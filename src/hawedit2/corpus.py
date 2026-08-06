@@ -30,6 +30,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
+from hawedit2.transcripts import Word
+
 __all__ = [
     "MINIMUM_HOURS",
     "Condition",
@@ -90,6 +92,9 @@ class CorpusItem:
     named_entities: tuple[str, ...] = ()
     code_switch_spans: tuple[str, ...] = ()
     speaker_count: int = 1
+    # Optional: §8.1's alignment-accuracy metric needs reference word timings. Expensive to
+    # annotate, so items without them simply do not contribute to that metric (None, not 0).
+    reference_words: tuple[Word, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.reference_ckb.strip():

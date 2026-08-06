@@ -31,6 +31,7 @@ from typing import Final, Protocol, runtime_checkable
 
 from hawedit2.corpus import CorpusItem
 from hawedit2.registry import ModelEntry, resolve
+from hawedit2.transcripts import Word
 
 __all__ = [
     "LONG_AUDIO_THRESHOLD_S",
@@ -83,6 +84,7 @@ class ASRResult:
     text_raw: str
     mean_logprob: float | None = None
     emissions_path: str | None = None
+    words: tuple[Word, ...] = ()
 
 
 @runtime_checkable

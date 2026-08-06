@@ -207,3 +207,40 @@ something.
 
 It is one constant, and the right way to change it is evidence from a real run — not a
 convenient number.
+
+---
+
+## D-010 · What "material gain" and "acceptable throughput" mean in §8.1's decision rule
+
+**Date:** 2026-08-06 · **Blueprint ref:** §8.1, §4.4 · **Type:** judgment call
+
+§8.1: "LLM-7B stays canonical unless another model shows a material accuracy gain on *your*
+audio at acceptable throughput." Neither "material" nor "acceptable" is given a number.
+
+**Material = ≥10% relative reduction in normalized CER** (`MATERIAL_GAIN_RATIO`). Relative,
+not absolute: an absolute threshold means something different at CER 0.30 than at 0.06.
+Ten percent sits clear of run-to-run noise while still admitting a real improvement. It is a
+floor for *considering* a switch, never sufficient on its own.
+
+**Acceptable throughput has no default — the caller must state `max_rtf`.** It is a capacity
+decision about a specific box and workload, and §3 Stage 1 explicitly warns against deriving
+it from Meta's A100 figures. A default here would be a fabricated number wearing the
+authority of a constant. The check uses **worst-case** RTF, not mean: a batch pipeline is
+sized by its slow items.
+
+**A fourth clause the sentence does not contain, from §4.4: no dialect may regress.** A
+challenger that wins on average while losing Mukriyan has not won, it has averaged. This is
+the entire reason per-dialect numbers exist, and enforcing it in the rule is what stops the
+aggregate from quietly becoming the decision.
+
+**A fifth, from ordinary caution: the incumbent must be in the run.** `decide_canonical`
+raises if it is absent rather than promoting whichever model happens to be present — that is
+precisely how a pinned choice disappears without anyone deciding to unpin it.
+
+Aggregates are **micro-averaged** (total edits over total reference characters). A macro
+average lets a five-character item weigh as much as a five-hundred-character one, which on a
+corpus mixing news and podcast material reports a different number than anyone means by
+"CER".
+
+Failed items are counted as failures and excluded from accuracy. Dropping them silently
+would reward a model for choking on the audio it finds hardest.
