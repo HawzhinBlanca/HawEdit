@@ -114,3 +114,32 @@ refuses to run the **test step** (exit 4) while still permitting lint/typecheck,
 `test_nested_fast_run_is_still_allowed`.
 
 **Measurement:** `bash hawedit2/scripts/verify.sh` → 9 passed, `VERIFY OK`, no recursion.
+
+---
+
+## D-006 · Normalization: numeral target, and measured whitespace behaviour
+
+**Date:** 2026-08-06 · **Blueprint ref:** §4.1, §8.1 · **Type:** judgment call + measurement
+
+**Numeral target = Latin.** §4.1 lists Farsi (`۰۱۲`), Eastern Arabic (`٠١٢`) and Western
+(`012`) as all occurring in real Kurdish text, and requires unification, but does not name
+the target. Latin is chosen because it is what timestamps, IDs and the §5 JSON contract
+already use, so a normalized transcript carries exactly one numeral convention rather than
+two. Reversible: it is a constant in `normalize.py`.
+
+**Whitespace — measured, and not what I first assumed.** The test written for M0.3 asserted
+that KLPT collapses internal whitespace. It does not, and the test failed:
+
+| Input | Output |
+|---|---|
+| `"   "` | `""` |
+| `"  ئەمە  "` | `"ئەمە"` |
+| `"ئەمە    زۆر"` | `"ئەمە    زۆر"` (4 spaces preserved) |
+
+So `normalize()` strips the ends and leaves internal runs alone. The assertion was corrected
+to the measured behaviour rather than the assumed one, and pinned — this is exactly the kind
+of detail a library update changes quietly.
+
+**Consequence:** normalized CER alone would charge a model for spacing it cannot reliably
+produce in a morphologically rich, clitic-heavy script. That is why §8.1 asks for a
+spacing-free CER *alongside* it, and both are implemented in M0.5.

@@ -38,7 +38,7 @@ M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisit
 |---|---|---|---|
 | M0.1 | Package skeleton + gate script; gate refuses a no-op command instead of printing green | DONE | `tests/test_gate.py` (9 tests) · gate green: `VERIFY OK — hawedit2 gate green` · found + fixed 2 real gate defects, see D-005 |
 | M0.2 | §7 model registry in code; model outside §7 rejected; NC licence hard-rejected | DONE | `src/hawedit2/registry.py` + `tests/test_registry.py` (15 tests). The tests **parse §7 out of `BLUEPRINT.md`** and assert exact set equality both ways, so a model added in code but not in the blueprint fails the gate. |
-| M0.3 | §4.1 Sorani normalization via KLPT; every §4.1 collision asserted in a test | TODO | |
+| M0.3 | §4.1 Sorani normalization via KLPT; every §4.1 collision asserted in a test | DONE | `src/hawedit2/normalize.py` + `tests/test_normalize.py` (12 tests): all 4 KLPT-covered §4.1 collisions, the two-encodings-compare-equal failure mode, idempotence, and the conjunctive-`و` gap pinned per D-003 |
 | M0.4 | Kurdish invariants #1 and #3 in code: `transcript.raw.json` write-once, model inputs read `norm` | TODO | |
 | M0.5 | §8.1 accuracy metrics: normalized CER, spacing-free CER, named-entity error, code-switch error | TODO | |
 | M0.6 | Labelled-corpus manifest + §8.1 coverage validation (3 dialects × 7 conditions), per-dialect never aggregated away | TODO | |
