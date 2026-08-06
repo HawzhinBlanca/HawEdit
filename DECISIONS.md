@@ -189,3 +189,21 @@ not silent."
 the reference should be able to score above it, and clipping would hide exactly that.
 
 All four are testable choices, not conventions to remember: see `tests/test_metrics.py`.
+
+---
+
+## D-009 · "Several hours" is enforced as a 3.0-hour floor
+
+**Date:** 2026-08-06 · **Blueprint ref:** §8.1 · **Type:** judgment call
+
+§8.1 asks for "several hours" of labelled audio without a number. `MINIMUM_HOURS = 3.0` —
+the smallest quantity "several" honestly describes — is enforced as a **floor, not a
+target**: a corpus below it fails `assert_section_8_1_coverage()` with the shortfall named.
+
+Why enforce anything at all: the coverage grid alone is gameable. Three dialects × seven
+conditions can be "fully covered" by 21 thirty-second clips, which satisfies every cell and
+measures nothing. The hours check and the grid check together are what make coverage mean
+something.
+
+It is one constant, and the right way to change it is evidence from a real run — not a
+convenient number.
