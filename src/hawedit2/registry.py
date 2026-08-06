@@ -28,6 +28,7 @@ from types import MappingProxyType
 from typing import Final
 
 __all__ = [
+    "BENCHMARK_CONTROLS",
     "EXCLUDED",
     "REGISTRY",
     "ExcludedEntry",
@@ -331,6 +332,30 @@ def _excluded() -> Mapping[str, ExcludedEntry]:
 
 REGISTRY: Final[Mapping[str, ModelEntry]] = _registry()
 EXCLUDED: Final[Mapping[str, ExcludedEntry]] = _excluded()
+
+# Benchmark controls: models the blueprint requires for *measurement* but deliberately keeps
+# out of §7's production table. §3 Stage 0 — "Keep speaker-diarization-3.1 (MIT) as a
+# benchmark control" — and §8.1 — "pyannote Community-1 vs 3.1 on Kurdish multi-speaker
+# material". §7's table lists only Community-1, and that table is authoritative for what
+# ships, so the control lives here instead of being quietly appended to the registry. It is
+# not routable: `resolve` does not find it, and nothing in the pipeline can select it.
+# See DECISIONS.md D-011.
+BENCHMARK_CONTROLS: Final[Mapping[str, ModelEntry]] = MappingProxyType(
+    {
+        "pyannote/speaker-diarization-3.1": ModelEntry(
+            model_id="pyannote/speaker-diarization-3.1",
+            component="Diarization benchmark control",
+            blueprint_model_cell="",  # deliberately absent from §7's table
+            licence=MIT,
+            role="diarization_control",
+            routable=False,
+            notes=(
+                "§3 Stage 0 keeps it as a control; §8.1 benchmarks Community-1 against it. "
+                "Measurement only — never a production diarizer."
+            ),
+        )
+    }
+)
 
 
 def resolve(model_id: str) -> ModelEntry:

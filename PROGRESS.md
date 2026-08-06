@@ -19,7 +19,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 | Milestone | Deliverable | Blocks | Status |
 |---|---|---|---|
-| **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | WIP |
+| **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness DONE (M0.1–M0.10, 159 tests) · measurement BLOCKED (M0.11–M0.13)** |
 | **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | TODO |
 | **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | TODO |
 | **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | TODO |
@@ -45,7 +45,7 @@ M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisit
 | M0.7 | ASR adapter interface + throughput harness: RTF, peak VRAM, long-audio failure rate | DONE | `src/hawedit2/asr.py` + `tests/test_asr.py` (14 tests). `Hardware` is required and cross-hardware comparison is refused per §3 Stage 1; failures are recorded not raised; every measurement names its adapter class. |
 | M0.8 | Alignment-accuracy metric against CTC emissions (§8.1 last metric) | DONE | `src/hawedit2/alignment.py` + `tests/test_alignment.py` (12 tests). Kurdish invariant #5 enforced at construction in `AsrProvenance`/`RawTranscript`, not just at scoring. |
 | M0.9 | Benchmark runner → comparable report JSON + §8.1 decision rule (LLM-7B stays canonical unless material gain) | DONE | `src/hawedit2/bench.py` + `tests/test_bench.py` (16 tests). Five clauses enforced, per-dialect always reported alongside the aggregate, thresholds recorded in D-010. |
-| M0.10 | Diarization benchmark: Community-1 vs 3.1 DER on Kurdish multi-speaker material | TODO | |
+| M0.10 | Diarization benchmark: Community-1 vs 3.1 DER on Kurdish multi-speaker material | DONE | `src/hawedit2/diarization.py` + `tests/test_diarization.py` (16 tests). DER with optimal speaker mapping and a reported breakdown, plus §8.1's boundary-reconciliation metric against word alignment. Control-model handling: D-011. |
 | M0.11 | Real-model adapters (`LLM_7B_v2`, `CTC_3B_v2`, `LLM_Unlimited_3B_v2`, `rzgar-ckb-v1`, Gemini native audio) | BLOCKED | `BLOCKED.md` #2 |
 | M0.12 | Labelled Sorani audio set — several hours, per §8.1 category list | BLOCKED | `BLOCKED.md` #1 |
 | M0.13 | Benchmark executed on real Kurdish audio on hawapc01; numbers recorded | BLOCKED | `BLOCKED.md` #1, #2 |

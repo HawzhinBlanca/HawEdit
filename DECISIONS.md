@@ -244,3 +244,29 @@ corpus mixing news and podcast material reports a different number than anyone m
 
 Failed items are counted as failures and excluded from accuracy. Dropping them silently
 would reward a model for choking on the audio it finds hardest.
+
+---
+
+## D-011 · The diarization control lives outside the §7 registry
+
+**Date:** 2026-08-06 · **Blueprint ref:** §7, §3 Stage 0, §8.1 · **Type:** blueprint inconsistency, resolved without deviating
+
+§7's registry table lists **only** `pyannote/speaker-diarization-community-1`. But two other
+places require its predecessor:
+
+- §3 Stage 0: "Keep `speaker-diarization-3.1` (MIT) as a benchmark control."
+- §8.1: "Also run here: pyannote Community-1 vs 3.1 on Kurdish multi-speaker material."
+
+So the blueprint requires running a model its own registry table does not list. Adding 3.1 to
+`REGISTRY` would break the gate rule "nothing in the model registry that isn't in §7" — and
+that rule is enforced mechanically, by parsing §7, so the conflict is a test failure and not
+a matter of opinion.
+
+**Resolution:** a separate `BENCHMARK_CONTROLS` mapping. §7's table stays authoritative for
+what ships; the control is available for measurement only. `resolve()` does not find it, and
+`routable` is `False`, so no pipeline stage can select it even by accident. Asserted in
+`tests/test_registry.py`.
+
+This is not a request to amend the blueprint — §3 Stage 0's instruction is unambiguous and
+the distinction between "ships" and "is benchmarked against" is real. Flagged because a
+future reader comparing §7's table to the code would otherwise find an apparent extra model.

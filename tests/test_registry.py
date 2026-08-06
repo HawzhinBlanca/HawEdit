@@ -164,3 +164,27 @@ def test_attribution_notices_cover_every_attribution_licence() -> None:
             assert any(entry.model_id.lower() in n.lower() for n in notices), (
                 f"{entry.model_id} requires attribution but has no notice"
             )
+
+
+# --- benchmark controls are measurement-only, never production ------------------------
+
+
+def test_the_diarization_control_is_not_in_the_production_registry() -> None:
+    """§7's table lists Community-1 only. §3 Stage 0 and §8.1 still require 3.1 as a
+    control, so it lives outside the registry rather than being appended to it (D-011)."""
+    from hawedit2.registry import BENCHMARK_CONTROLS
+
+    assert "pyannote/speaker-diarization-3.1" in BENCHMARK_CONTROLS
+    assert "pyannote/speaker-diarization-3.1" not in REGISTRY
+
+
+def test_a_benchmark_control_cannot_be_resolved_for_production_use() -> None:
+    with pytest.raises(ModelNotInRegistry):
+        resolve("pyannote/speaker-diarization-3.1")
+
+
+def test_benchmark_controls_are_not_routable() -> None:
+    from hawedit2.registry import BENCHMARK_CONTROLS
+
+    for entry in BENCHMARK_CONTROLS.values():
+        assert not entry.routable
