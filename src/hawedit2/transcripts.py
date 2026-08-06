@@ -36,6 +36,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from hawedit2.alignment import CTC_VITERBI, assert_ctc_viterbi
 from hawedit2.normalize import normalize_sorani
 from hawedit2.registry import resolve
 
@@ -88,6 +89,8 @@ class AsrProvenance:
         resolve(self.canonical)
         if self.validated_by is not None:
             resolve(self.validated_by)
+        if self.aligner is not None:
+            assert_ctc_viterbi(self.aligner)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +101,16 @@ class RawTranscript:
     text_ckb: str
     words: tuple[Word, ...]
     asr: AsrProvenance
+
+    def __post_init__(self) -> None:
+        # Invariant #5: timings exist only if something admissible produced them. A
+        # transcript carrying words with no declared aligner has timings from nowhere.
+        if self.words and self.asr.aligner is None:
+            raise ValueError(
+                f"{self.media_id}: transcript carries {len(self.words)} word timings but "
+                f"declares no aligner. Word timings come from {CTC_VITERBI!r} only "
+                f"(Kurdish invariant #5)."
+            )
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
