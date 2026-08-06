@@ -143,3 +143,49 @@ of detail a library update changes quietly.
 **Consequence:** normalized CER alone would charge a model for spacing it cannot reliably
 produce in a morphologically rich, clitic-heavy script. That is why §8.1 asks for a
 spacing-free CER *alongside* it, and both are implemented in M0.5.
+
+---
+
+## D-007 · Lint: RUF001/2/3 (ambiguous unicode) disabled project-wide
+
+**Date:** 2026-08-06 · **Blueprint ref:** §4.1 · **Type:** infrastructure
+
+These rules flag characters *confusable with ASCII*. The collisions this project actually
+cares about are Arabic-script-internal — Arabic `ي` vs Farsi `ی`, `ه`+ZWNJ vs `ە` — which
+look nothing like ASCII and which the rules never fire on. So they provide no §4.1
+protection whatsoever.
+
+What they do fire on is every `§` and en dash quoted verbatim from `BLUEPRINT.md`, and every
+Kurdish string in the test fixtures — which must contain the confusable characters, since
+that is the thing under test. Disabling them loses no coverage. The real protection is
+`tests/test_normalize.py`, which asserts every §4.1 collision resolves.
+
+---
+
+## D-008 · Definitions §8.1 names but does not specify
+
+**Date:** 2026-08-06 · **Blueprint ref:** §8.1 · **Type:** judgment call
+
+§8.1 lists "named-entity error" and "code-switch error" without defining them. Chosen
+definitions, and why:
+
+**Named-entity error = fraction of annotated entities absent from the normalized
+hypothesis.** Matching is exact after §4.1 normalization, so a keyboard difference is not
+scored as a lost name, but a near-miss is: a name 90% right is still the wrong name in a
+burned-in caption, and §8.2 identifies misleading output as the error class that matters
+most to a media organisation. Strictness here is deliberate.
+
+**Code-switch error = mean CER over annotated switched spans, each located by best
+substring alignment.** Spans are annotated in isolation but occur embedded in surrounding
+Kurdish, so the metric aligns each span against any substring of the hypothesis (free
+prefix/suffix). A whole-utterance CER would dilute a destroyed switch into invisibility —
+which is the exact reason §8.1 breaks it out as its own metric.
+
+**Unmeasured returns `None`, never 0.0.** An item with no annotated entities has no
+named-entity error. A 0.0 would render in a report as a perfect score. §1: "Fail visible,
+not silent."
+
+**CER is not clipped at 1.0.** Standard definition; a model hallucinating past the end of
+the reference should be able to score above it, and clipping would hide exactly that.
+
+All four are testable choices, not conventions to remember: see `tests/test_metrics.py`.
