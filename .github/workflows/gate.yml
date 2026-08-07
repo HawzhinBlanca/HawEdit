@@ -1,0 +1,89 @@
+name: gate
+# The gate that decides DONE, run on a clean runner from committed source.
+#
+# NOTE: adding the workflow does not make it *required*. Marking `gate` a required status check
+# on the protected branch is a repository setting only the owner can change.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # pyproject requires-python = ">=3.11"
+
+      - name: install
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          # CPU wheels: §6 puts Stage 0 (ffmpeg, scene detect, VAD) on CPU by design, and the
+          # CUDA build of torch is ~2 GB of runner disk for kernels nothing here calls.
+          .venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+            -e '.[dev,media]'
+
+      # §4.3.6's golden render is a pixel comparison, so it needs the *pinned* build the
+      # reference was rendered from — a distro ffmpeg is a different libass and would fail on
+      # rendering differences that are not regressions. fetch-ffmpeg.sh pins the URL.
+      #
+      # Required, not best-effort: `skipif(find_ffmpeg() is None)` means a failed fetch would
+      # silently retire Kurdish invariant #4 from CI.
+      - name: fetch the pinned ffmpeg (libass + HarfBuzz + FriBidi)
+        run: bash scripts/fetch-ffmpeg.sh
+
+      - name: gate
+        run: bash scripts/verify.sh
+
+      - name: the golden render must have run, not skipped
+        run: |
+          test -x .ffmpeg/ffmpeg
+          .venv/bin/python -m pytest tests/test_captions.py -q \
+            -k "golden_reference or simple_shaping" --no-header -rs \
+            | tee /tmp/golden.txt
+          if grep -q "skipped" /tmp/golden.txt; then
+            echo "REFUSED: the §4.3 golden render skipped in CI — invariant #4 unverified" >&2
+            exit 1
+          fi
+
+      # Same reasoning: the §3 Stage 0 tests are guarded by `skipif(media stack absent)`, so a
+      # botched install would retire real-media coverage of ffmpeg, PySceneDetect and Silero
+      # VAD without turning CI red. That guard now probes whether the stack *works* rather than
+      # whether it imports — an import-only install is what went red here first.
+      - name: Stage 0 must have run against real media, not skipped
+        run: |
+          .venv/bin/python -m pytest tests/test_ingest.py -q --no-header -rs \
+            | tee /tmp/ingest.txt
+          if grep -q "skipped" /tmp/ingest.txt; then
+            echo "REFUSED: §3 Stage 0 tests skipped in CI — the media stack is not installed" >&2
+            exit 1
+          fi
+
+      # The runner is the product surface. A green suite behind a CLI that cannot start is the
+      # gap between "the stages work" and "the system works".
+      - name: the pipeline must run over real media and refuse to claim completeness
+        run: |
+          set -o pipefail
+          rc=0
+          .venv/bin/python -m hawedit.pipeline tests/fixtures/kurdish-speech-3cuts.mp4 \
+            --work-dir "$RUNNER_TEMP/run" | tee "$RUNNER_TEMP/pipeline.txt" || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "REFUSED: expected exit 1 on an incomplete run, got $rc" >&2
+            exit 1
+          fi
+          grep -q "run is INCOMPLETE" "$RUNNER_TEMP/pipeline.txt"
+          grep -q "BLOCKED.md #3" "$RUNNER_TEMP/pipeline.txt"
+
+      - name: the gate must have left fresh test evidence
+        run: .venv/bin/python -m hawedit.gate .gate/last-test-run.xml scripts/test-count.floor
+
+      # The floor is committed. If the gate raised it here, the suite grew without the floor
+      # being updated in the same commit — the evidence and the claim are out of step.
+      - name: the test-count floor must not have been ratcheted by this run
+        run: git diff --exit-code -- scripts/test-count.floor
