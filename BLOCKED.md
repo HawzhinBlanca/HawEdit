@@ -60,6 +60,54 @@ confirmation that I should ship the harness and you run it.
 **Needed:** whether to target the Developer API or Vertex, and the credential path. I will not
 put a key in the repo; it goes through env (`.env` is on the never-edit list).
 
+### Measured 2026-08-07 — a key exists and the project has no paid tier
+
+A Developer API key was supplied and stored through `python -m hawedit.credentials`. It
+authenticates: **50 models visible, `gemini-2.5-pro` among them.** The live check then failed
+on the first real call:
+
+```
+Quota exceeded for metric: generate_content_free_tier_requests,
+limit: 0, model: gemini-2.5-pro
+```
+
+**A free-tier limit of exactly zero.** `gemini-2.5-pro` is paid-tier only, so the pinned §4
+judge cannot be called at all until billing is enabled on the key's Google Cloud project.
+
+This is the distinction the credential panel could not make on its own and `smoke.py` exists
+for: a key can be *valid*, and the model it is pinned to can be *visible in the listing*, and
+neither of those means it is callable. A listing is not a capability — the same lesson as
+`encoder_available` refusing to trust ffmpeg's `-encoders` output (D-028).
+
+Nothing was billed; both calls were rejected before generation. The retry path behaved
+correctly — three attempts on the 429, then a refusal naming the reason rather than a crash or
+an invented verdict.
+
+Isolated with a two-model probe on the same key, seconds apart:
+
+```
+gemini-2.5-flash   HTTP 200 — call succeeded
+gemini-2.5-pro     HTTP 429 — free_tier_requests, limit: 0
+```
+
+So the key, the network path and the API are all fine. The project is on the free tier and the
+**pinned** judge is the one model with no free-tier allowance.
+
+**A Google AI Ultra subscription does not cover this.** That is a consumer plan for the Gemini
+app; `generativelanguage.googleapis.com` bills through the Cloud billing account attached to
+the API key's project. Credits on the consumer plan are not spendable on the API surface.
+
+**To unblock:** link a billing account to the key's Cloud project (AI Studio → the key → its
+project). No new key is needed. This is required by §3 regardless of convenience: paid tier
+plus Vertex zero-data-retention is "mandatory, not advisory" before the first client job,
+because full-transcript discovery sends 100% of every transcript to Google. The governance half
+of this entry is still open and still needs a name, not a flag.
+
+**Not a workaround:** `gemini-2.5-flash` answers on this key today. Routing the judge to it
+would produce a green run and would be a measurement of a different system — §4 pins
+`gemini-2.5-pro`, §7's registry refuses substitution, and §8.1 is explicit that figures from
+different models are not comparable. Flash was a diagnostic and is not wired to anything.
+
 ---
 
 ## #4 · Hugging Face gated-repo acceptance — blocks M0.10, M1 diarization
