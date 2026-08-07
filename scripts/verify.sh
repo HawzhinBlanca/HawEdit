@@ -20,6 +20,13 @@ fi
 # override therefore stays empty and is caught by _noop_check below. With `${VAR:-default}`
 # an empty value would be silently replaced by the default, so `LINT_CMD=` would look like a
 # configured gate while expressing the intent to run nothing.
+# §4.3.6's golden render test runs only when an ffmpeg with libass/HarfBuzz is reachable.
+# Auto-discover one fetched by scripts/fetch-ffmpeg.sh so the safeguard is on by default
+# rather than opt-in — a golden test nobody remembers to enable protects nothing.
+if [[ -z "${HAWEDIT2_FFMPEG:-}" && -x "${here}/.ffmpeg/ffmpeg" ]]; then
+  export HAWEDIT2_FFMPEG="${here}/.ffmpeg/ffmpeg"
+fi
+
 LINT_CMD="${LINT_CMD-$PY -m ruff check src tests}"
 FORMAT_CMD="${FORMAT_CMD-$PY -m ruff format --check src tests}"
 TYPECHECK_CMD="${TYPECHECK_CMD-$PY -m mypy}"

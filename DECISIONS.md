@@ -537,3 +537,44 @@ evidence the two systems are close; dropping it inflates whatever margin remains
 
 **A per-source-hour figure over zero hours raises** rather than returning infinity. Zero
 source hours is a corpus bug, not an infinite rate.
+
+---
+
+## D-021 · ffmpeg with a verified RTL stack — obtained, and what it closes
+
+**Date:** 2026-08-06 · **Blueprint ref:** §4.3, §7 · **Type:** blocker resolved + licence check
+
+`BLOCKED.md` #5 recorded that no ffmpeg was available, blocking §4.3.6's golden render. That
+is now resolved, and the route matters for anyone reproducing it: `github.com` is denied by
+this environment's proxy, but `raw.githubusercontent.com` and the **Git-LFS media endpoint**
+are not. The plain raw URL returns a 134-byte LFS pointer; `media.githubusercontent.com`
+serves the real 142 MB archive. `scripts/fetch-ffmpeg.sh` automates it and **refuses a build
+lacking libass/HarfBuzz/FriBidi** rather than downloading something that cannot shape Arabic.
+
+**Build:** `n8.0.1-48-g0592be14ff`, `--enable-libass --enable-libharfbuzz --enable-libfribidi`.
+`assert_rtl_stack()` — written before any ffmpeg existed here — passes on its real
+`-buildconf` output unchanged.
+
+**Licence.** The build is `--enable-gpl --enable-version3`. §7 already lists the caption
+stack as LGPL/GPL. ffmpeg is invoked as a **separate executable** via `subprocess`, which is
+the standard arrangement and does not place this project's source under the GPL. The binary
+is **not committed** (~200 MB, `.ffmpeg/` is git-ignored). Bundling a GPL binary into a
+shipped product is a different question from invoking one, and is flagged here rather than
+decided: confirm before any distribution that includes the binary.
+
+**Measured finding — `auto` matched `complex` exactly on this build.** Recorded in
+`evidence/rtl-shaping.md`. This is *why* §4.3.1 forbids relying on `auto`, not evidence
+against it: on a build with HarfBuzz, `auto` resolves to complex and the output looks
+perfect, so a developer testing there concludes `auto` is fine and ships code that breaks on
+a host whose libass lacks HarfBuzz. The explicit setting is the difference between
+correctness that happens to hold and correctness that is stated.
+
+**The negative control is load-bearing.** `test_simple_shaping_fails_the_golden_test` renders
+with `shaping=simple` and requires the comparison to fail. Without it, the golden test could
+pass while measuring nothing, and `shaping=complex` would be cargo cult rather than a
+requirement.
+
+**Pixels, not bytes.** The comparison decodes both images to RGB24 through ffmpeg. A PNG
+encoder change between versions would otherwise fail a render that looks identical — and a
+golden test that cries wolf gets disabled, which is exactly how the regression §4.3.6 warns
+about eventually ships.

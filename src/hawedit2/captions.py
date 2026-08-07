@@ -39,6 +39,7 @@ from hawedit2.transcripts import Word
 
 __all__ = [
     "DEFAULT_MAX_CHARS_PER_LINE",
+    "GOLDEN_CAPTION_TEXT",
     "KURDISH_REQUIRED_GLYPHS",
     "CaptionStyle",
     "FontCoverageError",
@@ -49,6 +50,9 @@ __all__ = [
     "assert_rtl_stack",
     "build_ass",
     "compare_golden_render",
+    "decode_to_rgb",
+    "find_ffmpeg",
+    "render_caption_png",
     "subtitle_filter",
     "wrap_caption_lines",
 ]
@@ -63,6 +67,11 @@ KURDISH_REQUIRED_GLYPHS: Final[frozenset[str]] = frozenset("ڕڵۆێچژپگە" 
 DEFAULT_MAX_CHARS_PER_LINE: Final = 32
 
 _ASS_OVERRIDE = re.compile(r"[{}]")
+
+# The fixed Kurdish line §4.3.6's golden render uses. Chosen to exercise the joining
+# behaviour that `shaping=simple` gets wrong — `لە` and the initial form of `هەولێر` — plus
+# ڕ ۆ ژ ە ی from §4.3.4's required set.
+GOLDEN_CAPTION_TEXT: Final = "ڕۆژنامەوانی کوردی لە هەولێر."
 
 
 class MissingRtlStack(RuntimeError):
@@ -321,12 +330,107 @@ def build_ass(
     return header + "\n" + "\n".join(events) + "\n"
 
 
-def compare_golden_render(reference: Path, candidate: Path) -> None:
+def find_ffmpeg() -> Path | None:
+    """Locate an ffmpeg binary: `HAWEDIT2_FFMPEG` first, then `PATH`.
+
+    Returns `None` rather than raising — the caller decides whether a missing ffmpeg is a
+    skipped render test or a failed deploy check.
+    """
+    from os import environ
+    from shutil import which
+
+    configured = environ.get("HAWEDIT2_FFMPEG")
+    if configured and Path(configured).exists():
+        return Path(configured)
+    located = which("ffmpeg")
+    return Path(located) if located else None
+
+
+def render_caption_png(
+    ffmpeg: Path,
+    ass_path: Path,
+    fonts_dir: Path,
+    output: Path,
+    width: int = 1080,
+    height: int = 1920,
+    shaping: str = "complex",
+) -> Path:
+    """Burn one caption frame onto a black background — the §4.3.6 golden render.
+
+    `width`/`height` must match the ASS `PlayResX`/`PlayResY`, or libass scales the text and
+    the comparison measures the scaling rather than the shaping.
+
+    `shaping` is a parameter only so a test can render the **wrong** way and prove the right
+    way differs. Production always goes through `subtitle_filter`, which hard-codes `complex`.
+    """
+    import subprocess
+
+    filter_string = (
+        f"ass={_escape_filter_path(ass_path)}"
+        f":shaping={shaping}"
+        f":fontsdir={_escape_filter_path(fonts_dir)}"
+    )
+    subprocess.run(
+        [
+            str(ffmpeg),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s={width}x{height}:d=1",
+            "-vf",
+            filter_string,
+            "-frames:v",
+            "1",
+            "-y",
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return output
+
+
+def decode_to_rgb(ffmpeg: Path, image: Path) -> bytes:
+    """Decode an image to raw RGB24 pixels.
+
+    The golden comparison runs on pixels, not on file bytes: PNG encoders differ between
+    ffmpeg and zlib versions, so a byte comparison would fail on an encoder upgrade that
+    changed nothing a viewer can see — and a golden test that cries wolf gets disabled.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        [
+            str(ffmpeg),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(image),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return result.stdout
+
+
+def compare_golden_render(reference: Path, candidate: Path, ffmpeg: Path | None = None) -> None:
     """§4.3.6's golden-file test: compare a rendered Kurdish caption to a fixed reference.
 
     §4.3.6 is explicit that this — not the option flag — is the real safeguard: "Shaping
     regressions arrive silently through ffmpeg or libass updates and are invisible in code
     review."
+
+    When `ffmpeg` is supplied the comparison runs on decoded pixels rather than file bytes,
+    so a PNG-encoder change cannot fail a render that looks identical.
 
     Raises:
         GoldenReferenceMissing: the reference is absent. Passing silently would make the
@@ -342,8 +446,12 @@ def compare_golden_render(reference: Path, candidate: Path) -> None:
     if not candidate.exists():
         raise AssertionError(f"no candidate render at {candidate}")
 
-    reference_bytes = reference.read_bytes()
-    candidate_bytes = candidate.read_bytes()
+    if ffmpeg is not None:
+        reference_bytes = decode_to_rgb(ffmpeg, reference)
+        candidate_bytes = decode_to_rgb(ffmpeg, candidate)
+    else:
+        reference_bytes = reference.read_bytes()
+        candidate_bytes = candidate.read_bytes()
     if reference_bytes != candidate_bytes:
         raise AssertionError(
             f"rendered caption differs from the golden reference "

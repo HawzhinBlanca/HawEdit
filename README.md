@@ -17,6 +17,18 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
+## Rendering captions (§4.3)
+
+The golden-render test needs an ffmpeg whose libass has HarfBuzz. Fetch one once per
+checkout — the script verifies the RTL stack and refuses a build that cannot shape Arabic:
+
+```bash
+bash scripts/fetch-ffmpeg.sh     # ~200 MB, lands in .ffmpeg/ (git-ignored)
+```
+
+`verify.sh` discovers it automatically. Without it the golden test skips and you lose
+§4.3.6's only real safeguard, so run it.
+
 ## The gate
 
 ```bash

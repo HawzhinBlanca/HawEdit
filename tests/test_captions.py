@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from hawedit2.captions import (
+    GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
     CaptionStyle,
     FontCoverageError,
@@ -35,6 +36,8 @@ from hawedit2.captions import (
     assert_rtl_stack,
     build_ass,
     compare_golden_render,
+    find_ffmpeg,
+    render_caption_png,
     subtitle_filter,
     wrap_caption_lines,
 )
@@ -287,3 +290,70 @@ def test_a_missing_reference_says_how_to_generate_it(tmp_path: Path) -> None:
     candidate.write_bytes(b"x")
     with pytest.raises(GoldenReferenceMissing, match="HarfBuzz"):
         compare_golden_render(tmp_path / "missing.png", candidate)
+
+
+# --- §4.3.6 the golden render, against a real ffmpeg -------------------------------------
+
+GOLDEN = Path(__file__).resolve().parent / "golden" / "kurdish-caption.png"
+FONTS_DIR = FONT.parent
+
+
+def _golden_sentence() -> Sentence:
+    """The fixed line the reference was rendered from — see GOLDEN_CAPTION_TEXT."""
+    return Sentence(
+        words=words(
+            ("ڕۆژنامەوانی", 0, 600),
+            ("کوردی", 600, 1000),
+            ("لە", 1000, 1200),
+            ("هەولێر.", 1200, 1800),
+        ),
+        complete=True,
+    )
+
+
+def test_the_golden_reference_is_committed() -> None:
+    """Always on. If the reference is deleted, the suite says so rather than quietly
+    losing §4.3.6's only real safeguard."""
+    assert GOLDEN.exists(), f"golden reference missing at {GOLDEN}"
+    assert GOLDEN.stat().st_size > 1000
+
+
+def test_the_golden_sentence_matches_the_text_the_reference_was_rendered_from() -> None:
+    """A reference rendered from different text silently tests nothing."""
+    assert _golden_sentence().text == GOLDEN_CAPTION_TEXT
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
+def test_the_render_matches_the_golden_reference(tmp_path: Path) -> None:
+    """§4.3.6's real safeguard: render Kurdish and compare to the committed reference."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    assert_rtl_stack(
+        __import__("subprocess")
+        .run([str(ffmpeg), "-hide_banner", "-buildconf"], capture_output=True, text=True)
+        .stdout,
+        "",
+    )
+    ass_path = tmp_path / "captions.ass"
+    ass_path.write_text(build_ass((_golden_sentence(),)), encoding="utf-8")
+    rendered = render_caption_png(ffmpeg, ass_path, FONTS_DIR, tmp_path / "out.png")
+    compare_golden_render(GOLDEN, rendered, ffmpeg=ffmpeg)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
+def test_simple_shaping_fails_the_golden_test(tmp_path: Path) -> None:
+    """The negative control, and the whole justification for §4.3.
+
+    If `shaping=simple` produced the same pixels, the golden test would be measuring
+    nothing and `shaping=complex` would be cargo cult. It does not: simple breaks the
+    joining forms of لە and the initial هـ of هەولێر.
+    """
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "captions.ass"
+    ass_path.write_text(build_ass((_golden_sentence(),)), encoding="utf-8")
+    broken = render_caption_png(
+        ffmpeg, ass_path, FONTS_DIR, tmp_path / "simple.png", shaping="simple"
+    )
+    with pytest.raises(AssertionError, match="differs"):
+        compare_golden_render(GOLDEN, broken, ffmpeg=ffmpeg)
