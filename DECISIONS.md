@@ -327,3 +327,32 @@ can be corrected at the next revision.
 scored zero here precisely because a lexicon does not contain typing artefacts — which is
 where §4.1's other collisions actually live. The measurement worth acting on is the same
 script over real transcripts, and that is blocked on M0.12.
+
+---
+
+## D-014 · Sentence-pause threshold and the completeness rule
+
+**Date:** 2026-08-06 · **Blueprint ref:** §4.2, §5, §3 Stage 5 · **Type:** judgment call
+
+§4.2 requires segmenting on "Kurdish punctuation *plus* VAD pauses" and names no pause
+threshold. `DEFAULT_PAUSE_MS = 500` — a conversational sentence break rather than a breath.
+It is a **parameter, not a constant to trust**: the right value comes from real Kurdish
+conversational audio, which is M0.12. Both `segment_sentences` and its VAD input take it
+explicitly so tuning is a call-site change.
+
+**Why the pause path is not optional.** §4.2 warns that ASR punctuation for low-resource
+languages is unreliable. If it is absent entirely — the realistic case for Kurdish
+conversation — a punctuation-only segmenter returns one enormous sentence, §5's anchors
+collapse onto the whole segment, and "a clip never starts or ends mid-sentence" stops meaning
+anything while every test still passes. `test_punctuation_alone_would_have_returned_one_sentence`
+exists to keep that failure visible.
+
+**Completeness.** A sentence is complete when closed by punctuation or by a pause — the
+speaker finished it. A trailing run of words that merely ran out of segment is a fragment
+(`complete=False`). §5's contract: `sentence_complete == false ⇒ reject, never render`.
+
+**`anchors_for` returns `None` rather than a best guess** when a selection contains no
+complete sentence. §3 Stage 5: "If no sentence boundary exists within tolerance, extend to
+the next one or reject the candidate." A plausible-looking anchor derived from a fragment is
+exactly how a clip that starts mid-sentence reaches a client — the caller must decide to
+extend or reject, and cannot do that if the anchor function hides the problem.

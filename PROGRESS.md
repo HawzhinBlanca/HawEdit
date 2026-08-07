@@ -20,7 +20,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | Milestone | Deliverable | Blocks | Status |
 |---|---|---|---|
 | **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness DONE (M0.1–M0.10, 159 tests) · measurement BLOCKED (M0.11–M0.13)** |
-| **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | TODO |
+| **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | **WIP — §4.2 aligner + sentence segmentation DONE; Stage 0 ffmpeg and Stage 1 models blocked** |
 | **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | TODO |
 | **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | TODO |
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
@@ -56,6 +56,16 @@ M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisit
 **M0 cannot be closed while M0.12/M0.13 are blocked.** The harness is buildable and testable
 without the audio; the *measurement* — which is what M0 exists to produce, and what every
 downstream threshold depends on — is not. See `BLOCKED.md`.
+
+## M1 — task ledger
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M1.1 | §4.2 Viterbi forced alignment on CTC emissions, in-house per §7 | DONE | `src/hawedit2/forced_alignment.py` + `tests/test_forced_alignment.py` (22 tests). Monotone non-overlapping spans, every token framed, infeasible input refused rather than guessed. No new dependency. |
+| M1.2 | §4.2 sentence segmentation (Kurdish punctuation **plus** VAD pauses) + §5 anchors | DONE | `src/hawedit2/sentences.py` + `tests/test_sentences.py` (17 tests). Pause path works on wholly unpunctuated input; `anchors_for` returns `None` rather than a guess when nothing is complete. Threshold: D-014. |
+| M1.3 | Stage 0 ingest: ffmpeg demux, PySceneDetect, Silero VAD, diarization | BLOCKED | `BLOCKED.md` #5 (ffmpeg), #4 (gated diarizer) |
+| M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
+| M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | TODO | Unblocked — next iteration |
 
 ## Deferred with reason
 
