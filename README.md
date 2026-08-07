@@ -4,25 +4,20 @@ Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1
 
 ## What this is today
 
-**There is no end-to-end product yet.** You cannot point this at a video and get clips back.
-What exists is most of §3 except the middle — ingest, the transcript artifacts and their
-invariants, alignment, segmentation, the text index, boundary fusion, captions, and a render
-path that produces a real vertical clip with Kurdish captions burned in — plus the whole §8
-measurement apparatus, each piece tested and gated. Every §3 stage has code, and one
-command runs them:
+**One thing stands between this and a runnable product: §3 Stage 1.** The ASR models need
+weights and a GPU this machine cannot reach, so nothing here can turn audio into a transcript
+yet. Give it a transcript and a Gemini key, and the rest of §3 runs — discovery, judging,
+boundary fusion and a rendered vertical clip with burned-in Kurdish captions.
 
 ```bash
 .venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work
 ```
 
-It exits non-zero and prints every stage it could not run, with the blocker named. What is
-missing is the three hosted or GPU-bound *models* at the middle — Path A's Kurdish judge, Path
-B's `VideoChat3-4B`, and Stage 4's judge call — which is exactly the part that needs
-credentials and hardware this machine does not have. Supply a transcript and a verdict in
-their place and the runner goes all the way to a rendered vertical clip with burned-in Kurdish
-captions:
+Run bare, it does Stage 0 on real media, exits non-zero, and prints every stage it could not
+run with the blocker named. Nothing is skipped quietly.
 
 ```bash
+.venv/bin/python -m hawedit2.credentials                    # store a Gemini key, once
 .venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work \
   --transcript t.json --sentences 0,1 --qc-pass
 ```
@@ -32,7 +27,7 @@ captions:
 | 0 · Ingest | **runs** | Diarization — Community-1 is a gated repo (`BLOCKED.md` #4). |
 | 1 · Speech | contracts only | The ASR models themselves (`BLOCKED.md` #2). Alignment and segmentation are done and tested. |
 | 2 · Index | text only | The visual index (Qwen3-VL embeddings) needs weights and a GPU. |
-| 3 · Discovery | merge only | Both *producers* — Path A needs Gemini (`BLOCKED.md` #3), Path B needs `VideoChat3-4B` weights (`BLOCKED.md` #2). The union that joins them is built. |
+| 3 · Discovery | **Path A built, needs a key** | Path B — `VideoChat3-4B` weights and a GPU (`BLOCKED.md` #2). The union runs one-sided, which §3 says is correct rather than degraded. |
 | 4 · Editorial judge | **built, needs a key** | Nothing — run `python -m hawedit2.credentials`. The §3 ZDR answer is still required for confidential material. |
 | 5 · Boundary fusion | **runs** | TimeLens2 refinement (M6). |
 | 6 · Render | **runs** | Speaker-tracked reframing — the crop is static centre (`BLOCKED.md` #4). NVENC needs hawapc01. |
@@ -175,6 +170,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `clip.py` | §5 | The clip contract, validated. Rejection is a first-class type. |
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
+| `path_a.py` | §3 Stage 3 Path A | The Kurdish judge over the **whole** transcript. Refuses to send a subset, and refuses to split one. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |

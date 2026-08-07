@@ -225,13 +225,13 @@ class GeminiJudge:
         api_key: str | None = None,
         model_id: str = KURDISH_EDITORIAL_JUDGE,
         governance: Governance | None = None,
-        transport: Transport = _https,
+        transport: Transport | None = None,
         max_attempts: int = 3,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.model_id = model_id
         self.governance = governance or Governance()
-        self._transport = transport
+        self._transport = transport or _https
         self._max_attempts = max_attempts
         self._sleep = sleep
 

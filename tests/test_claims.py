@@ -129,15 +129,33 @@ def test_every_blocked_row_points_at_a_live_blocked_entry() -> None:
 # --- #1 the README must not describe a product that does not exist -----------------------
 
 
-def test_the_readme_says_plainly_that_there_is_no_end_to_end_product() -> None:
-    """The old opening line read as a completion claim to anyone who did not read on."""
-    assert "There is no end-to-end product yet" in README, (
-        "README must state the absence of a runnable pipeline in its own words, near the top — "
-        "not leave it to be inferred from a milestone table."
-    )
-    opening = README.lstrip().split("\n\n", 2)[1]
-    assert not opening.startswith("Implements"), (
-        f"the README opens by claiming the blueprint is implemented: {opening!r}"
+def test_the_readme_names_what_blocks_a_runnable_product() -> None:
+    """§3 Stage 1 turns audio into a transcript, and nothing downstream can start without one.
+
+    While no ASR adapter exists, the README has to say so in its own words near the top — not
+    leave it to be inferred from a milestone table. The first version of this test pinned an
+    exact sentence and went stale the moment the sentence stopped being true; this one asks the
+    filesystem what is missing and requires the README to agree.
+    """
+    asr_adapter = ROOT / "src" / "hawedit2" / "omniasr.py"
+    opening = README.split("## Setup")[0]
+    if not asr_adapter.exists():
+        assert "Stage 1" in opening, (
+            "no ASR adapter exists, so nothing can produce a transcript — the README's opening "
+            "must name Stage 1 as what stands between this and a runnable product."
+        )
+        assert "transcript" in opening.lower()
+    else:
+        assert "Stage 1" not in opening or "runs" in opening, (
+            f"{asr_adapter.name} exists, so the README should no longer present Stage 1 as the "
+            f"blocker."
+        )
+
+
+def test_the_readme_does_not_open_by_claiming_the_blueprint_is_implemented() -> None:
+    paragraph = README.lstrip().split("\n\n", 2)[1]
+    assert not paragraph.startswith("Implements"), (
+        f"the README opens by claiming the blueprint is implemented: {paragraph!r}"
     )
 
 

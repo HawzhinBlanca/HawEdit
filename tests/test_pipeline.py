@@ -311,3 +311,86 @@ def test_the_cli_reports_a_missing_source_without_a_traceback(tmp_path: Path) ->
     from hawedit2.pipeline import main
 
     assert main([str(tmp_path / "absent.mp4"), "--work-dir", str(tmp_path / "work")]) == 2
+
+
+# --- §3 Stages 3 and 4, wired in ------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_supplying_path_a_makes_the_runner_discover_instead_of_skip(tmp_path: Path) -> None:
+    """The seam closing: `discovery.py` had no producers, and now one plugs in.
+
+    Path B stays absent because its model needs a GPU, so the union runs one-sided — which §3
+    says is correct rather than degraded. Candidates from *either* path proceed, and a
+    verbal-only moment is precisely the case the dual path exists to protect.
+    """
+    from hawedit2.clip import DiscoveryPath
+    from hawedit2.discovery import Candidate
+
+    def path_a(norm: object) -> list[Candidate]:
+        return [
+            Candidate("v1", "disc", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9),
+            Candidate("v2", "disc", 2_000, 4_100, DiscoveryPath.VERBAL, rank=2, score=0.5),
+        ]
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="disc",
+        transcript=a_transcript("disc"),
+        discover=path_a,
+    )
+    assert len(run.candidates) == 2
+    assert {c.discovery_path for c in run.candidates} == {DiscoveryPath.VERBAL}
+    assert "discovery" not in {name for name, _ in run.skipped()}
+
+
+@needs_ffmpeg
+def test_a_discovery_pass_that_finds_nothing_is_reported_not_hidden(tmp_path: Path) -> None:
+    """ "Found nothing" is a real answer about this media and §8.2 records it."""
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="empty",
+        transcript=a_transcript("empty"),
+        discover=lambda _norm: [],
+    )
+    assert run.candidates == ()
+    skipped = dict(run.skipped())
+    assert "discovery" in skipped
+    assert "no candidates" in skipped["discovery"].blocked_by
+
+
+@needs_ffmpeg
+def test_supplying_a_judge_scores_the_top_candidate(tmp_path: Path) -> None:
+    """Stage 4 stops being a stand-in: the runner asks the judge itself."""
+    from hawedit2.clip import DiscoveryPath
+    from hawedit2.discovery import Candidate
+    from hawedit2.judge import JudgeRequest
+
+    seen: list[JudgeRequest] = []
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            seen.append(request)
+            return a_verdict(0, 4_300)
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            Candidate("v1", "judged", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
+        ],
+        judge=Judge(),
+    )
+    assert len(seen) == 1, "the judge must be asked exactly once for the top candidate"
+    assert seen[0].carried_verbal_score == 0.9, (
+        "§3: Stage 4 adds visual context to survivors rather than re-deriving verbal "
+        "judgment — the score Path A produced has to arrive with the request"
+    )
+    assert seen[0].text_ckb, "the judge was sent no text to read"
+    assert "editorial" not in {name for name, _ in run.skipped()}

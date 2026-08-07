@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -49,9 +50,10 @@ from typing import Any
 from hawedit2.boundary import BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit2.captions import build_ass
 from hawedit2.clip import Clip, ClipTranscript, DiscoveryPath, Qc
+from hawedit2.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit2.index import Bm25Index
 from hawedit2.ingest import IngestResult, ingest
-from hawedit2.judge import JudgeVerdict
+from hawedit2.judge import EditorialJudge, JudgeRequest, JudgeVerdict
 from hawedit2.render import RenderError, RenderResult, render_clip
 from hawedit2.sentences import Sentence, anchors_for, segment_sentences
 from hawedit2.transcripts import (
@@ -108,6 +110,7 @@ class PipelineRun:
     visual_index: StageSkipped | None = None
     discovery: StageSkipped | None = None
     editorial: StageSkipped | None = None
+    candidates: tuple[MergedCandidate, ...] = ()
     boundary: object | None = None
     clip: Clip | None = None
     render: RenderResult | StageSkipped | None = None
@@ -159,6 +162,7 @@ class PipelineRun:
                 )
             ),
             "sentence_count": len(self.sentences),
+            "candidates": [c.to_dict() for c in self.candidates],
             "visual_index": encode(self.visual_index),
             "discovery": encode(self.discovery),
             "editorial": encode(self.editorial),
@@ -207,6 +211,14 @@ _STAGE_3_DISCOVERY = StageSkipped(
     ),
     blocked_by=("BLOCKED.md #2", "BLOCKED.md #3"),
 )
+_STAGE_3_NOTHING_FOUND = StageSkipped(
+    stage="discovery",
+    reason=(
+        "Path A ran over the whole transcript and returned no candidates. That is a real "
+        "answer about this media, not a failure — but no clip can be cut from it."
+    ),
+    blocked_by=("no candidates",),
+)
 _STAGE_4_JUDGE = StageSkipped(
     stage="editorial",
     reason=(
@@ -225,6 +237,8 @@ def run_pipeline(
     select_sentences: tuple[int, ...] = (),
     qc: Qc | None = None,
     verdict: JudgeVerdict | None = None,
+    discover: Callable[[NormalizedTranscript], Sequence[Candidate]] | None = None,
+    judge: EditorialJudge | None = None,
     ffmpeg: Path | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
@@ -238,6 +252,12 @@ def run_pipeline(
             §3 Stage 3's job and Stage 3 has no producers.
         qc: §5's QC block. Absent means the clip is built but never rendered: §2 puts a human
             gate before output, always, and a runner is not a human.
+        discover: §3 Stage 3 Path A. Supply `PathADiscovery(...).discover` and the runner
+            stops standing in for discovery and actually runs it. Path B stays absent — its
+            model needs a GPU — and the union handles that: a verbal-only run is exactly what
+            §3 says must never be filtered away.
+        judge: §3 Stage 4. Supply `GeminiJudge(...)` and the runner scores the top candidate
+            itself rather than needing `verdict` handed to it.
         verdict: what §3 Stage 4 would have returned. The second stand-in, for the same reason
             as `transcript`: `Clip.assert_renderable` refuses a clip with no editorial block,
             because an unjudged clip has no meaning fidelity and no misleading-edit risk and
@@ -298,6 +318,33 @@ def run_pipeline(
     sentences = segment_sentences(transcript.words, vad_pauses=vad_pauses)
 
     run = _replace(run, transcript=normalized, index=index, sentences=sentences)
+
+    # --- §3 Stage 3 Path A ----------------------------------------------------------------
+    merged: tuple[MergedCandidate, ...] = ()
+    if discover is not None:
+        verbal = tuple(discover(normalized))
+        # Path B has no producer (its model needs a GPU), so the union runs one-sided. §3 is
+        # explicit that this is correct rather than degraded: candidates from *either* path
+        # proceed, and a verbal-only moment is the case the dual path exists to protect.
+        merged = merge_candidates(list(verbal), [])
+        run = _replace(
+            run,
+            discovery=None if merged else _STAGE_3_NOTHING_FOUND,
+            candidates=merged,
+            visual_index=_STAGE_2_VISUAL,
+        )
+
+    # --- §3 Stage 4 -----------------------------------------------------------------------
+    if judge is not None and merged:
+        top = merged[0]
+        verdict = judge.judge(
+            JudgeRequest.for_survivor(
+                top,
+                text_ckb=normalized.text_ckb,
+            )
+        )
+        run = _replace(run, editorial=None)
+
     if not select_sentences:
         return run
 

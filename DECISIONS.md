@@ -1137,3 +1137,47 @@ confirmation, and an unattributed one is not one. `BLOCKED.md` #3's second half 
 having a key does not answer whether ZDR is configured for COMMS and KAAE material.
 
 ---
+## D-036 · Path A sends everything, and refuses to split
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 3 · **Type:** implementation
+
+`discovery.py` built the union and had no producers. Path A is the first, and it exists now
+for a measured reason: `generativelanguage.googleapis.com` is reachable from this environment
+while `huggingface.co` is still 403 at the gateway — so the half of Stage 3 that needs a hosted
+model is the half that can be finished, and the half that needs weights is not.
+
+**"Not a filtered subset" is the whole design, and implementing it means refusing things.**
+Every temptation in this module is to send less: sample the transcript, drop the quiet stretches,
+skip whatever the §2 index scored low. Each would be invisible in the output — the candidates
+that came back would still look reasonable — and each reintroduces exactly the failure §3 spends
+a paragraph on. So the prompt carries the transcript entire, and a test asserts that specific
+fragments from the start, middle and end all reach the judge.
+
+**A too-long transcript is refused, not split.** §3's own figures put the one-request ceiling at
+roughly ten source hours (20K tokens/hour against a 200K tier ceiling). Splitting would be this
+module deciding which parts of a ten-hour transcript the Kurdish judge gets to read — the
+decision §3 forbids — so it raises with the arithmetic instead. If splitting is ever right, it
+is a blueprint decision, not an implementation convenience.
+
+**Word timings go with the text.** Without them a language model has no way to answer in
+milliseconds and will guess. The timing table truncates only at a size that would itself blow
+the budget, and the truncation is stated in the prompt rather than silent.
+
+**Every returned span is checked against the transcript's own range.** A model asked for
+millisecond boundaries will occasionally invent one past the end of the media, and such a
+candidate would reach Stage 5 as a boundary to fuse rather than as a mistake to reject.
+
+**Ranks are dense and ordered by score, ties broken on start time.** §8.2 counts Recall@K by
+rank; a gap or a duplicate makes every K mean something slightly different, and a re-run that
+reshuffles makes a reviewed candidate list untrustworthy.
+
+**Composition, not inheritance.** Path A is not a `judge()` implementation — it returns
+candidates, not a verdict — but it shares §7 routing, credentials, retry and governance with
+the Stage 4 judge. Duplicating those is how two code paths end up with two different governance
+checks, and the governance check is the one with legal consequences.
+
+**The union now runs one-sided, and that is correct rather than degraded.** Path B has no
+producer. §3: "Union, never intersect. Candidates from either path proceed." A verbal-only run
+is precisely the case the dual path exists to protect.
+
+---
