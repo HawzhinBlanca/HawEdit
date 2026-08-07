@@ -1,3 +1,12 @@
+# Secrets — never commit. The credentials panel refuses to write anywhere git tracks, so this
+# file is what makes `python -m hawedit2.credentials` able to store a key at all. It lived in
+# the host repository's root .gitignore before the split and did not come with it.
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+
 .venv/
 __pycache__/
 *.py[cod]

@@ -164,11 +164,11 @@ def test_ci_runs_the_hawedit2_gate() -> None:
     job installed Python, no job ran hawedit2's gate — so every DONE mark in PROGRESS.md
     rested on a local run alone, on the one machine with no independent check (finding #5).
     """
-    workflows = ROOT.parent / ".github" / "workflows"
+    workflows = ROOT / ".github" / "workflows"
     assert workflows.is_dir(), f"no workflows directory at {workflows}"
     bodies = {p.name: p.read_text(encoding="utf-8") for p in workflows.glob("*.yml")}
-    runners = [name for name, body in bodies.items() if "hawedit2/scripts/verify.sh" in body]
+    runners = [name for name, body in bodies.items() if "scripts/verify.sh" in body]
     assert runners, (
-        "no CI workflow runs hawedit2/scripts/verify.sh — the gate exists only on Hawa's "
+        "no CI workflow runs scripts/verify.sh — the gate exists only on Hawa's "
         f"laptop. Workflows present: {sorted(bodies)}"
     )
