@@ -16,13 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.boundary import Boundary, BoundaryInputs, fuse_boundary
-from hawedit2.captions import CaptionStyle, MissingRtlStack, assert_rtl_stack, build_ass
-from hawedit2.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Qc
-from hawedit2.corpus import Condition, CorpusItem, Dialect
-from hawedit2.registry import WrongRole
-from hawedit2.sentences import Sentence
-from hawedit2.transcripts import AsrProvenance, RawTranscript, TranscriptStore, Word
+from hawedit.boundary import Boundary, BoundaryInputs, fuse_boundary
+from hawedit.captions import CaptionStyle, MissingRtlStack, assert_rtl_stack, build_ass
+from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Qc
+from hawedit.corpus import Condition, CorpusItem, Dialect
+from hawedit.registry import WrongRole
+from hawedit.sentences import Sentence
+from hawedit.transcripts import AsrProvenance, RawTranscript, TranscriptStore, Word
 
 
 def a_boundary() -> Boundary:
@@ -115,7 +115,7 @@ def test_a_real_boolean_still_round_trips() -> None:
 
 
 def test_a_scene_detector_cannot_be_an_asr_adapter() -> None:
-    from hawedit2.asr import validate_adapter
+    from hawedit.asr import validate_adapter
 
     class NotAnAsr:
         model_id = "PySceneDetect"
@@ -172,7 +172,7 @@ def test_an_empty_media_id_is_refused(tmp_path: Path) -> None:
 
 def test_write_once_is_atomic_not_check_then_write(tmp_path: Path) -> None:
     """`exists()` then `write` is a race two ingest workers can both win."""
-    from hawedit2.transcripts import RawTranscriptImmutable
+    from hawedit.transcripts import RawTranscriptImmutable
 
     store = TranscriptStore(tmp_path)
     raw = RawTranscript(

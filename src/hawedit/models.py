@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from hawedit2.registry import REGISTRY, ModelEntry, Provisioning
+from hawedit.registry import REGISTRY, ModelEntry, Provisioning
 
 __all__ = [
     "DEFAULT_MODELS_ROOT",
@@ -156,7 +156,7 @@ class ModelStore:
                 detail="API credentials present" if has_key else "no API credentials in env",
             )
         if entry.provisioning is Provisioning.SYSTEM:
-            from hawedit2.captions import find_ffmpeg
+            from hawedit.captions import find_ffmpeg
 
             ffmpeg = find_ffmpeg()
             return ModelStatus(

@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 
-from hawedit2.transcripts import Word
+from hawedit.transcripts import Word
 
 __all__ = [
     "AlignmentInfeasible",

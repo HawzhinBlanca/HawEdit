@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.boundary import (
+from hawedit.boundary import (
     SHOT_CUT_WINDOW_MS,
     TAIL_MS,
     VAD_LEAD_IN_MS,

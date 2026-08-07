@@ -33,9 +33,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
-from hawedit2.normalize import normalize_sorani
-from hawedit2.sentences import Sentence
-from hawedit2.transcripts import NormalizedTranscript, RawTranscript, assert_model_input
+from hawedit.normalize import normalize_sorani
+from hawedit.sentences import Sentence
+from hawedit.transcripts import NormalizedTranscript, RawTranscript, assert_model_input
 
 __all__ = [
     "DEFAULT_B",

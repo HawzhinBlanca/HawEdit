@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.asr import (
+from hawedit.asr import (
     LONG_AUDIO_THRESHOLD_S,
     ASRResult,
     Hardware,
@@ -29,8 +29,8 @@ from hawedit2.asr import (
     long_audio_failure_rate,
     validate_adapter,
 )
-from hawedit2.corpus import Condition, CorpusItem, Dialect
-from hawedit2.registry import ModelExcluded, ModelNotInRegistry
+from hawedit.corpus import Condition, CorpusItem, Dialect
+from hawedit.registry import ModelExcluded, ModelNotInRegistry
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti", notes="Threadripper 3990X")
 AN_A100 = Hardware(host="a100-box", accelerator="A100")

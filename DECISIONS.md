@@ -5,18 +5,18 @@ reason and measurement. Append only; never rewrite an entry.
 
 ---
 
-## D-001 · Implementation language and layout — Python under `hawedit2/`
+## D-001 · Implementation language and layout — Python under `hawedit/`
 
 **Date:** 2026-08-06 · **Blueprint ref:** §2, §7 · **Type:** judgment call, not a deviation
 
 The blueprint's entire stack is Python (KLPT, pyannote.audio 4.x, `omnilingual_asr`,
 PySceneDetect, Silero, fontTools) plus ffmpeg. The host repo (`Codystem`) is a TypeScript
 harness; its gate (`scripts/verify.sh`) lints `src/**/*.ts` only and its
-`surface-manifest.sha256` covers root `scripts/` and `.github/`. `hawedit2/` is therefore
+`surface-manifest.sha256` covers root `scripts/` and `.github/`. `hawedit/` is therefore
 self-contained with its own gate so neither project's CI can silently pass the other's code.
 
-**Measurement:** `bash hawedit2/scripts/verify.sh` runs ruff + mypy + pytest over
-`hawedit2/` only; root `bash scripts/verify.sh` is unaffected (verified green after this
+**Measurement:** `bash hawedit/scripts/verify.sh` runs ruff + mypy + pytest over
+`hawedit/` only; root `bash scripts/verify.sh` is unaffected (verified green after this
 change).
 
 ---
@@ -81,7 +81,7 @@ Character 3-grams (§2) absorb part of this; the residual is unmeasured until M0
 
 **Date:** 2026-08-06 · **Blueprint ref:** none · **Type:** infrastructure
 
-`hawedit2/scripts/verify.sh --fast` runs lint + typecheck only, for use as an editor/hook
+`hawedit/scripts/verify.sh --fast` runs lint + typecheck only, for use as an editor/hook
 feedback loop. The full gate — the one that decides DONE — always runs tests. `--fast` can
 never print the full-gate success line.
 
@@ -107,13 +107,13 @@ run was killed. Defect 1 was the trigger (the empty-`LINT_CMD` case fell through
 run), but the recursion was latent and would have returned with any future test that shells
 out to the gate.
 
-Fixed with a depth guard: the gate exports `HAWEDIT2_GATE_DEPTH`, and a nested invocation
+Fixed with a depth guard: the gate exports `HAWEDIT_GATE_DEPTH`, and a nested invocation
 refuses to run the **test step** (exit 4) while still permitting lint/typecheck, so
 `--fast` remains usable from inside a test. Asserted by
 `test_nested_full_gate_refuses_instead_of_recursing` and
 `test_nested_fast_run_is_still_allowed`.
 
-**Measurement:** `bash hawedit2/scripts/verify.sh` → 9 passed, `VERIFY OK`, no recursion.
+**Measurement:** `bash hawedit/scripts/verify.sh` → 9 passed, `VERIFY OK`, no recursion.
 
 ---
 
@@ -704,7 +704,7 @@ because the pattern matters more than the individual bugs.
 | 2 | A challenger failing a whole dialect scored as if the dialect were absent | yes | missing dialects are regressions by name; incomplete coverage blocks promotion |
 | 3 | Render/QC gate bypassable by absence | yes | `assert_renderable` refuses `None`; `from_dict` demands real JSON booleans |
 | 4 | RTL check certified a build with `--disable-libass` | yes | flag parsing replaces substring search |
-| 5 | Gate not authoritative: CRLF, `echo` bypass, CI never ran it | yes, all three | `.gitattributes`; steps not configurable; junit-report evidence + ratchet; `hawedit2.yml` |
+| 5 | Gate not authoritative: CRLF, `echo` bypass, CI never ran it | yes, all three | `.gitattributes`; steps not configurable; junit-report evidence + ratchet; `hawedit.yml` |
 | 6 | Corpus serialization dropped `reference_words` | yes | serialized and restored |
 | 7 | Karaoke drifted by every pause; golden test compared bytes | yes | `\kf` spans tile the line; comparison decodes to pixels |
 | 8 | Registry membership mistaken for role | yes | `resolve_role`; PySceneDetect can no longer be an ASR model |
@@ -724,7 +724,7 @@ structural — evidence rather than exit codes, CI rather than one laptop — ra
 rule to remember.
 
 **Not fixed here:** making the CI job a *required* status check on the protected branch. That
-is a repository setting only Hawa can change, and until it is set, a red `hawedit2` job does
+is a repository setting only Hawa can change, and until it is set, a red `hawedit` job does
 not block anything. Added to `BLOCKED.md`.
 
 ---
@@ -999,7 +999,7 @@ drift apart. It is an estimate and is named as one — the authority on the bill
 **Date:** 2026-08-07 · **Blueprint ref:** §3, §1 · **Type:** implementation choice
 
 Until now every stage worked and nothing joined them, so "does this system work" was a
-question you answered by reading a test suite. `python -m hawedit2.pipeline VIDEO.mp4` is the
+question you answered by reading a test suite. `python -m hawedit.pipeline VIDEO.mp4` is the
 thing you point at a video.
 
 Three of §3's stages need models this machine does not have. A runner that quietly skipped them

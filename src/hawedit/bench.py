@@ -32,8 +32,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from hawedit2.alignment import AlignmentAccuracy, score_alignment
-from hawedit2.asr import (
+from hawedit.alignment import AlignmentAccuracy, score_alignment
+from hawedit.asr import (
     ASRAdapter,
     Hardware,
     Measurement,
@@ -41,15 +41,15 @@ from hawedit2.asr import (
     long_audio_failure_rate,
     validate_adapter,
 )
-from hawedit2.corpus import Corpus, CorpusItem, Coverage, Dialect, Provenance
-from hawedit2.metrics import (
+from hawedit.corpus import Corpus, CorpusItem, Coverage, Dialect, Provenance
+from hawedit.metrics import (
     code_switch_error_rate,
     named_entity_error_rate,
     normalized_cer,
     spacing_free_cer,
 )
-from hawedit2.normalize import normalize_sorani
-from hawedit2.transcripts import AsrProvenance
+from hawedit.normalize import normalize_sorani
+from hawedit.transcripts import AsrProvenance
 
 __all__ = [
     "CANONICAL_ASR",

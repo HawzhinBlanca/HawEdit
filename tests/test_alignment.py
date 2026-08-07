@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.alignment import CTC_VITERBI, score_alignment
-from hawedit2.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.alignment import CTC_VITERBI, score_alignment
+from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 
 CTC = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner=CTC_VITERBI)
 

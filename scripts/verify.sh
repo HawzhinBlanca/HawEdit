@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hawedit2 gate — the single source of "does it work" for the Kurdish repurposing system.
+# hawedit gate — the single source of "does it work" for the Kurdish repurposing system.
 #
 # A task is DONE only when this exits 0. The agent never marks DONE by judgment.
 # `--fast` runs lint + typecheck only (editor feedback); it can never print the full-gate
@@ -23,8 +23,8 @@ fi
 # §4.3.6's golden render test runs only when an ffmpeg with libass/HarfBuzz is reachable.
 # Auto-discover one fetched by scripts/fetch-ffmpeg.sh so the safeguard is on by default
 # rather than opt-in — a golden test nobody remembers to enable protects nothing.
-if [[ -z "${HAWEDIT2_FFMPEG:-}" && -x "${here}/.ffmpeg/ffmpeg" ]]; then
-  export HAWEDIT2_FFMPEG="${here}/.ffmpeg/ffmpeg"
+if [[ -z "${HAWEDIT_FFMPEG:-}" && -x "${here}/.ffmpeg/ffmpeg" ]]; then
+  export HAWEDIT_FFMPEG="${here}/.ffmpeg/ffmpeg"
 fi
 
 TEST_REPORT="$here/.gate/last-test-run.xml"
@@ -77,8 +77,8 @@ fi
 # Recursion guard. The test suite invokes this gate to assert its refusal behaviour, so a
 # nested full run would fork-bomb: gate -> pytest -> gate -> pytest. A nested invocation may
 # lint and typecheck, but must never reach the test step.
-GATE_DEPTH="${HAWEDIT2_GATE_DEPTH:-0}"
-export HAWEDIT2_GATE_DEPTH=$((GATE_DEPTH + 1))
+GATE_DEPTH="${HAWEDIT_GATE_DEPTH:-0}"
+export HAWEDIT_GATE_DEPTH=$((GATE_DEPTH + 1))
 
 run_step() {
   echo "==> $1"
@@ -110,6 +110,6 @@ started_at="$("$PY" -c 'import time; print(time.time())')"
 
 run_step "tests"     "$TEST_CMD"
 
-run_step "test evidence" "\"$PY\" -m hawedit2.gate \"$TEST_REPORT\" \"$TEST_FLOOR\" \"$started_at\""
+run_step "test evidence" "\"$PY\" -m hawedit.gate \"$TEST_REPORT\" \"$TEST_FLOOR\" \"$started_at\""
 
-echo "VERIFY OK — hawedit2 gate green"
+echo "VERIFY OK — hawedit gate green"

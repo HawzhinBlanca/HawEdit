@@ -19,8 +19,8 @@ import json
 
 import pytest
 
-from hawedit2.boundary import BoundaryInputs, BoundaryInvariantViolated, fuse_boundary
-from hawedit2.clip import (
+from hawedit.boundary import BoundaryInputs, BoundaryInvariantViolated, fuse_boundary
+from hawedit.clip import (
     Clip,
     ClipTranscript,
     DiscoveryPath,
@@ -30,8 +30,8 @@ from hawedit2.clip import (
     RejectedCandidate,
     Sv6d,
 )
-from hawedit2.registry import ModelNotInRegistry
-from hawedit2.transcripts import AsrProvenance, Word
+from hawedit.registry import ModelNotInRegistry
+from hawedit.transcripts import AsrProvenance, Word
 
 ANCHOR_IN, ANCHOR_OUT = 84_600, 112_400
 
@@ -134,7 +134,7 @@ def test_a_renderable_clip_passes_the_gate() -> None:
 
 
 def test_a_clip_whose_boundary_violates_the_invariant_is_not_renderable() -> None:
-    from hawedit2.boundary import Boundary
+    from hawedit.boundary import Boundary
 
     smuggled = Boundary(
         anchor_in_ms=ANCHOR_IN,

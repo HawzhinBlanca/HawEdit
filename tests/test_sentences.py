@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.sentences import (
+from hawedit.sentences import (
     DEFAULT_PAUSE_MS,
     KURDISH_SENTENCE_FINAL,
     anchors_for,
     segment_sentences,
 )
-from hawedit2.transcripts import Word
+from hawedit.transcripts import Word
 
 
 def words(*specs: tuple[str, int, int]) -> tuple[Word, ...]:

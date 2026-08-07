@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.corpus_import import MissingDurations, WrongLocale, import_common_voice
+from hawedit.corpus_import import MissingDurations, WrongLocale, import_common_voice
 
 # Real Sorani, written the way Common Voice contributors actually type it — note the
 # Arabic yeh/kaf and ZWNJ forms that §4.1 exists to normalize.
@@ -67,7 +67,7 @@ def test_the_corpus_is_marked_interim_with_its_licence(tmp_path: Path) -> None:
 def test_an_interim_import_cannot_satisfy_section_8_1(tmp_path: Path) -> None:
     """The point of the whole exercise: this set exercises the harness, it does not
     discharge M0."""
-    from hawedit2.corpus import IncompleteCoverage
+    from hawedit.corpus import IncompleteCoverage
 
     corpus = import_common_voice(
         write_tsv(tmp_path / "validated.tsv"), write_durations(tmp_path / "clip_durations.tsv")
@@ -144,7 +144,7 @@ def test_audio_paths_point_into_the_clips_directory(tmp_path: Path) -> None:
 
 
 def test_the_imported_manifest_round_trips(tmp_path: Path) -> None:
-    from hawedit2.corpus import Corpus
+    from hawedit.corpus import Corpus
 
     corpus = import_common_voice(
         write_tsv(tmp_path / "validated.tsv"), write_durations(tmp_path / "clip_durations.tsv")

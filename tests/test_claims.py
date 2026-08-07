@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from hawedit2.normalize import normalize_sorani
+from hawedit.normalize import normalize_sorani
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -137,7 +137,7 @@ def test_the_readme_names_what_blocks_a_runnable_product() -> None:
     exact sentence and went stale the moment the sentence stopped being true; this one asks the
     filesystem what is missing and requires the README to agree.
     """
-    asr_adapter = ROOT / "src" / "hawedit2" / "omniasr.py"
+    asr_adapter = ROOT / "src" / "hawedit" / "omniasr.py"
     opening = README.split("## Setup")[0]
     if not asr_adapter.exists():
         assert "Stage 1" in opening, (
@@ -167,8 +167,8 @@ def test_every_stage_the_readme_calls_not_written_really_has_no_module() -> None
     the table is only trustworthy if it tracks in both directions.
     """
     not_written = {
-        "3": ROOT / "src" / "hawedit2" / "discovery.py",
-        "4": ROOT / "src" / "hawedit2" / "judge.py",
+        "3": ROOT / "src" / "hawedit" / "discovery.py",
+        "4": ROOT / "src" / "hawedit" / "judge.py",
     }
     for stage, module in not_written.items():
         row = next(line for line in README.splitlines() if line.startswith(f"| {stage} ·"))
@@ -188,17 +188,17 @@ def test_every_shell_command_the_readme_offers_exists() -> None:
 def test_every_module_invocation_the_readme_offers_is_importable() -> None:
     from importlib.util import find_spec
 
-    for module in set(re.findall(r"python -m (hawedit2[\w.]*)", README)):
+    for module in set(re.findall(r"python -m (hawedit[\w.]*)", README)):
         assert find_spec(module) is not None, f"README offers `python -m {module}`, which is not"
 
 
 def test_every_module_the_readme_maps_exists() -> None:
     """The module map is the README's most load-bearing table; a stale row misdirects."""
     for name in set(re.findall(r"^\| `(\w+\.py)` \|", README, re.MULTILINE)):
-        assert (ROOT / "src" / "hawedit2" / name).exists(), f"module map lists missing {name}"
+        assert (ROOT / "src" / "hawedit" / name).exists(), f"module map lists missing {name}"
 
 
 def test_the_module_map_covers_every_module() -> None:
     mapped = set(re.findall(r"^\| `(\w+\.py)` \|", README, re.MULTILINE))
-    on_disk = {p.name for p in (ROOT / "src" / "hawedit2").glob("*.py")} - {"__init__.py"}
+    on_disk = {p.name for p in (ROOT / "src" / "hawedit").glob("*.py")} - {"__init__.py"}
     assert on_disk <= mapped, f"modules absent from the README map: {sorted(on_disk - mapped)}"

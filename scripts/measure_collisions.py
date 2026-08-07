@@ -15,8 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hawedit2.collisions import measure_collisions
-from hawedit2.corpus import Corpus
+from hawedit.collisions import measure_collisions
+from hawedit.corpus import Corpus
 
 ROOT = Path(__file__).resolve().parents[1]
 KLPT_DIC = ROOT / ".venv/lib/python3.11/site-packages/klpt/data/ckb-Arab.dic"

@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.registry import ModelExcluded, ModelNotInRegistry
-from hawedit2.transcripts import (
+from hawedit.registry import ModelExcluded, ModelNotInRegistry
+from hawedit.transcripts import (
     AsrProvenance,
     NormalizedTranscript,
     RawTranscript,

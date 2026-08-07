@@ -10,30 +10,30 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.smoke import SAMPLE, main
-from hawedit2.transcripts import normalize_transcript
+from hawedit.smoke import SAMPLE, main
+from hawedit.transcripts import normalize_transcript
 
 
 def test_without_a_key_it_refuses_and_names_the_panel(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hawedit2.smoke.read_credential", lambda _n=None: None)
+    monkeypatch.setattr("hawedit.smoke.read_credential", lambda _n=None: None)
     assert main(["--yes"]) == 2
 
 
 def test_it_sends_nothing_until_a_human_agrees(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two billed calls behind an unattended default would be a surprise on someone's invoice."""
-    monkeypatch.setattr("hawedit2.smoke.read_credential", lambda _n=None: "a-key")
+    monkeypatch.setattr("hawedit.smoke.read_credential", lambda _n=None: "a-key")
     monkeypatch.setattr("builtins.input", lambda _p="": "n")
 
     def explode(*_a: object, **_k: object) -> None:
         raise AssertionError("nothing may be sent before the confirmation")
 
-    monkeypatch.setattr("hawedit2.smoke.PathADiscovery", explode)
+    monkeypatch.setattr("hawedit.smoke.PathADiscovery", explode)
     assert main([]) == 0
 
 
 def test_a_declined_prompt_at_eof_also_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Piped stdin must default to "no", not to "yes"."""
-    monkeypatch.setattr("hawedit2.smoke.read_credential", lambda _n=None: "a-key")
+    monkeypatch.setattr("hawedit.smoke.read_credential", lambda _n=None: "a-key")
 
     def eof(_prompt: str = "") -> str:
         raise EOFError
@@ -43,7 +43,7 @@ def test_a_declined_prompt_at_eof_also_sends_nothing(monkeypatch: pytest.MonkeyP
     def explode(*_a: object, **_k: object) -> None:
         raise AssertionError("nothing may be sent")
 
-    monkeypatch.setattr("hawedit2.smoke.PathADiscovery", explode)
+    monkeypatch.setattr("hawedit.smoke.PathADiscovery", explode)
     assert main([]) == 0
 
 

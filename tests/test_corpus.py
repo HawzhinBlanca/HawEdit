@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.corpus import (
+from hawedit.corpus import (
     Condition,
     Corpus,
     CorpusItem,

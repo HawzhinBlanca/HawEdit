@@ -33,14 +33,14 @@ import random
 
 import pytest
 
-from hawedit2.clip import DiscoveryPath, Sv6d
-from hawedit2.discovery import (
+from hawedit.clip import DiscoveryPath, Sv6d
+from hawedit.discovery import (
     Candidate,
     MergedCandidate,
     merge_candidates,
     to_retrieved,
 )
-from hawedit2.repurposing import DEFAULT_IOU_MATCH, GoldCandidate, path_unique_wins, recall_at_k
+from hawedit.repurposing import DEFAULT_IOU_MATCH, GoldCandidate, path_unique_wins, recall_at_k
 
 MEDIA = "ep01"
 
@@ -284,7 +284,7 @@ def test_a_visual_candidate_is_claimed_by_exactly_one_verbal_candidate() -> None
 
 
 def _iou(a: Candidate, b: Candidate) -> float:
-    from hawedit2.repurposing import temporal_iou
+    from hawedit.repurposing import temporal_iou
 
     return temporal_iou(a.span, b.span)
 

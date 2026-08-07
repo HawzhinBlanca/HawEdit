@@ -21,7 +21,7 @@ from itertools import pairwise
 
 import pytest
 
-from hawedit2.forced_alignment import (
+from hawedit.forced_alignment import (
     AlignmentInfeasible,
     align_words,
     minimum_frames,
@@ -206,7 +206,7 @@ def test_a_word_with_no_tokens_is_refused() -> None:
 
 def test_aligned_words_satisfy_invariant_5_when_stored() -> None:
     """The output must be storable as a transcript — which requires the ctc_viterbi aligner."""
-    from hawedit2.transcripts import AsrProvenance, RawTranscript
+    from hawedit.transcripts import AsrProvenance, RawTranscript
 
     matrix = emissions([{1: 0.9}, {2: 0.9}], vocab=4)
     words = align_words(

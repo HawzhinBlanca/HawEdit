@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.collisions import COLLISIONS, measure_collisions
+from hawedit.collisions import COLLISIONS, measure_collisions
 
 
 def test_a_corpus_with_no_collisions_reports_none() -> None:
@@ -108,6 +108,6 @@ def test_heh_doachashmee_merges_in_word_context() -> None:
 def test_heh_doachashmee_is_not_normalized_in_isolation() -> None:
     """Measured, not assumed: KLPT's rule is contextual. Pinned so a library update that
     changes it is visible rather than silently shifting every index key."""
-    from hawedit2.normalize import normalize_sorani
+    from hawedit.normalize import normalize_sorani
 
     assert normalize_sorani("ھ") == "ھ"

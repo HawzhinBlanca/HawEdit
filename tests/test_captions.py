@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.captions import (
+from hawedit.captions import (
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
     CaptionStyle,
@@ -41,8 +41,8 @@ from hawedit2.captions import (
     subtitle_filter,
     wrap_caption_lines,
 )
-from hawedit2.sentences import Sentence
-from hawedit2.transcripts import Word
+from hawedit.sentences import Sentence
+from hawedit.transcripts import Word
 
 FONT = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoNaskhArabic-Regular.ttf"
 
@@ -323,7 +323,7 @@ def test_the_golden_sentence_matches_the_text_the_reference_was_rendered_from() 
     assert _golden_sentence().text == GOLDEN_CAPTION_TEXT
 
 
-@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 def test_the_render_matches_the_golden_reference(tmp_path: Path) -> None:
     """§4.3.6's real safeguard: render Kurdish and compare to the committed reference."""
     ffmpeg = find_ffmpeg()
@@ -340,7 +340,7 @@ def test_the_render_matches_the_golden_reference(tmp_path: Path) -> None:
     compare_golden_render(GOLDEN, rendered, ffmpeg=ffmpeg)
 
 
-@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 def test_simple_shaping_fails_the_golden_test(tmp_path: Path) -> None:
     """The negative control, and the whole justification for §4.3.
 

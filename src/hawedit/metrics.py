@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from hawedit2.normalize import normalize_sorani
+from hawedit.normalize import normalize_sorani
 
 __all__ = [
     "cer",

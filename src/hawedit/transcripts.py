@@ -37,9 +37,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from hawedit2.alignment import CTC_VITERBI, assert_ctc_viterbi
-from hawedit2.normalize import normalize_sorani
-from hawedit2.registry import resolve_role
+from hawedit.alignment import CTC_VITERBI, assert_ctc_viterbi
+from hawedit.normalize import normalize_sorani
+from hawedit.registry import resolve_role
 
 __all__ = [
     "AsrProvenance",

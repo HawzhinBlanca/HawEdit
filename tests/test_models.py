@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.models import (
+from hawedit.models import (
     ModelNotProvisioned,
     ModelStore,
     SourceNotConfigured,
     readiness_report,
 )
-from hawedit2.registry import REGISTRY, Provisioning
+from hawedit.registry import REGISTRY, Provisioning
 
 
 def store(tmp_path: Path) -> ModelStore:

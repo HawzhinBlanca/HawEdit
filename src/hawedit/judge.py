@@ -44,10 +44,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
 
-from hawedit2.clip import Editorial, Output, Sv6d
-from hawedit2.discovery import MergedCandidate
-from hawedit2.normalize import normalize_sorani
-from hawedit2.registry import ModelEntry, resolve_role
+from hawedit.clip import Editorial, Output, Sv6d
+from hawedit.discovery import MergedCandidate
+from hawedit.normalize import normalize_sorani
+from hawedit.registry import ModelEntry, resolve_role
 
 __all__ = [
     "CANDIDATE_SLICE_TOKENS_PER_HOUR",

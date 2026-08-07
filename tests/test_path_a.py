@@ -29,12 +29,12 @@ from typing import Any
 
 import pytest
 
-from hawedit2.clip import DiscoveryPath
-from hawedit2.discovery import merge_candidates
-from hawedit2.gemini import GeminiUnavailable, Governance, JudgeUnusable
-from hawedit2.judge import InputMode, RequestTooLarge
-from hawedit2.path_a import CANDIDATE_SCHEMA, PathADiscovery, discover_verbal
-from hawedit2.transcripts import AsrProvenance, RawTranscript, Word, normalize_transcript
+from hawedit.clip import DiscoveryPath
+from hawedit.discovery import merge_candidates
+from hawedit.gemini import GeminiUnavailable, Governance, JudgeUnusable
+from hawedit.judge import InputMode, RequestTooLarge
+from hawedit.path_a import CANDIDATE_SCHEMA, PathADiscovery, discover_verbal
+from hawedit.transcripts import AsrProvenance, RawTranscript, Word, normalize_transcript
 
 KEY = "test-key-not-real"
 
@@ -244,7 +244,7 @@ def test_the_estimated_cost_matches_section_3s_figure() -> None:
 
 
 def test_the_shadow_cannot_run_path_a() -> None:
-    from hawedit2.judge import NotRoutable
+    from hawedit.judge import NotRoutable
 
     with pytest.raises(NotRoutable):
         a_path_a(Api(), model_id="gemini-3.1-pro")

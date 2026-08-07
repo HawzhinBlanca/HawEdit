@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.diarization import (
+from hawedit.diarization import (
     OverlappingSegments,
     Segment,
     boundary_reconciliation,
     diarization_error_rate,
 )
-from hawedit2.transcripts import Word
+from hawedit.transcripts import Word
 
 REFERENCE = (
     Segment(0, 10_000, "A"),

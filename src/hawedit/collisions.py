@@ -29,7 +29,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from hawedit2.normalize import normalize_sorani
+from hawedit.normalize import normalize_sorani
 
 __all__ = ["COLLISIONS", "CollisionReport", "measure_collisions"]
 

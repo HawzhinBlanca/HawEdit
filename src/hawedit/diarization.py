@@ -28,7 +28,7 @@ from itertools import pairwise, permutations
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from hawedit2.transcripts import Word
+    from hawedit.transcripts import Word
 
 __all__ = [
     "MAX_SPEAKERS_FOR_EXACT_MAPPING",

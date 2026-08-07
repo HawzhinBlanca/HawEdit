@@ -49,8 +49,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from hawedit2.clip import DiscoveryPath, Sv6d
-from hawedit2.repurposing import DEFAULT_IOU_MATCH, RetrievedCandidate, temporal_iou
+from hawedit.clip import DiscoveryPath, Sv6d
+from hawedit.repurposing import DEFAULT_IOU_MATCH, RetrievedCandidate, temporal_iou
 
 __all__ = [
     "Candidate",

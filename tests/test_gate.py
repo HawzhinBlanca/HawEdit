@@ -74,7 +74,7 @@ def test_nested_full_gate_refuses_instead_of_recursing() -> None:
     This suite runs *inside* the gate, so every call in this file is already nested. A nested
     full run must refuse (exit 4) rather than spawn another pytest.
     """
-    result = _run_gate(HAWEDIT2_GATE_DEPTH="1")
+    result = _run_gate(HAWEDIT_GATE_DEPTH="1")
     assert result.returncode == 4, f"expected nested refusal exit 4, got {result.returncode}"
     assert "nested gate invocation" in result.stderr
     assert FULL_GATE_SUCCESS_LINE not in result.stdout
@@ -82,7 +82,7 @@ def test_nested_full_gate_refuses_instead_of_recursing() -> None:
 
 def test_nested_fast_run_is_still_allowed() -> None:
     """The guard must block only the test step — lint/typecheck nested are harmless."""
-    result = _run_gate("--fast", HAWEDIT2_GATE_DEPTH="1")
+    result = _run_gate("--fast", HAWEDIT_GATE_DEPTH="1")
     assert result.returncode == 0, result.stderr
     assert FULL_GATE_SUCCESS_LINE not in result.stdout
 
@@ -113,7 +113,7 @@ def test_a_step_command_that_merely_prints_cannot_produce_a_green_gate() -> None
     is now the other way round: the gate's steps are not configurable, and a run with any
     step replaced cannot print the success line no matter what the replacement does.
     """
-    result = _run_gate(HAWEDIT2_GATE_DEPTH="0", TEST_CMD="echo skipped")
+    result = _run_gate(HAWEDIT_GATE_DEPTH="0", TEST_CMD="echo skipped")
     assert FULL_GATE_SUCCESS_LINE not in result.stdout, (
         "a run with a replaced test step must never print the full-gate success line"
     )
@@ -124,7 +124,7 @@ def test_a_step_command_that_merely_prints_cannot_produce_a_green_gate() -> None
 def test_overriding_any_step_is_refused_before_anything_runs() -> None:
     """The refusal must precede the steps: a replaced gate should cost nothing to reject."""
     for var in ("LINT_CMD", "TYPECHECK_CMD", "FORMAT_CMD", "TEST_CMD"):
-        result = _run_gate(HAWEDIT2_GATE_DEPTH="0", **{var: "echo pretending"})
+        result = _run_gate(HAWEDIT_GATE_DEPTH="0", **{var: "echo pretending"})
         assert result.returncode == 5, f"{var} override was not refused"
         assert var in result.stderr
         assert "==>" not in result.stdout, f"{var}: steps ran before the override was refused"
@@ -157,11 +157,11 @@ def test_no_committed_shell_script_contains_a_carriage_return() -> None:
         )
 
 
-def test_ci_runs_the_hawedit2_gate() -> None:
+def test_ci_runs_the_hawedit_gate() -> None:
     """DONE means verify.sh green AND required CI checks green. CI never ran this gate.
 
     The repository's CI workflow builds the host Node project and runs *its* verify.sh. No
-    job installed Python, no job ran hawedit2's gate — so every DONE mark in PROGRESS.md
+    job installed Python, no job ran hawedit's gate — so every DONE mark in PROGRESS.md
     rested on a local run alone, on the one machine with no independent check (finding #5).
     """
     workflows = ROOT / ".github" / "workflows"

@@ -38,9 +38,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Final
 
-from hawedit2.clip import DiscoveryPath
-from hawedit2.discovery import Candidate
-from hawedit2.gemini import (
+from hawedit.clip import DiscoveryPath
+from hawedit.discovery import Candidate
+from hawedit.gemini import (
     API_ROOT,
     GeminiJudge,
     Governance,
@@ -48,8 +48,8 @@ from hawedit2.gemini import (
     Transport,
     count_tokens,
 )
-from hawedit2.judge import InputMode, JudgeRequest
-from hawedit2.transcripts import NormalizedTranscript, assert_model_input
+from hawedit.judge import InputMode, JudgeRequest
+from hawedit.transcripts import NormalizedTranscript, assert_model_input
 
 __all__ = [
     "CANDIDATE_SCHEMA",

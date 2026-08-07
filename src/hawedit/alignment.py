@@ -26,10 +26,10 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Final
 
-from hawedit2.normalize import normalize_sorani
+from hawedit.normalize import normalize_sorani
 
 if TYPE_CHECKING:
-    from hawedit2.transcripts import AsrProvenance, Word
+    from hawedit.transcripts import AsrProvenance, Word
 
 __all__ = [
     "CTC_VITERBI",

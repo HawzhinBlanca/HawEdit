@@ -30,7 +30,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from hawedit2.clip import DiscoveryPath
+from hawedit.clip import DiscoveryPath
 
 __all__ = [
     "DEFAULT_IOU_MATCH",

@@ -34,8 +34,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
-from hawedit2.sentences import Sentence
-from hawedit2.transcripts import Word
+from hawedit.sentences import Sentence
+from hawedit.transcripts import Word
 
 __all__ = [
     "DEFAULT_MAX_CHARS_PER_LINE",
@@ -346,7 +346,7 @@ def build_ass(
 
 
 def find_ffmpeg() -> Path | None:
-    """Locate an ffmpeg binary: `HAWEDIT2_FFMPEG`, then `.ffmpeg/`, then `PATH`.
+    """Locate an ffmpeg binary: `HAWEDIT_FFMPEG`, then `.ffmpeg/`, then `PATH`.
 
     Returns `None` rather than raising — the caller decides whether a missing ffmpeg is a
     skipped render test or a failed deploy check.
@@ -354,7 +354,7 @@ def find_ffmpeg() -> Path | None:
     from os import environ
     from shutil import which
 
-    configured = environ.get("HAWEDIT2_FFMPEG")
+    configured = environ.get("HAWEDIT_FFMPEG")
     if configured and Path(configured).exists():
         return Path(configured)
     # Where scripts/fetch-ffmpeg.sh puts it, so the readiness report and the gate agree

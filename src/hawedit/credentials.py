@@ -1,6 +1,6 @@
 """Where secrets live, and the panel that puts them there.
 
-    python -m hawedit2.credentials
+    python -m hawedit.credentials
 
 §3 Stage 4 routes through `gemini-2.5-pro` and needs an API key. A key is the one kind of
 configuration that is actively dangerous to get slightly wrong, so this module is written
@@ -142,7 +142,7 @@ def write_credential(
     existing[name] = value.strip()
 
     env_file.parent.mkdir(parents=True, exist_ok=True)
-    body = "# hawedit2 credentials. Git-ignored. Never commit this file.\n" + "".join(
+    body = "# hawedit credentials. Git-ignored. Never commit this file.\n" + "".join(
         f"{key}={val}\n" for key, val in sorted(existing.items())
     )
     env_file.write_text(body, encoding="utf-8")
@@ -233,13 +233,13 @@ def main(argv: list[str] | None = None) -> int:
     from getpass import getpass
 
     parser = argparse.ArgumentParser(
-        prog="hawedit2.credentials",
+        prog="hawedit.credentials",
         description="Store and verify the Gemini API key §3 Stage 4 routes through.",
     )
     parser.add_argument("--check", action="store_true", help="report status and exit")
     args = parser.parse_args(argv)
 
-    print("hawedit2 credentials — §3 Stage 4 judge access")
+    print("hawedit credentials — §3 Stage 4 judge access")
     print(f"store: {ENV_FILE}  (git-ignored, 0600)\n")
 
     key, check = credential_status()

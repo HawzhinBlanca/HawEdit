@@ -37,8 +37,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
-from hawedit2.captions import assert_rtl_stack, find_ffmpeg, subtitle_filter
-from hawedit2.clip import Clip
+from hawedit.captions import assert_rtl_stack, find_ffmpeg, subtitle_filter
+from hawedit.clip import Clip
 
 __all__ = [
     "VERTICAL_HEIGHT",
@@ -216,9 +216,7 @@ def render_clip(
 
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
-        raise RenderError(
-            "no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT2_FFMPEG"
-        )
+        raise RenderError("no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT_FFMPEG")
 
     version = subprocess.run(
         [str(binary), "-hide_banner", "-version"], capture_output=True, text=True, check=False

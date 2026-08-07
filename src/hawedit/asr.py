@@ -29,9 +29,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol, runtime_checkable
 
-from hawedit2.corpus import CorpusItem
-from hawedit2.registry import ASR_ROLES, ModelEntry, resolve_role
-from hawedit2.transcripts import Word
+from hawedit.corpus import CorpusItem
+from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
+from hawedit.transcripts import Word
 
 __all__ = [
     "LONG_AUDIO_THRESHOLD_S",

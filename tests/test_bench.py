@@ -15,14 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.asr import ASRResult, Hardware, MeasurementSession
-from hawedit2.bench import (
+from hawedit.asr import ASRResult, Hardware, MeasurementSession
+from hawedit.bench import (
     MATERIAL_GAIN_RATIO,
     BenchmarkReport,
     decide_canonical,
     run_benchmark,
 )
-from hawedit2.corpus import Condition, Corpus, CorpusItem, Dialect, Provenance
+from hawedit.corpus import Condition, Corpus, CorpusItem, Dialect, Provenance
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti")
 INCUMBENT = "omniASR_LLM_7B_v2"

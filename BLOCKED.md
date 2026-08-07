@@ -134,11 +134,11 @@ incidence on the only real Sorani reachable here — KLPT's bundled 24,894-entry
 
 ---
 
-## #7 · The hawedit2 CI job is not a *required* status check
+## #7 · The hawedit CI job is not a *required* status check
 
 **Needs:** Hawa, in the GitHub repository settings. One click, no code.
 
-`.github/workflows/hawedit2.yml` now runs the gate on a clean runner — audit finding #5 was
+`.github/workflows/hawedit.yml` now runs the gate on a clean runner — audit finding #5 was
 that nothing ever did. But a workflow that runs is not a workflow that blocks: until `gate`
 is added to the protected branch's required status checks, a red run is a red tick beside a
 mergeable PR.
@@ -148,7 +148,7 @@ This matters more here than it usually would, because the project's own definiti
 refers to nothing.
 
 **To unblock:** Settings → Branches → branch protection rule for the default branch → Require
-status checks to pass → add **`gate`** (workflow `hawedit2`).
+status checks to pass → add **`gate`** (workflow `hawedit`).
 
 Until then, treat every DONE mark as resting on a local run plus an advisory CI run.
 

@@ -47,16 +47,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from hawedit2.boundary import BoundaryInputs, IncompleteSentence, fuse_boundary
-from hawedit2.captions import build_ass
-from hawedit2.clip import Clip, ClipTranscript, DiscoveryPath, Qc
-from hawedit2.discovery import Candidate, MergedCandidate, merge_candidates
-from hawedit2.index import Bm25Index
-from hawedit2.ingest import IngestResult, ingest
-from hawedit2.judge import EditorialJudge, JudgeRequest, JudgeVerdict
-from hawedit2.render import RenderError, RenderResult, render_clip
-from hawedit2.sentences import Sentence, anchors_for, segment_sentences
-from hawedit2.transcripts import (
+from hawedit.boundary import BoundaryInputs, IncompleteSentence, fuse_boundary
+from hawedit.captions import build_ass
+from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc
+from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
+from hawedit.index import Bm25Index
+from hawedit.ingest import IngestResult, ingest
+from hawedit.judge import EditorialJudge, JudgeRequest, JudgeVerdict
+from hawedit.render import RenderError, RenderResult, render_clip
+from hawedit.sentences import Sentence, anchors_for, segment_sentences
+from hawedit.transcripts import (
     NormalizedTranscript,
     RawTranscript,
     RawTranscriptImmutable,
@@ -476,8 +476,8 @@ def _proxy_dimensions(source: Path, ffmpeg: Path | None) -> tuple[int, int]:
     """Source frame size, probed rather than assumed — the crop arithmetic depends on it."""
     import subprocess
 
-    from hawedit2.captions import find_ffmpeg
-    from hawedit2.ingest import IngestError
+    from hawedit.captions import find_ffmpeg
+    from hawedit.ingest import IngestError
 
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
@@ -504,13 +504,13 @@ def _proxy_dimensions(source: Path, ffmpeg: Path | None) -> tuple[int, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`python -m hawedit2.pipeline <video> [--transcript t.json] [--sentences 0,1]`.
+    """`python -m hawedit.pipeline <video> [--transcript t.json] [--sentences 0,1]`.
 
     Exits non-zero on an incomplete run. A partial pipeline that exited 0 would be indis-
     tinguishable from a working one to anything scripting it.
     """
     parser = argparse.ArgumentParser(
-        prog="hawedit2.pipeline", description="Run §3 over one media file, as far as it can go."
+        prog="hawedit.pipeline", description="Run §3 over one media file, as far as it can go."
     )
     parser.add_argument("source", type=Path)
     parser.add_argument("--work-dir", type=Path, default=Path("work"))

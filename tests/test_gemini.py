@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from hawedit2.gemini import (
+from hawedit.gemini import (
     VERDICT_SCHEMA,
     GeminiJudge,
     GeminiUnavailable,
@@ -31,8 +31,8 @@ from hawedit2.gemini import (
     JudgeUnusable,
     count_tokens,
 )
-from hawedit2.judge import InputMode, JudgeRequest, RequestTooLarge
-from hawedit2.registry import WrongRole
+from hawedit.judge import InputMode, JudgeRequest, RequestTooLarge
+from hawedit.registry import WrongRole
 
 KEY = "test-key-not-real"
 TITLE = "ڕۆژنامەوانی کوردی لە هەولێر"
@@ -306,7 +306,7 @@ def test_non_confidential_material_needs_no_confirmation() -> None:
 
 def test_the_shadow_cannot_be_constructed_as_the_judge() -> None:
     """§3 Stage 4: gemini-3.1-pro is "evaluated, not routed"."""
-    from hawedit2.judge import NotRoutable
+    from hawedit.judge import NotRoutable
 
     with pytest.raises(NotRoutable):
         a_judge(Api(), model_id="gemini-3.1-pro")
@@ -319,8 +319,8 @@ def test_a_model_outside_section_7_cannot_be_constructed() -> None:
 
 def test_a_missing_key_names_the_panel_that_fixes_it(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.setattr("hawedit2.gemini.read_credential", lambda _n=None: None)
-    with pytest.raises(GeminiUnavailable, match="hawedit2.credentials"):
+    monkeypatch.setattr("hawedit.gemini.read_credential", lambda _n=None: None)
+    with pytest.raises(GeminiUnavailable, match="hawedit.credentials"):
         GeminiJudge(api_key=None, transport=Api())
 
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.escalation import (
+from hawedit.escalation import (
     DEFAULT_DISAGREEMENT_CER,
     SegmentScore,
     materially_disagree,

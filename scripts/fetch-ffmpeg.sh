@@ -8,7 +8,7 @@
 # The binary is ~200 MB and is NOT committed. It lands in .ffmpeg/ (git-ignored).
 #
 # Usage:  bash scripts/fetch-ffmpeg.sh
-# Then:   export HAWEDIT2_FFMPEG="$PWD/.ffmpeg/ffmpeg"
+# Then:   export HAWEDIT_FFMPEG="$PWD/.ffmpeg/ffmpeg"
 #
 # LICENCE NOTE: this build is --enable-gpl --enable-version3. See DECISIONS.md D-021 —
 # ffmpeg is invoked as a separate executable, which is the standard arrangement and does not
@@ -49,4 +49,4 @@ fi
 "${dest}/ffmpeg" -version | head -1
 echo "libass + HarfBuzz + FriBidi: present"
 echo
-echo "export HAWEDIT2_FFMPEG=\"${dest}/ffmpeg\""
+echo "export HAWEDIT_FFMPEG=\"${dest}/ffmpeg\""

@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from hawedit2.metrics import normalized_cer
+from hawedit.metrics import normalized_cer
 
 __all__ = [
     "DEFAULT_DISAGREEMENT_CER",

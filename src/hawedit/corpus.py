@@ -30,7 +30,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit2.transcripts import Word
+from hawedit.transcripts import Word
 
 __all__ = [
     "MINIMUM_HOURS",

@@ -17,14 +17,14 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.index import (
+from hawedit.index import (
     DEFAULT_NGRAM_WEIGHT,
     Bm25Index,
     Document,
     character_ngrams,
     index_tokens,
 )
-from hawedit2.transcripts import AsrProvenance, NormalizedTranscript, RawTranscript
+from hawedit.transcripts import AsrProvenance, NormalizedTranscript, RawTranscript
 
 BOOK = "کتێب"  # book
 MY_BOOK = "کتێبەکەم"  # my book — the same stem with clitics attached
@@ -215,8 +215,8 @@ def test_ranking_is_stable_for_tied_scores() -> None:
 
 
 def test_an_index_can_be_built_from_segmented_sentences() -> None:
-    from hawedit2.sentences import segment_sentences
-    from hawedit2.transcripts import Word
+    from hawedit.sentences import segment_sentences
+    from hawedit.transcripts import Word
 
     words = (
         Word(w="کوردستان", start_ms=0, end_ms=500, conf=0.9),
@@ -232,8 +232,8 @@ def test_an_index_can_be_built_from_segmented_sentences() -> None:
 
 def test_sentences_are_normalized_on_the_way_into_the_index() -> None:
     """Sentence.text is raw surface forms; the index must hold the derived normalized form."""
-    from hawedit2.sentences import Sentence
-    from hawedit2.transcripts import Word
+    from hawedit.sentences import Sentence
+    from hawedit.transcripts import Word
 
     sentence = Sentence(words=(Word(w="كوردي.", start_ms=0, end_ms=500, conf=0.9),), complete=True)
     index = Bm25Index.from_sentences((sentence,), media_id="m1")

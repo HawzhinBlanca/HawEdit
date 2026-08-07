@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Download §7's model weights into models/ — driven by the registry, not by a hard-coded list.
 #
-# The list of what may be fetched comes from `hawedit2.registry.REGISTRY`, so this script
+# The list of what may be fetched comes from `hawedit.registry.REGISTRY`, so this script
 # cannot download a model the blueprint does not permit, and cannot silently skip one it
 # requires. NonCommercial licences are refused before any bytes move.
 #
@@ -19,7 +19,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 PY="${PY:-$here/.venv/bin/python}"
-models_root="${HAWEDIT2_MODELS:-$here/models}"
+models_root="${HAWEDIT_MODELS:-$here/models}"
 
 if [[ ! -x "$PY" ]]; then
   echo "✗ no interpreter at $PY — run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
@@ -27,7 +27,7 @@ if [[ ! -x "$PY" ]]; then
 fi
 
 if [[ "${1:-}" == "--status" ]]; then
-  exec "$PY" -m hawedit2.models
+  exec "$PY" -m hawedit.models
 fi
 
 mkdir -p "$models_root"
@@ -36,8 +36,8 @@ mkdir -p "$models_root"
 plan="$("$PY" - "$models_root" "${1:-}" <<'PYEOF'
 import sys
 from pathlib import Path
-from hawedit2.models import ModelStore, SourceNotConfigured
-from hawedit2.registry import Provisioning, assert_commercially_usable
+from hawedit.models import ModelStore, SourceNotConfigured
+from hawedit.registry import Provisioning, assert_commercially_usable
 
 root, only = Path(sys.argv[1]), (sys.argv[2] if len(sys.argv) > 2 else "")
 store = ModelStore(root=root)
@@ -73,7 +73,7 @@ fi
 
 if [[ -z "${plan//[[:space:]]/}" ]]; then
   echo "nothing to fetch — every configured §7 checkpoint is already present."
-  exec "$PY" -m hawedit2.models
+  exec "$PY" -m hawedit.models
 fi
 
 # --- capacity, before an hour is spent finding out ------------------------------------------
@@ -121,4 +121,4 @@ PYEOF
 done <<<"$plan"
 
 echo
-exec "$PY" -m hawedit2.models
+exec "$PY" -m hawedit.models

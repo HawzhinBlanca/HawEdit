@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.gate import NoTestEvidence, check_test_evidence, read_floor, write_floor
+from hawedit.gate import NoTestEvidence, check_test_evidence, read_floor, write_floor
 
 
 def _report(

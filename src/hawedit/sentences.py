@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Final
 
-from hawedit2.transcripts import Word
+from hawedit.transcripts import Word
 
 __all__ = [
     "DEFAULT_PAUSE_MS",

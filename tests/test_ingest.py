@@ -26,8 +26,8 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.captions import find_ffmpeg
-from hawedit2.ingest import (
+from hawedit.captions import find_ffmpeg
+from hawedit.ingest import (
     LOUDNORM_FILTER,
     MAX_SPEECH_DURATION_S,
     OMNIASR_CEILING_S,
@@ -62,7 +62,7 @@ CUT_TOLERANCE_MS = 100
 # work is exactly what slipped past CI-less local runs.
 MEDIA_STACK = media_stack_available()
 
-needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
+needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 needs_media_stack = pytest.mark.skipif(
     not MEDIA_STACK, reason="media stack absent — install '.[media]'"
 )
@@ -103,8 +103,8 @@ def _spy_commands(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
         seen.append(command)
         return subprocess.CompletedProcess(command, 0, b"", b"")
 
-    monkeypatch.setattr("hawedit2.ingest._run", fake_run)
-    monkeypatch.setattr("hawedit2.ingest._assert_audio_format", lambda _p: None)
+    monkeypatch.setattr("hawedit.ingest._run", fake_run)
+    monkeypatch.setattr("hawedit.ingest._assert_audio_format", lambda _p: None)
     return seen
 
 
@@ -155,7 +155,7 @@ def test_extracted_audio_is_16k_mono_16bit(tmp_path: Path) -> None:
 @needs_ffmpeg
 def test_audio_in_the_wrong_format_is_refused_at_stage_0(tmp_path: Path) -> None:
     """A 44.1 kHz stereo file reaching Stage 1 fails there with no mention of the VAD."""
-    from hawedit2.ingest import _assert_audio_format
+    from hawedit.ingest import _assert_audio_format
 
     wrong = tmp_path / "wrong.wav"
     with wave.open(str(wrong), "wb") as handle:
@@ -329,7 +329,7 @@ def test_a_round_trip_does_not_turn_absent_diarization_into_an_empty_result() ->
 
 
 def test_missing_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("hawedit2.ingest.find_ffmpeg", lambda: None)
+    monkeypatch.setattr("hawedit.ingest.find_ffmpeg", lambda: None)
     with pytest.raises(IngestError, match="fetch-ffmpeg.sh"):
         ingest(FIXTURE, tmp_path / "work")
 

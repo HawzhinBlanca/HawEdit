@@ -29,20 +29,20 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.captions import find_ffmpeg
-from hawedit2.clip import Qc
-from hawedit2.judge import JudgeVerdict
-from hawedit2.pipeline import (
+from hawedit.captions import find_ffmpeg
+from hawedit.clip import Qc
+from hawedit.judge import JudgeVerdict
+from hawedit.pipeline import (
     PipelineRun,
     StageSkipped,
     run_pipeline,
 )
-from hawedit2.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
 
-needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
+needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 
 # Two complete Kurdish sentences whose timings sit inside the 4.16 s fixture, matching the two
 # utterances Stage 0's VAD actually finds in it.
@@ -129,7 +129,7 @@ def test_a_skipped_stage_is_never_reported_as_an_empty_result(tmp_path: Path) ->
 def full_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
     """Six §3 stages against the real fixture, in one call. Rendered once."""
     if find_ffmpeg() is None:
-        pytest.skip("no ffmpeg — set HAWEDIT2_FFMPEG")
+        pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
     work = tmp_path_factory.mktemp("pipeline")
     return run_pipeline(
         FIXTURE,
@@ -170,7 +170,7 @@ def test_the_normalized_transcript_is_what_the_index_read(full_run: PipelineRun)
 @needs_ffmpeg
 def test_the_raw_transcript_is_written_once_and_never_rewritten(full_run: PipelineRun) -> None:
     """Kurdish invariant #1, exercised by the runner rather than only by the store's tests."""
-    from hawedit2.transcripts import RawTranscriptImmutable, TranscriptStore
+    from hawedit.transcripts import RawTranscriptImmutable, TranscriptStore
 
     store = TranscriptStore(Path(full_run.work_dir) / "transcripts")
     assert store.raw_path("fixture").exists()
@@ -301,14 +301,14 @@ def test_a_missing_source_file_is_named(tmp_path: Path) -> None:
 @needs_ffmpeg
 def test_the_cli_reports_and_exits_nonzero_when_the_run_is_incomplete(tmp_path: Path) -> None:
     """A partial pipeline must not exit 0 — that is what a shell script would check."""
-    from hawedit2.pipeline import main
+    from hawedit.pipeline import main
 
     code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work")])
     assert code != 0
 
 
 def test_the_cli_reports_a_missing_source_without_a_traceback(tmp_path: Path) -> None:
-    from hawedit2.pipeline import main
+    from hawedit.pipeline import main
 
     assert main([str(tmp_path / "absent.mp4"), "--work-dir", str(tmp_path / "work")]) == 2
 
@@ -324,8 +324,8 @@ def test_supplying_path_a_makes_the_runner_discover_instead_of_skip(tmp_path: Pa
     says is correct rather than degraded. Candidates from *either* path proceed, and a
     verbal-only moment is precisely the case the dual path exists to protect.
     """
-    from hawedit2.clip import DiscoveryPath
-    from hawedit2.discovery import Candidate
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
 
     def path_a(norm: object) -> list[Candidate]:
         return [
@@ -364,9 +364,9 @@ def test_a_discovery_pass_that_finds_nothing_is_reported_not_hidden(tmp_path: Pa
 @needs_ffmpeg
 def test_supplying_a_judge_scores_the_top_candidate(tmp_path: Path) -> None:
     """Stage 4 stops being a stand-in: the runner asks the judge itself."""
-    from hawedit2.clip import DiscoveryPath
-    from hawedit2.discovery import Candidate
-    from hawedit2.judge import JudgeRequest
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
 
     seen: list[JudgeRequest] = []
 

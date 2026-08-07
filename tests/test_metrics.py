@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.metrics import (
+from hawedit.metrics import (
     cer,
     code_switch_error_rate,
     edit_distance,

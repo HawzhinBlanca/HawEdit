@@ -28,9 +28,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final
 
-from hawedit2.boundary import Boundary, _strict_bool, assert_boundary_invariant
-from hawedit2.registry import resolve_role
-from hawedit2.transcripts import AsrProvenance, Word
+from hawedit.boundary import Boundary, _strict_bool, assert_boundary_invariant
+from hawedit.registry import resolve_role
+from hawedit.transcripts import AsrProvenance, Word
 
 __all__ = [
     "Clip",

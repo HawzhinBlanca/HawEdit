@@ -39,9 +39,9 @@ import json
 
 import pytest
 
-from hawedit2.clip import DiscoveryPath
-from hawedit2.discovery import Candidate, merge_candidates
-from hawedit2.judge import (
+from hawedit.clip import DiscoveryPath
+from hawedit.discovery import Candidate, merge_candidates
+from hawedit.judge import (
     CANDIDATE_SLICE_TOKENS_PER_HOUR,
     FULL_TRANSCRIPT_TOKENS_PER_HOUR,
     PRO_TIER_TOKEN_CEILING,
@@ -59,7 +59,7 @@ from hawedit2.judge import (
     route,
     video_tokens,
 )
-from hawedit2.registry import WrongRole
+from hawedit.registry import WrongRole
 
 JUDGE = "gemini-2.5-pro"
 SHADOW = "gemini-3.1-pro"
@@ -158,7 +158,7 @@ def test_a_shadow_verdict_cannot_become_a_clips_editorial_block() -> None:
 def test_section_5s_editorial_block_refuses_the_shadow_a_second_time() -> None:
     """Defence at both ends, because a verdict can arrive as JSON that never passed through
     `to_editorial()` at all."""
-    from hawedit2.clip import Editorial
+    from hawedit.clip import Editorial
 
     with pytest.raises(ValueError, match="routable"):
         Editorial(
@@ -268,7 +268,7 @@ def test_a_section_5_document_written_before_the_two_fields_existed_still_loads(
     a migration rather than an addition — and §5 is a frozen contract, so an addition that
     breaks readers is not an addition.
     """
-    from hawedit2.clip import Editorial, Output
+    from hawedit.clip import Editorial, Output
 
     legacy_editorial = {
         "hook_score": 0.8,

@@ -29,7 +29,7 @@ import csv
 from pathlib import Path
 from typing import Final
 
-from hawedit2.corpus import Corpus, CorpusItem, Provenance
+from hawedit.corpus import Corpus, CorpusItem, Provenance
 
 __all__ = [
     "COMMON_VOICE_LICENCE",

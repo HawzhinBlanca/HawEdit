@@ -42,8 +42,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final
 
-from hawedit2.credentials import GEMINI_API_KEY, read_credential
-from hawedit2.judge import (
+from hawedit.credentials import GEMINI_API_KEY, read_credential
+from hawedit.judge import (
     KURDISH_EDITORIAL_JUDGE,
     JudgeRequest,
     JudgeVerdict,
@@ -242,7 +242,7 @@ class GeminiJudge:
         key = api_key or read_credential(GEMINI_API_KEY)
         if not key:
             raise GeminiUnavailable(
-                "no Gemini API key. Run `python -m hawedit2.credentials` to store one, or set "
+                "no Gemini API key. Run `python -m hawedit.credentials` to store one, or set "
                 f"{GEMINI_API_KEY} in the environment."
             )
         self._key = key

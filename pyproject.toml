@@ -1,5 +1,5 @@
 [project]
-name = "hawedit2"
+name = "hawedit"
 version = "0.1.0"
 description = "Kurdish (Sorani/ckb) video repurposing system — implements BLUEPRINT.md v1.1"
 requires-python = ">=3.11"

@@ -36,8 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit2.captions import find_ffmpeg
-from hawedit2.diarization import Segment
+from hawedit.captions import find_ffmpeg
+from hawedit.diarization import Segment
 
 __all__ = [
     "CONTENT_DETECTOR_THRESHOLD",
@@ -103,7 +103,7 @@ def _ffmpeg(ffmpeg: Path | None) -> Path:
     resolved = ffmpeg or find_ffmpeg()
     if resolved is None:
         raise IngestError(
-            "no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT2_FFMPEG."
+            "no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT_FFMPEG."
         )
     return resolved
 

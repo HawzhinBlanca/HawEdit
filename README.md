@@ -1,4 +1,4 @@
-# hawedit2 — Kurdish Video Repurposing System
+# hawedit — Kurdish Video Repurposing System
 
 Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1.1 (frozen).
 
@@ -10,15 +10,15 @@ yet. Give it a transcript and a Gemini key, and the rest of §3 runs — discove
 boundary fusion and a rendered vertical clip with burned-in Kurdish captions.
 
 ```bash
-.venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work
+.venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work
 ```
 
 Run bare, it does Stage 0 on real media, exits non-zero, and prints every stage it could not
 run with the blocker named. Nothing is skipped quietly.
 
 ```bash
-.venv/bin/python -m hawedit2.credentials                    # store a Gemini key, once
-.venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work \
+.venv/bin/python -m hawedit.credentials                    # store a Gemini key, once
+.venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work \
   --transcript t.json --sentences 0,1 --qc-pass
 ```
 
@@ -28,7 +28,7 @@ run with the blocker named. Nothing is skipped quietly.
 | 1 · Speech | contracts only | The ASR models themselves (`BLOCKED.md` #2). Alignment and segmentation are done and tested. |
 | 2 · Index | text only | The visual index (Qwen3-VL embeddings) needs weights and a GPU. |
 | 3 · Discovery | **Path A built, needs a key** | Path B — `VideoChat3-4B` weights and a GPU (`BLOCKED.md` #2). The union runs one-sided, which §3 says is correct rather than degraded. |
-| 4 · Editorial judge | **built, needs a key** | Nothing — run `python -m hawedit2.credentials`. The §3 ZDR answer is still required for confidential material. |
+| 4 · Editorial judge | **built, needs a key** | Nothing — run `python -m hawedit.credentials`. The §3 ZDR answer is still required for confidential material. |
 | 5 · Boundary fusion | **runs** | TimeLens2 refinement (M6). |
 | 6 · Render | **runs** | Speaker-tracked reframing — the crop is static centre (`BLOCKED.md` #4). NVENC needs hawapc01. |
 
@@ -47,7 +47,7 @@ compiles. `PROGRESS.md` carries the per-task evidence and `BLOCKED.md` carries w
 One command, from a fresh clone to a green gate:
 
 ```bash
-cd hawedit2
+cd hawedit
 bash scripts/setup.sh
 ```
 
@@ -79,7 +79,7 @@ real safeguard on Kurdish invariant #4 — skips.
 Check what this machine has:
 
 ```bash
-.venv/bin/python -m hawedit2.models      # §7 component readiness
+.venv/bin/python -m hawedit.models      # §7 component readiness
 ```
 
 Fetch what it does not:
@@ -106,8 +106,8 @@ refuses to guess a repo for them; supply one in `models/sources.json`:
 ## Gemini access (§3 Stage 4)
 
 ```bash
-.venv/bin/python -m hawedit2.credentials          # panel: paste a key, it verifies, it stores
-.venv/bin/python -m hawedit2.credentials --check  # status only; exits non-zero if unusable
+.venv/bin/python -m hawedit.credentials          # panel: paste a key, it verifies, it stores
+.venv/bin/python -m hawedit.credentials --check  # status only; exits non-zero if unusable
 ```
 
 Input is hidden and never echoed. The key is verified against Google before anything is
@@ -121,7 +121,7 @@ Once a key is stored, verify the real path end to end — this is the only thing
 that spends money, and it says how much before it does:
 
 ```bash
-.venv/bin/python -m hawedit2.smoke     # two real calls, ~$0.003
+.venv/bin/python -m hawedit.smoke     # two real calls, ~$0.003
 ```
 
 It runs §3 Stage 3 Path A over a built-in Sorani sample and §3 Stage 4 on the top candidate,
@@ -157,7 +157,7 @@ The gate is deliberately hard to fool, because it is the only thing that decides
 - **A nested invocation refuses its own test step** — it would otherwise recurse, and once
   did (D-005).
 
-CI runs the same script on a clean runner (`.github/workflows/hawedit2.yml`), fetches the
+CI runs the same script on a clean runner (`.github/workflows/hawedit.yml`), fetches the
 pinned ffmpeg, and fails if the §4.3 golden render or the §3 Stage 0 tests *skip* rather than
 run. Making that job a required status check is a repository setting, and is not done.
 

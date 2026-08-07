@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.credentials import (
+from hawedit.credentials import (
     GEMINI_API_KEY,
     CredentialError,
     KeyCheck,
@@ -64,7 +64,7 @@ def test_writing_to_a_tracked_path_is_refused(tmp_path: Path) -> None:
 
 def test_the_projects_own_env_file_is_ignored() -> None:
     """The check is only worth having if the real target passes it."""
-    from hawedit2.credentials import ENV_FILE
+    from hawedit.credentials import ENV_FILE
 
     assert_ignored_by_git(ENV_FILE)  # must not raise
 

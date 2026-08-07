@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.clip import DiscoveryPath
-from hawedit2.repurposing import (
+from hawedit.clip import DiscoveryPath
+from hawedit.repurposing import (
     DEFAULT_IOU_MATCH,
     GoldCandidate,
     RetrievedCandidate,

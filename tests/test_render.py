@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pytest
 
-from hawedit2.boundary import BoundaryInputs, fuse_boundary
-from hawedit2.captions import build_ass, find_ffmpeg
-from hawedit2.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
-from hawedit2.render import (
+from hawedit.boundary import BoundaryInputs, fuse_boundary
+from hawedit.captions import build_ass, find_ffmpeg
+from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
+from hawedit.render import (
     VERTICAL_HEIGHT,
     VERTICAL_WIDTH,
     Encoder,
@@ -38,8 +38,8 @@ from hawedit2.render import (
     encoder_available,
     render_clip,
 )
-from hawedit2.sentences import Sentence
-from hawedit2.transcripts import AsrProvenance, Word
+from hawedit.sentences import Sentence
+from hawedit.transcripts import AsrProvenance, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -48,7 +48,7 @@ FONTS = ROOT / "assets" / "fonts"
 # The fixture is 640x360 — see tests/test_ingest.py for how it is built.
 SOURCE_WIDTH, SOURCE_HEIGHT = 640, 360
 
-needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
+needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 
 CAPTION_TEXT = "ڕۆژنامەوانی کوردی"
 
@@ -223,7 +223,7 @@ def test_an_incomplete_sentence_cannot_even_reach_a_clip() -> None:
     `fuse_boundary` refuses outright, so there is no path from a candidate whose sentence did
     not close to a `Clip` at all — the render gate never sees one because one cannot be built.
     """
-    from hawedit2.boundary import IncompleteSentence
+    from hawedit.boundary import IncompleteSentence
 
     with pytest.raises(IncompleteSentence):
         _clip(complete=False)
@@ -239,7 +239,7 @@ def test_a_hand_built_incomplete_boundary_is_still_refused_at_the_render(tmp_pat
     """
     from dataclasses import replace
 
-    from hawedit2.boundary import BoundaryInvariantViolated
+    from hawedit.boundary import BoundaryInvariantViolated
 
     clip = _clip()
     smuggled = replace(clip, boundary=replace(clip.boundary, sentence_complete=False))
@@ -327,7 +327,7 @@ def test_a_missing_subtitle_file_is_refused(tmp_path: Path) -> None:
 
 
 def test_no_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("hawedit2.render.find_ffmpeg", lambda: None)
+    monkeypatch.setattr("hawedit.render.find_ffmpeg", lambda: None)
     (tmp_path / "captions.ass").write_text("", encoding="utf-8")
     with pytest.raises(RenderError, match="fetch-ffmpeg.sh"):
         render_clip(
@@ -348,7 +348,7 @@ def test_no_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 def rendered(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """One real clip. Rendered once and probed by several tests — encoding is not cheap."""
     if find_ffmpeg() is None:
-        pytest.skip("no ffmpeg — set HAWEDIT2_FFMPEG")
+        pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
     work = tmp_path_factory.mktemp("m2-4")
     ass = work / "captions.ass"
     ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
@@ -452,7 +452,7 @@ def test_the_burned_in_captions_are_shaped(rendered: Path, tmp_path: Path) -> No
     captions the wrong way and requiring the pixels to differ is what makes the burn-in a
     check on shaping and not merely on ink.
     """
-    from hawedit2.captions import _escape_filter_path
+    from hawedit.captions import _escape_filter_path
 
     binary = find_ffmpeg()
     assert binary is not None

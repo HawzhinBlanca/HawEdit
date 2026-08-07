@@ -21,7 +21,7 @@ step() { printf '\n==> %s\n' "$1"; }
 step "python"
 "$PY_BIN" --version
 if ! "$PY_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
-  echo "✗ hawedit2 needs Python 3.11+ (pyproject requires-python). Set PY_BIN to a newer one." >&2
+  echo "✗ hawedit needs Python 3.11+ (pyproject requires-python). Set PY_BIN to a newer one." >&2
   exit 2
 fi
 
@@ -47,7 +47,7 @@ bash scripts/fetch-ffmpeg.sh
 step "§7 model readiness"
 # Reports rather than fails: most §7 components need weights this environment may not reach,
 # and that is a fact about the machine, not an error in the checkout.
-.venv/bin/python -m hawedit2.models || true
+.venv/bin/python -m hawedit.models || true
 
 step "gate"
 bash scripts/verify.sh
@@ -58,12 +58,12 @@ Setup complete. The checkout is ready and the gate is green.
 
 Run the pipeline over a video:
 
-  .venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work
+  .venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work
 
 It will exit non-zero and name every §3 stage it could not run — the models at the middle of
 the pipeline need credentials and hardware (see BLOCKED.md). Supply a transcript and a verdict
 in their place to go all the way to a rendered clip:
 
-  .venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work \
+  .venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work \
     --transcript t.json --sentences 0,1 --qc-pass
 DONE

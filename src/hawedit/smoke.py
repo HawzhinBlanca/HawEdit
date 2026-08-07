@@ -1,6 +1,6 @@
 """A live check against the real Gemini API — opt-in, cheap, and honest about cost.
 
-    python -m hawedit2.smoke
+    python -m hawedit.smoke
 
 Everything Gemini in this project is tested offline through an injected transport, which is
 right: a suite that needed a live key would push people toward committing one. But offline
@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import sys
 
-from hawedit2.credentials import GEMINI_API_KEY, mask, read_credential
-from hawedit2.gemini import GeminiJudge, GeminiUnavailable, JudgeUnusable
-from hawedit2.judge import JudgeRequest, estimate_cost_usd
-from hawedit2.path_a import PathADiscovery
-from hawedit2.transcripts import AsrProvenance, RawTranscript, Word, normalize_transcript
+from hawedit.credentials import GEMINI_API_KEY, mask, read_credential
+from hawedit.gemini import GeminiJudge, GeminiUnavailable, JudgeUnusable
+from hawedit.judge import JudgeRequest, estimate_cost_usd
+from hawedit.path_a import PathADiscovery
+from hawedit.transcripts import AsrProvenance, RawTranscript, Word, normalize_transcript
 
 __all__ = ["SAMPLE", "main"]
 
@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="hawedit2.smoke",
+        prog="hawedit.smoke",
         description="Live check against the real Gemini API. Spends a fraction of a cent.",
     )
     parser.add_argument(
@@ -84,13 +84,11 @@ def main(argv: list[str] | None = None) -> int:
 
     key = read_credential(GEMINI_API_KEY)
     if key is None:
-        print(
-            f"✗ no {GEMINI_API_KEY}. Run `python -m hawedit2.credentials` first.", file=sys.stderr
-        )
+        print(f"✗ no {GEMINI_API_KEY}. Run `python -m hawedit.credentials` first.", file=sys.stderr)
         return 2
 
     normalized = normalize_transcript(SAMPLE)
-    print("hawedit2 live check — §3 Stage 3 Path A, then §3 Stage 4\n")
+    print("hawedit live check — §3 Stage 3 Path A, then §3 Stage 4\n")
     print(f"key         {mask(key)}")
     print(f"transcript  {len(SAMPLE.words)} words, {SAMPLE.words[-1].end_ms / 1000:.1f} s")
     print(f"estimate    ~{estimate_cost_usd(1_500):.4f} USD for both calls\n")

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from hawedit2.normalize import normalize_sorani
+from hawedit.normalize import normalize_sorani
 
 # The §4.1 collision table: (label, as-typed, as-it-should-normalize)
 SECTION_4_1_COLLISIONS = [

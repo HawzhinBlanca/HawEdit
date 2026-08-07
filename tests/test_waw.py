@@ -31,7 +31,7 @@ from pathlib import Path
 import klpt
 import pytest
 
-from hawedit2.normalize import (
+from hawedit.normalize import (
     WAW,
     is_sorani_word,
     normalize_sorani,
@@ -173,7 +173,7 @@ def test_the_index_can_now_match_a_joined_conjunction() -> None:
     Before separation, `وکتێبەکان` and `کتێبەکان` were different terms and BM25 scored a query
     for one against a document containing the other at zero.
     """
-    from hawedit2.index import Bm25Index, Document
+    from hawedit.index import Bm25Index, Document
 
     joined = Document(
         doc_id="joined", text_norm=normalize_sorani("ئەمە وکتێبەکان بوو"), start_ms=0, end_ms=1

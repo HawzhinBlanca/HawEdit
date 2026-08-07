@@ -156,9 +156,9 @@ def check_test_evidence(
 
 
 def main(argv: list[str]) -> int:
-    """`python -m hawedit2.gate <report.xml> <floor> [<not_before_mtime>]`."""
+    """`python -m hawedit.gate <report.xml> <floor> [<not_before_mtime>]`."""
     if not 3 <= len(argv) <= 4:
-        print("usage: python -m hawedit2.gate <report.xml> <floor> [not_before]", file=sys.stderr)
+        print("usage: python -m hawedit.gate <report.xml> <floor> [not_before]", file=sys.stderr)
         return 64
     not_before = float(argv[3]) if len(argv) == 4 else None
     try:
