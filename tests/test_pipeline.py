@@ -474,3 +474,31 @@ def test_supplying_a_judge_scores_the_top_candidate(tmp_path: Path) -> None:
     )
     assert seen[0].text_ckb, "the judge was sent no text to read"
     assert "editorial" not in {name for name, _ in run.skipped()}
+
+
+@needs_ffmpeg
+def test_the_run_writes_section_2s_whole_delivery_set(full_run: PipelineRun) -> None:
+    """§2's diagram ends with `MP4 · SRT/ASS · editing JSON · EDL`. All four, on disk.
+
+    Two of them did not exist until M3.6, so a run could produce an MP4 and an ASS and be two
+    deliverables short of what §2 says this system delivers, with nothing reporting it.
+    """
+    from hawedit.delivery import parse_srt_times
+    from hawedit.pipeline import Delivery
+
+    assert isinstance(full_run.delivery, Delivery), full_run.delivery
+    srt = Path(full_run.delivery.srt_path)
+    edl = Path(full_run.delivery.edl_path)
+    assert srt.exists() and edl.exists()
+
+    assert full_run.clip is not None
+    duration = full_run.clip.out_ms - full_run.clip.in_ms
+    cues = parse_srt_times(srt.read_text(encoding="utf-8"))
+    assert cues, "the SRT has no cues"
+    # The sidecar is on the clip's timeline, like the ASS burned into the picture.
+    assert all(start >= 0 and end <= duration for start, end in cues), cues
+
+    body = edl.read_text(encoding="utf-8")
+    assert "FCM: NON-DROP FRAME" in body
+    # The EDL's record timeline starts at zero; its source timecodes do not have to.
+    assert "00:00:00:00" in body

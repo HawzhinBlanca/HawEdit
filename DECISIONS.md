@@ -1449,3 +1449,44 @@ and `evidence/m3-5-caption-timeline.md` records that so nobody later reads its t
 correct.
 
 ---
+
+## D-042 · §2's delivery set was two files short
+
+**The gap.** §2's diagram ends with `MP4 · SRT/ASS · editing JSON · EDL`. MP4, ASS and the §5
+JSON existed. **SRT and EDL had never been built**, so two of the four things §2 says this
+system delivers did not exist and nothing in the run report mentioned them.
+
+**Decision 1 — one offset rule for both subtitle formats.** An SRT ships beside the MP4, so its
+timeline is the clip's. `build_srt` takes the same `clip_in_ms` as `build_ass` and refuses the
+same out-of-window sentence, because M3.5 established what happens when a subtitle file is
+written on the source's timeline: a valid, playable file that delivers nothing.
+
+**Decision 2 — the EDL is the opposite, deliberately.** Its *source* timecodes are the
+source's — where the clip was cut from — and only its *record* timecodes start at zero. An EDL
+in clip time conforms the top of the episode and is perfectly well-formed. The two formats sit
+in one module so the distinction is written down where both are.
+
+**Decision 3 — a non-integer frame rate is refused, not rounded.** 29.97 and 59.94 need SMPTE
+drop-frame timecode. Non-drop at 29.97 drifts about 3.6 s per hour against the footage and the
+EDL looks correct for the whole conform, so `ms_to_timecode` raises and names the drift.
+Drop-frame is unimplemented; saying so beats approximating it. This required `render.frame_rate`
+to report ffprobe's exact ratio (`30000/1001`) rather than a rounded one — a rate rounded on
+the way in cannot be refused on the way out.
+
+**Decision 4 — an NTSC source loses the EDL, not the clip.** Delivery is its own field on
+`PipelineRun`: a correct MP4 plus a named `StageSkipped` for delivery, and `complete` goes
+false. Failing the whole render over a sidecar would be worse; writing a drifting one would be
+worse still.
+
+**Decision 5 — empty is refused everywhere it is possible.** An SRT with no cues, an EDL event
+shorter than one frame, a video-only EDL: each is a valid file that delivers nothing, which is
+the failure class this project keeps finding.
+
+**Decision 6 — the SRT separator is a comma.** A period is WebVTT. A player expecting SRT
+rejects or mis-parses the cue and the subtitles do not appear — silent, like the rest.
+
+**Status.** Both files are written by `run_pipeline` on real media —
+`evidence/m3-6-delivery-set.md`. The fixture's clip is the whole file, so source and record
+timecodes coincide there; the unit test at 84 600 ms is what demonstrates the distinction.
+
+---

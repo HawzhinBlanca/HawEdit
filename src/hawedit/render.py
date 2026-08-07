@@ -57,6 +57,7 @@ __all__ = [
     "crop_filter",
     "encoder_available",
     "frame_duration_ms",
+    "frame_rate",
     "linked_libraries",
     "render_clip",
 ]
@@ -238,6 +239,16 @@ def frame_duration_ms(video: Path, ffmpeg: Path | None = None) -> int:
     rate would make the tolerance below either too tight for one source or too loose for
     another, and "too loose" is the direction that ships a truncated clip.
     """
+    return round(1000 / frame_rate(video, ffmpeg))
+
+
+def frame_rate(video: Path, ffmpeg: Path | None = None) -> float:
+    """`video`'s frame rate, from `r_frame_rate`, kept as the exact ratio ffprobe reports.
+
+    `30000/1001` is 29.97002997…, and rounding it to 30 here is the difference between an EDL
+    that conforms and one that drifts — `delivery.ms_to_timecode` refuses the non-integer rate
+    on purpose, and can only do so if it is told the truth about it.
+    """
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
         raise RenderError("no ffmpeg available to probe the frame rate")
@@ -267,7 +278,7 @@ def frame_duration_ms(video: Path, ffmpeg: Path | None = None) -> int:
     except ValueError as exc:
         # A video file whose frame rate cannot be read is not a file to guess about.
         raise RenderError(f"could not read a frame rate from {video}: {rate!r}") from exc
-    return round(denominator * 1000 / numerator)
+    return numerator / denominator
 
 
 def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> None:

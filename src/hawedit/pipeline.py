@@ -51,12 +51,13 @@ from typing import Any
 from hawedit.boundary import BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import build_ass
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc
+from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.index import Bm25Index
 from hawedit.ingest import IngestResult, ingest
 from hawedit.judge import EditorialJudge, JudgeRequest, JudgeVerdict
 from hawedit.path_b import VideoUnderstanding, discover_visual
-from hawedit.render import RenderError, RenderResult, render_clip
+from hawedit.render import RenderError, RenderResult, frame_rate, render_clip
 from hawedit.sentences import Sentence, anchors_for, segment_sentences
 from hawedit.transcripts import (
     NormalizedTranscript,
@@ -68,6 +69,7 @@ from hawedit.transcripts import (
 from hawedit.visual_index import SceneWindow, plan_scene_windows
 
 __all__ = [
+    "Delivery",
     "PipelineRun",
     "StageSkipped",
     "assert_contiguous",
@@ -102,6 +104,23 @@ class StageSkipped:
 
 
 @dataclass(frozen=True, slots=True)
+class Delivery:
+    """§2's two sidecars, once they are on disk.
+
+    Separate from `RenderResult` because they are separate deliverables: a run can produce a
+    correct MP4 and still be unable to write an honest EDL — an NTSC source needs drop-frame
+    timecode, which `delivery.py` refuses rather than approximates. That gap is a named
+    `StageSkipped`, not a missing file nobody mentions.
+    """
+
+    srt_path: str
+    edl_path: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"srt_path": self.srt_path, "edl_path": self.edl_path}
+
+
+@dataclass(frozen=True, slots=True)
 class PipelineRun:
     """What one pass over one media file produced, and what it could not."""
 
@@ -123,6 +142,7 @@ class PipelineRun:
     boundary: object | None = None
     clip: Clip | None = None
     render: RenderResult | StageSkipped | None = None
+    delivery: Delivery | StageSkipped | None = None
 
     def skipped(self) -> tuple[tuple[str, StageSkipped], ...]:
         """Every stage that did not run, in pipeline order."""
@@ -135,6 +155,7 @@ class PipelineRun:
             ("editorial", self.editorial),
             ("boundary", self.boundary),
             ("render", self.render),
+            ("delivery", self.delivery),
         )
         return tuple((name, value) for name, value in ordered if isinstance(value, StageSkipped))
 
@@ -172,6 +193,7 @@ class PipelineRun:
             ),
             "sentence_count": len(self.sentences),
             "visual_windows": [w.to_dict() for w in self.visual_windows],
+            "delivery": encode(self.delivery),
             "candidates": [c.to_dict() for c in self.candidates],
             "visual_index": encode(self.visual_index),
             "discovery": encode(self.discovery),
@@ -550,7 +572,40 @@ def run_pipeline(
             run, render=StageSkipped(stage="render", reason=str(exc), blocked_by=("§2 QC gate",))
         )
 
-    return _replace(run, render=rendered)
+    run = _replace(run, render=rendered)
+
+    # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
+    # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
+    srt_path = work_dir / f"{clip.clip_id}.srt"
+    edl_path = work_dir / f"{clip.clip_id}.edl"
+    try:
+        srt_path.write_text(
+            build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms),
+            encoding="utf-8",
+        )
+        # The EDL's source timecodes are the *source's* timeline — where this clip was cut
+        # from — so it takes the source's own frame rate. An NTSC rate is refused there rather
+        # than rounded, and lands here as a named gap instead of a silently drifting conform.
+        edl_path.write_text(
+            build_edl(
+                clip_in_ms=clip.in_ms,
+                clip_out_ms=clip.out_ms,
+                fps=frame_rate(source, ffmpeg),
+                title=f"{identifier} {clip.clip_id}",
+            ),
+            encoding="utf-8",
+        )
+    except (DeliveryError, RenderError) as exc:
+        return _replace(
+            run,
+            delivery=StageSkipped(
+                stage="delivery",
+                reason=str(exc),
+                blocked_by=("§2 delivery set",),
+            ),
+        )
+
+    return _replace(run, delivery=Delivery(srt_path=str(srt_path), edl_path=str(edl_path)))
 
 
 def _replace(run: PipelineRun, **changes: object) -> PipelineRun:

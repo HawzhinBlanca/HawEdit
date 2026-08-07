@@ -192,6 +192,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
 | `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, §3's ZDR gate. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
+| `delivery.py` | §2 | The SRT sidecar (clip timeline) and the CMX 3600 EDL (source timeline). Refuses NTSC rather than writing timecode that drifts. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
