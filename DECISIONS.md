@@ -270,3 +270,60 @@ what ships; the control is available for measurement only. `resolve()` does not 
 This is not a request to amend the blueprint — §3 Stage 0's instruction is unambiguous and
 the distinction between "ships" and "is benchmarked against" is real. Flagged because a
 future reader comparing §7's table to the code would otherwise find an apparent extra model.
+
+---
+
+## D-012 · Interim corpus authorised — public Sorani data, with hard limits
+
+**Date:** 2026-08-06 · **Blueprint ref:** §8.1, §1 · **Type:** authorised deviation
+
+Hawa authorised using a public Sorani corpus as an interim set while the real labelled
+material is assembled. §8.1 wants measurement on *your* audio, so the deviation is bounded
+in code rather than by intention:
+
+1. Imported items carry **no dialect and no condition**. Common Voice has neither, and
+   inventing them would fabricate exactly the evidence §4.4 exists to protect.
+2. Unlabelled hours **fill no coverage cell and count toward no minimum**.
+   `assert_section_8_1_coverage()` still fails on an interim corpus.
+3. `Corpus.provenance.interim` propagates into the benchmark report's JSON, and
+   `bench.decide_canonical` **refuses to switch the canonical model on interim data** no
+   matter how large the measured gain. It will name a challenger worth testing properly;
+   it will not move the pin. §1: "No model changes without measurement."
+4. Durations are required from the source, never defaulted — a default would fabricate both
+   the real-time factor and the hours figure.
+
+What the interim set buys: proof the harness runs end to end on real Kurdish, and a place to
+measure §4.1 collision incidence (D-013). What it does not buy: any threshold, any model
+decision, or the closure of M0.
+
+---
+
+## D-013 · Measured: §4.1's table is missing a collision (U+06BE vs U+0647)
+
+**Date:** 2026-08-06 · **Blueprint ref:** §4.1, §0 · **Type:** measured gap in the blueprint
+
+Ran the §4.1 collision detectors over KLPT's bundled Sorani lexicon — 24,894 entries, 24,051
+distinct forms. Full evidence: `evidence/collision-incidence.md`.
+
+**0.84%** of entries are altered by normalization; **0.21%** of distinct forms merge with
+another form, i.e. would have been two index entries that never match.
+
+Every one of those merges came from a pair §4.1's table does not list: **`ھ` U+06BE ARABIC
+LETTER HEH DOACHASHMEE against `ه` U+0647 ARABIC LETTER HEH** — 204 affected entries, in
+ordinary high-frequency words (`دهۆک`/`دھۆک` Duhok, `جیهان`/`جیھان` world, `بەهار`/`بەھار`
+spring). KLPT resolves it, so §4.1's mandate covers it in practice; the *table* does not
+mention it, so nobody working from the blueprint would think to test for it.
+
+The rule is **contextual**: KLPT rewrites `ھ`→`ه` inside a word and leaves an isolated `ھ`
+untouched. Pinned by a test, because a library update changing it would silently shift every
+index key without failing anything.
+
+**Action taken:** `heh_doachashmee` added to the measured collision set. **Not** a blueprint
+amendment — §4.1's normalization mandate already covers it via KLPT. Recorded so §4.1's table
+can be corrected at the next revision.
+
+**Honest limit on the number.** A curated dictionary is close to already-normalized, so
+0.21% is a **floor**, not an estimate for real text. `ه`+ZWNJ and Arabic-keyboard `ي`/`ك`
+scored zero here precisely because a lexicon does not contain typing artefacts — which is
+where §4.1's other collisions actually live. The measurement worth acting on is the same
+script over real transcripts, and that is blocked on M0.12.

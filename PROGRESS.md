@@ -49,6 +49,9 @@ M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisit
 | M0.11 | Real-model adapters (`LLM_7B_v2`, `CTC_3B_v2`, `LLM_Unlimited_3B_v2`, `rzgar-ckb-v1`, Gemini native audio) | BLOCKED | `BLOCKED.md` #2 |
 | M0.12 | Labelled Sorani audio set — several hours, per §8.1 category list | BLOCKED | `BLOCKED.md` #1 |
 | M0.13 | Benchmark executed on real Kurdish audio on hawapc01; numbers recorded | BLOCKED | `BLOCKED.md` #1, #2 |
+| M0.14 | Public-corpus importer (Common Voice `ckb`) producing an interim, unlabelled manifest | DONE | `src/hawedit2/corpus_import.py` + `tests/test_corpus_import.py` (12 tests). Refuses to invent dialect, condition or duration. Authorised in D-012. |
+| M0.15 | Measure §4.1 collision incidence on real Sorani | DONE | `evidence/collision-incidence.md` — 24,894 real entries; 0.21% of distinct forms would have failed to match. Surfaced a collision §4.1's table omits (D-013). |
+| M0.16 | Download the interim audio corpus | BLOCKED | `BLOCKED.md` #6 — every corpus host is denied by the container's network policy |
 
 **M0 cannot be closed while M0.12/M0.13 are blocked.** The harness is buildable and testable
 without the audio; the *measurement* — which is what M0 exists to produce, and what every

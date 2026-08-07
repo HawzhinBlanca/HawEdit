@@ -84,3 +84,40 @@ Recording it now so M3 does not discover it late. Unblocking this is likely just
 in the render image, but the golden reference PNG must be generated on a build whose libass
 is verified — so the first reference has to come from a trusted box, not from whatever
 ffmpeg a CI runner happens to ship.
+
+---
+
+## #6 · The interim corpus is authorised but not reachable — network policy
+
+**Status:** Hawa authorised a public Sorani corpus as an interim set (D-012). The importer
+is built and tested (M0.14). **The data cannot be downloaded from this container.**
+
+Measured at the agent proxy, not guessed:
+
+| Host | Result |
+|---|---|
+| `huggingface.co` | connection refused by proxy |
+| `datasets-server.huggingface.co` | `403` to CONNECT (policy denial) |
+| `commonvoice.mozilla.org` | connection refused by proxy |
+| `www.openslr.org` | connection refused by proxy |
+| `zenodo.org` | connection refused by proxy |
+| `github.com` / `raw.githubusercontent.com` | reachable |
+| `pypi.org` | reachable |
+
+This blocks the interim audio run **and** M0.11's model weights, which also live on Hugging
+Face — so no ASR model can be obtained here either, which is why an end-to-end interim CER
+is not merely missing a corpus.
+
+**Any one of these unblocks it:**
+
+1. **Allow `huggingface.co` in the environment's network policy.** Both the corpus and the
+   §7 model weights come from there. This is the single change that unblocks the most.
+2. **Point me at a corpus on GitHub.** GitHub is reachable, so a repo or release asset works
+   today — give me `owner/repo` and I will pull and import it. I have deliberately not gone
+   hunting: guessing repository names is how the wrong dataset gets imported, and the
+   importer refuses a non-`ckb` locale precisely because that mistake is silent.
+3. **Commit the audio to this repo** (or a repo I can read) if it is small enough.
+
+What was delivered without it: the importer, and a real measurement of §4.1 collision
+incidence on the only real Sorani reachable here — KLPT's bundled 24,894-entry lexicon
+(`evidence/collision-incidence.md`, D-013).
