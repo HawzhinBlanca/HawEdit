@@ -1490,3 +1490,38 @@ rejects or mis-parses the cue and the subtitles do not appear — silent, like t
 timecodes coincide there; the unit test at 84 600 ms is what demonstrates the distinction.
 
 ---
+
+## D-043 · §10's attribution mitigation had already drifted, in both directions
+
+**The defect.** §10 lists "Attribution obligations — Community-1 (CC-BY-4.0) requires an
+attribution notice in shipped product docs" as a known risk with a stated mitigation. The
+mitigation was a hand-written list in the README under a sentence claiming
+`registry.attribution_notices()` generated it. It did not, and the two disagreed **both ways**:
+
+- the function emitted **ASS + libass/HarfBuzz/FriBidi (LGPL/GPL)**, which the README omitted;
+- the README listed **Noto Naskh Arabic (OFL-1.1)**, which the function omitted.
+
+A licence obligation documented by hand beside a generator that does not generate it is the
+same class as everything else this session found: the shape of a mitigation without its
+content. The libass notice was missing from the only place §10 says it must appear.
+
+**Decision — `SHIPPED_ASSETS`, separate from `REGISTRY`.** The font is a real shipped artifact
+with a real obligation and is **not** a model. Adding it to `REGISTRY` to make the notice
+appear would have put something in §7's table that §7 does not contain, and `test_registry.py`
+parses §7 out of `BLUEPRINT.md` and asserts set equality both ways precisely so that cannot
+happen. §10's obligation is about shipped product docs, which is a wider set than §7's models,
+so it gets its own table. `attribution_notices()` now returns both.
+
+**Decision — the README section is asserted against the generator in both directions.** A
+notice absent from the docs is an unmet obligation; a bullet nobody generates is one that
+outlives its obligation and misstates what the product contains. `tests/test_claims.py` fails
+on either.
+
+**Also fixed.** The README pointed CI at `.github/workflows/hawedit.yml`; the file is
+`gate.yml`. A test now asserts every workflow path the README names exists on disk.
+
+**Not decided here.** Whether OFL-1.1's obligation is discharged by shipping `OFL.txt` beside
+the `.ttf` — it is what the licence asks for and the file is asserted present, but this is a
+licence question and I am not counsel.
+
+---

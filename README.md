@@ -157,7 +157,7 @@ The gate is deliberately hard to fool, because it is the only thing that decides
 - **A nested invocation refuses its own test step** — it would otherwise recurse, and once
   did (D-005).
 
-CI runs the same script on a clean runner (`.github/workflows/hawedit.yml`), fetches the
+CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the
 pinned ffmpeg, and fails if the §4.3 golden render or the §3 Stage 0 tests *skip* rather than
 run. Making that job a required status check is a repository setting, and is not done.
 
@@ -215,10 +215,14 @@ incomplete set never looks unqualified.
 ## Attribution (licence obligations, §7 and D-002)
 
 - `pyannote/speaker-diarization-community-1` — CC-BY-4.0, attribution required.
-- KLPT (Sina Ahmadi) — CC-BY-SA-4.0, attribution required; share-alike attaches if the rule
+- KLPT — Sina Ahmadi, CC-BY-SA-4.0, attribution required; share-alike attaches if the rule
   tables are ever adapted.
+- ASS + libass/HarfBuzz/FriBidi — LGPL/GPL, attribution required.
 - Noto Naskh Arabic (The Noto Project Authors) — OFL-1.1. The licence must accompany the
   font: `assets/fonts/OFL.txt` ships beside it.
 
-These must appear in shipped product documentation. `registry.attribution_notices()`
-generates the list.
+These must appear in shipped product documentation. `registry.attribution_notices()` generates
+the list, and `tests/test_claims.py` asserts this section matches it **in both directions** —
+this list had already drifted from its generator in both, which is what §10 calls a known risk
+with a stated mitigation. Models come from §7's registry; the font comes from
+`registry.SHIPPED_ASSETS`, because a font is not a model and §7's table is not ours to widen.

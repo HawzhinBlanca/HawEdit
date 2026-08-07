@@ -202,3 +202,56 @@ def test_the_module_map_covers_every_module() -> None:
     mapped = set(re.findall(r"^\| `(\w+\.py)` \|", README, re.MULTILINE))
     on_disk = {p.name for p in (ROOT / "src" / "hawedit").glob("*.py")} - {"__init__.py"}
     assert on_disk <= mapped, f"modules absent from the README map: {sorted(on_disk - mapped)}"
+
+
+# =========================================================================================
+# §10's attribution obligation, and the workflow the README names
+#
+# §10 lists "Attribution obligations — Community-1 (CC-BY-4.0) requires an attribution notice
+# in shipped product docs" as a known risk with a stated mitigation. The mitigation was a
+# hand-maintained list in the README beside a sentence claiming a function generated it. It
+# did not: the function emitted libass/LGPL, which the README omitted, and the README listed
+# the OFL font, which the function omitted because a font is not a §7 model.
+# =========================================================================================
+
+
+def test_every_generated_attribution_notice_appears_in_the_readme() -> None:
+    from hawedit.registry import attribution_notices
+
+    section = README.split("## Attribution")[1]
+    missing = [n for n in attribution_notices() if _attribution_subject(n) not in section]
+    assert not missing, f"attribution obligations absent from the README: {missing}"
+
+
+def test_every_readme_attribution_bullet_is_generated() -> None:
+    """Both directions. A bullet nobody generates is a bullet that outlives its obligation."""
+    from hawedit.registry import attribution_notices
+
+    section = README.split("## Attribution")[1].split("\n##")[0]
+    documented = {
+        line.split("—")[0].strip(" -`") for line in section.splitlines() if line.startswith("- ")
+    }
+    generated = {_attribution_subject(n) for n in attribution_notices()}
+    assert documented == generated, (
+        f"README-only: {sorted(documented - generated)}; generated-only: "
+        f"{sorted(generated - documented)}"
+    )
+
+
+def _attribution_subject(notice: str) -> str:
+    return notice.split("—")[0].strip(" `")
+
+
+def test_the_shipped_font_carries_its_licence_beside_it() -> None:
+    """OFL-1.1 requires the licence to accompany the font. A missing OFL.txt is a licence
+    violation in every build that ships the .ttf."""
+    fonts = ROOT / "assets" / "fonts"
+    assert (fonts / "NotoNaskhArabic-Regular.ttf").exists()
+    assert (fonts / "OFL.txt").exists(), "the font ships without the licence it requires"
+
+
+def test_the_readme_names_a_workflow_that_exists() -> None:
+    """The README pointed at `.github/workflows/hawedit.yml`; the file is `gate.yml`."""
+    named = set(re.findall(r"\.github/workflows/([\w.-]+\.ya?ml)", README))
+    on_disk = {p.name for p in (ROOT / ".github" / "workflows").glob("*.y*ml")}
+    assert named <= on_disk, f"README names workflows that do not exist: {sorted(named - on_disk)}"

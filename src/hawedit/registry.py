@@ -33,6 +33,7 @@ __all__ = [
     "BENCHMARK_CONTROLS",
     "EXCLUDED",
     "REGISTRY",
+    "SHIPPED_ASSETS",
     "ExcludedEntry",
     "Licence",
     "ModelEntry",
@@ -40,6 +41,7 @@ __all__ = [
     "ModelNotInRegistry",
     "NonCommercialLicence",
     "Provisioning",
+    "ShippedAsset",
     "WrongRole",
     "assert_commercially_usable",
     "attribution_notices",
@@ -68,6 +70,7 @@ CC_BY_NC_4_0: Final = Licence("CC-BY-NC-4.0", commercial_use=False)
 COMMERCIAL: Final = Licence("commercial", commercial_use=True)
 OPEN_PER_SECTION_7: Final = Licence("open (§7, not independently verified)", commercial_use=True)
 LGPL_GPL: Final = Licence("LGPL/GPL", commercial_use=True, attribution_required=True)
+OFL_1_1: Final = Licence("OFL-1.1", commercial_use=True, attribution_required=True)
 IN_HOUSE: Final = Licence("in-house", commercial_use=True)
 NOT_ASSESSED: Final = Licence("not assessed (excluded for a non-licence reason)", False)
 
@@ -462,6 +465,34 @@ def assert_commercially_usable(entry: ModelEntry | ExcludedEntry) -> None:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ShippedAsset:
+    """A non-model artifact that ships with the product and carries a licence obligation.
+
+    Deliberately **not** in `REGISTRY`. §7 is the model registry and the rule is that nothing
+    is in it that is not in §7 — a font is not a model and putting it there to get an
+    attribution notice would corrupt the one table the blueprint fixes. §10's obligation is
+    about shipped product docs, which is a wider set than §7's models, so it gets its own.
+    """
+
+    name: str
+    role: str
+    licence: Licence
+    licence_file: str | None = None
+
+
+SHIPPED_ASSETS: Final[tuple[ShippedAsset, ...]] = (
+    ShippedAsset(
+        name="Noto Naskh Arabic (The Noto Project Authors)",
+        role="Captions font",
+        licence=OFL_1_1,
+        # OFL-1.1 requires the licence to accompany the font. Shipping the .ttf without it is
+        # a licence violation in every build, and `tests/test_claims.py` asserts the file.
+        licence_file="assets/fonts/OFL.txt",
+    ),
+)
+
+
 def attribution_notices() -> list[str]:
     """Attribution text every shipped build must carry.
 
@@ -475,5 +506,12 @@ def attribution_notices() -> list[str]:
         note = f"{entry.model_id} — {entry.component}, licensed {entry.licence.name}"
         if entry.licence.share_alike:
             note += " (share-alike applies to any adaptation of this work)"
+        notices.append(note)
+    for asset in SHIPPED_ASSETS:
+        if not asset.licence.attribution_required:
+            continue
+        note = f"{asset.name} — {asset.role}, licensed {asset.licence.name}"
+        if asset.licence_file:
+            note += f" (the licence must accompany it: {asset.licence_file})"
         notices.append(note)
     return notices
