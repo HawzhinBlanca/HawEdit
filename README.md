@@ -8,11 +8,11 @@ Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1
 What exists is most of §3 except the middle — ingest, the transcript artifacts and their
 invariants, alignment, segmentation, the text index, boundary fusion, captions, and a render
 path that produces a real vertical clip with Kurdish captions burned in — plus the whole §8
-measurement apparatus, each piece tested and gated. What is missing is the two *producers* of
-candidates and the editorial judge (§3 Stages 3 and 4), which is exactly the part that needs
-models and credentials this machine does not have — though the union that joins the two
-discovery paths is built and tested ahead of them. Nothing joins the pieces into one command
-yet.
+measurement apparatus, each piece tested and gated. Every §3 stage now has code. What is
+missing is the three hosted or GPU-bound *models* at the middle of it — Path A's Kurdish
+judge, Path B's `VideoChat3-4B`, and Stage 4's judge call — which is exactly the part that
+needs credentials and hardware this machine does not have. The contracts they plug into are
+built and tested ahead of them. Nothing joins the pieces into one command yet.
 
 | §3 Stage | State | What is missing |
 |---|---|---|
@@ -20,7 +20,7 @@ yet.
 | 1 · Speech | contracts only | The ASR models themselves (`BLOCKED.md` #2). Alignment and segmentation are done and tested. |
 | 2 · Index | text only | The visual index (Qwen3-VL embeddings) needs weights and a GPU. |
 | 3 · Discovery | merge only | Both *producers* — Path A needs Gemini (`BLOCKED.md` #3), Path B needs `VideoChat3-4B` weights (`BLOCKED.md` #2). The union that joins them is built. |
-| 4 · Editorial judge | **not written** | Needs Gemini credentials (`BLOCKED.md` #3). |
+| 4 · Editorial judge | contract only | The call itself — Gemini credentials and the §3 ZDR governance decision (`BLOCKED.md` #3). |
 | 5 · Boundary fusion | **runs** | TimeLens2 refinement (M6). |
 | 6 · Render | **runs** | Speaker-tracked reframing — the crop is static centre (`BLOCKED.md` #4). NVENC needs hawapc01. |
 
@@ -141,6 +141,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
+| `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |

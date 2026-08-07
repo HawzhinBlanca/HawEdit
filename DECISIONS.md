@@ -909,3 +909,88 @@ path earns its cost. Those are §8.2 questions and they need the labelled set. W
 established is that the merge cannot be the thing that loses a candidate.
 
 ---
+## D-030 · §3 Stage 4 lists two judge outputs §5's frozen contract has no cell for
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 4, §5 · **Type:** discrepancy inside the
+frozen blueprint — recorded, not resolved. **Needs Hawa.**
+
+§3 Stage 4 states the judge's outputs:
+
+> hook strength · self-containment · **payoff location** · meaning fidelity ·
+> misleading-edit risk · cultural landing · Kurdish title, description, **hashtags**
+
+§5's JSON contract carries `hook_score`, `self_contained`, `meaning_fidelity`,
+`misleading_edit_risk`, `cultural_landing`, `narrative_role`, `judge`, `sv6d` in `editorial`,
+and `title_ckb`, `description_ckb` in `output`. There is no cell for **payoff location** and
+none for **hashtags**. `narrative_role` is the nearest thing to the first and is not it — it
+records *that* a clip is a payoff, not *where* the payoff lands.
+
+**Not resolved here, because §5 is frozen and adding fields to it would be redesigning the
+architecture.** What is done instead:
+
+* `JudgeVerdict` carries the full §3 Stage 4 list, including `payoff_at_ms` and
+  `hashtags_ckb`. Nothing the judge produces is discarded at the point of production.
+* `to_editorial()` and `to_output()` project onto §5's blocks, and the projection is lossy in
+  exactly those two fields. The loss happens in one named place with a docstring on it and a
+  test asserting which fields do not survive, instead of being a field nobody noticed was
+  missing.
+
+**`payoff_at_ms` is validated even though it does not ship:** it must fall inside the clip. A
+payoff outside the cut is not a payoff, it is evidence the judge scored a different span than
+the one being rendered — and that is worth catching whether or not the value travels.
+
+**The question for Hawa:** does §5 gain two fields, or is §3 Stage 4's list aspirational? Both
+are defensible; only one of them is what the client artifact should contain. Until it is
+answered, the payoff location and hashtags exist in the pipeline and stop at §5's boundary.
+
+---
+
+## D-031 · §3 Stage 4's four warnings, made enforceable
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 4 · **Type:** implementation choice
+
+Stage 4 is entirely a hosted model, so the buildable part is the contract — which is also where
+§3 puts most of its warnings.
+
+**"Evaluated, not routed", enforced at three points.** `route()` refuses `gemini-3.1-pro`;
+`JudgeVerdict.to_editorial()` refuses it again; §5's `Editorial` refuses it a third time. Three
+rather than one because a verdict can arrive at §5 as deserialized JSON that never passed
+through the other two. What is *not* refused is constructing a shadow verdict at all — the
+first draft did that, and it was wrong: the shadow is *evaluated*, so refusing to build its
+verdict would make "switch only when 3.1 Pro beats 2.5 Pro" unenforceable for want of a 3.1 Pro
+result to compare. Routability is a question about shipping, not about existing.
+
+**"Empirical beats newer", as three refusals.** `decide_judge` will not promote on an empty
+regression set (promotion on nothing is precisely the reasoning §3 exists to prevent), will not
+promote on a tie (a tie is not beating), and will not promote on fewer than 20 items (a
+one-item margin is noise). The 20 is a judgment, not a blueprint figure, and it is a parameter
+so §8.2 can raise it against real data.
+
+**The signature takes no date.** §3: the October 2026 deprecation applies to Vertex AI rather
+than the Developer API, and this is "a managed migration with a shadow test, not a deadline". A
+`decide_judge(..., deprecation_date=...)` would encode the reading §3 explicitly rejects, so a
+test asserts no parameter of `decide_judge` is date-shaped.
+
+**The 200K ceiling is arithmetic.** §3's with-video figure is ~360K tokens per source hour
+against "keep each request under 200K tokens to stay on the lower Pro price tier" — so the most
+expensive mode is also the one that cannot be a single request. §3 already prescribes the fix
+(20 × 60 s segments); `assert_within_tier` makes skipping it loud. A request whose token count
+is `None` is refused too: "unmeasured is None", and None is not "small enough".
+
+**"Don't pay the judge twice."** `JudgeRequest.for_survivor` carries Path A's score forward and
+refuses `PATH_A_DISCOVERY` for a candidate that already has one. That mistake produces a larger
+bill and a correct-looking result, which is exactly why nothing else would catch it.
+
+**One addition §3 does not ask for, added anyway.** The Kurdish title, description and hashtags
+are refused if they contain no Arabic-script characters. It is the quietest way this system can
+fail a Kurdish client: every type downstream accepts a `str`, so a judge answering in English
+produces a clip that renders, uploads and reads as finished work in the wrong language. The
+check is deliberately weak — "plausibly Kurdish", not "good Kurdish" — because the failure it
+exists to catch is total. The fields are also §4.1-normalized on the way in, since an
+unnormalized title makes the clip unfindable by its own name in the §2 index.
+
+**Cost figures are back-solved from §3's own table** (20K tokens ≈ $0.04, 360K ≈ $0.72) rather
+than from a published price list, so this project's cost claims and the blueprint's cannot
+drift apart. It is an estimate and is named as one — the authority on the bill is the bill.
+
+---

@@ -151,3 +151,24 @@ refers to nothing.
 status checks to pass → add **`gate`** (workflow `hawedit2`).
 
 Until then, treat every DONE mark as resting on a local run plus an advisory CI run.
+
+---
+
+## #8 · §3 Stage 4 and §5 disagree about two judge outputs
+
+**Needs:** Hawa, one decision. No code, no credentials.
+
+§3 Stage 4 lists **payoff location** and **hashtags** among the judge's outputs. §5's frozen
+JSON contract has no cell for either. `narrative_role` records *that* a clip is a payoff, not
+*where* the payoff lands.
+
+This does not block Stage 4 — the verdict carries both and the projection to §5 drops them
+explicitly (D-030), so nothing is lost inside the pipeline. It blocks knowing what the client
+artifact is supposed to contain.
+
+**The question:** does §5's contract gain `payoff_at_ms` and `hashtags_ckb`, or is §3 Stage 4's
+output list aspirational? Both readings are defensible and I will not pick one — §5 is frozen,
+and editing it is redesigning the architecture rather than implementing it.
+
+Until it is answered, a payoff location and hashtags exist in every verdict and stop at §5's
+boundary.
