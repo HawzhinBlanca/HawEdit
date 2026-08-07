@@ -30,6 +30,28 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | **M7** | Repurposing eval set + threshold tuning | Quality gates | **WIP — §8.2 metrics DONE; the 200–500 labelled candidates need humans** |
 | **M8** | Auto-reframe (SAM 3 / Molmo2) | Vertical formats | TODO |
 
+## Where this stops, and why
+
+Everything that does not require credentials, model weights, a GPU, human annotators, or a
+decision from Hawa is built, tested and gated. `bash scripts/setup.sh` takes a clone to a green
+gate; `python -m hawedit2.pipeline VIDEO.mp4` runs §3 as far as the available models allow and
+exits non-zero naming every stage it could not.
+
+What remains is not a backlog. Every open row below is waiting on one of six things:
+
+| Waiting on | Blocks |
+|---|---|
+| `huggingface.co` reachable | M0.11–M0.13, M0.16, M1.4, M5 — every model weight |
+| A GPU (hawapc01) | M0.13, M1.4, M5, M6, M8, NVENC in M3.3 |
+| Gemini credentials + the §3 ZDR governance answer | M2.3, M4, Stage 4's call |
+| The gated `pyannote/speaker-diarization-community-1` repo | M0.10, M1.3, the speaker-tracked reframe in M3.3 |
+| Human annotators + real footage | M7.2, and M7.3 behind it |
+| Hawa, one decision each | `BLOCKED.md` #7 (required CI check), #8 (§3/§5 disagree on two judge outputs) |
+
+No amount of further work in this environment moves any of them. The contracts those models
+plug into are built and tested ahead of them, so landing each one is a matter of producing the
+type its stage already expects.
+
 ## M0 — task ledger
 
 M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisite of
