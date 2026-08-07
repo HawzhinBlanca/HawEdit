@@ -117,6 +117,18 @@ in `.env` at 0600, and the panel refuses to write anywhere git does not ignore.
 Get a key at <https://aistudio.google.com/apikey>. There is deliberately no `--key` flag:
 command-line arguments are visible in `ps` to everyone on the machine.
 
+Once a key is stored, verify the real path end to end — this is the only thing in the project
+that spends money, and it says how much before it does:
+
+```bash
+.venv/bin/python -m hawedit2.smoke     # two real calls, ~$0.003
+```
+
+It runs §3 Stage 3 Path A over a built-in Sorani sample and §3 Stage 4 on the top candidate,
+then prints the Kurdish title it got back. It checks what offline tests cannot: that
+`gemini-2.5-pro` is enabled on your key's project, that the structured-output schema survives a
+real response, and that the model actually answers in Kurdish.
+
 **Before the first client job**, §3 Stage 3 requires a decision, not a setting: full-transcript
 discovery sends 100% of every transcript to Google, and for COMMS and KAAE material paid-tier
 Vertex with zero-data-retention is *mandatory, not advisory*. `gemini.Governance` refuses to
@@ -173,6 +185,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `path_a.py` | §3 Stage 3 Path A | The Kurdish judge over the **whole** transcript. Refuses to send a subset, and refuses to split one. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
+| `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
 | `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, §3's ZDR gate. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
