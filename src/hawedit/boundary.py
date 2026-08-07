@@ -148,6 +148,21 @@ def assert_boundary_invariant(boundary: Boundary) -> None:
         BoundaryInvariantViolated: the clip would start or end mid-sentence, or its
             sentence never closed.
     """
+    # A real boolean, not merely something truthy. `Boundary` is deliberately not
+    # self-validating so that *this* function can be the universal net — its docstring says a
+    # boundary arriving as JSON from another stage "has to be checkable on arrival". The
+    # strict-bool guard was wired into `Boundary.from_dict` alone, so anything built by another
+    # route reached here with sentence_complete="false" and passed, because a non-empty string
+    # is truthy. Kurdish invariant #2 is "reject, never render"; that rendered. Found by the
+    # independent review of 2026-08-07.
+    if not isinstance(boundary.sentence_complete, bool):
+        raise BoundaryInvariantViolated(
+            f"sentence_complete is {boundary.sentence_complete!r} "
+            f"({type(boundary.sentence_complete).__name__}), not a boolean. "
+            f"bool({boundary.sentence_complete!r}) would be "
+            f"{bool(boundary.sentence_complete)} — a coercion here decides whether a clip that "
+            f"never finished its sentence reaches a client (Kurdish invariant #2)."
+        )
     if not boundary.sentence_complete:
         raise BoundaryInvariantViolated(
             "sentence_complete is false — reject, never render (Kurdish invariant #2). §3 "

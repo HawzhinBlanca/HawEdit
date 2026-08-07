@@ -27,6 +27,7 @@ because arguments are visible in `ps` to every user on the machine.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import subprocess
@@ -145,7 +146,33 @@ def write_credential(
     body = "# hawedit credentials. Git-ignored. Never commit this file.\n" + "".join(
         f"{key}={val}\n" for key, val in sorted(existing.items())
     )
-    env_file.write_text(body, encoding="utf-8")
+
+    # Two defects the independent review found here, fixed by one syscall.
+    #
+    # O_NOFOLLOW: `git check-ignore` answers about the *pathname*, never the symlink target, so
+    # `.env -> README.md` passed the ignore check and `Path.write_text` followed the link and
+    # put the plaintext key into a tracked file — one `git add -A` from being committed
+    # forever. `TranscriptStore.write_raw` already used O_EXCL for exactly this reason; the one
+    # module actually handling a secret did not.
+    #
+    # mode=0o600 at creation: `write_text` then `chmod` created the file at the process umask
+    # (0644 typically) and only narrowed it afterwards, leaving a window in which any other
+    # local user — or a backup, indexer or AV scan — could read the key. A file cannot be
+    # created wider than the mode passed here, so there is no window to lose.
+    try:
+        handle = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            raise CredentialError(
+                f"{env_file} is a symbolic link. git reports whether the *name* is ignored, "
+                f"not where the link points, so writing through it could put the key into a "
+                f"tracked file. Remove the link and try again."
+            ) from exc
+        raise CredentialError(f"cannot write {env_file}: {exc}") from exc
+
+    with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        stream.write(body)
+    # An existing file keeps its old mode through O_CREAT, so narrow it explicitly too.
     env_file.chmod(0o600)
     return env_file
 

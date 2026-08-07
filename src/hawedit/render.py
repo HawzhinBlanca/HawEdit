@@ -49,6 +49,7 @@ __all__ = [
     "RenderResult",
     "crop_filter",
     "encoder_available",
+    "linked_libraries",
     "render_clip",
 ]
 
@@ -125,6 +126,30 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
         # ffmpeg can exit 0 having written nothing when the encoder fails to initialise, so
         # the exit code alone is not the answer either.
         return result.returncode == 0 and probe.exists() and probe.stat().st_size > 0
+
+
+def linked_libraries(ffmpeg: Path) -> str:
+    """What this ffmpeg binary is dynamically linked against, via `ldd`.
+
+    §4.3.2's warning is that a build accepting `shaping=complex` may lack the backing library,
+    and `assert_rtl_stack` takes two evidence sources for exactly that reason: ffmpeg's own
+    `--enable-libharfbuzz` governs *drawtext*, not whether the separately built, dynamically
+    linked `libass.so` was itself compiled with HarfBuzz. The render path passed `""` for the
+    second source, so the distro-build case the parameter exists for was dead code and Kurdish
+    invariant #4 rested on a flag string. Found by the independent review of 2026-08-07.
+
+    Returns the empty string rather than raising when `ldd` is absent or the binary is static —
+    both are normal (the pinned build here *is* static), and a crash would take down every
+    render. An empty result simply means this source contributes no evidence, which is what
+    `assert_rtl_stack` already handles.
+    """
+    try:
+        result = subprocess.run(
+            ["ldd", str(ffmpeg)], capture_output=True, text=True, check=False, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout
 
 
 def crop_filter(
@@ -226,7 +251,7 @@ def render_clip(
     ).stdout
     # §4.3.2: a build that accepts shaping=complex may still lack HarfBuzz, and the failure is
     # invisible until a client sees the captions. Checked here, not only in the golden test.
-    assert_rtl_stack(buildconf, "")
+    assert_rtl_stack(buildconf, linked_libraries(binary))
 
     if not encoder_available(encoder, binary):
         raise RenderError(

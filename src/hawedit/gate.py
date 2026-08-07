@@ -141,7 +141,26 @@ def check_test_evidence(
             f"{evidence.collected} collected."
         )
 
+    # Collected is not run. A report of 700 collected, 0 failures, 0 errors and 700 *skipped*
+    # cleared every check this function had, and `verify.sh` printed VERIFY OK with zero test
+    # bodies executed. One over-broad `skipif` — a media guard that evaluates true everywhere —
+    # produces exactly that report. The gate had learned that an exit code is not evidence and
+    # then accepted a report proving nothing ran. Found by the independent review.
+    if evidence.passed == 0:
+        raise NoTestEvidence(
+            f"{report_path} says {evidence.collected} tests were collected and {evidence.skipped} "
+            f"skipped — nothing actually ran. A suite that skips itself is not a passing suite."
+        )
+
     floor = read_floor(floor_path)
+    if evidence.passed < floor:
+        raise NoTestEvidence(
+            f"only {evidence.passed} tests passed against a floor of {floor} "
+            f"({evidence.skipped} skipped of {evidence.collected} collected). The tests still "
+            f"exist, so the collected count clears the floor while the number that ran does "
+            f"not — which is what a creeping skip condition looks like. If ffmpeg or the media "
+            f"stack is missing, install it: `bash scripts/setup.sh`."
+        )
     if evidence.collected < floor:
         raise NoTestEvidence(
             f"the suite collected {evidence.collected} tests but the committed floor is "

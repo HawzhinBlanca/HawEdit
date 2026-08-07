@@ -64,7 +64,11 @@ API_ROOT: Final = "https://generativelanguage.googleapis.com/v1beta"
 
 # Transient statuses only. A 400 means this request is malformed and a retry bills twice for
 # the same mistake; a 403 means the key lacks access and will still lack it in two seconds.
-_RETRYABLE: Final = frozenset({429, 500, 502, 503, 504})
+# 0 is `_https`'s marker for an OSError — a reset connection, a DNS blip, a TLS hiccup.
+# It was absent here, so a dropped connection was reported as "the judge refused this
+# request" on the first attempt, sending someone to look at their prompt when the problem
+# was the network. A 400 still does not retry: that request is wrong and will stay wrong.
+_RETRYABLE: Final = frozenset({0, 429, 500, 502, 503, 504})
 
 
 class GeminiUnavailable(RuntimeError):
@@ -73,6 +77,24 @@ class GeminiUnavailable(RuntimeError):
 
 class JudgeUnusable(ValueError):
     """Raised when the model answered but the answer is not a verdict this system can use."""
+
+
+def _strict_bool(value: object, field: str) -> bool:
+    """Refuse anything that is not a real JSON boolean.
+
+    `bool("false")` is True. This is the same guard `boundary.py` grew after the previous
+    audit, applied where it was most obviously needed and least obviously present: the point
+    where the least-trusted input in the system — a hosted model's response — becomes a field
+    on a shipped artifact. Structured output makes a schema violation unlikely, not impossible,
+    and nothing else re-checks the type before the value is used.
+    """
+    if not isinstance(value, bool):
+        raise JudgeUnusable(
+            f"the judge returned {field}={value!r} ({type(value).__name__}), not a JSON "
+            f"boolean. bool({value!r}) would be {bool(value)} — a coercion here decides a "
+            f"field that ships to the client."
+        )
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,7 +270,15 @@ class GeminiJudge:
         self._key = key
 
     def count_request_tokens(self, request: JudgeRequest) -> int:
-        """The real token count for what this request would send."""
+        """The real token count for what this request would send.
+
+        Governance runs first. This method builds the full prompt — transcript included — and
+        posts it to Google, so it is a network egress path exactly like `judge()`. It did not
+        check, which made it a live bypass of the one rule in this project with legal
+        consequences: §3 Stage 3 calls ZDR "mandatory, not advisory" for COMMS and KAAE
+        material. `smoke.py` calls this directly. Found by the independent review.
+        """
+        self.governance.assert_permits_upload()
         return count_tokens(self._prompt(request), self._key, self.model_id, self._transport)
 
     def _prompt(self, request: JudgeRequest) -> str:
@@ -334,7 +364,7 @@ class GeminiJudge:
             return JudgeVerdict(
                 candidate_id=request.candidate_id,
                 hook_score=float(fields["hook_score"]),
-                self_contained=bool(fields["self_contained"]),
+                self_contained=_strict_bool(fields["self_contained"], "self_contained"),
                 payoff_at_ms=int(fields["payoff_at_ms"]),
                 meaning_fidelity=float(fields["meaning_fidelity"]),
                 misleading_edit_risk=float(fields["misleading_edit_risk"]),

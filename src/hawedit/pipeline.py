@@ -67,6 +67,7 @@ from hawedit.transcripts import (
 __all__ = [
     "PipelineRun",
     "StageSkipped",
+    "assert_contiguous",
     "main",
     "run_pipeline",
 ]
@@ -229,6 +230,32 @@ _STAGE_4_JUDGE = StageSkipped(
 )
 
 
+def assert_contiguous(selection: tuple[int, ...], total: int) -> None:
+    """Refuse a selection that skips a sentence it spans.
+
+    §5's anchors come from the first and last *selected* complete sentence, and the invariant
+    check only compares numbers — so selecting sentences 0 and 2 produces a boundary spanning
+    sentence 1, and the clip renders with real Kurdish speech in the middle that has no caption
+    and is absent from the `raw_ckb` §4.1 says ships to the client. The numbers all agree; the
+    artifact lies. Found by the independent review of 2026-08-07.
+
+    Out-of-order indices are fine — sorted, they are still a run.
+
+    Raises:
+        ValueError: the selection has duplicates, or skips a sentence between its ends.
+    """
+    if len(set(selection)) != len(selection):
+        raise ValueError(f"sentence selection {selection} contains a duplicate index")
+    ordered = sorted(selection)
+    if ordered and ordered != list(range(ordered[0], ordered[-1] + 1)):
+        missing = sorted(set(range(ordered[0], ordered[-1] + 1)) - set(ordered))
+        raise ValueError(
+            f"sentence selection {selection} is not contiguous — it spans sentence(s) "
+            f"{missing} without including them. The clip would run across speech that has no "
+            f"caption and is missing from the transcript that ships to the client."
+        )
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
@@ -354,6 +381,9 @@ def run_pipeline(
             f"sentence index {out_of_range} is outside 0..{len(sentences) - 1}. The transcript "
             f"segmented into {len(sentences)} sentence(s)."
         )
+    # After the range check on purpose: an index of 99 in a 3-sentence transcript is out of
+    # range, and reporting it as "spans sentences 1..98" is true but useless.
+    assert_contiguous(select_sentences, total=len(sentences))
     selected = tuple(sentences[i] for i in select_sentences)
 
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------
