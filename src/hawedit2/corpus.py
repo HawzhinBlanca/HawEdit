@@ -41,6 +41,7 @@ __all__ = [
     "Dialect",
     "IncompleteCoverage",
     "InvalidCorpusItem",
+    "Provenance",
 ]
 
 
@@ -86,7 +87,10 @@ class CorpusItem:
     item_id: str
     audio_path: str
     reference_ckb: str
-    dialect: Dialect
+    # None means "not labelled for dialect". A public corpus does not carry §4.4's
+    # Hewlêr/Slemani/Mukriyan split, and inventing one would be fabricated evidence — so
+    # unlabelled items contribute hours and nothing else. See Provenance and D-012.
+    dialect: Dialect | None
     conditions: frozenset[Condition]
     duration_s: float
     named_entities: tuple[str, ...] = ()
@@ -107,10 +111,16 @@ class CorpusItem:
                 f"{self.item_id}: duration_s must be positive; real-time factor and the "
                 f"hours-of-coverage check both divide by it."
             )
-        if not self.conditions:
+        if self.dialect is not None and not self.conditions:
             raise InvalidCorpusItem(
-                f"{self.item_id}: no condition labelled. An unlabelled item contributes "
-                f"hours to the corpus without contributing coverage."
+                f"{self.item_id}: has a dialect but no condition. Half-labelled items fill "
+                f"a coverage cell they cannot support — label both, or neither."
+            )
+        if self.dialect is None and self.conditions:
+            raise InvalidCorpusItem(
+                f"{self.item_id}: has conditions but no dialect. §4.4 scores per dialect, so "
+                f"a condition with no dialect cannot be placed in the coverage grid — label "
+                f"both, or neither."
             )
         if self.conditions & _CODE_SWITCH_CONDITIONS and not self.code_switch_spans:
             raise InvalidCorpusItem(
@@ -129,12 +139,17 @@ class CorpusItem:
                 f"{self.speaker_count}. Overlap needs at least two speakers."
             )
 
+    @property
+    def is_labelled(self) -> bool:
+        """True when this item can occupy a §8.1 coverage cell."""
+        return self.dialect is not None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "item_id": self.item_id,
             "audio_path": self.audio_path,
             "reference_ckb": self.reference_ckb,
-            "dialect": self.dialect.value,
+            "dialect": self.dialect.value if self.dialect else None,
             "conditions": sorted(c.value for c in self.conditions),
             "duration_s": self.duration_s,
             "named_entities": list(self.named_entities),
@@ -145,8 +160,9 @@ class CorpusItem:
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> CorpusItem:
         item_id = data.get("item_id", "<unnamed>")
+        raw_dialect = data.get("dialect")
         try:
-            dialect = Dialect(data["dialect"])
+            dialect = Dialect(raw_dialect) if raw_dialect is not None else None
         except ValueError as exc:
             raise InvalidCorpusItem(
                 f"{item_id}: unknown dialect {data['dialect']!r}. §4.4 evaluates Hewlêr, "
@@ -173,22 +189,56 @@ class CorpusItem:
 
 
 @dataclass(frozen=True, slots=True)
+class Provenance:
+    """Where a corpus came from, and whether it may be treated as evidence.
+
+    `interim=True` marks a stand-in — public data used to exercise the harness while the
+    real labelled set is assembled. An interim corpus can prove the pipeline runs; it
+    cannot justify a model change (§1: "No model changes without measurement", §8.1: on
+    *your* audio), and `bench.decide_canonical` refuses to switch on one.
+    """
+
+    name: str
+    licence: str
+    interim: bool = False
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.licence.strip():
+            raise ValueError(
+                f"corpus {self.name!r} has no recorded licence. Every corpus entering this "
+                f"system carries an audited licence — NonCommercial is a hard reject, and "
+                f"'unknown' is not a licence."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class Coverage:
     """What the labelled set actually covers, per dialect and per cell."""
 
     hours_by_dialect: Mapping[Dialect, float]
     items_by_dialect: Mapping[Dialect, int]
     missing_cells: tuple[tuple[Dialect, Condition], ...]
-    total_hours: float
+    labelled_hours: float
+    unlabelled_hours: float
     meets_minimum_hours: bool
+
+    @property
+    def total_hours(self) -> float:
+        return self.labelled_hours + self.unlabelled_hours
 
     def is_complete(self) -> bool:
         return not self.missing_cells and self.meets_minimum_hours
 
     def summary(self) -> str:
         per_dialect = ", ".join(f"{d.value}={self.hours_by_dialect[d]:.2f}h" for d in Dialect)
+        unlabelled = (
+            f", {self.unlabelled_hours:.2f}h unlabelled (counts toward nothing)"
+            if self.unlabelled_hours
+            else ""
+        )
         return (
-            f"{self.total_hours:.2f}h total ({per_dialect}); "
+            f"{self.labelled_hours:.2f}h labelled ({per_dialect}){unlabelled}; "
             f"{len(self.missing_cells)} of {len(Dialect) * len(Condition)} cells empty"
         )
 
@@ -198,12 +248,22 @@ class Corpus:
     """The labelled Sorani set §8.1 calls for."""
 
     items: tuple[CorpusItem, ...] = field(default=())
+    provenance: Provenance = field(
+        default=Provenance(name="unnamed", licence="unrecorded — see DECISIONS.md")
+    )
 
     def coverage(self) -> Coverage:
         hours: dict[Dialect, float] = {d: 0.0 for d in Dialect}
         counts: dict[Dialect, int] = {d: 0 for d in Dialect}
         populated: set[tuple[Dialect, Condition]] = set()
+        unlabelled_hours = 0.0
         for item in self.items:
+            if item.dialect is None:
+                # Hours with no dialect cannot fill a §4.4 cell and must not count toward
+                # the §8.1 minimum: five hours of unlabelled read speech is not five hours
+                # of coverage. Tracked separately so it is visible, not discarded.
+                unlabelled_hours += item.duration_s / 3600.0
+                continue
             hours[item.dialect] += item.duration_s / 3600.0
             counts[item.dialect] += 1
             for condition in item.conditions:
@@ -215,13 +275,14 @@ class Corpus:
             for condition in Condition
             if (dialect, condition) not in populated
         )
-        total = sum(hours.values())
+        labelled = sum(hours.values())
         return Coverage(
             hours_by_dialect=hours,
             items_by_dialect=counts,
             missing_cells=missing,
-            total_hours=total,
-            meets_minimum_hours=total >= MINIMUM_HOURS,
+            labelled_hours=labelled,
+            unlabelled_hours=unlabelled_hours,
+            meets_minimum_hours=labelled >= MINIMUM_HOURS,
         )
 
     def assert_section_8_1_coverage(self) -> None:
@@ -239,7 +300,7 @@ class Corpus:
             problems.append(f"uncovered cells: {named}")
         if not coverage.meets_minimum_hours:
             problems.append(
-                f"only {coverage.total_hours:.2f} hours labelled; §8.1 asks for several "
+                f"only {coverage.labelled_hours:.2f} hours labelled; §8.1 asks for several "
                 f"(floor {MINIMUM_HOURS:.1f}h)"
             )
         if problems:
@@ -262,7 +323,15 @@ class Corpus:
 
     def to_json(self) -> str:
         return json.dumps(
-            {"items": [i.to_dict() for i in self.items]},
+            {
+                "provenance": {
+                    "name": self.provenance.name,
+                    "licence": self.provenance.licence,
+                    "interim": self.provenance.interim,
+                    "note": self.provenance.note,
+                },
+                "items": [i.to_dict() for i in self.items],
+            },
             ensure_ascii=False,
             indent=2,
             sort_keys=True,
@@ -276,4 +345,15 @@ class Corpus:
     def load(path: Path) -> Corpus:
         data: Mapping[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         raw_items: Sequence[Mapping[str, Any]] = data["items"]
-        return Corpus(tuple(CorpusItem.from_dict(i) for i in raw_items))
+        raw_provenance = data.get("provenance")
+        provenance = (
+            Provenance(
+                name=raw_provenance["name"],
+                licence=raw_provenance["licence"],
+                interim=bool(raw_provenance.get("interim", False)),
+                note=raw_provenance.get("note", ""),
+            )
+            if raw_provenance
+            else Provenance(name="unnamed", licence="unrecorded — see DECISIONS.md")
+        )
+        return Corpus(tuple(CorpusItem.from_dict(i) for i in raw_items), provenance=provenance)

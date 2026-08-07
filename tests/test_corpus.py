@@ -24,6 +24,7 @@ from hawedit2.corpus import (
     Dialect,
     IncompleteCoverage,
     InvalidCorpusItem,
+    Provenance,
 )
 
 
@@ -246,3 +247,85 @@ def test_missing_audio_is_reported_separately_from_schema_validity(tmp_path: Pat
     corpus = a_full_corpus()
     missing = corpus.missing_audio(root=tmp_path)
     assert len(missing) == len(corpus.items), "no audio exists under an empty root"
+
+
+# --- interim / unlabelled corpora (M0.6b) ---------------------------------------------
+
+
+def an_unlabelled_item(item_id: str = "cv-001", duration_s: float = 5.0) -> CorpusItem:
+    return CorpusItem(
+        item_id=item_id,
+        audio_path=f"clips/{item_id}.mp3",
+        reference_ckb="ئەمە زۆر باشە",
+        dialect=None,
+        conditions=frozenset(),
+        duration_s=duration_s,
+    )
+
+
+def test_an_item_may_be_explicitly_unlabelled() -> None:
+    """A public corpus has no dialect labels. Inventing one would be fabricated evidence."""
+    assert an_unlabelled_item().is_labelled is False
+
+
+def test_a_partially_labelled_item_is_refused() -> None:
+    """Either both, or neither. A dialect with no condition is a half-labelled item that
+    would silently fill a coverage cell it cannot support."""
+    with pytest.raises(InvalidCorpusItem, match="condition"):
+        an_item(conditions=())
+    with pytest.raises(InvalidCorpusItem, match="dialect"):
+        CorpusItem(
+            item_id="x",
+            audio_path="x.wav",
+            reference_ckb="ئەمە",
+            dialect=None,
+            conditions=frozenset({Condition.NOISY}),
+            duration_s=10.0,
+        )
+
+
+def test_unlabelled_hours_never_fill_a_coverage_cell() -> None:
+    corpus = Corpus(tuple(an_unlabelled_item(f"cv-{i}", 600.0) for i in range(30)))
+    coverage = corpus.coverage()
+    assert len(coverage.missing_cells) == len(Dialect) * len(Condition)
+    assert coverage.unlabelled_hours == pytest.approx(5.0)
+    assert coverage.labelled_hours == 0.0
+
+
+def test_unlabelled_hours_do_not_count_toward_the_section_8_1_minimum() -> None:
+    """Five hours of unlabelled read speech is not five hours of §8.1 coverage."""
+    corpus = Corpus(tuple(an_unlabelled_item(f"cv-{i}", 600.0) for i in range(30)))
+    assert corpus.coverage().meets_minimum_hours is False
+
+
+def test_a_corpus_reports_labelled_and_unlabelled_hours_separately() -> None:
+    mixed = Corpus((*a_full_corpus().items, an_unlabelled_item("cv-x", 3600.0)))
+    coverage = mixed.coverage()
+    assert coverage.unlabelled_hours == pytest.approx(1.0)
+    assert coverage.labelled_hours == pytest.approx(3 * 7 * 600.0 / 3600.0)
+    assert coverage.total_hours == pytest.approx(coverage.labelled_hours + 1.0)
+
+
+def test_an_interim_corpus_says_so() -> None:
+    corpus = Corpus(
+        (an_unlabelled_item(),),
+        provenance=Provenance(name="Common Voice ckb", licence="CC0-1.0", interim=True),
+    )
+    assert corpus.provenance.interim
+    assert "Common Voice" in corpus.provenance.name
+
+
+def test_a_provenance_without_a_licence_is_refused() -> None:
+    """Every corpus that enters this system has an audited licence — no exceptions."""
+    with pytest.raises(ValueError, match="licence"):
+        Provenance(name="somebody's scrape", licence="", interim=True)
+
+
+def test_an_interim_corpus_still_round_trips_through_the_manifest(tmp_path: Path) -> None:
+    corpus = Corpus(
+        (an_unlabelled_item(),),
+        provenance=Provenance(name="Common Voice ckb", licence="CC0-1.0", interim=True),
+    )
+    path = tmp_path / "interim.json"
+    path.write_text(corpus.to_json(), encoding="utf-8")
+    assert Corpus.load(path) == corpus

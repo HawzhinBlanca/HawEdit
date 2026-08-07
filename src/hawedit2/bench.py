@@ -41,7 +41,7 @@ from hawedit2.asr import (
     long_audio_failure_rate,
     validate_adapter,
 )
-from hawedit2.corpus import Corpus, CorpusItem, Coverage, Dialect
+from hawedit2.corpus import Corpus, CorpusItem, Coverage, Dialect, Provenance
 from hawedit2.metrics import (
     code_switch_error_rate,
     named_entity_error_rate,
@@ -78,7 +78,9 @@ class ItemScore:
     """Every §8.1 accuracy metric for one (model, item), plus what it cost to produce."""
 
     item_id: str
-    dialect: Dialect
+    # None for an unlabelled item (an interim corpus has no §4.4 dialect). Such an item
+    # still scores; it simply contributes to no per-dialect breakdown.
+    dialect: Dialect | None
     reference_chars: int
     normalized_cer: float
     spacing_free_cer: float
@@ -181,9 +183,16 @@ class BenchmarkReport:
     hardware: Hardware
     coverage: Coverage
     models: Mapping[str, ModelReport]
+    provenance: Provenance
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "provenance": {
+                "name": self.provenance.name,
+                "licence": self.provenance.licence,
+                "interim": self.provenance.interim,
+                "note": self.provenance.note,
+            },
             "hardware": {
                 "host": self.hardware.host,
                 "accelerator": self.hardware.accelerator,
@@ -191,6 +200,8 @@ class BenchmarkReport:
             },
             "coverage": {
                 "total_hours": self.coverage.total_hours,
+                "labelled_hours": self.coverage.labelled_hours,
+                "unlabelled_hours": self.coverage.unlabelled_hours,
                 "hours_by_dialect": {d.value: h for d, h in self.coverage.hours_by_dialect.items()},
                 "missing_cells": [f"{d.value}/{c.value}" for d, c in self.coverage.missing_cells],
                 "meets_minimum_hours": self.coverage.meets_minimum_hours,
@@ -264,7 +275,12 @@ def run_benchmark(
             peak_vram_bytes=max(vram) if vram else None,
         )
 
-    return BenchmarkReport(hardware=session.hardware, coverage=corpus.coverage(), models=models)
+    return BenchmarkReport(
+        hardware=session.hardware,
+        coverage=corpus.coverage(),
+        models=models,
+        provenance=corpus.provenance,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +327,13 @@ def decide_canonical(
         f"incumbent {incumbent} normalized CER {baseline_cer:.4f} on "
         f"{baseline.scored_items} items ({report.hardware.host})"
     ]
+    if report.provenance.interim:
+        reasons.append(
+            f"corpus {report.provenance.name!r} is INTERIM — a public stand-in, not your "
+            f"audio. §8.1 justifies a swap on measurement on your own material, and §1 "
+            f"forbids model changes without it. This run can show the harness works and "
+            f"can surface a candidate worth testing properly; it cannot promote one."
+        )
     if not report.coverage.is_complete():
         reasons.append(
             f"corpus does not satisfy §8.1 ({report.coverage.summary()}) — this decision "
@@ -367,6 +390,13 @@ def decide_canonical(
     if best is None:
         reasons.append(f"{incumbent} stays canonical")
         return CanonicalDecision(incumbent, None, switch=False, reasons=tuple(reasons))
+
+    if report.provenance.interim:
+        reasons.append(
+            f"{best[0]} beats {incumbent} on this interim corpus and is worth benchmarking "
+            f"on the real labelled set — but the pin does NOT move on interim evidence."
+        )
+        return CanonicalDecision(incumbent, best[0], switch=False, reasons=tuple(reasons))
 
     reasons.append(
         f"{best[0]} meets every clause of §8.1's rule — recommend replacing {incumbent}. "

@@ -22,7 +22,7 @@ from hawedit2.bench import (
     decide_canonical,
     run_benchmark,
 )
-from hawedit2.corpus import Condition, Corpus, CorpusItem, Dialect
+from hawedit2.corpus import Condition, Corpus, CorpusItem, Dialect, Provenance
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti")
 INCUMBENT = "omniASR_LLM_7B_v2"
@@ -234,3 +234,71 @@ def test_a_failed_item_does_not_silently_improve_a_score() -> None:
     assert model.failed_items == 1
     assert model.scored_items == 1
     assert Dialect.MUKRIYAN not in model.normalized_cer_by_dialect
+
+
+# --- interim corpora may exercise the harness but never decide a model (M0.9b) ---------
+
+
+def an_interim_corpus() -> Corpus:
+    """Unlabelled public data: real Kurdish, no §4.4 dialect labels, no §8.1 conditions."""
+    return Corpus(
+        tuple(
+            CorpusItem(
+                item_id=f"cv-{i}",
+                audio_path=f"cv-{i}.wav",
+                reference_ckb=PERFECT,
+                dialect=None,
+                conditions=frozenset(),
+                duration_s=60.0,
+            )
+            for i in range(2)
+        ),
+        provenance=Provenance(name="Common Voice ckb", licence="CC0-1.0", interim=True),
+    )
+
+
+def an_interim_run(incumbent_text: dict[str, str], challenger_text: dict[str, str]):  # type: ignore[no-untyped-def]
+    corpus = an_interim_corpus()
+    return run_benchmark(
+        corpus,
+        [
+            ScriptedAdapter(INCUMBENT, incumbent_text),
+            ScriptedAdapter(CHALLENGER, challenger_text),
+        ],
+        a_session(),
+    )
+
+
+def test_an_interim_corpus_cannot_promote_a_challenger_however_large_the_gain() -> None:
+    """§8.1 justifies a swap on measurement on *your* audio. Public stand-in data is not
+    that, no matter how clean the win looks."""
+    report = an_interim_run(
+        incumbent_text={"cv-0": "ئەمە زۆر خراپە", "cv-1": "ئەمە زۆر خراپە"},
+        challenger_text={"cv-0": PERFECT, "cv-1": PERFECT},
+    )
+    decision = decide_canonical(report, max_rtf=1.0)
+    assert not decision.switch
+    assert any("interim" in r.lower() for r in decision.reasons)
+
+
+def test_an_interim_run_still_reports_its_numbers() -> None:
+    """Refusing to *decide* on interim data is not refusing to measure with it."""
+    report = an_interim_run(
+        incumbent_text={"cv-0": "ئەمە زۆر خراپە", "cv-1": "ئەمە زۆر خراپە"},
+        challenger_text={"cv-0": PERFECT, "cv-1": PERFECT},
+    )
+    assert report.models[CHALLENGER].normalized_cer == 0.0
+    assert report.models[INCUMBENT].normalized_cer is not None
+
+
+def test_the_report_marks_itself_interim() -> None:
+    payload = an_interim_run({"cv-0": PERFECT, "cv-1": PERFECT}, {"cv-0": PERFECT, "cv-1": PERFECT})
+    assert payload.provenance.interim
+    assert '"interim": true' in payload.to_json()
+
+
+def test_an_interim_report_carries_no_per_dialect_numbers() -> None:
+    """Nothing to break down by: the data has no dialect labels, and inventing them is
+    exactly what §4.4 warns the aggregate hides."""
+    report = an_interim_run({"cv-0": PERFECT, "cv-1": PERFECT}, {"cv-0": PERFECT, "cv-1": PERFECT})
+    assert report.models[INCUMBENT].normalized_cer_by_dialect == {}
