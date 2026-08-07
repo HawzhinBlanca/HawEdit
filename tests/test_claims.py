@@ -85,17 +85,44 @@ def test_every_ledger_row_marked_partial_names_its_shortfall() -> None:
             assert "Shortfall" in cells[4], f"PARTIAL row names no shortfall:\n{line}"
 
 
-def test_every_blocked_row_points_at_a_blocked_entry() -> None:
+def _blocked_entries() -> dict[str, bool]:
+    """Every BLOCKED.md entry number, mapped to whether it is still live.
+
+    An entry keeps its heading after it is resolved — the record of what was in the way is
+    worth more than a tidy file — so "resolved" is a property of the heading, not its absence.
+    """
     blocked = (ROOT / "BLOCKED.md").read_text(encoding="utf-8")
-    open_entries = set(re.findall(r"^##\s*#(\d+)", blocked, re.MULTILINE))
+    live: dict[str, bool] = {}
+    for number, rest in re.findall(r"^##\s*#(\d+)([^\n]*)", blocked, re.MULTILINE):
+        resolved = "RESOLVED" in rest.upper()
+        live[number] = live.get(number, True) and not resolved
+    return live
+
+
+def test_every_blocked_row_points_at_a_live_blocked_entry() -> None:
+    """A BLOCKED row must cite a blocker that exists **and is still in the way**.
+
+    Checking only for existence is not enough, and this test was written because it was not
+    enough: `BLOCKED.md` #5 (an ffmpeg with libass and HarfBuzz) was resolved on 2026-08-06,
+    and M2.4 sat marked BLOCKED behind it for two days. That is audit finding #10's shape
+    exactly — a status that stopped tracking reality — but pointing the other way: work that
+    was ready and looked impossible, rather than work that was incomplete and looked done.
+    """
+    entries = _blocked_entries()
     for line in PROGRESS.splitlines():
         cells = [c.strip() for c in line.split("|")]
         if len(cells) > 4 and cells[3] == "BLOCKED":
             cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", cells[4]))
             assert cited, f"BLOCKED row cites no entry:\n{line}"
-            assert cited <= open_entries, (
-                f"{cells[1]} cites BLOCKED.md #{sorted(cited - open_entries)}, which does not "
-                f"exist. Entries present: {sorted(open_entries)}"
+            missing = cited - entries.keys()
+            assert not missing, (
+                f"{cells[1]} cites BLOCKED.md #{sorted(missing)}, which does not exist. "
+                f"Entries present: {sorted(entries)}"
+            )
+            resolved = {n for n in cited if not entries[n]}
+            assert resolved != cited, (
+                f"{cells[1]} is marked BLOCKED, but every blocker it cites is resolved "
+                f"(#{sorted(resolved)}). The work is available — re-status the row."
             )
 
 

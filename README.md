@@ -5,11 +5,12 @@ Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1
 ## What this is today
 
 **There is no end-to-end product yet.** You cannot point this at a video and get clips back.
-What exists is roughly the left-hand half of §3 — ingest, the transcript artifacts and their
-invariants, alignment, segmentation, the text index, boundary fusion, captions — plus the
-whole §8 measurement apparatus, each piece tested and gated. The stages that turn candidates
-into clips (§3 Stages 3, 4 and 6's encode) are not written, and the two stages that are
-written but cannot run need model weights this machine does not have.
+What exists is most of §3 except the middle — ingest, the transcript artifacts and their
+invariants, alignment, segmentation, the text index, boundary fusion, captions, and a render
+path that produces a real vertical clip with Kurdish captions burned in — plus the whole §8
+measurement apparatus, each piece tested and gated. What is missing is candidate *discovery*
+and the editorial judge (§3 Stages 3 and 4), which is exactly the part that needs models and
+credentials this machine does not have. Nothing joins the pieces into one command yet.
 
 | §3 Stage | State | What is missing |
 |---|---|---|
@@ -19,7 +20,7 @@ written but cannot run need model weights this machine does not have.
 | 3 · Discovery | **not written** | Both paths. |
 | 4 · Editorial judge | **not written** | Needs Gemini credentials (`BLOCKED.md` #3). |
 | 5 · Boundary fusion | **runs** | TimeLens2 refinement (M6). |
-| 6 · Render | captions only | Reframing and encode. |
+| 6 · Render | **runs** | Speaker-tracked reframing — the crop is static centre (`BLOCKED.md` #4). NVENC needs hawapc01. |
 
 "Runs" means: on real media, in a test, in the gate. Nothing here is marked done because it
 compiles. `PROGRESS.md` carries the per-task evidence and `BLOCKED.md` carries what needs Hawa.
@@ -137,6 +138,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `clip.py` | §5 | The clip contract, validated. Rejection is a first-class type. |
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
+| `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |

@@ -786,3 +786,75 @@ corrected rows to be genuinely closed rather than merely re-labelled. M0.10 stay
 it needs weights and audio, not code.
 
 ---
+## D-027 · §3 Stage 6 render — what it does, and what it refuses to call itself
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 6, §4.3, §6 · **Type:** implementation choice
+
+§3 Stage 6 is one sentence — "Reframing, captions, encode" — and each of the three has a
+failure mode that produces a perfectly playable file.
+
+**Reframing.** §3 Stage 6 tracks the active speaker from diarization plus face detection.
+Neither is available (`BLOCKED.md` #4), so what is implemented is a static centre crop. The
+choice recorded here is that it is **named** rather than implied: `Reframe.STATIC_CENTRE`
+travels on every `RenderResult`, and `Reframe.SPEAKER_TRACKED` exists as a value this module
+cannot currently produce. A centre crop that called itself reframing would look correct in
+every artifact and be wrong on every two-shot, and no consumer could tell the difference.
+`crop_filter(focus_x=...)` is the seam the tracking path plugs into, and it is tested before
+it exists so that landing tracking is a caller change rather than a rewrite.
+
+**Captions.** Burn-in goes through `captions.subtitle_filter`, which hard-codes
+`shaping=complex` and an explicit `fontsdir` (§4.3.1, §4.3.4). Verified on decoded pixels
+rather than on the absence of an error: the shipped render is compared against the same frames
+with no subtitle filter (they must differ — otherwise libass drew nothing) and against a
+`shaping=simple` render (they must differ — otherwise shaping is not reaching libass).
+
+**Encode, and a measurement worth recording.** `encoder_available` originally read
+`ffmpeg -encoders`, which is a list of what was *compiled in*. Measured on the pinned static
+build: it lists `h264_nvenc` and **cannot encode a single frame with it**, because NVENC is
+loaded at runtime and there is no NVIDIA driver. Worse, that failing run **exits 0** when the
+output is `-f null`, so neither the listing nor the exit code answers the question. The probe
+now encodes one 64×64 frame to a real file and checks bytes came out.
+
+This is §4.3.2's lesson — "a build accepting the option may still lack the backing library" —
+holding for encoders as well as for shapers, and it is the same shape as audit finding #4:
+reading the shape of an answer instead of its content. The blueprint stated the principle
+about libass; it generalises, and the generalisation was worth a test.
+
+`render_clip` refuses an unusable encoder rather than substituting one. §6 puts NVENC on
+hawapc01; getting x264 instead would make any throughput figure quietly a measurement of the
+wrong encoder.
+
+**The gate runs first.** `Clip.assert_renderable()` is called before ffmpeg is even located,
+so Kurdish invariant #2 and §2's QC-before-output rule are enforced at the last point before a
+client could see the file, not only at the contract boundary. A refused clip leaves no
+artifact behind, which is asserted rather than assumed.
+
+**Consequence for the ledger:** M2.4 DONE (`evidence/m2-4-rendered-clip.md`), M3.3 PARTIAL —
+the encode runs, the reframe is not the one §3 specifies.
+
+---
+
+## D-028 · A resolved blocker is not a blocker — caught by test, not by reading
+
+**Date:** 2026-08-07 · **Type:** process defect found by the audit's own remediation
+
+`BLOCKED.md` #5 (an ffmpeg with libass + HarfBuzz) was resolved on 2026-08-06 and recorded as
+such. M2.4 stayed marked `BLOCKED` behind it for two days, and the work — which was the entire
+M2 vertical slice deliverable — sat available and looked impossible.
+
+This is audit finding #10's shape pointing the other way. #10 was work that was incomplete and
+looked done; this is work that was ready and looked blocked. Both are the same defect: a status
+that stopped tracking reality. The first costs trust, the second costs time, and neither is
+visible by reading the file, because both look perfectly consistent.
+
+`tests/test_claims.py::test_every_blocked_row_points_at_a_live_blocked_entry` now fails when a
+row marked BLOCKED cites only blockers whose `BLOCKED.md` heading says RESOLVED. Entries keep
+their headings after resolution — the record of what was in the way is worth more than a tidy
+file — so "resolved" is a property of the heading rather than of its absence, and the test
+reads it that way.
+
+**The general rule this session keeps arriving at:** every claim in a state file that a test
+can check should be checked by one. Prose does not drift because anyone is careless; it drifts
+because nothing fails when it does.
+
+---

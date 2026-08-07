@@ -22,8 +22,8 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 |---|---|---|---|
 | **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness built and gated (M0.1–M0.10) · M0.10 PARTIAL, see the ledger · every measurement BLOCKED (M0.11–M0.13, M0.16)** |
 | **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | **WIP — Stage 0 runs on real media (minus diarization); §4.2 aligner, segmentation and §4.1's last collision DONE; Stage 1 models blocked** |
-| **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | **WIP — BM25 index, boundary fusion and the §5 contract DONE; Gemini and render blocked** |
-| **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | **WIP — §4.3 fully DONE incl. golden test; encode remains** |
+| **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | **WIP — index, boundary fusion, §5 contract and a real rendered clip DONE; only Gemini (Stage 3) is still missing from the slice** |
+| **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | **WIP — §4.3 DONE incl. golden test; encode runs (M3.3 PARTIAL — static crop, no NVENC)** |
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
 | **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | TODO |
 | **M6** | Stage 5 TimeLens2 + sentence-hard fusion | Boundary precision | TODO |
@@ -77,7 +77,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M2.1 | §2 text index: BM25 + character 3-grams over normalized Sorani | DONE | `src/hawedit2/index.py` + `tests/test_index.py` (25 tests). The clitic-attachment failure §2 describes is measured: word BM25 scores the stem query **0.0**, n-grams retrieve it. Invariant #3 enforced at the index boundary. Weighting: D-016. |
 | M2.2 | §5 clip contract + §3 Stage 5 boundary fusion + Kurdish invariant #2 | DONE | `src/hawedit2/boundary.py` (31 tests) + `src/hawedit2/clip.py` (20 tests). Invariant #2 checked exhaustively over 3,125 soft-input combinations and enforced again at an explicit render gate. Contract choices: D-017. |
 | M2.3 | Stage 3 Path A (Gemini reads the full transcript) | BLOCKED | `BLOCKED.md` #3 — credentials + the Vertex ZDR governance decision |
-| M2.4 | One rendered clip | BLOCKED | `BLOCKED.md` #5 (ffmpeg + libass/HarfBuzz) |
+| M2.4 | One rendered clip | DONE | `evidence/m2-4-rendered-clip.mp4` (1080×1920, 2.2 s) + `evidence/m2-4-frame.png` — a real vertical clip with Kurdish captions burned in, rendered by `src/hawedit2/render.py` + `tests/test_render.py` (21 tests). Was marked BLOCKED behind `BLOCKED.md` #5 for two days after #5 was resolved; `tests/test_claims.py` now fails on a BLOCKED row whose every blocker is resolved. |
 
 ## Kurdish invariants — where each is enforced
 
@@ -95,7 +95,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 |---|---|---|---|
 | M3.1 | §4.3 caption generation: shaping, stack check, font coverage, own line breaks | DONE | `src/hawedit2/captions.py` + `tests/test_captions.py` (33 tests). Font coverage asserted against the real OFL-1.1 Noto Naskh Arabic shipped in `assets/fonts` — full Kurdish coverage measured (D-018). |
 | M3.2 | §4.3.6 golden-file render compared per build | DONE | `tests/golden/kurdish-caption.png` rendered on a verified libass build; compared on decoded pixels every gate run. `shaping=simple` must fail the same comparison — without that control the test measures nothing. D-021, `evidence/rtl-shaping.md`. |
-| M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | TODO | Unblocked for CPU encode now ffmpeg is available; NVENC still needs hawapc01 (`BLOCKED.md` #2) |
+| M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | PARTIAL | `src/hawedit2/render.py` + `tests/test_render.py` (21 tests). Cut, 9:16 crop, `shaping=complex` burn-in and x264 encode all run and are verified on decoded pixels: a captioned render must differ from an uncaptioned one, and a `shaping=simple` render must differ from the shipped one. **Shortfall:** §3 Stage 6 reframes by tracking the active speaker from diarization plus face detection; neither runs (`BLOCKED.md` #4), so the crop is static and says so — `Reframe.STATIC_CENTRE`, never `SPEAKER_TRACKED`. NVENC needs hawapc01 (`BLOCKED.md` #2) and is refused here rather than substituted. |
 
 ## M7 — task ledger
 
