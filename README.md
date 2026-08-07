@@ -8,11 +8,24 @@ Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1
 What exists is most of §3 except the middle — ingest, the transcript artifacts and their
 invariants, alignment, segmentation, the text index, boundary fusion, captions, and a render
 path that produces a real vertical clip with Kurdish captions burned in — plus the whole §8
-measurement apparatus, each piece tested and gated. Every §3 stage now has code. What is
-missing is the three hosted or GPU-bound *models* at the middle of it — Path A's Kurdish
-judge, Path B's `VideoChat3-4B`, and Stage 4's judge call — which is exactly the part that
-needs credentials and hardware this machine does not have. The contracts they plug into are
-built and tested ahead of them. Nothing joins the pieces into one command yet.
+measurement apparatus, each piece tested and gated. Every §3 stage has code, and one
+command runs them:
+
+```bash
+.venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work
+```
+
+It exits non-zero and prints every stage it could not run, with the blocker named. What is
+missing is the three hosted or GPU-bound *models* at the middle — Path A's Kurdish judge, Path
+B's `VideoChat3-4B`, and Stage 4's judge call — which is exactly the part that needs
+credentials and hardware this machine does not have. Supply a transcript and a verdict in
+their place and the runner goes all the way to a rendered vertical clip with burned-in Kurdish
+captions:
+
+```bash
+.venv/bin/python -m hawedit2.pipeline VIDEO.mp4 --work-dir work \
+  --transcript t.json --sentences 0,1 --qc-pass
+```
 
 | §3 Stage | State | What is missing |
 |---|---|---|
@@ -141,6 +154,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
+| `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |

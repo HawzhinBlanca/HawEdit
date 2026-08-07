@@ -994,3 +994,43 @@ than from a published price list, so this project's cost claims and the blueprin
 drift apart. It is an estimate and is named as one — the authority on the bill is the bill.
 
 ---
+## D-032 · The runner reports what it could not do, and that is most of its value
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3, §1 · **Type:** implementation choice
+
+Until now every stage worked and nothing joined them, so "does this system work" was a
+question you answered by reading a test suite. `python -m hawedit2.pipeline VIDEO.mp4` is the
+thing you point at a video.
+
+Three of §3's stages need models this machine does not have. A runner that quietly skipped them
+would print a clip path and exit 0, and you would have to already know that no model discovered
+that clip to understand what you were looking at. So:
+
+* every stage yields a result **or** a `StageSkipped` naming its blocker — never an empty
+  result, the same rule that keeps `IngestResult.diarization` at `None` rather than `[]`;
+* `PipelineRun.complete` is false whenever anything was skipped, **even on a run that rendered
+  a clip**;
+* the CLI exits non-zero on an incomplete run, because that is what a shell script checks.
+
+**Two stand-ins, and the second one was a discovery.** Supplying a transcript for Stage 1 was
+the plan. Supplying a *verdict* for Stage 4 was not: the first runner built a clip, called
+`render_clip`, and got a refusal — `Clip.assert_renderable` rejects a clip with no editorial
+block, because an unjudged clip has no meaning fidelity and no misleading-edit risk and §8.2
+calls the second the metric that matters for a media organisation. That is audit finding #3's
+fix reaching all the way out to the runner, and it was tempting to route around it. The right
+answer was the symmetric one: Stage 4 gets a stand-in exactly as Stage 1 does, and without one
+the runner builds a clip and stops. A test asserts the stop.
+
+**The joins are the point, not the stage list.** §3 Stage 5 fuses against the shot cuts Stage 0
+detected on *that* video, and §4.2 segments against the VAD pauses from the same run — not
+against fixtures. A pipeline whose stages each work on their own test data is a test suite with
+a `main()`; the value here is that Stage 0's real output is Stage 5's real input.
+
+**The runner adds no invariants and weakens none.** Every Kurdish invariant is enforced by the
+module that owns it: the transcript goes through `TranscriptStore` so #1 governs it, the index
+reads the normalized artifact so #3 holds, `fuse_boundary` constructs #2, and the render gate
+runs before ffmpeg is located. A second run over the same work directory reads the existing raw
+transcript rather than overwriting it — invariant #1 has no exception for "the same pipeline,
+again".
+
+---
