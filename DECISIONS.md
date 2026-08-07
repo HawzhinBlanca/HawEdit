@@ -578,3 +578,44 @@ requirement.
 encoder change between versions would otherwise fail a render that looks identical — and a
 golden test that cries wolf gets disabled, which is exactly how the regression §4.3.6 warns
 about eventually ships.
+
+---
+
+## D-022 · Model provisioning: registry-driven, and sources are never guessed
+
+**Date:** 2026-08-06 · **Blueprint ref:** §7, §3 Stage 0, §6 · **Type:** infrastructure + honest gap
+
+**The fetcher reads §7.** `scripts/fetch-models.sh` enumerates what to download from
+`registry.REGISTRY`, not from a list in the script. It therefore cannot fetch a model the
+blueprint excludes, cannot silently skip one it requires, and calls
+`assert_commercially_usable` before a single byte moves — NonCommercial is refused at
+download time, not merely at use time.
+
+**Provisioning is classified per component**, because it is not uniform and pretending
+otherwise misleads an operator. Of §7's fifteen entries: 3 arrive with a pip package,
+1 is our own code, 2 are cloud APIs needing credentials rather than disk, 1 is a system
+library, and **8 are multi-gigabyte checkpoints**. Only the last group can be "missing" in a
+way that stops a stage. Silero VAD in particular **ships its ONNX model inside the wheel** —
+treating it as a download would send someone hunting for something already present.
+
+**Four sources §7 fixes; four it does not — and those are refused, not guessed.** §7 names
+`pyannote/speaker-diarization-community-1`, `rzgar/qwen3-asr-sorani-kurdish-ckb-v1`,
+`MCG-NJU/VideoChat3-4B` and `MCG-NJU/TimeLens2-4B` in unambiguous `org/name` form, and those
+are used directly. `omniASR_LLM_7B_v2`, `omniASR_CTC_3B_v2`, `Qwen3-VL-Embedding-2B` and
+`Qwen3-VL-Reranker-2B` are **checkpoint names, not repository ids**. A plausible-looking
+guess (`facebook/omnilingual-asr`, `Qwen/Qwen3-VL-Embedding-2B`) would be a fabrication that
+fails as a 404 on hawapc01 with nothing in the code to explain it. They require an explicit
+entry in `models/sources.json`, and the script prints exactly what to add.
+
+**Capacity is checked before the download, not during.** The §7 checkpoints total roughly
+50 GB. This container has ~22 GB free, so it could not hold them even if Hugging Face were
+reachable — worth knowing before an hour is spent finding out.
+
+**Gated repos are handled explicitly.** §3 Stage 0 flags Community-1 as gated and asks that
+acceptance be built into deployment automation. Without `HF_TOKEN` the script skips it with
+the reason and continues, rather than failing the whole run.
+
+**Still blocked here:** `huggingface.co` is denied by this environment's proxy
+(`BLOCKED.md` #6), so no checkpoint could be downloaded. The provisioning path is built and
+exercised end to end — enumeration, licence refusal, capacity check, gated-repo skip, and a
+real `snapshot_download` attempt that fails on the network exactly as it should.

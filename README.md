@@ -29,6 +29,35 @@ bash scripts/fetch-ffmpeg.sh     # ~200 MB, lands in .ffmpeg/ (git-ignored)
 `verify.sh` discovers it automatically. Without it the golden test skips and you lose
 §4.3.6's only real safeguard, so run it.
 
+## Models and weights
+
+Check what this machine has:
+
+```bash
+.venv/bin/python -m hawedit2.models      # §7 component readiness
+```
+
+Fetch what it does not:
+
+```bash
+bash scripts/fetch-models.sh             # everything §7 needs, into models/
+bash scripts/fetch-models.sh --status    # same as the readiness report
+```
+
+The fetcher is driven by the §7 registry, so it cannot download a model the blueprint
+excludes and refuses a NonCommercial licence before any bytes move. Needs
+`huggingface.co` reachable, `HF_TOKEN` for the gated Community-1 repo, and ~50 GB free.
+
+Four checkpoints — `omniASR_LLM_7B_v2`, `omniASR_CTC_3B_v2`, `Qwen3-VL-Embedding-2B`,
+`Qwen3-VL-Reranker-2B` — are named in §7 as *checkpoints*, not repository ids. The script
+refuses to guess a repo for them; supply one in `models/sources.json`:
+
+```json
+{ "omniASR_LLM_7B_v2": "<org>/<repo>" }
+```
+
+`models/` and `.ffmpeg/` are git-ignored — weights never enter the repository.
+
 ## The gate
 
 ```bash

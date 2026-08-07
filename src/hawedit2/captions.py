@@ -331,7 +331,7 @@ def build_ass(
 
 
 def find_ffmpeg() -> Path | None:
-    """Locate an ffmpeg binary: `HAWEDIT2_FFMPEG` first, then `PATH`.
+    """Locate an ffmpeg binary: `HAWEDIT2_FFMPEG`, then `.ffmpeg/`, then `PATH`.
 
     Returns `None` rather than raising — the caller decides whether a missing ffmpeg is a
     skipped render test or a failed deploy check.
@@ -342,6 +342,11 @@ def find_ffmpeg() -> Path | None:
     configured = environ.get("HAWEDIT2_FFMPEG")
     if configured and Path(configured).exists():
         return Path(configured)
+    # Where scripts/fetch-ffmpeg.sh puts it, so the readiness report and the gate agree
+    # without anyone having to remember an environment variable.
+    vendored = Path(__file__).resolve().parents[2] / ".ffmpeg" / "ffmpeg"
+    if vendored.exists():
+        return vendored
     located = which("ffmpeg")
     return Path(located) if located else None
 

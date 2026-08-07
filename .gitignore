@@ -9,3 +9,4 @@ __pycache__/
 /out/
 /corpus/audio/
 .ffmpeg/
+models/

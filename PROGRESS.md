@@ -63,7 +63,8 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 |---|---|---|---|
 | M1.1 | §4.2 Viterbi forced alignment on CTC emissions, in-house per §7 | DONE | `src/hawedit2/forced_alignment.py` + `tests/test_forced_alignment.py` (22 tests). Monotone non-overlapping spans, every token framed, infeasible input refused rather than guessed. No new dependency. |
 | M1.2 | §4.2 sentence segmentation (Kurdish punctuation **plus** VAD pauses) + §5 anchors | DONE | `src/hawedit2/sentences.py` + `tests/test_sentences.py` (17 tests). Pause path works on wholly unpunctuated input; `anchors_for` returns `None` rather than a guess when nothing is complete. Threshold: D-014. |
-| M1.3 | Stage 0 ingest: ffmpeg demux, PySceneDetect, Silero VAD, diarization | BLOCKED | `BLOCKED.md` #5 (ffmpeg), #4 (gated diarizer) |
+| M1.3 | Stage 0 ingest: ffmpeg demux, PySceneDetect, Silero VAD, diarization | TODO | **Unblocked except diarization** — ffmpeg, PySceneDetect and Silero VAD all present and Silero verified running (ONNX, no torch needed). Diarization still needs the gated repo (`BLOCKED.md` #4). |
+| M1.6 | Model provisioning: readiness report + registry-driven fetcher | DONE | `src/hawedit2/models.py` + `tests/test_models.py` (21 tests) + `scripts/fetch-models.sh`. `python -m hawedit2.models` reports all 15 §7 components. Sources §7 leaves open are refused, not guessed (D-022). |
 | M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
 | M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | DONE | `src/hawedit2/escalation.py` + `tests/test_escalation.py` (16 tests). §3's "never escalate on duration or word-count" prohibition asserted directly. Threshold: D-015. |
 

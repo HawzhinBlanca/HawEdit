@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Download §7's model weights into models/ — driven by the registry, not by a hard-coded list.
+#
+# The list of what may be fetched comes from `hawedit2.registry.REGISTRY`, so this script
+# cannot download a model the blueprint does not permit, and cannot silently skip one it
+# requires. NonCommercial licences are refused before any bytes move.
+#
+# Usage:
+#   bash scripts/fetch-models.sh              # everything §7 needs
+#   bash scripts/fetch-models.sh --status     # what is already here
+#   bash scripts/fetch-models.sh <model_id>   # one component
+#
+# Requirements:
+#   - network access to huggingface.co
+#   - HF_TOKEN in the environment for gated repos (§3 Stage 0: Community-1 is gated)
+#   - ~50 GB free disk for the full §7 set
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$here"
+PY="${PY:-$here/.venv/bin/python}"
+models_root="${HAWEDIT2_MODELS:-$here/models}"
+
+if [[ ! -x "$PY" ]]; then
+  echo "✗ no interpreter at $PY — run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
+  exit 2
+fi
+
+if [[ "${1:-}" == "--status" ]]; then
+  exec "$PY" -m hawedit2.models
+fi
+
+mkdir -p "$models_root"
+
+# --- what does §7 actually require, and is any of it unfetchable? ---------------------------
+plan="$("$PY" - "$models_root" "${1:-}" <<'PYEOF'
+import sys
+from pathlib import Path
+from hawedit2.models import ModelStore, SourceNotConfigured
+from hawedit2.registry import Provisioning, assert_commercially_usable
+
+root, only = Path(sys.argv[1]), (sys.argv[2] if len(sys.argv) > 2 else "")
+store = ModelStore(root=root)
+
+unconfigured, lines = [], []
+for entry in store.missing_weights():
+    if only and entry.model_id != only:
+        continue
+    # NonCommercial is a hard reject — checked before a single byte moves.
+    assert_commercially_usable(entry)
+    try:
+        source = store.source_for(entry)
+    except SourceNotConfigured:
+        unconfigured.append(entry.model_id)
+        continue
+    lines.append(f"{entry.model_id}\t{source}\t{int(entry.gated)}\t{store.path_for(entry)}")
+
+if unconfigured:
+    print("UNCONFIGURED\t" + ",".join(unconfigured))
+print("\n".join(lines))
+PYEOF
+)"
+
+if grep -q '^UNCONFIGURED' <<<"$plan"; then
+  names="$(grep '^UNCONFIGURED' <<<"$plan" | cut -f2)"
+  echo "⚠ no download source configured for: ${names}" >&2
+  echo "  §7 names these as checkpoints, not repository ids, and this script will not guess." >&2
+  echo "  Add them to ${models_root}/sources.json, e.g." >&2
+  echo '    { "omniASR_LLM_7B_v2": "<org>/<repo>" }' >&2
+  echo >&2
+  plan="$(grep -v '^UNCONFIGURED' <<<"$plan")"
+fi
+
+if [[ -z "${plan//[[:space:]]/}" ]]; then
+  echo "nothing to fetch — every configured §7 checkpoint is already present."
+  exec "$PY" -m hawedit2.models
+fi
+
+# --- capacity, before an hour is spent finding out ------------------------------------------
+free_gb="$(df -BG --output=avail "$models_root" | tail -1 | tr -dc '0-9')"
+echo "==> ${free_gb} GB free at ${models_root}; the full §7 set is roughly 50 GB"
+if (( free_gb < 55 )); then
+  echo "⚠ this may not be enough for every checkpoint — fetching what fits, in order." >&2
+fi
+
+"$PY" -c "import huggingface_hub" 2>/dev/null || {
+  echo "==> installing huggingface_hub (Apache-2.0)"
+  "$PY" -m pip install -q "huggingface_hub>=0.26"
+}
+
+while IFS=$'\t' read -r model_id source gated dest; do
+  [[ -z "$model_id" ]] && continue
+  echo
+  echo "==> ${model_id}"
+  echo "    from ${source} -> ${dest}"
+  if [[ "$gated" == "1" && -z "${HF_TOKEN:-}" ]]; then
+    echo "    SKIPPED: ${source} is a gated repo (§3 Stage 0) and HF_TOKEN is not set." >&2
+    echo "    Accept the licence on Hugging Face, then export HF_TOKEN." >&2
+    continue
+  fi
+  if ! "$PY" - "$source" "$dest" <<'PYEOF'
+import sys
+from huggingface_hub import snapshot_download
+
+source, dest = sys.argv[1], sys.argv[2]
+try:
+    snapshot_download(repo_id=source, local_dir=dest)
+except Exception as exc:  # network, auth, or a repo that moved
+    print(f"    FAILED: {type(exc).__name__}: {exc}"[:400], file=sys.stderr)
+    print(
+        "    Check network access to huggingface.co, HF_TOKEN for gated repos, and that "
+        "the repo id in models/sources.json is right.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from None
+print(f"    done: {dest}")
+PYEOF
+  then
+    echo "    (continuing with the remaining components)" >&2
+  fi
+done <<<"$plan"
+
+echo
+exec "$PY" -m hawedit2.models

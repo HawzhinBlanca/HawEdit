@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 from types import MappingProxyType
 from typing import Final
 
@@ -37,6 +38,7 @@ __all__ = [
     "ModelExcluded",
     "ModelNotInRegistry",
     "NonCommercialLicence",
+    "Provisioning",
     "assert_commercially_usable",
     "attribution_notices",
     "resolve",
@@ -67,6 +69,21 @@ IN_HOUSE: Final = Licence("in-house", commercial_use=True)
 NOT_ASSESSED: Final = Licence("not assessed (excluded for a non-licence reason)", False)
 
 
+class Provisioning(Enum):
+    """How a §7 component actually arrives on a machine.
+
+    Knowing this per component is what turns "is the app ready to run?" from a guess into a
+    check: only `WEIGHTS` entries need the multi-gigabyte download, and only those can be
+    missing in a way that stops a stage.
+    """
+
+    PIP = "pip"  # arrives with a Python package (model bundled or none needed)
+    WEIGHTS = "weights"  # multi-GB checkpoint that must be downloaded
+    CLOUD = "cloud"  # an API; nothing local but credentials
+    SYSTEM = "system"  # a system binary or library
+    IN_HOUSE = "in_house"  # our own code
+
+
 @dataclass(frozen=True, slots=True)
 class ModelEntry:
     """A model §7 permits, with the blueprint cell it is accountable to."""
@@ -79,6 +96,10 @@ class ModelEntry:
     routable: bool = True
     gated: bool = False
     notes: str = ""
+    provisioning: Provisioning = Provisioning.WEIGHTS
+    # The Hugging Face repo id, when §7 states it unambiguously. `None` means the source
+    # must be configured rather than guessed — see models.py and D-022.
+    hf_repo: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +129,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="PySceneDetect",
             component="Scene detection",
+            provisioning=Provisioning.PIP,
             blueprint_model_cell="PySceneDetect",
             licence=OPEN_PER_SECTION_7,
             role="shot_detection",
@@ -116,6 +138,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="Silero VAD",
             component="VAD",
+            provisioning=Provisioning.PIP,
             blueprint_model_cell="Silero VAD",
             licence=MIT,
             role="vad",
@@ -124,6 +147,8 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="pyannote/speaker-diarization-community-1",
             component="Diarization",
+            provisioning=Provisioning.WEIGHTS,
+            hf_repo="pyannote/speaker-diarization-community-1",
             blueprint_model_cell="pyannote/speaker-diarization-community-1",
             licence=CC_BY_4_0,
             role="diarization",
@@ -137,6 +162,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="omniASR_LLM_7B_v2",
             component="Canonical ASR",
+            provisioning=Provisioning.WEIGHTS,
             blueprint_model_cell="omniASR_LLM_7B_v2",
             licence=APACHE_2_0,
             role="canonical_asr",
@@ -148,6 +174,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="omniASR_CTC_3B_v2",
             component="ASR confidence + emissions",
+            provisioning=Provisioning.WEIGHTS,
             blueprint_model_cell="omniASR_CTC_3B_v2",
             licence=APACHE_2_0,
             role="asr_emissions",
@@ -159,6 +186,8 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
             component="ASR validator",
+            provisioning=Provisioning.WEIGHTS,
+            hf_repo="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
             blueprint_model_cell="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
             licence=APACHE_2_0,
             role="asr_validator",
@@ -170,6 +199,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="Custom Viterbi on CTC emissions",
             component="Forced alignment",
+            provisioning=Provisioning.IN_HOUSE,
             blueprint_model_cell="Custom Viterbi on CTC emissions",
             licence=IN_HOUSE,
             role="forced_alignment",
@@ -178,6 +208,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="KLPT",
             component="Normalization",
+            provisioning=Provisioning.PIP,
             blueprint_model_cell="KLPT",
             licence=CC_BY_SA_4_0,
             role="normalization",
@@ -190,6 +221,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="Qwen3-VL-Embedding-2B",
             component="Visual embedding",
+            provisioning=Provisioning.WEIGHTS,
             blueprint_model_cell="Qwen3-VL-Embedding-2B",
             licence=APACHE_2_0,
             role="visual_embedding",
@@ -198,6 +230,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="Qwen3-VL-Reranker-2B",
             component="Reranking",
+            provisioning=Provisioning.WEIGHTS,
             blueprint_model_cell="Qwen3-VL-Reranker-2B",
             licence=APACHE_2_0,
             role="visual_rerank",
@@ -206,6 +239,8 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="MCG-NJU/VideoChat3-4B",
             component="Local video understanding",
+            provisioning=Provisioning.WEIGHTS,
+            hf_repo="MCG-NJU/VideoChat3-4B",
             blueprint_model_cell="MCG-NJU/VideoChat3-4B",
             licence=APACHE_2_0,
             role="visual_discovery",
@@ -217,6 +252,8 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="MCG-NJU/TimeLens2-4B",
             component="Visual temporal evidence",
+            provisioning=Provisioning.WEIGHTS,
+            hf_repo="MCG-NJU/TimeLens2-4B",
             blueprint_model_cell="MCG-NJU/TimeLens2-4B",
             licence=APACHE_2_0,
             role="temporal_evidence",
@@ -228,6 +265,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="gemini-2.5-pro",
             component="Kurdish judge (both stages)",
+            provisioning=Provisioning.CLOUD,
             blueprint_model_cell="gemini-2.5-pro, pinned",
             licence=COMMERCIAL,
             role="kurdish_editorial_judge",
@@ -240,6 +278,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="gemini-3.1-pro",
             component="Judge shadow",
+            provisioning=Provisioning.CLOUD,
             blueprint_model_cell="gemini-3.1-pro",
             licence=COMMERCIAL,
             role="judge_shadow",
@@ -252,6 +291,7 @@ def _registry() -> Mapping[str, ModelEntry]:
         ModelEntry(
             model_id="ASS + libass/HarfBuzz/FriBidi",
             component="Captions",
+            provisioning=Provisioning.SYSTEM,
             blueprint_model_cell="ASS + libass/HarfBuzz/FriBidi",
             licence=LGPL_GPL,
             role="captions",
