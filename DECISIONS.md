@@ -728,3 +728,61 @@ is a repository setting only Hawa can change, and until it is set, a red `hawedi
 not block anything. Added to `BLOCKED.md`.
 
 ---
+## D-026 · §4.1's fifth collision closed — conjunctive `و`, as a refusal not a prediction
+
+**Date:** 2026-08-07 · **Blueprint ref:** §4.1 · **Type:** closes the gap recorded in D-003
+
+D-003 measured that KLPT's `normalize()` covers four of §4.1's five collisions and left the
+fifth — the conjunction `و` typed onto the preceding word — unimplemented, because §4.1 only
+says "AsoSoft applies a separation algorithm" and correct separation needs a lexicon. That
+reasoning was right and is now satisfied: KLPT ships a Sorani hunspell dictionary, and its
+`check_spelling` is morphology-aware, so the evidence exists in a dependency already present
+for §4.1 anyway. No new dependency, no new model, nothing added to §7.
+
+**The rule:**
+
+    split `و` + R  →  `و` R    only if   R is a valid Sorani word   AND   `و`+R is not.
+
+Stated as a refusal rather than a prediction. Both conditions are load-bearing: without the
+first, every `و`-initial token gets split; without the second, `وتار` ("article") becomes
+"and tar" — a word nobody said, written into `transcript.norm.json`, which every index,
+embedding and model input reads under Kurdish invariant #3.
+
+**The bias is deliberate and one-directional: under-split, never mis-split.** A joined `و`
+left alone costs recall in the §2 index, and §2's character 3-grams absorb part of that. A
+real word torn in half costs correctness, and nothing absorbs it. Where the evidence is
+ambiguous the rule declines — including on D-003's own example, `وتو`, where neither reading
+has lexicon support.
+
+**Measured over all 24,894 dictionary entries** (`evidence/waw-separation.md`):
+
+| | |
+|---|---|
+| dictionary words damaged | **0** |
+| joined forms recovered | 24,124 of 24,390 — **98.91%** |
+| `و`-initial words that can never be split | 19 (`وتار`, `وشە`, `ویست`, …) |
+
+The safety claim is checked exhaustively over the whole dictionary, not by example, in
+`tests/test_waw.py::test_no_dictionary_word_is_ever_split`. That property had to hold before
+this could be turned on at all.
+
+**The 1.09% shortfall has a single named cause,** and it is not this rule: all 266 forms
+contain a bare medial `ه` (U+0647) or `ھ` (U+06BE), which KLPT's spell checker rejects from
+its own dictionary. That is D-013's finding — §4.1's collision table lists `ه`+ZWNJ → `ە` and
+says nothing about bare medial `ه` or U+06BE — arrived at from the opposite direction. Two
+instruments agreeing on the same gap is worth more than either alone.
+
+**Ordering:** separation runs *after* KLPT's encoding fixes inside `normalize_sorani`. A
+dictionary lookup on unnormalized text fails for exactly the reason §4.1 exists, so separation
+would silently never fire on the text that most needs it. Asserted in
+`test_normalization_runs_the_encoding_fixes_before_the_lexicon_lookup`.
+
+**What this does not establish:** anything about running Kurdish speech. The dictionary is a
+word list. Real incidence, and the recall the §2 index actually gains, need the labelled
+corpus (`BLOCKED.md` #1, #6).
+
+**Consequence for the ledger:** M0.3 moves PARTIAL → DONE, the first of audit #10's two
+corrected rows to be genuinely closed rather than merely re-labelled. M0.10 stays PARTIAL —
+it needs weights and audio, not code.
+
+---

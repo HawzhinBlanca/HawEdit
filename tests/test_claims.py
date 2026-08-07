@@ -8,17 +8,15 @@ no benchmark behind it.
 
 Prose drifts from code silently, which is exactly why it needs tests rather than care. The
 checks here are deliberately narrow: each one pins a specific claim to a specific fact that a
-future change would flip. When conjunctive `و` separation lands, the test that keeps M0.3 out
-of DONE fails and tells you to promote it — the ledger cannot be right and the test red at
-the same time.
+future change would flip — in both directions, so the ledger cannot be right while a test here
+is red. That is not hypothetical: the M0.3 check below held the row at PARTIAL until §4.1's
+fifth collision was actually implemented (M1.7), then failed until the row was promoted.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-
-import pytest
 
 from hawedit2.normalize import normalize_sorani
 
@@ -43,24 +41,24 @@ def _status(task: str) -> str:
 # --- #10 a DONE mark must be backed by the thing it claims -------------------------------
 
 
-def test_normalization_is_not_marked_done_while_a_collision_is_unhandled() -> None:
-    """§4.1 lists five collisions. KLPT covers four (D-003).
+def test_the_ledger_tracks_whether_all_five_collisions_are_handled() -> None:
+    """§4.1 lists five collisions. The ledger's mark on M0.3 must follow the code, both ways.
 
-    When conjunctive `و` separation is implemented this test fails — that is its job. Promote
-    M0.3 to DONE in the same commit, and delete this test in favour of the one in
-    tests/test_normalize.py that will then be asserting the behaviour rather than the gap.
+    The probe is a token that *should* separate — an inflected noun with a conjunctive `و`
+    joined on. D-003's `وتو` is the wrong probe: it is ambiguous, the rule declines it by
+    design, and it therefore reads as "unimplemented" forever.
     """
-    joined_waw_is_unhandled = normalize_sorani("من وتو") == "من وتو"
-    if joined_waw_is_unhandled:
-        assert _status("M0.3") != "DONE", (
-            "M0.3 claims §4.1 normalization is done, but conjunctive `و` separation — one of "
-            "the five collisions §4.1 lists — leaves input unchanged. Mark it PARTIAL and name "
-            "the shortfall, or implement it (M1.7)."
+    handled = normalize_sorani("وکتێبەکان") == "و کتێبەکان"
+    status = _status("M0.3")
+    if handled:
+        assert status == "DONE", (
+            "conjunctive `و` separation is implemented (M1.7), so §4.1's fifth collision is "
+            f"handled — M0.3 is still marked {status}. Promote it and record the evidence."
         )
     else:
-        pytest.fail(
-            "conjunctive `و` separation now changes output. Implement M1.7 properly, promote "
-            "M0.3 to DONE, and remove this guard."
+        assert status != "DONE", (
+            "M0.3 claims §4.1 normalization is done, but conjunctive `و` separation — one of "
+            "the five collisions §4.1 lists — leaves input unchanged."
         )
 
 

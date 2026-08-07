@@ -69,18 +69,20 @@ def test_normalization_does_not_mutate_its_input() -> None:
     assert typed == before
 
 
-def test_conjunctive_waw_separation_is_a_known_gap() -> None:
-    """§4.1 credits AsoSoft with a `و` separation algorithm. KLPT does not implement it.
+def test_conjunctive_waw_separation_is_part_of_normalization() -> None:
+    """§4.1's fifth collision, closed in M1.7. The rule and its measurements: `tests/test_waw.py`.
 
-    Asserted rather than ignored (D-003): correct separation needs a lexicon, and guessing
-    would corrupt real words. When separation lands, this test fails and forces the update
-    instead of the gap being quietly carried forward.
+    D-003 left this unimplemented because separation needs a lexicon and guessing corrupts
+    real words. D-026 implements it against KLPT's dictionary as a refusal rather than a
+    prediction, and the exhaustive safety check — no dictionary word is ever split — lives
+    next to the rule.
     """
-    joined = "من وتو"
-    assert normalize_sorani(joined) == joined, (
-        "conjunctive `و` separation now changes output — implement it properly, update "
-        "DECISIONS.md D-003, and replace this test with the real expectation"
-    )
+    assert normalize_sorani("وکتێبەکان") == "و کتێبەکان"
+
+
+def test_the_ambiguous_join_is_still_left_alone() -> None:
+    """D-003's example. Neither reading of `وتو` has lexicon support, so neither is chosen."""
+    assert normalize_sorani("من وتو") == "من وتو"
 
 
 def test_full_kurdish_character_set_survives_normalization() -> None:

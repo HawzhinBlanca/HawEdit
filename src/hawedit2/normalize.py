@@ -11,18 +11,28 @@ the normalized artifact (Kurdish invariant #3) — never the raw one, and never 
 This module only ever returns a new string; it has no in-place mode by design.
 
 Tooling is KLPT's `preprocess` module, per §4.1. What it does and does not cover was
-measured, not assumed — see `DECISIONS.md` D-003. The one gap (conjunctive `و` separation)
-is asserted in `tests/test_normalize.py` so it cannot be silently carried forward.
+measured, not assumed — see `DECISIONS.md` D-003. It covers four of §4.1's five collisions;
+the fifth, conjunctive `و` separation, is handled here against KLPT's Sorani dictionary and
+is documented on `separate_conjunctive_waw` (D-026).
 """
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Final
 
 from klpt.preprocess import Preprocess
 
-__all__ = ["NUMERAL", "SCRIPT", "SORANI", "normalize_sorani"]
+__all__ = [
+    "NUMERAL",
+    "SCRIPT",
+    "SORANI",
+    "WAW",
+    "is_sorani_word",
+    "normalize_sorani",
+    "separate_conjunctive_waw",
+]
 
 SORANI: Final = "Sorani"
 SCRIPT: Final = "Arabic"
@@ -52,4 +62,77 @@ def normalize_sorani(text: str) -> str:
     Idempotent: `normalize_sorani(normalize_sorani(t)) == normalize_sorani(t)`.
     """
     normalized: str = _preprocessor().normalize(text)
-    return normalized
+    # Order matters: the encoding fixes must land before any dictionary lookup, or separation
+    # would fail on exactly the text §4.1 exists for — a word typed with `ه`+ZWNJ is not the
+    # dictionary's spelling of it, so it would never be recognised and never be separated.
+    return separate_conjunctive_waw(normalized)
+
+
+# --- §4.1's fifth collision: conjunctive `و` ----------------------------------------------
+
+WAW: Final = "و"
+
+# A token as it sits in text: leading punctuation/quotes, the word, trailing punctuation.
+# `\w` is Unicode-aware, so Kurdish letters are word characters and «», ., ، are not.
+_TOKEN: Final = re.compile(r"(\w+)")
+
+
+@lru_cache(maxsize=1)
+def _speller() -> object:
+    """KLPT's Stem, used only for `check_spelling`. Built once — construction reads the
+    hunspell tables and costs ~0.2 s."""
+    from klpt.stem import Stem
+
+    return Stem(SORANI, SCRIPT)
+
+
+@lru_cache(maxsize=100_000)
+def is_sorani_word(token: str) -> bool:
+    """Is `token` a valid Sorani word, inflections included?
+
+    KLPT's spell check is morphology-aware — it accepts `کتێبەکان` (books-the), not just the
+    citation form — which is what makes separation possible at all. A bare-lexicon lookup
+    would only ever recognise the ~24k headwords and would leave every inflected form joined.
+
+    Cached because normalization runs over whole transcripts and the same function words
+    recur constantly.
+    """
+    if not token:
+        return False
+    checked: bool = _speller().check_spelling(token)  # type: ignore[attr-defined]
+    return checked
+
+
+def separate_conjunctive_waw(text: str) -> str:
+    """Split a conjunctive `و` off the word it was typed onto (§4.1, D-026).
+
+    §4.1: "Often joined to the previous word; AsoSoft applies a separation algorithm." The
+    algorithm here is stated as a refusal rather than a prediction:
+
+        split `و` + R  →  `و` R    only if   R is a valid Sorani word  AND  `و`+R is not.
+
+    Both conditions carry weight. Drop the first and every `و`-initial token gets split. Drop
+    the second and `وتار` — "article" — becomes "and tar", writing a word nobody said into the
+    artifact that every index, embedding and model input reads (Kurdish invariant #3).
+
+    The bias is deliberate and one-directional: **under-split, never mis-split.** A joined `و`
+    left alone costs recall in the §2 index, and character 3-grams absorb part of that. A real
+    word torn in half costs correctness, and nothing absorbs it. The residual is bounded and
+    measured — see `evidence/waw-separation.md`: on KLPT's 24,888-entry dictionary, zero words
+    are damaged and 10 `و`-initial words can never be separated because they are words in
+    their own right.
+
+    Returns:
+        A new string. Never mutates `text`.
+    """
+
+    def split_token(match: re.Match[str]) -> str:
+        token = match.group(1)
+        if len(token) < 2 or not token.startswith(WAW):
+            return token
+        remainder = token[1:]
+        if is_sorani_word(token) or not is_sorani_word(remainder):
+            return token
+        return f"{WAW} {remainder}"
+
+    return _TOKEN.sub(split_token, text)
