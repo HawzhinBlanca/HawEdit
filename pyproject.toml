@@ -21,6 +21,11 @@ dev = [
 # are. Both models are named in §7: PySceneDetect for shot detection, Silero VAD for speech.
 media = [
     "scenedetect==0.6.5",   # BSD-3-Clause — §7 shot detection
+    # scenedetect declares OpenCV as an *optional* extra, so `import scenedetect`
+    # succeeds on an install that cannot detect a single cut. CI caught that; a local
+    # venv that happened to have it did not. Headless on purpose: §6 puts Stage 0 on a
+    # server, and the GUI build pulls X11 libraries no runner or render box needs.
+    "opencv-python-headless==5.0.0.93",  # Apache-2.0 — scenedetect's actual backend
     "silero-vad==5.1.2",    # MIT — §7 VAD; ships its own ONNX weights in the wheel
     "onnxruntime==1.20.1",  # MIT — silero-vad's ONNX backend
     "torch==2.13.0",        # BSD-3-Clause — silero-vad's tensor interface

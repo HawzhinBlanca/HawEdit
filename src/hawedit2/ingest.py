@@ -56,6 +56,7 @@ __all__ = [
     "extract_audio",
     "extract_proxy",
     "ingest",
+    "media_stack_available",
     "probe_duration_ms",
 ]
 
@@ -204,6 +205,29 @@ def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
         ]
     )
     return dest
+
+
+def media_stack_available() -> bool:
+    """Can this install actually detect shots and speech — not merely import the modules?
+
+    `importlib.util.find_spec("scenedetect")` returns a spec for an install that cannot detect
+    a single cut, because PySceneDetect declares OpenCV as an *optional* extra. A guard built
+    on that answers "is the module present", which is a different question from "does it work",
+    and the gap is invisible until something calls `detect()`.
+
+    That is the same mistake §4.3.2 warns about for libass and `encoder_available` found for
+    NVENC: a component can be present and unusable. So this imports the whole chain the way
+    Stage 0 uses it, and answers the question that was actually asked.
+    """
+    try:
+        import numpy  # noqa: F401
+        import scenedetect  # noqa: F401
+        import silero_vad  # noqa: F401
+        import torch  # noqa: F401
+        from scenedetect import ContentDetector, detect  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def detect_shots(source: Path, threshold: float = CONTENT_DETECTOR_THRESHOLD) -> tuple[int, ...]:

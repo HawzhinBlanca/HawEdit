@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import subprocess
 import wave
-from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -45,9 +44,11 @@ from hawedit2.ingest import (
     extract_audio,
     extract_proxy,
     ingest,
+    media_stack_available,
     probe_duration_ms,
 )
 
+ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.mp4"
 
 # How the fixture was built: three 1.4 s segments, so two cuts.
@@ -57,7 +58,9 @@ GROUND_TRUTH_CUTS_MS = (1_400, 2_800)
 # quarter of it — tight enough that passing means something.
 CUT_TOLERANCE_MS = 100
 
-MEDIA_STACK = all(find_spec(m) is not None for m in ("scenedetect", "silero_vad", "torch"))
+# Not `find_spec`: see ingest.media_stack_available. A module that imports and cannot
+# work is exactly what slipped past CI-less local runs.
+MEDIA_STACK = media_stack_available()
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT2_FFMPEG")
 needs_media_stack = pytest.mark.skipif(
@@ -329,3 +332,48 @@ def test_missing_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setattr("hawedit2.ingest.find_ffmpeg", lambda: None)
     with pytest.raises(IngestError, match="fetch-ffmpeg.sh"):
         ingest(FIXTURE, tmp_path / "work")
+
+
+# --- the CI-only failure: present is not usable ---------------------------------------------
+
+
+def test_the_media_stack_check_asks_whether_it_works_not_whether_it_imports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug CI caught and every local run missed.
+
+    PySceneDetect declares OpenCV as an *optional* extra, so `import scenedetect` succeeds on
+    an install that cannot detect a single cut. A guard built on `find_spec` answers "is the
+    module present", which is a different question from "does it work" — and the gap only
+    appears when something calls `detect()`, which on a clean runner was 22 red tests.
+
+    Same shape as §4.3.2's warning about libass and what `encoder_available` found for NVENC: a
+    component can be present and unusable, and only trying it tells you which.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def without_opencv(name: str, *args: object, **kwargs: object) -> object:
+        if name == "scenedetect" or name.startswith("scenedetect."):
+            raise ImportError("OpenCV could not be found, try installing opencv-python")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", without_opencv)
+    assert media_stack_available() is False
+
+
+def test_the_stack_this_machine_has_is_reported_available() -> None:
+    """The positive control. An always-False check would pass the test above trivially."""
+    assert media_stack_available() is True
+
+
+def test_opencv_is_a_declared_dependency_not_an_accident() -> None:
+    """It was installed locally and undeclared, which is why only CI found it."""
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    media = pyproject["project"]["optional-dependencies"]["media"]
+    assert any("opencv" in dep for dep in media), (
+        f"scenedetect's backend is not declared; a clean install cannot detect shots: {media}"
+    )
