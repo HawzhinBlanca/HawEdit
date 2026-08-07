@@ -453,3 +453,218 @@ def test_the_umask_cannot_widen_the_credential_file(tmp_path: Path) -> None:
         assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
     finally:
         os.umask(old)
+
+
+# =========================================================================================
+# ROUND 2 — the same bug class, found inside the code written to fix it
+#
+# Four of the eleven round-1 fixes introduced a new instance of "a check that accepts the
+# shape of an answer without checking its content", one call site over from where the fix
+# landed. That is the finding: the pattern is not a bug, it is a habit — fix X at site A,
+# never look at site B.
+# =========================================================================================
+
+
+def test_a_hardlinked_env_cannot_rewrite_a_tracked_file(tmp_path: Path) -> None:
+    """BLOCKER, introduced by the round-1 symlink fix.
+
+    `O_NOFOLLOW` rejects a `.env` that *is* a symlink. A hardlink is an ordinary regular file
+    that happens to share an inode with — say — a tracked file, so O_NOFOLLOW passes it and
+    `O_TRUNC` rewrites that file's content with the plaintext key. The round-1 fix validated
+    the path's *name*; the symlink bug was really about the file's *identity*.
+    """
+    repo = _git_repo(tmp_path)
+    sink = repo / "README.md"
+    os.link(sink, repo / ".env")
+
+    with pytest.raises(CredentialError, match="hard link"):
+        write_credential(GEMINI_API_KEY, "sk-LEAKED-VIA-HARDLINK", env_file=repo / ".env")
+
+    assert sink.read_text(encoding="utf-8") == "tracked content\n", (
+        "the tracked file was rewritten with the key through a hardlink"
+    )
+
+
+def test_the_raw_transcript_is_complete_the_instant_it_is_visible(tmp_path: Path) -> None:
+    """BLOCKER, introduced by the round-1 O_EXCL fix.
+
+    `O_EXCL` protected the writer and, in doing so, made the *name* appear before the content
+    did. A concurrent reader hit a half-written file or a missing digest sidecar and crashed
+    with `JSONDecodeError`/`FileNotFoundError` instead of the orderly refusal the code
+    promises. Whenever raw is readable, it must parse and its sidecar must exist.
+    """
+    from hawedit.transcripts import AsrProvenance, RawTranscript, TranscriptStore
+
+    store = TranscriptStore(tmp_path)
+    raw = RawTranscript(
+        media_id="m", text_ckb="ئەمە", words=(), asr=AsrProvenance(canonical="omniASR_LLM_7B_v2")
+    )
+    store.write_raw(raw)
+    # Both artifacts present and consistent immediately after the write returns.
+    assert store.raw_path("m").exists()
+    store.verify_raw_integrity("m")
+    assert store.read_raw("m").text_ckb == "ئەمە"
+    # And no staging debris left behind.
+    assert not list(tmp_path.glob(".*tmp")), "a temporary file survived the write"
+
+
+def test_write_once_survives_the_new_write_path(tmp_path: Path) -> None:
+    """Invariant #1 must not have been weakened by fixing the race."""
+    from hawedit.transcripts import (
+        AsrProvenance,
+        RawTranscript,
+        RawTranscriptImmutable,
+        TranscriptStore,
+    )
+
+    store = TranscriptStore(tmp_path)
+    raw = RawTranscript(
+        media_id="m", text_ckb="ئەمە", words=(), asr=AsrProvenance(canonical="omniASR_LLM_7B_v2")
+    )
+    store.write_raw(raw)
+    with pytest.raises(RawTranscriptImmutable):
+        store.write_raw(raw)
+    assert not list(tmp_path.glob(".*tmp")), "the refused write left debris"
+
+
+def test_index_contiguity_is_not_time_contiguity() -> None:
+    """BLOCKER, introduced by the round-1 contiguity fix.
+
+    The clip is cut in *time*. Index contiguity coincides with time contiguity only when the
+    sentence list is already chronological, and nothing guaranteed that. An out-of-time-order
+    transcript therefore produced an index-contiguous selection whose window swallowed real,
+    un-captioned Kurdish speech — exactly the defect the fix was written to prevent.
+    """
+    from hawedit.pipeline import assert_time_contiguous
+    from hawedit.sentences import Sentence
+    from hawedit.transcripts import Word
+
+    def sentence(start: int, end: int) -> Sentence:
+        return Sentence(
+            words=(Word(w="ئەمە", start_ms=start, end_ms=end, conf=0.9),), complete=True
+        )
+
+    # Index order 0,1,2 — but sentence 2 sits in time *between* 0 and 1.
+    out_of_order = [sentence(0, 900), sentence(3_000, 3_900), sentence(1_500, 2_400)]
+    with pytest.raises(ValueError, match="overlaps sentence"):
+        assert_time_contiguous(out_of_order, (0, 1))
+
+    in_order = [sentence(0, 900), sentence(1_500, 2_400), sentence(3_000, 3_900)]
+    assert_time_contiguous(in_order, (0, 1))  # must not raise
+    assert_time_contiguous(in_order, ())  # empty selection is not a violation
+
+
+def test_a_persisted_verdict_cannot_smuggle_a_string_boolean() -> None:
+    """MAJOR, introduced by the round-1 strict-bool fix.
+
+    `_strict_bool` was added to the live-response parser. `JudgeVerdict.from_dict` — the
+    sibling path that rebuilds a verdict from persisted JSON — took the value with no check,
+    and it survived all the way into a shipped `Editorial`.
+    """
+    from hawedit.judge import JudgeVerdict
+
+    payload = {
+        "candidate_id": "c",
+        "hook_score": 0.8,
+        "self_contained": "false",
+        "payoff_at_ms": 500,
+        "meaning_fidelity": 0.9,
+        "misleading_edit_risk": 0.1,
+        "cultural_landing": 0.8,
+        "narrative_role": "payoff",
+        "title_ckb": "ڕۆژنامەوانی کوردی",
+        "description_ckb": "بابەتێکی گرنگ",
+        "hashtags_ckb": ["#کوردی"],
+        "judge": "gemini-2.5-pro",
+        "clip_in_ms": 0,
+        "clip_out_ms": 1_000,
+        "sv6d": None,
+    }
+    with pytest.raises(ValueError, match="boolean"):
+        JudgeVerdict.from_dict(payload)
+
+
+def test_a_string_of_hashtags_is_not_shredded_into_letters() -> None:
+    """A `str` is iterable, so a scalar where the schema says array yields one 'hashtag' per
+    character — and each character passes the Kurdish-script check, because a Kurdish letter
+    is Kurdish script."""
+    from hawedit.gemini import GeminiJudge, JudgeUnusable
+    from hawedit.judge import InputMode, JudgeRequest
+
+    fields = {
+        "hook_score": 0.8,
+        "self_contained": True,
+        "payoff_at_ms": 500,
+        "meaning_fidelity": 0.9,
+        "misleading_edit_risk": 0.1,
+        "cultural_landing": 0.8,
+        "narrative_role": "payoff",
+        "title_ckb": "ڕۆژنامەوانی کوردی",
+        "description_ckb": "بابەتێکی گرنگ",
+        "hashtags_ckb": "کورد",  # a string, not an array
+    }
+
+    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+        if "countTokens" in url:
+            return 200, json.dumps({"totalTokens": 10})
+        return 200, json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": json.dumps(fields)}]}}]}
+        )
+
+    with pytest.raises(JudgeUnusable, match="not an array"):
+        GeminiJudge(api_key="k", transport=transport, sleep=lambda _s: None).judge(
+            JudgeRequest(
+                candidate_id="c",
+                mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
+                text_ckb="ئەمە",
+                clip_in_ms=0,
+                clip_out_ms=1_000,
+            )
+        )
+
+
+def test_narrative_role_is_one_of_the_four_the_prompt_asks_for() -> None:
+    """`str()` accepted anything. §5 carries the value to the client, so an unconstrained
+    string means the field says whatever the model felt like saying."""
+    from hawedit.judge import NARRATIVE_ROLES, JudgeVerdict
+
+    assert {"setup", "escalation", "payoff", "aside"} == NARRATIVE_ROLES
+    with pytest.raises(ValueError, match="narrative_role"):
+        JudgeVerdict(
+            candidate_id="c",
+            hook_score=0.8,
+            self_contained=True,
+            payoff_at_ms=500,
+            meaning_fidelity=0.9,
+            misleading_edit_risk=0.1,
+            cultural_landing=0.8,
+            narrative_role="a moment of quiet reflection",
+            title_ckb="ڕۆژنامەوانی کوردی",
+            description_ckb="بابەتێکی گرنگ",
+            hashtags_ckb=("#کوردی",),
+            judge="gemini-2.5-pro",
+            clip_in_ms=0,
+            clip_out_ms=1_000,
+        )
+
+
+def test_costing_a_request_cannot_launder_a_raw_transcript() -> None:
+    """`RawTranscript` duck-types `NormalizedTranscript` exactly, and `build_request` is public
+    and documented as usable on its own — so invariant #3 needed the check here too."""
+    from hawedit.gemini import Governance
+    from hawedit.path_a import PathADiscovery
+    from hawedit.transcripts import AsrProvenance, RawTranscript
+
+    raw = RawTranscript(
+        media_id="m",
+        text_ckb="ڕۆژنامەوانی",
+        words=(),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2"),
+    )
+
+    def transport(_url: str, _body: bytes | None = None) -> tuple[int, str]:
+        return 200, "{}"
+
+    path_a = PathADiscovery(api_key="k", transport=transport, governance=Governance())
+    with pytest.raises(TypeError, match="norm"):
+        path_a.build_request(raw)  # type: ignore[arg-type]

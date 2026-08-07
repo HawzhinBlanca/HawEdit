@@ -161,7 +161,16 @@ class PathADiscovery:
     def build_request(
         self, transcript: NormalizedTranscript, tokens: int | None = None
     ) -> JudgeRequest:
-        """The §3 Stage 4 request object for this discovery pass, for costing and ceilings."""
+        """The §3 Stage 4 request object for this discovery pass, for costing and ceilings.
+
+        Raises:
+            TypeError: a raw transcript was passed (Kurdish invariant #3). `_prompt` checks
+                this and `discover` goes through it, but this method is public and documented
+                as usable on its own — and `RawTranscript` duck-types `NormalizedTranscript`
+                exactly, so nothing but this call stops raw text reaching a `JudgeRequest` and
+                from there the network. Found by the second independent review.
+        """
+        assert_model_input(transcript)
         return JudgeRequest(
             candidate_id=f"{transcript.media_id}-path-a",
             mode=InputMode.PATH_A_DISCOVERY,

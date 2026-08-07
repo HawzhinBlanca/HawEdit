@@ -226,20 +226,34 @@ class TranscriptStore:
             RawTranscriptImmutable: a raw transcript for this media_id already exists.
         """
         path = self.raw_path(raw.media_id)
+        # O_EXCL protected the *writer* — two workers could not both create the file — and in
+        # doing so made the name appear before the content did. A concurrent reader then hit a
+        # half-written file (JSONDecodeError) or a missing sidecar (FileNotFoundError) instead
+        # of the orderly refusal the code promises. So the content is written to a temporary
+        # file first and `os.link` puts it in place: link is atomic, fails with EEXIST if the
+        # name is taken (write-once, unchanged), and the file is complete the instant it is
+        # visible. Found by the second independent review — in the code written to fix the
+        # first review's race.
         # Exclusive create: `exists()` then `write` is a race, and two workers ingesting the
         # same media would both pass the check and one would overwrite the other's canonical
         # transcript. O_EXCL makes the refusal atomic (audit finding #9).
+        payload = raw.to_json()
+        digest = raw.sha256()
+        staging = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        staging.write_text(payload, encoding="utf-8")
+        # The sidecar lands first, so "raw exists" always implies "digest exists" for a reader.
+        self._digest_path(raw.media_id).write_text(digest, encoding="utf-8")
         try:
-            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            os.link(staging, path)
         except FileExistsError:
+            staging.unlink(missing_ok=True)
             raise RawTranscriptImmutable(
                 f"{path} already exists. transcript.raw.json is never modified after write "
                 f"(Kurdish invariant #1) — not even with identical content. If the ASR output "
                 f"genuinely changed, that is a new media_id or a new run directory."
             ) from None
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(raw.to_json())
-        self._digest_path(raw.media_id).write_text(raw.sha256(), encoding="utf-8")
+        finally:
+            staging.unlink(missing_ok=True)
         path.chmod(0o444)  # advisory: root ignores this, the digest is the real evidence
         return path
 

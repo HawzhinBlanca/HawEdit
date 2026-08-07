@@ -68,6 +68,7 @@ __all__ = [
     "PipelineRun",
     "StageSkipped",
     "assert_contiguous",
+    "assert_time_contiguous",
     "main",
     "run_pipeline",
 ]
@@ -230,6 +231,38 @@ _STAGE_4_JUDGE = StageSkipped(
 )
 
 
+def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
+    """Refuse a selection whose span covers a sentence it does not include.
+
+    `assert_contiguous` checks that the *indices* form a run. That is not the property that
+    matters: the clip is cut in time, so what must hold is that no unselected sentence falls
+    inside the selected span. Those coincide only when the sentence list is already in
+    chronological order, and nothing guaranteed that — a caller-supplied transcript with words
+    out of time order produces an index-contiguous selection whose window contains real,
+    un-captioned Kurdish speech.
+
+    That is precisely the defect `assert_contiguous` was added to prevent, reachable through a
+    dimension the fix never checked. Found by the second independent review.
+    """
+    if not selection:
+        return
+    chosen = {sentences[i] for i in selection}
+    start = min(s.start_ms for s in chosen)
+    end = max(s.end_ms for s in chosen)
+    swallowed = [
+        (i, s)
+        for i, s in enumerate(sentences)
+        if i not in selection and s.start_ms < end and s.end_ms > start
+    ]
+    if swallowed:
+        names = ", ".join(f"#{i} ({s.start_ms}-{s.end_ms} ms)" for i, s in swallowed)
+        raise ValueError(
+            f"the selected sentences span {start}-{end} ms, which overlaps sentence(s) not "
+            f"selected: {names}. The clip would run across speech that has no caption and is "
+            f"missing from the transcript that ships to the client (§4.1)."
+        )
+
+
 def assert_contiguous(selection: tuple[int, ...], total: int) -> None:
     """Refuse a selection that skips a sentence it spans.
 
@@ -384,6 +417,8 @@ def run_pipeline(
     # After the range check on purpose: an index of 99 in a 3-sentence transcript is out of
     # range, and reporting it as "spans sentences 1..98" is true but useless.
     assert_contiguous(select_sentences, total=len(sentences))
+    # Index contiguity is not time contiguity — see assert_time_contiguous.
+    assert_time_contiguous(sentences, select_sentences)
     selected = tuple(sentences[i] for i in select_sentences)
 
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------

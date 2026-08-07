@@ -160,7 +160,10 @@ def write_credential(
     # local user — or a backup, indexer or AV scan — could read the key. A file cannot be
     # created wider than the mode passed here, so there is no window to lose.
     try:
-        handle = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        # Deliberately NO O_TRUNC. It empties the file at open time — before any check could
+        # run — so a hardlink guard placed after the open would fire only once the tracked file
+        # it protects had already been destroyed. Truncation happens below, after identity.
+        handle = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EMLINK):
             raise CredentialError(
@@ -170,7 +173,22 @@ def write_credential(
             ) from exc
         raise CredentialError(f"cannot write {env_file}: {exc}") from exc
 
+    # O_NOFOLLOW rejects a *symlinked* .env. It says nothing about a hardlink, which is an
+    # ordinary regular file sharing an inode with — say — a tracked file. O_TRUNC would then
+    # rewrite that file's content with the key. The round-1 fix validated the path's NAME; this
+    # validates the file's IDENTITY, which is what the symlink bug was really about. Found by
+    # the second independent review, in the code written to fix the first one.
+    links = os.fstat(handle).st_nlink
+    if links > 1:
+        os.close(handle)
+        raise CredentialError(
+            f"{env_file} has {links} hard links — writing to it would also rewrite whatever "
+            f"else shares that inode, which may be a tracked file. Remove the extra link and "
+            f"try again."
+        )
+
     with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        os.ftruncate(stream.fileno(), 0)  # safe now: this inode is ours alone
         stream.write(body)
     # An existing file keeps its old mode through O_CREAT, so narrow it explicitly too.
     env_file.chmod(0o600)

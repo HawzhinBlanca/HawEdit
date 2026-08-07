@@ -79,6 +79,23 @@ class JudgeUnusable(ValueError):
     """Raised when the model answered but the answer is not a verdict this system can use."""
 
 
+def _strict_list(value: object) -> list[Any]:
+    """Refuse a scalar where the schema declares an array.
+
+    A Python `str` is iterable, so `tuple(x for x in "کورد")` yields four single-letter
+    "hashtags" — each of which passes the Kurdish-script check individually, because a Kurdish
+    letter is Kurdish script. The schema constrains what is *asked for*, never what is
+    received. Shape without content, once more.
+    """
+    if not isinstance(value, list):
+        raise JudgeUnusable(
+            f"hashtags_ckb is {type(value).__name__} {value!r}, not an array. A string here "
+            f"would be iterated into one 'hashtag' per character, and each character would "
+            f"pass the Kurdish-script check on its own."
+        )
+    return value
+
+
 def _strict_bool(value: object, field: str) -> bool:
     """Refuse anything that is not a real JSON boolean.
 
@@ -372,7 +389,7 @@ class GeminiJudge:
                 narrative_role=str(fields["narrative_role"]),
                 title_ckb=str(fields["title_ckb"]),
                 description_ckb=str(fields["description_ckb"]),
-                hashtags_ckb=tuple(str(tag) for tag in fields["hashtags_ckb"]),
+                hashtags_ckb=tuple(str(tag) for tag in _strict_list(fields["hashtags_ckb"])),
                 judge=self.model_id,
                 clip_in_ms=request.clip_in_ms,
                 clip_out_ms=request.clip_out_ms,

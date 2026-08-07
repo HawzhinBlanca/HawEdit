@@ -55,6 +55,7 @@ __all__ = [
     "JUDGE_ROLES",
     "KURDISH_EDITORIAL_JUDGE",
     "MIN_REGRESSION_ITEMS",
+    "NARRATIVE_ROLES",
     "PRO_TIER_TOKEN_CEILING",
     "USD_PER_MILLION_TOKENS",
     "VIDEO_TOKENS_PER_SECOND",
@@ -99,6 +100,24 @@ USD_PER_MILLION_TOKENS: Final = 2.0
 # tested evidence on Hawa's Sorani; the floor is a judgment recorded in D-030, not a blueprint
 # figure, and it is a parameter so §8.2 can raise it against real data.
 MIN_REGRESSION_ITEMS: Final = 20
+
+
+NARRATIVE_ROLES: Final = frozenset({"setup", "escalation", "payoff", "aside"})
+
+
+def _strict_bool(value: object, field: str) -> bool:
+    """Refuse anything that is not a real JSON boolean.
+
+    `bool("false")` is True. The guard existed in `gemini.py` for the live-response path and
+    was missing from this one — the sibling that rebuilds a verdict from persisted JSON. A
+    guard at one call site is not a guard; that is the whole lesson of both reviews.
+    """
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"{field} is {value!r} ({type(value).__name__}), not a JSON boolean. "
+            f"bool({value!r}) would be {bool(value)}, and this field ships to the client."
+        )
+    return value
 
 
 class NotRoutable(ValueError):
@@ -179,6 +198,14 @@ class JudgeVerdict:
                 f"({self.clip_in_ms}..{self.clip_out_ms}). The judge scored a different span "
                 f"than the one being cut, and shipping this would put the punchline past the "
                 f"out point."
+            )
+
+        if self.narrative_role not in NARRATIVE_ROLES:
+            raise ValueError(
+                f"narrative_role {self.narrative_role!r} is not one of "
+                f"{sorted(NARRATIVE_ROLES)}. The prompt asks for exactly these four, and §5's "
+                f"contract carries the value to the client — an unconstrained string means the "
+                f"field says whatever the model felt like saying."
             )
 
         object.__setattr__(self, "title_ckb", _kurdish_field(self.title_ckb, "title_ckb"))
@@ -273,7 +300,7 @@ class JudgeVerdict:
         return JudgeVerdict(
             candidate_id=data["candidate_id"],
             hook_score=data["hook_score"],
-            self_contained=data["self_contained"],
+            self_contained=_strict_bool(data["self_contained"], "self_contained"),
             payoff_at_ms=data["payoff_at_ms"],
             meaning_fidelity=data["meaning_fidelity"],
             misleading_edit_risk=data["misleading_edit_risk"],

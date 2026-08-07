@@ -68,3 +68,41 @@ and the only way to find that out is to have someone else look.
 
 Fixes and their regression tests: `tests/test_review_findings.py`. Each test fails against the
 code as it stood before this review.
+
+
+---
+
+# Round 2 — 2026-08-07
+
+Same method, different target: rather than re-reading the code, five reviewers attacked **the
+eleven round-1 fixes** on their own terms, and a sixth worked the areas round 1 admitted it
+never covered. 11 proposed, 8 survived, 3 blockers.
+
+## The finding that matters
+
+**Four of the eleven round-1 fixes introduced a new instance of the same bug class, one call
+site over from where the fix landed.**
+
+| Round-1 fix | What it introduced |
+|---|---|
+| `O_NOFOLLOW` rejects a symlinked `.env` | a **hardlinked** `.env` still rewrote a tracked file — O_NOFOLLOW checks the final component's *name*, never the inode's identity |
+| `_strict_bool` in the live-response parser | `JudgeVerdict.from_dict`, the sibling path, took `"false"` unchecked all the way into a shipped `Editorial` |
+| `assert_contiguous` refuses skipped sentences | it checks *index* contiguity; the clip is cut in **time**, and an out-of-time-order transcript still swallowed un-captioned speech |
+| `O_EXCL` stops two writers clobbering raw | it made the *name* appear before the *content*, so a concurrent reader hit `JSONDecodeError` instead of an orderly refusal |
+
+The pattern is not a bug. It is a habit: fix X at site A, never look at site B.
+
+## And one more, in the fix for the fix
+
+The first hardlink fix checked `st_nlink` *after* opening with `O_TRUNC` — which empties the
+file at open time. The guard fired only once the tracked file it protected had already been
+destroyed. Corrected: open without `O_TRUNC`, establish identity, then `ftruncate`.
+
+A check in the wrong *place* is the same failure as a check of the wrong *thing*.
+
+## Verdict
+
+Every round-1 fix stops the literal exploit reported. None of them generalised without being
+made to. The honest reading is that this codebase's invariants are enforced *at the sites
+someone thought to look at*, and the only reliable way to find the others is an adversarial
+reader who was not the author.
