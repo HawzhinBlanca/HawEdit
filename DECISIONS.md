@@ -356,3 +356,30 @@ complete sentence. §3 Stage 5: "If no sentence boundary exists within tolerance
 the next one or reject the candidate." A plausible-looking anchor derived from a fragment is
 exactly how a clip that starts mid-sentence reaches a client — the caller must decide to
 extend or reject, and cannot do that if the anchor function hides the problem.
+
+---
+
+## D-015 · "Materially disagree" in §3 Stage 1's escalation rule
+
+**Date:** 2026-08-06 · **Blueprint ref:** §3 Stage 1 · **Type:** judgment call
+
+§3 Stage 1 routes to the validator "any segment where LLM-7B and CTC-3B disagree materially"
+without defining materially. `DEFAULT_DISAGREEMENT_CER = 0.15` — normalized CER between the
+two hypotheses. Measured after §4.1 normalization, so the two models typing the same Kurdish
+with different keyboards is agreement, not a reason to spend the validator's 4 GiB.
+
+A tunable awaiting real audio: the right value is whatever separates "the models heard
+different words" from "the models spelled the same words differently", and that boundary is
+empirical. Configurable per call.
+
+**The quartile is relative, not a threshold.** Log-probability scales vary with audio and
+model, so an absolute cutoff escalates everything on one recording and nothing on the next.
+`len(scores) // 4` segments; with fewer than four there is no bottom quarter and confidence
+escalates nothing, though disagreement still applies.
+
+**The prohibition is enforced structurally.** §3 Stage 1: "Never escalate on duration or
+word-count heuristics." `duration_s` is carried on `SegmentScore` for reporting and read by
+no code path, and two tests assert that batches differing only in duration — or only in word
+count — produce identical decisions. Length is the cheap proxy for difficulty and it is
+wrong: 38 seconds of clean studio speech needs no validator; three seconds of overlapping
+Slemani conversation does.

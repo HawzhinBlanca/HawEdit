@@ -65,7 +65,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M1.2 | §4.2 sentence segmentation (Kurdish punctuation **plus** VAD pauses) + §5 anchors | DONE | `src/hawedit2/sentences.py` + `tests/test_sentences.py` (17 tests). Pause path works on wholly unpunctuated input; `anchors_for` returns `None` rather than a guess when nothing is complete. Threshold: D-014. |
 | M1.3 | Stage 0 ingest: ffmpeg demux, PySceneDetect, Silero VAD, diarization | BLOCKED | `BLOCKED.md` #5 (ffmpeg), #4 (gated diarizer) |
 | M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
-| M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | TODO | Unblocked — next iteration |
+| M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | DONE | `src/hawedit2/escalation.py` + `tests/test_escalation.py` (16 tests). §3's "never escalate on duration or word-count" prohibition asserted directly. Threshold: D-015. |
 
 ## Deferred with reason
 
