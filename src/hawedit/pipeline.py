@@ -55,6 +55,7 @@ from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.index import Bm25Index
 from hawedit.ingest import IngestResult, ingest
 from hawedit.judge import EditorialJudge, JudgeRequest, JudgeVerdict
+from hawedit.path_b import VideoUnderstanding, discover_visual
 from hawedit.render import RenderError, RenderResult, render_clip
 from hawedit.sentences import Sentence, anchors_for, segment_sentences
 from hawedit.transcripts import (
@@ -305,6 +306,7 @@ def run_pipeline(
     qc: Qc | None = None,
     verdict: JudgeVerdict | None = None,
     discover: Callable[[NormalizedTranscript], Sequence[Candidate]] | None = None,
+    read_scenes: VideoUnderstanding | None = None,
     judge: EditorialJudge | None = None,
     ffmpeg: Path | None = None,
 ) -> PipelineRun:
@@ -320,9 +322,12 @@ def run_pipeline(
         qc: §5's QC block. Absent means the clip is built but never rendered: §2 puts a human
             gate before output, always, and a runner is not a human.
         discover: §3 Stage 3 Path A. Supply `PathADiscovery(...).discover` and the runner
-            stops standing in for discovery and actually runs it. Path B stays absent — its
-            model needs a GPU — and the union handles that: a verbal-only run is exactly what
-            §3 says must never be filtered away.
+            stops standing in for discovery and actually runs it.
+        read_scenes: §3 Stage 3 Path B. Supply a `VideoUnderstanding` and the union runs
+            two-sided over the scene windows Stage 2 planned on this video. Absent — its model
+            needs a GPU — the union runs one-sided, which §3 says is correct rather than
+            degraded: "Candidates from either path proceed", and a verbal-only moment is the
+            case the dual path exists to protect.
         judge: §3 Stage 4. Supply `GeminiJudge(...)` and the runner scores the top candidate
             itself rather than needing `verdict` handed to it.
         verdict: what §3 Stage 4 would have returned. The second stand-in, for the same reason
@@ -393,14 +398,18 @@ def run_pipeline(
 
     run = _replace(run, transcript=normalized, index=index, sentences=sentences)
 
-    # --- §3 Stage 3 Path A ----------------------------------------------------------------
+    # --- §3 Stage 3, both paths -------------------------------------------------------------
     merged: tuple[MergedCandidate, ...] = ()
     if discover is not None:
         verbal = tuple(discover(normalized))
-        # Path B has no producer (its model needs a GPU), so the union runs one-sided. §3 is
-        # explicit that this is correct rather than degraded: candidates from *either* path
-        # proceed, and a verbal-only moment is the case the dual path exists to protect.
-        merged = merge_candidates(list(verbal), [])
+        # Path B usually has no producer here (its model needs a GPU), and §3 is explicit that
+        # a one-sided union is correct rather than degraded: candidates from *either* path
+        # proceed, and a verbal-only moment is the case the dual path exists to protect. When
+        # a reader *is* supplied it reads the windows Stage 2 planned on this video.
+        visual: tuple[Candidate, ...] = ()
+        if read_scenes is not None:
+            visual = discover_visual(run.visual_windows, read_scenes, media_id=identifier)
+        merged = merge_candidates(list(verbal), list(visual))
         run = _replace(
             run,
             discovery=None if merged else _STAGE_3_NOTHING_FOUND,

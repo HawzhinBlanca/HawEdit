@@ -185,6 +185,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
 | `path_a.py` | §3 Stage 3 Path A | The Kurdish judge over the **whole** transcript. Refuses to send a subset, and refuses to split one. |
+| `path_b.py` | §3 Stage 3 Path B | `VideoChat3-4B` over scenes. Frame budget refused before the call; every SV6D label must cite a time **inside the scene it describes**. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |

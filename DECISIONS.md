@@ -1281,3 +1281,55 @@ updated rather than relaxed, and the refusals they no longer cover are covered b
 came from the model. `evidence/m6-1-timelens-relevance.md`.
 
 ---
+
+## D-039 · SV6D: a timestamp is not evidence unless it points at the scene
+
+**The defect.** §3 Stage 3 says "Every label must cite a timestamp. Reject output where a claim
+has no timeline evidence." `Sv6d` enforced the first sentence with a regex search, and could
+enforce only that, because the type does not know which scene it belongs to. Measured:
+
+```
+scene shown to the model : 300000 .. 312000 ms
+label                    : 'speaker gestures at 9999s'
+cited                    : (9999000,) ms  = 2.7775 hours
+Sv6d presence check      : PASSED (constructed)
+```
+
+Two and three-quarter hours cited about a twelve-second scene. The two sentences read together
+ask for something the presence check cannot express: a timestamp pointing where the model was
+never shown is a well-formed string, not evidence.
+
+**Decision 1 — the range check is a function beside the type, not a check inside it.** It needs
+the window as an argument, and `Sv6d` travels through §5 documents that carry no window. Same
+split as `assert_boundary_invariant` beside `Boundary`, and for the same reason: the type stays
+able to represent what arrived so the gate has something to catch.
+
+**Decision 2 — *some* cited time must land in the window, not every number.** "slow push-in
+over 3s, starting 5:04" cites 3 000 ms and 304 000 ms; only the second is a point on the
+timeline. Requiring all would reject honest labels, and requiring none is what let `9999s`
+through. A label citing only a duration anchors nothing and is refused.
+
+**Decision 3 — a two-part clock is minutes and seconds.** `1:24` in a note about a video is a
+minute and 24 seconds. Reading it as an hour and 24 minutes would put every such citation
+outside every window and turn this check into a blanket rejection.
+
+**Decision 4 — the frame budget is refused before the call, not after.** §3: "Segmentation is
+mandatory: the authors report ~17.7 GB at 256 frames and ~26.7 GB at 512." 256 is the ceiling
+on a single call, because VRAM responds to a call rather than to a total. Past it the failure
+is an out-of-memory kill mid-batch, not a wrong answer, so there is nothing to inspect
+afterwards — a test asserts the model was never invoked.
+
+**What Path B does not do.** Rank against Path A, dedupe across paths, or widen a span: a
+candidate spans exactly the window it was read from. `discovery.py` owns the union and §3
+Stage 5 owns boundaries. Path B never reports `DiscoveryPath.BOTH` — that is the merge's
+conclusion about a moment two paths found independently.
+
+**The runner.** `run_pipeline(..., read_scenes=…)` makes §3's union two-sided over the windows
+Stage 2 planned on that video. Absent, it stays one-sided, which §3 calls correct rather than
+degraded.
+
+**Status.** `MCG-NJU/VideoChat3-4B` is `BLOCKED.md` #2 and #6. No reading here came from the
+model, and the prompt is unwritten — a prompt is only testable against the model it is written
+for. `evidence/m5-3-path-b.md`.
+
+---

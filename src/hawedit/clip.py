@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Final
+from typing import Any, ClassVar, Final
 
 from hawedit.boundary import Boundary, _strict_bool, assert_boundary_invariant
 from hawedit.registry import resolve_role
@@ -41,12 +41,24 @@ __all__ = [
     "Qc",
     "RejectedCandidate",
     "Sv6d",
+    "assert_sv6d_within_window",
+    "parse_timestamps_ms",
 ]
 
 # A timestamp citation in an SV6D label. Accepts `84.6s`, `84600ms`, `1:24` and `00:01:52`,
 # which is the range of forms a judge plausibly emits; the requirement §3 Stage 3 makes is
 # that *some* timeline evidence is present, not that it is in one house format.
-_TIMESTAMP = re.compile(r"\d+(?:\.\d+)?\s*(?:ms|s)\b|\d{1,2}:\d{2}(?::\d{2})?")
+#
+# `Sv6d` checks presence, which is all it can do: it does not know which scene the label is
+# about. Presence alone accepts `speaker at 9999s` on a twelve-second scene — two and three-
+# quarter hours away, regex satisfied, claim anchored to a moment the model never saw.
+# `assert_sv6d_within_window` is the other half, and it needs the window as an argument, so it
+# is a function beside the type rather than a check inside it — the same split as
+# `assert_boundary_invariant` beside `Boundary`.
+_TIMESTAMP = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>ms|s)\b"
+    r"|(?P<first>\d{1,2}):(?P<second>\d{2})(?::(?P<third>\d{2}))?"
+)
 
 _SCORE_FIELDS: Final = (
     "hook_score",
@@ -75,8 +87,17 @@ class Sv6d:
     narrative: str
     retention: str
 
+    DIMENSIONS: ClassVar[tuple[str, ...]] = (
+        "subject",
+        "aesthetics",
+        "camera",
+        "editing",
+        "narrative",
+        "retention",
+    )
+
     def __post_init__(self) -> None:
-        for dimension in ("subject", "aesthetics", "camera", "editing", "narrative", "retention"):
+        for dimension in self.DIMENSIONS:
             label: str = getattr(self, dimension)
             if not _TIMESTAMP.search(label):
                 raise ValueError(
@@ -94,6 +115,56 @@ class Sv6d:
             "narrative": self.narrative,
             "retention": self.retention,
         }
+
+
+def parse_timestamps_ms(label: str) -> tuple[int, ...]:
+    """Every time this label cites, in milliseconds, in the order they appear.
+
+    A two-part clock is minutes and seconds — `1:24` in a note about a video is a minute and
+    24 seconds, never an hour and 24 minutes. Three parts are hours, minutes, seconds.
+    """
+    found: list[int] = []
+    for match in _TIMESTAMP.finditer(label):
+        if match.group("value") is not None:
+            value = float(match.group("value"))
+            found.append(round(value if match.group("unit") == "ms" else value * 1000))
+            continue
+        first, second, third = match.group("first", "second", "third")
+        if third is None:
+            found.append((int(first) * 60 + int(second)) * 1000)
+        else:
+            found.append((int(first) * 3600 + int(second) * 60 + int(third)) * 1000)
+    return tuple(found)
+
+
+def assert_sv6d_within_window(sv6d: Sv6d, in_ms: int, out_ms: int) -> None:
+    """Refuse SV6D labels whose timeline evidence is not in the scene they describe.
+
+    §3 Stage 3: "Every label must cite a timestamp. Reject output where a claim has no timeline
+    evidence." `Sv6d` enforces the first sentence and can only enforce the first, because it
+    does not know which scene it belongs to. Read together the two sentences ask for something
+    stronger than a well-formed string: a claim citing `9999s` on a twelve-second scene has a
+    timestamp and no evidence, since the model was never shown that moment.
+
+    The rule is that **some** cited time falls inside the window, not that every number does.
+    A label may legitimately mention a length as well as a moment — "slow push-in over 3s,
+    starting 5:04" cites 3 000 ms and 304 000 ms, and only the second is a point on the
+    timeline. Requiring all of them would reject honest labels; requiring none is what let
+    `9999s` through.
+
+    Raises:
+        ValueError: a dimension cites no time inside `[in_ms, out_ms]`.
+    """
+    for dimension in Sv6d.DIMENSIONS:
+        label: str = getattr(sv6d, dimension)
+        cited = parse_timestamps_ms(label)
+        if not any(in_ms <= t <= out_ms for t in cited):
+            raise ValueError(
+                f"SV6D {dimension} label {label!r} cites {list(cited)} ms, all outside the "
+                f"scene it describes ({in_ms}..{out_ms} ms). §3 Stage 3: 'Reject output where "
+                f"a claim has no timeline evidence' — a timestamp pointing somewhere the model "
+                f"was never shown is a well-formed string, not evidence."
+            )
 
 
 @dataclass(frozen=True, slots=True)

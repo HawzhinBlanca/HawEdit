@@ -372,6 +372,60 @@ def test_supplying_path_a_makes_the_runner_discover_instead_of_skip(tmp_path: Pa
 
 
 @needs_ffmpeg
+def test_supplying_both_paths_makes_the_union_two_sided_on_this_video(tmp_path: Path) -> None:
+    """§3 Stage 3 with both producers, over the scene windows Stage 2 planned on this media.
+
+    Path B reads the windows Stage 0's own cuts produced — 0..1400, 1400..2800, 2800..4162 —
+    not a fixture list, so this is the join rather than two modules that happen to typecheck.
+    The verbal candidate at 0..1700 overlaps the first visual window, and the merge concludes
+    BOTH about that moment while every other candidate survives on its own path: "union, never
+    intersect".
+    """
+    from collections.abc import Sequence
+
+    from hawedit.clip import DiscoveryPath, Sv6d
+    from hawedit.discovery import Candidate
+    from hawedit.path_b import SceneReading
+    from hawedit.visual_index import SceneWindow
+
+    def sv6d_for(window: SceneWindow) -> Sv6d:
+        at = f"{window.in_ms + 100}ms"
+        return Sv6d(
+            subject=f"speaker at {at}",
+            aesthetics=f"warm grade at {at}",
+            camera=f"static at {at}",
+            editing=f"cut at {at}",
+            narrative=f"setup at {at}",
+            retention=f"hook at {at}",
+        )
+
+    class Reader:
+        def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
+            return tuple(
+                SceneReading(window=w, sv6d=sv6d_for(w), score=0.9 - i * 0.1)
+                for i, w in enumerate(windows)
+            )
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="dual",
+        transcript=a_transcript("dual"),
+        discover=lambda _norm: [
+            Candidate("v1", "dual", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
+        ],
+        read_scenes=Reader(),
+    )
+    assert [w.span for w in run.visual_windows] == [(0, 1_400), (1_400, 2_800), (2_800, 4_162)]
+    paths = {c.discovery_path for c in run.candidates}
+    assert DiscoveryPath.BOTH in paths, paths
+    assert DiscoveryPath.VISUAL in paths, paths
+    # Nothing is dropped: one verbal candidate plus three windows, and the overlap merges into
+    # one rather than disappearing.
+    assert sum(len(c.sources) for c in run.candidates) == 4
+
+
+@needs_ffmpeg
 def test_a_discovery_pass_that_finds_nothing_is_reported_not_hidden(tmp_path: Path) -> None:
     """ "Found nothing" is a real answer about this media and §8.2 records it."""
     run = run_pipeline(
