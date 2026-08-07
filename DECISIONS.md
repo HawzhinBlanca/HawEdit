@@ -1333,3 +1333,68 @@ model, and the prompt is unwritten — a prompt is only testable against the mod
 for. `evidence/m5-3-path-b.md`.
 
 ---
+
+## D-040 · §8.3's "every shipped clip" means the file, not the plan
+
+**The defect.** §8.3's third render-regression bullet asks for the boundary invariant "on every
+shipped clip". `render_clip` asserted it on the `Clip` object, ran ffmpeg, and returned
+`duration_ms` — the requested duration, echoed back. The artifact was never opened. Measured:
+
+```
+requested duration : 8000 ms
+file on disk       : 4180 ms
+source is          : 4162 ms
+encode exit        : 0
+```
+
+ffmpeg cuts what exists and exits 0. The shipped clip ends 3.8 s before its own `final_out` —
+mid-sentence, which Kurdish invariant #2 exists to prevent — and every check on the numbers
+passed, because no check compared the numbers to the file.
+
+**And the upstream cause it found.** The first thing the new check caught was this project's
+own end-to-end fixture. §3 Stage 5's out set always includes `anchor_out + 200 ms tail`, and on
+a short source that alone runs past the end:
+
+```
+media                        : 4162 ms
+anchor_out                   : 4100 ms
+final_out, duration unknown  : 4300 ms  -> 138 ms past the file
+final_out, duration supplied : 4162 ms
+invariant #2 holds either way: True True
+```
+
+`run_pipeline` had been shipping a clip 138 ms shorter than the boundary it recorded, on every
+run, with a green suite. `fuse_boundary` already clamped `final_in` at 0 with the note "a clip
+cannot start before the media does"; there was no upper clamp because nothing told it where the
+media stopped.
+
+**Decision 1 — `BoundaryInputs.media_duration_ms`, optional.** Supplied, the out-point is
+clamped to the end of the media. Absent, §3's formula applies unclamped — honest rather than
+safe, since a caller who has not said how long the media is has told fusion nothing, and
+`render_clip` is the net. The pipeline passes the duration Stage 0 already probed.
+
+**Decision 2 — an anchor past the end is refused, not clamped.** Clamping the *tail* is safe
+for invariant #2 because the anchor still fits inside the media; clamping an anchor that does
+not fit would produce `final_out < anchor_out`, the invariant violated by its own fix. An
+anchored sentence ending after the file does is a broken transcript.
+
+**Decision 3 — the clamp does not touch `out_extended_by`.** It changes the number, not which
+signal reached for it, and §8.2 still asks which one won.
+
+**Decision 4 — two checks, before and after.** The pre-flight (`clip.out_ms` against the probed
+source) is deterministic and names both numbers. The post-encode measurement is the general net
+for causes the pre-flight cannot see. Tolerance is one frame taken from the file's own rate,
+not assumed: correct cuts of the real fixture came back exact except one at `+40 ms`, exactly
+one frame at 25 fps. Only the short side is a defect; a frame of container rounding is not.
+
+**Decision 5 — `RenderResult` carries both durations.** `requested_duration_ms` and
+`measured_duration_ms`, with `duration_ms` kept as a property returning the measured one,
+because the file is the answer. The run report emits both, so drift is visible rather than
+inferred.
+
+**Cost.** Two extra ffprobe launches per render, against an encode. Not measurable.
+
+**Already honest.** `evidence/m2-4-rendered-clip.mp4` measures 2240 ms against a 2200 ms
+request — one frame of rounding, well inside the source. That artifact was never truncated.
+
+---

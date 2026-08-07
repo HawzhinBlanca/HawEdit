@@ -336,3 +336,61 @@ def test_confidence_is_carried_through() -> None:
 def test_confidence_outside_zero_to_one_is_refused() -> None:
     with pytest.raises(ValueError, match="confidence"):
         fuse_boundary(inputs(), confidence=1.4)
+
+
+# --- the media has an end, and §3's soft extensions do not know it ----------------------
+#
+# `fuse_boundary` clamps `final_in` at 0 with the note "a clip cannot start before the media
+# does". There was no matching upper clamp, because the function was never told where the media
+# stops. So §3's `anchor_out + 200 ms tail` pushed `final_out` past the end of the file, and
+# nothing downstream noticed until the encoded artifact was measured: the project's own
+# end-to-end fixture asked for 4300 ms of a 4162 ms video and shipped a clip 138 ms short.
+
+
+def test_the_tail_is_clamped_to_the_end_of_the_media() -> None:
+    boundary = fuse_boundary(inputs(anchor_in_ms=0, anchor_out_ms=4_100, media_duration_ms=4_162))
+    assert boundary.final_out_ms == 4_162
+    assert boundary.final_out_ms >= boundary.anchor_out_ms
+
+
+def test_without_a_duration_the_tail_still_overshoots_and_that_is_honest() -> None:
+    """Absence is not permission, but it is not knowledge either: a caller that does not say
+    how long the media is gets the §3 formula unclamped, and `render_clip` is the net."""
+    boundary = fuse_boundary(inputs(anchor_in_ms=0, anchor_out_ms=4_100))
+    assert boundary.final_out_ms == 4_300
+
+
+def test_an_anchor_past_the_end_of_the_media_is_refused_not_clamped() -> None:
+    """Clamping the *tail* is safe for Kurdish invariant #2 because the anchor still fits.
+    An anchor that does not fit is a transcript claiming speech after the file ends, and
+    clamping it would produce final_out < anchor_out — the invariant, violated by the fix."""
+    with pytest.raises(ValueError, match="after the media ends"):
+        fuse_boundary(inputs(anchor_in_ms=0, anchor_out_ms=5_000, media_duration_ms=4_162))
+
+
+def test_every_soft_signal_is_clamped_not_just_the_tail() -> None:
+    boundary = fuse_boundary(
+        inputs(
+            anchor_in_ms=0,
+            anchor_out_ms=4_000,
+            media_duration_ms=4_162,
+            natural_silence_ms=9_000,
+            speaker_turn_end_ms=8_000,
+        )
+    )
+    assert boundary.final_out_ms == 4_162
+
+
+def test_a_clamped_boundary_still_records_which_input_moved_it() -> None:
+    """The clamp changes the number, not the provenance: §8.2 still asks which signal won."""
+    boundary = fuse_boundary(
+        inputs(
+            anchor_in_ms=0, anchor_out_ms=4_000, media_duration_ms=4_162, natural_silence_ms=9_000
+        )
+    )
+    assert boundary.out_extended_by == "natural_silence"
+
+
+def test_a_non_positive_media_duration_is_refused() -> None:
+    with pytest.raises(ValueError, match="media_duration_ms"):
+        fuse_boundary(inputs(anchor_in_ms=0, anchor_out_ms=1_000, media_duration_ms=0))

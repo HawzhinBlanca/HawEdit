@@ -185,7 +185,9 @@ class PipelineRun:
                         "path": self.render.path,
                         "width": self.render.width,
                         "height": self.render.height,
-                        "duration_ms": self.render.duration_ms,
+                        # Both, because they are two facts and their agreement is the check.
+                        "duration_ms": self.render.measured_duration_ms,
+                        "requested_duration_ms": self.render.requested_duration_ms,
                         "reframe": self.render.reframe.value,
                         "encoder": self.render.encoder.value,
                         "ffmpeg_version": self.render.ffmpeg_version,
@@ -469,6 +471,11 @@ def run_pipeline(
             # measured on *this* video by Stage 0 a few lines above, not supplied as fixtures.
             shot_cuts_ms=ingested.shot_cuts_ms,
             vad_onset_ms=ingested.speech[0].start_ms if ingested.speech else None,
+            # Stage 0 probed this file's length, so Stage 5 can be told where it stops. Without
+            # it the 200 ms tail alone runs past the end of a short source — which is what this
+            # runner had been doing, shipping a clip 138 ms shorter than the boundary it
+            # recorded, until `render_clip` started measuring the artifact.
+            media_duration_ms=ingested.duration_ms,
         )
     )
 

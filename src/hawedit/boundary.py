@@ -98,6 +98,10 @@ class BoundaryInputs:
     # are supplied together or neither is; `fuse_boundary` refuses the mismatch.
     timelens_interval_start_ms: int | None = None
     timelens_interval_end_ms: int | None = None
+    # Where the media stops. `None` means the caller did not say, and fusion then applies §3's
+    # formula unclamped — which is honest, not safe: the 200 ms tail alone can push `final_out`
+    # past the end of the file, and ffmpeg encodes that successfully and truncates it.
+    media_duration_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +265,20 @@ def fuse_boundary(inputs: BoundaryInputs, confidence: float | None = None) -> Bo
         )
     if confidence is not None and not 0.0 <= confidence <= 1.0:
         raise ValueError(f"confidence must be within [0, 1], got {confidence}")
+    if inputs.media_duration_ms is not None:
+        if inputs.media_duration_ms <= 0:
+            raise ValueError(f"media_duration_ms must be positive, got {inputs.media_duration_ms}")
+        if inputs.anchor_out_ms > inputs.media_duration_ms:
+            # Refused rather than clamped. Clamping the *tail* is safe for Kurdish invariant #2
+            # because the anchor still fits inside the media; clamping an anchor that does not
+            # fit would produce final_out < anchor_out — the invariant violated by the fix. An
+            # anchored sentence ending after the file does is a broken transcript, not a
+            # boundary problem.
+            raise ValueError(
+                f"anchor_out ({inputs.anchor_out_ms} ms) is after the media ends "
+                f"({inputs.media_duration_ms} ms): the anchored sentence claims speech past "
+                f"the end of the file, so there is no clip to cut."
+            )
     _assert_timelens_is_about_this_clip(inputs)
 
     # --- in point: earliest of the candidates, anchor_in included so nothing pulls inward
@@ -300,6 +318,12 @@ def fuse_boundary(inputs: BoundaryInputs, confidence: float | None = None) -> Bo
         out_candidates.append((max(following_cuts), "shot_cut"))
 
     final_out_ms, out_extended_by = max(out_candidates, key=lambda candidate: candidate[0])
+    if inputs.media_duration_ms is not None and final_out_ms > inputs.media_duration_ms:
+        # The mirror of the clamp at 0 above, and safe for the same reason: anchor_out <=
+        # media_duration is checked already, so the invariant survives. `out_extended_by` is
+        # left alone — the clamp changes the number, not which signal reached for it, and §8.2
+        # still asks which one won.
+        final_out_ms = inputs.media_duration_ms
 
     boundary = Boundary(
         anchor_in_ms=inputs.anchor_in_ms,

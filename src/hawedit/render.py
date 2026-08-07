@@ -39,6 +39,7 @@ from typing import Final
 
 from hawedit.captions import assert_rtl_stack, find_ffmpeg, subtitle_filter
 from hawedit.clip import Clip
+from hawedit.ingest import probe_duration_ms
 
 __all__ = [
     "VERTICAL_HEIGHT",
@@ -47,8 +48,10 @@ __all__ = [
     "Reframe",
     "RenderError",
     "RenderResult",
+    "assert_encoded_span",
     "crop_filter",
     "encoder_available",
+    "frame_duration_ms",
     "linked_libraries",
     "render_clip",
 ]
@@ -206,11 +209,81 @@ class RenderResult:
     path: str
     width: int
     height: int
-    duration_ms: int
+    # Two durations, because they are two different facts. `requested` is the clip's own span
+    # — what §5 says this clip is. `measured` is probed from the file that was written. They
+    # agreed silently for as long as nobody looked; §8.3 asks for the invariant "on every
+    # shipped clip", and a shipped clip is a file, not a plan.
+    requested_duration_ms: int
+    measured_duration_ms: int
     reframe: Reframe
     encoder: Encoder
     captions_burned_in: bool
     ffmpeg_version: str
+
+    @property
+    def duration_ms(self) -> int:
+        """The duration of the artifact. Kept as a name because the file is the answer."""
+        return self.measured_duration_ms
+
+
+def frame_duration_ms(video: Path, ffmpeg: Path | None = None) -> int:
+    """One frame of `video`, in milliseconds, from the file's own rate.
+
+    Not a constant: the fixture here is 25 fps (40 ms), a 30 fps source is 33 ms. Assuming a
+    rate would make the tolerance below either too tight for one source or too loose for
+    another, and "too loose" is the direction that ships a truncated clip.
+    """
+    binary = ffmpeg or find_ffmpeg()
+    if binary is None:
+        raise RenderError("no ffmpeg available to probe the frame rate")
+    ffprobe = binary.with_name("ffprobe")
+    result = subprocess.run(
+        [
+            str(ffprobe),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate",
+            "-of",
+            "default=nw=1:nk=1",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    rate = result.stdout.strip()
+    try:
+        numerator, denominator = (int(part) for part in rate.split("/"))
+        if numerator <= 0 or denominator <= 0:
+            raise ValueError(rate)
+    except ValueError as exc:
+        # A video file whose frame rate cannot be read is not a file to guess about.
+        raise RenderError(f"could not read a frame rate from {video}: {rate!r}") from exc
+    return round(denominator * 1000 / numerator)
+
+
+def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> None:
+    """Refuse an encode that came out shorter than the clip it claims to be.
+
+    §8.3: "Boundary invariant: assert `final_in <= anchor_in` and `final_out >= anchor_out` on
+    every shipped clip." A file short of `requested_ms` ends before the clip's own `final_out`,
+    which is mid-sentence — exactly what Kurdish invariant #2 forbids — while every check on
+    the numbers passed, because the numbers were never compared to the artifact.
+
+    One frame of slack in each direction, measured rather than assumed: correct cuts of the
+    real fixture came back exact except one, which was over by 40 ms — precisely one frame at
+    25 fps. Only the short side is a defect; a frame of container rounding is not.
+    """
+    if measured_ms < requested_ms - frame_ms:
+        raise RenderError(
+            f"the encoded file is {measured_ms} ms, shorter than the {requested_ms} ms clip it "
+            f"claims to be (tolerance one frame, {frame_ms} ms). The clip ends before its own "
+            f"final_out, which is mid-sentence — §8.3 asserts Kurdish invariant #2 on every "
+            f"shipped clip, and the shipped clip is this file."
+        )
 
 
 def render_clip(
@@ -263,6 +336,17 @@ def render_clip(
         raise RenderError(f"no subtitle file at {ass_path} — §4.3 captions are not optional")
 
     duration_ms = clip.out_ms - clip.in_ms
+    # Measured on the real fixture: asking for 0..8000 ms of a 4162 ms source makes ffmpeg
+    # exit 0 and write 4180 ms. Nothing in the numbers is wrong — the clip is internally
+    # consistent — so the only place to catch it is against the media itself, before encoding.
+    source_ms = probe_duration_ms(source, binary)
+    if clip.out_ms > source_ms:
+        raise RenderError(
+            f"clip {clip.clip_id} ends at {clip.out_ms} ms but {source.name} is {source_ms} ms. "
+            f"ffmpeg would encode this successfully and truncate it, and the shipped clip would "
+            f"end {clip.out_ms - source_ms} ms before its own final_out — mid-sentence, which "
+            f"§8.3 asserts against on every shipped clip."
+        )
     output.parent.mkdir(parents=True, exist_ok=True)
     filters = ",".join(
         [crop_filter(source_width, source_height, focus_x), subtitle_filter(ass_path, fonts_dir)]
@@ -304,12 +388,17 @@ def render_clip(
             f"{result.stderr.decode('utf-8', 'replace')[-800:]}"
         )
 
+    # The artifact, measured. Until this existed, `duration_ms` was the request echoed back.
+    measured_ms = probe_duration_ms(output, binary)
+    assert_encoded_span(measured_ms, duration_ms, frame_duration_ms(output, binary))
+
     return RenderResult(
         clip_id=clip.clip_id,
         path=str(output),
         width=VERTICAL_WIDTH,
         height=VERTICAL_HEIGHT,
-        duration_ms=duration_ms,
+        requested_duration_ms=duration_ms,
+        measured_duration_ms=measured_ms,
         # Named for what it is. §3 Stage 6's speaker tracking needs diarization, which does
         # not run (`BLOCKED.md` #4), so no clip this function produces may claim it.
         reframe=Reframe.STATIC_CENTRE,

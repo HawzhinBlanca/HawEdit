@@ -21,6 +21,7 @@ producing something plausible.
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -28,14 +29,17 @@ import pytest
 from hawedit.boundary import BoundaryInputs, fuse_boundary
 from hawedit.captions import build_ass, find_ffmpeg
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
+from hawedit.ingest import probe_duration_ms
 from hawedit.render import (
     VERTICAL_HEIGHT,
     VERTICAL_WIDTH,
     Encoder,
     Reframe,
     RenderError,
+    assert_encoded_span,
     crop_filter,
     encoder_available,
+    frame_duration_ms,
     render_clip,
 )
 from hawedit.sentences import Sentence
@@ -502,3 +506,80 @@ def test_the_evidence_clip_is_committed() -> None:
     clip = ROOT / "evidence" / "m2-4-rendered-clip.mp4"
     assert clip.exists(), f"M2.4's rendered clip is not committed at {clip}"
     assert clip.stat().st_size > 1_000
+
+
+# =========================================================================================
+# §8.3 — "assert final_in <= anchor_in and final_out >= anchor_out on every SHIPPED clip"
+#
+# The invariant was asserted on the plan: `assert_renderable()` runs, the numbers are checked,
+# ffmpeg is invoked, and `RenderResult.duration_ms` reports what was *asked for*. The file was
+# never measured. Requesting 0..8000 ms of a 4162 ms fixture: ffmpeg exits 0, writes 4180 ms,
+# and the result claims 8000. The shipped clip ends 3.8 s before its own `final_out` — which is
+# mid-sentence, the one thing Kurdish invariant #2 exists to prevent — with every check green.
+# =========================================================================================
+
+
+@needs_ffmpeg
+def test_a_clip_running_past_the_end_of_the_media_is_refused(tmp_path: Path) -> None:
+    """Measured: the encode succeeds and silently truncates, so the numbers must be checked
+    against the source before an encoder is ever started."""
+    clip = _clip()
+    over = replace(clip, out_ms=8_000, boundary=replace(clip.boundary, final_out_ms=8_000))
+    output = tmp_path / "over.mp4"
+    with pytest.raises(RenderError, match="4162"):
+        render_clip(
+            clip=over,
+            source=FIXTURE,
+            ass_path=_write_ass(tmp_path),
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+            fonts_dir=FONTS,
+        )
+    assert not output.exists(), "a refused clip still wrote a file"
+
+
+@needs_ffmpeg
+def test_the_result_reports_the_duration_of_the_file_not_of_the_request(tmp_path: Path) -> None:
+    """A number carries its provenance: `measured_duration_ms` comes from the artifact."""
+    clip = _clip()
+    output = tmp_path / "ok.mp4"
+    result = render_clip(
+        clip=clip,
+        source=FIXTURE,
+        ass_path=_write_ass(tmp_path),
+        output=output,
+        source_width=SOURCE_WIDTH,
+        source_height=SOURCE_HEIGHT,
+        fonts_dir=FONTS,
+    )
+    assert result.requested_duration_ms == clip.out_ms - clip.in_ms
+    assert result.measured_duration_ms == probe_duration_ms(output, find_ffmpeg())
+    assert abs(result.measured_duration_ms - result.requested_duration_ms) <= 40
+
+
+def test_a_file_shorter_than_the_request_is_refused() -> None:
+    """The net under the pre-flight check, as a unit.
+
+    Truncation by a short source is now impossible, but it is not the only way an encode can
+    come up short, and this is the check that would catch the others.
+    """
+    with pytest.raises(RenderError, match="shorter"):
+        assert_encoded_span(measured_ms=4_180, requested_ms=8_000, frame_ms=40)
+
+
+def test_a_file_one_frame_long_is_container_rounding_not_a_failure() -> None:
+    """Measured on the real fixture: correct cuts came back exact except one, which was +40 ms
+    — exactly one frame at 25 fps. Rejecting that would fail honest renders."""
+    assert_encoded_span(measured_ms=2_040, requested_ms=2_000, frame_ms=40)
+
+
+def test_a_file_one_frame_short_is_tolerated_and_two_frames_is_not() -> None:
+    assert_encoded_span(measured_ms=1_960, requested_ms=2_000, frame_ms=40)
+    with pytest.raises(RenderError, match="shorter"):
+        assert_encoded_span(measured_ms=1_919, requested_ms=2_000, frame_ms=40)
+
+
+def test_frame_duration_comes_from_the_file_rather_than_an_assumed_rate() -> None:
+    """25 fps is the fixture's rate, not a constant. A 30 fps source has a different frame."""
+    assert frame_duration_ms(FIXTURE, find_ffmpeg()) == 40

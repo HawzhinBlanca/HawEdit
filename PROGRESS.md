@@ -141,6 +141,8 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M6.2 | Sentence-hard fusion (the HARD/SOFT rule itself) | DONE | Delivered in M2.2 — `boundary.py`, invariant #2 exhaustive over 3,125 soft-input combinations. |
 | M6.3 | Real `MCG-NJU/TimeLens2-4B` behind the contract above | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
 
+| M3.4 | §8.3's third render-regression bullet: the boundary invariant asserted on every **shipped** clip | DONE | `render.py` (`assert_encoded_span`, `frame_duration_ms`) + `boundary.py` (`media_duration_ms`) + `tests/test_render.py`, `tests/test_boundary.py`. The invariant had been asserted on the `Clip` object; `RenderResult.duration_ms` was the request echoed back and the file was never opened. Measured: requesting 8000 ms of a 4162 ms source makes ffmpeg exit 0 and write 4180 ms. The new check immediately caught the runner's own end-to-end fixture — §3 Stage 5's 200 ms tail pushed `final_out` 138 ms past the end of the file, so **every `run_pipeline` render had been silently truncated** while the suite stayed green (`evidence/m3-4-shipped-clip-invariant.md`). D-040. |
+
 ## M7 — task ledger
 
 | Task | Definition of Done | Status | Evidence |
