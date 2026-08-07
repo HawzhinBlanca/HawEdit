@@ -858,3 +858,54 @@ can check should be checked by one. Prose does not drift because anyone is carel
 because nothing fails when it does.
 
 ---
+## D-029 · §3 Stage 3 merge — what "union, never intersect" costs to get right
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 3, §8.2 · **Type:** implementation choice
+
+§3 calls Stage 3 "the most important structural decision in the system" and states the rule in
+four words. The four words are easy; the implementations that satisfy them on small examples
+and destroy candidates on real input are not. Four decisions, each against a plausible
+alternative.
+
+**Overlap is measured against the anchor, never against a growing group.** Grouping by
+transitive closure — V1 overlaps X, X overlaps V2, therefore all three are one moment —
+produces a merged candidate spanning more time than anything either path proposed. Measured
+on the fixture in `test_overlap_does_not_chain_across_a_shared_neighbour`: V1 (0–4000) and X
+(1000–5000) match at IoU 0.60, X and V2 (2000–6000) at 0.60, V1 and V2 at 0.33. Union-find
+returns one candidate 0–6000; this returns two, neither longer than 4 s. That bug looks correct
+in every small test, which is why the fixture asserts all three IoUs before asserting the
+result.
+
+**A merged candidate keeps the anchor's span, not the union of the spans that agreed.** §3
+Stage 5 owns boundary fusion. Widening here would decide something Stage 3 has no evidence for
+and would quietly break §8.2's IoU matching against gold — a candidate stretched to cover both
+paths' guesses matches neither gold span.
+
+**A path never dedupes itself.** Two overlapping candidates from Path A are two moments the
+Kurdish judge chose to emit. Collapsing them is this module overruling a path on its own
+output. Only cross-path grouping happens here, which also means the "no chaining" guarantee is
+structural rather than a special case: a visual candidate is claimed by at most one verbal
+candidate, in rank order.
+
+**No cross-path score is invented.** Path A's score is an editorial judgment from the Kurdish
+judge; Path B's is retrieval similarity. There is no defensible arithmetic between them, and
+producing one would be exactly the mistake §3 Stage 1 warns about with published RTF figures —
+a number that looks comparable and is not. `verbal_score` and `visual_score` stay separate and
+are `None` when that path never saw the candidate. A fused ranking is a §8.2 tuning question
+against the labelled set (`BLOCKED.md` #1), not something to guess.
+
+**The grouping threshold defaults to §8.2's own `DEFAULT_IOU_MATCH` (0.5).** Not for
+convenience: grouping at one threshold while §8.2 scores at another would measure a system
+other than the one the merge produced. It is a parameter so §8.2 can tune both together.
+
+**Why build this with neither producer available.** Path A needs Gemini credentials and the §3
+governance decision (`BLOCKED.md` #3); Path B needs `VideoChat3-4B` weights and a GPU
+(`BLOCKED.md` #2). But the merge is where the structural decision actually lives, and it is
+testable in full without either — the four rules above are properties of the union, not of the
+models. Landing either producer is now a matter of emitting `Candidate`s.
+
+**What this does not establish:** anything about candidate quality, recall, or whether the dual
+path earns its cost. Those are §8.2 questions and they need the labelled set. What is
+established is that the merge cannot be the thing that loses a candidate.
+
+---
