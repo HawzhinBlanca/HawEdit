@@ -447,3 +447,60 @@ called explicitly.
 
 **`editorial` and `output` are optional.** Stage 5 produces boundaries before Stage 4 has
 scored anything; a clip mid-pipeline is a real state, not an incomplete record.
+
+---
+
+## D-018 · Caption font and the §4.3 dependency, with licences verified
+
+**Date:** 2026-08-06 · **Blueprint ref:** §4.3, §7 · **Type:** dependency + licence check
+
+§4.3.4 names Noto Naskh Arabic or Vazirmatn as safe starts and requires the font be
+referenced via `fontsdir` rather than resolved by fontconfig on the render host. So the font
+is a shipped asset, not a host assumption.
+
+| Item | Version | Licence | Verified from |
+|---|---|---|---|
+| Noto Naskh Arabic Regular | 2.012 | **OFL-1.1** | the font's own `name` table, IDs 13/14 |
+| `fonttools` | 4.55.3 | MIT | PyPI metadata |
+
+OFL-1.1 permits commercial use and embedding; it requires the licence accompany the font, so
+`assets/fonts/OFL.txt` ships beside it. The licence was read from the binary's name table
+(`nameID 13` → "SIL Open Font License, Version 1.1"), not from a repository README.
+
+**Coverage measured, not assumed.** Running §4.3.4's check against the shipped font:
+
+```
+Kurdish set ڕ ڵ ۆ ێ چ ژ پ گ ە  → full coverage
+ه U+0647 present · ھ U+06BE present · ە U+06D5 present · ZWNJ U+200C present
+```
+
+`KURDISH_REQUIRED_GLYPHS` extends §4.3.4's list with **both heh forms**. `ھ` U+06BE is not in
+§4.3's list, but D-013 measured it in 204 real lexicon entries — ordinary words like `دھۆک`.
+A font missing it renders boxes in a city name.
+
+---
+
+## D-019 · §4.3: what is enforced, and the one part that is not
+
+**Date:** 2026-08-06 · **Blueprint ref:** §4.3 · **Type:** implementation + honest gap
+
+Five of §4.3's six requirements are enforced in code and tested:
+
+1. `shaping=complex` always emitted, never `auto`.
+2. libass + HarfBuzz + FriBidi verified from **both** `-buildconf` and linked libraries.
+   Either source satisfies HarfBuzz/FriBidi, because a distro can link them through libass
+   without an ffmpeg configure flag naming them — but libass itself must be in the build.
+3. `ass`/`subtitles` only; `drawtext` never appears in a generated filter.
+4. Font coverage asserted against the real shipped font.
+5. `WrapStyle: 2` plus our own `\N` breaks from the word alignment.
+
+**Not done: §4.3.6's golden reference PNG.** Generating it needs a real render on a build
+whose libass is verified — this container has no ffmpeg (`BLOCKED.md` #5). The *comparison*
+is implemented and tested, and a missing reference **raises** rather than passing: a golden
+test that silently succeeds when its reference is absent is decorative, which is the exact
+failure mode §4.3.6 exists to prevent.
+
+**A filter-escaping detail worth naming.** An unescaped `:` in a path truncates the
+filtergraph argument, and the filter then renders with default options — including
+`shaping=auto`. So a path bug reintroduces failure mode #3 silently. `subtitle_filter`
+escapes `\ : ' [ ] ,` and there is a test for it.

@@ -22,7 +22,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness DONE (M0.1–M0.10, 159 tests) · measurement BLOCKED (M0.11–M0.13)** |
 | **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | **WIP — §4.2 aligner + sentence segmentation DONE; Stage 0 ffmpeg and Stage 1 models blocked** |
 | **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | **WIP — BM25 index, boundary fusion and the §5 contract DONE; Gemini and render blocked** |
-| **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | TODO |
+| **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | **WIP — §4.3 5-of-6 DONE; golden reference + encode blocked on ffmpeg** |
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
 | **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | TODO |
 | **M6** | Stage 5 TimeLens2 + sentence-hard fusion | Boundary precision | TODO |
@@ -83,8 +83,16 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | 1 | `transcript.raw.json` never mutated after write | `transcripts.py` — refuse-rewrite, frozen types, SHA-256 tamper evidence |
 | 2 | `final_in <= anchor_in` and `final_out >= anchor_out`; `sentence_complete == false ⇒ reject` | `boundary.py` — by construction in `fuse_boundary`, and again at `assert_boundary_invariant` / `Clip.assert_renderable` |
 | 3 | Indexes, embeddings and model inputs read `norm`, never raw | `transcripts.py` (types + `assert_model_input`), `index.py` (index boundary) |
-| 4 | Captions render `shaping=complex`; build asserts libass has HarfBuzz; golden-image test in CI | **NOT YET** — M3, blocked on ffmpeg (`BLOCKED.md` #5) |
+| 4 | Captions render `shaping=complex`; build asserts libass has HarfBuzz; golden-image test in CI | `captions.py` — shaping, stack check, font coverage and our own line breaks all enforced. **Golden reference PNG still missing** (needs a real render, `BLOCKED.md` #5); the comparison raises rather than passing without it. |
 | 5 | Word timings from OmniASR CTC Viterbi alignment only | `alignment.py` + `transcripts.py` — refused at construction |
+
+## M3 — task ledger
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M3.1 | §4.3 caption generation: shaping, stack check, font coverage, own line breaks | DONE | `src/hawedit2/captions.py` + `tests/test_captions.py` (33 tests). Font coverage asserted against the real OFL-1.1 Noto Naskh Arabic shipped in `assets/fonts` — full Kurdish coverage measured (D-018). |
+| M3.2 | §4.3.6 golden-file render compared per build | BLOCKED | `BLOCKED.md` #5 — the comparison is implemented and tested; the reference PNG needs a real render on a verified libass build |
+| M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | BLOCKED | `BLOCKED.md` #5 |
 
 ## Deferred with reason
 

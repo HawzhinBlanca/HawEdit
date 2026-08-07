@@ -41,6 +41,13 @@ and a nested invocation refuses its own test step (it would otherwise recurse).
 | `asr.py` | §8.1, §3 Stage 1 | Adapter boundary, RTF, VRAM, long-audio failure rate. Hardware is required. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `diarization.py` | §8.1, §3 Stage 0 | DER and boundary reconciliation against word alignment. |
+| `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
+| `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
+| `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |
+| `index.py` | §2 | BM25 + character 3-grams over normalized Sorani. |
+| `boundary.py` | §3 Stage 5 | Boundary fusion. Kurdish invariant #2, at construction and at the render gate. |
+| `clip.py` | §5 | The clip contract, validated. Rejection is a first-class type. |
+| `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
 
 ## Two conventions worth knowing before reading the code
 
@@ -59,6 +66,8 @@ incomplete set never looks unqualified.
 - `pyannote/speaker-diarization-community-1` — CC-BY-4.0, attribution required.
 - KLPT (Sina Ahmadi) — CC-BY-SA-4.0, attribution required; share-alike attaches if the rule
   tables are ever adapted.
+- Noto Naskh Arabic (The Noto Project Authors) — OFL-1.1. The licence must accompany the
+  font: `assets/fonts/OFL.txt` ships beside it.
 
 These must appear in shipped product documentation. `registry.attribution_notices()`
 generates the list.
