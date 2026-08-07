@@ -250,8 +250,16 @@ def test_the_shipped_font_carries_its_licence_beside_it() -> None:
     assert (fonts / "OFL.txt").exists(), "the font ships without the licence it requires"
 
 
-def test_the_readme_names_a_workflow_that_exists() -> None:
-    """The README pointed at `.github/workflows/hawedit.yml`; the file is `gate.yml`."""
-    named = set(re.findall(r"\.github/workflows/([\w.-]+\.ya?ml)", README))
+def test_the_docs_name_workflows_that_exist() -> None:
+    """The README and BLOCKED.md both pointed at `.github/workflows/hawedit.yml`; the file is
+    `gate.yml`.
+
+    `DECISIONS.md` is excluded on purpose: it is append-only history, and an entry recording
+    that a name *used to be* wrong must keep quoting the wrong name.
+    """
     on_disk = {p.name for p in (ROOT / ".github" / "workflows").glob("*.y*ml")}
-    assert named <= on_disk, f"README names workflows that do not exist: {sorted(named - on_disk)}"
+    for doc in ("README.md", "BLOCKED.md", "PROGRESS.md"):
+        named = set(re.findall(r"\.github/workflows/([\w.-]+\.ya?ml)", (ROOT / doc).read_text()))
+        assert named <= on_disk, (
+            f"{doc} names workflows that do not exist: {sorted(named - on_disk)}"
+        )

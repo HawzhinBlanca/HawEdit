@@ -28,7 +28,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | **WIP — Stage 2's contract + scene-window plan and Stage 3 Path B's contract are DONE; the union runs two-sided on real media given a reader. Every model needs weights** |
 | **M6** | Stage 5 TimeLens2 + sentence-hard fusion | Boundary precision | **WIP — sentence-hard fusion DONE (M2.2); the TimeLens2 contract and its relevance gate DONE; the model needs weights** |
 | **M7** | Repurposing eval set + threshold tuning | Quality gates | **WIP — §8.2 metrics DONE; the 200–500 labelled candidates need humans** |
-| **M8** | Auto-reframe (SAM 3 / Molmo2) | Vertical formats | TODO |
+| **M8** | Auto-reframe (SAM 3 / Molmo2) | Vertical formats | **BLOCKED — `BLOCKED.md` #9. Neither SAM 3 nor Molmo2 is in §7, and §3 Stage 6 says to add SAM 3 *only if* face-centred cropping proves insufficient on real footage. Not startable, which is a different fact from not started.** |
 
 ## Where this stops, and why
 
@@ -47,7 +47,7 @@ What remains is not a backlog. Every open row below is waiting on one of six thi
 | **§3 Stage 1 ASR weights** | the one thing between this and a runnable product: no transcript, so nothing downstream can start from a video alone |
 | The gated `pyannote/speaker-diarization-community-1` repo | M0.10, M1.3, the speaker-tracked reframe in M3.3 |
 | Human annotators + real footage | M7.2, and M7.3 behind it |
-| Hawa, one decision each | `BLOCKED.md` #7 (required CI check) · #8 answered, but `BLUEPRINT.md` §5 needs the matching amendment (D-033) |
+| Hawa, one decision each | `BLOCKED.md` #7 (required CI check) · #9 (M8 names two models §7 does not contain) · #8 answered, but `BLUEPRINT.md` §5 needs the matching amendment (D-033) |
 
 No amount of further work in this environment moves any of them. The contracts those models
 plug into are built and tested ahead of them, so landing each one is a matter of producing the

@@ -138,7 +138,7 @@ incidence on the only real Sorani reachable here — KLPT's bundled 24,894-entry
 
 **Needs:** Hawa, in the GitHub repository settings. One click, no code.
 
-`.github/workflows/hawedit.yml` now runs the gate on a clean runner — audit finding #5 was
+`.github/workflows/gate.yml` now runs the gate on a clean runner — audit finding #5 was
 that nothing ever did. But a workflow that runs is not a workflow that blocks: until `gate`
 is added to the protected branch's required status checks, a red run is a red tick beside a
 mergeable PR.
@@ -148,7 +148,7 @@ This matters more here than it usually would, because the project's own definiti
 refers to nothing.
 
 **To unblock:** Settings → Branches → branch protection rule for the default branch → Require
-status checks to pass → add **`gate`** (workflow `hawedit`).
+status checks to pass → add **`gate`** (workflow `gate`).
 
 Until then, treat every DONE mark as resting on a local run plus an advisory CI run.
 
@@ -178,3 +178,32 @@ and editing it is redesigning the architecture rather than implementing it.
 
 Until it is answered, a payoff location and hashtags exist in every verdict and stop at §5's
 boundary.
+
+## #9 · §9's M8 names two models §7 does not contain
+
+**Needs:** Hawa, one decision. No code, no credentials, no hardware.
+
+§9's build order ends with `M8 · Auto-reframe (SAM 3 / Molmo2)`. Neither **SAM 3** nor
+**Molmo2** appears anywhere in §7's model registry, and §7 is the table this project treats as
+closed: `registry.py` refuses any model not in it, and `tests/test_registry.py` parses §7 out
+of `BLUEPRINT.md` and asserts set equality **both ways**, so a model added in code but not in
+the blueprint fails the gate. That check is deliberate and it is working — it means M8 cannot
+be started, not that the check is wrong.
+
+§3 Stage 6 also makes SAM 3 conditional rather than planned: "Vertical reframing tracks the
+active speaker from diarization plus face detection; **add SAM 3 only if face-centred cropping
+proves insufficient on real footage**." So M8 has two gates, and neither is code:
+
+1. Real Kurdish footage showing that face-centred cropping is insufficient (`BLOCKED.md` #1).
+   Until that measurement exists, §3 says not to add the model at all.
+2. A §7 amendment naming SAM 3 and Molmo2 with their licences, if step 1 says they are needed.
+
+**The question:** does §7 gain those two rows, and with which licences? Molmo2 in particular
+needs a licence check before anything else — a NonCommercial licence is a hard reject in this
+project and would end the question there.
+
+Until both clear, M8 stays TODO and is not startable. Recorded here rather than left as an
+ordinary backlog row, because "not started" and "cannot be started" are different facts and
+this project does not let those serialize to the same thing.
+
+---
