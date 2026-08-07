@@ -619,3 +619,112 @@ the reason and continues, rather than failing the whole run.
 (`BLOCKED.md` #6), so no checkpoint could be downloaded. The provisioning path is built and
 exercised end to end — enumeration, licence refusal, capacity check, gated-repo skip, and a
 real `snapshot_download` attempt that fails on the network exactly as it should.
+## D-023 · Shot detection runs on the source, not the 1 fps proxy — measured
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 0, §3 Stage 5 · **Type:** implementation choice
+
+§3 Stage 0 produces a `fps=1` proxy and lists PySceneDetect in the same stage, which reads as
+an invitation to detect on the proxy — it is smaller, and that is what a proxy is for. §3
+Stage 5 then matches a candidate boundary against a shot cut within a **400 ms** window.
+One frame per second cannot express 400 ms, so the two requirements are incompatible.
+
+Measured on `tests/fixtures/kurdish-speech-3cuts.mp4` (three 1.4 s segments concatenated, so
+the cuts are at 1400 ms and 2800 ms by construction):
+
+| Detected on | Cuts found | Error vs ground truth |
+|---|---|---|
+| source | `(1400, 2800)` | **0 ms, both** |
+| 1 fps proxy | `()` | both cuts **missed entirely** |
+
+Worse than predicted. The expectation was quantisation to whole seconds — a ±500 ms error,
+already past Stage 5's tolerance. What actually happens on a 1.4 s cadence is that
+ContentDetector's frame-to-frame comparison has too few frames to fire at all, so the proxy
+yields no cuts rather than coarse ones. Stage 5 would then never match a shot cut, and the
+whole soft-signal term would silently contribute nothing.
+
+**Decision:** `detect_shots` takes the source. The proxy stays for keyframe and visual work
+(Stage 2), which is what §3 Stage 0's 1 fps is sized for. The cost is decoding the full-rate
+video once; on the §6 hardware that is CPU-parallel across files and not on the GPU path.
+
+**Guard:** `tests/test_ingest.py::test_detecting_on_the_proxy_is_coarser_than_stage_5s_tolerance`
+runs both and fails if the proxy ever becomes as good as the source — which would mean this
+decision needs revisiting rather than silently costing decode time for nothing.
+
+---
+
+## D-024 · §3 Stage 0's media stack — licences audited, and why it is a separate extra
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 0, §7 · **Type:** new dependencies
+
+Both models are named in §7 (PySceneDetect for shot detection, Silero VAD for speech), so
+this adds no model the blueprint does not permit. Licences, read from the installed
+distributions rather than from memory:
+
+| Package | Version | Licence | Source of the reading |
+|---|---|---|---|
+| `scenedetect` | 0.6.5 | BSD-3-Clause | `dist-info/LICENSE` (the PyPI classifier says MIT and is wrong — the licence text is authoritative) |
+| `silero-vad` | 5.1.2 | MIT | classifier; weights ship inside the wheel, no separate download |
+| `onnxruntime` | 1.20.1 | MIT | metadata |
+| `torch` | 2.13.0 | BSD-3-Clause | `dist-info/licenses/LICENSE` |
+| `numpy` | 2.2.1 | BSD-3-Clause | classifier |
+
+**NonCommercial: none.** A naive scan of installed metadata flags numpy, which is a false
+positive worth recording so nobody "fixes" it later: the word *noncommercially* appears in
+the GPL-with-runtime-exception text of `libquadmath`, vendored into the manylinux wheel. It
+is not numpy's licence and it is not a NonCommercial term. Note separately that redistributing
+that wheel inside a binary product carries an LGPL obligation — irrelevant today, relevant the
+day anything here is shipped as a bundle.
+
+**Deviation:** these are an optional extra (`.[media]`), not core dependencies. torch is ~2 GB
+and nothing outside Stage 0 imports it; making it mandatory would put a multi-gigabyte
+download in front of the §4.1/§4.2/§4.3/§8.1 work, all of which is pure Python. CI installs
+CPU wheels (`--extra-index-url .../whl/cpu`), which §6 justifies independently: Stage 0 is
+CPU by design.
+
+**The cost, stated plainly:** an optional extra means the Stage 0 tests *skip* when it is
+absent, and a skipped test is the same quiet green this audit was about. So CI installs the
+extra and then fails if `tests/test_ingest.py` reports any skip at all.
+
+---
+
+## D-025 · The 2026-08-07 audit — what it found and what changed
+
+**Date:** 2026-08-07 · **Type:** external review, ten findings
+
+An external audit reported ten release-blocking findings. Seven reproduced exactly as
+described and were fixed with regression tests (`tests/test_audit_regressions.py`,
+`tests/test_gate.py`, `tests/test_gate_evidence.py`, `tests/test_claims.py`). Recorded here
+because the pattern matters more than the individual bugs.
+
+**Findings, and the reproduction:**
+
+| # | Finding | Reproduced | Fix |
+|---|---|---|---|
+| 1 | README overstates: no runnable product | yes | README opens with what does not exist; `tests/test_claims.py` pins it |
+| 2 | A challenger failing a whole dialect scored as if the dialect were absent | yes | missing dialects are regressions by name; incomplete coverage blocks promotion |
+| 3 | Render/QC gate bypassable by absence | yes | `assert_renderable` refuses `None`; `from_dict` demands real JSON booleans |
+| 4 | RTL check certified a build with `--disable-libass` | yes | flag parsing replaces substring search |
+| 5 | Gate not authoritative: CRLF, `echo` bypass, CI never ran it | yes, all three | `.gitattributes`; steps not configurable; junit-report evidence + ratchet; `hawedit2.yml` |
+| 6 | Corpus serialization dropped `reference_words` | yes | serialized and restored |
+| 7 | Karaoke drifted by every pause; golden test compared bytes | yes | `\kf` spans tile the line; comparison decodes to pixels |
+| 8 | Registry membership mistaken for role | yes | `resolve_role`; PySceneDetect can no longer be an ASR model |
+| 9 | `media_id` reached the filesystem unchecked | yes | path validation + `O_CREAT\|O_EXCL` |
+| 10 | Premature DONE claims | yes | `PARTIAL` status introduced; M0.3, M0.10, M1.3 corrected |
+
+**The common cause, worth naming:** eight of the ten were a check that accepted the *shape*
+of an answer without checking its *content*. Substring instead of flag (#4). Truthiness
+instead of boolean (#3). Membership instead of role (#8). Absence instead of refusal (#3).
+Exit code instead of report (#5). Metric instead of measurement (#10). Each looked like a
+check and was one, but of the wrong thing — and a wrong check is worse than none, because it
+reads as coverage.
+
+**What the audit says about the gate:** every one of these passed the gate. The gate was
+green through all ten. That is the finding behind finding #5, and it is why the fix there is
+structural — evidence rather than exit codes, CI rather than one laptop — rather than another
+rule to remember.
+
+**Not fixed here:** making the CI job a *required* status check on the protected branch. That
+is a repository setting only Hawa can change, and until it is set, a red `hawedit2` job does
+not block anything. Added to `BLOCKED.md`.
+
+---

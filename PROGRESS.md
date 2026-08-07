@@ -10,7 +10,8 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 | Mark | Meaning |
 |---|---|
-| DONE | Gate green **and** evidence recorded below |
+| DONE | Gate green **and** evidence recorded below **and** the task's stated Definition of Done met in full |
+| PARTIAL | Gate green on what was built, but the Definition of Done is *not* met — the shortfall is named in the evidence column. Introduced after the 2026-08-07 audit found DONE marks that were really this. |
 | WIP | In progress this iteration |
 | TODO | Not started |
 | BLOCKED | Needs Hawa / hardware / credentials — see `BLOCKED.md` |
@@ -19,8 +20,8 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 | Milestone | Deliverable | Blocks | Status |
 |---|---|---|---|
-| **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness DONE (M0.1–M0.10, 159 tests) · measurement BLOCKED (M0.11–M0.13)** |
-| **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | **WIP — §4.2 aligner + sentence segmentation DONE; Stage 0 ffmpeg and Stage 1 models blocked** |
+| **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness built and gated (M0.1–M0.10) · M0.3 and M0.10 PARTIAL, see the ledger · every measurement BLOCKED (M0.11–M0.13, M0.16)** |
+| **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | **WIP — Stage 0 runs on real media (minus diarization); §4.2 aligner + segmentation DONE; Stage 1 models blocked** |
 | **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | **WIP — BM25 index, boundary fusion and the §5 contract DONE; Gemini and render blocked** |
 | **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | **WIP — §4.3 fully DONE incl. golden test; encode remains** |
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
@@ -38,14 +39,14 @@ M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisit
 |---|---|---|---|
 | M0.1 | Package skeleton + gate script; gate refuses a no-op command instead of printing green | DONE | `tests/test_gate.py` (9 tests) · gate green: `VERIFY OK — hawedit2 gate green` · found + fixed 2 real gate defects, see D-005 |
 | M0.2 | §7 model registry in code; model outside §7 rejected; NC licence hard-rejected | DONE | `src/hawedit2/registry.py` + `tests/test_registry.py` (15 tests). The tests **parse §7 out of `BLUEPRINT.md`** and assert exact set equality both ways, so a model added in code but not in the blueprint fails the gate. |
-| M0.3 | §4.1 Sorani normalization via KLPT; every §4.1 collision asserted in a test | DONE | `src/hawedit2/normalize.py` + `tests/test_normalize.py` (12 tests): all 4 KLPT-covered §4.1 collisions, the two-encodings-compare-equal failure mode, idempotence, and the conjunctive-`و` gap pinned per D-003 |
+| M0.3 | §4.1 Sorani normalization via KLPT; every §4.1 collision asserted in a test | PARTIAL | `src/hawedit2/normalize.py` + `tests/test_normalize.py` (12 tests): all 4 KLPT-covered §4.1 collisions, the two-encodings-compare-equal failure mode, idempotence, and the conjunctive-`و` gap pinned per D-003. **Shortfall (audit #10):** 4 of §4.1's 5 collisions are normalized; conjunctive `و` separation is not implemented, so the milestone reads DONE only if you read the DoD as "asserted" rather than "handled". Correct separation needs a lexicon (`وتو` is ambiguous) — tracked as M1.7, incidence measured in M0.15. |
 | M0.4 | Kurdish invariants #1 and #3 in code: `transcript.raw.json` write-once, model inputs read `norm` | DONE | `src/hawedit2/transcripts.py` + `tests/test_transcripts.py` (17 tests). #1 enforced three ways (refuse-rewrite, frozen types, SHA-256 tamper evidence); #3 enforced by distinct types (mypy) + `assert_model_input` (runtime) + stale-norm detection. ASR provenance is validated against §7 at construction. |
 | M0.5 | §8.1 accuracy metrics: normalized CER, spacing-free CER, named-entity error, code-switch error | DONE | `src/hawedit2/metrics.py` + `tests/test_metrics.py` (26 tests). Definitions §8.1 left open are recorded in D-008. Unmeasured returns `None`, never 0.0. |
 | M0.6 | Labelled-corpus manifest + §8.1 coverage validation (3 dialects × 7 conditions), per-dialect never aggregated away | DONE | `src/hawedit2/corpus.py` + `tests/test_corpus.py` (19 tests). Missing cells are named, not counted; hours are reported per dialect per §4.4; the hours floor is D-009. |
 | M0.7 | ASR adapter interface + throughput harness: RTF, peak VRAM, long-audio failure rate | DONE | `src/hawedit2/asr.py` + `tests/test_asr.py` (14 tests). `Hardware` is required and cross-hardware comparison is refused per §3 Stage 1; failures are recorded not raised; every measurement names its adapter class. |
 | M0.8 | Alignment-accuracy metric against CTC emissions (§8.1 last metric) | DONE | `src/hawedit2/alignment.py` + `tests/test_alignment.py` (12 tests). Kurdish invariant #5 enforced at construction in `AsrProvenance`/`RawTranscript`, not just at scoring. |
 | M0.9 | Benchmark runner → comparable report JSON + §8.1 decision rule (LLM-7B stays canonical unless material gain) | DONE | `src/hawedit2/bench.py` + `tests/test_bench.py` (16 tests). Five clauses enforced, per-dialect always reported alongside the aggregate, thresholds recorded in D-010. |
-| M0.10 | Diarization benchmark: Community-1 vs 3.1 DER on Kurdish multi-speaker material | DONE | `src/hawedit2/diarization.py` + `tests/test_diarization.py` (16 tests). DER with optimal speaker mapping and a reported breakdown, plus §8.1's boundary-reconciliation metric against word alignment. Control-model handling: D-011. |
+| M0.10 | Diarization benchmark: Community-1 vs 3.1 DER on Kurdish multi-speaker material | PARTIAL | `src/hawedit2/diarization.py` + `tests/test_diarization.py` (16 tests). DER with optimal speaker mapping and a reported breakdown, plus §8.1's boundary-reconciliation metric against word alignment. Control-model handling: D-011. **Shortfall (audit #10):** this is the *metric*, not the benchmark. No DER has been computed on Kurdish multi-speaker material — that needs the gated Community-1 weights (`BLOCKED.md` #4) and multi-speaker audio (`BLOCKED.md` #1, #6). The task as written is not done and cannot be until both clear. |
 | M0.11 | Real-model adapters (`LLM_7B_v2`, `CTC_3B_v2`, `LLM_Unlimited_3B_v2`, `rzgar-ckb-v1`, Gemini native audio) | BLOCKED | `BLOCKED.md` #2 |
 | M0.12 | Labelled Sorani audio set — several hours, per §8.1 category list | BLOCKED | `BLOCKED.md` #1 |
 | M0.13 | Benchmark executed on real Kurdish audio on hawapc01; numbers recorded | BLOCKED | `BLOCKED.md` #1, #2 |
@@ -63,8 +64,9 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 |---|---|---|---|
 | M1.1 | §4.2 Viterbi forced alignment on CTC emissions, in-house per §7 | DONE | `src/hawedit2/forced_alignment.py` + `tests/test_forced_alignment.py` (22 tests). Monotone non-overlapping spans, every token framed, infeasible input refused rather than guessed. No new dependency. |
 | M1.2 | §4.2 sentence segmentation (Kurdish punctuation **plus** VAD pauses) + §5 anchors | DONE | `src/hawedit2/sentences.py` + `tests/test_sentences.py` (17 tests). Pause path works on wholly unpunctuated input; `anchors_for` returns `None` rather than a guess when nothing is complete. Threshold: D-014. |
-| M1.3 | Stage 0 ingest: ffmpeg demux, PySceneDetect, Silero VAD, diarization | TODO | **Unblocked except diarization** — ffmpeg, PySceneDetect and Silero VAD all present and Silero verified running (ONNX, no torch needed). Diarization still needs the gated repo (`BLOCKED.md` #4). |
+| M1.3 | Stage 0 ingest: ffmpeg demux, PySceneDetect, Silero VAD, diarization | PARTIAL | `src/hawedit2/ingest.py` + `tests/test_ingest.py` (20 tests) run against real media: `tests/fixtures/kurdish-speech-3cuts.mp4`, built from three 1.4 s segments so the cuts are known. Measured: shot detection on the **source** finds both cuts with **0 ms** error; on the 1 fps proxy it finds **none** (D-023). VAD returns the two utterances, returns nothing on silence, and every segment of a 62 s file stays under the 38 s ceiling. **Shortfall:** diarization is not run — `IngestResult.diarization` is `None`, never `[]` — pending the gated Community-1 repo (`BLOCKED.md` #4). |
 | M1.6 | Model provisioning: readiness report + registry-driven fetcher | DONE | `src/hawedit2/models.py` + `tests/test_models.py` (21 tests) + `scripts/fetch-models.sh`. `python -m hawedit2.models` reports all 15 §7 components. Sources §7 leaves open are refused, not guessed (D-022). |
+| M1.7 | §4.1 conjunctive `و` separation (the collision KLPT does not cover) | TODO | Needs a Sorani lexicon: `وتو` is ambiguous without one, and guessing corrupts the canonical transcript. Incidence measured in M0.15; gap asserted in `tests/test_normalize.py` so the day it is implemented the test says so. D-003. |
 | M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
 | M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | DONE | `src/hawedit2/escalation.py` + `tests/test_escalation.py` (16 tests). §3's "never escalate on duration or word-count" prohibition asserted directly. Threshold: D-015. |
 
@@ -101,7 +103,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 |---|---|---|---|
 | M7.1 | §8.2 metrics: per-path Recall@20, temporal IoU, sentence-completeness, misleading-edit rate, pairwise preference, cost/wall-clock per source hour | DONE | `src/hawedit2/repurposing.py` + `tests/test_repurposing.py` (31 tests). `path_unique_wins` answers §8.2's collapse question directly. Definitions: D-020. |
 | M7.2 | 200–500 human-reviewed candidates labelled per §8.2 | BLOCKED | Needs human annotators and real footage — same dependency as `BLOCKED.md` #1 |
-| M7.3 | Threshold tuning against the labelled set | BLOCKED | Depends on M7.2; every threshold in `DECISIONS.md` marked "awaiting real data" is tuned here |
+| M7.3 | Threshold tuning against the labelled set | TODO | Depends on M7.2 — an unstarted task, not an external blocker. Every threshold in `DECISIONS.md` marked "awaiting real data" is tuned here. |
 
 ## Deferred with reason
 

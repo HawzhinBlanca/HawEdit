@@ -15,6 +15,17 @@ dev = [
     "ruff==0.9.6",   # MIT
     "mypy==1.15.0",  # MIT
 ]
+# §3 Stage 0's media stack. Split out because torch is ~2 GB and nothing outside Stage 0
+# needs it — the §4.1/§4.2/§4.3/§8.1 work is pure Python and stays installable in seconds.
+# Licences audited in DECISIONS.md D-024; NonCommercial is a hard reject and none of these
+# are. Both models are named in §7: PySceneDetect for shot detection, Silero VAD for speech.
+media = [
+    "scenedetect==0.6.5",   # BSD-3-Clause — §7 shot detection
+    "silero-vad==5.1.2",    # MIT — §7 VAD; ships its own ONNX weights in the wheel
+    "onnxruntime==1.20.1",  # MIT — silero-vad's ONNX backend
+    "torch==2.13.0",        # BSD-3-Clause — silero-vad's tensor interface
+    "numpy==2.2.1",         # BSD-3-Clause — WAV frames to tensor without torchaudio
+]
 
 [build-system]
 requires = ["setuptools>=68"]

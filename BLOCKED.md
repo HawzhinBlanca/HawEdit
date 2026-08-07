@@ -131,3 +131,23 @@ is not merely missing a corpus.
 What was delivered without it: the importer, and a real measurement of §4.1 collision
 incidence on the only real Sorani reachable here — KLPT's bundled 24,894-entry lexicon
 (`evidence/collision-incidence.md`, D-013).
+
+---
+
+## #7 · The hawedit2 CI job is not a *required* status check
+
+**Needs:** Hawa, in the GitHub repository settings. One click, no code.
+
+`.github/workflows/hawedit2.yml` now runs the gate on a clean runner — audit finding #5 was
+that nothing ever did. But a workflow that runs is not a workflow that blocks: until `gate`
+is added to the protected branch's required status checks, a red run is a red tick beside a
+mergeable PR.
+
+This matters more here than it usually would, because the project's own definition of DONE is
+"verify.sh green **AND** required CI checks green". The second half of that sentence currently
+refers to nothing.
+
+**To unblock:** Settings → Branches → branch protection rule for the default branch → Require
+status checks to pass → add **`gate`** (workflow `hawedit2`).
+
+Until then, treat every DONE mark as resting on a local run plus an advisory CI run.
