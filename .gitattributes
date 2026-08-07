@@ -1,0 +1,16 @@
+# Audit finding #5. Hawa develops on Windows, where the Git installer's default is
+# core.autocrlf=true. Without this, `scripts/verify.sh` is checked out with CRLF and bash
+# dies on line 7 — `set -euo pipefail\r` is not an option name. A gate that cannot start
+# cannot refuse anything, so the line endings of the gate are a correctness property.
+*.sh text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+
+# Binary evidence: the golden caption render is compared pixel by pixel (§4.3.6). Any
+# newline translation would corrupt it into a test failure with a baffling diff.
+*.png binary
+*.ttf binary
+*.wav binary
+*.mp4 binary

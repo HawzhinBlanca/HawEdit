@@ -27,14 +27,26 @@ if [[ -z "${HAWEDIT2_FFMPEG:-}" && -x "${here}/.ffmpeg/ffmpeg" ]]; then
   export HAWEDIT2_FFMPEG="${here}/.ffmpeg/ffmpeg"
 fi
 
+TEST_REPORT="$here/.gate/last-test-run.xml"
+TEST_FLOOR="$here/scripts/test-count.floor"
+
+# Which steps did the caller replace? Recorded BEFORE the defaults are filled in, because
+# filling a default sets the variable and would make every step look overridden.
+# `${VAR+set}` is true for any assignment including the empty one, so this cannot be dodged
+# by passing an empty value.
+_overridden=()
+for _var in LINT_CMD FORMAT_CMD TYPECHECK_CMD TEST_CMD; do
+  if [[ -n "${!_var+set}" ]]; then _overridden+=("$_var"); fi
+done
+
 LINT_CMD="${LINT_CMD-$PY -m ruff check src tests}"
 FORMAT_CMD="${FORMAT_CMD-$PY -m ruff format --check src tests}"
 TYPECHECK_CMD="${TYPECHECK_CMD-$PY -m mypy}"
-TEST_CMD="${TEST_CMD-$PY -m pytest}"
+TEST_CMD="${TEST_CMD-$PY -m pytest --junitxml=$TEST_REPORT}"
 
-# Anti-cheat: a *_CMD that resolves to a no-op would make this gate print green while running
-# nothing. Refuse loudly BEFORE running anything. Only the steps that will actually run are
-# checked. (Same reasoning as the host repo's scripts/verify.sh.)
+# Anti-cheat, layer 1: a *_CMD that resolves to a no-op would make this gate print green while
+# running nothing. Refuse loudly BEFORE running anything. Only the steps that will actually run
+# are checked. (Same reasoning as the host repo's scripts/verify.sh.)
 _noop_check() {
   local name="$1" trimmed
   trimmed="$(printf '%s' "$2" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
@@ -49,6 +61,17 @@ _noop_check "TYPECHECK_CMD" "$TYPECHECK_CMD"
 if [[ "$FAST" != "--fast" ]]; then
   _noop_check "FORMAT_CMD" "$FORMAT_CMD"
   _noop_check "TEST_CMD" "$TEST_CMD"
+fi
+
+# Anti-cheat, layer 2 (audit finding #5). The blacklist above knows five spellings of "do
+# nothing"; TEST_CMD="echo skipped" is a sixth, and `pytest -k nothing_matches` a seventh. No
+# blacklist of ways to run nothing can be complete, so the rule is inverted: the gate's steps
+# are not configurable. A replaced step is refused outright rather than judged on its content.
+if [[ ${#_overridden[@]} -gt 0 ]]; then
+  echo "REFUSED: ${_overridden[*]} overridden — the gate's steps are not configurable." >&2
+  echo "A run with a replaced step proves nothing about this project, so it cannot be green." >&2
+  echo "For a partial check use: bash scripts/verify.sh --fast" >&2
+  exit 5
 fi
 
 # Recursion guard. The test suite invokes this gate to assert its refusal behaviour, so a
@@ -76,6 +99,17 @@ if [[ "$GATE_DEPTH" -gt 0 ]]; then
 fi
 
 run_step "format"    "$FORMAT_CMD"
+
+# Layer 3 (audit finding #5). Refusing overrides closes the *deliberate* bypass. It does not
+# close the accidental one: a testpaths typo, a stray -k in addopts, or a collection error a
+# plugin swallowed all make pytest exit 0 having run nothing, with the command exactly right.
+# So the exit code stops being the evidence. Delete the report, run, read it back.
+mkdir -p "$here/.gate"
+rm -f "$TEST_REPORT"
+started_at="$("$PY" -c 'import time; print(time.time())')"
+
 run_step "tests"     "$TEST_CMD"
+
+run_step "test evidence" "\"$PY\" -m hawedit2.gate \"$TEST_REPORT\" \"$TEST_FLOOR\" \"$started_at\""
 
 echo "VERIFY OK — hawedit2 gate green"
