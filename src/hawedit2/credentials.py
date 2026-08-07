@@ -1,0 +1,304 @@
+"""Where secrets live, and the panel that puts them there.
+
+    python -m hawedit2.credentials
+
+§3 Stage 4 routes through `gemini-2.5-pro` and needs an API key. A key is the one kind of
+configuration that is actively dangerous to get slightly wrong, so this module is written
+around three refusals rather than around convenience:
+
+**It refuses to write a key to a file git would track.** Before writing anything it asks git
+whether the target is ignored, and stops if it is not. `AGENTS.md`'s hard boundary — "never
+commit secrets" — is a rule someone has to remember; this is the same rule as a check. A key
+in a commit is a key that has to be revoked, and the commit outlives the revocation.
+
+**It refuses to store a key it has not verified.** Google's endpoint answers a bad key with a
+clear 400, so there is no reason to accept one on trust and discover it inside a client job.
+Validation is a live call, not a regex: a well-formed key that has been revoked looks exactly
+like a working one.
+
+**It never prints the key.** Not on success, not in an exception, not in the status line. The
+panel shows the last four characters so you can tell two keys apart, and nothing else — an
+error message containing a credential is how secrets reach log aggregators.
+
+Reading is layered so CI and a laptop can differ without either being a special case: the
+process environment wins, then `.env`. Nothing here reads a key from a command-line argument,
+because arguments are visible in `ps` to every user on the machine.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Final
+
+__all__ = [
+    "ENV_FILE",
+    "GEMINI_API_KEY",
+    "CredentialError",
+    "KeyCheck",
+    "credential_status",
+    "main",
+    "mask",
+    "read_credential",
+    "validate_gemini_key",
+    "write_credential",
+]
+
+GEMINI_API_KEY: Final = "GEMINI_API_KEY"
+REPO_ROOT: Final = Path(__file__).resolve().parents[2]
+ENV_FILE: Final = REPO_ROOT / ".env"
+
+_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+
+
+class CredentialError(RuntimeError):
+    """Raised when a credential cannot be stored or verified safely."""
+
+
+def mask(secret: str) -> str:
+    """A credential rendered so two keys can be told apart and neither can be used."""
+    if not secret:
+        return "(unset)"
+    return f"…{secret[-4:]}" if len(secret) > 4 else "…"
+
+
+def _parse_env(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = _LINE.match(line)
+        if match:
+            value = match.group(2)
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[match.group(1)] = value
+    return values
+
+
+def read_credential(name: str = GEMINI_API_KEY, env_file: Path = ENV_FILE) -> str | None:
+    """The credential, from the environment first and `.env` second.
+
+    Environment wins so CI can inject a secret without a file, and a shell export can override
+    a stale `.env` without editing it. `None` means genuinely absent — never an empty string,
+    which would read as "configured, to nothing".
+    """
+    from_env = os.environ.get(name)
+    if from_env and from_env.strip():
+        return from_env.strip()
+    if env_file.exists():
+        value = _parse_env(env_file.read_text(encoding="utf-8")).get(name, "").strip()
+        return value or None
+    return None
+
+
+def assert_ignored_by_git(path: Path) -> None:
+    """Refuse to treat a git-tracked path as somewhere secrets may go.
+
+    Raises:
+        CredentialError: git does not ignore `path`, or git cannot say.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", str(path)],
+            cwd=path.parent if path.parent.exists() else REPO_ROOT,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:  # pragma: no cover - git missing is not a normal state here
+        raise CredentialError(f"cannot ask git whether {path} is ignored: {exc}") from exc
+    if result.returncode != 0:
+        raise CredentialError(
+            f"{path} is not ignored by git. Storing a credential there risks committing it, "
+            f"and a key in a commit outlives its revocation. Add it to .gitignore first."
+        )
+
+
+def write_credential(
+    name: str,
+    value: str,
+    env_file: Path = ENV_FILE,
+    check_ignored: bool = True,
+) -> Path:
+    """Store one credential in `.env`, leaving any others in place.
+
+    The file is created 0600 and re-chmod'd on every write, because an existing `.env` may
+    predate this function.
+
+    Raises:
+        CredentialError: the value is empty, or the file is not git-ignored.
+    """
+    if not value.strip():
+        raise CredentialError(f"{name} is empty — that is not a credential, it is a typo")
+    if check_ignored:
+        assert_ignored_by_git(env_file)
+
+    existing = _parse_env(env_file.read_text(encoding="utf-8")) if env_file.exists() else {}
+    existing[name] = value.strip()
+
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    body = "# hawedit2 credentials. Git-ignored. Never commit this file.\n" + "".join(
+        f"{key}={val}\n" for key, val in sorted(existing.items())
+    )
+    env_file.write_text(body, encoding="utf-8")
+    env_file.chmod(0o600)
+    return env_file
+
+
+@dataclass(frozen=True, slots=True)
+class KeyCheck:
+    """What a live validation call concluded. `models` is empty unless the key worked."""
+
+    valid: bool
+    detail: str
+    models: tuple[str, ...] = ()
+
+
+Transport = Callable[[str], tuple[int, str]]
+
+
+def _https_get(url: str) -> tuple[int, str]:
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+    except OSError as exc:
+        return 0, str(exc)
+
+
+def validate_gemini_key(key: str, transport: Transport = _https_get) -> KeyCheck:
+    """Ask Google whether this key works, rather than whether it looks like a key.
+
+    A revoked key and a working key are the same string shape. The only check worth having is
+    the one the service performs, and it is cheap: listing models bills nothing.
+
+    The key is placed in the query string because that is the API's own scheme; nothing here
+    echoes it, and the URL is never logged.
+    """
+    import json
+
+    status, body = transport(f"https://generativelanguage.googleapis.com/v1beta/models?key={key}")
+    if status == 0:
+        return KeyCheck(False, f"could not reach the Gemini API: {body}")
+    if status != 200:
+        try:
+            message = json.loads(body)["error"]["message"]
+        except (ValueError, KeyError, TypeError):
+            message = body[:200]
+        return KeyCheck(False, f"the API rejected this key (HTTP {status}): {message}")
+
+    try:
+        names = tuple(
+            str(model["name"]).removeprefix("models/") for model in json.loads(body)["models"]
+        )
+    except (ValueError, KeyError, TypeError) as exc:
+        return KeyCheck(False, f"unreadable response from the API: {exc}")
+    return KeyCheck(True, f"key accepted; {len(names)} model(s) visible", names)
+
+
+def credential_status(
+    name: str = GEMINI_API_KEY,
+    env_file: Path = ENV_FILE,
+    transport: Transport = _https_get,
+) -> tuple[str | None, KeyCheck | None]:
+    """The stored credential (masked by the caller) and what a live check says about it."""
+    key = read_credential(name, env_file)
+    if key is None:
+        return None, None
+    return key, validate_gemini_key(key, transport)
+
+
+# --- the panel ----------------------------------------------------------------------------
+
+_PINNED_JUDGE = "gemini-2.5-pro"
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Interactive panel: show the current key, take a new one, verify it, store it.
+
+    Input is read with `getpass`, so the key is never echoed to the terminal and never lands
+    in shell history. There is deliberately no `--key` flag: command-line arguments are
+    visible in `ps` to every user on the machine.
+    """
+    import argparse
+    from getpass import getpass
+
+    parser = argparse.ArgumentParser(
+        prog="hawedit2.credentials",
+        description="Store and verify the Gemini API key §3 Stage 4 routes through.",
+    )
+    parser.add_argument("--check", action="store_true", help="report status and exit")
+    args = parser.parse_args(argv)
+
+    print("hawedit2 credentials — §3 Stage 4 judge access")
+    print(f"store: {ENV_FILE}  (git-ignored, 0600)\n")
+
+    key, check = credential_status()
+    if key is None:
+        print(f"{GEMINI_API_KEY}: not set")
+    else:
+        source = "environment" if os.environ.get(GEMINI_API_KEY) else ".env"
+        print(f"{GEMINI_API_KEY}: {mask(key)}  (from {source})")
+        if check is not None:
+            print(f"  {'✓' if check.valid else '✗'} {check.detail}")
+            if check.valid:
+                pinned = _PINNED_JUDGE in check.models
+                state = "available" if pinned else "NOT visible to this key — §7 pins it"
+                print(f"  {'✓' if pinned else '✗'} {_PINNED_JUDGE} {state}")
+
+    if args.check:
+        return 0 if (check is not None and check.valid) else 1
+
+    print(
+        "\nPaste a key from https://aistudio.google.com/apikey — input is hidden, and blank "
+        "keeps the current one."
+    )
+    try:
+        entered = getpass("GEMINI_API_KEY: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nno change")
+        return 1
+    if not entered:
+        print("no change")
+        return 0 if (check is not None and check.valid) else 1
+
+    print("verifying with Google…")
+    verified = validate_gemini_key(entered)
+    if not verified.valid:
+        # Not stored. A key that does not work is worse than no key: it turns a clear "not
+        # configured" into a failure inside the first client job.
+        print(f"✗ {verified.detail}\nnothing was written.", file=sys.stderr)
+        return 1
+
+    try:
+        path = write_credential(GEMINI_API_KEY, entered)
+    except CredentialError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 2
+
+    print(f"✓ {verified.detail}")
+    print(f"✓ stored {mask(entered)} in {path}")
+    if _PINNED_JUDGE not in verified.models:
+        print(
+            f"⚠ {_PINNED_JUDGE} is not visible to this key. §7 pins it and the registry will "
+            f"refuse anything else — check the key's project has the model enabled."
+        )
+    print(
+        "\n§3 Stage 4 can now route. Still required before the first client job: the §3 "
+        "governance answer on zero-data-retention (BLOCKED.md #3) — full-transcript discovery "
+        "sends 100% of every transcript to Google."
+    )
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through main()
+    raise SystemExit(main())

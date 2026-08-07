@@ -201,9 +201,12 @@ class JudgeVerdict:
     def to_editorial(self) -> Editorial:
         """Project onto §5's frozen `editorial` block.
 
-        Lossy on purpose: §5 has no cell for `payoff_at_ms` or `hashtags_ckb`, and §5 is not
-        edited by implementation work. The verdict keeps both, so nothing is destroyed — it
-        simply does not travel in the wire format (D-030).
+        No longer lossy. D-030 recorded that §5 had no cell for `payoff_at_ms` or
+        `hashtags_ckb` while §3 Stage 4 lists both among the judge's outputs, and left the
+        question open. D-033 answers it: both are carried, as *optional* fields, so every §5
+        document written before now still deserializes. `payoff_at_ms` lands in `editorial`
+        because it is a judgment; `hashtags_ckb` lands in `output` beside the title and
+        description because it is a delivery artifact.
 
         Raises:
             NotRoutable: a shadow model produced this verdict. This is the boundary where
@@ -227,6 +230,7 @@ class JudgeVerdict:
             narrative_role=self.narrative_role,
             judge=self.judge,
             sv6d=self.sv6d,
+            payoff_at_ms=self.payoff_at_ms,
         )
 
     def to_output(self, crop_target: str, durations: tuple[int, ...]) -> Output:
@@ -241,6 +245,7 @@ class JudgeVerdict:
             crop_target=crop_target,
             caption_style="word_highlight",
             durations=durations,
+            hashtags_ckb=self.hashtags_ckb,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -371,6 +376,11 @@ class JudgeRequest:
     # assert_within_tier.
     tokens: int | None = None
     carried_verbal_score: float | None = None
+    # What the judge actually reads. Normalized Sorani (Kurdish invariant #3) — the judge is a
+    # model input, so it reads transcript.norm.json and never the raw artifact.
+    text_ckb: str = ""
+    clip_in_ms: int = 0
+    clip_out_ms: int = 0
 
     def assert_within_tier(self) -> None:
         """Refuse a request that would leave the lower Pro price tier (§3 Stage 4).
@@ -401,6 +411,7 @@ class JudgeRequest:
         candidate: MergedCandidate,
         tokens: int | None = None,
         mode: InputMode = InputMode.STAGE_4_TRANSCRIPT_FIRST,
+        text_ckb: str = "",
     ) -> JudgeRequest:
         """Build a Stage 4 request for a candidate that survived Stage 3's union.
 
@@ -425,6 +436,9 @@ class JudgeRequest:
             mode=mode,
             tokens=tokens,
             carried_verbal_score=candidate.verbal_score,
+            text_ckb=text_ckb,
+            clip_in_ms=candidate.in_ms,
+            clip_out_ms=candidate.out_ms,
         )
 
 

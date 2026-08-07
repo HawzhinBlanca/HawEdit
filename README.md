@@ -33,7 +33,7 @@ captions:
 | 1 · Speech | contracts only | The ASR models themselves (`BLOCKED.md` #2). Alignment and segmentation are done and tested. |
 | 2 · Index | text only | The visual index (Qwen3-VL embeddings) needs weights and a GPU. |
 | 3 · Discovery | merge only | Both *producers* — Path A needs Gemini (`BLOCKED.md` #3), Path B needs `VideoChat3-4B` weights (`BLOCKED.md` #2). The union that joins them is built. |
-| 4 · Editorial judge | contract only | The call itself — Gemini credentials and the §3 ZDR governance decision (`BLOCKED.md` #3). |
+| 4 · Editorial judge | **built, needs a key** | Nothing — run `python -m hawedit2.credentials`. The §3 ZDR answer is still required for confidential material. |
 | 5 · Boundary fusion | **runs** | TimeLens2 refinement (M6). |
 | 6 · Render | **runs** | Speaker-tracked reframing — the crop is static centre (`BLOCKED.md` #4). NVENC needs hawapc01. |
 
@@ -108,6 +108,25 @@ refuses to guess a repo for them; supply one in `models/sources.json`:
 
 `models/` and `.ffmpeg/` are git-ignored — weights never enter the repository.
 
+## Gemini access (§3 Stage 4)
+
+```bash
+.venv/bin/python -m hawedit2.credentials          # panel: paste a key, it verifies, it stores
+.venv/bin/python -m hawedit2.credentials --check  # status only; exits non-zero if unusable
+```
+
+Input is hidden and never echoed. The key is verified against Google before anything is
+written — a revoked key looks exactly like a working one, so a regex would not help. It lands
+in `.env` at 0600, and the panel refuses to write anywhere git does not ignore.
+
+Get a key at <https://aistudio.google.com/apikey>. There is deliberately no `--key` flag:
+command-line arguments are visible in `ps` to everyone on the machine.
+
+**Before the first client job**, §3 Stage 3 requires a decision, not a setting: full-transcript
+discovery sends 100% of every transcript to Google, and for COMMS and KAAE material paid-tier
+Vertex with zero-data-retention is *mandatory, not advisory*. `gemini.Governance` refuses to
+upload material marked confidential until that is configured and attributed.
+
 ## The gate
 
 ```bash
@@ -158,6 +177,8 @@ run. Making that job a required status check is a repository setting, and is not
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
+| `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
+| `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, §3's ZDR gate. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |

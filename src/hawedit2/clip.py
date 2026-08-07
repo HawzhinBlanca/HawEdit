@@ -108,6 +108,10 @@ class Editorial:
     narrative_role: str
     judge: str
     sv6d: Sv6d | None = None
+    # §3 Stage 4 lists "payoff location" among the judge's outputs; §5's contract cell for it
+    # did not exist. Added as an OPTIONAL field so every §5 document written before this still
+    # deserializes — see D-033. `None` means unmeasured, not "at zero".
+    payoff_at_ms: int | None = None
 
     def __post_init__(self) -> None:
         for name in _SCORE_FIELDS:
@@ -136,6 +140,7 @@ class Editorial:
             "narrative_role": self.narrative_role,
             "judge": self.judge,
             "sv6d": self.sv6d.to_dict() if self.sv6d else None,
+            "payoff_at_ms": self.payoff_at_ms,
         }
 
     @staticmethod
@@ -150,6 +155,7 @@ class Editorial:
             narrative_role=data["narrative_role"],
             judge=data["judge"],
             sv6d=Sv6d(**raw_sv6d) if raw_sv6d else None,
+            payoff_at_ms=data.get("payoff_at_ms"),
         )
 
 
@@ -200,6 +206,10 @@ class Output:
     crop_target: str
     caption_style: str
     durations: tuple[int, ...]
+    # §3 Stage 4 lists hashtags among the judge's outputs and §5 had no cell. Optional and
+    # additive for the same reason as `Editorial.payoff_at_ms` — see D-033. An empty tuple
+    # here genuinely means "none", because a post with no hashtags is a real deliverable.
+    hashtags_ckb: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if any(duration <= 0 for duration in self.durations):
@@ -212,6 +222,7 @@ class Output:
             "crop_target": self.crop_target,
             "caption_style": self.caption_style,
             "durations": list(self.durations),
+            "hashtags_ckb": list(self.hashtags_ckb),
         }
 
     @staticmethod
@@ -222,6 +233,7 @@ class Output:
             crop_target=data["crop_target"],
             caption_style=data["caption_style"],
             durations=tuple(data["durations"]),
+            hashtags_ckb=tuple(data.get("hashtags_ckb", ())),
         )
 
 

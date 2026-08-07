@@ -1034,3 +1034,106 @@ transcript rather than overwriting it — invariant #1 has no exception for "the
 again".
 
 ---
+## D-033 · §5 gains two optional fields — BLOCKED #8 answered
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 4, §5 · **Type:** contract decision,
+delegated by Hawa ("u choose best for me")
+
+D-030 recorded that §3 Stage 4 lists *payoff location* and *hashtags* among the judge's
+outputs while §5's contract has no cell for either, and refused to pick a reading. Hawa
+delegated the choice. **§5 gains both.**
+
+**Why that way round.** Hashtags are not decoration on a video-repurposing product — a Kurdish
+title and description with no hashtags is an incomplete social post, and the whole system
+exists to produce social posts. Payoff location is operationally useful in a way
+`narrative_role` is not: `narrative_role` records *that* a clip is a payoff, while an editor
+choosing a thumbnail or trimming a variant needs to know *where* the payoff lands.
+"Aspirational" would have meant §3 listing an output nothing consumes, which is the less
+plausible reading of a section that is otherwise precise.
+
+**Where each lands.** `payoff_at_ms` in `editorial`, because it is a judgment. `hashtags_ckb`
+in `output`, beside the title and description it ships with. Splitting them by kind rather
+than putting both in one block keeps §5's two blocks meaning what they meant.
+
+**Both are optional, and that is the load-bearing part.** A required field would make every §5
+document written before today unreadable — a migration rather than an addition. §5 is a
+contract other stages deserialize, so an addition that breaks readers is not an addition. A
+test loads a pre-change `editorial` and `output` payload and asserts they still parse, with
+`payoff_at_ms` as `None` (unmeasured, not "at zero") and `hashtags_ckb` as `()` (genuinely
+none, because a post with no hashtags is a real deliverable).
+
+**What I did not do:** edit `BLUEPRINT.md`. It is frozen and implementation work does not
+touch it. §5's document still shows the old cells, so **the blueprint needs Hawa's amendment
+to make this official** — until then the code is ahead of the spec, deliberately and in one
+recorded place rather than silently.
+
+---
+
+## D-034 · Credentials: three refusals, not a config file
+
+**Date:** 2026-08-07 · **Type:** implementation choice
+
+A key is the one piece of configuration that is actively dangerous to get slightly wrong, so
+`credentials.py` is built around refusals rather than convenience.
+
+**It refuses to write a key anywhere git tracks.** Before writing it asks `git check-ignore`
+and stops if the answer is no. `AGENTS.md`'s "never commit secrets" is a rule someone has to
+remember; this is the same rule as a check. A key in a commit outlives its own revocation —
+rotating it does not remove it from history, and anyone who cloned in between still has it.
+
+**It refuses to store a key it has not verified.** A revoked key and a working key are the
+same string shape, so a format check buys nothing. Google answers a bad key with a clear 400
+and listing models bills nothing, so validation is a live call. A key that does not work is
+worse than no key: it turns a clear "not configured" into a failure inside the first client job.
+
+**It never prints the key.** Not on success, not in an exception, not in the status line — the
+panel shows the last four characters and nothing else. Two tests assert that the API's own
+error messages do not contain the key, because an error carrying a credential is how secrets
+reach log aggregators.
+
+**No `--key` flag.** Command-line arguments are visible in `ps` to every user on the machine.
+Input goes through `getpass`, so it is never echoed and never enters shell history. Reading is
+layered — environment first, then `.env` — so CI and a laptop differ without either being a
+special case.
+
+---
+
+## D-035 · The real Gemini judge, and what it does not trust
+
+**Date:** 2026-08-07 · **Blueprint ref:** §3 Stage 4, §3 Stage 3's governance box ·
+**Type:** implementation
+
+`generativelanguage.googleapis.com` is reachable from this environment — measured, not assumed
+— so §3 Stage 4's judge is now implemented rather than only contracted. `judge.py` stays the
+contract; `gemini.py` is one implementation of it, and nothing above it knows the provider.
+
+**Structured output, not prompt-and-parse.** The request carries `responseSchema` and asks for
+`application/json`. "Reply in JSON please" plus a parser is how a stage acquires a 1% failure
+rate that only appears in production. A response that does not match is `JudgeUnusable`, never
+a partially-filled verdict.
+
+**Token counts come from `countTokens`.** §3's 200K tier ceiling is about money, and
+`assert_within_tier` refuses a request of unknown size. Google counts for free, so estimating
+here could only be wrong about the bill. The count happens *before* the billed call, so an
+over-ceiling request costs nothing.
+
+**`temperature=0.0`.** §8.2 compares judges against a regression set. A judge that disagrees
+with itself makes that comparison measure sampling noise rather than model quality.
+
+**The model is the least trusted source in the system, not the most.** Every check in
+`JudgeVerdict` applies to its output exactly as to a hand-written verdict: Kurdish script on
+the title, description and every hashtag; the payoff inside the clip; scores in range. The
+English-title test is the important one — every type downstream accepts a `str`, so a judge
+answering in English produces a clip that renders, uploads and reads as finished work in the
+wrong language.
+
+**Retries are bounded and only transient.** 429 and 5xx retry with backoff; a 400 does not,
+because retrying a malformed request bills three times for one mistake.
+
+**§3's governance box is a value, not a paragraph.** `Governance(confidential=..., 
+zero_data_retention=..., confirmed_by=...)` refuses to upload material marked confidential
+without ZDR configured *and* someone recorded as having confirmed it — §3 asks for a
+confirmation, and an unattributed one is not one. `BLOCKED.md` #3's second half is still open:
+having a key does not answer whether ZDR is configured for COMMS and KAAE material.
+
+---

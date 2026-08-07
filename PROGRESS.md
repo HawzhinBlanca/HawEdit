@@ -43,10 +43,10 @@ What remains is not a backlog. Every open row below is waiting on one of six thi
 |---|---|
 | `huggingface.co` reachable | M0.11–M0.13, M0.16, M1.4, M5 — every model weight |
 | A GPU (hawapc01) | M0.13, M1.4, M5, M6, M8, NVENC in M3.3 |
-| Gemini credentials + the §3 ZDR governance answer | M2.3, M4, Stage 4's call |
+| The §3 ZDR governance answer (credentials themselves are now handled) | confidential material only — `gemini.Governance` refuses it until ZDR is configured and attributed |
 | The gated `pyannote/speaker-diarization-community-1` repo | M0.10, M1.3, the speaker-tracked reframe in M3.3 |
 | Human annotators + real footage | M7.2, and M7.3 behind it |
-| Hawa, one decision each | `BLOCKED.md` #7 (required CI check), #8 (§3/§5 disagree on two judge outputs) |
+| Hawa, one decision each | `BLOCKED.md` #7 (required CI check) · #8 answered, but `BLUEPRINT.md` §5 needs the matching amendment (D-033) |
 
 No amount of further work in this environment moves any of them. The contracts those models
 plug into are built and tested ahead of them, so landing each one is a matter of producing the
@@ -101,6 +101,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M2.5 | §3 Stage 3 dual-path candidate merge — "union, never intersect" | DONE | `src/hawedit2/discovery.py` + `tests/test_discovery.py` (27 tests). Nothing is dropped (property test over 200 generated inputs); per-path attribution survives so §8.2's `recall_at_k_by_path` and `path_unique_wins` still mean something; overlap does not chain; a path never dedupes itself; spans are the anchor's, never widened — §3 Stage 5 owns boundaries. Refuses to invent a cross-path score. D-029. Built ahead of both producers (`BLOCKED.md` #2, #3). |
 | M2.6 | §3 Stage 4 editorial judge contract: routing interface, verdict, cost model, shadow rule | DONE | `src/hawedit2/judge.py` + `tests/test_judge.py` (40 tests). The shadow is refused at `route()` and again at `to_editorial()` and again at §5's `Editorial`; promotion needs a clear win on ≥20 real items, never a tie or an empty set, and `decide_judge` takes no date argument by design; the 200K tier ceiling is enforced as arithmetic against §3's own 360K with-video figure; a survivor Path A already scored cannot be re-sent for discovery. Kurdish title/description/hashtags are refused if they contain no Kurdish script. D-030, D-031. The call itself is `BLOCKED.md` #3. |
 | M2.7 | End-to-end runner: one command over §3, reporting every stage it could not run | DONE | `src/hawedit2/pipeline.py` + `tests/test_pipeline.py` (18 tests). `python -m hawedit2.pipeline VIDEO.mp4` runs Stage 0 on real media and exits **1** naming the four blocked stages. Given a transcript and a verdict as stand-ins it runs six stages end to end — ingest → §4.1 → §2 index → §4.2 segmentation → Stage 5 fusion → Stage 6 render — with Stage 5 fusing against the shot cuts Stage 0 found *on that video*. A skipped stage is a `StageSkipped` naming its blocker, never an empty result. D-032. |
+| M2.8 | Gemini credential panel + the real §3 Stage 4 judge | DONE | `src/hawedit2/credentials.py` (20 tests) + `src/hawedit2/gemini.py` (26 tests). `python -m hawedit2.credentials` verifies a key against Google before storing it, refuses any target git tracks, and never prints it. `GeminiJudge` implements `EditorialJudge` with schema-enforced output, real `countTokens` before the billed call, temperature 0, bounded retries on transient failures only, and §3's ZDR gate as a required value. Every check in `JudgeVerdict` applies to model output. D-034, D-035. |
 | M2.3 | Stage 3 Path A (Gemini reads the full transcript) | BLOCKED | `BLOCKED.md` #3 — credentials + the Vertex ZDR governance decision |
 | M2.4 | One rendered clip | DONE | `evidence/m2-4-rendered-clip.mp4` (1080×1920, 2.2 s) + `evidence/m2-4-frame.png` — a real vertical clip with Kurdish captions burned in, rendered by `src/hawedit2/render.py` + `tests/test_render.py` (21 tests). Was marked BLOCKED behind `BLOCKED.md` #5 for two days after #5 was resolved; `tests/test_claims.py` now fails on a BLOCKED row whose every blocker is resolved. |
 

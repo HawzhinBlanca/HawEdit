@@ -154,7 +154,13 @@ Until then, treat every DONE mark as resting on a local run plus an advisory CI 
 
 ---
 
-## #8 · §3 Stage 4 and §5 disagree about two judge outputs
+## #8 · §3 Stage 4 and §5 disagree about two judge outputs — **RESOLVED 2026-08-07**
+
+**Resolved.** Hawa delegated the choice; §5 gains both fields, additively and optionally, so no existing §5 document breaks. `payoff_at_ms` in `editorial`, `hashtags_ckb` in `output` — see D-033 for the reasoning. **`BLUEPRINT.md` itself still needs Hawa's amendment**: it is frozen and implementation work does not edit it, so the code is deliberately ahead of the spec in this one recorded place.
+
+Original entry, kept for the record:
+
+## #8 (original) · §3 Stage 4 and §5 disagree about two judge outputs
 
 **Needs:** Hawa, one decision. No code, no credentials.
 

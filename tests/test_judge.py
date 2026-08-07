@@ -249,18 +249,47 @@ def test_the_verdict_projects_onto_section_5s_editorial_block() -> None:
     assert editorial.narrative_role == "payoff"
 
 
-def test_the_projection_drops_exactly_what_section_5_has_no_cell_for() -> None:
-    """§3 Stage 4 lists payoff location and hashtags; §5's contract carries neither.
+def test_the_projection_carries_both_fields_section_3_names_and_section_5_lacked() -> None:
+    """D-030 found the gap; D-033 closes it — additively, so nothing already written breaks.
 
-    §5 is frozen, so the projection is lossy and the loss is stated. The verdict keeps both,
-    so nothing is destroyed — it is simply not in the wire format. D-030.
+    `payoff_at_ms` is a judgment and lands in `editorial`. `hashtags_ckb` is a delivery
+    artifact and lands in `output`, beside the title and description it ships with.
     """
     verdict = a_verdict()
-    editorial = verdict.to_editorial()
-    assert "payoff_at_ms" not in editorial.to_dict()
-    assert "hashtags_ckb" not in editorial.to_dict()
-    assert verdict.payoff_at_ms == 4_000
-    assert verdict.hashtags_ckb == ("#کوردی", "#هەولێر")
+    assert verdict.to_editorial().to_dict()["payoff_at_ms"] == 4_000
+    output = verdict.to_output(crop_target="speaker_face", durations=(30,))
+    assert output.to_dict()["hashtags_ckb"] == ["#کوردی", "#هەولێر"]
+
+
+def test_a_section_5_document_written_before_the_two_fields_existed_still_loads() -> None:
+    """The whole reason the fields are optional: §5 documents predate them.
+
+    A required field would make every clip artifact written before today unreadable, which is
+    a migration rather than an addition — and §5 is a frozen contract, so an addition that
+    breaks readers is not an addition.
+    """
+    from hawedit2.clip import Editorial, Output
+
+    legacy_editorial = {
+        "hook_score": 0.8,
+        "self_contained": True,
+        "meaning_fidelity": 0.9,
+        "misleading_edit_risk": 0.1,
+        "cultural_landing": 0.8,
+        "narrative_role": "payoff",
+        "judge": JUDGE,
+        "sv6d": None,
+    }
+    assert Editorial.from_dict(legacy_editorial).payoff_at_ms is None
+
+    legacy_output = {
+        "title_ckb": TITLE,
+        "description_ckb": DESCRIPTION,
+        "crop_target": "speaker_face",
+        "caption_style": "word_highlight",
+        "durations": [30],
+    }
+    assert Output.from_dict(legacy_output).hashtags_ckb == ()
 
 
 def test_the_verdict_fills_section_5s_output_block_titles() -> None:
