@@ -26,7 +26,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | **WIP — §4.3 DONE incl. golden test; encode runs (M3.3 PARTIAL — static crop, no NVENC)** |
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
 | **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | **WIP — the Stage 2 contract and the scene-window plan are DONE and run on real media; embedding, reranking and Path B need weights** |
-| **M6** | Stage 5 TimeLens2 + sentence-hard fusion | Boundary precision | TODO |
+| **M6** | Stage 5 TimeLens2 + sentence-hard fusion | Boundary precision | **WIP — sentence-hard fusion DONE (M2.2); the TimeLens2 contract and its relevance gate DONE; the model needs weights** |
 | **M7** | Repurposing eval set + threshold tuning | Quality gates | **WIP — §8.2 metrics DONE; the 200–500 labelled candidates need humans** |
 | **M8** | Auto-reframe (SAM 3 / Molmo2) | Vertical formats | TODO |
 
@@ -131,6 +131,14 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M5.1 | §3 Stage 2 visual index: scenes segmented to the reference settings, retrieval, and the top-50 → rerank → keep-5–10 contract | DONE | `src/hawedit/visual_index.py` + `tests/test_visual_index.py` (51 tests). Runs in `pipeline.py` on real media: Stage 0's own cuts at 1400/2800 ms become three windows tiling 0→4162 ms, `evidence/m5-1-scene-windows.md`. The 64-frame ceiling and ~1 fps are enforced as one setting because either alone is satisfiable while the pair is broken — a 180 s scene at 0.35 fps is 63 frames, under the ceiling, and its embedding is indistinguishable from an honest one. A zero or NaN vector is refused rather than scored 0.0. The reranker may reorder and score; it may not invent a window, duplicate one, drop below the survivor count, or restate the retrieval score it was handed. D-037. **The splitting path is exercised by tests only** — there is no long Kurdish episode here to run it against (`BLOCKED.md` #1). |
 | M5.2 | Real `Qwen3-VL-Embedding-2B` / `-Reranker-2B` behind the interfaces above | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
 | M5.3 | §3 Stage 3 Path B: `VideoChat3-4B` over scenes, producing `Candidate`s the §3 union already accepts | BLOCKED | `BLOCKED.md` #2, #6. The merge that unions it with Path A is built and tested — M2.5. |
+
+## M6 — task ledger
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M6.1 | §3 Stage 5 TimeLens2 contract: intervals as evidence, never as cuts, and only where they are about the clip | DONE | `src/hawedit/timelens.py` + `tests/test_timelens.py` (23 tests). Found a real defect in `boundary.py`: `timelens_interval_end_ms` arrived as a bare integer, so §3's "latest of { …, timelens_interval_end }" read as `max()` over the episode — measured, a 4.0 s anchored sentence became a **295 s clip with Kurdish invariant #2 still passing**, because the invariant constrains direction and nothing constrained relevance (`evidence/m6-1-timelens-relevance.md`). Eligibility is now overlap with the anchored sentence, checked in the selector **and** at the fusion site, because `BoundaryInputs` accepting a naked end is what let it happen. D-038. |
+| M6.2 | Sentence-hard fusion (the HARD/SOFT rule itself) | DONE | Delivered in M2.2 — `boundary.py`, invariant #2 exhaustive over 3,125 soft-input combinations. |
+| M6.3 | Real `MCG-NJU/TimeLens2-4B` behind the contract above | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
 
 ## M7 — task ledger
 

@@ -93,6 +93,10 @@ class BoundaryInputs:
     shot_cuts_ms: tuple[int, ...] = field(default=())
     speaker_turn_start_ms: int | None = None
     speaker_turn_end_ms: int | None = None
+    # TimeLens2's interval, as an interval. The end alone used to arrive here, and a bare
+    # number cannot be asked whether it is about this clip — see `timelens.py`. Both halves
+    # are supplied together or neither is; `fuse_boundary` refuses the mismatch.
+    timelens_interval_start_ms: int | None = None
     timelens_interval_end_ms: int | None = None
 
 
@@ -183,6 +187,50 @@ def assert_boundary_invariant(boundary: Boundary) -> None:
         )
 
 
+def _assert_timelens_is_about_this_clip(inputs: BoundaryInputs) -> None:
+    """§3 Stage 5's first sentence, checked where the number is used.
+
+    Kurdish invariant #2 constrains the *direction* a soft signal may move a boundary, and an
+    interval from elsewhere in the episode satisfies it easily: extending `final_out` from
+    14 s to 305 s is outward. What was never checked is whether the interval is about this
+    clip at all. §3: TimeLens2 "returns intervals containing relevant visual evidence" — so an
+    interval sharing no footage with the anchored idea is evidence about a different moment,
+    and using its end is not one input among five, it is a different clip.
+
+    This lives at the fusion site rather than only in `timelens.py` on purpose. A selector one
+    module away leaves `BoundaryInputs` accepting the same bare integer it always did, and the
+    next caller to build inputs by hand reintroduces the defect with every test still green.
+    """
+    start, end = inputs.timelens_interval_start_ms, inputs.timelens_interval_end_ms
+    if start is None and end is None:
+        return
+    if end is None:
+        raise ValueError(
+            "timelens_interval_start_ms was given without timelens_interval_end_ms. Half an "
+            "interval is not an interval, and ignoring the start would hide a producer that "
+            "lost its end."
+        )
+    if start is None:
+        raise ValueError(
+            "timelens_interval_end_ms was given without timelens_interval_start_ms. §3 Stage 5 "
+            "takes an interval from TimeLens2, not a timestamp: without the start there is no "
+            "way to ask whether the evidence is about this clip, and an interval from five "
+            "minutes away extends final_out while satisfying Kurdish invariant #2."
+        )
+    if end <= start:
+        raise ValueError(
+            f"timelens interval spans {start}..{end}, which has no length; it cannot contain "
+            f"evidence of anything."
+        )
+    if not (start < inputs.anchor_out_ms and end > inputs.anchor_in_ms):
+        raise ValueError(
+            f"timelens interval {start}..{end} does not overlap the anchored sentence "
+            f"{inputs.anchor_in_ms}..{inputs.anchor_out_ms}. §3 Stage 5: TimeLens2 'returns "
+            f"intervals containing relevant visual evidence' — evidence about a different "
+            f"moment cannot set this clip's out-point."
+        )
+
+
 def fuse_boundary(inputs: BoundaryInputs, confidence: float | None = None) -> Boundary:
     """Fuse the hard anchors with the advisory signals, per §3 Stage 5.
 
@@ -213,6 +261,7 @@ def fuse_boundary(inputs: BoundaryInputs, confidence: float | None = None) -> Bo
         )
     if confidence is not None and not 0.0 <= confidence <= 1.0:
         raise ValueError(f"confidence must be within [0, 1], got {confidence}")
+    _assert_timelens_is_about_this_clip(inputs)
 
     # --- in point: earliest of the candidates, anchor_in included so nothing pulls inward
     in_candidates: list[tuple[int, str | None]] = [(inputs.anchor_in_ms, None)]

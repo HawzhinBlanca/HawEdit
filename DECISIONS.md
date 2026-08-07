@@ -1228,3 +1228,56 @@ window plan needs neither and runs in `pipeline.py` on real media —
 is no long Kurdish episode here to run it against.
 
 ---
+
+## D-038 · TimeLens2's interval must be about the clip it extends
+
+**The defect.** §3 Stage 5 writes the out-point as `latest of { …, timelens_interval_end }`,
+and `boundary.py` received that as a bare integer. "Latest" then reads as `max()` over the
+intervals the model returned for the episode, which is what a careful implementer would write.
+Measured:
+
+```
+anchored sentence : 10000..14000 ms  (4.0 s)
+naive max(end)    : final_out = 305000 ms -> clip is 295.0 s
+relevance-first   : final_out = 16000 ms  -> clip is 6.0 s
+invariant #2 satisfied by the naive answer: True
+```
+
+A four-second Kurdish sentence becomes a five-minute clip, and **Kurdish invariant #2 passes**
+— `final_out >= anchor_out` is satisfied handsomely. The invariant constrains the *direction*
+a soft signal may move a boundary. Nothing constrained *relevance*. This is the same class the
+last two reviews kept finding: a check that accepts the shape of an answer without its content.
+
+**Decision 1 — eligibility is overlap with the anchored sentence.** §3 says TimeLens2 "returns
+intervals containing relevant visual evidence", so an interval sharing no footage with the
+anchored idea is evidence about a different moment and may not set this clip's out-point.
+Touching at a single instant is not overlap. Considered and rejected: taking `max()` and
+trusting the caller to pass only this candidate's intervals — that is the assumption the bare
+integer already encoded, unstated and unchecked.
+
+**Decision 2 — the check lives at the fusion site, not only in the selector.** `timelens.py`
+provides `interval_end_for_fusion`, and `BoundaryInputs` now carries
+`timelens_interval_start_ms` so that `fuse_boundary` can verify the overlap itself. Putting it
+only in the selector would leave `BoundaryInputs` accepting the same bare integer, and the next
+caller building inputs by hand reintroduces the five-minute clip with every test still green.
+That is not hypothetical: it is exactly what round 2 of the independent review found four times
+over — a fix applied at one call site and not at its sibling.
+
+**Decision 3 — an overlapping interval ending before the anchor supplies `None`.** It is about
+this moment but cannot extend outward, and returning it would record
+`out_extended_by="timelens_interval_end"` for a boundary TimeLens2 did not move.
+
+**Not decided here.** No magnitude cap. An interval overlapping by one millisecond and ending
+far later is still eligible. §3 caps shot cuts at 400 ms and is silent on TimeLens2; inventing
+a threshold would be redesigning a frozen section. Whether one is needed is a §8.2 tuning
+question against the labelled set (M7.2).
+
+**Cost.** Four existing tests in `tests/test_boundary.py` passed the bare end and now supply
+the interval. They were asserting an interface we now know was insufficient, so they were
+updated rather than relaxed, and the refusals they no longer cover are covered by
+`tests/test_timelens.py`.
+
+**Status.** `MCG-NJU/TimeLens2-4B` is `BLOCKED.md` #2 and #6. No interval in this repository
+came from the model. `evidence/m6-1-timelens-relevance.md`.
+
+---

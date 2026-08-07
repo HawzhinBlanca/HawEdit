@@ -135,8 +135,18 @@ def test_a_speaker_turn_end_inside_the_anchor_is_discarded() -> None:
 
 
 def test_a_timelens_interval_ending_early_never_shortens_the_clip() -> None:
-    """§3 Stage 5: TimeLens2 "does not produce editorial cuts" — one input among five."""
-    boundary = fuse_boundary(inputs(timelens_interval_end_ms=ANCHOR_OUT - 10_000))
+    """§3 Stage 5: TimeLens2 "does not produce editorial cuts" — one input among five.
+
+    The interval's *start* is supplied alongside its end throughout this file because fusion
+    now requires the pair: an end on its own cannot be asked whether the evidence is about
+    this clip. `tests/test_timelens.py` covers that refusal and why it exists.
+    """
+    boundary = fuse_boundary(
+        inputs(
+            timelens_interval_start_ms=ANCHOR_OUT - 15_000,
+            timelens_interval_end_ms=ANCHOR_OUT - 10_000,
+        )
+    )
     assert boundary.final_out_ms >= ANCHOR_OUT
 
 
@@ -162,7 +172,12 @@ def test_natural_silence_extends_the_out_point() -> None:
 
 
 def test_a_timelens_interval_end_extends_the_out_point() -> None:
-    boundary = fuse_boundary(inputs(timelens_interval_end_ms=ANCHOR_OUT + 2_000))
+    boundary = fuse_boundary(
+        inputs(
+            timelens_interval_start_ms=ANCHOR_OUT - 2_000,
+            timelens_interval_end_ms=ANCHOR_OUT + 2_000,
+        )
+    )
     assert boundary.final_out_ms == ANCHOR_OUT + 2_000
     assert boundary.out_extended_by == "timelens_interval_end"
 
@@ -176,6 +191,7 @@ def test_the_latest_candidate_wins() -> None:
     boundary = fuse_boundary(
         inputs(
             natural_silence_ms=ANCHOR_OUT + 500,
+            timelens_interval_start_ms=ANCHOR_OUT - 1_000,
             timelens_interval_end_ms=ANCHOR_OUT + 4_000,
             speaker_turn_end_ms=ANCHOR_OUT + 1_000,
         )
@@ -201,6 +217,9 @@ def test_the_invariant_holds_across_every_combination_of_soft_inputs() -> None:
                                 shot_cuts_ms=(ANCHOR_IN + cut, ANCHOR_OUT + cut),
                                 speaker_turn_start_ms=ANCHOR_IN + turn_start,
                                 speaker_turn_end_ms=ANCHOR_OUT + turn_end,
+                                # Overlapping the anchor for every offset, so this sweep keeps
+                                # measuring the invariant rather than the relevance guard.
+                                timelens_interval_start_ms=ANCHOR_IN + 100,
                                 timelens_interval_end_ms=ANCHOR_OUT + lens,
                             )
                         )
