@@ -42,16 +42,19 @@ __all__ = [
     "GOLDEN_CAPTION_TEXT",
     "KURDISH_REQUIRED_GLYPHS",
     "CaptionStyle",
+    "CaptionsOutsideClip",
     "FontCoverageError",
     "GoldenReferenceMissing",
     "MissingRtlStack",
     "RtlStackReport",
+    "assert_captions_within_clip",
     "assert_font_covers_kurdish",
     "assert_rtl_stack",
     "build_ass",
     "compare_golden_render",
     "decode_to_rgb",
     "find_ffmpeg",
+    "parse_dialogue_times",
     "render_caption_png",
     "subtitle_filter",
     "wrap_caption_lines",
@@ -244,6 +247,71 @@ def wrap_caption_lines(
     return tuple(lines)
 
 
+class CaptionsOutsideClip(ValueError):
+    """The caption file's timeline is not the clip's timeline.
+
+    §3 Stage 6 burns subtitles into a stream ffmpeg has already cut, so t=0 is the start of
+    the clip and never the start of the source. A caption scheduled in source time lands past
+    the end of a clip taken from the middle of an episode, libass draws nothing, and the
+    result is a valid, playable, entirely caption-free MP4 — Kurdish invariant #4 absent with
+    no error anywhere.
+    """
+
+
+_DIALOGUE_TIME = re.compile(
+    r"^Dialogue:\s*\d+,(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),", re.MULTILINE
+)
+
+
+def parse_dialogue_times(ass_text: str) -> tuple[tuple[int, int], ...]:
+    """Every Dialogue line's `(start_ms, end_ms)`, as the file actually carries them.
+
+    ASS stores centiseconds, so the values read back truncated to 10 ms. That is a property of
+    the format rather than a rounding choice here, and it is visible in the result instead of
+    being smoothed over.
+    """
+    return tuple(
+        (_parse_ass_time(start), _parse_ass_time(end))
+        for start, end in _DIALOGUE_TIME.findall(ass_text)
+    )
+
+
+def _parse_ass_time(stamp: str) -> int:
+    hours, minutes, rest = stamp.split(":")
+    seconds, centiseconds = rest.split(".")
+    return ((int(hours) * 60 + int(minutes)) * 60 + int(seconds)) * 1000 + int(centiseconds) * 10
+
+
+def assert_captions_within_clip(ass_text: str, clip_duration_ms: int) -> None:
+    """Refuse a caption file that has nothing to draw inside `[0, clip_duration_ms]`.
+
+    This runs at the burn, on whatever file arrives, because a fix applied only where the file
+    is *written* is not a fix — the same lesson as D-038. `build_ass` now applies the clip
+    offset; this catches a hand-written file, a file from an older run, and a future caller
+    that forgets, which is the failure that actually shipped.
+
+    Partial overlap is enough: something is on screen, so this is not the silent case.
+
+    Raises:
+        CaptionsOutsideClip: no Dialogue line, or none intersecting the clip.
+    """
+    events = parse_dialogue_times(ass_text)
+    if not events:
+        raise CaptionsOutsideClip(
+            "the caption file has no Dialogue lines: libass would draw nothing and the clip "
+            "would ship without captions (Kurdish invariant #4)"
+        )
+    if not any(start < clip_duration_ms and end > 0 for start, end in events):
+        first, last = events[0], events[-1]
+        raise CaptionsOutsideClip(
+            f"the caption file spans {first[0]}..{last[1]} ms and the clip is "
+            f"0..{clip_duration_ms} ms, so libass has nothing to draw. Subtitles are burned "
+            f"into a stream that was "
+            f"already cut, where t=0 is the start of the clip — source-absolute timestamps "
+            f"produce a valid, playable, caption-free MP4."
+        )
+
+
 def _ass_time(milliseconds: int) -> str:
     """ASS timestamps are H:MM:SS.cc — centiseconds, not milliseconds."""
     centiseconds = milliseconds // 10
@@ -266,6 +334,8 @@ def build_ass(
     play_res_y: int = 1920,
     style: CaptionStyle = CaptionStyle.LINE,
     max_chars_per_line: int = DEFAULT_MAX_CHARS_PER_LINE,
+    clip_in_ms: int = 0,
+    clip_duration_ms: int | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -289,6 +359,18 @@ def build_ass(
             raise ValueError(
                 f"sentence at {sentence.start_ms} ms is not complete — reject, never render "
                 f"(Kurdish invariant #2). Captioning a fragment ships a broken clip."
+            )
+        if sentence.start_ms < clip_in_ms:
+            raise CaptionsOutsideClip(
+                f"sentence at {sentence.start_ms} ms starts before the clip does "
+                f"({clip_in_ms} ms): it would need a negative timestamp, which means it is "
+                f"speech from outside this clip."
+            )
+        if clip_duration_ms is not None and sentence.end_ms - clip_in_ms > clip_duration_ms:
+            raise CaptionsOutsideClip(
+                f"sentence ending at {sentence.end_ms} ms runs past the end of the clip "
+                f"({clip_in_ms + clip_duration_ms} ms) — a caption for speech this clip does "
+                f"not contain."
             )
 
     header = "\n".join(
@@ -337,8 +419,13 @@ def build_ass(
         else:
             rendered_lines = [" ".join(_escape_ass_text(word.w) for word in line) for line in lines]
         text = "\\N".join(rendered_lines)
+        # The clip's timeline, not the source's. The `\kf` spans above are durations and are
+        # unaffected — only these two absolute stamps ever needed the offset, and for as long
+        # as they did not have it, every clip cut from the middle of an episode shipped with
+        # no captions at all.
         events.append(
-            f"Dialogue: 0,{_ass_time(sentence.start_ms)},{_ass_time(sentence.end_ms)},"
+            f"Dialogue: 0,{_ass_time(sentence.start_ms - clip_in_ms)},"
+            f"{_ass_time(sentence.end_ms - clip_in_ms)},"
             f"Kurdish,,0,0,0,,{text}"
         )
 

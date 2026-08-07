@@ -143,6 +143,8 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 
 | M3.4 | §8.3's third render-regression bullet: the boundary invariant asserted on every **shipped** clip | DONE | `render.py` (`assert_encoded_span`, `frame_duration_ms`) + `boundary.py` (`media_duration_ms`) + `tests/test_render.py`, `tests/test_boundary.py`. The invariant had been asserted on the `Clip` object; `RenderResult.duration_ms` was the request echoed back and the file was never opened. Measured: requesting 8000 ms of a 4162 ms source makes ffmpeg exit 0 and write 4180 ms. The new check immediately caught the runner's own end-to-end fixture — §3 Stage 5's 200 ms tail pushed `final_out` 138 ms past the end of the file, so **every `run_pipeline` render had been silently truncated** while the suite stayed green (`evidence/m3-4-shipped-clip-invariant.md`). D-040. |
 
+| M3.5 | Captions timed to the clip, and a burn that refuses an ASS with nothing to draw | DONE | `captions.py` (`clip_in_ms`, `parse_dialogue_times`, `assert_captions_within_clip`) + `tests/test_caption_timing.py` (13 tests). **The most serious defect found so far.** `build_ass` wrote source-absolute timestamps and `render_clip` burns into a stream already cut at `clip.in_ms`. Measured on a 1.6 s clip taken from source 2000 ms: **0 bytes** differ between a captioned and an uncaptioned render — libass drew nothing, ffmpeg exited 0, and the output is a valid, playable, caption-free MP4. Kurdish invariant #4 was absent from every clip not starting near zero. The existing pixel test is the right test; its fixture cuts at 300 ms with words at 0–1600, the one input where the bug is invisible. `evidence/m3-5-caption-timeline.md`, D-041. |
+
 ## M7 — task ledger
 
 | Task | Definition of Done | Status | Evidence |

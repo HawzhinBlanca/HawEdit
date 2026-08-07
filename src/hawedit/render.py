@@ -37,7 +37,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
-from hawedit.captions import assert_rtl_stack, find_ffmpeg, subtitle_filter
+from hawedit.captions import (
+    assert_captions_within_clip,
+    assert_rtl_stack,
+    find_ffmpeg,
+    subtitle_filter,
+)
 from hawedit.clip import Clip
 from hawedit.ingest import probe_duration_ms
 
@@ -336,6 +341,10 @@ def render_clip(
         raise RenderError(f"no subtitle file at {ass_path} — §4.3 captions are not optional")
 
     duration_ms = clip.out_ms - clip.in_ms
+    # Subtitles are burned into a stream ffmpeg has already cut, so t=0 is the start of the
+    # clip. A file carrying source-absolute stamps draws nothing and ships a caption-free MP4;
+    # checked here on whatever file arrives, not only where `build_ass` writes one.
+    assert_captions_within_clip(ass_path.read_text(encoding="utf-8"), duration_ms)
     # Measured on the real fixture: asking for 0..8000 ms of a 4162 ms source makes ffmpeg
     # exit 0 and write 4180 ms. Nothing in the numbers is wrong — the clip is internally
     # consistent — so the only place to catch it is against the media itself, before encoding.

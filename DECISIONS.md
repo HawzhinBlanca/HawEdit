@@ -1398,3 +1398,54 @@ inferred.
 request — one frame of rounding, well inside the source. That artifact was never truncated.
 
 ---
+
+## D-041 · Captions belong to the clip's timeline, and the burn checks it
+
+**The defect, and it was shipping.** `build_ass` wrote source-absolute timestamps.
+`render_clip` burns them into a stream ffmpeg has already cut with `-ss clip.in_ms`, where t=0
+is the start of the clip. Measured on a 1.6 s clip taken from source 2000 ms, sentence spoken
+at source 2000–3600 ms:
+
+```
+ASS Dialogue line: Dialogue: 0,0:00:02.00,0:00:03.60,Kurdish,,0,0,0,,ڕۆژنامەوانی …
+bytes differing between captioned and uncaptioned render: 0
+captions drawn: False
+```
+
+Zero bytes differ. The caption was scheduled past the end of the clip, libass drew nothing,
+ffmpeg exited 0, and the result is a valid, playable, caption-free MP4. Kurdish invariant #4 —
+the entire §4.3 surface, the thing §0 calls failure mode #3 — absent from every clip not
+starting near zero, with no error anywhere. `render.py`'s docstring names this failure mode
+verbatim ("an ASS file libass parses but finds nothing to draw in") and nothing checked it.
+
+**Why the pixel test passed.** `tests/test_render.py` compares captioned against uncaptioned
+decoded frames, which is the right test. Its fixture cuts at 300 ms with words at 0–1600, so
+the timelines overlap by 1.3 s and something is always drawn. The test measured the right thing
+on the one input where the defect is invisible — the same shape as the golden render needing
+`shaping=simple` as a failing control before it measured anything.
+
+**Decision 1 — `build_ass` takes the clip window.** `clip_in_ms` shifts each `Dialogue` stamp;
+`clip_duration_ms`, when given, bounds it. The `\kf` karaoke spans are durations and were
+always correct. A sentence starting before the clip or ending after it is refused rather than
+clamped: it is speech this clip does not contain, and a clamped caption would assert a timing
+the alignment never produced.
+
+**Decision 2 — the check runs again at the burn.** `assert_captions_within_clip` parses the ASS
+`render_clip` is about to use and refuses one with no `Dialogue` line, or none intersecting
+`[0, duration]`. Fixing only the writer is not fixing the class — D-038's lesson, and round 2
+of the independent review found four instances of exactly that. This catches a hand-written
+file, a file from an older run, and the next caller who forgets.
+
+**Decision 3 — partial overlap passes.** Something is on screen, so it is not the silent case.
+A stricter rule would reject legitimate captions that begin just before a clip's in-point.
+
+**Decision 4 — `clip_in_ms` defaults to 0.** Seventeen call sites, all of them about clips at
+zero, and a required argument would have churned them without making anything safer, because
+the *writer* is not where this is caught now. The burn is.
+
+**Not re-rendered.** `evidence/m2-4-rendered-clip.mp4` came from the 300 ms fixture: its
+captions are on screen but end 300 ms late. It demonstrates the RTL stack, not client output,
+and `evidence/m3-5-caption-timeline.md` records that so nobody later reads its timing as
+correct.
+
+---

@@ -523,7 +523,13 @@ def run_pipeline(
         )
 
     ass_path = work_dir / "captions.ass"
-    ass_path.write_text(build_ass(selected), encoding="utf-8")
+    ass_path.write_text(
+        # The clip's own timeline. Without this every caption is scheduled at its source
+        # time, lands past the end of a clip cut from mid-episode, and libass draws
+        # nothing — a playable MP4 with no captions and no error.
+        build_ass(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms),
+        encoding="utf-8",
+    )
     width, height = _proxy_dimensions(source, ffmpeg)
     try:
         rendered = render_clip(
