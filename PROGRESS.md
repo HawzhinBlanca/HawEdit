@@ -26,7 +26,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
 | **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | TODO |
 | **M6** | Stage 5 TimeLens2 + sentence-hard fusion | Boundary precision | TODO |
-| **M7** | Repurposing eval set + threshold tuning | Quality gates | TODO |
+| **M7** | Repurposing eval set + threshold tuning | Quality gates | **WIP — §8.2 metrics DONE; the 200–500 labelled candidates need humans** |
 | **M8** | Auto-reframe (SAM 3 / Molmo2) | Vertical formats | TODO |
 
 ## M0 — task ledger
@@ -93,6 +93,14 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M3.1 | §4.3 caption generation: shaping, stack check, font coverage, own line breaks | DONE | `src/hawedit2/captions.py` + `tests/test_captions.py` (33 tests). Font coverage asserted against the real OFL-1.1 Noto Naskh Arabic shipped in `assets/fonts` — full Kurdish coverage measured (D-018). |
 | M3.2 | §4.3.6 golden-file render compared per build | BLOCKED | `BLOCKED.md` #5 — the comparison is implemented and tested; the reference PNG needs a real render on a verified libass build |
 | M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | BLOCKED | `BLOCKED.md` #5 |
+
+## M7 — task ledger
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M7.1 | §8.2 metrics: per-path Recall@20, temporal IoU, sentence-completeness, misleading-edit rate, pairwise preference, cost/wall-clock per source hour | DONE | `src/hawedit2/repurposing.py` + `tests/test_repurposing.py` (31 tests). `path_unique_wins` answers §8.2's collapse question directly. Definitions: D-020. |
+| M7.2 | 200–500 human-reviewed candidates labelled per §8.2 | BLOCKED | Needs human annotators and real footage — same dependency as `BLOCKED.md` #1 |
+| M7.3 | Threshold tuning against the labelled set | BLOCKED | Depends on M7.2; every threshold in `DECISIONS.md` marked "awaiting real data" is tuned here |
 
 ## Deferred with reason
 

@@ -504,3 +504,36 @@ failure mode §4.3.6 exists to prevent.
 filtergraph argument, and the filter then renders with default options — including
 `shaping=auto`. So a path bug reintroduces failure mode #3 silently. `subtitle_filter`
 escapes `\ : ' [ ] ,` and there is a test for it.
+
+---
+
+## D-020 · §8.2 metric definitions the blueprint leaves open
+
+**Date:** 2026-08-06 · **Blueprint ref:** §8.2, §3 Stage 3 · **Type:** judgment call
+
+**A retrieved candidate "found" a gold winner at temporal IoU ≥ 0.5** (`DEFAULT_IOU_MATCH`).
+The usual temporal-localization convention; §8.2 names IoU as a metric but sets no matching
+threshold. Below 0.5 a candidate shares a fragment of the moment without being the moment,
+and counting it as a hit would inflate recall for a system that consistently cuts late.
+
+**Per-path recall uses *all* gold winners as its denominator, not the path's own.** This is
+the load-bearing choice. Grading each path only against winners it was "expected" to find
+lets both paths score 1.0 while each finds half the moments — and §8.2 uses this number to
+decide whether Path B earns GPU 0, a segmented 4B model, and the whole of §3's Path B. A test
+names the choice explicitly, because the tempting alternative is subtly self-congratulatory.
+
+**`path_unique_wins` answers the collapse question directly.** §8.2: "If Path B never
+surfaces a winner Path A missed, collapse it." Zero unique wins is the answer that justifies
+removing a path, so every path appears in the result including those scoring zero — an absent
+entry reads as "not measured".
+
+**Misleading-edit rate is measured over what ships**, not over all candidates. §8.2: "An
+engaging clip that misrepresents the speaker is worse than no clip." A system that generates
+a hundred misleading candidates and rejects them all scores zero, which is correct — nothing
+misleading reached anyone.
+
+**Ties in pairwise preference count half to each side** rather than being discarded. A tie is
+evidence the two systems are close; dropping it inflates whatever margin remains.
+
+**A per-source-hour figure over zero hours raises** rather than returning infinity. Zero
+source hours is a corpus bug, not an infinite rate.
