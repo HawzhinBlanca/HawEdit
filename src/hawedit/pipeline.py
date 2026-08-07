@@ -27,6 +27,7 @@ of the blueprint against real media:
     Stage 0  ingest      16 kHz audio, 1 fps proxy, shot cuts, VAD          ingest.py
     §4.1     normalize   five collisions, raw written once and never again  transcripts.py
     Stage 2  index       BM25 + character 3-grams over the *normalized*     index.py
+    Stage 2  windows     scenes segmented to ~1 fps × 64 frames             visual_index.py
     §4.2     segment     sentences from punctuation and Stage 0's VAD       sentences.py
     Stage 5  fuse        §5 anchors + this run's real shot cuts             boundary.py
     Stage 6  render      9:16 crop, shaping=complex burn-in, encode         render.py
@@ -63,6 +64,7 @@ from hawedit.transcripts import (
     TranscriptStore,
     normalize_transcript,
 )
+from hawedit.visual_index import SceneWindow, plan_scene_windows
 
 __all__ = [
     "PipelineRun",
@@ -109,6 +111,10 @@ class PipelineRun:
     transcript: NormalizedTranscript | StageSkipped | None = None
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
+    # §3 Stage 2's visual half splits into a part that needs weights and a part that does not.
+    # The window plan is arithmetic over Stage 0's shot cuts, so it runs here on real media
+    # even though the embedder cannot; `visual_index` stays skipped for the embedding itself.
+    visual_windows: tuple[SceneWindow, ...] = ()
     visual_index: StageSkipped | None = None
     discovery: StageSkipped | None = None
     editorial: StageSkipped | None = None
@@ -164,6 +170,7 @@ class PipelineRun:
                 )
             ),
             "sentence_count": len(self.sentences),
+            "visual_windows": [w.to_dict() for w in self.visual_windows],
             "candidates": [c.to_dict() for c in self.candidates],
             "visual_index": encode(self.visual_index),
             "discovery": encode(self.discovery),
@@ -345,12 +352,19 @@ def run_pipeline(
     # --- §3 Stage 0 ----------------------------------------------------------------------
     ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
 
+    # --- §3 Stage 2 (visual half, the part that needs no weights) --------------------------
+    # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
+    # embedding". The segmenting is arithmetic over the cuts Stage 0 just found on this video,
+    # so it runs now and is real; only the embedding itself waits on the model.
+    windows = plan_scene_windows(identifier, ingested.duration_ms, ingested.shot_cuts_ms)
+
     run = PipelineRun(
         media_id=identifier,
         source=str(source),
         work_dir=str(work_dir),
         ingest=ingested,
         transcript=_STAGE_1_ASR,
+        visual_windows=windows,
         visual_index=_STAGE_2_VISUAL,
         discovery=_STAGE_3_DISCOVERY,
         editorial=_STAGE_4_JUDGE,
@@ -621,6 +635,15 @@ def _print_report(run: PipelineRun) -> None:
         print(
             f"stage 0 {run.ingest.duration_ms} ms · {len(run.ingest.shot_cuts_ms)} shot cut(s) · "
             f"{len(run.ingest.speech)} speech region(s) · diarization: not run"
+        )
+    if run.visual_windows:
+        # Printed even though `visual_index` is skipped just below. Stage 2's visual half is
+        # two things, and only one of them is blocked; a report that showed the skip alone
+        # would say a stage did nothing when part of it ran on this video.
+        frames = sum(w.frame_count for w in run.visual_windows)
+        print(
+            f"stage 2 {len(run.visual_windows)} scene window(s) · {frames} frame(s) at "
+            f"{run.visual_windows[0].fps} fps · embedding still blocked"
         )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")

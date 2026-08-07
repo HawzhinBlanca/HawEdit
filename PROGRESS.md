@@ -25,7 +25,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | **WIP — index, boundary fusion, §5 contract and a real rendered clip DONE; only Gemini (Stage 3) is still missing from the slice** |
 | **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | **WIP — §4.3 DONE incl. golden test; encode runs (M3.3 PARTIAL — static crop, no NVENC)** |
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
-| **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | TODO |
+| **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | **WIP — the Stage 2 contract and the scene-window plan are DONE and run on real media; embedding, reranking and Path B need weights** |
 | **M6** | Stage 5 TimeLens2 + sentence-hard fusion | Boundary precision | TODO |
 | **M7** | Repurposing eval set + threshold tuning | Quality gates | **WIP — §8.2 metrics DONE; the 200–500 labelled candidates need humans** |
 | **M8** | Auto-reframe (SAM 3 / Molmo2) | Vertical formats | TODO |
@@ -123,6 +123,14 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M3.1 | §4.3 caption generation: shaping, stack check, font coverage, own line breaks | DONE | `src/hawedit/captions.py` + `tests/test_captions.py` (33 tests). Font coverage asserted against the real OFL-1.1 Noto Naskh Arabic shipped in `assets/fonts` — full Kurdish coverage measured (D-018). |
 | M3.2 | §4.3.6 golden-file render compared per build | DONE | `tests/golden/kurdish-caption.png` rendered on a verified libass build; compared on decoded pixels every gate run. `shaping=simple` must fail the same comparison — without that control the test measures nothing. D-021, `evidence/rtl-shaping.md`. |
 | M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | PARTIAL | `src/hawedit/render.py` + `tests/test_render.py` (21 tests). Cut, 9:16 crop, `shaping=complex` burn-in and x264 encode all run and are verified on decoded pixels: a captioned render must differ from an uncaptioned one, and a `shaping=simple` render must differ from the shipped one. **Shortfall:** §3 Stage 6 reframes by tracking the active speaker from diarization plus face detection; neither runs (`BLOCKED.md` #4), so the crop is static and says so — `Reframe.STATIC_CENTRE`, never `SPEAKER_TRACKED`. NVENC needs hawapc01 (`BLOCKED.md` #2) and is refused here rather than substituted. |
+
+## M5 — task ledger
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M5.1 | §3 Stage 2 visual index: scenes segmented to the reference settings, retrieval, and the top-50 → rerank → keep-5–10 contract | DONE | `src/hawedit/visual_index.py` + `tests/test_visual_index.py` (51 tests). Runs in `pipeline.py` on real media: Stage 0's own cuts at 1400/2800 ms become three windows tiling 0→4162 ms, `evidence/m5-1-scene-windows.md`. The 64-frame ceiling and ~1 fps are enforced as one setting because either alone is satisfiable while the pair is broken — a 180 s scene at 0.35 fps is 63 frames, under the ceiling, and its embedding is indistinguishable from an honest one. A zero or NaN vector is refused rather than scored 0.0. The reranker may reorder and score; it may not invent a window, duplicate one, drop below the survivor count, or restate the retrieval score it was handed. D-037. **The splitting path is exercised by tests only** — there is no long Kurdish episode here to run it against (`BLOCKED.md` #1). |
+| M5.2 | Real `Qwen3-VL-Embedding-2B` / `-Reranker-2B` behind the interfaces above | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
+| M5.3 | §3 Stage 3 Path B: `VideoChat3-4B` over scenes, producing `Candidate`s the §3 union already accepts | BLOCKED | `BLOCKED.md` #2, #6. The merge that unions it with Path A is built and tested — M2.5. |
 
 ## M7 — task ledger
 

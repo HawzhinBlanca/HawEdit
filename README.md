@@ -178,6 +178,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
 | `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |
 | `index.py` | §2 | BM25 + character 3-grams over normalized Sorani. |
+| `visual_index.py` | §3 Stage 2 | The visual half: scenes segmented to ~1 fps × 64 frames, cosine retrieval, and the top-50 → rerank → keep-5–10 contract. |
 | `boundary.py` | §3 Stage 5 | Boundary fusion. Kurdish invariant #2, at construction and at the render gate. |
 | `clip.py` | §5 | The clip contract, validated. Rejection is a first-class type. |
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |

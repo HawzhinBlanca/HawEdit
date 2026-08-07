@@ -159,6 +159,32 @@ def test_stage_0_ran_on_the_real_media(full_run: PipelineRun) -> None:
 
 
 @needs_ffmpeg
+def test_stage_2s_window_plan_was_built_from_this_runs_own_shot_cuts(
+    full_run: PipelineRun,
+) -> None:
+    """§3 Stage 2's visual half, on real media, without the weights it is blocked on.
+
+    Stage 0 found cuts at 1400 ms and 2800 ms on this video. The window plan must be *those*
+    scenes — the join, not a fixture — and it must cover the media, because a gap is footage
+    no visual query could ever retrieve.
+    """
+    from hawedit.visual_index import assert_window_coverage
+
+    assert not isinstance(full_run.ingest, StageSkipped)
+    assert full_run.ingest is not None
+    windows = full_run.visual_windows
+    assert [w.span for w in windows] == [
+        (0, 1_400),
+        (1_400, 2_800),
+        (2_800, full_run.ingest.duration_ms),
+    ]
+    assert_window_coverage(windows, media_id="fixture", duration_ms=full_run.ingest.duration_ms)
+    # The embedder is still missing, and the run must keep saying so rather than let a real
+    # window plan stand in for a visual index it does not have.
+    assert isinstance(full_run.visual_index, StageSkipped)
+
+
+@needs_ffmpeg
 def test_the_normalized_transcript_is_what_the_index_read(full_run: PipelineRun) -> None:
     """Kurdish invariant #3, at the one place the whole pipeline could have got it wrong."""
     assert not isinstance(full_run.index, StageSkipped)

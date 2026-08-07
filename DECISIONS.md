@@ -1181,3 +1181,50 @@ producer. §3: "Union, never intersect. Candidates from either path proceed." A 
 is precisely the case the dual path exists to protect.
 
 ---
+
+## D-037 · Stage 2's visual index: four §3 sentences turned into arithmetic
+
+**Decision.** `visual_index.py` implements §3 Stage 2's visual half as checks rather than as
+comments, and refuses in four places where the convenient behaviour would be silent.
+
+**1 · `fps` lives on the window, and may not fall below 1.0.** §3 gives the reference settings
+as "~1 fps with a maximum of 64 frames". Those are one setting. A 180 s scene sampled at
+0.35 fps is 63 frames — under the ceiling — and the embedding that comes back has the right
+dimension and the right norm while describing a third of the footage the published retrieval
+numbers were measured on. Measured, not reasoned: `math.ceil(180_000 * 0.35 / 1000) == 63`.
+So the rate is refused rather than the count silently traded away, which forces the caller to
+do what §3 says in the same sentence — "segment before embedding".
+
+**2 · Long scenes split evenly, not into full windows plus a remainder.** 65 s would otherwise
+become 64 s + 1 s, and that 1 s window embeds a single frame as a whole scene, then competes
+for retrieval slots on equal terms with windows built from sixty-four. Even split: two 32.5 s
+windows.
+
+**3 · A zero vector is refused, not scored 0.0.** Cosine similarity against a vector with no
+direction is undefined. Returning 0.0 would be this system's oldest mistake — "unmeasured is
+`None`, never 0.0" — in numeric form, and would make the scene invisible to every query
+without reporting anything. A NaN component is refused for the same reason from the other
+direction: NaN compares `False` against everything, so the scene sinks below all others
+permanently and silently.
+
+**4 · Below the survivor floor the retrieval refuses instead of shortening.** §3 fixes the
+count at 5–10. A three-scene video cannot satisfy it. The alternative considered was returning
+whatever exists; rejected because §8.2 counts Recall@K on this list, and three results in a
+column that says five is a number that does not mean what the column says. `rerank_and_keep`
+raises and names both figures.
+
+**What the reranker may and may not do.** It may reorder and it may score. It may not add a
+window that was not retrieved, return one twice, drop below the survivor count, or restate the
+`retrieval_similarity` it was handed — that field is the evidence that lets §8.2 ask whether
+reranking changed anything, and a reranker supplying its own has erased the comparison while
+producing output of exactly the right type and length. Every one of those four is checked.
+
+**Not decided here.** Whether reranking earns its cost, and where in 5–10 the survivor count
+should sit. Both are §8.2 questions against the labelled set (M7.2, blocked on annotators).
+
+**Status.** `Qwen3-VL-Embedding-2B` and `Qwen3-VL-Reranker-2B` are `BLOCKED.md` #2 and #6. The
+window plan needs neither and runs in `pipeline.py` on real media —
+`evidence/m5-1-scene-windows.md`. The splitting path itself is exercised by tests only; there
+is no long Kurdish episode here to run it against.
+
+---
