@@ -383,3 +383,36 @@ no code path, and two tests assert that batches differing only in duration — o
 count — produce identical decisions. Length is the cheap proxy for difficulty and it is
 wrong: 38 seconds of clean studio speech needs no validator; three seconds of overlapping
 Slemani conversation does.
+
+---
+
+## D-016 · §2 index: field weighting and tokenization choices
+
+**Date:** 2026-08-06 · **Blueprint ref:** §2, §4.1 · **Type:** judgment call
+
+§2 mandates "BM25 + character 3-grams over the normalized transcript" without saying how the
+two combine. Choices:
+
+**Two separately scored BM25 fields, combined as `word + 0.5 × ngram`.** Both contributions
+survive onto every `SearchHit`, so the balance is visible and tunable rather than baked into
+one opaque number. 0.5 is set so an exact word match outranks pure morphological overlap
+(`test_word_matches_still_outrank_mere_ngram_overlap`) while a clitic-attached variant is
+still retrievable at all. A tunable awaiting §8.2's real candidates.
+
+**N-grams are per word, with boundary padding** (`\x02word\x03`) rather than over the whole
+string. Cross-word grams would match on accidental letter runs spanning a space; padding
+means `کتێب` standing alone and `کتێب` heading `کتێبەکەم` share their interior grams but
+differ at the trailing boundary — which is exactly the gradient that keeps exact matches
+ahead of relatives.
+
+**k1 = 1.2, b = 0.75** — Okapi's standard defaults, exposed as parameters. §8.2 tunes
+retrieval against real candidates; convention is a starting point, not evidence.
+
+**Queries are normalized too.** An index that normalizes its documents but not its queries
+has §4.1's bug with extra steps. Asserted by
+`test_encoding_differences_do_not_prevent_a_match`.
+
+**Why this is not optional.** With word-level BM25 alone, querying the stem `کتێب` against a
+document containing only `کتێبەکەم` scores **exactly zero** — measured, not asserted, in
+`test_the_failure_section_2_describes`. §2's warning that "word-level matching misses
+variants a human reads as identical" is the literal behaviour of the field without n-grams.

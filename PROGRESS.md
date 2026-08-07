@@ -67,6 +67,15 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
 | M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | DONE | `src/hawedit2/escalation.py` + `tests/test_escalation.py` (16 tests). §3's "never escalate on duration or word-count" prohibition asserted directly. Threshold: D-015. |
 
+## M2 — task ledger
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M2.1 | §2 text index: BM25 + character 3-grams over normalized Sorani | DONE | `src/hawedit2/index.py` + `tests/test_index.py` (25 tests). The clitic-attachment failure §2 describes is measured: word BM25 scores the stem query **0.0**, n-grams retrieve it. Invariant #3 enforced at the index boundary. Weighting: D-016. |
+| M2.2 | §5 clip contract + §3 Stage 5 boundary fusion + Kurdish invariant #2 | WIP | |
+| M2.3 | Stage 3 Path A (Gemini reads the full transcript) | BLOCKED | `BLOCKED.md` #3 — credentials + the Vertex ZDR governance decision |
+| M2.4 | One rendered clip | BLOCKED | `BLOCKED.md` #5 (ffmpeg + libass/HarfBuzz) |
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |
