@@ -1,0 +1,297 @@
+"""M2.2 (cont.) — §5's clip contract.
+
+"Every stage emits and consumes JSON. Stages are independently testable, replaceable,
+re-runnable." (§1) So the contract is a validated structure, not a dictionary passed on trust.
+
+Three §5 rules the type enforces rather than documents:
+
+* `in_ms`/`out_ms` must be the boundary's final points. A record whose top-level span
+  disagrees with its own boundary block is a lie the renderer would act on.
+* "Rejection is a first-class outcome. Every rejected candidate keeps a `reject_reason` and
+  its `discovery_path`." (§5) — rejection is a type, not a `None`.
+* SV6D: "Every label must cite a timestamp. Reject output where a claim has no timeline
+  evidence." (§3 Stage 3)
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from hawedit2.boundary import BoundaryInputs, BoundaryInvariantViolated, fuse_boundary
+from hawedit2.clip import (
+    Clip,
+    ClipTranscript,
+    DiscoveryPath,
+    Editorial,
+    Output,
+    Qc,
+    RejectedCandidate,
+    Sv6d,
+)
+from hawedit2.registry import ModelNotInRegistry
+from hawedit2.transcripts import AsrProvenance, Word
+
+ANCHOR_IN, ANCHOR_OUT = 84_600, 112_400
+
+
+def a_boundary(**overrides: object):  # type: ignore[no-untyped-def]
+    payload: dict[str, object] = {
+        "anchor_in_ms": ANCHOR_IN,
+        "anchor_out_ms": ANCHOR_OUT,
+        "sentence_complete": True,
+    }
+    payload.update(overrides)
+    return fuse_boundary(BoundaryInputs(**payload), confidence=0.91)  # type: ignore[arg-type]
+
+
+def a_transcript() -> ClipTranscript:
+    return ClipTranscript(
+        raw_ckb="ئه‌مه‌ زۆر باشه‌",
+        norm_ckb="ئەمە زۆر باشە",
+        en_aux="This is very good",
+        words=(Word(w="ئه‌مه‌", start_ms=84_600, end_ms=84_920, conf=0.97),),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi", mean_logprob=-0.21),
+    )
+
+
+def an_sv6d() -> Sv6d:
+    return Sv6d(
+        subject="speaker at desk [84.6s]",
+        aesthetics="warm key light [85.0s]",
+        camera="static medium [84.6s]",
+        editing="single take [84.6s-112.4s]",
+        narrative="payoff of the earlier claim [110.0s]",
+        retention="raised voice holds attention [111.2s]",
+    )
+
+
+def an_editorial(**overrides: object) -> Editorial:
+    payload: dict[str, object] = {
+        "hook_score": 0.88,
+        "self_contained": True,
+        "meaning_fidelity": 0.94,
+        "misleading_edit_risk": 0.03,
+        "cultural_landing": 0.86,
+        "narrative_role": "payoff",
+        "judge": "gemini-2.5-pro",
+        "sv6d": an_sv6d(),
+    }
+    payload.update(overrides)
+    return Editorial(**payload)  # type: ignore[arg-type]
+
+
+def a_clip(**overrides: object) -> Clip:
+    boundary = a_boundary()
+    payload: dict[str, object] = {
+        "clip_id": "c-1",
+        "media_id": "m-1",
+        "in_ms": boundary.final_in_ms,
+        "out_ms": boundary.final_out_ms,
+        "discovery_path": DiscoveryPath.VERBAL,
+        "boundary": boundary,
+        "transcript": a_transcript(),
+        "speaker": "SPK_01",
+        "editorial": an_editorial(),
+        "output": Output(
+            title_ckb="ناونیشان",
+            description_ckb="وەسف",
+            crop_target="speaker_face",
+            caption_style="word_highlight",
+            durations=(15, 30, 60),
+        ),
+        "qc": Qc(auto_pass=True, flags=(), human_reviewed=False),
+    }
+    payload.update(overrides)
+    return Clip(**payload)  # type: ignore[arg-type]
+
+
+# --- the span must agree with its own boundary ----------------------------------------
+
+
+def test_a_clip_span_must_match_its_boundary() -> None:
+    boundary = a_boundary()
+    with pytest.raises(ValueError, match="in_ms"):
+        a_clip(in_ms=boundary.final_in_ms + 1)
+
+
+def test_a_clip_out_point_must_match_its_boundary() -> None:
+    boundary = a_boundary()
+    with pytest.raises(ValueError, match="out_ms"):
+        a_clip(out_ms=boundary.final_out_ms - 1)
+
+
+def test_a_well_formed_clip_is_accepted() -> None:
+    assert a_clip().in_ms == a_boundary().final_in_ms
+
+
+# --- invariant #2 at the render gate ---------------------------------------------------
+
+
+def test_a_renderable_clip_passes_the_gate() -> None:
+    a_clip().assert_renderable()
+
+
+def test_a_clip_whose_boundary_violates_the_invariant_is_not_renderable() -> None:
+    from hawedit2.boundary import Boundary
+
+    smuggled = Boundary(
+        anchor_in_ms=ANCHOR_IN,
+        anchor_out_ms=ANCHOR_OUT,
+        final_in_ms=ANCHOR_IN + 50,
+        final_out_ms=ANCHOR_OUT + 200,
+        in_extended_by=None,
+        out_extended_by="tail",
+        sentence_complete=True,
+    )
+    clip = a_clip(boundary=smuggled, in_ms=smuggled.final_in_ms, out_ms=smuggled.final_out_ms)
+    with pytest.raises(BoundaryInvariantViolated):
+        clip.assert_renderable()
+
+
+def test_a_clip_awaiting_human_review_is_not_renderable() -> None:
+    """§2's diagram puts a HUMAN QC GATE before output, always."""
+    clip = a_clip(qc=Qc(auto_pass=False, flags=("low confidence",), human_reviewed=False))
+    with pytest.raises(ValueError, match="QC"):
+        clip.assert_renderable()
+
+
+def test_a_human_reviewed_clip_is_renderable_even_without_auto_pass() -> None:
+    clip = a_clip(qc=Qc(auto_pass=False, flags=("checked",), human_reviewed=True))
+    clip.assert_renderable()
+
+
+# --- editorial ---------------------------------------------------------------------------
+
+
+def test_the_judge_must_be_a_routable_model() -> None:
+    """§4: the shadow is "evaluated, not routed". Recording it as the judge would mean a
+    clip was scored by a model the blueprint says must not be in the path."""
+    with pytest.raises(ValueError, match="routable"):
+        an_editorial(judge="gemini-3.1-pro")
+
+
+def test_an_unregistered_judge_is_refused() -> None:
+    with pytest.raises(ModelNotInRegistry):
+        an_editorial(judge="gpt-4o")
+
+
+def test_scores_outside_zero_to_one_are_refused() -> None:
+    with pytest.raises(ValueError, match="hook_score"):
+        an_editorial(hook_score=1.5)
+    with pytest.raises(ValueError, match="misleading_edit_risk"):
+        an_editorial(misleading_edit_risk=-0.1)
+
+
+def test_every_sv6d_label_must_cite_a_timestamp() -> None:
+    """§3 Stage 3: "Every label must cite a timestamp. Reject output where a claim has no
+    timeline evidence." """
+    with pytest.raises(ValueError, match="timestamp"):
+        Sv6d(
+            subject="a speaker",  # no timestamp
+            aesthetics="warm key light [85.0s]",
+            camera="static medium [84.6s]",
+            editing="single take [84.6s-112.4s]",
+            narrative="payoff [110.0s]",
+            retention="raised voice [111.2s]",
+        )
+
+
+def test_several_timestamp_formats_are_accepted() -> None:
+    Sv6d(
+        subject="speaker [84.6s]",
+        aesthetics="light [1:24]",
+        camera="static [84600ms]",
+        editing="cut [84.6s-112.4s]",
+        narrative="payoff [110s]",
+        retention="voice [00:01:52]",
+    )
+
+
+# --- rejection is first-class ------------------------------------------------------------
+
+
+def test_a_rejected_candidate_keeps_its_reason_and_discovery_path() -> None:
+    """§5: "Every rejected candidate keeps a reject_reason and its discovery_path. That set
+    is your only measure of recall." """
+    rejected = RejectedCandidate(
+        media_id="m-1",
+        in_ms=1000,
+        out_ms=2000,
+        discovery_path=DiscoveryPath.VISUAL,
+        reject_reason="sentence_complete was false",
+    )
+    assert rejected.discovery_path is DiscoveryPath.VISUAL
+    assert "sentence_complete" in rejected.reject_reason
+
+
+def test_a_rejection_without_a_reason_is_refused() -> None:
+    """A rejection set with blank reasons cannot measure recall, which is its only job."""
+    with pytest.raises(ValueError, match="reject_reason"):
+        RejectedCandidate(
+            media_id="m-1",
+            in_ms=1000,
+            out_ms=2000,
+            discovery_path=DiscoveryPath.VERBAL,
+            reject_reason="   ",
+        )
+
+
+def test_a_rejection_serialises_with_its_path() -> None:
+    rejected = RejectedCandidate(
+        media_id="m-1",
+        in_ms=1,
+        out_ms=2,
+        discovery_path=DiscoveryPath.BOTH,
+        reject_reason="no complete sentence in tolerance",
+    )
+    assert rejected.to_dict()["discovery_path"] == "both"
+
+
+# --- the §5 JSON shape --------------------------------------------------------------------
+
+
+def test_the_clip_serialises_to_the_section_5_shape() -> None:
+    record = a_clip().to_dict()
+    assert set(record) == {
+        "clip_id",
+        "media_id",
+        "in_ms",
+        "out_ms",
+        "discovery_path",
+        "boundary",
+        "transcript",
+        "speaker",
+        "editorial",
+        "output",
+        "qc",
+    }
+    assert record["discovery_path"] == "verbal"
+    assert record["boundary"]["sentence_complete"] is True
+    assert record["transcript"]["asr"]["aligner"] == "ctc_viterbi"
+    assert record["editorial"]["sv6d"]["subject"].endswith("[84.6s]")
+    assert record["output"]["durations"] == [15, 30, 60]
+
+
+def test_the_clip_round_trips_through_json() -> None:
+    original = a_clip()
+    restored = Clip.from_dict(json.loads(json.dumps(original.to_dict())))
+    assert restored == original
+
+
+def test_the_raw_transcript_survives_serialisation_unmodified() -> None:
+    """Invariant #1 reaches the client through this field — byte for byte."""
+    record = a_clip().to_dict()
+    assert record["transcript"]["raw_ckb"] == "ئه‌مه‌ زۆر باشه‌"
+
+
+def test_the_discovery_path_values_are_the_three_section_5_allows() -> None:
+    assert {p.value for p in DiscoveryPath} == {"verbal", "visual", "both"}
+
+
+def test_a_clip_may_omit_the_editorial_block_before_the_judge_has_run() -> None:
+    """Stage 5 produces boundaries before Stage 4 has scored anything."""
+    clip = a_clip(editorial=None, output=None)
+    assert clip.to_dict()["editorial"] is None
+    assert Clip.from_dict(clip.to_dict()) == clip

@@ -416,3 +416,34 @@ has §4.1's bug with extra steps. Asserted by
 document containing only `کتێبەکەم` scores **exactly zero** — measured, not asserted, in
 `test_the_failure_section_2_describes`. §2's warning that "word-level matching misses
 variants a human reads as identical" is the literal behaviour of the field without n-grams.
+
+---
+
+## D-017 · §5 contract: what the type enforces, and what it deliberately does not
+
+**Date:** 2026-08-06 · **Blueprint ref:** §5, §3 Stage 3, §3 Stage 5, §4 · **Type:** judgment call
+
+§5 gives a JSON shape. A shape in a document gets violated the first time two stages disagree
+about a field and nothing notices until a client sees the output, so these rules are enforced
+at construction:
+
+- **`in_ms`/`out_ms` must equal the boundary's final points.** A span contradicting its own
+  boundary block is a lie the renderer acts on.
+- **The judge must be `routable`.** §4 marks `gemini-3.1-pro` "evaluated, not routed";
+  recording it as a clip's judge would mean a model the blueprint keeps out of the path
+  scored client output.
+- **SV6D labels must cite a timestamp** (§3 Stage 3: "Reject output where a claim has no
+  timeline evidence"). Accepted forms: `84.6s`, `84600ms`, `1:24`, `00:01:52` — the
+  requirement is timeline evidence, not one house format.
+- **Rejection is a type**, with `reject_reason` and `discovery_path` both required and a
+  blank reason refused. §5: "That set is your only measure of recall", and §8.2 needs recall
+  *per path* to justify the dual-path cost.
+
+**Deliberately not enforced: `Boundary` does not self-validate.** `assert_boundary_invariant`
+is the render gate §3 Stage 5 asks for, and a type that could not represent a violation would
+give that gate nothing to catch. A boundary deserialized from another stage's JSON has to be
+checkable on arrival — so `Boundary.from_dict` builds without validating, and the gate is
+called explicitly.
+
+**`editorial` and `output` are optional.** Stage 5 produces boundaries before Stage 4 has
+scored anything; a clip mid-pipeline is a real state, not an incomplete record.

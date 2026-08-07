@@ -21,7 +21,7 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 |---|---|---|---|
 | **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness DONE (M0.1–M0.10, 159 tests) · measurement BLOCKED (M0.11–M0.13)** |
 | **M1** | Stage 0 + Stage 1 → raw/normalized transcript with word timings | M2 | **WIP — §4.2 aligner + sentence segmentation DONE; Stage 0 ffmpeg and Stage 1 models blocked** |
-| **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | TODO |
+| **M2** | Vertical slice: transcript → BM25 → Gemini → manual boundary → one rendered clip | Proves the concept | **WIP — BM25 index, boundary fusion and the §5 contract DONE; Gemini and render blocked** |
 | **M3** | Stage 6 render path with verified RTL captions + golden test | Client delivery | TODO |
 | **M4** | Stage 3 Path A (full-transcript discovery) | Verbal recall | TODO |
 | **M5** | Stage 2 visual index + Stage 3 Path B | Visual recall | TODO |
@@ -72,13 +72,23 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | Task | Definition of Done | Status | Evidence |
 |---|---|---|---|
 | M2.1 | §2 text index: BM25 + character 3-grams over normalized Sorani | DONE | `src/hawedit2/index.py` + `tests/test_index.py` (25 tests). The clitic-attachment failure §2 describes is measured: word BM25 scores the stem query **0.0**, n-grams retrieve it. Invariant #3 enforced at the index boundary. Weighting: D-016. |
-| M2.2 | §5 clip contract + §3 Stage 5 boundary fusion + Kurdish invariant #2 | WIP | |
+| M2.2 | §5 clip contract + §3 Stage 5 boundary fusion + Kurdish invariant #2 | DONE | `src/hawedit2/boundary.py` (31 tests) + `src/hawedit2/clip.py` (20 tests). Invariant #2 checked exhaustively over 3,125 soft-input combinations and enforced again at an explicit render gate. Contract choices: D-017. |
 | M2.3 | Stage 3 Path A (Gemini reads the full transcript) | BLOCKED | `BLOCKED.md` #3 — credentials + the Vertex ZDR governance decision |
 | M2.4 | One rendered clip | BLOCKED | `BLOCKED.md` #5 (ffmpeg + libass/HarfBuzz) |
+
+## Kurdish invariants — where each is enforced
+
+| # | Invariant | Enforced in |
+|---|---|---|
+| 1 | `transcript.raw.json` never mutated after write | `transcripts.py` — refuse-rewrite, frozen types, SHA-256 tamper evidence |
+| 2 | `final_in <= anchor_in` and `final_out >= anchor_out`; `sentence_complete == false ⇒ reject` | `boundary.py` — by construction in `fuse_boundary`, and again at `assert_boundary_invariant` / `Clip.assert_renderable` |
+| 3 | Indexes, embeddings and model inputs read `norm`, never raw | `transcripts.py` (types + `assert_model_input`), `index.py` (index boundary) |
+| 4 | Captions render `shaping=complex`; build asserts libass has HarfBuzz; golden-image test in CI | **NOT YET** — M3, blocked on ffmpeg (`BLOCKED.md` #5) |
+| 5 | Word timings from OmniASR CTC Viterbi alignment only | `alignment.py` + `transcripts.py` — refused at construction |
 
 ## Deferred with reason
 
 | Item | Deferred to | Reason |
 |---|---|---|
-| §5 clip contract (`clip_id`/`boundary`/`editorial`/`qc`) | M1–M2 | M0 emits benchmark reports, not clips. Writing the clip contract now would be untested code with no producer. Kurdish invariant #2 (`final_in <= anchor_in`) lands with the first boundary producer, M6, and is asserted before render per §8.3. |
+| ~~§5 clip contract~~ | ~~M1–M2~~ | **Delivered in M2.2** — boundary fusion gave it a producer. Kurdish invariant #2 is enforced at fusion and again at the render gate. |
 | Conjunctive `و` separation (§4.1) | M1 | Not implemented by KLPT `normalize` — measured, see `DECISIONS.md` D-003. |
