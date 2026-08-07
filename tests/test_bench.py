@@ -137,13 +137,52 @@ def test_the_report_carries_the_corpus_coverage_it_was_run_on() -> None:
 # --- §8.1 decision rule ----------------------------------------------------------------
 
 
+def complete_corpus() -> Corpus:
+    """A §8.1-complete set: every dialect x condition cell, and past the hours floor.
+
+    Required for any test that expects a *successful* promotion — an incomplete corpus
+    blocks the switch outright (audit finding #2).
+    """
+    items = []
+    for dialect in Dialect:
+        for condition in Condition:
+            extra: dict[str, object] = {}
+            if condition is Condition.CODE_SWITCH_EN:
+                extra["code_switch_spans"] = ("machine learning",)
+            elif condition is Condition.CODE_SWITCH_AR:
+                extra["code_switch_spans"] = ("جمهورية العراق",)
+            elif condition is Condition.NAMED_ENTITIES:
+                extra["named_entities"] = ("هەولێر",)
+            elif condition is Condition.OVERLAPPING_SPEAKERS:
+                extra["speaker_count"] = 2
+            name = f"{dialect.value}-{condition.value}"
+            items.append(
+                CorpusItem(
+                    item_id=name,
+                    audio_path=f"{name}.wav",
+                    reference_ckb=PERFECT,
+                    dialect=dialect,
+                    conditions=frozenset({condition}),
+                    duration_s=600.0,
+                    **extra,  # type: ignore[arg-type]
+                )
+            )
+    return Corpus(tuple(items))
+
+
 def test_a_material_gain_at_acceptable_throughput_switches_the_canonical_model() -> None:
-    report = a_run(
-        incumbent_text={"hew-1": "ئەمە زۆر خراپە", "muk-1": "ئەمە زۆر خراپە"},
-        challenger_text={"hew-1": PERFECT, "muk-1": PERFECT},
+    corpus = complete_corpus()
+    ids = [i.item_id for i in corpus.items]
+    report = run_benchmark(
+        corpus,
+        [
+            ScriptedAdapter(INCUMBENT, dict.fromkeys(ids, "ئەمە زۆر خراپە")),
+            ScriptedAdapter(CHALLENGER, dict.fromkeys(ids, PERFECT)),
+        ],
+        a_session(),
     )
     decision = decide_canonical(report, max_rtf=1.0)
-    assert decision.switch
+    assert decision.switch, decision.reasons
     assert decision.challenger == CHALLENGER
 
 

@@ -48,5 +48,5 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["klpt.*", "fontTools.*"]
+module = ["klpt.*", "fontTools.*", "scenedetect.*", "silero_vad.*", "torch.*"]
 ignore_missing_imports = true

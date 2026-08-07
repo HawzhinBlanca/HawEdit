@@ -334,10 +334,15 @@ def decide_canonical(
             f"forbids model changes without it. This run can show the harness works and "
             f"can surface a candidate worth testing properly; it cannot promote one."
         )
-    if not report.coverage.is_complete():
+    # An incomplete corpus BLOCKS a switch rather than merely annotating one. §8.1's rule is
+    # "a material accuracy gain on *your* audio", and a set missing dialects or hours is not
+    # that audio. Previously this only appended a sentence and the promotion went ahead —
+    # audit finding #2.
+    coverage_blocks = not report.coverage.is_complete()
+    if coverage_blocks:
         reasons.append(
-            f"corpus does not satisfy §8.1 ({report.coverage.summary()}) — this decision "
-            f"rests on an incomplete labelled set"
+            f"corpus does not satisfy §8.1 ({report.coverage.summary()}) — no model change "
+            f"may rest on an incomplete labelled set"
         )
 
     best: tuple[str, float] | None = None
@@ -358,10 +363,19 @@ def decide_canonical(
             continue
 
         baseline_by_dialect = baseline.normalized_cer_by_dialect
+        challenger_by_dialect = model.normalized_cer_by_dialect
         regressions = [
             f"{dialect.value} ({value:.4f} vs {baseline_by_dialect[dialect]:.4f})"
-            for dialect, value in model.normalized_cer_by_dialect.items()
+            for dialect, value in challenger_by_dialect.items()
             if dialect in baseline_by_dialect and value > baseline_by_dialect[dialect]
+        ]
+        # A dialect the incumbent scored and the challenger did NOT is the worst case, not
+        # an absent one: the challenger failed every item in it. Skipping it let a model
+        # that choked on all of Mukriyan be promoted on one Hewlêr item. Audit finding #2.
+        regressions += [
+            f"{dialect.value} (no score at all — failed every item)"
+            for dialect in baseline_by_dialect
+            if dialect not in challenger_by_dialect
         ]
         if regressions:
             reasons.append(
@@ -386,6 +400,13 @@ def decide_canonical(
         )
         if best is None or challenger_cer < best[1]:
             best = (model_id, challenger_cer)
+
+    if best is not None and coverage_blocks:
+        reasons.append(
+            f"{best[0]} outscores {incumbent} here, but the corpus is incomplete — "
+            f"re-run on a §8.1-complete set before moving the pin."
+        )
+        return CanonicalDecision(incumbent, best[0], switch=False, reasons=tuple(reasons))
 
     if best is None:
         reasons.append(f"{incumbent} stays canonical")

@@ -28,8 +28,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final
 
-from hawedit2.boundary import Boundary, assert_boundary_invariant
-from hawedit2.registry import resolve
+from hawedit2.boundary import Boundary, _strict_bool, assert_boundary_invariant
+from hawedit2.registry import resolve_role
 from hawedit2.transcripts import AsrProvenance, Word
 
 __all__ = [
@@ -114,7 +114,11 @@ class Editorial:
             value: float = getattr(self, name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be within [0, 1], got {value}")
-        entry = resolve(self.judge)
+        entry = resolve_role(
+            self.judge,
+            frozenset({"kurdish_editorial_judge", "judge_shadow"}),
+            "the editorial judge",
+        )
         if not entry.routable:
             raise ValueError(
                 f"{self.judge!r} is not routable. §4 marks it 'evaluated, not routed' — a "
@@ -139,7 +143,7 @@ class Editorial:
         raw_sv6d = data.get("sv6d")
         return Editorial(
             hook_score=data["hook_score"],
-            self_contained=data["self_contained"],
+            self_contained=_strict_bool(data["self_contained"], "editorial.self_contained"),
             meaning_fidelity=data["meaning_fidelity"],
             misleading_edit_risk=data["misleading_edit_risk"],
             cultural_landing=data["cultural_landing"],
@@ -239,9 +243,9 @@ class Qc:
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Qc:
         return Qc(
-            auto_pass=data["auto_pass"],
+            auto_pass=_strict_bool(data["auto_pass"], "qc.auto_pass"),
             flags=tuple(data.get("flags", ())),
-            human_reviewed=data.get("human_reviewed", False),
+            human_reviewed=_strict_bool(data.get("human_reviewed", False), "qc.human_reviewed"),
         )
 
 
@@ -329,11 +333,31 @@ class Clip:
             ValueError: the clip has not cleared QC.
         """
         assert_boundary_invariant(self.boundary)
-        if self.qc is not None and not (self.qc.auto_pass or self.qc.human_reviewed):
+        # A clip with no QC record has not passed QC — it has skipped it. §2's diagram puts
+        # the gate before output "(always)", so absence is refusal, not permission. The
+        # same for the judge: an unjudged clip has no meaning-fidelity or misleading-edit
+        # score, which are the numbers §8.2 says matter most. Audit finding #3.
+        if self.qc is None:
+            raise ValueError(
+                f"clip {self.clip_id!r} carries no QC record. §2 puts a human QC gate before "
+                f"output, always — a missing record is not a pass."
+            )
+        if not (self.qc.auto_pass or self.qc.human_reviewed):
             raise ValueError(
                 f"clip {self.clip_id!r} has not cleared QC (flags: {list(self.qc.flags)}). "
                 f"§2 puts a human QC gate before output, always — low confidence routes to "
                 f"review, never to silent acceptance."
+            )
+        if self.editorial is None:
+            raise ValueError(
+                f"clip {self.clip_id!r} has no editorial block: it was never judged, so its "
+                f"meaning fidelity and misleading-edit risk are unknown. §8.2 calls the "
+                f"misleading-edit rate the metric that matters for a media organisation."
+            )
+        if self.output is None:
+            raise ValueError(
+                f"clip {self.clip_id!r} has no output block — no title, crop target or "
+                f"caption style to render with."
             )
 
     def to_dict(self) -> dict[str, Any]:

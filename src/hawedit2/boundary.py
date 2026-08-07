@@ -38,6 +38,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+
+def _strict_bool(value: object, field: str) -> bool:
+    """Accept only a real boolean.
+
+    `bool("false")` is `True`, so a JSON document carrying the string "false" for
+    `sentence_complete` used to deserialize into a clip that passed the render gate. A
+    contract that coerces its own refusal into an approval is worse than no contract —
+    audit finding #3.
+    """
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"{field} must be a JSON boolean, got {type(value).__name__} {value!r}. "
+            f"Coercing it would let the string 'false' read as true."
+        )
+    return value
+
+
 __all__ = [
     "SHOT_CUT_WINDOW_MS",
     "TAIL_MS",
@@ -119,7 +136,7 @@ class Boundary:
             final_out_ms=int(data["final_out_ms"]),
             in_extended_by=data.get("in_extended_by"),
             out_extended_by=data.get("out_extended_by"),
-            sentence_complete=bool(data["sentence_complete"]),
+            sentence_complete=_strict_bool(data["sentence_complete"], "sentence_complete"),
             confidence=data.get("confidence"),
         )
 

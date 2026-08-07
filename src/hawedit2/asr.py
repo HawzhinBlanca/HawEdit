@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Final, Protocol, runtime_checkable
 
 from hawedit2.corpus import CorpusItem
-from hawedit2.registry import ModelEntry, resolve
+from hawedit2.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit2.transcripts import Word
 
 __all__ = [
@@ -106,8 +106,9 @@ def validate_adapter(adapter: ASRAdapter) -> ModelEntry:
     Raises:
         ModelNotInRegistry: the model is not in §7.
         ModelExcluded: §7 names it in the exclusion table.
+        WrongRole: the model is in §7 but is not an ASR model (audit finding #8).
     """
-    return resolve(adapter.model_id)
+    return resolve_role(adapter.model_id, ASR_ROLES, "an ASR adapter")
 
 
 @dataclass(frozen=True, slots=True)

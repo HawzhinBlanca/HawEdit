@@ -116,19 +116,26 @@ def assert_rtl_stack(buildconf: str, linked_libraries: str = "") -> RtlStackRepo
         MissingRtlStack: any of libass, HarfBuzz or FriBidi is absent. The message names
             which, because "the RTL stack is broken" is not actionable at 2am.
     """
-    haystack_build = buildconf.lower()
-    haystack_linked = linked_libraries.lower()
+    # Parse configure FLAGS, not substrings. `--disable-libass` contains "libass", so a
+    # substring search certifies a build that explicitly turned the library off — which is
+    # the one failure this check exists to catch. Reported by audit finding #4.
+    enabled = set(re.findall(r"--enable-([a-z0-9_+-]+)", buildconf.lower()))
+    disabled = set(re.findall(r"--disable-([a-z0-9_+-]+)", buildconf.lower()))
+    # A linked shared object is real evidence; match the library file name, not free text.
+    linked = set(re.findall(r"\blib([a-z0-9_+-]+?)\.so", linked_libraries.lower()))
 
-    def find(*needles: str) -> str | None:
-        if any(needle in haystack_build for needle in needles):
+    def find(name: str) -> str | None:
+        if name in disabled:
+            return None  # an explicit --disable- always wins
+        if name in enabled:
             return "buildconf"
-        if any(needle in haystack_linked for needle in needles):
+        if name in linked:
             return "linked libraries"
         return None
 
     libass_source = find("libass")
-    harfbuzz_source = find("harfbuzz")
-    fribidi_source = find("fribidi")
+    harfbuzz_source = find("libharfbuzz") or find("harfbuzz")
+    fribidi_source = find("libfribidi") or find("fribidi")
 
     missing: list[str] = []
     if libass_source is None:
@@ -311,14 +318,22 @@ def build_ass(
     for sentence in sentences:
         lines = wrap_caption_lines(sentence.words, max_chars=max_chars_per_line)
         if style is CaptionStyle.WORD_HIGHLIGHT:
-            rendered_lines = [
-                "".join(
-                    f"{{\\kf{max(1, (word.end_ms - word.start_ms) // 10)}}}"
-                    f"{_escape_ass_text(word.w)} "
-                    for word in line
-                ).strip()
-                for line in lines
-            ]
+            # Karaoke durations must tile the whole line, gaps included. Emitting only word
+            # durations makes the highlight run ahead by the length of every pause, so it
+            # drifts further from the speech with each silence. Reported by audit finding #7.
+            rendered_lines = []
+            for line in lines:
+                parts: list[str] = []
+                cursor = line[0].start_ms
+                for word in line:
+                    gap_cs = max(0, (word.start_ms - cursor) // 10)
+                    if gap_cs:
+                        # An empty karaoke span holds the highlight through the silence.
+                        parts.append(f"{{\\kf{gap_cs}}}")
+                    span_cs = max(1, (word.end_ms - word.start_ms) // 10)
+                    parts.append(f"{{\\kf{span_cs}}}{_escape_ass_text(word.w)} ")
+                    cursor = word.end_ms
+                rendered_lines.append("".join(parts).strip())
         else:
             rendered_lines = [" ".join(_escape_ass_text(word.w) for word in line) for line in lines]
         text = "\\N".join(rendered_lines)

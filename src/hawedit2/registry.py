@@ -29,6 +29,7 @@ from types import MappingProxyType
 from typing import Final
 
 __all__ = [
+    "ASR_ROLES",
     "BENCHMARK_CONTROLS",
     "EXCLUDED",
     "REGISTRY",
@@ -39,9 +40,11 @@ __all__ = [
     "ModelNotInRegistry",
     "NonCommercialLicence",
     "Provisioning",
+    "WrongRole",
     "assert_commercially_usable",
     "attribution_notices",
     "resolve",
+    "resolve_role",
 ]
 
 
@@ -396,6 +399,34 @@ BENCHMARK_CONTROLS: Final[Mapping[str, ModelEntry]] = MappingProxyType(
         )
     }
 )
+
+
+ASR_ROLES: Final = frozenset({"canonical_asr", "asr_emissions", "asr_validator"})
+
+
+class WrongRole(ValueError):
+    """Raised when a §7 model is used for a component it is not the model for."""
+
+
+def resolve_role(model_id: str, allowed: frozenset[str], purpose: str) -> ModelEntry:
+    """Resolve `model_id` and require it to fill one of `allowed` roles.
+
+    Membership in §7 says a model may be *used by this system*, not that it may be used
+    *here*. Without this, PySceneDetect passed as an ASR adapter and as the editorial judge —
+    every call site checked only that the name was in the registry. Audit finding #8.
+
+    Raises:
+        ModelNotInRegistry / ModelExcluded: as `resolve`.
+        WrongRole: the model is in §7 but is not that kind of component.
+    """
+    entry = resolve(model_id)
+    if entry.role not in allowed:
+        raise WrongRole(
+            f"{model_id!r} is §7's {entry.component!r} (role {entry.role!r}) and cannot be "
+            f"used as {purpose}. Being in the registry means the blueprint permits the "
+            f"model, not that it fits this slot."
+        )
+    return entry
 
 
 def resolve(model_id: str) -> ModelEntry:

@@ -32,13 +32,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from hawedit2.alignment import CTC_VITERBI, assert_ctc_viterbi
 from hawedit2.normalize import normalize_sorani
-from hawedit2.registry import resolve
+from hawedit2.registry import resolve_role
 
 __all__ = [
     "AsrProvenance",
@@ -86,9 +87,11 @@ class AsrProvenance:
     mean_logprob: float | None = None
 
     def __post_init__(self) -> None:
-        resolve(self.canonical)
+        # Role-checked, not merely registry-checked: a scene detector is in §7 but did not
+        # transcribe anything (audit finding #8).
+        resolve_role(self.canonical, frozenset({"canonical_asr"}), "the canonical ASR")
         if self.validated_by is not None:
-            resolve(self.validated_by)
+            resolve_role(self.validated_by, frozenset({"asr_validator"}), "the ASR validator")
         if self.aligner is not None:
             assert_ctc_viterbi(self.aligner)
 
@@ -188,14 +191,33 @@ class TranscriptStore:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _safe(media_id: str) -> str:
+        """Refuse a media_id that could escape the store, or collide inside it.
+
+        `media_id` reaches here from filenames and job payloads. Interpolated straight into
+        a path, `../../etc/x` writes outside the store entirely — and invariant #1's
+        write-once guarantee means nothing if the path it guards is attacker-chosen. Audit
+        finding #9.
+        """
+        if not media_id or media_id in {".", ".."}:
+            raise ValueError("media_id must not be empty or a path component")
+        if any(sep in media_id for sep in ("/", "\\", "\x00")) or ".." in media_id:
+            raise ValueError(
+                f"media_id {media_id!r} contains a path separator or parent reference. "
+                f"Transcript paths are derived from it, so this would write outside the "
+                f"store (Kurdish invariant #1)."
+            )
+        return media_id
+
     def raw_path(self, media_id: str) -> Path:
-        return self.root / f"{media_id}.transcript.raw.json"
+        return self.root / f"{self._safe(media_id)}.transcript.raw.json"
 
     def norm_path(self, media_id: str) -> Path:
-        return self.root / f"{media_id}.transcript.norm.json"
+        return self.root / f"{self._safe(media_id)}.transcript.norm.json"
 
     def _digest_path(self, media_id: str) -> Path:
-        return self.root / f"{media_id}.transcript.raw.sha256"
+        return self.root / f"{self._safe(media_id)}.transcript.raw.sha256"
 
     def write_raw(self, raw: RawTranscript) -> Path:
         """Write the canonical transcript once.
@@ -204,13 +226,19 @@ class TranscriptStore:
             RawTranscriptImmutable: a raw transcript for this media_id already exists.
         """
         path = self.raw_path(raw.media_id)
-        if path.exists():
+        # Exclusive create: `exists()` then `write` is a race, and two workers ingesting the
+        # same media would both pass the check and one would overwrite the other's canonical
+        # transcript. O_EXCL makes the refusal atomic (audit finding #9).
+        try:
+            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
             raise RawTranscriptImmutable(
                 f"{path} already exists. transcript.raw.json is never modified after write "
                 f"(Kurdish invariant #1) — not even with identical content. If the ASR output "
                 f"genuinely changed, that is a new media_id or a new run directory."
-            )
-        path.write_text(raw.to_json(), encoding="utf-8")
+            ) from None
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(raw.to_json())
         self._digest_path(raw.media_id).write_text(raw.sha256(), encoding="utf-8")
         path.chmod(0o444)  # advisory: root ignores this, the digest is the real evidence
         return path

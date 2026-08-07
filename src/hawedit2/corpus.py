@@ -155,6 +155,12 @@ class CorpusItem:
             "named_entities": list(self.named_entities),
             "code_switch_spans": list(self.code_switch_spans),
             "speaker_count": self.speaker_count,
+            # §8.1's alignment metric depends on these. Omitting them from serialization
+            # silently discarded the ground truth on every save/load round trip — audit #6.
+            "reference_words": [
+                {"w": w.w, "start_ms": w.start_ms, "end_ms": w.end_ms, "conf": w.conf}
+                for w in self.reference_words
+            ],
         }
 
     @staticmethod
@@ -185,6 +191,7 @@ class CorpusItem:
             named_entities=tuple(data.get("named_entities", ())),
             code_switch_spans=tuple(data.get("code_switch_spans", ())),
             speaker_count=int(data.get("speaker_count", 1)),
+            reference_words=tuple(Word(**w) for w in data.get("reference_words", ())),
         )
 
 
