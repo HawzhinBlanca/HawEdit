@@ -49,32 +49,35 @@ compiles. `PROGRESS.md` carries the per-task evidence and `BLOCKED.md` carries w
 
 ## Setup
 
+One command, from a fresh clone to a green gate:
+
 ```bash
 cd hawedit2
+bash scripts/setup.sh
+```
+
+It creates the venv, installs the dev and §3 Stage 0 media dependencies (CPU torch — §6 puts
+Stage 0 on CPU by design), fetches an ffmpeg whose libass has HarfBuzz, reports §7 model
+readiness, and finishes by running the gate. If it exits 0 the checkout is genuinely ready.
+
+The media extra is not optional here even though `pyproject.toml` marks it optional: without
+it the Stage 0 tests *skip*, and a skipped test is the quiet green this project is written
+against. That is also why setup ends with the gate rather than with an install.
+
+<details><summary>Doing it by hand</summary>
+
+```bash
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-```
-
-§3 Stage 0 needs the media stack — PySceneDetect and Silero VAD, and torch because Silero's
-interface takes tensors. It is a separate extra because torch is ~2 GB and nothing outside
-Stage 0 touches it; without it the Stage 0 tests skip and you lose real-media coverage of
-ingest, so install it before trusting a green gate:
-
-```bash
 .venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,media]'
-```
-
-## Rendering captions (§4.3)
-
-The golden-render test needs an ffmpeg whose libass has HarfBuzz. Fetch one once per
-checkout — the script verifies the RTL stack and refuses a build that cannot shape Arabic:
-
-```bash
 bash scripts/fetch-ffmpeg.sh     # ~200 MB, lands in .ffmpeg/ (git-ignored)
+bash scripts/verify.sh
 ```
 
-`verify.sh` discovers it automatically. Without it the golden test skips and you lose
-§4.3.6's only real safeguard, so run it.
+`fetch-ffmpeg.sh` verifies the RTL stack and refuses a build that cannot shape Arabic script.
+`verify.sh` discovers the binary automatically; without it §4.3.6's golden render — the only
+real safeguard on Kurdish invariant #4 — skips.
+
+</details>
 
 ## Models and weights
 
