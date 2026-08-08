@@ -25,6 +25,7 @@ correct and quietly destroys the reason Path A exists:
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -47,9 +48,9 @@ def a_transcript(media_id: str = "ep01") -> Any:
         text_ckb=TEXT,
         words=(
             Word(w="ڕۆژنامەوانی", start_ms=0, end_ms=900, conf=0.95),
-            Word(w="کوردی.", start_ms=900, end_ms=1_800, conf=0.94),
+            Word(w="کوردی", start_ms=900, end_ms=1_800, conf=0.94),
             Word(w="ئەمە", start_ms=2_000, end_ms=2_500, conf=0.93),
-            Word(w="گرنگە.", start_ms=2_500, end_ms=4_000, conf=0.92),
+            Word(w="گرنگە", start_ms=2_500, end_ms=4_000, conf=0.92),
             Word(w="بکەین.", start_ms=4_200, end_ms=6_000, conf=0.91),
         ),
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
@@ -73,7 +74,9 @@ class Api:
         self.calls: list[str] = []
         self.bodies: list[dict[str, Any]] = []
 
-    def __call__(self, url: str, body: bytes | None = None) -> tuple[int, str]:
+    def __call__(
+        self, url: str, body: bytes | None, _headers: Mapping[str, str]
+    ) -> tuple[int, str]:
         self.calls.append(url.split("?")[0].rsplit("/", 1)[-1])
         if body:
             self.bodies.append(json.loads(body))

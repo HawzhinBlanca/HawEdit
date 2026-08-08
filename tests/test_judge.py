@@ -303,6 +303,20 @@ def test_the_verdict_round_trips_through_json() -> None:
     assert JudgeVerdict.from_dict(json.loads(json.dumps(verdict.to_dict()))) == verdict
 
 
+def test_a_persisted_verdict_refuses_scalar_hashtags() -> None:
+    payload = a_verdict().to_dict()
+    payload["hashtags_ckb"] = "#کوردی"
+    with pytest.raises(ValueError, match="array of strings"):
+        JudgeVerdict.from_dict(payload)
+
+
+def test_a_persisted_verdict_refuses_non_object_visual_evidence() -> None:
+    payload = a_verdict().to_dict()
+    payload["sv6d"] = "not an object"
+    with pytest.raises(ValueError, match="JSON object"):
+        JudgeVerdict.from_dict(payload)
+
+
 # --- input modes, the token ceiling, and cost ----------------------------------------------
 
 

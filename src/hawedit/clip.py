@@ -316,6 +316,14 @@ class Qc:
     flags: tuple[str, ...] = ()
     human_reviewed: bool = False
 
+    def __post_init__(self) -> None:
+        _strict_bool(self.auto_pass, "qc.auto_pass")
+        _strict_bool(self.human_reviewed, "qc.human_reviewed")
+        if not isinstance(self.flags, tuple) or any(
+            not isinstance(flag, str) or not flag.strip() for flag in self.flags
+        ):
+            raise ValueError("qc.flags must be a tuple of non-empty strings")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "auto_pass": self.auto_pass,
@@ -325,9 +333,12 @@ class Qc:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Qc:
+        raw_flags = data.get("flags", [])
+        if not isinstance(raw_flags, list) or not all(isinstance(flag, str) for flag in raw_flags):
+            raise ValueError("qc.flags must be a JSON array of strings")
         return Qc(
             auto_pass=_strict_bool(data["auto_pass"], "qc.auto_pass"),
-            flags=tuple(data.get("flags", ())),
+            flags=tuple(raw_flags),
             human_reviewed=_strict_bool(data.get("human_reviewed", False), "qc.human_reviewed"),
         )
 

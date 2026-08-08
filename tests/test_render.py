@@ -636,3 +636,33 @@ def test_a_file_one_frame_short_is_tolerated_and_two_frames_is_not() -> None:
 def test_frame_duration_comes_from_the_file_rather_than_an_assumed_rate() -> None:
     """25 fps is the fixture's rate, not a constant. A 30 fps source has a different frame."""
     assert frame_duration_ms(FIXTURE, find_ffmpeg()) == 40
+
+
+def test_dynamic_crop_tracks_focus_points_over_the_clip_timeline() -> None:
+    chain = crop_filter(
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        focus_points=((100, 50), (1_100, 600)),
+        clip_in_ms=100,
+    )
+    assert "if(lt(t\\,0.500)" in chain
+    assert "\\,0\\," in chain
+    assert "\\,438)" in chain
+
+
+@needs_ffmpeg
+def test_real_render_accepts_a_time_varying_face_track(tmp_path: Path) -> None:
+    clip = _clip()
+    output = tmp_path / "tracked.mp4"
+    result = render_clip(
+        clip=clip,
+        source=FIXTURE,
+        ass_path=_write_ass(tmp_path),
+        output=output,
+        source_width=SOURCE_WIDTH,
+        source_height=SOURCE_HEIGHT,
+        fonts_dir=FONTS,
+        focus_points=((clip.in_ms, 50), (clip.out_ms - 1, 600)),
+    )
+    assert result.reframe is Reframe.FACE_TRACKED
+    assert output.exists() and output.stat().st_size > 1_000

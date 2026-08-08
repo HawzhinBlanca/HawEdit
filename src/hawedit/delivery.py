@@ -133,6 +133,10 @@ def ms_to_timecode(milliseconds: int, fps: float) -> str:
         )
     rate = round(fps)
     total_frames = round(milliseconds * rate / 1000)
+    return _frames_to_timecode(total_frames, rate)
+
+
+def _frames_to_timecode(total_frames: int, rate: int) -> str:
     frames = total_frames % rate
     seconds = total_frames // rate
     minutes, seconds = divmod(seconds, 60)
@@ -172,16 +176,21 @@ def build_edl(
         )
     # `ms_to_timecode` validates the rate, and it must run before the frame arithmetic below
     # uses it — a non-integer rate makes `round(fps)` a silent substitution.
-    source_in = ms_to_timecode(clip_in_ms, fps)
-    source_out = ms_to_timecode(clip_out_ms, fps)
+    ms_to_timecode(0, fps)  # validate the rate before using its rounded integer form
+    rate = round(fps)
+    source_in_frame = round(clip_in_ms * rate / 1000)
+    source_out_frame = round(clip_out_ms * rate / 1000)
+    duration_frames = source_out_frame - source_in_frame
     duration_ms = clip_out_ms - clip_in_ms
-    if round(duration_ms * round(fps) / 1000) < 1:
+    if duration_frames < 1:
         raise DeliveryError(
             f"a {duration_ms} ms clip is less than one frame at {fps} fps: the EDL event would "
             f"be well-formed and cut nothing."
         )
-    record_in = ms_to_timecode(0, fps)
-    record_out = ms_to_timecode(duration_ms, fps)
+    source_in = _frames_to_timecode(source_in_frame, rate)
+    source_out = _frames_to_timecode(source_out_frame, rate)
+    record_in = _frames_to_timecode(0, rate)
+    record_out = _frames_to_timecode(duration_frames, rate)
 
     # An EDL is a line-oriented format; a newline inside the title truncates the file's meaning
     # at that point for most parsers.

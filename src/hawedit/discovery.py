@@ -37,10 +37,9 @@ therefore all three are one moment — produces a candidate longer than anything
 proposed. Each merged candidate here is anchored on a real verbal candidate and contains only
 candidates that overlap **that anchor** directly.
 
-Neither path's *producer* exists yet: Path A needs Gemini credentials and the §3 governance
-decision (`BLOCKED.md` #3), Path B needs `VideoChat3-4B` weights and a GPU (`BLOCKED.md` #2).
-This is the seam they meet at, built and tested ahead of both so that landing either is a
-matter of producing `Candidate`s.
+Both producers now exist and meet here. Path A still requires an authorized Gemini/Vertex route;
+Path B is locally composed behind bounded Qwen survivors. This module remains deliberately
+ignorant of either adapter and merges only validated ``Candidate`` values.
 """
 
 from __future__ import annotations

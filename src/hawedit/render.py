@@ -10,11 +10,10 @@ first, every time. §2 puts a human QC gate before output *always*, and Kurdish 
 forbids rendering a boundary whose sentence is incomplete. A render function that takes an
 `in_ms`/`out_ms` pair and trusts them is how a clip that was rejected reaches a client.
 
-**It will not call a centre crop "reframing".** §3 Stage 6's reframe tracks the active speaker
-from diarization plus face detection, and neither is available (`BLOCKED.md` #4). So the crop
-here is static, `Reframe.STATIC_CENTRE` says so by name, and `speaker_tracked` is a separate
-value that this module cannot yet produce. A centre crop that called itself reframing would
-look correct in every artifact and be wrong on every two-shot.
+**It names what drove the crop.** Static centre, continuous face tracking and future
+speaker tracking are distinct artifact values. The current dynamic path follows a smoothed,
+continuous dominant face; it does not claim active-speaker association while diarization remains
+gated (`BLOCKED.md` #4). A centre crop that called itself reframing would be wrong on a two-shot.
 
 **It will not silently fall back to a software encoder.** §6 puts NVENC on hawapc01. Asking
 for NVENC on a machine without it and getting x264 anyway means a throughput measurement that
@@ -31,6 +30,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -89,13 +89,15 @@ class RenderError(RuntimeError):
 class Reframe(Enum):
     """How the vertical crop was chosen. The name travels with the artifact.
 
-    `SPEAKER_TRACKED` is what §3 Stage 6 actually specifies and is not implemented — it needs
-    diarization (`BLOCKED.md` #4) and face detection. It exists here so that the day it lands,
+    `FACE_TRACKED` is the current dynamic path. `SPEAKER_TRACKED` is what §3 Stage 6 ultimately
+    specifies and still needs diarization (`BLOCKED.md` #4) plus face association. It exists so
+    that the day it lands,
     every clip rendered before it is distinguishable from every clip rendered after, without
     anyone having to remember which was which.
     """
 
     STATIC_CENTRE = "static_centre"
+    FACE_TRACKED = "face_tracked"
     SPEAKER_TRACKED = "speaker_tracked"
 
 
@@ -188,6 +190,8 @@ def crop_filter(
     source_width: int,
     source_height: int,
     focus_x: int | None = None,
+    focus_points: Sequence[tuple[int, int]] = (),
+    clip_in_ms: int = 0,
     target_width: int = VERTICAL_WIDTH,
     target_height: int = VERTICAL_HEIGHT,
 ) -> str:
@@ -218,7 +222,19 @@ def crop_filter(
     if crop_w < 2 or crop_h < 2:
         raise ValueError(f"{source_width}x{source_height} cannot be cropped to {aspect:.3f}")
 
-    if focus_x is None:
+    if focus_points:
+        ordered = sorted(focus_points)
+        positions = [
+            max(0, min(center - crop_w // 2, source_width - crop_w)) for _, center in ordered
+        ]
+        expression = str(positions[-1])
+        for index in range(len(positions) - 2, -1, -1):
+            boundary_s = ((ordered[index][0] + ordered[index + 1][0]) / 2 - clip_in_ms) / 1000
+            expression = (
+                f"if(lt(t\\,{max(0.0, boundary_s):.3f})\\,{positions[index]}\\,{expression})"
+            )
+        x: int | str = expression
+    elif focus_x is None:
         x = (source_width - crop_w) // 2
     else:
         # Clamp rather than raise: a face detector reporting a centre near the frame edge is
@@ -317,6 +333,7 @@ def render_clip(
     source_height: int,
     encoder: Encoder = Encoder.X264,
     focus_x: int | None = None,
+    focus_points: Sequence[tuple[int, int]] = (),
     ffmpeg: Path | None = None,
     crf: int = 20,
 ) -> RenderResult:
@@ -374,7 +391,16 @@ def render_clip(
         )
     output.parent.mkdir(parents=True, exist_ok=True)
     filters = ",".join(
-        [crop_filter(source_width, source_height, focus_x), subtitle_filter(ass_path, fonts_dir)]
+        [
+            crop_filter(
+                source_width,
+                source_height,
+                focus_x,
+                focus_points=focus_points,
+                clip_in_ms=clip.in_ms,
+            ),
+            subtitle_filter(ass_path, fonts_dir),
+        ]
     )
 
     result = subprocess.run(
@@ -426,7 +452,7 @@ def render_clip(
         measured_duration_ms=measured_ms,
         # Named for what it is. §3 Stage 6's speaker tracking needs diarization, which does
         # not run (`BLOCKED.md` #4), so no clip this function produces may claim it.
-        reframe=Reframe.STATIC_CENTRE,
+        reframe=Reframe.FACE_TRACKED if focus_points else Reframe.STATIC_CENTRE,
         encoder=encoder,
         captions_burned_in=True,
         ffmpeg_version=version,

@@ -8,6 +8,7 @@ secrets/
 *.pem
 
 .venv/
+.venv-wsl/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -26,3 +27,4 @@ __pycache__/
 models/*
 !models/sources.json
 /.gate/
+/build/

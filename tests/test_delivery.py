@@ -189,6 +189,13 @@ def test_the_record_timeline_starts_at_zero() -> None:
     assert "00:00:00:00" in edl
 
 
+def test_source_and_record_ranges_use_the_same_quantized_frame_duration() -> None:
+    edl = build_edl(clip_in_ms=20, clip_out_ms=60, fps=25)
+    event = next(line for line in edl.splitlines() if line.startswith("001"))
+    fields = event.split()[-4:]
+    assert fields == ["00:00:00:00", "00:00:00:02", "00:00:00:00", "00:00:00:02"]
+
+
 def test_the_edl_declares_non_drop_frame() -> None:
     assert "FCM: NON-DROP FRAME" in build_edl(clip_in_ms=0, clip_out_ms=1_000, fps=25)
 

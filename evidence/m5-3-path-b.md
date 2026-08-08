@@ -45,9 +45,10 @@ anchors nothing and is refused.
 > **VideoChat3-4B notes:** … Segmentation is mandatory: the authors report ~17.7 GB at 256
 > frames and ~26.7 GB at 512.
 
-Five 64-second scene windows are 320 frames. Past the budget this does not answer badly — it is
-an out-of-memory kill part-way through a batch on a 24 GB card. So the count is checked
-**before the model is called**, and a test asserts the fake reader was never invoked.
+Five 64-second scene windows are 320 frames. The 256-frame figure governs one invocation, not
+the whole episode, so they are packed deterministically into calls of 256 and 64 frames. A test
+asserts every call stays inside the ceiling. The earlier implementation refused the 320-frame
+episode outright, accidentally turning a VRAM limit into a maximum source length (D-059).
 
 ## The join, on real media
 
@@ -66,7 +67,5 @@ degraded — "Candidates from either path proceed".
 
 ## What this does not show
 
-`MCG-NJU/VideoChat3-4B` is `BLOCKED.md` #2 (GPU) and #6 (weights). No reading in this
-repository came from the model; the reader in the tests is a fake that returns the type it
-will return. The prompt itself is unwritten — a prompt is only testable against the model it
-is written for.
+This evidence row originally used a fake reader. The real model and measured prompt now live in
+`evidence/m5-4-path-b.md`; the remaining integration gaps are recorded there and in `README.md`.

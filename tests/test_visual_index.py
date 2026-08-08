@@ -558,11 +558,46 @@ def test_a_reranker_that_rewrites_the_retrieval_score_is_refused() -> None:
         rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker("fabricate"), keep=5)
 
 
-def test_short_media_keeps_every_available_window_after_reranking() -> None:
-    """The 5–10 target is a ceiling on survivors, not a reason to reject a three-shot clip."""
+def test_an_index_below_the_survivor_floor_is_refused_rather_than_shortened() -> None:
+    """D-037 clause 4, restored (D-066). It considered returning whatever exists and rejected it.
+
+    §8.2 counts Recall@K on this list, so three results in a column that says five is a number
+    that does not mean what the column says. A three-window index is the *fixture*, not the
+    product — a 40-minute episode is roughly 75 windows at 2 fps — so the refusal costs nothing
+    real and the alternative silently mislabels every downstream metric.
+
+    This test replaced one asserting `len(kept) == 3`, written when the guard was reverted to
+    `min(keep, len(reranked))` with no superseding decision while `PROGRESS.md` still certified
+    the refusal. The docstring two lines above the change still said the reranker "may not drop
+    below the survivor count".
+    """
     index = _index_of(3)
-    kept = rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker(), keep=5)
-    assert len(kept) == 3
+    with pytest.raises(VisualIndexError, match="too short for Stage 2's survivor slice"):
+        rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker(), keep=5)
+
+
+def test_the_refusal_is_made_before_the_reranker_is_asked_to_run() -> None:
+    """The negative control on where the check sits: a GPU pass costs seconds per window.
+
+    A reranker that raises if called at all still lets the refusal through, which proves the
+    index size is checked before any scoring — not after paying for it.
+    """
+
+    class _Explode:
+        model_id = RERANKER
+
+        def rerank(self, query: str, hits: object) -> tuple[RerankedHit, ...]:
+            raise AssertionError("the reranker was called on an index below the survivor floor")
+
+    with pytest.raises(VisualIndexError, match="too short for Stage 2's survivor slice"):
+        rerank_and_keep(_index_of(3), (1.0, 0.0), "q", _Explode(), keep=5)
+
+
+def test_an_index_at_the_floor_is_accepted_and_returns_exactly_the_survivor_count() -> None:
+    """The positive control. A guard that refused every index would pass both tests above."""
+    kept = rerank_and_keep(_index_of(5), (1.0, 0.0), "q", FakeReranker(), keep=5)
+    assert len(kept) == 5
+    assert [hit.rank for hit in kept] == [1, 2, 3, 4, 5]
 
 
 def test_a_reranked_hit_from_the_wrong_role_is_refused() -> None:

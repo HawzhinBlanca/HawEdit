@@ -25,7 +25,10 @@ shot cuts (§3 Stage 5), and renders a vertical clip with burned-in Kurdish capt
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -99,7 +102,7 @@ def test_a_run_without_a_transcript_is_incomplete_and_says_which_stage_stopped_i
     assert not run.complete
     assert run.ingest is not None, "Stage 0 needs nothing that is blocked and must have run"
     assert isinstance(run.transcript, StageSkipped)
-    assert run.transcript.blocked_by == ("BLOCKED.md #2", "BLOCKED.md #6")
+    assert run.transcript.blocked_by == ("Stage 1 producer not enabled",)
     assert "omniASR" in run.transcript.reason
     assert run.clip is None
 
@@ -122,6 +125,13 @@ def test_a_skipped_stage_is_never_reported_as_an_empty_result(tmp_path: Path) ->
     assert payload["transcript"]["blocked_by"]
 
 
+def test_an_empty_run_object_cannot_claim_completion() -> None:
+    """Absence of explicit skip markers is not evidence that any stage actually ran."""
+    run = PipelineRun(media_id="m", source="m.mp4", work_dir="work")
+    assert not run.complete
+    assert run.to_dict()["complete"] is False
+
+
 # --- the end-to-end path that does run ----------------------------------------------------
 
 
@@ -138,7 +148,7 @@ def full_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         transcript=a_transcript(),
         select_sentences=(0, 1),
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
-        verdict=a_verdict(0, 4_300),
+        verdict=a_verdict(100, 4_100),
     )
 
 
@@ -185,6 +195,14 @@ def test_stage_2s_window_plan_was_built_from_this_runs_own_shot_cuts(
 
 
 @needs_ffmpeg
+def test_the_pipeline_can_use_the_declared_visual_rate_for_short_scenes(tmp_path: Path) -> None:
+    run = run_pipeline(FIXTURE, tmp_path / "work", visual_fps=2.0)
+    assert run.visual_windows
+    assert {window.fps for window in run.visual_windows} == {2.0}
+    assert all(window.frame_count >= 3 for window in run.visual_windows)
+
+
+@needs_ffmpeg
 def test_the_normalized_transcript_is_what_the_index_read(full_run: PipelineRun) -> None:
     """Kurdish invariant #3, at the one place the whole pipeline could have got it wrong."""
     assert not isinstance(full_run.index, StageSkipped)
@@ -203,6 +221,24 @@ def test_the_raw_transcript_is_written_once_and_never_rewritten(full_run: Pipeli
     store.verify_raw_integrity("fixture")
     with pytest.raises(RawTranscriptImmutable):
         store.write_raw(a_transcript())
+
+
+@needs_ffmpeg
+def test_a_reused_work_dir_refuses_a_different_supplied_transcript(tmp_path: Path) -> None:
+    """Write-once must not become "silently use yesterday's different transcript"."""
+    from hawedit.transcripts import RawTranscriptImmutable
+
+    work = tmp_path / "work"
+    first = a_transcript("reuse")
+    run_pipeline(FIXTURE, work, media_id="reuse", transcript=first)
+    changed_words = (replace(first.words[0], w="جیاواز"), *first.words[1:])
+    changed = replace(
+        first,
+        text_ckb=" ".join(word.w for word in changed_words),
+        words=changed_words,
+    )
+    with pytest.raises(RawTranscriptImmutable, match="different canonical transcript"):
+        run_pipeline(FIXTURE, work, media_id="reuse", transcript=changed)
 
 
 @needs_ffmpeg
@@ -234,6 +270,8 @@ def test_the_run_report_serializes_to_json(full_run: PipelineRun) -> None:
     """The run is data (§1). A report you cannot store is a report you cannot compare."""
     payload = json.loads(json.dumps(full_run.to_dict(), ensure_ascii=False))
     assert payload["media_id"] == "fixture"
+    assert payload["index"]["document_count"] == 1
+    assert payload["boundary"]["sentence_complete"] is True
     assert payload["clip"]["boundary"]["sentence_complete"] is True
     assert payload["render"]["reframe"] == "static_centre"
 
@@ -247,7 +285,8 @@ def test_the_full_run_is_still_not_complete(full_run: PipelineRun) -> None:
     and no diarization informed the crop.
     """
     assert not full_run.complete
-    assert {name for name, _ in full_run.skipped()} >= {"discovery", "editorial"}
+    assert {name for name, _ in full_run.skipped()} >= {"discovery", "visual_index"}
+    assert "editorial" not in {name for name, _ in full_run.skipped()}
 
 
 # --- the refusals -------------------------------------------------------------------------
@@ -262,7 +301,7 @@ def test_a_selection_with_no_complete_sentence_produces_no_clip(tmp_path: Path) 
     """
     fragment = RawTranscript(
         media_id="frag",
-        text_ckb="ڕۆژنامەوانی کوردی",
+        text_ckb="ڕۆژنامەوانی",
         words=(Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=900, conf=0.9),),
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
     )
@@ -284,7 +323,7 @@ def test_a_clip_that_has_not_cleared_qc_is_not_rendered(tmp_path: Path) -> None:
         transcript=a_transcript("qc"),
         select_sentences=(0, 1),
         qc=Qc(auto_pass=False, flags=("low_confidence",), human_reviewed=False),
-        verdict=a_verdict(0, 4_300),
+        verdict=a_verdict(100, 4_100),
     )
     assert run.clip is not None, "the clip exists; it is the render that must refuse"
     assert isinstance(run.render, StageSkipped)
@@ -305,6 +344,44 @@ def test_a_transcript_for_different_media_is_refused(tmp_path: Path) -> None:
 
 
 @needs_ffmpeg
+def test_rendering_refuses_a_partial_or_punctuation_changed_alignment(tmp_path: Path) -> None:
+    transcript = RawTranscript(
+        media_id="partial",
+        text_ckb="یەکەم ئاماژەنەکراوە دووەم.",
+        words=(
+            Word(w="یەکەم", start_ms=100, end_ms=800, conf=0.9),
+            Word(w="دووەم.", start_ms=800, end_ms=1_700, conf=0.9),
+        ),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+    )
+    with pytest.raises(ValueError, match="token-for-token"):
+        run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="partial",
+            transcript=transcript,
+            select_sentences=(0,),
+        )
+
+
+@needs_ffmpeg
+def test_clip_transcript_preserves_canonical_raw_whitespace(tmp_path: Path) -> None:
+    transcript = a_transcript("spacing")
+    transcript = replace(transcript, text_ckb=transcript.text_ckb.replace(" ", "  "))
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="spacing",
+        transcript=transcript,
+        select_sentences=(0, 1),
+        verdict=a_verdict(100, 4_100),
+    )
+    assert run.clip is not None
+    assert "  " in run.clip.transcript.raw_ckb
+    assert run.clip.transcript.raw_ckb == transcript.text_ckb
+
+
+@needs_ffmpeg
 def test_selecting_a_sentence_that_does_not_exist_is_refused(tmp_path: Path) -> None:
     with pytest.raises(IndexError, match="sentence"):
         run_pipeline(
@@ -314,6 +391,44 @@ def test_selecting_a_sentence_that_does_not_exist_is_refused(tmp_path: Path) -> 
             transcript=a_transcript("oob"),
             select_sentences=(0, 99),
         )
+
+
+@needs_ffmpeg
+def test_an_out_of_order_contiguous_selection_is_processed_in_time_order(tmp_path: Path) -> None:
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="reverse",
+        transcript=a_transcript("reverse"),
+        select_sentences=(1, 0),
+        verdict=a_verdict(100, 4_100),
+    )
+    assert run.clip is not None
+    assert [word.start_ms for word in run.clip.transcript.words] == [100, 800, 2_000, 2_400]
+    assert run.clip.clip_id == "reverse-s0-1"
+
+
+@needs_ffmpeg
+def test_soft_boundary_expansion_cannot_swallow_uncaptioned_speech(tmp_path: Path) -> None:
+    transcript = RawTranscript(
+        media_id="tail",
+        text_ckb="یەکەم. دووەم.",
+        words=(
+            Word(w="یەکەم.", start_ms=100, end_ms=1_700, conf=0.9),
+            Word(w="دووەم.", start_ms=1_800, end_ms=2_400, conf=0.9),
+        ),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+    )
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="tail",
+        transcript=transcript,
+        select_sentences=(0,),
+    )
+    assert run.clip is None
+    assert isinstance(run.boundary, StageSkipped)
+    assert run.boundary.blocked_by == ("uncaptioned speech",)
 
 
 def test_a_missing_source_file_is_named(tmp_path: Path) -> None:
@@ -337,6 +452,75 @@ def test_the_cli_reports_a_missing_source_without_a_traceback(tmp_path: Path) ->
     from hawedit.pipeline import main
 
     assert main([str(tmp_path / "absent.mp4"), "--work-dir", str(tmp_path / "work")]) == 2
+
+
+def test_the_cli_reports_malformed_transcript_json_without_a_traceback(tmp_path: Path) -> None:
+    from hawedit.pipeline import main
+
+    source = tmp_path / "source.mp4"
+    source.touch()
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text("{}", encoding="utf-8")
+    assert main([str(source), "--transcript", str(transcript)]) == 2
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ("--sentences", "0"),
+        ("--qc-pass",),
+        ("--confidential",),
+    ],
+)
+def test_the_cli_refuses_flags_whose_prerequisites_are_absent(
+    tmp_path: Path, flags: tuple[str, ...]
+) -> None:
+    from hawedit.pipeline import main
+
+    source = tmp_path / "source.mp4"
+    source.touch()
+    assert main([str(source), *flags]) == 2
+
+
+def test_the_cli_can_load_the_documented_stage_4_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.pipeline import PipelineRun, main
+
+    source = tmp_path / "source.mp4"
+    source.touch()
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(a_transcript("source").to_json(), encoding="utf-8")
+    verdict_path = tmp_path / "verdict.json"
+    verdict_path.write_text(
+        json.dumps(a_verdict(0, 4_300).to_dict(), ensure_ascii=False), encoding="utf-8"
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(source_arg: Path, work_arg: Path, **kwargs: object) -> PipelineRun:
+        captured.update(kwargs)
+        return PipelineRun(media_id="source", source=str(source_arg), work_dir=str(work_arg))
+
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", fake_run)
+    assert (
+        main(
+            [
+                str(source),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--transcript",
+                str(transcript_path),
+                "--verdict",
+                str(verdict_path),
+                "--sentences",
+                "0,1",
+                "--qc-pass",
+            ]
+        )
+        == 1
+    )
+    assert isinstance(captured["verdict"], JudgeVerdict)
+    assert captured["qc"] == Qc(auto_pass=False, flags=(), human_reviewed=True)
 
 
 # --- §3 Stages 3 and 4, wired in ------------------------------------------------------------
@@ -381,29 +565,36 @@ def test_supplying_both_paths_makes_the_union_two_sided_on_this_video(tmp_path: 
     BOTH about that moment while every other candidate survives on its own path: "union, never
     intersect".
     """
-    from collections.abc import Sequence
-
-    from hawedit.clip import DiscoveryPath, Sv6d
+    from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.path_b import SceneReading
-    from hawedit.visual_index import SceneWindow
+    from hawedit.visual_pipeline import VisualDiscoveryResult
 
-    def sv6d_for(window: SceneWindow) -> Sv6d:
-        at = f"{window.in_ms + 100}ms"
-        return Sv6d(
-            subject=f"speaker at {at}",
-            aesthetics=f"warm grade at {at}",
-            camera=f"static at {at}",
-            editing=f"cut at {at}",
-            narrative=f"setup at {at}",
-            retention=f"hook at {at}",
-        )
-
-    class Reader:
-        def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
-            return tuple(
-                SceneReading(window=w, sv6d=sv6d_for(w), score=0.9 - i * 0.1)
-                for i, w in enumerate(windows)
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            assert [window.span for window in windows] == [
+                (0, 1_400),
+                (1_400, 2_800),
+                (2_800, 4_162),
+            ]
+            return VisualDiscoveryResult(
+                media_id,
+                query,
+                3,
+                3,
+                (),
+                (
+                    Candidate("scene-0", media_id, 0, 1_400, DiscoveryPath.VISUAL, 1, 0.9),
+                    Candidate("scene-2", media_id, 2_800, 4_162, DiscoveryPath.VISUAL, 2, 0.7),
+                ),
             )
 
     run = run_pipeline(
@@ -414,15 +605,54 @@ def test_supplying_both_paths_makes_the_union_two_sided_on_this_video(tmp_path: 
         discover=lambda _norm: [
             Candidate("v1", "dual", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
         ],
-        read_scenes=Reader(),
+        visual_composer=Composer(),  # type: ignore[arg-type]
     )
     assert [w.span for w in run.visual_windows] == [(0, 1_400), (1_400, 2_800), (2_800, 4_162)]
     paths = {c.discovery_path for c in run.candidates}
     assert DiscoveryPath.BOTH in paths, paths
     assert DiscoveryPath.VISUAL in paths, paths
-    # Nothing is dropped: one verbal candidate plus three windows, and the overlap merges into
-    # one rather than disappearing.
-    assert sum(len(c.sources) for c in run.candidates) == 4
+    # Nothing is dropped: one verbal candidate plus two bounded visual survivors, and the
+    # overlap merges into one rather than disappearing.
+    assert sum(len(c.sources) for c in run.candidates) == 3
+
+
+@needs_ffmpeg
+def test_visual_composer_refusal_is_reported_as_a_skipped_stage(tmp_path: Path) -> None:
+    from hawedit.visual_pipeline import VisualPipelineError
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            raise VisualPipelineError("media is too short for Stage 2's survivor slice")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="short",
+        transcript=a_transcript("short"),
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert isinstance(run.visual_index, StageSkipped)
+    assert "too short" in run.visual_index.reason
+    assert run.candidates == ()
+
+
+@needs_ffmpeg
+def test_unranked_path_b_injection_is_refused(tmp_path: Path) -> None:
+    """A bare reader could promote every scene and bypass the keep-5–10 contract."""
+
+    class Reader:
+        def read_scenes(self, windows: Sequence[Any]) -> tuple[object, ...]:
+            return ()
+
+    with pytest.raises(ValueError, match="Qwen retrieval/reranking"):
+        run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="unsafe",
+            transcript=a_transcript("unsafe"),
+            read_scenes=Reader(),  # type: ignore[arg-type]
+        )
 
 
 @needs_ffmpeg
@@ -455,7 +685,10 @@ def test_supplying_a_judge_scores_the_top_candidate(tmp_path: Path) -> None:
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             seen.append(request)
-            return a_verdict(0, 4_300)
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
 
     run = run_pipeline(
         FIXTURE,
@@ -477,6 +710,84 @@ def test_supplying_a_judge_scores_the_top_candidate(tmp_path: Path) -> None:
 
 
 @needs_ffmpeg
+def test_the_judge_gets_rank_one_not_the_earliest_candidate(tmp_path: Path) -> None:
+    """Merge order is chronological; Stage 4 survivor order is not."""
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    seen: list[JudgeRequest] = []
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            seen.append(request)
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="ranked",
+        transcript=a_transcript("ranked"),
+        discover=lambda _n: [
+            Candidate("best", "ranked", 2_000, 4_100, DiscoveryPath.VERBAL, 1, 0.99),
+            Candidate("early", "ranked", 0, 1_700, DiscoveryPath.VERBAL, 2, 0.10),
+        ],
+        judge=Judge(),
+    )
+    assert seen[0].candidate_id == "best"
+    assert seen[0].text_ckb == "لە هەولێر."
+
+
+@needs_ffmpeg
+def test_partial_candidate_overlap_cannot_lend_evidence_to_a_larger_manual_clip(
+    tmp_path: Path,
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+
+    with pytest.raises(ValueError, match="not contained"):
+        run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="partial-candidate",
+            transcript=a_transcript("partial-candidate"),
+            select_sentences=(0, 1),
+            discover=lambda _n: [
+                Candidate(
+                    "tiny",
+                    "partial-candidate",
+                    100,
+                    200,
+                    DiscoveryPath.VERBAL,
+                    rank=1,
+                    score=0.99,
+                )
+            ],
+        )
+
+
+def test_vad_onset_is_selected_for_the_anchor_not_the_episode_start() -> None:
+    from hawedit.ingest import IngestResult, SpeechSegment
+    from hawedit.pipeline import _vad_onset_for_anchor
+
+    ingested = IngestResult(
+        media_id="m",
+        source="m.mp4",
+        audio_path="audio.wav",
+        proxy_path="proxy.mp4",
+        duration_ms=200_000,
+        shot_cuts_ms=(),
+        speech=(SpeechSegment(1_000, 5_000), SpeechSegment(99_500, 106_000)),
+    )
+    assert _vad_onset_for_anchor(ingested, 100_000, 105_000) == 99_500
+
+
+@needs_ffmpeg
 def test_the_run_writes_section_2s_whole_delivery_set(full_run: PipelineRun) -> None:
     """§2's diagram ends with `MP4 · SRT/ASS · editing JSON · EDL`. All four, on disk.
 
@@ -489,7 +800,8 @@ def test_the_run_writes_section_2s_whole_delivery_set(full_run: PipelineRun) -> 
     assert isinstance(full_run.delivery, Delivery), full_run.delivery
     srt = Path(full_run.delivery.srt_path)
     edl = Path(full_run.delivery.edl_path)
-    assert srt.exists() and edl.exists()
+    editing_json = Path(full_run.delivery.editing_json_path)
+    assert srt.exists() and edl.exists() and editing_json.exists()
 
     assert full_run.clip is not None
     duration = full_run.clip.out_ms - full_run.clip.in_ms
@@ -502,3 +814,235 @@ def test_the_run_writes_section_2s_whole_delivery_set(full_run: PipelineRun) -> 
     assert "FCM: NON-DROP FRAME" in body
     # The EDL's record timeline starts at zero; its source timecodes do not have to.
     assert "00:00:00:00" in body
+    assert json.loads(editing_json.read_text(encoding="utf-8"))["clip_id"] == full_run.clip.clip_id
+
+
+@needs_ffmpeg
+def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    first = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="variants",
+        transcript=a_transcript("variants"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert first.render is not None and not isinstance(first.render, StageSkipped)
+    first_path = Path(first.render.path)
+    first_bytes = first_path.read_bytes()
+
+    second = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="variants",
+        transcript=a_transcript("variants"),
+        select_sentences=(0, 1),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 4_100),
+    )
+    assert second.render is not None and not isinstance(second.render, StageSkipped)
+    assert Path(second.render.path) != first_path
+    assert first_path.read_bytes() == first_bytes
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        run_pipeline(
+            FIXTURE,
+            work,
+            media_id="variants",
+            transcript=a_transcript("variants"),
+            select_sentences=(0,),
+            qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+            verdict=a_verdict(100, 1_700),
+        )
+
+
+# --- composed model stages -----------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_runner_invokes_canonical_asr_when_no_transcript_is_supplied(tmp_path: Path) -> None:
+    seen: list[tuple[str, Path, int]] = []
+
+    class CanonicalAsr:
+        def transcribe(
+            self,
+            media_id: str,
+            audio_path: Path,
+            speech_segments: Sequence[Any],
+            work_dir: Path,
+            ffmpeg: Path | None = None,
+        ) -> RawTranscript:
+            segments = tuple(speech_segments)
+            seen.append((media_id, audio_path, len(segments)))
+            return a_transcript(media_id)
+
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="asr", asr=CanonicalAsr())
+    assert seen and seen[0][0] == "asr" and seen[0][1].exists() and seen[0][2] > 0
+    assert not isinstance(run.transcript, StageSkipped)
+
+
+@needs_ffmpeg
+def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
+    tmp_path: Path,
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="automatic",
+        transcript=a_transcript("automatic"),
+        discover=lambda _n: [
+            Candidate("best", "automatic", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.99)
+        ],
+        judge=Judge(),
+        auto_select=True,
+    )
+    assert run.clip is not None
+    assert run.clip.clip_id == "automatic-s0-0"
+    assert tuple(word.w for word in run.clip.transcript.words) == tuple(
+        word.w for word in WORDS[:2]
+    )
+
+
+@needs_ffmpeg
+def test_multimodal_judge_receives_real_source_keyframes_from_runner(tmp_path: Path) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    seen: list[JudgeRequest] = []
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            seen.append(request)
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="pixels",
+        transcript=a_transcript("pixels"),
+        discover=lambda _n: [Candidate("best", "pixels", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.99)],
+        judge=Judge(),
+    )
+    assert len(seen) == 1
+    assert 1 <= len(seen[0].keyframes) <= 20
+    assert all(frame.data.startswith(b"\xff\xd8") for frame in seen[0].keyframes)
+
+
+@needs_ffmpeg
+def test_composed_visual_path_uses_measured_fps_and_best_verbal_slice_as_query(
+    tmp_path: Path,
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    observed: dict[str, object] = {}
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            observed.update(query=query, fps=windows[0].fps, media_id=media_id)
+            return VisualDiscoveryResult(
+                media_id,
+                query,
+                len(windows),
+                len(windows),
+                (),
+                (Candidate("scene", media_id, 2_000, 4_100, DiscoveryPath.VISUAL, 1, 0.8),),
+            )
+
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="composed",
+        transcript=a_transcript("composed"),
+        discover=lambda _n: [
+            Candidate("best", "composed", 2_000, 4_100, DiscoveryPath.VERBAL, 1, 0.9)
+        ],
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+    assert observed == {"query": "لە هەولێر.", "fps": 2.0, "media_id": "composed"}
+
+
+@needs_ffmpeg
+def test_timelens_grounding_is_composed_into_boundary_fusion(tmp_path: Path) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.timelens import VisualEvidenceInterval
+    from hawedit.visual_index import SceneWindow
+
+    seen: list[SceneWindow] = []
+
+    class Grounder:
+        def ground_all(
+            self, windows: Sequence[SceneWindow], query: str
+        ) -> tuple[VisualEvidenceInterval, ...]:
+            seen.extend(windows)
+            assert query
+            return (VisualEvidenceInterval("grounded", 1_500, 1_950, "visible reaction"),)
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="grounded",
+        transcript=a_transcript("grounded"),
+        select_sentences=(0,),
+        discover=lambda _n: [Candidate("wide", "grounded", 0, 2_800, DiscoveryPath.VERBAL, 1, 0.9)],
+        temporal_grounder=Grounder(),
+    )
+    assert seen and all(window.in_ms < 2_800 and window.out_ms > 0 for window in seen)
+    assert run.clip is not None
+    assert run.clip.boundary.final_out_ms == 1_950
+    assert run.clip.boundary.out_extended_by == "timelens_interval_end"
+
+
+@needs_ffmpeg
+def test_subject_tracking_marks_output_for_dynamic_reframing(tmp_path: Path) -> None:
+    from hawedit.reframe import FocusPoint
+
+    class Tracker:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+            assert source == FIXTURE and out_ms > in_ms
+            return (FocusPoint(in_ms, 120), FocusPoint(out_ms - 1, 520))
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="tracked",
+        transcript=a_transcript("tracked"),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="tracked-0"),
+        subject_tracker=Tracker(),
+    )
+    assert run.clip is not None and run.clip.output is not None
+    assert run.clip.output.crop_target == "face_tracked"

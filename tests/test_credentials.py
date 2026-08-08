@@ -16,6 +16,7 @@ import json
 import os
 import stat
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,6 @@ from hawedit.credentials import (
     GEMINI_API_KEY,
     CredentialError,
     KeyCheck,
-    assert_ignored_by_git,
     credential_status,
     mask,
     read_credential,
@@ -35,19 +35,19 @@ from hawedit.credentials import (
 FAKE_KEY = "AIzaSy-not-a-real-key-0000-abcd"
 
 
-def ok_transport(_url: str) -> tuple[int, str]:
+def ok_transport(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
     return 200, json.dumps(
         {"models": [{"name": "models/gemini-2.5-pro"}, {"name": "models/gemini-2.5-flash"}]}
     )
 
 
-def rejecting_transport(_url: str) -> tuple[int, str]:
+def rejecting_transport(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
     return 400, json.dumps(
         {"error": {"code": 400, "message": "API key not valid. Please pass a valid API key."}}
     )
 
 
-def offline_transport(_url: str) -> tuple[int, str]:
+def offline_transport(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
     return 0, "Name or service not known"
 
 
@@ -65,11 +65,12 @@ def test_writing_to_a_tracked_path_is_refused(tmp_path: Path) -> None:
         write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=tracked)
 
 
-def test_the_projects_own_env_file_is_ignored() -> None:
-    """The check is only worth having if the real target passes it."""
-    from hawedit.credentials import ENV_FILE
+def test_the_default_credential_file_is_outside_the_checkout() -> None:
+    """An installed wheel must not write a secret into site-packages or require Git."""
+    from hawedit.credentials import ENV_FILE, REPO_ROOT
 
-    assert_ignored_by_git(ENV_FILE)  # must not raise
+    assert not ENV_FILE.is_relative_to(REPO_ROOT)
+    assert ENV_FILE.name == "credentials.env"
 
 
 def assert_owner_only(env_file: Path) -> None:
@@ -140,8 +141,20 @@ def test_a_working_key_reports_the_models_it_can_see() -> None:
     assert "gemini-2.5-pro" in check.models, "§7 pins this model; its absence is worth knowing"
 
 
+def test_key_validation_authenticates_by_header_never_by_url() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def transport(url: str, headers: Mapping[str, str]) -> tuple[int, str]:
+        seen.append((url, dict(headers)))
+        return ok_transport(url, headers)
+
+    assert validate_gemini_key(FAKE_KEY, transport=transport).valid
+    assert FAKE_KEY not in seen[0][0] and "?key=" not in seen[0][0]
+    assert seen[0][1].get("x-goog-api-key") == FAKE_KEY
+
+
 def test_a_malformed_success_body_is_not_treated_as_valid() -> None:
-    check = validate_gemini_key(FAKE_KEY, transport=lambda _u: (200, "not json"))
+    check = validate_gemini_key(FAKE_KEY, transport=lambda _u, _h: (200, "not json"))
     assert not check.valid
 
 
@@ -233,7 +246,7 @@ def test_status_reports_absence_without_calling_the_api(
 ) -> None:
     monkeypatch.delenv(GEMINI_API_KEY, raising=False)
 
-    def explode(_url: str) -> tuple[int, str]:
+    def explode(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
         raise AssertionError("the API must not be called when no key is configured")
 
     key, check = credential_status(GEMINI_API_KEY, tmp_path / "absent", transport=explode)

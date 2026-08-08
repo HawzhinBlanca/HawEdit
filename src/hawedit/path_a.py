@@ -41,12 +41,10 @@ from typing import Any, Final
 from hawedit.clip import DiscoveryPath
 from hawedit.discovery import Candidate
 from hawedit.gemini import (
-    API_ROOT,
     GeminiJudge,
     Governance,
     JudgeUnusable,
     Transport,
-    count_tokens,
 )
 from hawedit.judge import InputMode, JudgeRequest
 from hawedit.transcripts import NormalizedTranscript, assert_model_input
@@ -128,12 +126,17 @@ class PathADiscovery:
         transport: Transport | None = None,
         max_attempts: int = 3,
         sleep: Callable[[float], None] = time.sleep,
+        client: GeminiJudge | None = None,
     ) -> None:
         # Composition rather than inheritance: Path A is not a `judge()` implementation — it
         # returns candidates, not a verdict — but it shares §7 routing, credentials, retry and
         # governance with the Stage 4 judge, and duplicating those is how two code paths end
         # up with two different governance checks.
-        self._judge = GeminiJudge(
+        if client is not None and any(
+            value is not None for value in (api_key, governance, transport)
+        ):
+            raise ValueError("client is mutually exclusive with Path A transport arguments")
+        self._judge = client or GeminiJudge(
             api_key=api_key,
             model_id=model_id,
             governance=governance,
@@ -141,7 +144,7 @@ class PathADiscovery:
             max_attempts=max_attempts,
             sleep=sleep,
         )
-        self.model_id = model_id
+        self.model_id = self._judge.model_id
 
     @property
     def governance(self) -> Governance:
@@ -188,26 +191,12 @@ class PathADiscovery:
                 on why this refuses rather than splits.
             JudgeUnusable: a returned candidate is not one this system can use.
         """
-        self.governance.assert_permits_upload()
         prompt = self._prompt(transcript)
 
-        counted = count_tokens(prompt, self._judge._key, self.model_id, self._judge._transport)
+        parts = [{"text": prompt}]
+        counted = self._judge.count_parts(parts)
         replace(self.build_request(transcript), tokens=counted).assert_within_tier()
-
-        payload = json.dumps(
-            {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "responseSchema": CANDIDATE_SCHEMA,
-                    # Discovery is compared against a gold set in §8.2. A pass that returns a
-                    # different candidate list each run makes Recall@K measure sampling.
-                    "temperature": 0.0,
-                },
-            }
-        ).encode("utf-8")
-
-        body = self._judge._post(f"{API_ROOT}/models/{self.model_id}:generateContent", payload)
+        body = self._judge.generate_json(parts, CANDIDATE_SCHEMA)
         return self._to_candidates(body, transcript)
 
     def _to_candidates(self, body: str, transcript: NormalizedTranscript) -> tuple[Candidate, ...]:

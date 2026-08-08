@@ -21,8 +21,8 @@ panel shows the last four characters so you can tell two keys apart, and nothing
 error message containing a credential is how secrets reach log aggregators.
 
 Reading is layered so CI and a laptop can differ without either being a special case: the
-process environment wins, then `.env`. Nothing here reads a key from a command-line argument,
-because arguments are visible in `ps` to every user on the machine.
+process environment wins, then the owner-only user config file. Nothing here reads a key from
+a command-line argument, because arguments are visible in `ps` to every user on the machine.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -54,7 +54,17 @@ __all__ = [
 
 GEMINI_API_KEY: Final = "GEMINI_API_KEY"
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-ENV_FILE: Final = REPO_ROOT / ".env"
+
+
+def _user_config_file() -> Path:
+    if os.name == "nt":
+        root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    else:
+        root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return root / "hawedit" / "credentials.env"
+
+
+ENV_FILE: Final = _user_config_file()
 
 _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 
@@ -167,7 +177,7 @@ def write_credential(
     name: str,
     value: str,
     env_file: Path = ENV_FILE,
-    check_ignored: bool = True,
+    check_ignored: bool | None = None,
 ) -> Path:
     """Store one credential in `.env`, leaving any others in place.
 
@@ -180,6 +190,11 @@ def write_credential(
     """
     if not value.strip():
         raise CredentialError(f"{name} is empty — that is not a credential, it is a typo")
+    # The default lives outside the checkout and cannot be committed. Any caller-selected
+    # path keeps the original fail-closed Git check unless it opts out explicitly (tests use
+    # that only for isolated temporary files).
+    if check_ignored is None:
+        check_ignored = env_file != ENV_FILE
     if check_ignored:
         assert_ignored_by_git(env_file)
 
@@ -277,15 +292,16 @@ class KeyCheck:
     models: tuple[str, ...] = ()
 
 
-Transport = Callable[[str], tuple[int, str]]
+Transport = Callable[[str, Mapping[str, str]], tuple[int, str]]
 
 
-def _https_get(url: str) -> tuple[int, str]:
+def _https_get(url: str, headers: Mapping[str, str] | None = None) -> tuple[int, str]:
     import urllib.error
     import urllib.request
 
+    request = urllib.request.Request(url, headers=dict(headers or {}))
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             return response.status, response.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", "replace")
@@ -299,12 +315,14 @@ def validate_gemini_key(key: str, transport: Transport = _https_get) -> KeyCheck
     A revoked key and a working key are the same string shape. The only check worth having is
     the one the service performs, and it is cheap: listing models bills nothing.
 
-    The key is placed in the query string because that is the API's own scheme; nothing here
-    echoes it, and the URL is never logged.
+    Authentication uses Google's API-key header so the credential cannot leak through URL
+    logging in clients, proxies, exception traces, or access logs.
     """
     import json
 
-    status, body = transport(f"https://generativelanguage.googleapis.com/v1beta/models?key={key}")
+    status, body = transport(
+        "https://generativelanguage.googleapis.com/v1beta/models", {"x-goog-api-key": key}
+    )
     if status == 0:
         return KeyCheck(False, f"could not reach the Gemini API: {body}")
     if status != 200:
@@ -363,13 +381,13 @@ def main(argv: list[str] | None = None) -> int:
     # instead. A status line that names the wrong mechanism is a small lie in the one panel whose
     # job is telling you where your secret is and how it is protected.
     protection = "chmod 0600" if os.name != "nt" else "ACL: owner only"
-    print(f"store: {ENV_FILE}  (git-ignored, {protection})\n")
+    print(f"store: {ENV_FILE}  (user config, {protection})\n")
 
     key, check = credential_status()
     if key is None:
         print(f"{GEMINI_API_KEY}: not set")
     else:
-        source = "environment" if os.environ.get(GEMINI_API_KEY) else ".env"
+        source = "environment" if os.environ.get(GEMINI_API_KEY) else "user config"
         print(f"{GEMINI_API_KEY}: {mask(key)}  (from {source})")
         if check is not None:
             print(f"  {'✓' if check.valid else '✗'} {check.detail}")

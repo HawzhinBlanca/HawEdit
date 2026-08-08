@@ -83,7 +83,7 @@ class Provisioning(Enum):
     missing in a way that stops a stage.
     """
 
-    PIP = "pip"  # arrives with a Python package (model bundled or none needed)
+    PIP = "pip"  # arrives with a package (model bundled, package-managed, or none needed)
     WEIGHTS = "weights"  # multi-GB checkpoint that must be downloaded
     CLOUD = "cloud"  # an API; nothing local but credentials
     SYSTEM = "system"  # a system binary or library
@@ -167,7 +167,7 @@ _ENTRIES: Final = (
     ModelEntry(
         model_id="omniASR_LLM_7B_v2",
         component="Canonical ASR",
-        provisioning=Provisioning.WEIGHTS,
+        provisioning=Provisioning.PIP,
         blueprint_model_cell="omniASR_LLM_7B_v2",
         licence=APACHE_2_0,
         role="canonical_asr",
@@ -179,7 +179,7 @@ _ENTRIES: Final = (
     ModelEntry(
         model_id="omniASR_CTC_3B_v2",
         component="ASR confidence + emissions",
-        provisioning=Provisioning.WEIGHTS,
+        provisioning=Provisioning.PIP,
         blueprint_model_cell="omniASR_CTC_3B_v2",
         licence=APACHE_2_0,
         role="asr_emissions",

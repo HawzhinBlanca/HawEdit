@@ -64,6 +64,7 @@ __all__ = [
     "EditorialJudge",
     "InputMode",
     "JudgeDecision",
+    "JudgeFrame",
     "JudgeRequest",
     "JudgeVerdict",
     "NotRoutable",
@@ -283,6 +284,16 @@ class JudgeVerdict:
     @staticmethod
     def from_dict(data: dict[str, Any]) -> JudgeVerdict:
         raw_sv6d = data.get("sv6d")
+        raw_hashtags = data["hashtags_ckb"]
+        if not isinstance(raw_hashtags, list) or not all(
+            isinstance(tag, str) for tag in raw_hashtags
+        ):
+            raise ValueError(
+                "hashtags_ckb must be a JSON array of strings; a scalar string would be "
+                "split into one hashtag per character"
+            )
+        if raw_sv6d is not None and not isinstance(raw_sv6d, dict):
+            raise ValueError("sv6d must be a JSON object or null")
         return JudgeVerdict(
             candidate_id=data["candidate_id"],
             hook_score=data["hook_score"],
@@ -294,11 +305,11 @@ class JudgeVerdict:
             narrative_role=data["narrative_role"],
             title_ckb=data["title_ckb"],
             description_ckb=data["description_ckb"],
-            hashtags_ckb=tuple(data["hashtags_ckb"]),
+            hashtags_ckb=tuple(raw_hashtags),
             judge=data["judge"],
             clip_in_ms=data["clip_in_ms"],
             clip_out_ms=data["clip_out_ms"],
-            sv6d=Sv6d(**raw_sv6d) if raw_sv6d else None,
+            sv6d=Sv6d(**raw_sv6d) if raw_sv6d is not None else None,
         )
 
 
@@ -358,6 +369,25 @@ class InputMode(Enum):
     STAGE_4_WITH_VIDEO = "stage_4_with_video"
 
 
+@dataclass(frozen=True, slots=True)
+class JudgeFrame:
+    """One source-timestamped image sent to the multimodal editorial judge."""
+
+    timestamp_ms: int
+    mime_type: str
+    data: bytes
+
+    def __post_init__(self) -> None:
+        if self.timestamp_ms < 0:
+            raise ValueError("judge keyframe timestamp must be non-negative")
+        if self.mime_type not in {"image/jpeg", "image/png"}:
+            raise ValueError(f"unsupported judge keyframe MIME type {self.mime_type!r}")
+        if not isinstance(self.data, bytes) or not self.data:
+            raise ValueError("judge keyframe data must be non-empty bytes")
+        if len(self.data) > 5 * 1024 * 1024:
+            raise ValueError("one judge keyframe exceeds the 5 MiB inline-data ceiling")
+
+
 def video_tokens(seconds: float, resolution: str = "default") -> int:
     """§3: "~300 tokens/sec at default media resolution, ~100 at low."."""
     if resolution not in VIDEO_TOKENS_PER_SECOND:
@@ -389,11 +419,31 @@ class JudgeRequest:
     # assert_within_tier.
     tokens: int | None = None
     carried_verbal_score: float | None = None
+    # Stage 4 is not a second text-only Path A pass. Path B's timestamped SV6D evidence is
+    # carried into the final judgment so a reaction/gesture/visual beat is not reduced to the
+    # transcript that could not see it. This is the evidence the local visual reader produced.
+    visual_context: tuple[str, ...] = ()
+    # Actual source pixels. Textual SV6D does not make a multimodal request by itself.
+    keyframes: tuple[JudgeFrame, ...] = ()
     # What the judge actually reads. Normalized Sorani (Kurdish invariant #3) — the judge is a
     # model input, so it reads transcript.norm.json and never the raw artifact.
     text_ckb: str = ""
     clip_in_ms: int = 0
     clip_out_ms: int = 0
+
+    def __post_init__(self) -> None:
+        if len(self.keyframes) > 20:
+            raise ValueError(f"Stage 4 accepts at most 20 keyframes, got {len(self.keyframes)}")
+        outside = [
+            frame.timestamp_ms
+            for frame in self.keyframes
+            if not self.clip_in_ms <= frame.timestamp_ms <= self.clip_out_ms
+        ]
+        if outside:
+            raise ValueError(
+                f"judge keyframes {outside!r} fall outside candidate "
+                f"{self.clip_in_ms}..{self.clip_out_ms}ms"
+            )
 
     def assert_within_tier(self) -> None:
         """Refuse a request that would leave the lower Pro price tier (§3 Stage 4).
@@ -425,6 +475,7 @@ class JudgeRequest:
         tokens: int | None = None,
         mode: InputMode = InputMode.STAGE_4_TRANSCRIPT_FIRST,
         text_ckb: str = "",
+        keyframes: tuple[JudgeFrame, ...] = (),
     ) -> JudgeRequest:
         """Build a Stage 4 request for a candidate that survived Stage 3's union.
 
@@ -449,6 +500,15 @@ class JudgeRequest:
             mode=mode,
             tokens=tokens,
             carried_verbal_score=candidate.verbal_score,
+            visual_context=(
+                tuple(
+                    f"{dimension}: {getattr(candidate.sv6d, dimension)}"
+                    for dimension in candidate.sv6d.DIMENSIONS
+                )
+                if candidate.sv6d is not None
+                else ()
+            ),
+            keyframes=keyframes,
             text_ckb=text_ckb,
             clip_in_ms=candidate.in_ms,
             clip_out_ms=candidate.out_ms,

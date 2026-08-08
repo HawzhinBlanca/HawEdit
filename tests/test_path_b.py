@@ -217,9 +217,11 @@ class FakeVideoChat:
     def __init__(self, mode: str = "ok") -> None:
         self.mode = mode
         self.seen: tuple[SceneWindow, ...] = ()
+        self.calls: list[tuple[SceneWindow, ...]] = []
 
     def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
         self.seen = tuple(windows)
+        self.calls.append(self.seen)
         if self.mode == "invent":
             # Internally consistent on purpose: its SV6D is anchored inside its own window, so
             # the reading constructs cleanly and the only thing wrong with it is that this
@@ -237,6 +239,19 @@ class FakeVideoChat:
                 )
                 for _ in range(2)
             )
+        if self.mode == "omit":
+            windows = windows[:-1]
+        if self.mode == "alter_window":
+            sent = windows[0]
+            altered = SceneWindow(
+                media_id=sent.media_id,
+                scene_index=sent.scene_index,
+                window_index=sent.window_index,
+                in_ms=sent.in_ms + 1_000,
+                out_ms=sent.out_ms,
+                fps=sent.fps,
+            )
+            return (SceneReading(window=altered, sv6d=_sv6d_for(altered), score=0.9),)
         readings = []
         for position, window in enumerate(windows):
             readings.append(
@@ -298,6 +313,18 @@ def test_the_same_window_read_twice_is_refused() -> None:
         discover_visual(_windows(3), FakeVideoChat("duplicate"), media_id="m1")
 
 
+def test_omitting_a_requested_window_is_refused() -> None:
+    """A partial response is not a successful visual pass: the missing scene loses recall."""
+    with pytest.raises(PathBError, match="omitted readings"):
+        discover_visual(_windows(3), FakeVideoChat("omit"), media_id="m1")
+
+
+def test_a_matching_id_cannot_hide_changed_window_data() -> None:
+    """The id excludes timestamps and fps, so matching it alone does not identify footage."""
+    with pytest.raises(PathBError, match="window data that differs"):
+        discover_visual(_windows(1), FakeVideoChat("alter_window"), media_id="m1")
+
+
 def test_a_window_from_another_media_is_refused_before_the_model_is_called() -> None:
     model = FakeVideoChat()
     with pytest.raises(PathBError, match="media"):
@@ -305,7 +332,7 @@ def test_a_window_from_another_media_is_refused_before_the_model_is_called() -> 
     assert model.seen == (), "the model was called with footage from the wrong episode"
 
 
-def test_the_frame_budget_is_enforced_before_the_call() -> None:
+def test_an_episode_over_the_frame_budget_is_split_into_bounded_calls() -> None:
     """§3: "Segmentation is mandatory: the authors report ~17.7 GB at 256 frames and ~26.7 GB
     at 512." Five scene windows of 64 frames is 320 — past the 256 the note is written about,
     and the failure is an out-of-memory kill on a 24 GB card rather than a wrong answer."""
@@ -322,9 +349,8 @@ def test_the_frame_budget_is_enforced_before_the_call() -> None:
     )
     assert sum(w.frame_count for w in windows) == 320
     model = FakeVideoChat()
-    with pytest.raises(PathBError, match=str(MAX_FRAMES_PER_CALL)):
-        discover_visual(windows, model, media_id="m1")
-    assert model.seen == ()
+    assert len(discover_visual(windows, model, media_id="m1")) == 5
+    assert [sum(w.frame_count for w in call) for call in model.calls] == [256, 64]
 
 
 def test_a_call_at_exactly_the_budget_is_allowed() -> None:
@@ -340,7 +366,9 @@ def test_a_call_at_exactly_the_budget_is_allowed() -> None:
         for i in range(4)
     )
     assert sum(w.frame_count for w in windows) == MAX_FRAMES_PER_CALL
-    assert len(discover_visual(windows, FakeVideoChat(), media_id="m1")) == 4
+    model = FakeVideoChat()
+    assert len(discover_visual(windows, model, media_id="m1")) == 4
+    assert len(model.calls) == 1
 
 
 def test_no_windows_at_all_is_an_empty_result_not_a_call() -> None:

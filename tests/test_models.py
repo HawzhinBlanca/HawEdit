@@ -50,9 +50,9 @@ def test_forced_alignment_is_our_own_code() -> None:
     assert REGISTRY["Custom Viterbi on CTC emissions"].provisioning is Provisioning.IN_HOUSE
 
 
-def test_the_asr_checkpoints_need_weights() -> None:
+def test_the_asr_model_cards_are_managed_by_the_official_runtime() -> None:
     for model_id in ("omniASR_LLM_7B_v2", "omniASR_CTC_3B_v2"):
-        assert REGISTRY[model_id].provisioning is Provisioning.WEIGHTS
+        assert REGISTRY[model_id].provisioning is Provisioning.PIP
 
 
 # --- paths ---------------------------------------------------------------------------------
@@ -73,24 +73,30 @@ def test_a_repo_id_stated_by_section_7_is_used_directly(tmp_path: Path) -> None:
 
 
 def test_a_checkpoint_name_without_a_repo_is_refused_not_invented(tmp_path: Path) -> None:
-    """§7 names omniASR_LLM_7B_v2 as a checkpoint. A guessed repo id 404s on the machine
+    """§7 names Qwen3-VL-Embedding-2B as a checkpoint. A guessed repo id 404s on the machine
     least able to debug it."""
     with pytest.raises(SourceNotConfigured, match="sources.json"):
-        store(tmp_path).source_for(REGISTRY["omniASR_LLM_7B_v2"])
+        store(tmp_path).source_for(REGISTRY["Qwen3-VL-Embedding-2B"])
 
 
 def test_a_configured_source_supplies_what_section_7_leaves_open(tmp_path: Path) -> None:
     (tmp_path / "sources.json").write_text(
-        json.dumps({"omniASR_LLM_7B_v2": "facebook/some-omniasr-repo"}), encoding="utf-8"
+        json.dumps({"Qwen3-VL-Embedding-2B": "Qwen/repo"}), encoding="utf-8"
     )
-    assert store(tmp_path).source_for(REGISTRY["omniASR_LLM_7B_v2"]) == "facebook/some-omniasr-repo"
+    assert store(tmp_path).source_for(REGISTRY["Qwen3-VL-Embedding-2B"]) == "Qwen/repo"
+
+
+def test_the_installed_source_manifest_location_is_stable() -> None:
+    from hawedit.models import INSTALLED_SOURCES
+
+    assert INSTALLED_SOURCES.parts[-4:] == ("share", "hawedit", "models", "sources.json")
 
 
 def test_unconfigured_sources_are_listed_so_an_operator_knows_what_to_supply(
     tmp_path: Path,
 ) -> None:
     unconfigured = {e.model_id for e in store(tmp_path).unconfigured_sources()}
-    assert "omniASR_LLM_7B_v2" in unconfigured
+    assert "Qwen3-VL-Embedding-2B" in unconfigured
     assert "pyannote/speaker-diarization-community-1" not in unconfigured
 
 
@@ -101,7 +107,10 @@ def test_every_registry_entry_appears_in_the_status_report(tmp_path: Path) -> No
     assert len(store(tmp_path).status()) == len(REGISTRY)
 
 
-def test_an_absent_checkpoint_reports_as_missing(tmp_path: Path) -> None:
+def test_an_absent_checkpoint_reports_as_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("hawedit.models._is_importable", lambda module: module != "omnilingual_asr")
     statuses = {s.model_id: s for s in store(tmp_path).status()}
     assert statuses["omniASR_LLM_7B_v2"].available is False
 
@@ -134,7 +143,7 @@ def test_pip_provisioned_components_report_from_the_environment(tmp_path: Path) 
 
 def test_missing_weights_lists_only_downloadable_components(tmp_path: Path) -> None:
     missing = {e.model_id for e in store(tmp_path).missing_weights()}
-    assert "omniASR_LLM_7B_v2" in missing
+    assert "Qwen3-VL-Embedding-2B" in missing
     assert "KLPT" not in missing, "pip components are not downloads"
     assert "gemini-2.5-pro" not in missing, "a cloud API is not a download"
 
@@ -144,7 +153,16 @@ def test_missing_weights_lists_only_downloadable_components(tmp_path: Path) -> N
 
 def test_a_stage_refuses_to_start_without_its_weights(tmp_path: Path) -> None:
     with pytest.raises(ModelNotProvisioned, match="fetch-models"):
+        store(tmp_path).assert_available("Qwen3-VL-Embedding-2B")
+
+
+def test_missing_omniasr_is_not_misreported_as_a_fetch_models_problem(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("hawedit.models._is_importable", lambda _module: False)
+    with pytest.raises(ModelNotProvisioned) as raised:
         store(tmp_path).assert_available("omniASR_LLM_7B_v2")
+    assert "fetch-models" not in str(raised.value)
 
 
 def test_a_model_outside_section_7_cannot_be_provisioned(tmp_path: Path) -> None:

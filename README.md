@@ -4,10 +4,14 @@ Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1
 
 ## What this is today
 
-**One thing stands between this and a runnable product: §3 Stage 1.** The ASR models need
-weights and a GPU this machine cannot reach, so nothing here can turn audio into a transcript
-yet. Give it a transcript and a Gemini key, and the rest of §3 runs — discovery, judging,
-boundary fusion and a rendered vertical clip with burned-in Kurdish captions.
+**This is a fully composed, rigorously tested pipeline, not a production-proven product.** The
+runner wires canonical OmniASR, Qwen retrieval/reranking, survivor-only VideoChat3, multimodal
+Gemini judging, TimeLens grounding, automatic sentence selection and face-aware reframing. A
+production claim still needs external weights, an authorized cloud route and real
+human-labelled Sorani/editorial sets; this repository does not fabricate those results.
+Stage 1 is runnable through `--omni-asr`; on Windows the runner automatically uses the WSL2
+bridge because Meta's fairseq2 native extension has no Windows wheel. Its model execution is
+not a measured Sorani benchmark until the package-managed weights and labels are present.
 
 ```bash
 .venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work
@@ -19,18 +23,28 @@ run with the blocker named. Nothing is skipped quietly.
 ```bash
 .venv/bin/python -m hawedit.credentials                    # store a Gemini key, once
 .venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work \
-  --transcript t.json --sentences 0,1 --qc-pass
+  --transcript t.json --gemini --sentences 0,1 --qc-pass
 ```
+
+The autonomous local/cloud route is explicit:
+
+```bash
+.venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work \
+  --omni-asr --visual --gemini --auto-select --timelens --face-reframe --qc-pass
+```
+
+For confidential material, replace `--gemini` with `--vertex-project PROJECT`, configure ADC,
+and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 
 | §3 Stage | State | What is missing |
 |---|---|---|
 | 0 · Ingest | **runs** | Diarization — Community-1 is a gated repo (`BLOCKED.md` #4). |
-| 1 · Speech | contracts only | The ASR models themselves (`BLOCKED.md` #2). Alignment and segmentation are done and tested. |
-| 2 · Index | text only | The visual index (Qwen3-VL embeddings) needs weights and a GPU. |
-| 3 · Discovery | **Path A built, needs a key** | Path B — `VideoChat3-4B` weights and a GPU (`BLOCKED.md` #2). The union runs one-sided, which §3 says is correct rather than degraded. |
-| 4 · Editorial judge | **built, needs a key** | Nothing — run `python -m hawedit.credentials`. The §3 ZDR answer is still required for confidential material. |
-| 5 · Boundary fusion | **runs** | TimeLens2 refinement (M6). |
-| 6 · Render | **runs** | Speaker-tracked reframing — the crop is static centre (`BLOCKED.md` #4). NVENC needs hawapc01. |
+| 1 · Speech | **wired** | `--omni-asr` runs official OmniASR inference plus CTC-Viterbi timing. Real weights and labelled Sorani validation remain external. |
+| 2 · Index | **wired** | `--visual` extracts each scene once, embeds all windows, retrieves top 50, reranks all hits and retains 5–10 (or all scenes on shorter media). |
+| 3 · Discovery | **wired** | Path A and composed Path B union without promoting non-survivor scenes; `--auto-select` anchors complete contiguous sentences. |
+| 4 · Editorial judge | **wired** | Requests carry actual source JPEG bytes. Developer API handles non-confidential work; Vertex uses ADC bearer auth and an attributed ZDR gate. Credentials/billing remain external. |
+| 5 · Boundary fusion | **wired** | `--timelens` runs TimeLens2 per overlapping scene window and fuses only relevant media-clock intervals. |
+| 6 · Render | **wired** | `--face-reframe` tracks a dominant continuous face and drives a time-varying vertical crop. It is face-aware, not active-speaker diarization. |
 
 "Runs" means: on real media, in a test, in the gate. Nothing here is marked done because it
 compiles. `PROGRESS.md` carries the per-task evidence and `BLOCKED.md` carries what needs Hawa.
@@ -61,6 +75,20 @@ ready, and the last thing it prints is the interpreter path for *this* machine.
 > only the commands quoted in this file are written one way. An ffmpeg on `PATH` with libass,
 > HarfBuzz and FriBidi is accepted as-is — `winget install Gyan.FFmpeg` (the *full* build)
 > supplies one, and `fetch-ffmpeg.sh` verifies it rather than downloading a Linux binary over it.
+
+Canonical OmniASR needs a one-time WSL2 runtime setup on Windows (the official native loader is
+Linux/macOS only):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup-wsl-asr.ps1
+```
+
+That creates a source-fingerprinted runtime below `%LOCALAPPDATA%\HawEdit\wsl-asr`, using Python
+3.12, and probes both CUDA GPUs. The host runner still owns Stage 0, cuts every VAD-bounded WAV
+locally, invokes one WSL worker so both models load once, then validates the returned immutable
+transcript. An installed wheel exposes the same operation as `hawedit-asr-setup`. Override the
+distribution with `-Distribution Ubuntu`; advanced deployments can set
+`HAWEDIT_WSL_RUNTIME`, `HAWEDIT_WSL_PYTHON` and `HAWEDIT_WSL_SOURCE` explicitly.
 
 The media extra is not optional here even though `pyproject.toml` marks it optional: without
 it the Stage 0 tests *skip*, and a skipped test is the quiet green this project is written
@@ -100,18 +128,19 @@ The fetcher is driven by the §7 registry, so it cannot download a model the blu
 excludes and refuses a NonCommercial licence before any bytes move. Needs
 `huggingface.co` reachable, `HF_TOKEN` for the gated Community-1 repo, and ~50 GB free.
 
-Four checkpoints — `omniASR_LLM_7B_v2`, `omniASR_CTC_3B_v2`, `Qwen3-VL-Embedding-2B`,
-`Qwen3-VL-Reranker-2B` — are named in §7 as *checkpoints*, not repository ids, and the script
-refuses to guess. All four are now resolved in `models/sources.json`, which is **tracked** — it
-is configuration, not weights, and re-deriving it per machine is the guessing D-022 forbids. The
-two Qwen rows are verified name matches; the two omniASR rows are a recorded decision, because
-§7's `_v2` suffix appears on no published Meta checkpoint (`BLOCKED.md` #10, D-046).
+The two Qwen checkpoint names are resolved in tracked `models/sources.json`; the fetcher never
+guesses a repository id. OmniASR is deliberately absent from that file: the pinned official
+`omnilingual-asr` package ships the exact `_v2` model cards and owns their Meta asset URLs and
+cache. Downloading similarly named Hub repositories into `models/` would provision weights the
+runtime never reads.
 
 Weights themselves never enter the repository: `models/*` and `.ffmpeg/` are git-ignored.
 
-**The two omniASR checkpoints cannot be loaded on Windows** — they are raw fairseq2 `.pt` files
-and `fairseq2n` publishes no Windows wheel, so §3 Stage 1 needs WSL2, a container, or a Linux
-host. That is `BLOCKED.md` #11, and it is the one thing between this and a runnable product.
+On Linux, install `.[asr]` for the official OmniASR runtime. On Windows, run
+`scripts/setup-wsl-asr.ps1`; the `asr` dependency is intentionally platform-marked away from the
+host venv because `fairseq2n` cannot install there. Model loading is lazy, so a missing package
+or checkpoint is reported without making basic ingest unusable. This checkout has not run the
+full canonical pair on a real labelled Sorani set; wiring is not accuracy evidence.
 
 ## GPU (§3 Stages 2, 3 Path B, 5)
 
@@ -142,7 +171,9 @@ records two traps that decide how Stage 2 must be written (D-048).
 
 Input is hidden and never echoed. The key is verified against Google before anything is
 written — a revoked key looks exactly like a working one, so a regex would not help. It lands
-in `.env` at 0600, and the panel refuses to write anywhere git does not ignore.
+in an owner-only user config file (`%APPDATA%/hawedit/credentials.env` on Windows,
+`$XDG_CONFIG_HOME/hawedit/credentials.env` on Linux). Explicit alternate paths are still
+refused unless Git ignores them.
 
 Get a key at <https://aistudio.google.com/apikey>. There is deliberately no `--key` flag:
 command-line arguments are visible in `ps` to everyone on the machine.
@@ -161,8 +192,32 @@ real response, and that the model actually answers in Kurdish.
 
 **Before the first client job**, §3 Stage 3 requires a decision, not a setting: full-transcript
 discovery sends 100% of every transcript to Google, and for COMMS and KAAE material paid-tier
-Vertex with zero-data-retention is *mandatory, not advisory*. `gemini.Governance` refuses to
-upload material marked confidential until that is configured and attributed.
+Vertex with zero-data-retention is *mandatory, not advisory*. `--vertex-project` routes Path A
+and Stage 4 through Vertex REST with ADC bearer credentials. Confidential uploads are still
+refused unless ZDR is explicitly confirmed and attributed; code cannot verify a customer's
+contractual retention configuration by itself.
+
+Stage 4 samples up to 20 JPEG keyframes from the exact candidate span and sends those same image
+parts to `countTokens` and `generateContent`. Textual SV6D remains supporting evidence; it no
+longer masquerades as source pixels.
+
+## Benchmarks
+
+`bench.py` remains the §8.1 ASR harness: normalized/spacing-free CER, named entities,
+code-switching, alignment, RTF, VRAM and per-dialect coverage. `hawedit-editorial-bench`
+validates and scores a blind human regression manifest, requiring at least 20 items, at least
+five per dialect, two named reviewers per item, exact candidate/span equality and source media
+on disk.
+
+```bash
+hawedit-asr-bench sorani-corpus.json --audio-root /secure/audio \
+  --host hawapc01 --accelerator "RTX 3090 Ti" --output asr-report.json
+hawedit-editorial-bench editorial.json --media-root /secure/media --output report.json
+```
+
+No production benchmark number ships in this repository. The required client/archive Sorani
+audio and 200–500 human-reviewed editorial candidates have not been supplied, so claiming a CER,
+hook-quality win or cultural-fit score would be fabricated evidence.
 
 ## The gate
 
@@ -201,8 +256,11 @@ run. Making that job a required status check is a repository setting, and is not
 | `alignment.py` | §4.2, §8.1 | Alignment accuracy. Kurdish invariant #5. |
 | `metrics.py` | §8.1 | Normalized CER, spacing-free CER, named-entity error, code-switch error. |
 | `corpus.py` | §8.1, §4.4 | The labelled set and its coverage grid — 3 dialects × 7 conditions. |
-| `asr.py` | §8.1, §3 Stage 1 | Adapter boundary, RTF, VRAM, long-audio failure rate. Hardware is required. |
+| `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, RTF, VRAM and failure rate. Hardware is required. |
+| `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
+| `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
+| `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
 | `diarization.py` | §8.1, §3 Stage 0 | DER and boundary reconciliation against word alignment. |
 | `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
@@ -217,14 +275,17 @@ run. Making that job a required status check is a repository setting, and is not
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
 | `path_a.py` | §3 Stage 3 Path A | The Kurdish judge over the **whole** transcript. Refuses to send a subset, and refuses to split one. |
-| `path_b.py` | §3 Stage 3 Path B | `VideoChat3-4B` over scenes. Frame budget refused before the call; every SV6D label must cite a time **inside the scene it describes**. |
+| `path_b.py` | §3 Stage 3 Path B | `VideoChat3-4B` over scenes. Inputs are packed into ≤256-frame calls; every SV6D label must cite a time **inside the scene it describes**. |
 | `video_reader.py` | §3 Stage 3 Path B | `MCG-NJU/VideoChat3-4B` and the SV6D prompt. The model is shown one scene starting at zero, so every time it cites is moved onto the media's clock here — the invariant alone accepts an unshifted one whenever it happens to land in range. |
 | `video_grounding.py` | §3 Stage 5 | `MCG-NJU/TimeLens2-4B` grounding a query in one scene. It answers in seconds from the window's start; `VisualEvidenceInterval.from_window` moves that onto the media's clock, because an unshifted span can overlap the anchored sentence and extend the clip on footage from elsewhere. |
+| `visual_pipeline.py` | §3 Stages 2–3B | Extract once → Qwen embed → top-50 retrieve → rerank every hit → bounded survivors → VideoChat3 only on those survivors, with exact ID/score provenance. |
+| `keyframes.py` | §3 Stage 4 | Real source-timestamped JPEG extraction for the multimodal judge, capped at 20. |
+| `reframe.py` | §3 Stage 6 | Dominant-face continuity tracking that drives the render crop over time. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
-| `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, §3's ZDR gate. |
+| `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, and fail-closed confidential routing. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) and the CMX 3600 EDL (source timeline). Refuses NTSC rather than writing timecode that drifts. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |

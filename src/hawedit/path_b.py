@@ -18,9 +18,9 @@ B is the mirror: it reads *scenes*, one reading each, and its refusals are about
 visual reader silently produces something that looks right.
 
 **The frame budget is a refusal, not a hope.** §3 calls segmentation mandatory and gives the
-numbers it is mandatory because of. Handing 320 frames to a 24 GB card is not a wrong answer,
-it is an out-of-memory kill part-way through a batch — so the budget is checked before the
-model is called, not after it dies.
+numbers it is mandatory because of. The budget governs each model call, not the duration of an
+episode: windows are packed deterministically into calls of at most 256 frames. Treating the
+episode total as one call made every sufficiently long source impossible despite segmentation.
 
 **A timestamp is not evidence unless it points at the scene.** `Sv6d` has always required each
 label to cite a time, and could only require that, since the type does not know which scene it
@@ -32,7 +32,8 @@ What this module does *not* do is rank against Path A, dedupe across paths, or w
 `discovery.py` owns the union and §3 Stage 5 owns boundaries; a candidate here spans exactly
 the window it was read from.
 
-The model is `BLOCKED.md` #2 (GPU) and #6 (weights). This is the type it will return.
+The real model adapter is ``video_reader.py``; ``visual_pipeline.py`` ensures this contract is
+invoked only for Qwen-reranked survivors.
 """
 
 from __future__ import annotations
@@ -105,7 +106,7 @@ class SceneReading:
 
 
 class VideoUnderstanding(Protocol):
-    """`VideoChat3-4B`'s interface (`BLOCKED.md` #2, #6)."""
+    """`VideoChat3-4B`'s local scene-reading interface."""
 
     def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]: ...
 
@@ -118,8 +119,8 @@ def discover_visual(
     """§3 Stage 3 Path B: read these scenes, return candidates ordered by the model's score.
 
     Raises:
-        PathBError: a window belongs to other media, the call would exceed the frame budget,
-            or the model returned a scene it was not given / returned one twice.
+        PathBError: a window belongs to other media, or the model did not return exactly one
+            reading for every window in each frame-budgeted call.
     """
     if not windows:
         # Nothing to read is not an error and is not a call. §3's union proceeds with whatever
@@ -132,34 +133,54 @@ def discover_visual(
             f"windows from media {foreign!r} were passed while discovering {media_id!r}"
         )
 
-    frames = sum(w.frame_count for w in windows)
-    if frames > MAX_FRAMES_PER_CALL:
-        raise PathBError(
-            f"{len(windows)} windows are {frames} frames, past the {MAX_FRAMES_PER_CALL}-frame "
-            f"budget for one call. §3: 'Segmentation is mandatory: the authors report ~17.7 GB "
-            f"at 256 frames and ~26.7 GB at 512.' Past the budget this does not answer badly, "
-            f"it is killed mid-batch — so the call is refused before it is made."
-        )
+    batches: list[tuple[SceneWindow, ...]] = []
+    current: list[SceneWindow] = []
+    current_frames = 0
+    for window in windows:
+        if current and current_frames + window.frame_count > MAX_FRAMES_PER_CALL:
+            batches.append(tuple(current))
+            current = []
+            current_frames = 0
+        current.append(window)
+        current_frames += window.frame_count
+    if current:
+        batches.append(tuple(current))
 
-    sent = {w.window_id: w for w in windows}
-    readings = model.read_scenes(tuple(windows))
+    all_readings: list[SceneReading] = []
+    for batch in batches:
+        sent = {w.window_id: w for w in batch}
+        readings = model.read_scenes(batch)
+        seen: set[str] = set()
+        for reading in readings:
+            window_id = reading.window.window_id
+            if window_id not in sent:
+                raise PathBError(
+                    f"the model returned a reading for {window_id}, which is not among the "
+                    f"{len(batch)} windows in its frame-budgeted call. A scene that was never "
+                    f"shown to it has no footage behind whatever the reading claims."
+                )
+            if reading.window != sent[window_id]:
+                raise PathBError(
+                    f"the model returned {window_id} with window data that differs from the "
+                    f"window it was given. A matching id does not prove it read the requested "
+                    f"footage: expected {sent[window_id]!r}, got {reading.window!r}."
+                )
+            if window_id in seen:
+                raise PathBError(
+                    f"the model returned {window_id} twice. §3 Stage 2 is one embedding per "
+                    f"scene and this is one reading per scene; two would give the same footage "
+                    f"two chances to survive into Stage 4."
+                )
+            seen.add(window_id)
 
-    seen: set[str] = set()
-    for reading in readings:
-        window_id = reading.window.window_id
-        if window_id not in sent:
+        missing = sorted(sent.keys() - seen)
+        if missing:
             raise PathBError(
-                f"the model returned a reading for {window_id}, which is not among the "
-                f"{len(windows)} windows it was given. A scene that was never shown to it has "
-                f"no footage behind whatever the reading claims."
+                f"the model omitted readings for {missing!r}. Path B requires exactly one "
+                f"reading for every one of the {len(batch)} windows in a call; silently "
+                f"dropping scenes destroys visual recall."
             )
-        if window_id in seen:
-            raise PathBError(
-                f"the model returned {window_id} twice. §3 Stage 2 is one embedding per scene "
-                f"and this is one reading per scene; two would give the same footage two "
-                f"chances to survive into Stage 4."
-            )
-        seen.add(window_id)
+        all_readings.extend(readings)
 
-    ordered = sorted(readings, key=lambda r: (-r.score, r.window.in_ms, r.window.window_id))
+    ordered = sorted(all_readings, key=lambda r: (-r.score, r.window.in_ms, r.window.window_id))
     return tuple(reading.to_candidate(rank) for rank, reading in enumerate(ordered, start=1))

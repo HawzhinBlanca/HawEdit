@@ -162,6 +162,16 @@ def test_a_human_reviewed_clip_is_renderable_even_without_auto_pass() -> None:
     clip.assert_renderable()
 
 
+def test_direct_qc_construction_refuses_truthy_string_booleans() -> None:
+    with pytest.raises(ValueError, match="boolean"):
+        Qc(auto_pass="false", flags=(), human_reviewed=False)  # type: ignore[arg-type]
+
+
+def test_persisted_qc_refuses_scalar_flags() -> None:
+    with pytest.raises(ValueError, match="JSON array"):
+        Qc.from_dict({"auto_pass": False, "flags": "reviewed", "human_reviewed": True})
+
+
 # --- editorial ---------------------------------------------------------------------------
 
 

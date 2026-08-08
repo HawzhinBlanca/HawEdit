@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -35,10 +37,13 @@ CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
 
 
 def a_raw(text: str = "ئه‌مه‌ زۆر باشه‌") -> RawTranscript:
+    surface = "ئه‌مه‌"
     return RawTranscript(
         media_id="media-001",
         text_ckb=text,
-        words=(Word(w="ئه‌مه‌", start_ms=84600, end_ms=84920, conf=0.97),),
+        words=(Word(w=surface, start_ms=84600, end_ms=84920, conf=0.97),)
+        if surface in text
+        else (),
         asr=CANONICAL,
     )
 
@@ -64,6 +69,46 @@ def test_rewriting_raw_with_identical_content_is_still_refused(tmp_path: Path) -
         store.write_raw(a_raw())
 
 
+def test_refused_rewrite_does_not_replace_the_existing_digest(tmp_path: Path) -> None:
+    """The immutable raw and its tamper-evidence sidecar are one write-once artifact."""
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw())
+    sidecar = tmp_path / "media-001.transcript.raw.sha256"
+    recorded = sidecar.read_bytes()
+
+    with pytest.raises(RawTranscriptImmutable):
+        store.write_raw(a_raw("different ASR output"))
+
+    assert sidecar.read_bytes() == recorded
+    assert store.read_raw("media-001") == a_raw()
+    store.verify_raw_integrity("media-001")
+
+
+def test_competing_writers_publish_one_matching_raw_and_digest(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    contenders = (
+        RawTranscript(media_id="race", text_ckb="first", words=(), asr=CANONICAL),
+        RawTranscript(media_id="race", text_ckb="second", words=(), asr=CANONICAL),
+    )
+    barrier = Barrier(len(contenders))
+
+    def attempt(raw: RawTranscript) -> str | None:
+        barrier.wait()
+        try:
+            store.write_raw(raw)
+        except RawTranscriptImmutable:
+            return None
+        return raw.text_ckb
+
+    with ThreadPoolExecutor(max_workers=len(contenders)) as pool:
+        results = tuple(pool.map(attempt, contenders))
+
+    winners = tuple(result for result in results if result is not None)
+    assert len(winners) == 1
+    assert store.read_raw("race").text_ckb == winners[0]
+    store.verify_raw_integrity("race")
+
+
 def test_raw_file_is_marked_read_only(tmp_path: Path) -> None:
     """Defence in depth, not a guarantee: root ignores the mode bits (see the module docs)."""
     store = TranscriptStore(tmp_path)
@@ -84,6 +129,105 @@ def test_tampering_with_raw_on_disk_is_detected(tmp_path: Path) -> None:
 
     with pytest.raises(RawTranscriptTampered):
         store.verify_raw_integrity("media-001")
+
+
+def test_byte_only_tampering_with_raw_is_detected(tmp_path: Path) -> None:
+    """Equivalent parsed JSON is still a mutation of the canonical file's exact bytes."""
+    store = TranscriptStore(tmp_path)
+    path = store.write_raw(a_raw())
+    path.chmod(0o644)
+    path.write_bytes(path.read_bytes() + b"\n")
+
+    # Parsing and canonical re-serialization would erase this edit and miss the mutation.
+    assert store.read_raw("media-001") == a_raw()
+    with pytest.raises(RawTranscriptTampered):
+        store.verify_raw_integrity("media-001")
+
+
+@pytest.mark.parametrize(
+    ("w", "start_ms", "end_ms", "conf", "message"),
+    [
+        ("", 0, 1, 0.5, "surface form"),
+        ("   ", 0, 1, 0.5, "surface form"),
+        ("word", -1, 1, 0.5, "non-negative"),
+        ("word", 1, 1, 0.5, "after start"),
+        ("word", 2, 1, 0.5, "after start"),
+        ("word", 0, 1, -0.01, "probability"),
+        ("word", 0, 1, 1.01, "probability"),
+        ("word", 0, 1, float("nan"), "probability"),
+    ],
+)
+def test_invalid_word_data_is_refused(
+    w: str, start_ms: int, end_ms: int, conf: float, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        Word(w=w, start_ms=start_ms, end_ms=end_ms, conf=conf)
+
+
+def test_non_integer_word_timing_is_refused() -> None:
+    with pytest.raises(ValueError, match="integer milliseconds"):
+        Word(w="word", start_ms=0.5, end_ms=1, conf=0.5)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        (
+            Word(w="first", start_ms=100, end_ms=300, conf=0.9),
+            Word(w="second", start_ms=250, end_ms=400, conf=0.9),
+        ),
+        (
+            Word(w="first", start_ms=500, end_ms=600, conf=0.9),
+            Word(w="second", start_ms=100, end_ms=200, conf=0.9),
+        ),
+    ],
+)
+def test_raw_transcript_refuses_overlapping_or_out_of_order_words(
+    words: tuple[Word, ...],
+) -> None:
+    with pytest.raises(ValueError, match="chronological and non-overlapping"):
+        RawTranscript(
+            media_id="invalid-order",
+            text_ckb="first second",
+            words=words,
+            asr=CANONICAL,
+        )
+
+
+def test_raw_transcript_refuses_a_word_absent_from_the_asr_text() -> None:
+    with pytest.raises(ValueError, match="does not appear"):
+        RawTranscript(
+            media_id="mismatch",
+            text_ckb="the ASR emitted this",
+            words=(Word(w="invented", start_ms=0, end_ms=100, conf=0.9),),
+            asr=CANONICAL,
+        )
+
+
+def test_raw_transcript_allows_partial_but_ordered_alignment() -> None:
+    raw = RawTranscript(
+        media_id="partial",
+        text_ckb="one unaligned two trailing",
+        words=(
+            Word(w="one", start_ms=0, end_ms=100, conf=0.9),
+            Word(w="two", start_ms=200, end_ms=300, conf=0.8),
+        ),
+        asr=CANONICAL,
+    )
+    assert tuple(word.w for word in raw.words) == ("one", "two")
+
+
+def test_raw_transcript_allows_ctc_and_asr_punctuation_to_differ() -> None:
+    raw = RawTranscript(
+        media_id="punctuation",
+        text_ckb="first second continues",
+        words=(
+            Word(w="first", start_ms=0, end_ms=100, conf=0.9),
+            Word(w="second.", start_ms=100, end_ms=200, conf=0.8),
+        ),
+        asr=CANONICAL,
+    )
+    assert raw.words[-1].w == "second."
 
 
 def test_raw_transcript_is_immutable_in_memory(tmp_path: Path) -> None:

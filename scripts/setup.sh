@@ -100,5 +100,5 @@ the pipeline need credentials and hardware (see BLOCKED.md). Supply a transcript
 in their place to go all the way to a rendered clip:
 
   ${VENV_PY} -m hawedit.pipeline VIDEO.mp4 --work-dir work \\
-    --transcript t.json --sentences 0,1 --qc-pass
+    --transcript t.json --verdict verdict.json --sentences 0,1 --qc-pass
 DONE

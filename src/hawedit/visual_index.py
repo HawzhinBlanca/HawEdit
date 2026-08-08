@@ -490,6 +490,21 @@ def rerank_and_keep(
         raise VisualIndexError(
             f"keep={keep} is outside §3 Stage 2's survivor range of {KEEP_MIN}–{KEEP_MAX}"
         )
+    # Below the survivor floor the retrieval refuses instead of shortening — D-037 clause 4,
+    # which considered "return whatever exists" and rejected it: §8.2 counts Recall@K on this
+    # list, and three results in a column that says five is a number that does not mean what the
+    # column says. Checked before the reranker runs, so a media too small for §3's slice costs no
+    # GPU time. Restored 2026-08-08 (D-066) after it was reverted to `min(keep, len(reranked))`
+    # to accommodate the three-scene fixture; a real episode is ~75 windows at 2 fps, so the
+    # short-index case is the test material, not the product.
+    if len(index) < keep:
+        raise VisualIndexError(
+            f"the index holds {len(index)} windows and {keep} survivors were asked for. §3 "
+            f"Stage 2 fixes the count at {KEEP_MIN}–{KEEP_MAX}; returning fewer would put a "
+            f"number in §8.2's Recall@K column that does not mean what the column says. This "
+            f"media is too short for Stage 2's survivor slice — the caller decides whether to "
+            f"skip the slice, and says so, rather than this function shortening it quietly."
+        )
     hits = index.retrieve(query_vector, k=k)
     if not hits:
         return ()
@@ -524,8 +539,6 @@ def rerank_and_keep(
 
     # Ranks are renumbered densely over the survivors so that Recall@K counts positions in
     # what actually ships, not positions in a list that was cut afterwards.
-    survivor_count = min(keep, len(reranked))
     return tuple(
-        replace(hit, rank=position)
-        for position, hit in enumerate(reranked[:survivor_count], start=1)
+        replace(hit, rank=position) for position, hit in enumerate(reranked[:keep], start=1)
     )

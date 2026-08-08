@@ -5,17 +5,20 @@ registry, so nothing can be provisioned that the blueprint does not permit and n
 blueprint requires can be quietly forgotten.
 
 **Provisioning is not uniform, and pretending it is causes the confusion.** Of §7's fifteen
-components, three arrive with a pip package (Silero VAD ships its ONNX model inside the
-wheel), one is our own code, two are cloud APIs needing credentials rather than disk, one is
-a system library, and **eight are multi-gigabyte checkpoints**. Only that last group can be
-"missing" in a way that stops a stage.
+components, five arrive with a pip package or package-managed model card (Silero VAD ships its
+ONNX model inside the wheel), one is our own code, two are cloud APIs needing credentials, one is
+a system library, and **six are explicitly provisioned multi-gigabyte checkpoints**. Only that
+last group is downloaded by `fetch-models.sh`.
 
 **Source ids are configured, never guessed.** §7 names four models in unambiguous
-`org/name` form and those are used directly. The other four — `omniASR_LLM_7B_v2`,
-`omniASR_CTC_3B_v2`, `Qwen3-VL-Embedding-2B`, `Qwen3-VL-Reranker-2B` — are *checkpoint
-names*, not repository ids. Inventing a plausible-looking repo for them would be the kind of
+`org/name` form and those are used directly. The two Qwen models are *checkpoint names*, not
+repository ids. Inventing a plausible-looking repo for them would be the kind of
 fabrication that fails at 3am on hawapc01 with a 404 nobody can explain, so they require an
 explicit entry in `models/sources.json`. See D-022.
+
+The two canonical OmniASR aliases are different: they are model cards shipped by the pinned
+`omnilingual-asr` package, which owns their official asset URLs and cache. Fetching similarly
+named Hugging Face repositories into `models/` would create weights the runtime never reads.
 
 **Capacity is worth checking before the download, not during.** §6 gives hawapc01 2×24 GiB
 of VRAM and the §7 checkpoints total roughly 50 GiB on disk; a machine that cannot hold them
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +48,23 @@ __all__ = [
     "readiness_report",
 ]
 
-DEFAULT_MODELS_ROOT: Final = Path(__file__).resolve().parents[2] / "models"
+
+def _default_models_root() -> Path:
+    configured = os.environ.get("HAWEDIT_MODELS_DIR")
+    if configured:
+        return Path(configured)
+    checkout = Path(__file__).resolve().parents[2] / "models"
+    if (checkout / "sources.json").exists():
+        return checkout
+    if os.name == "nt":
+        cache = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return cache / "hawedit" / "models"
+
+
+DEFAULT_MODELS_ROOT: Final = _default_models_root()
+INSTALLED_SOURCES: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "sources.json"
 
 # Which pip package supplies each PIP-provisioned component. Kept here rather than in the
 # registry because it describes this implementation's packaging, not §7's content.
@@ -52,6 +72,8 @@ _PIP_MODULES: Final[Mapping[str, str]] = {
     "PySceneDetect": "scenedetect",
     "Silero VAD": "silero_vad",
     "KLPT": "klpt",
+    "omniASR_LLM_7B_v2": "omnilingual_asr",
+    "omniASR_CTC_3B_v2": "omnilingual_asr",
 }
 
 
@@ -121,8 +143,9 @@ def _directory_size(path: Path) -> int:
 class ModelStore:
     """The on-disk home of §7's downloadable checkpoints."""
 
-    def __init__(self, root: Path = DEFAULT_MODELS_ROOT) -> None:
-        self.root = root
+    def __init__(self, root: Path | None = None) -> None:
+        self.root = root if root is not None else DEFAULT_MODELS_ROOT
+        self._use_installed_sources = root is None
 
     def path_for(self, entry: ModelEntry) -> Path:
         """Where `entry`'s weights live. `/` in a model id becomes `__` in the directory."""
@@ -136,6 +159,8 @@ class ModelStore:
         """
         configured: dict[str, str] = {}
         source_file = self.root / "sources.json"
+        if not source_file.exists() and self._use_installed_sources and INSTALLED_SOURCES.exists():
+            source_file = INSTALLED_SOURCES
         if source_file.exists():
             # JSON has no comments and this file needs one — it is the file most likely to be
             # "helpfully" completed by guessing the two entries that are deliberately absent.
@@ -176,13 +201,19 @@ class ModelStore:
         if entry.provisioning is Provisioning.PIP:
             module = _PIP_MODULES.get(entry.model_id)
             available = module is not None and _is_importable(module)
+            package_managed = entry.model_id.startswith("omniASR_")
             return ModelStatus(
                 model_id=entry.model_id,
                 component=entry.component,
                 provisioning=entry.provisioning,
                 available=available,
                 detail=(
-                    f"pip package {module!r} importable"
+                    (
+                        f"pip package {module!r} importable; official model-card asset is "
+                        "downloaded/cached on first load"
+                        if package_managed
+                        else f"pip package {module!r} importable"
+                    )
                     if available
                     else f"pip package {module!r} not installed"
                 ),
@@ -258,10 +289,18 @@ class ModelStore:
         if status is None:
             raise ModelNotProvisioned(f"{model_id!r} is not in §7")
         if not status.available:
+            if status.provisioning is Provisioning.WEIGHTS:
+                remedy = "Run scripts/fetch-models.sh."
+            elif status.provisioning is Provisioning.SYSTEM:
+                remedy = "Run scripts/fetch-ffmpeg.sh."
+            elif status.provisioning is Provisioning.CLOUD:
+                remedy = "Configure the required cloud credentials."
+            elif status.model_id.startswith("omniASR_") and os.name == "nt":
+                remedy = "Run hawedit-asr-setup."
+            else:
+                remedy = "Install the optional package that supplies this component."
             raise ModelNotProvisioned(
-                f"{model_id!r} ({status.component}) is not available: {status.detail}. "
-                f"Run scripts/fetch-models.sh, or scripts/fetch-ffmpeg.sh for the render "
-                f"stack."
+                f"{model_id!r} ({status.component}) is not available: {status.detail}. {remedy}"
             )
         return status.path
 

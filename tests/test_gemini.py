@@ -18,7 +18,9 @@ Each of those is a test below. The last one is the only one with legal consequen
 
 from __future__ import annotations
 
+import base64
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -29,9 +31,10 @@ from hawedit.gemini import (
     GeminiUnavailable,
     Governance,
     JudgeUnusable,
+    VertexGeminiJudge,
     count_tokens,
 )
-from hawedit.judge import InputMode, JudgeRequest, RequestTooLarge
+from hawedit.judge import InputMode, JudgeFrame, JudgeRequest, RequestTooLarge
 from hawedit.registry import WrongRole
 
 KEY = "test-key-not-real"
@@ -48,6 +51,14 @@ def a_request(**overrides: Any) -> JudgeRequest:
         "clip_out_ms": 9_000,
     }
     fields.update(overrides)
+    if "keyframes" not in fields:
+        fields["keyframes"] = (
+            JudgeFrame(
+                timestamp_ms=(fields["clip_in_ms"] + fields["clip_out_ms"]) // 2,
+                mime_type="image/jpeg",
+                data=b"actual-jpeg-bytes",
+            ),
+        )
     return JudgeRequest(**fields)
 
 
@@ -75,8 +86,12 @@ class Api:
         self.tokens = tokens
         self.fields = verdict_fields(**overrides)
         self.calls: list[str] = []
+        self.urls: list[str] = []
+        self.headers: list[dict[str, str]] = []
 
-    def __call__(self, url: str, body: bytes | None = None) -> tuple[int, str]:
+    def __call__(self, url: str, body: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
+        self.urls.append(url)
+        self.headers.append(dict(headers))
         self.calls.append(url.split("?")[0].rsplit("/", 1)[-1])
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": self.tokens})
@@ -119,6 +134,19 @@ def test_the_prompt_carries_the_transcript_and_the_span() -> None:
     assert "Sorani" in prompt
 
 
+def test_the_prompt_carries_stage_3_verbal_and_visual_evidence() -> None:
+    judge = a_judge(Api())
+    prompt = judge._prompt(
+        a_request(
+            carried_verbal_score=0.91,
+            visual_context=("retention: 2.400s visible reaction",),
+        )
+    )
+    assert "0.910000" in prompt
+    assert "retention: 2.400s visible reaction" in prompt
+    assert "candidate slice" in prompt
+
+
 def test_tokens_are_counted_before_the_billed_call() -> None:
     """§3's ceiling is about money, so it is checked against a real count, not a guess."""
     api = Api()
@@ -127,14 +155,21 @@ def test_tokens_are_counted_before_the_billed_call() -> None:
     assert api.calls[1].endswith("generateContent")
 
 
+def test_api_key_is_sent_in_a_header_never_in_the_url() -> None:
+    api = Api()
+    a_judge(api).judge(a_request())
+    assert all(KEY not in url and "?key=" not in url for url in api.urls)
+    assert all(headers.get("x-goog-api-key") == KEY for headers in api.headers)
+
+
 def test_the_response_schema_is_sent_rather_than_requested_in_prose() -> None:
     """ "Reply in JSON please" is how a stage acquires a 1% failure rate."""
     sent: list[dict[str, Any]] = []
 
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
         if body:
             sent.append(json.loads(body))
-        return Api()(url, body)
+        return Api()(url, body, headers)
 
     a_judge(transport).judge(a_request())
     generation = sent[-1]["generationConfig"]
@@ -144,6 +179,29 @@ def test_the_response_schema_is_sent_rather_than_requested_in_prose() -> None:
         "a judge that disagrees with itself makes §8.2's regression comparison measure "
         "sampling noise rather than model quality"
     )
+
+
+def test_stage_4_sends_actual_keyframe_bytes_to_count_and_generate() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def transport(url: str, body: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
+        if body:
+            sent.append(json.loads(body))
+        return Api()(url, body, headers)
+
+    a_judge(transport).judge(a_request())
+    assert len(sent) == 2
+    for payload in sent:
+        inline = next(
+            part["inlineData"] for part in payload["contents"][0]["parts"] if "inlineData" in part
+        )
+        assert inline["mimeType"] == "image/jpeg"
+        assert base64.b64decode(inline["data"]) == b"actual-jpeg-bytes"
+
+
+def test_stage_4_refuses_textual_visual_context_without_source_pixels() -> None:
+    with pytest.raises(JudgeUnusable, match="no keyframes"):
+        a_judge(Api()).judge(a_request(keyframes=(), visual_context=("a person gestures",)))
 
 
 # --- the ways a model integration fails while looking like it worked ----------------------
@@ -174,7 +232,7 @@ def test_an_omitted_field_is_named_rather_than_defaulted() -> None:
 
 
 def test_a_non_json_response_is_refused() -> None:
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
         return 200, json.dumps({"candidates": [{"content": {"parts": [{"text": "sorry!"}]}}]})
@@ -184,7 +242,7 @@ def test_a_non_json_response_is_refused() -> None:
 
 
 def test_an_empty_response_is_refused() -> None:
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
         return 200, json.dumps({"candidates": []})
@@ -195,7 +253,7 @@ def test_an_empty_response_is_refused() -> None:
 
 def test_a_request_with_no_transcript_is_refused_before_any_call() -> None:
     api = Api()
-    with pytest.raises(JudgeUnusable, match="no transcript"):
+    with pytest.raises(JudgeUnusable, match="neither transcript"):
         a_judge(api).judge(a_request(text_ckb=""))
     assert api.calls == [], "nothing should have been sent"
 
@@ -215,7 +273,7 @@ def test_a_malformed_request_is_not_retried() -> None:
     """A 400 means this request is wrong. Retrying bills three times for one mistake."""
     calls: list[str] = []
 
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         calls.append(url)
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
@@ -229,7 +287,7 @@ def test_a_malformed_request_is_not_retried() -> None:
 def test_a_rate_limit_is_retried_and_then_given_up_on() -> None:
     calls: list[str] = []
 
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         calls.append(url)
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
@@ -243,21 +301,21 @@ def test_a_rate_limit_is_retried_and_then_given_up_on() -> None:
 def test_a_transient_failure_that_clears_produces_a_verdict() -> None:
     state = {"n": 0}
 
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
         state["n"] += 1
         if state["n"] == 1:
             return 503, json.dumps({"error": {"message": "unavailable"}})
-        return Api()(url, body)
+        return Api()(url, body, headers)
 
     assert a_judge(transport).judge(a_request()).candidate_id == "c1"
 
 
 def test_an_api_error_message_never_contains_the_key() -> None:
-    """The key rides in the query string; an error that echoed the URL would leak it."""
+    """Neither transport metadata nor a provider error may leak the key."""
 
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
         return 403, json.dumps({"error": {"message": "Permission denied"}})
@@ -289,16 +347,59 @@ def test_claimed_zero_data_retention_must_name_who_confirmed_it() -> None:
         judge.judge(a_request())
 
 
-def test_confirmed_confidential_material_proceeds() -> None:
+def test_flags_cannot_turn_the_developer_api_into_a_confidential_vertex_route() -> None:
     judge = a_judge(
         Api(),
         governance=Governance(confidential=True, zero_data_retention=True, confirmed_by="Hawa"),
     )
-    assert judge.judge(a_request()).candidate_id == "c1"
+    with pytest.raises(GeminiUnavailable, match="Developer API"):
+        judge.judge(a_request())
 
 
 def test_non_confidential_material_needs_no_confirmation() -> None:
     assert a_judge(Api()).judge(a_request()).candidate_id == "c1"
+
+
+def test_confidential_vertex_route_uses_adc_bearer_and_multimodal_payload() -> None:
+    api = Api()
+    judge = VertexGeminiJudge(
+        "news-project",
+        location="global",
+        governance=Governance(
+            confidential=True,
+            zero_data_retention=True,
+            confirmed_by="data-protection-officer",
+        ),
+        token_provider=lambda: "adc-token",
+        transport=api,
+        sleep=lambda _seconds: None,
+    )
+    assert judge.judge(a_request()).candidate_id == "c1"
+    assert all(
+        url.startswith(
+            "https://aiplatform.googleapis.com/v1/projects/news-project/locations/global/"
+        )
+        for url in api.urls
+    )
+    assert all(headers == {"Authorization": "Bearer adc-token"} for headers in api.headers)
+    assert all("key=" not in url for url in api.urls)
+
+
+def test_regional_vertex_route_uses_the_regional_endpoint() -> None:
+    judge = VertexGeminiJudge(
+        "news-project",
+        location="europe-west4",
+        token_provider=lambda: "token",
+        transport=Api(),
+    )
+    assert judge._url("generateContent").startswith(
+        "https://europe-west4-aiplatform.googleapis.com/"
+    )
+
+
+def test_vertex_resource_ids_cannot_inject_a_different_url_path() -> None:
+    with pytest.raises(ValueError, match="project"):
+        VertexGeminiJudge("project/locations/other", token_provider=lambda: "token")
 
 
 # --- §7, before anything is billed ---------------------------------------------------------
@@ -334,7 +435,7 @@ def test_count_tokens_returns_the_apis_number() -> None:
 def test_count_tokens_failure_is_not_silently_zero() -> None:
     """A zero would read as "this request is free and definitely under the ceiling"."""
 
-    def failing(_url: str, _body: bytes | None = None) -> tuple[int, str]:
+    def failing(_url: str, _body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         return 500, "{}"
 
     with pytest.raises(GeminiUnavailable, match="countTokens"):

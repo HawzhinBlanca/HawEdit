@@ -1,6 +1,6 @@
 """A live check against the real Gemini API — opt-in, cheap, and honest about cost.
 
-    python -m hawedit.smoke
+    python -m hawedit.smoke --video sample.mp4
 
 Everything Gemini in this project is tested offline through an injected transport, which is
 right: a suite that needed a live key would push people toward committing one. But offline
@@ -9,9 +9,9 @@ work against Google, with my key, on my quota?* A mocked transport agrees with w
 mock was written to believe.
 
 So this is the one place that spends money, and it announces what it will spend before it does.
-It runs the two real calls the pipeline makes — §3 Stage 3 Path A over a transcript, then §3
-Stage 4 on the top candidate — against a short built-in Sorani sample, and prints what came
-back, including the Kurdish title. Roughly a thousand tokens; a fraction of a cent.
+It runs the two model stages the pipeline makes — §3 Stage 3 Path A over a transcript, then §3
+Stage 4 on the top candidate with actual keyframes from a matching sample video — and prints
+what came back, including the Kurdish title. Roughly a thousand tokens; a fraction of a cent.
 
 What it is checking is not "did the HTTP request succeed". It is the set of things that only
 break against a real model: whether `gemini-2.5-pro` is enabled on this key's project, whether
@@ -22,10 +22,12 @@ Kurdish when asked to, and whether the spans it returns land inside the transcri
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from hawedit.credentials import GEMINI_API_KEY, mask, read_credential
 from hawedit.gemini import GeminiJudge, GeminiUnavailable, JudgeUnusable
-from hawedit.judge import JudgeRequest, estimate_cost_usd
+from hawedit.judge import InputMode, JudgeRequest, estimate_cost_usd
+from hawedit.keyframes import KeyframeError, extract_judge_frames
 from hawedit.path_a import PathADiscovery
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word, normalize_transcript
 
@@ -79,6 +81,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--yes", action="store_true", help="skip the confirmation prompt (for scripts)"
+    )
+    parser.add_argument(
+        "--video",
+        type=Path,
+        help="video matching the built-in Sorani sample; required for pixel-grounded Stage 4",
     )
     args = parser.parse_args(argv)
 
@@ -139,18 +146,31 @@ def main(argv: list[str] | None = None) -> int:
     # --- §3 Stage 4 -----------------------------------------------------------------------
     top = candidates[0]
     print("\n==> Stage 4")
+    if args.video is None:
+        print("✗ Stage 4 needs --video; text-only visual judging is refused", file=sys.stderr)
+        return 1
+    if not args.video.is_file():
+        print(f"✗ no sample video at {args.video}", file=sys.stderr)
+        return 2
     try:
+        keyframes = extract_judge_frames(
+            args.video,
+            top.in_ms,
+            top.out_ms,
+            Path(".gate") / "gemini-smoke-keyframes",
+        )
         verdict = GeminiJudge(api_key=key).judge(
             JudgeRequest(
                 candidate_id=top.candidate_id,
-                mode=request.mode,
+                mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
                 text_ckb=normalized.text_ckb,
                 carried_verbal_score=top.score,
                 clip_in_ms=top.in_ms,
                 clip_out_ms=top.out_ms,
+                keyframes=keyframes,
             )
         )
-    except (GeminiUnavailable, JudgeUnusable) as exc:
+    except (GeminiUnavailable, JudgeUnusable, KeyframeError) as exc:
         print(f"✗ Stage 4 failed: {exc}", file=sys.stderr)
         return 1
 

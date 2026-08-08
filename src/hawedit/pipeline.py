@@ -3,12 +3,11 @@
 Until this existed, every stage worked and nothing joined them, so "does this system work" was
 a question you answered by reading a test suite. This is the thing you point at a video.
 
-Three of §3's stages need models this machine does not have — Path A's Kurdish judge and
-Stage 4's judge call need credentials and the §3 governance decision (`BLOCKED.md` #3), Path
-B needs `VideoChat3-4B` weights and a GPU (`BLOCKED.md` #2), and Stage 1's ASR needs both
-(`BLOCKED.md` #2, #6). A runner that quietly skipped them would produce a clip and a green
-log, and you would have to already know that no model discovered it to understand what you
-were looking at.
+Every model stage is now wired, but none is silently enabled: OmniASR needs its optional
+runtime and checkpoints, local vision needs the GPU checkpoints, and Gemini/Vertex needs an
+authorized cloud route. A runner that quietly skipped an unconfigured stage would produce a
+clip and a green log, and you would have to already know that no model discovered it to
+understand the artifact.
 
 So every stage yields either a result or a `StageSkipped` that names its blocker,
 `PipelineRun.complete` is false whenever anything was skipped, and the CLI exits non-zero on
@@ -46,27 +45,41 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from hawedit.boundary import BoundaryInputs, IncompleteSentence, fuse_boundary
-from hawedit.captions import build_ass
+from hawedit.asr import CanonicalTranscriptProducer
+from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
+from hawedit.captions import CaptionStyle, build_ass
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc
+from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
+from hawedit.gemini import GeminiUnavailable
 from hawedit.index import Bm25Index
 from hawedit.ingest import IngestError, IngestResult, ingest, probe_stream
 from hawedit.judge import EditorialJudge, JudgeRequest, JudgeVerdict
-from hawedit.path_b import VideoUnderstanding, discover_visual
+from hawedit.keyframes import extract_judge_frames
+from hawedit.normalize import normalize_sorani
+from hawedit.path_b import VideoUnderstanding
+from hawedit.reframe import SubjectTracker
 from hawedit.render import RenderError, RenderResult, frame_rate, render_clip
 from hawedit.sentences import Sentence, anchors_for, segment_sentences
+from hawedit.timelens import VisualEvidenceInterval, interval_for_fusion
 from hawedit.transcripts import (
     NormalizedTranscript,
     RawTranscript,
     RawTranscriptImmutable,
     TranscriptStore,
+    Word,
     normalize_transcript,
 )
-from hawedit.visual_index import SceneWindow, plan_scene_windows
+from hawedit.visual_index import (
+    DECLARED_SAMPLING_FPS,
+    REFERENCE_FPS,
+    SceneWindow,
+    plan_scene_windows,
+)
+from hawedit.visual_pipeline import VisualComposer, VisualDiscoveryResult, VisualPipelineError
 
 __all__ = [
     "Delivery",
@@ -78,7 +91,22 @@ __all__ = [
     "run_pipeline",
 ]
 
-FONTS_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+
+def _runtime_fonts_dir() -> Path:
+    checkout = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+    installed = Path(sys.prefix) / "share" / "hawedit" / "assets" / "fonts"
+    return checkout if checkout.is_dir() else installed
+
+
+FONTS_DIR = _runtime_fonts_dir()
+
+
+class TemporalGrounder(Protocol):
+    """Stage 5 adapter; concrete implementations ground queries in exact scene windows."""
+
+    def ground_all(
+        self, windows: Sequence[SceneWindow], query: str
+    ) -> tuple[VisualEvidenceInterval, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,9 +143,14 @@ class Delivery:
 
     srt_path: str
     edl_path: str
+    editing_json_path: str
 
     def to_dict(self) -> dict[str, Any]:
-        return {"srt_path": self.srt_path, "edl_path": self.edl_path}
+        return {
+            "srt_path": self.srt_path,
+            "edl_path": self.edl_path,
+            "editing_json_path": self.editing_json_path,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +168,7 @@ class PipelineRun:
     # The window plan is arithmetic over Stage 0's shot cuts, so it runs here on real media
     # even though the embedder cannot; `visual_index` stays skipped for the embedding itself.
     visual_windows: tuple[SceneWindow, ...] = ()
-    visual_index: StageSkipped | None = None
+    visual_index: VisualDiscoveryResult | StageSkipped | None = None
     discovery: StageSkipped | None = None
     editorial: StageSkipped | None = None
     candidates: tuple[MergedCandidate, ...] = ()
@@ -166,7 +199,23 @@ class PipelineRun:
         Producing a clip is not the same as being the system §3 describes, and a runner that
         conflated them would report success for a pipeline missing its discovery and its judge.
         """
-        return not self.skipped()
+        # `None` means "this stage succeeded and has no separate result object" for the visual
+        # index, discovery and editorial seams. It is also every dataclass field's construction
+        # default, so "there are no StageSkipped values" alone lets an empty PipelineRun claim
+        # success. Require the material evidence that a finished run necessarily leaves behind.
+        return (
+            not self.skipped()
+            and isinstance(self.ingest, IngestResult)
+            and isinstance(self.transcript, NormalizedTranscript)
+            and isinstance(self.index, Bm25Index)
+            and bool(self.visual_windows)
+            and bool(self.candidates)
+            and isinstance(self.boundary, Boundary)
+            and isinstance(self.clip, Clip)
+            and self.clip.editorial is not None
+            and isinstance(self.render, RenderResult)
+            and isinstance(self.delivery, Delivery)
+        )
 
     def to_dict(self) -> dict[str, Any]:
         def encode(value: object) -> Any:
@@ -191,6 +240,19 @@ class PipelineRun:
                     json.loads(self.transcript.to_json()) if self.transcript is not None else None
                 )
             ),
+            "index": (
+                self.index.to_dict()
+                if isinstance(self.index, StageSkipped)
+                else (
+                    {
+                        "document_count": len(self.index.documents),
+                        "ngram_size": self.index.ngram_size,
+                        "ngram_weight": self.index.ngram_weight,
+                    }
+                    if self.index is not None
+                    else None
+                )
+            ),
             "sentence_count": len(self.sentences),
             "visual_windows": [w.to_dict() for w in self.visual_windows],
             "delivery": encode(self.delivery),
@@ -198,6 +260,7 @@ class PipelineRun:
             "visual_index": encode(self.visual_index),
             "discovery": encode(self.discovery),
             "editorial": encode(self.editorial),
+            "boundary": encode(self.boundary),
             "clip": self.clip.to_dict() if self.clip is not None else None,
             "render": (
                 encode(self.render)
@@ -226,41 +289,52 @@ class PipelineRun:
 _STAGE_1_ASR = StageSkipped(
     stage="transcript",
     reason=(
-        "§3 Stage 1 needs omniASR_LLM_7B_v2 and omniASR_CTC_3B_v2. No weights and no GPU here, "
-        "so no transcript was produced. Supply one with --transcript to run the rest."
+        "no Stage 1 producer was enabled. Supply --transcript or run the canonical "
+        "omniASR_LLM_7B_v2 + omniASR_CTC_3B_v2 path with --omni-asr."
     ),
-    blocked_by=("BLOCKED.md #2", "BLOCKED.md #6"),
+    blocked_by=("Stage 1 producer not enabled",),
 )
 _STAGE_2_VISUAL = StageSkipped(
     stage="visual_index",
-    reason="§3 Stage 2's visual index needs Qwen3-VL embedding and reranker weights, and a GPU.",
-    blocked_by=("BLOCKED.md #2",),
+    reason=(
+        "local visual retrieval was not enabled. Use --visual to compose frame extraction, "
+        "Qwen indexing, top-50 retrieval, reranking, a 5–10 survivor set and VideoChat3."
+    ),
+    blocked_by=("visual discovery not enabled",),
 )
 _STAGE_3_DISCOVERY = StageSkipped(
     stage="discovery",
     reason=(
-        "§3 Stage 3 needs both producers: Path A is the Kurdish judge over the full transcript "
-        "(credentials + the ZDR governance decision), Path B is VideoChat3-4B (weights + GPU). "
-        "The merge that unions them is built and tested — see discovery.py."
+        "no Stage 3 producer was enabled. Select --gemini or --vertex-project for Path A, "
+        "--visual for composed Path B, or both for the two-sided union."
     ),
-    blocked_by=("BLOCKED.md #2", "BLOCKED.md #3"),
+    blocked_by=("discovery producer not enabled",),
 )
 _STAGE_3_NOTHING_FOUND = StageSkipped(
     stage="discovery",
     reason=(
-        "Path A ran over the whole transcript and returned no candidates. That is a real "
-        "answer about this media, not a failure — but no clip can be cut from it."
+        "Every enabled discovery path ran and returned no candidates. That is a real answer "
+        "about this media, not a model failure — but no clip can be cut from it."
     ),
     blocked_by=("no candidates",),
 )
 _STAGE_4_JUDGE = StageSkipped(
     stage="editorial",
     reason=(
-        "§3 Stage 4's judge is gemini-2.5-pro. No credentials, and §3 Stage 3's governance box "
-        "must be answered before the first client job. The contract is built — see judge.py."
+        "no Stage 4 judge or persisted verdict was supplied. Use --gemini for non-confidential "
+        "work, --vertex-project with governance confirmation for confidential work, or "
+        "--verdict for an already-reviewed exact span."
     ),
-    blocked_by=("BLOCKED.md #3",),
+    blocked_by=("Stage 4 judgment not enabled",),
 )
+
+
+def _not_reached(stage: str, dependency: str) -> StageSkipped:
+    return StageSkipped(
+        stage=stage,
+        reason=f"{stage} did not run because {dependency} was not available.",
+        blocked_by=(dependency,),
+    )
 
 
 def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
@@ -321,17 +395,187 @@ def assert_contiguous(selection: tuple[int, ...], total: int) -> None:
         )
 
 
+def _candidate_priority(candidate: MergedCandidate) -> tuple[int, int, int, str]:
+    """Order survivors without comparing unlike verbal and visual scores."""
+    ranks = tuple(
+        rank for rank in (candidate.verbal_rank, candidate.visual_rank) if rank is not None
+    )
+    best_rank = min(ranks) if ranks else sys.maxsize
+    agreement = 0 if candidate.discovery_path is DiscoveryPath.BOTH else 1
+    return best_rank, agreement, candidate.in_ms, candidate.candidate_id
+
+
+def _candidate_for_judging(
+    candidates: Sequence[MergedCandidate],
+    selected_span: tuple[int, int] | None,
+) -> MergedCandidate:
+    """Choose the survivor being cut, or the best per-path-ranked survivor."""
+    if not candidates:
+        raise ValueError("cannot choose a candidate from an empty survivor list")
+    if selected_span is None:
+        return min(candidates, key=_candidate_priority)
+
+    selected_in, selected_out = selected_span
+    containing: list[MergedCandidate] = []
+    for candidate in candidates:
+        if candidate.in_ms <= selected_in and candidate.out_ms >= selected_out:
+            containing.append(candidate)
+    if not containing:
+        raise ValueError(
+            f"the selected sentence span {selected_in}..{selected_out} ms is not contained by "
+            f"any of Stage 3's {len(candidates)} candidate(s). A partial overlap cannot carry "
+            f"that candidate's score, path or visual evidence onto different footage."
+        )
+    return min(
+        containing,
+        key=lambda candidate: (
+            candidate.out_ms - candidate.in_ms,
+            *_candidate_priority(candidate),
+        ),
+    )
+
+
+def _automatic_sentence_selection(
+    candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence]
+) -> tuple[int, ...]:
+    """Choose complete contiguous sentence anchors wholly contained by the best survivor."""
+    for candidate in sorted(candidates, key=_candidate_priority):
+        eligible = [
+            index
+            for index, sentence in enumerate(sentences)
+            if sentence.complete
+            and sentence.start_ms >= candidate.in_ms
+            and sentence.end_ms <= candidate.out_ms
+        ]
+        if not eligible:
+            continue
+        runs: list[list[int]] = [[eligible[0]]]
+        for index in eligible[1:]:
+            if index == runs[-1][-1] + 1:
+                runs[-1].append(index)
+            else:
+                runs.append([index])
+        best = max(
+            runs,
+            key=lambda run: (
+                sentences[run[-1]].end_ms - sentences[run[0]].start_ms,
+                -run[0],
+            ),
+        )
+        return tuple(best)
+    return ()
+
+
+def _prepare_selection(
+    transcript: RawTranscript,
+    sentences: Sequence[Sentence],
+    selection: tuple[int, ...],
+) -> tuple[tuple[int, ...], tuple[Sentence, ...], tuple[int, int] | None]:
+    if not selection:
+        return (), (), None
+    _assert_render_alignment_complete(transcript)
+    out_of_range = [i for i in selection if not 0 <= i < len(sentences)]
+    if out_of_range:
+        raise IndexError(
+            f"sentence index {out_of_range} is outside 0..{len(sentences) - 1}. The "
+            f"transcript segmented into {len(sentences)} sentence(s)."
+        )
+    assert_contiguous(selection, total=len(sentences))
+    assert_time_contiguous(sentences, selection)
+    ordered = tuple(sorted(selection))
+    selected = tuple(sentences[i] for i in ordered)
+    anchors = anchors_for(selected) if all(sentence.complete for sentence in selected) else None
+    return ordered, selected, anchors
+
+
+def _assert_render_alignment_complete(transcript: RawTranscript) -> None:
+    """Rendering requires every raw token to have the exact aligned surface it captions."""
+    raw_tokens = tuple(transcript.text_ckb.split())
+    aligned_tokens = tuple(word.w for word in transcript.words)
+    if raw_tokens != aligned_tokens:
+        raise ValueError(
+            "the supplied transcript is only partially or approximately aligned: rendering "
+            "would rebuild raw_ckb and captions from Word.w and omit or alter ASR text. A "
+            "renderable transcript requires exact token-for-token aligned surfaces."
+        )
+
+
+def _raw_text_for_words(transcript: RawTranscript, words: Sequence[Word]) -> str:
+    """The exact canonical substring covered by `words`, including original whitespace."""
+    if not words:
+        raise ValueError("cannot extract raw text for an empty word selection")
+    offsets: list[tuple[int, int]] = []
+    cursor = 0
+    for word in transcript.words:
+        start = transcript.text_ckb.find(word.w, cursor)
+        if start < 0:  # guarded by _assert_render_alignment_complete; defence in depth
+            raise ValueError(f"aligned surface {word.w!r} is absent from canonical raw text")
+        end = start + len(word.w)
+        offsets.append((start, end))
+        cursor = end
+    first = next(i for i, word in enumerate(transcript.words) if word is words[0])
+    last = next(i for i, word in reversed(tuple(enumerate(transcript.words))) if word is words[-1])
+    return transcript.text_ckb[offsets[first][0] : offsets[last][1]]
+
+
+def _candidate_slice_text(transcript: NormalizedTranscript, in_ms: int, out_ms: int) -> str:
+    """Normalized aligned words inside a candidate, never the whole episode."""
+    words = [w.w for w in transcript.words if w.start_ms < out_ms and w.end_ms > in_ms]
+    return normalize_sorani(" ".join(words))
+
+
+def _assert_verdict_matches_request(verdict: JudgeVerdict, request: JudgeRequest) -> None:
+    """Refuse a judge adapter that returns a verdict for different footage."""
+    if verdict.candidate_id != request.candidate_id:
+        raise ValueError(
+            f"judge returned candidate {verdict.candidate_id!r} for request "
+            f"{request.candidate_id!r}; the verdict belongs to different footage"
+        )
+    if (verdict.clip_in_ms, verdict.clip_out_ms) != (
+        request.clip_in_ms,
+        request.clip_out_ms,
+    ):
+        raise ValueError(
+            f"judge returned span {verdict.clip_in_ms}..{verdict.clip_out_ms} ms for request "
+            f"{request.clip_in_ms}..{request.clip_out_ms} ms"
+        )
+
+
+def _vad_onset_for_anchor(
+    ingested: IngestResult, anchor_in_ms: int, anchor_out_ms: int
+) -> int | None:
+    """The onset of speech containing the first anchor, never the episode's first speech."""
+    containing = [
+        segment for segment in ingested.speech if segment.start_ms <= anchor_in_ms < segment.end_ms
+    ]
+    if containing:
+        return max(containing, key=lambda segment: segment.start_ms).start_ms
+    overlapping = [
+        segment
+        for segment in ingested.speech
+        if segment.start_ms < anchor_out_ms and segment.end_ms > anchor_in_ms
+    ]
+    return min(overlapping, key=lambda segment: segment.start_ms).start_ms if overlapping else None
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
     media_id: str | None = None,
     transcript: RawTranscript | None = None,
+    asr: CanonicalTranscriptProducer | None = None,
     select_sentences: tuple[int, ...] = (),
     qc: Qc | None = None,
     verdict: JudgeVerdict | None = None,
     discover: Callable[[NormalizedTranscript], Sequence[Candidate]] | None = None,
     read_scenes: VideoUnderstanding | None = None,
+    visual_composer: VisualComposer | None = None,
+    visual_query: str | None = None,
     judge: EditorialJudge | None = None,
+    temporal_grounder: TemporalGrounder | None = None,
+    subject_tracker: SubjectTracker | None = None,
+    auto_select: bool = False,
+    visual_fps: float | None = None,
     ffmpeg: Path | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
@@ -347,11 +591,12 @@ def run_pipeline(
             gate before output, always, and a runner is not a human.
         discover: §3 Stage 3 Path A. Supply `PathADiscovery(...).discover` and the runner
             stops standing in for discovery and actually runs it.
-        read_scenes: §3 Stage 3 Path B. Supply a `VideoUnderstanding` and the union runs
-            two-sided over the scene windows Stage 2 planned on this video. Absent — its model
-            needs a GPU — the union runs one-sided, which §3 says is correct rather than
-            degraded: "Candidates from either path proceed", and a verbal-only moment is the
-            case the dual path exists to protect.
+        read_scenes: retired unsafe injection seam. Any non-``None`` value is refused because a
+            bare reader has no retrieval/rerank provenance and can promote every scene. Use
+            ``visual_composer`` so only bounded, scored survivors reach VideoChat3.
+        visual_fps: one sampling rate for every planned visual window. Omitted uses the
+            blueprint's 1 fps planning reference, or the checkpoints' declared 2 fps ceiling
+            when the composed model path is enabled.
         judge: §3 Stage 4. Supply `GeminiJudge(...)` and the runner scores the top candidate
             itself rather than needing `verdict` handed to it.
         verdict: what §3 Stage 4 would have returned. The second stand-in, for the same reason
@@ -368,6 +613,11 @@ def run_pipeline(
     """
     if not source.exists():
         raise FileNotFoundError(f"no media at {source}")
+    if read_scenes is not None:
+        raise ValueError(
+            "unranked read_scenes injection is not a valid Path B producer; use VisualComposer "
+            "so Qwen retrieval/reranking bounds the scenes sent to VideoChat3"
+        )
 
     identifier = media_id or source.stem
     if transcript is not None and transcript.media_id != identifier:
@@ -381,11 +631,31 @@ def run_pipeline(
     # --- §3 Stage 0 ----------------------------------------------------------------------
     ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
 
+    if transcript is None and asr is not None:
+        transcript = asr.transcribe(
+            identifier,
+            Path(ingested.audio_path),
+            ingested.speech,
+            work_dir / "stage1",
+            ffmpeg,
+        )
+        if transcript.media_id != identifier:
+            raise ValueError(
+                f"canonical ASR returned media_id {transcript.media_id!r} for {identifier!r}"
+            )
+
     # --- §3 Stage 2 (visual half, the part that needs no weights) --------------------------
     # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
     # embedding". The segmenting is arithmetic over the cuts Stage 0 just found on this video,
     # so it runs now and is real; only the embedding itself waits on the model.
-    windows = plan_scene_windows(identifier, ingested.duration_ms, ingested.shot_cuts_ms)
+    effective_visual_fps = (
+        visual_fps
+        if visual_fps is not None
+        else (DECLARED_SAMPLING_FPS if visual_composer is not None else REFERENCE_FPS)
+    )
+    windows = plan_scene_windows(
+        identifier, ingested.duration_ms, ingested.shot_cuts_ms, fps=effective_visual_fps
+    )
 
     run = PipelineRun(
         media_id=identifier,
@@ -393,10 +663,14 @@ def run_pipeline(
         work_dir=str(work_dir),
         ingest=ingested,
         transcript=_STAGE_1_ASR,
+        index=_not_reached("index", "a transcript"),
         visual_windows=windows,
         visual_index=_STAGE_2_VISUAL,
         discovery=_STAGE_3_DISCOVERY,
-        editorial=_STAGE_4_JUDGE,
+        editorial=None if verdict is not None else _STAGE_4_JUDGE,
+        boundary=_not_reached("boundary", "complete selected sentences"),
+        render=_not_reached("render", "a judged boundary and QC pass"),
+        delivery=_not_reached("delivery", "a successful render"),
     )
     if transcript is None:
         return run
@@ -408,7 +682,14 @@ def run_pipeline(
     except RawTranscriptImmutable:
         # Invariant #1: the canonical transcript is never rewritten. A second run over the
         # same work directory reads what is already there rather than overwriting it.
-        transcript = store.read_raw(identifier)
+        stored = store.read_raw(identifier)
+        if stored != transcript:
+            raise RawTranscriptImmutable(
+                f"{store.raw_path(identifier)} already contains a different canonical "
+                "transcript. Reusing it would silently ignore the newly supplied words; use "
+                "a new work directory or media_id."
+            ) from None
+        transcript = stored
     store.verify_raw_integrity(identifier)
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
@@ -422,54 +703,101 @@ def run_pipeline(
 
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 
+    select_sentences, selected, selected_anchors = _prepare_selection(
+        transcript, sentences, select_sentences
+    )
+
     # --- §3 Stage 3, both paths -------------------------------------------------------------
     merged: tuple[MergedCandidate, ...] = ()
-    if discover is not None:
-        verbal = tuple(discover(normalized))
-        # Path B usually has no producer here (its model needs a GPU), and §3 is explicit that
+    visual_result: VisualDiscoveryResult | None = None
+    visual_skipped: StageSkipped | None = None
+    if discover is not None or visual_composer is not None:
+        verbal = tuple(discover(normalized)) if discover is not None else ()
+        # Path B usually has no composed producer here, and §3 is explicit that
         # a one-sided union is correct rather than degraded: candidates from *either* path
         # proceed, and a verbal-only moment is the case the dual path exists to protect. When
-        # a reader *is* supplied it reads the windows Stage 2 planned on this video.
-        visual: tuple[Candidate, ...] = ()
-        if read_scenes is not None:
-            visual = discover_visual(run.visual_windows, read_scenes, media_id=identifier)
-        merged = merge_candidates(list(verbal), list(visual))
+        # a composer *is* supplied it retrieves and reranks before reading any scene.
+        visual_candidates_tuple: tuple[Candidate, ...] = ()
+        if visual_composer is not None:
+            best_verbal = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
+            query = visual_query or (
+                _candidate_slice_text(normalized, best_verbal.in_ms, best_verbal.out_ms)
+                if best_verbal is not None
+                else normalized.text_ckb
+            )
+            try:
+                visual_result = visual_composer.discover(
+                    source,
+                    run.visual_windows,
+                    query,
+                    work_dir / "visual",
+                    media_id=identifier,
+                    ffmpeg=ffmpeg,
+                )
+            except VisualPipelineError as exc:
+                visual_skipped = StageSkipped(
+                    stage="visual_index",
+                    reason=str(exc),
+                    blocked_by=("visual retrieval refused this media",),
+                )
+            else:
+                visual_candidates_tuple = visual_result.candidates
+        merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
             discovery=None if merged else _STAGE_3_NOTHING_FOUND,
             candidates=merged,
-            visual_index=_STAGE_2_VISUAL,
+            visual_index=visual_result or visual_skipped or _STAGE_2_VISUAL,
         )
 
-    # --- §3 Stage 4 -----------------------------------------------------------------------
-    if judge is not None and merged:
-        top = merged[0]
-        verdict = judge.judge(
-            JudgeRequest.for_survivor(
-                top,
-                text_ckb=normalized.text_ckb,
-            )
+    if auto_select and not select_sentences and merged:
+        automatic = _automatic_sentence_selection(merged, sentences)
+        select_sentences, selected, selected_anchors = _prepare_selection(
+            transcript, sentences, automatic
         )
+
+    selected_candidate: MergedCandidate | None = None
+    if merged and selected_anchors is not None:
+        selected_candidate = _candidate_for_judging(merged, selected_anchors)
+
+    # --- §3 Stage 4 -----------------------------------------------------------------------
+    if judge is not None and merged and (not selected or selected_anchors is not None):
+        survivor = selected_candidate or _candidate_for_judging(merged, None)
+        request_candidate = (
+            replace(survivor, in_ms=selected_anchors[0], out_ms=selected_anchors[1])
+            if selected_anchors is not None
+            else survivor
+        )
+        judge_frames = (
+            extract_judge_frames(
+                source,
+                request_candidate.in_ms,
+                request_candidate.out_ms,
+                work_dir / "stage4" / request_candidate.candidate_id.replace(":", "_"),
+                ffmpeg=ffmpeg,
+            )
+            if getattr(judge, "requires_keyframes", False)
+            else ()
+        )
+        request = JudgeRequest.for_survivor(
+            request_candidate,
+            text_ckb=_candidate_slice_text(
+                normalized, request_candidate.in_ms, request_candidate.out_ms
+            ),
+            keyframes=judge_frames,
+        )
+        judged = judge.judge(request)
+        _assert_verdict_matches_request(judged, request)
+        if judged.sv6d is None and survivor.sv6d is not None:
+            judged = replace(judged, sv6d=survivor.sv6d)
+        verdict = judged
         run = replace(run, editorial=None)
 
     if not select_sentences:
         return run
 
-    out_of_range = [i for i in select_sentences if not 0 <= i < len(sentences)]
-    if out_of_range:
-        raise IndexError(
-            f"sentence index {out_of_range} is outside 0..{len(sentences) - 1}. The transcript "
-            f"segmented into {len(sentences)} sentence(s)."
-        )
-    # After the range check on purpose: an index of 99 in a 3-sentence transcript is out of
-    # range, and reporting it as "spans sentences 1..98" is true but useless.
-    assert_contiguous(select_sentences, total=len(sentences))
-    # Index contiguity is not time contiguity — see assert_time_contiguous.
-    assert_time_contiguous(sentences, select_sentences)
-    selected = tuple(sentences[i] for i in select_sentences)
-
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------
-    anchors = anchors_for(selected)
+    anchors = selected_anchors
     if anchors is None:
         return replace(
             run,
@@ -484,6 +812,41 @@ def run_pipeline(
         )
 
     anchor_in, anchor_out = anchors
+    if (
+        verdict is not None
+        and judge is None
+        and (
+            verdict.clip_in_ms,
+            verdict.clip_out_ms,
+        )
+        != (anchor_in, anchor_out)
+    ):
+        raise ValueError(
+            f"supplied verdict scores {verdict.clip_in_ms}..{verdict.clip_out_ms} ms but the "
+            f"selected sentence anchors are exactly {anchor_in}..{anchor_out} ms. Persisted "
+            f"and live verdicts must identify the same footage."
+        )
+    timelens_interval = None
+    if temporal_grounder is not None:
+        temporal_span = selected_candidate.span if selected_candidate is not None else anchors
+        grounding_windows = tuple(
+            window
+            for window in run.visual_windows
+            if window.in_ms < temporal_span[1] and window.out_ms > temporal_span[0]
+        )
+        if not grounding_windows:
+            raise ValueError(
+                f"no visual window overlaps the Stage 5 span {temporal_span[0]}.."
+                f"{temporal_span[1]} ms"
+            )
+        timelens_intervals = temporal_grounder.ground_all(
+            grounding_windows,
+            _candidate_slice_text(normalized, anchor_in, anchor_out),
+        )
+        timelens_interval = interval_for_fusion(
+            timelens_intervals, anchor_in, anchor_out, identifier
+        )
+
     boundary = fuse_boundary(
         BoundaryInputs(
             anchor_in_ms=anchor_in,
@@ -492,7 +855,13 @@ def run_pipeline(
             # The join this runner exists to make: the shot cuts and speech regions below were
             # measured on *this* video by Stage 0 a few lines above, not supplied as fixtures.
             shot_cuts_ms=ingested.shot_cuts_ms,
-            vad_onset_ms=ingested.speech[0].start_ms if ingested.speech else None,
+            vad_onset_ms=_vad_onset_for_anchor(ingested, anchor_in, anchor_out),
+            timelens_interval_start_ms=(
+                timelens_interval.start_ms if timelens_interval is not None else None
+            ),
+            timelens_interval_end_ms=(
+                timelens_interval.end_ms if timelens_interval is not None else None
+            ),
             # Stage 0 probed this file's length, so Stage 5 can be told where it stops. Without
             # it the 200 ms tail alone runs past the end of a short source — which is what this
             # runner had been doing, shipping a clip 138 ms shorter than the boundary it
@@ -501,25 +870,64 @@ def run_pipeline(
         )
     )
 
+    selected_words = {word for sentence in selected for word in sentence.words}
+    uncaptioned = [
+        word
+        for sentence in sentences
+        for word in sentence.words
+        if word not in selected_words
+        and word.start_ms < boundary.final_out_ms
+        and word.end_ms > boundary.final_in_ms
+    ]
+    if uncaptioned:
+        first = uncaptioned[0]
+        return replace(
+            run,
+            boundary=StageSkipped(
+                stage="boundary",
+                reason=(
+                    f"soft boundary expansion {boundary.final_in_ms}..{boundary.final_out_ms} ms "
+                    f"would include unselected speech beginning with {first.w!r} at "
+                    f"{first.start_ms}..{first.end_ms} ms. Rendering it would ship speech "
+                    "missing from the captions and clip transcript."
+                ),
+                blocked_by=("uncaptioned speech",),
+            ),
+        )
+
+    clip_words = tuple(word for sentence in selected for word in sentence.words)
+    raw_clip_text = _raw_text_for_words(transcript, clip_words)
+    focus_points = (
+        subject_tracker.track(source, boundary.final_in_ms, boundary.final_out_ms)
+        if subject_tracker is not None
+        else ()
+    )
     clip = Clip(
-        clip_id=f"{identifier}-{select_sentences[0]}",
+        clip_id=f"{identifier}-s{select_sentences[0]}-{select_sentences[-1]}",
         media_id=identifier,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         # §3 Stage 3 discovers candidates and did not run. VERBAL records where this clip
         # *came from* — a human reading the transcript — and no clip here may claim BOTH.
-        discovery_path=DiscoveryPath.VERBAL,
+        discovery_path=(
+            selected_candidate.discovery_path
+            if selected_candidate is not None
+            else DiscoveryPath.VERBAL
+        ),
         boundary=boundary,
         transcript=ClipTranscript(
-            raw_ckb=transcript.text_ckb,
-            norm_ckb=normalized.text_ckb,
+            raw_ckb=raw_clip_text,
+            norm_ckb=normalize_sorani(raw_clip_text),
             en_aux=None,
-            words=tuple(w for s in selected for w in s.words),
+            words=clip_words,
             asr=transcript.asr,
         ),
         editorial=verdict.to_editorial() if verdict is not None else None,
         output=(
-            verdict.to_output(crop_target="static_centre", durations=(30,))
+            verdict.to_output(
+                crop_target="face_tracked" if focus_points else "static_centre",
+                durations=(max(1, round((boundary.final_out_ms - boundary.final_in_ms) / 1000)),),
+            )
             if verdict is not None
             else None
         ),
@@ -540,45 +948,79 @@ def run_pipeline(
                     "render gate refuses it: an unjudged clip has no meaning fidelity and no "
                     "misleading-edit risk. Supply a verdict to render."
                 ),
-                blocked_by=("BLOCKED.md #3",),
+                blocked_by=("Stage 4 verdict",),
             ),
         )
 
-    ass_path = work_dir / "captions.ass"
-    ass_path.write_text(
-        # The clip's own timeline. Without this every caption is scheduled at its source
-        # time, lands past the end of a clip cut from mid-episode, and libass draws
-        # nothing — a playable MP4 with no captions and no error.
-        build_ass(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms),
-        encoding="utf-8",
-    )
-    width, height = _proxy_dimensions(source, ffmpeg)
+    ass_path = work_dir / f"{clip.clip_id}.ass"
+    render_path = work_dir / f"{clip.clip_id}.mp4"
+    srt_path = work_dir / f"{clip.clip_id}.srt"
+    edl_path = work_dir / f"{clip.clip_id}.edl"
+    editing_json_path = work_dir / f"{clip.clip_id}.json"
+    existing = [
+        path
+        for path in (ass_path, render_path, srt_path, edl_path, editing_json_path)
+        if path.exists()
+    ]
+    if existing:
+        raise FileExistsError(
+            "refusing to overwrite existing delivery artifact(s): "
+            + ", ".join(str(path) for path in existing)
+            + ". Use a new work directory for a new run."
+        )
     try:
+        clip.assert_renderable()
+    except (ValueError, IncompleteSentence) as exc:
+        return replace(
+            run,
+            render=StageSkipped(
+                stage="render", reason=str(exc), blocked_by=("§2 QC/editorial gate",)
+            ),
+        )
+
+    try:
+        ass_path.write_text(
+            # The clip's own timeline. Without this every caption is scheduled at its source
+            # time, lands past the end of a clip cut from mid-episode, and libass draws
+            # nothing — a playable MP4 with no captions and no error.
+            build_ass(
+                selected,
+                style=CaptionStyle.WORD_HIGHLIGHT,
+                clip_in_ms=clip.in_ms,
+                clip_duration_ms=clip.out_ms - clip.in_ms,
+            ),
+            encoding="utf-8",
+        )
+        width, height = _proxy_dimensions(source, ffmpeg)
         rendered = render_clip(
             clip,
             source,
             ass_path,
             FONTS_DIR,
-            work_dir / f"{clip.clip_id}.mp4",
+            render_path,
             source_width=width,
             source_height=height,
+            focus_points=tuple((point.at_ms, point.center_x) for point in focus_points),
             ffmpeg=ffmpeg,
         )
-    except (ValueError, RenderError, IncompleteSentence) as exc:
-        # The render gate refused. That is the gate working — §2 puts QC before output always,
-        # and invariant #2 forbids rendering an unfinished sentence — so it is reported rather
-        # than raised: the run is a partial result, not a crash.
+    except (IngestError, RenderError, ValueError) as exc:
+        ass_path.unlink(missing_ok=True)
+        render_path.unlink(missing_ok=True)
         return replace(
-            run, render=StageSkipped(stage="render", reason=str(exc), blocked_by=("§2 QC gate",))
+            run,
+            render=StageSkipped(
+                stage="render", reason=str(exc), blocked_by=("Stage 6 render runtime",)
+            ),
         )
 
     run = replace(run, render=rendered)
 
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
     # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
-    srt_path = work_dir / f"{clip.clip_id}.srt"
-    edl_path = work_dir / f"{clip.clip_id}.edl"
     try:
+        editing_json_path.write_text(
+            json.dumps(clip.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         srt_path.write_text(
             build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms),
             encoding="utf-8",
@@ -605,7 +1047,14 @@ def run_pipeline(
             ),
         )
 
-    return replace(run, delivery=Delivery(srt_path=str(srt_path), edl_path=str(edl_path)))
+    return replace(
+        run,
+        delivery=Delivery(
+            srt_path=str(srt_path),
+            edl_path=str(edl_path),
+            editing_json_path=str(editing_json_path),
+        ),
+    )
 
 
 def _pauses_between(ingested: IngestResult) -> tuple[tuple[int, int], ...]:
@@ -647,28 +1096,216 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--transcript", type=Path, help="a transcript.raw.json to stand in for §3 Stage 1"
     )
+    parser.add_argument(
+        "--omni-asr",
+        action="store_true",
+        help="run canonical OmniASR LLM-7B + CTC-3B/Viterbi instead of supplying a transcript",
+    )
+    parser.add_argument(
+        "--omni-asr-runtime",
+        choices=("auto", "local", "wsl"),
+        default="auto",
+        help="OmniASR runtime; auto uses WSL2 on Windows and local inference elsewhere",
+    )
+    parser.add_argument("--wsl-distro", help="optional WSL distribution for canonical OmniASR")
+    parser.add_argument(
+        "--verdict", type=Path, help="a JudgeVerdict JSON document to stand in for Stage 4"
+    )
+    parser.add_argument(
+        "--gemini",
+        action="store_true",
+        help="run Path A discovery and the Stage 4 Gemini judge (sends transcript data)",
+    )
+    parser.add_argument(
+        "--vertex-project",
+        help="route Path A and Stage 4 through Gemini on this Vertex AI project",
+    )
+    parser.add_argument("--vertex-location", default="global")
+    parser.add_argument(
+        "--visual",
+        action="store_true",
+        help="compose Qwen embedding/reranking and VideoChat3 over only the survivors",
+    )
+    parser.add_argument("--visual-query", help="Sorani visual retrieval query")
+    parser.add_argument("--visual-keep", type=int, default=7)
+    parser.add_argument("--visual-fps", type=float, default=None)
+    parser.add_argument("--visual-device", default="cuda:0")
+    parser.add_argument(
+        "--auto-select",
+        action="store_true",
+        help="choose complete contiguous sentences contained by the best Stage 3 survivor",
+    )
+    parser.add_argument("--timelens", action="store_true", help="run TimeLens2 in Stage 5")
+    parser.add_argument("--timelens-device", default="cuda:1")
+    parser.add_argument(
+        "--face-reframe",
+        action="store_true",
+        help="track the dominant face and dynamically move the vertical crop",
+    )
+    parser.add_argument(
+        "--confidential", action="store_true", help="mark the source as confidential"
+    )
+    parser.add_argument(
+        "--zero-data-retention",
+        action="store_true",
+        help="confirm the configured Gemini/Vertex route has zero-data-retention",
+    )
+    parser.add_argument(
+        "--zdr-confirmed-by", default="", help="person who verified zero-data-retention"
+    )
     parser.add_argument("--sentences", help="comma-separated sentence indexes to cut, e.g. 0,1")
     parser.add_argument("--qc-pass", action="store_true", help="record a human QC pass (§2)")
     parser.add_argument("--json", action="store_true", help="print the run report as JSON")
     args = parser.parse_args(argv)
 
-    transcript = (
-        RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
-        if args.transcript
-        else None
-    )
-    selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
-
     try:
+        if args.transcript and args.omni_asr:
+            raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
+        if (args.omni_asr_runtime != "auto" or args.wsl_distro) and not args.omni_asr:
+            raise ValueError("--omni-asr-runtime and --wsl-distro require --omni-asr")
+        if args.gemini and args.vertex_project:
+            raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
+        if (args.gemini or args.vertex_project) and args.verdict:
+            raise ValueError("cloud judging and --verdict are mutually exclusive Stage 4 sources")
+        if (args.gemini or args.vertex_project) and not (args.transcript or args.omni_asr):
+            raise ValueError("cloud discovery requires --transcript or --omni-asr")
+        if args.sentences and not (args.transcript or args.omni_asr):
+            raise ValueError("--sentences requires --transcript or --omni-asr")
+        if args.verdict and (not (args.transcript or args.omni_asr) or not args.sentences):
+            raise ValueError("--verdict requires a Stage 1 source and --sentences")
+        if args.visual and not (args.transcript or args.omni_asr):
+            raise ValueError("--visual requires --transcript or --omni-asr")
+        if args.visual_query and not args.visual:
+            raise ValueError("--visual-query requires --visual")
+        if args.qc_pass and not (args.sentences or args.auto_select):
+            raise ValueError("--qc-pass requires --sentences or --auto-select")
+        if args.auto_select and not (args.visual or args.gemini or args.vertex_project):
+            raise ValueError("--auto-select needs at least one Stage 3 producer")
+        if args.auto_select and not (args.transcript or args.omni_asr):
+            raise ValueError("--auto-select requires --transcript or --omni-asr")
+        if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
+            raise ValueError("--timelens and --face-reframe require --sentences or --auto-select")
+        if (args.confidential or args.zero_data_retention or args.zdr_confirmed_by) and not (
+            args.gemini or args.vertex_project
+        ):
+            raise ValueError("governance flags apply only with a Gemini or Vertex route")
+
+        transcript = (
+            RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
+            if args.transcript
+            else None
+        )
+        verdict = (
+            JudgeVerdict.from_dict(json.loads(args.verdict.read_text(encoding="utf-8")))
+            if args.verdict
+            else None
+        )
+        selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
+
+        discover = None
+        judge = None
+        governance = None
+        if args.gemini or args.vertex_project:
+            from hawedit.gemini import GeminiJudge, Governance, VertexGeminiJudge
+            from hawedit.path_a import PathADiscovery
+
+            governance = Governance(
+                confidential=args.confidential,
+                zero_data_retention=args.zero_data_retention,
+                confirmed_by=args.zdr_confirmed_by,
+            )
+            judge = (
+                VertexGeminiJudge(
+                    args.vertex_project,
+                    location=args.vertex_location,
+                    governance=governance,
+                )
+                if args.vertex_project
+                else GeminiJudge(governance=governance)
+            )
+            path_a = PathADiscovery(client=judge)
+            discover = path_a.discover
+
+        canonical_asr = None
+        if args.omni_asr:
+            from hawedit.asr import create_omni_asr_producer
+
+            canonical_asr = create_omni_asr_producer(args.omni_asr_runtime, distro=args.wsl_distro)
+
+        visual_composer = None
+        if args.visual:
+            from hawedit.models import ModelStore
+            from hawedit.qwen_visual import QwenVisualEmbedder, QwenVisualReranker
+            from hawedit.registry import REGISTRY
+            from hawedit.video_reader import VideoChat3Reader
+            from hawedit.visual_pipeline import VisualComposer
+
+            model_store = ModelStore()
+            embed_dir = model_store.path_for(REGISTRY["Qwen3-VL-Embedding-2B"])
+            rerank_dir = model_store.path_for(REGISTRY["Qwen3-VL-Reranker-2B"])
+            reader_dir = model_store.path_for(REGISTRY["MCG-NJU/VideoChat3-4B"])
+            visual_composer = VisualComposer(
+                QwenVisualEmbedder(embed_dir, device=args.visual_device),
+                lambda read: QwenVisualReranker(rerank_dir, read, device=args.visual_device),
+                lambda read, score: VideoChat3Reader(
+                    reader_dir, read, score, device=args.visual_device
+                ),
+                keep=args.visual_keep,
+            )
+
+        temporal_grounder = None
+        if args.timelens:
+            from hawedit.models import ModelStore
+            from hawedit.registry import REGISTRY
+            from hawedit.video_grounding import TimeLens2Grounder
+            from hawedit.video_input import extract_window_frames
+
+            temporal_grounder = TimeLens2Grounder(
+                ModelStore().path_for(REGISTRY["MCG-NJU/TimeLens2-4B"]),
+                lambda window: extract_window_frames(
+                    args.source,
+                    window,
+                    args.work_dir / "timelens" / "frames" / window.window_id.replace(":", "_"),
+                ),
+                device=args.timelens_device,
+            )
+
+        subject_tracker = None
+        if args.face_reframe:
+            from hawedit.reframe import OpenCvFaceTracker
+
+            subject_tracker = OpenCvFaceTracker()
+
         run = run_pipeline(
             args.source,
             args.work_dir,
             media_id=args.media_id,
             transcript=transcript,
+            asr=canonical_asr,
             select_sentences=selection,
-            qc=Qc(auto_pass=True, flags=(), human_reviewed=True) if args.qc_pass else None,
+            qc=Qc(auto_pass=False, flags=(), human_reviewed=True) if args.qc_pass else None,
+            verdict=verdict,
+            discover=discover,
+            visual_composer=visual_composer,
+            visual_query=args.visual_query,
+            judge=judge,
+            temporal_grounder=temporal_grounder,
+            subject_tracker=subject_tracker,
+            auto_select=args.auto_select,
+            visual_fps=args.visual_fps,
         )
-    except FileNotFoundError as exc:
+    except (
+        CredentialError,
+        FileExistsError,
+        FileNotFoundError,
+        GeminiUnavailable,
+        IngestError,
+        KeyError,
+        RawTranscriptImmutable,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2
 
@@ -691,9 +1328,14 @@ def _print_report(run: PipelineRun) -> None:
         # two things, and only one of them is blocked; a report that showed the skip alone
         # would say a stage did nothing when part of it ran on this video.
         frames = sum(w.frame_count for w in run.visual_windows)
+        suffix = (
+            f" · {len(run.visual_index.survivors)} reranked survivor(s)"
+            if isinstance(run.visual_index, VisualDiscoveryResult)
+            else " · local visual retrieval not enabled"
+        )
         print(
             f"stage 2 {len(run.visual_windows)} scene window(s) · {frames} frame(s) at "
-            f"{run.visual_windows[0].fps} fps · embedding still blocked"
+            f"{run.visual_windows[0].fps} fps{suffix}"
         )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")

@@ -74,7 +74,7 @@ if grep -q '^UNCONFIGURED' <<<"$plan"; then
   echo "⚠ no download source configured for: ${names}" >&2
   echo "  §7 names these as checkpoints, not repository ids, and this script will not guess." >&2
   echo "  Add them to ${models_root}/sources.json, e.g." >&2
-  echo '    { "omniASR_LLM_7B_v2": "<org>/<repo>" }' >&2
+  echo '    { "Qwen3-VL-Embedding-2B": "<org>/<repo>" }' >&2
   echo >&2
   plan="$(grep -v '^UNCONFIGURED' <<<"$plan")"
 fi

@@ -29,22 +29,27 @@ written verdict. A model is not a trusted source; it is the least trusted one in
 Governance, unchanged by any of this: §3 Stage 3's warning box says full-transcript discovery
 sends 100% of every transcript to Google, and that for COMMS and KAAE material paid-tier Vertex
 with zero-data-retention is *mandatory, not advisory*. This module refuses to run against
-material marked confidential unless that has been confirmed — see `Governance`.
+material marked confidential unless that has been confirmed — see `Governance`. This adapter
+targets the Gemini Developer API, so even a confirmed setting cannot stand in for the Vertex
+route the blueprint requires for confidential material.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import re
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
 from hawedit.credentials import GEMINI_API_KEY, read_credential
 from hawedit.judge import (
     KURDISH_EDITORIAL_JUDGE,
+    InputMode,
     JudgeRequest,
     JudgeVerdict,
     route,
@@ -57,6 +62,8 @@ __all__ = [
     "GeminiUnavailable",
     "Governance",
     "JudgeUnusable",
+    "VertexGeminiJudge",
+    "adc_access_token",
     "count_tokens",
 ]
 
@@ -124,7 +131,9 @@ class Governance:
 
     A boolean default of `False` would make the safe path the one nobody selects. So
     `confidential` is what the caller knows about the material, and `zero_data_retention` is
-    what they have actually configured — and sending confidential material without ZDR raises.
+    what they have actually configured. Those values are necessary evidence, not a transport:
+    this module's endpoint remains the Developer API, so confidential uploads stay refused
+    until an actual Vertex implementation is selected.
     """
 
     confidential: bool = False
@@ -146,6 +155,23 @@ class Governance:
             raise GeminiUnavailable(
                 "zero-data-retention is claimed but nobody is recorded as having confirmed it. "
                 "§3 asks for a confirmation, and an unattributed one is not a confirmation."
+            )
+        if self.confidential:
+            raise GeminiUnavailable(
+                "confidential material requires a paid Vertex route with zero-data-retention, "
+                "but this adapter calls the Gemini Developer API. Flags cannot change that "
+                "endpoint; implement and select a Vertex transport before uploading it."
+            )
+
+    def assert_permits_vertex(self) -> None:
+        """Permit confidential upload only with an attributed Vertex ZDR confirmation."""
+        if self.confidential and not self.zero_data_retention:
+            raise GeminiUnavailable(
+                "confidential material requires Vertex zero-data-retention configuration"
+            )
+        if self.confidential and not self.confirmed_by.strip():
+            raise GeminiUnavailable(
+                "Vertex zero-data-retention is claimed but confirmed_by is empty"
             )
 
 
@@ -181,8 +207,15 @@ VERDICT_SCHEMA: Final[dict[str, Any]] = {
 _PROMPT = """You are the Kurdish editorial judge for a Central Kurdish (Sorani, ckb) video
 repurposing system. You are judging one candidate clip for social publication.
 
-The transcript below is normalized Sorani in Arabic script. Times are milliseconds from the
-start of the source video. The candidate runs from {in_ms} to {out_ms}.
+The candidate runs from {in_ms} to {out_ms} milliseconds in the source video. The transcript
+below is ONLY the aligned candidate slice, normalized Sorani in Arabic script; it is not the
+full episode. The carried Path A score and timestamped visual evidence are prior evidence from
+Stage 3. Use them; do not pretend a visual beat is absent merely because it has no words.
+
+Carried Path A score: {verbal_score}
+
+Validated visual evidence:
+{visual_context}
 
 Judge it on:
 - hook_score: how strongly the opening seconds hold attention (0..1)
@@ -196,18 +229,26 @@ Judge it on:
 - title_ckb, description_ckb, hashtags_ckb: IN CENTRAL KURDISH (Sorani, Arabic script) ONLY.
   Never Latin script, never English, never Kurmanji. This is a Kurdish product.
 
-Transcript:
+Candidate transcript slice:
 {text}
+
+The request also contains {keyframe_count} source-timestamped keyframes. Judge visible claims
+against those pixels; do not treat the textual SV6D description as a substitute for them.
 """
 
-Transport = Callable[[str, bytes | None], tuple[int, str]]
+Transport = Callable[[str, bytes | None, Mapping[str, str]], tuple[int, str]]
 
 
-def _https(url: str, body: bytes | None = None) -> tuple[int, str]:
+def _https(
+    url: str, body: bytes | None = None, headers: Mapping[str, str] | None = None
+) -> tuple[int, str]:
+    request_headers = dict(headers or {})
+    if body:
+        request_headers.setdefault("Content-Type", "application/json")
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"} if body else {},
+        headers=request_headers,
         method="POST" if body else "GET",
     )
     try:
@@ -220,7 +261,7 @@ def _https(url: str, body: bytes | None = None) -> tuple[int, str]:
 
 
 def _api_error(status: int, body: str) -> str:
-    """The API's own message, without echoing the URL — which carries the key."""
+    """Return the API's own bounded error message without request metadata."""
     try:
         return f"HTTP {status}: {json.loads(body)['error']['message']}"
     except (ValueError, KeyError, TypeError):
@@ -243,7 +284,25 @@ def count_tokens(
         GeminiUnavailable: the API could not be reached or refused the request.
     """
     payload = json.dumps({"contents": [{"parts": [{"text": text}]}]}).encode("utf-8")
-    status, body = transport(f"{API_ROOT}/models/{model}:countTokens?key={api_key}", payload)
+    status, body = transport(
+        f"{API_ROOT}/models/{model}:countTokens", payload, {"x-goog-api-key": api_key}
+    )
+    if status != 200:
+        raise GeminiUnavailable(f"countTokens failed — {_api_error(status, body)}")
+    try:
+        return int(json.loads(body)["totalTokens"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise GeminiUnavailable(f"countTokens returned no totalTokens: {exc}") from exc
+
+
+def _count_parts(
+    parts: list[dict[str, Any]],
+    url: str,
+    headers: Mapping[str, str],
+    transport: Transport,
+) -> int:
+    payload = json.dumps({"contents": [{"parts": parts}]}).encode("utf-8")
+    status, body = transport(url, payload, headers)
     if status != 200:
         raise GeminiUnavailable(f"countTokens failed — {_api_error(status, body)}")
     try:
@@ -258,6 +317,8 @@ class GeminiJudge:
     The model is resolved against §7 at construction, so this class cannot be pointed at the
     shadow or at a model the blueprint excludes — `route()` refuses both.
     """
+
+    requires_keyframes = True
 
     def __init__(
         self,
@@ -295,17 +356,86 @@ class GeminiJudge:
         consequences: §3 Stage 3 calls ZDR "mandatory, not advisory" for COMMS and KAAE
         material. `smoke.py` calls this directly. Found by the independent review.
         """
+        self._assert_governance()
+        self._assert_keyframes(request)
+        return _count_parts(
+            self._parts(request),
+            self._url("countTokens"),
+            self._headers(),
+            self._transport,
+        )
+
+    def _assert_governance(self) -> None:
         self.governance.assert_permits_upload()
-        return count_tokens(self._prompt(request), self._key, self.model_id, self._transport)
+
+    def _headers(self) -> Mapping[str, str]:
+        return {"x-goog-api-key": self._key}
+
+    def _url(self, method: str) -> str:
+        return f"{API_ROOT}/models/{self.model_id}:{method}"
+
+    @staticmethod
+    def _assert_keyframes(request: JudgeRequest) -> None:
+        if request.mode is not InputMode.PATH_A_DISCOVERY and not request.keyframes:
+            raise JudgeUnusable(
+                f"Stage 4 request {request.candidate_id!r} has no keyframes. Textual SV6D "
+                "is prior evidence, not source pixels; refusing a text-only visual judgment."
+            )
+
+    def _parts(self, request: JudgeRequest) -> list[dict[str, Any]]:
+        prompt = self._prompt(request)
+        parts: list[dict[str, Any]] = []
+        for frame in request.keyframes:
+            parts.append({"text": f"Source keyframe at {frame.timestamp_ms} ms:"})
+            parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": frame.mime_type,
+                        "data": base64.b64encode(frame.data).decode("ascii"),
+                    }
+                }
+            )
+        parts.append({"text": prompt})
+        return parts
+
+    def count_parts(self, parts: list[dict[str, Any]]) -> int:
+        """Count arbitrary content parts through this adapter's authenticated route."""
+        self._assert_governance()
+        return _count_parts(parts, self._url("countTokens"), self._headers(), self._transport)
+
+    def generate_json(self, parts: list[dict[str, Any]], schema: Mapping[str, Any]) -> str:
+        """Generate deterministic structured JSON through Developer API or Vertex."""
+        self._assert_governance()
+        payload = json.dumps(
+            {
+                "contents": [{"parts": parts}],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "responseSchema": schema,
+                    "temperature": 0.0,
+                },
+            }
+        ).encode("utf-8")
+        return self._post(self._url("generateContent"), payload)
 
     def _prompt(self, request: JudgeRequest) -> str:
-        if not request.text_ckb:
+        if not request.text_ckb and not request.visual_context:
             raise JudgeUnusable(
-                f"request {request.candidate_id!r} carries no transcript text. There is nothing "
-                f"for the judge to read, and a verdict on nothing is not a verdict."
+                f"request {request.candidate_id!r} carries neither transcript text nor visual "
+                f"evidence. There is nothing for the judge to judge."
             )
+        visual_context = "\n".join(f"- {item}" for item in request.visual_context) or "(none)"
         return _PROMPT.format(
-            in_ms=request.clip_in_ms, out_ms=request.clip_out_ms, text=request.text_ckb
+            in_ms=request.clip_in_ms,
+            out_ms=request.clip_out_ms,
+            verbal_score=(
+                f"{request.carried_verbal_score:.6f}"
+                if request.carried_verbal_score is not None
+                else "(not available)"
+            ),
+            visual_context=visual_context,
+            text=request.text_ckb or "(no aligned speech in this candidate)",
+            keyframe_count=len(request.keyframes),
         )
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
@@ -316,19 +446,24 @@ class GeminiJudge:
             RequestTooLarge: the request exceeds §3's 200K tier ceiling.
             JudgeUnusable: the model answered with something that is not a usable verdict.
         """
-        self.governance.assert_permits_upload()
-        prompt = self._prompt(request)
-
+        self._assert_governance()
+        self._assert_keyframes(request)
         # Count before sending. The ceiling is about money, so it is checked against the real
         # number rather than against whatever the caller believed when building the request.
-        counted = count_tokens(prompt, self._key, self.model_id, self._transport)
+        parts = self._parts(request)
+        counted = _count_parts(
+            parts,
+            self._url("countTokens"),
+            self._headers(),
+            self._transport,
+        )
         from dataclasses import replace
 
         replace(request, tokens=counted).assert_within_tier()
 
         payload = json.dumps(
             {
-                "contents": [{"parts": [{"text": prompt}]}],
+                "contents": [{"parts": parts}],
                 "generationConfig": {
                     "responseMimeType": "application/json",
                     "responseSchema": VERDICT_SCHEMA,
@@ -340,13 +475,13 @@ class GeminiJudge:
             }
         ).encode("utf-8")
 
-        body = self._post(f"{API_ROOT}/models/{self.model_id}:generateContent", payload)
+        body = self._post(self._url("generateContent"), payload)
         return self._to_verdict(body, request)
 
     def _post(self, url: str, payload: bytes) -> str:
         last = ""
         for attempt in range(1, self._max_attempts + 1):
-            status, body = self._transport(f"{url}?key={self._key}", payload)
+            status, body = self._transport(url, payload, self._headers())
             if status == 200:
                 return body
             last = _api_error(status, body)
@@ -396,3 +531,72 @@ class GeminiJudge:
             )
         except (ValueError, TypeError) as exc:
             raise JudgeUnusable(f"the judge's verdict failed validation: {exc}") from exc
+
+
+def adc_access_token() -> str:
+    """Refresh and return a short-lived Google Application Default Credentials token."""
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+    except ImportError as exc:
+        raise GeminiUnavailable(
+            "Vertex requires the cloud extra: pip install -e '.[cloud]'"
+        ) from exc
+    credentials, _ = google.auth.default(scopes=("https://www.googleapis.com/auth/cloud-platform",))
+    credentials.refresh(Request())
+    token = getattr(credentials, "token", None)
+    if not token:
+        raise GeminiUnavailable("Application Default Credentials returned no access token")
+    return str(token)
+
+
+class VertexGeminiJudge(GeminiJudge):
+    """Gemini on Vertex AI with ADC bearer authentication for confidential routing."""
+
+    def __init__(
+        self,
+        project: str,
+        *,
+        location: str = "global",
+        model_id: str = KURDISH_EDITORIAL_JUDGE,
+        governance: Governance | None = None,
+        token_provider: Callable[[], str] = adc_access_token,
+        transport: Transport | None = None,
+        max_attempts: int = 3,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", project):
+            raise ValueError(f"invalid Vertex project identifier {project!r}")
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", location):
+            raise ValueError(f"invalid Vertex location {location!r}")
+        self.model_id = model_id
+        self.governance = governance or Governance()
+        self.project = project
+        self.location = location
+        self._token_provider = token_provider
+        self._transport = transport or _https
+        self._max_attempts = max_attempts
+        self._sleep = sleep
+        self._key = ""
+        route(self)
+
+    def _assert_governance(self) -> None:
+        self.governance.assert_permits_vertex()
+
+    def _headers(self) -> Mapping[str, str]:
+        token = self._token_provider()
+        if not token:
+            raise GeminiUnavailable("Vertex token provider returned an empty access token")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _url(self, method: str) -> str:
+        host = (
+            "aiplatform.googleapis.com"
+            if self.location == "global"
+            else f"{self.location}-aiplatform.googleapis.com"
+        )
+        return (
+            f"https://{host}/v1/projects/"
+            f"{self.project}/locations/{self.location}/publishers/google/models/"
+            f"{self.model_id}:{method}"
+        )

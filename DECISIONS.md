@@ -2303,6 +2303,20 @@ lines parseable. Recorded because a prompt looks like prose and behaves like an 
 
 ---
 
+## D-059 · A per-call VRAM ceiling is not a maximum episode length
+
+**Defect.** `discover_visual` summed every scene in an episode and refused the model when the
+total exceeded 256 frames. The real `VideoChat3Reader` invokes the model once per scene. A
+30-minute episode could therefore be rejected for exceeding a memory budget no invocation ever
+exceeded; segmentation had been implemented and then defeated by arithmetic at the next seam.
+
+**Decision.** Pack windows in source order into deterministic calls whose planned frame totals
+are each at most 256. Validate exact one-reading-per-window inside each call before continuing.
+The real adapter remains free to make smaller calls (it uses one window), while any future
+batched adapter receives the ceiling the blueprint's VRAM figures actually describe.
+
+---
+
 ## D-060 · The frames handed to a model must be the frames it reads, checked on the batch
 
 **Context:** M6.3's premise check. Every §7 visual checkpoint's
@@ -2466,6 +2480,49 @@ that was red is the thing this project's DONE rule exists to prevent.
 
 ---
 
+## D-063 · The checkpoints' declared 2 fps is a hard sampling ceiling
+
+**Date:** 2026-08-08 · **Blueprint ref:** §3 Stage 2, §7 · **Type:** measured guardrail
+
+All four local visual checkpoints declare a 2 fps video sampler. Reading `video_grid_thw` showed
+that inputs above that rate are silently resampled: 64 frames at 4 fps became 32, and 45 at
+3 fps became 30. Odd frame counts are padded by repeating the last frame. Both failures leave a
+valid embedding or generation, so downstream code cannot detect that the model saw different
+footage from the window it reports.
+
+**Decision.** `SceneWindow` refuses rates above 2 fps. Extraction trims an odd tail only when at
+least one full temporal patch remains, and the model-input boundary verifies the frame count it
+actually received. The composed runner uses 2 fps by default; the uncomposed arithmetic reference
+remains §3's ~1 fps. This supersedes the earlier 3 fps default rather than preserving a measured
+rate that the processors discard.
+
+---
+
+## D-064 · Windows Stage 1 crosses one explicit WSL2 process boundary
+
+**Date:** 2026-08-08 · **Blueprint ref:** §3 Stage 1, §6 · **Type:** architecture decision
+
+The official `omnilingual-asr` package is the only supported loader for the two canonical model
+cards, and its `fairseq2n` dependency has no Windows wheel. The target Windows host already has
+WSL2, Python 3.12, 740 GB free and both RTX 3090 Ti GPUs visible through CUDA. Leaving
+`--omni-asr` pointed at the host interpreter therefore made a wired runner that could never run.
+
+**Decision.** On Windows, `--omni-asr` automatically cuts Stage 0's bounded WAV regions on the
+host and invokes one WSL2 worker for the whole media item. The worker loads LLM-7B and CTC-3B
+once, runs their forwards in parallel per segment, performs CTC/Viterbi alignment, shifts every
+word to the media clock and exclusively publishes one validated raw transcript in the shared
+work directory. Linux remains direct. `--omni-asr-runtime` exposes the choice and never silently
+falls back between them.
+
+The request accepts only relative segment paths confined to its directory. Sorani text crosses
+the boundary in UTF-8 files, not console output. `hawedit-asr-setup` provisions a
+source-fingerprinted runtime under local app-data, so an installed wheel does not depend on a
+checkout path and a package upgrade cannot silently use an older worker. The same physical GPUs
+still count as hawapc01, but benchmark metadata must name WSL2 in `Hardware.notes`; no RTF or CER
+is inferred from wiring.
+
+---
+
 ## D-065 · What the sampling ceiling moved, and the evidence it retired
 
 **Context:** D-063 (recorded by a concurrent session) and this implementation were arrived at
@@ -2506,5 +2563,58 @@ delivery rate, and now a sampling rate, and none of those was visible in the fir
 **Audit.** 4/4 mutations caught against a baseline verified green first. The trim survived the
 first pass, because the sweep simulates the processor's arithmetic rather than running ffmpeg; a
 real extraction closed it — 1400 ms at 2 fps writes three JPEGs and hands over two.
+
+---
+
+## D-066 · D-037 clause 4 restored: below the survivor floor, retrieval refuses
+
+**Context:** `rerank_and_keep` was changed to `survivor_count = min(keep, len(reranked))` — it
+returned however many windows existed instead of refusing. **I committed that change myself** in
+`3c270f7`: I staged the whole of `visual_index.py` rather than building HEAD-plus-my-edits as I had
+for the shared documents, and it carried a concurrent session's edit into main with it.
+
+**What the change reversed.** D-037 clause 4 states the decision and the alternative it rejected,
+verbatim: *"Below the survivor floor the retrieval refuses instead of shortening. §3 fixes the
+count at 5–10. A three-scene video cannot satisfy it. The alternative considered was returning
+whatever exists; rejected because §8.2 counts Recall@K on this list, and three results in a column
+that says five is a number that does not mean what the column says."* No superseding entry was
+recorded. `PROGRESS.md` still certified that `rerank_and_keep` *"correctly refuses"*, and the
+function's own docstring two lines above the change still said the reranker *"may not ... drop
+below the survivor count"*.
+
+**Decision — restore the refusal, and move it before the reranker runs.** The rule this project
+holds is that an invariant is not weakened to make something pass, and that a check believed wrong
+is proven wrong first. Neither happened. The refusal is now checked against `len(index)` before any
+scoring, so a media too short for §3's slice costs no GPU time, and the message names the caller's
+option rather than the function's: *"the caller decides whether to skip the slice, and says so,
+rather than this function shortening it quietly."*
+
+**Why the short-media case does not justify it.** A three-window index is the **fixture**, not the
+product. At 2 fps with a 32-second ceiling, a 40-minute Kurdish episode plans roughly 75 windows;
+the only inputs that fall below five are test material. `evidence/m5-2-reranker.md` has recorded
+since M5.2 that the keep-5–10 slice is *"not exercisable on this fixture"* and that
+`rerank_and_keep` *"correctly refuses"* it.
+
+**The counter-argument, recorded rather than dismissed.** §8.2's Recall@K over three candidates is
+arguably still well defined — the denominator is smaller, not corrupted — and
+`VisualDiscoveryResult` already reports `indexed_windows` and `retrieved`, so a reader could see
+the shortfall. That is a real argument that D-037 clause 4 may be wrong. It is **not settled here**,
+because settling it needs the labelled set §8.2 scores against, which is `BLOCKED.md` #1. Until
+then the recorded decision stands, which is the only rule available when neither side can be
+measured.
+
+**What the other session's change got right, and is kept.** It added a check that the reranker
+returns exactly as many hits as it was given — *"every retrieved window must be scored ... none may
+disappear"* — which is stronger than what it replaced and is retained unchanged.
+
+**One mutation survives, and it is redundancy rather than an unprotected guard.** Reverting the
+final slice to `min(keep, len(reranked))` changes no behaviour and no test goes red. That is
+provable rather than lucky: `hits` is `min(k, len(index))` and the floor now guarantees
+`len(index) >= keep`, while the equal-length check guarantees `len(reranked) == len(hits)`, so
+`len(reranked) >= keep` always. The plain `[:keep]` is kept because it states the contract; writing
+a test for a branch that cannot be reached would be a test that measures nothing.
+
+**Audit.** 3/3 anchors applied; 2 caught, 1 provably unreachable as above. Baseline verified green
+first (1067 passed, 0 skipped).
 
 ---

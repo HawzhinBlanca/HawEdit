@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -217,7 +218,7 @@ def test_counting_tokens_cannot_send_confidential_text_before_the_zdr_gate() -> 
 
     sent: list[bytes] = []
 
-    def spy(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def spy(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         if body:
             sent.append(body)
         return 200, json.dumps({"totalTokens": 10})
@@ -259,14 +260,14 @@ def test_a_string_false_from_the_model_is_not_read_as_true() -> None:
         "hashtags_ckb": ["#کوردی"],
     }
 
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
         return 200, json.dumps(
             {"candidates": [{"content": {"parts": [{"text": json.dumps(fields)}]}}]}
         )
 
-    from hawedit.judge import InputMode, JudgeRequest
+    from hawedit.judge import InputMode, JudgeFrame, JudgeRequest
 
     judge = GeminiJudge(api_key="k", transport=transport, sleep=lambda _s: None)
     with pytest.raises(JudgeUnusable, match="boolean"):
@@ -277,6 +278,7 @@ def test_a_string_false_from_the_model_is_not_read_as_true() -> None:
                 text_ckb="ئەمە",
                 clip_in_ms=0,
                 clip_out_ms=1_000,
+                keyframes=(JudgeFrame(500, "image/jpeg", b"jpeg"),),
             )
         )
 
@@ -292,11 +294,11 @@ def test_a_dropped_connection_is_retried_rather_than_reported_as_a_refusal() -> 
     the problem was the network.
     """
     from hawedit.gemini import GeminiJudge
-    from hawedit.judge import InputMode, JudgeRequest
+    from hawedit.judge import InputMode, JudgeFrame, JudgeRequest
 
     attempts = {"n": 0}
 
-    def flaky(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def flaky(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
         attempts["n"] += 1
@@ -339,6 +341,7 @@ def test_a_dropped_connection_is_retried_rather_than_reported_as_a_refusal() -> 
             text_ckb="ئەمە",
             clip_in_ms=0,
             clip_out_ms=1_000,
+            keyframes=(JudgeFrame(500, "image/jpeg", b"jpeg"),),
         )
     )
     assert verdict.candidate_id == "c"
@@ -614,7 +617,7 @@ def test_a_string_of_hashtags_is_not_shredded_into_letters() -> None:
     character — and each character passes the Kurdish-script check, because a Kurdish letter
     is Kurdish script."""
     from hawedit.gemini import GeminiJudge, JudgeUnusable
-    from hawedit.judge import InputMode, JudgeRequest
+    from hawedit.judge import InputMode, JudgeFrame, JudgeRequest
 
     fields = {
         "hook_score": 0.8,
@@ -629,7 +632,7 @@ def test_a_string_of_hashtags_is_not_shredded_into_letters() -> None:
         "hashtags_ckb": "کورد",  # a string, not an array
     }
 
-    def transport(url: str, body: bytes | None = None) -> tuple[int, str]:
+    def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         if "countTokens" in url:
             return 200, json.dumps({"totalTokens": 10})
         return 200, json.dumps(
@@ -644,6 +647,7 @@ def test_a_string_of_hashtags_is_not_shredded_into_letters() -> None:
                 text_ckb="ئەمە",
                 clip_in_ms=0,
                 clip_out_ms=1_000,
+                keyframes=(JudgeFrame(500, "image/jpeg", b"jpeg"),),
             )
         )
 
@@ -687,7 +691,7 @@ def test_costing_a_request_cannot_launder_a_raw_transcript() -> None:
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2"),
     )
 
-    def transport(_url: str, _body: bytes | None = None) -> tuple[int, str]:
+    def transport(_url: str, _body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
         return 200, "{}"
 
     path_a = PathADiscovery(api_key="k", transport=transport, governance=Governance())

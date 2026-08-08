@@ -1,6 +1,6 @@
-"""Â§3 Stage 5 â€” TimeLens2-4B's output, and which of its intervals Stage 5 may use.
+"""§3 Stage 5 — TimeLens2-4B's output, and which of its intervals Stage 5 may use.
 
-Â§3 Stage 5 opens with a warning, in bold, before it gives any formula:
+§3 Stage 5 opens with a warning, in bold, before it gives any formula:
 
     **TimeLens2-4B returns intervals containing relevant visual evidence. It does not produce
     editorial cuts and cannot locate a speech-only idea without transcript timing.** Treat its
@@ -9,24 +9,25 @@
 `boundary.py` has honoured the second sentence since it was written: the interval is one soft
 signal among five and may only extend outward, so a visual model can never truncate a Kurdish
 sentence. What it could not honour was the first, because what arrived was
-`timelens_interval_end_ms` â€” a bare integer with no way to ask which interval produced it.
+`timelens_interval_end_ms` — a bare integer with no way to ask which interval produced it.
 
-Â§3 writes the out-point rule as `latest of { â€¦, timelens_interval_end }`, and the naive reading
+§3 writes the out-point rule as `latest of { …, timelens_interval_end }`, and the naive reading
 of "latest" is `max()` over every interval the model returned for the episode. That reading
-turns an interval at 5:00 into the out-point of a clip anchored at 10â€“14 s: `final_out` becomes
-305 000 ms, Kurdish invariant #2 is satisfied â€” `final_out >= anchor_out`, generously â€” and the
+turns an interval at 5:00 into the out-point of a clip anchored at 10–14 s: `final_out` becomes
+305 000 ms, Kurdish invariant #2 is satisfied — `final_out >= anchor_out`, generously — and the
 clip runs from one Kurdish sentence into five minutes of unrelated footage with every check
 green. The invariant constrains *direction*. Nothing constrained *relevance*.
 
-So this module does the selection Â§3 leaves implicit, and does it by the rule Â§3 states: the
+So this module does the selection §3 leaves implicit, and does it by the rule §3 states: the
 model reports evidence *contained in* an interval, and an interval that shares no footage with
 the anchored idea is evidence about a different moment. Only overlapping intervals are
 eligible. And because a fix that lives only here would leave the next hand-built
-`BoundaryInputs` free to pass the bare integer again â€” the exact "one call site over" mistake
-this codebase has now made twice â€” `fuse_boundary` requires the interval's start alongside its
+`BoundaryInputs` free to pass the bare integer again — the exact "one call site over" mistake
+this codebase has now made twice — `fuse_boundary` requires the interval's start alongside its
 end and checks the overlap itself.
 
-The model is `BLOCKED.md` #2 (GPU) and #6 (weights). This is the type it will return.
+The real producer is ``video_grounding.TimeLens2Grounder`` and the runner composes its
+media-clock intervals into boundary fusion.
 """
 
 from __future__ import annotations
@@ -42,10 +43,12 @@ __all__ = [
     "TIMELENS_MODEL",
     "VisualEvidenceInterval",
     "interval_end_for_fusion",
+    "interval_for_fusion",
 ]
 
 TIMELENS_MODEL: Final = "MCG-NJU/TimeLens2-4B"
 _EVIDENCE_ROLE: Final = frozenset({"temporal_evidence"})
+
 
 # The model answers in seconds to one decimal, and ffmpeg's `fps` filter samples at interval
 # centres, so the last frame sits half an interval before the window's nominal end. A span
@@ -58,7 +61,7 @@ _SPAN_TOLERANCE_S: Final = 0.05
 class VisualEvidenceInterval:
     """A span TimeLens2 says contains visual evidence, and what it says is in it.
 
-    Not a cut. Â§3 Stage 5 is explicit that this model "does not produce editorial cuts", and
+    Not a cut. §3 Stage 5 is explicit that this model "does not produce editorial cuts", and
     the type is named for what it is so that no call site can read it as one.
     """
 
@@ -80,8 +83,8 @@ class VisualEvidenceInterval:
             )
         if not self.claim.strip():
             raise ValueError(
-                "interval carries no claim. Â§3 applies the same rule to SV6D â€” 'Reject output "
-                "where a claim has no timeline evidence' â€” and the converse holds here: a span "
+                "interval carries no claim. §3 applies the same rule to SV6D — 'Reject output "
+                "where a claim has no timeline evidence' — and the converse holds here: a span "
                 "of time asserting nothing is not evidence, and it would still move a boundary."
             )
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
@@ -170,7 +173,7 @@ def interval_end_for_fusion(
     anchor_out_ms: int,
     media_id: str | None = None,
 ) -> int | None:
-    """The single number Â§3 Stage 5's out-point rule takes from TimeLens2 â€” or `None`.
+    """The single number §3 Stage 5's out-point rule takes from TimeLens2 — or `None`.
 
     `None` means "this model has nothing to say about this moment", which is not the same as
     "this model says the clip ends at zero". `fuse_boundary` treats an absent signal as no
@@ -179,26 +182,32 @@ def interval_end_for_fusion(
     Raises:
         ValueError: the anchors are malformed, or an interval belongs to other media.
     """
+    selected = interval_for_fusion(intervals, anchor_in_ms, anchor_out_ms, media_id)
+    return selected.end_ms if selected is not None else None
+
+
+def interval_for_fusion(
+    intervals: Sequence[VisualEvidenceInterval],
+    anchor_in_ms: int,
+    anchor_out_ms: int,
+    media_id: str | None = None,
+) -> VisualEvidenceInterval | None:
+    """The relevant interval whose end extends furthest beyond the anchored sentence."""
     if anchor_out_ms <= anchor_in_ms:
         raise ValueError(
             f"anchor_out ({anchor_out_ms} ms) must be after anchor_in ({anchor_in_ms} ms)"
         )
     if media_id is not None:
-        foreign = sorted({i.media_id for i in intervals} - {media_id})
+        foreign = sorted({item.media_id for item in intervals} - {media_id})
         if foreign:
-            # Loudly, not by skipping: a media_id typo would otherwise discard an episode's
-            # whole visual evidence and produce a run indistinguishable from one that had none.
             raise ValueError(
                 f"visual evidence for media {foreign!r} was passed while fusing {media_id!r}"
             )
-
-    # Relevance first, magnitude second. Doing it the other way round â€” max() over every
-    # interval â€” is the five-minute clip this module exists to prevent.
-    relevant = [i for i in intervals if i.overlaps(anchor_in_ms, anchor_out_ms)]
+    relevant = [
+        item
+        for item in intervals
+        if item.overlaps(anchor_in_ms, anchor_out_ms) and item.end_ms > anchor_out_ms
+    ]
     if not relevant:
         return None
-    latest = max(i.end_ms for i in relevant)
-    # An overlapping interval that ends before the anchor does is about this moment but cannot
-    # extend it outward. Reporting it would put "timelens_interval_end" into `out_extended_by`
-    # for a boundary TimeLens2 did not move.
-    return latest if latest > anchor_out_ms else None
+    return max(relevant, key=lambda item: (item.end_ms, -item.start_ms, item.claim))

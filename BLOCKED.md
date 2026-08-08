@@ -401,7 +401,17 @@ to invent one, and §3 Stage 1 cannot run — which keeps M1.4, M0.11 and M0.13 
 
 ---
 
-## #11 · §7's canonical ASR cannot be loaded on Windows, and hawapc01 is Windows
+## #11 · §7's canonical ASR cannot be loaded on Windows — **RESOLVED 2026-08-08**
+
+**Resolved in code by choosing WSL2 for Stage 1 on Windows.** `--omni-asr` now selects a
+path-confined Windows→WSL worker automatically; `hawedit-asr-setup` (wrapped by
+`scripts/setup-wsl-asr.ps1` in a checkout) provisions a source-fingerprinted Python 3.12 runtime
+under the user's local app-data, installs official `omnilingual-asr`, and refuses a setup without
+both CUDA GPUs. Stage 0 and WAV cutting stay on the host, one worker loads both models
+once, and the returned `RawTranscript` is validated before the immutable store accepts it.
+Direct Linux execution remains available through `--omni-asr-runtime local`. This resolves the
+architecture/runtime blocker, not the missing labelled Sorani corpus or an unrun 44 GB model
+pair; those remain measurement blockers under #1.
 
 **Needs:** Hawa, one decision — where §3 Stage 1 runs. No credentials, no purchase.
 

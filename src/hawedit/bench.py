@@ -27,9 +27,12 @@ choking on the audio it finds hardest.
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Final
 
 from hawedit.alignment import AlignmentAccuracy, score_alignment
@@ -38,6 +41,7 @@ from hawedit.asr import (
     Hardware,
     Measurement,
     MeasurementSession,
+    OmniAsrAdapter,
     long_audio_failure_rate,
     validate_adapter,
 )
@@ -59,6 +63,7 @@ __all__ = [
     "ItemScore",
     "ModelReport",
     "decide_canonical",
+    "main",
     "run_benchmark",
 ]
 
@@ -424,3 +429,46 @@ def decide_canonical(
         f"Record the numbers in DECISIONS.md before changing the pin."
     )
     return CanonicalDecision(incumbent, best[0], switch=True, reasons=tuple(reasons))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the canonical model on a complete real Sorani corpus manifest."""
+    parser = argparse.ArgumentParser(description="Run HawEdit's real §8.1 Sorani ASR benchmark")
+    parser.add_argument("manifest", type=Path)
+    parser.add_argument("--audio-root", type=Path, required=True)
+    parser.add_argument("--host", required=True, help="machine on which RTF is measured")
+    parser.add_argument("--accelerator", required=True, help="exact GPU/accelerator identity")
+    parser.add_argument("--notes", default="")
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        corpus = Corpus.load(args.manifest)
+        corpus.assert_section_8_1_coverage()
+        missing = corpus.missing_audio(args.audio_root)
+        if missing:
+            raise FileNotFoundError(
+                f"missing corpus audio for item(s): {[item.item_id for item in missing]}"
+            )
+        if args.output.exists():
+            raise FileExistsError(f"refusing to overwrite benchmark report {args.output}")
+        rooted = Corpus(
+            tuple(
+                replace(item, audio_path=str(args.audio_root / item.audio_path))
+                for item in corpus.items
+            ),
+            provenance=corpus.provenance,
+        )
+        report = run_benchmark(
+            rooted,
+            (OmniAsrAdapter(),),
+            MeasurementSession(Hardware(args.host, args.accelerator, args.notes)),
+        )
+        args.output.write_text(report.to_json() + "\n", encoding="utf-8")
+    except (FileExistsError, FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

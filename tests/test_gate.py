@@ -14,9 +14,92 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "verify.sh"
-BASH = shutil.which("bash") or "bash"
 
 FULL_GATE_SUCCESS_LINE = "VERIFY OK"
+
+
+def _bash_candidates() -> tuple[Path, ...]:
+    """Return plausible Bash installations without trusting Windows command lookup.
+
+    ``C:\\Windows\\System32`` precedes ``PATH`` for a Windows process.  Consequently
+    ``shutil.which("bash")`` commonly returns WSL's launcher even when Git Bash is installed.
+    Find Git Bash from the Git installation first, while retaining WSL as a usable fallback.
+    """
+    candidates: list[Path] = []
+    configured = os.environ.get("HAWEDIT_BASH")
+    if configured:
+        candidates.append(Path(configured))
+
+    git = shutil.which("git")
+    if git:
+        # Git for Windows installs cmd/git.exe and bin/bash.exe under the same root.
+        candidates.append(Path(git).resolve().parent.parent / "bin" / "bash.exe")
+
+    if program_files := os.environ.get("PROGRAMFILES"):
+        candidates.append(Path(program_files) / "Git" / "bin" / "bash.exe")
+    if local_app_data := os.environ.get("LOCALAPPDATA"):
+        candidates.append(Path(local_app_data) / "Programs" / "Git" / "bin" / "bash.exe")
+
+    if on_path := shutil.which("bash"):
+        candidates.append(Path(on_path))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        identity = os.path.normcase(os.path.abspath(candidate))
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(candidate)
+    return tuple(unique)
+
+
+def _gate_paths_for_bash() -> tuple[str, ...]:
+    """Spell the checkout path for native Windows Bash and for WSL."""
+    paths = [GATE.as_posix()]
+    if GATE.drive:
+        relative = GATE.as_posix()[3:]
+        paths.append(f"/mnt/{GATE.drive[0].lower()}/{relative}")
+    return tuple(paths)
+
+
+def _select_bash() -> tuple[str | None, str | None, str]:
+    """Select a Bash that proves it can read this checkout's real gate script."""
+    failures: list[str] = []
+    for candidate in _bash_candidates():
+        if not candidate.is_file():
+            failures.append(f"{candidate}: not a file")
+            continue
+        for gate_path in _gate_paths_for_bash():
+            try:
+                probe = subprocess.run(
+                    [
+                        str(candidate),
+                        "--noprofile",
+                        "--norc",
+                        "-c",
+                        'test -r "$1"',
+                        "hawedit-gate-probe",
+                        gate_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except OSError as exc:
+                failures.append(f"{candidate}: {exc}")
+                break
+            except subprocess.TimeoutExpired:
+                failures.append(f"{candidate}: probe timed out")
+                break
+            if probe.returncode == 0:
+                return str(candidate), gate_path, ""
+        else:
+            failures.append(f"{candidate}: cannot read {GATE}")
+    return None, None, "; ".join(failures) or "no Bash candidates were found"
+
+
+BASH, GATE_ARGUMENT, BASH_FAILURE = _select_bash()
 
 
 def _run_gate(*args: str, **env_overrides: str) -> subprocess.CompletedProcess[str]:
@@ -25,18 +108,20 @@ def _run_gate(*args: str, **env_overrides: str) -> subprocess.CompletedProcess[s
     Two Windows-only traps, both of which turn every refusal assertion below into a false
     pass — the tests that exist to prove the gate cannot be neutered, neutered by the harness.
 
-    `BASH`, not `"bash"`: `CreateProcess` searches `C:\\Windows\\system32` *before* PATH, and
-    that is where WSL's `bash.exe` lives. Python would launch a Linux interpreter that cannot
-    see a Windows path at all, exit 127, and every `returncode == 3` assertion would read the
-    failure as "did not refuse". `shutil.which` walks PATH only, so it finds the Git Bash that
-    a developer here actually uses.
+    `BASH`, not `"bash"`: Windows commonly resolves WSL's launcher even when Git Bash is
+    installed. The resolver finds Git Bash beside `git.exe`, considers WSL as a fallback, and
+    probes that the interpreter can read the real checkout before any assertion trusts it.
 
-    `as_posix()`, not `str()`: bash reads `C:\\Users\\…` as escape sequences and hands itself
-    `C:UsersWareen…`. `C:/Users/…` passes through unchanged.
+    `GATE_ARGUMENT`, not `str(GATE)`: native Bash needs a forward-slash Windows path while WSL
+    needs `/mnt/<drive>/...`. The successful readability probe selects the matching spelling.
     """
+    assert BASH is not None and GATE_ARGUMENT is not None, (
+        "no Bash interpreter can access the checkout; install Git for Windows or set "
+        f"HAWEDIT_BASH. Probes: {BASH_FAILURE}"
+    )
     env = {**os.environ, **env_overrides}
     return subprocess.run(
-        [BASH, GATE.as_posix(), *args],
+        [BASH, GATE_ARGUMENT, *args],
         capture_output=True,
         text=True,
         env=env,

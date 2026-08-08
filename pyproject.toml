@@ -25,7 +25,8 @@ media = [
     # succeeds on an install that cannot detect a single cut. CI caught that; a local
     # venv that happened to have it did not. Headless on purpose: §6 puts Stage 0 on a
     # server, and the GUI build pulls X11 libraries no runner or render box needs.
-    "opencv-python-headless==5.0.0.93",  # Apache-2.0 — scenedetect's actual backend
+    # OpenCV 5 removed CascadeClassifier, which Stage 6's built-in face tracker uses.
+    "opencv-python-headless==4.12.0.88", # Apache-2.0 — scene + face detection backend
     "silero-vad==5.1.2",    # MIT — §7 VAD; ships its own ONNX weights in the wheel
     "onnxruntime==1.20.1",  # MIT — silero-vad's ONNX backend
     "torch==2.13.0",        # BSD-3-Clause — silero-vad's tensor interface
@@ -60,6 +61,13 @@ gpu = [
     "pillow>=10",                   # MIT-CMU (HPND) — frames between ffmpeg and the processor
     "torchvision>=0.28",            # BSD-3-Clause — required by Qwen3VLVideoProcessor
 ]
+asr = [
+    # fairseq2n has no Windows wheel. The Windows runner invokes this extra inside WSL2.
+    "omnilingual-asr==0.2.0; platform_system != 'Windows'", # Apache-2.0
+]
+cloud = [
+    "google-auth>=2.40,<3", # Apache-2.0 — Vertex ADC bearer authentication
+]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -67,6 +75,20 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/hawedit/assets/fonts" = [
+    "assets/fonts/NotoNaskhArabic-Regular.ttf",
+    "assets/fonts/OFL.txt",
+]
+"share/hawedit/models" = ["models/sources.json"]
+
+[project.scripts]
+hawedit = "hawedit.pipeline:main"
+hawedit-asr-bench = "hawedit.bench:main"
+hawedit-asr-setup = "hawedit.wsl_setup:main"
+hawedit-credentials = "hawedit.credentials:main"
+hawedit-editorial-bench = "hawedit.editorial_bench:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -93,5 +115,14 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["klpt.*", "fontTools.*", "scenedetect.*", "silero_vad.*", "torch.*"]
+module = [
+  "klpt.*",
+  "fontTools.*",
+  "scenedetect.*",
+  "silero_vad.*",
+  "torch.*",
+  "google.*",
+  "omnilingual_asr.*",
+  "fairseq2.*",
+]
 ignore_missing_imports = true
