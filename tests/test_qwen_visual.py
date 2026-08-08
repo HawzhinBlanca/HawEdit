@@ -380,7 +380,7 @@ def test_the_embedder_passes_video_metadata_top_level(
     """The D-049 fix, protected. Dropping this argument was silently revertible."""
     import torch
 
-    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2))
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2), device="cpu")
     processor, _ = stubbed(embedder, monkeypatch, torch.zeros(1, 1, 2) + 0.5, torch.eye(2))
     embedding = embedder.embed_frames(two_frames())
     assert embedding.dimension == 2
@@ -398,7 +398,7 @@ def test_the_embedder_refuses_a_prompt_that_compresses_the_window(
     """
     import torch
 
-    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2))
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2), device="cpu")
     stubbed(embedder, monkeypatch, torch.zeros(1, 1, 2) + 0.5, torch.eye(2))
     original = StubProcessor.apply_chat_template
     monkeypatch.setattr(
@@ -427,6 +427,7 @@ def test_the_reranker_score_is_the_float32_weight_difference(
     reranker = QwenVisualReranker(
         a_reranker_checkpoint(tmp_path, true_id=1, false_id=0),
         read_frames=lambda w: WindowFrames(window=w, paths=(Path("f0.jpg"),)),
+        device="cpu",
     )
     stubbed(reranker, monkeypatch, torch.tensor([[[3.0, 1.0]]]), torch.eye(2))
     score = reranker.score("ڕۆژنامەوانی", two_frames())
@@ -447,6 +448,7 @@ def test_the_reranker_asks_for_the_answer_position(
     reranker = QwenVisualReranker(
         a_reranker_checkpoint(tmp_path),
         read_frames=lambda w: WindowFrames(window=w, paths=(Path("f0.jpg"),)),
+        device="cpu",
     )
     processor, model = stubbed(reranker, monkeypatch, torch.zeros(1, 1, 2), torch.zeros(9694, 2))
     reranker.score("ڕۆژنامەوانی", two_frames())

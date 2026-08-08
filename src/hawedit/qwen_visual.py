@@ -115,8 +115,23 @@ def load_processor_and_model(
       defaults to `flash_attention_2`, which resolves to `None` without flash-attn, and
       flash-attn publishes no Windows wheels.
     """
+    # torch first and alone, then the CUDA check, then transformers. The order is the point:
+    # torch ships in the `media` extra and is therefore present anywhere Stage 0 runs, while
+    # transformers is in `gpu` and is absent on the CI runner. Importing them together made
+    # "install the gpu extra" the only reachable error there, and hid the more specific one —
+    # a GPU was asked for and this machine has none. Measured: the refusal below was untestable
+    # on the runner until this was split. D-068.
     try:
         import torch
+    except ImportError as exc:  # neither extra is installed
+        raise EmbedderUnavailable(f"{exc}. §3 Stage 2 needs torch: see README 'Setup'.") from exc
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise EmbedderUnavailable(
+            f"device {device!r} was asked for and torch reports no CUDA. §6 puts Stage 2 on a "
+            f"GPU; silently using the CPU would change what every measurement taken afterwards "
+            f"is about."
+        )
+    try:
         from transformers import (
             AutoConfig,
             AutoModelForCausalLM,
@@ -127,12 +142,6 @@ def load_processor_and_model(
         raise EmbedderUnavailable(
             f"{exc}. §3 Stage 2 needs the GPU extra: see README 'GPU'."
         ) from exc
-    if device.startswith("cuda") and not torch.cuda.is_available():
-        raise EmbedderUnavailable(
-            f"device {device!r} was asked for and torch reports no CUDA. §6 puts Stage 2 on a "
-            f"GPU; silently using the CPU would change what every measurement taken afterwards "
-            f"is about."
-        )
     # transformers ships `py.typed` while leaving `AutoProcessor.from_pretrained` untyped, so
     # this call needs an ignore where the package is installed and must NOT have one where it
     # is absent — the runner reported `unused-ignore` for exactly that reason. Binding the

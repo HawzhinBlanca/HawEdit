@@ -2661,3 +2661,37 @@ without blocking. This is the first time that gap was measured rather than descr
 red there, for three hours, and nothing in the repository could tell.
 
 ---
+
+## D-068 · The CUDA refusal must not sit behind an optional import, and stub tests must name a device
+
+**Context:** D-067 fixed the runner's typecheck; the pytest step then failed on four tests, all
+mine, all in `tests/test_qwen_visual.py`. The remote gate had in fact been red since the first
+Stage 2 commit landed — the last green run on `main` predates it.
+
+**Two independent causes, both the same shape: a test that only runs on the machine that wrote
+it.**
+
+**1. The CUDA refusal was unreachable where it matters most.** `load_processor_and_model` imported
+`torch` and `transformers` in one `try`, so on the runner — torch present via `media`, transformers
+absent from `gpu` — the ImportError fired first and "install the gpu extra" was the only error
+anyone could get. The more specific refusal, *a GPU was asked for and this machine has none*, could
+not be produced at all, and the test asserting it failed on the message rather than the behaviour.
+Split into torch, then the CUDA check, then transformers. Verified by hiding `transformers` and
+forcing `cuda.is_available()` False: the refusal now fires.
+
+That ordering is better independently of the test. `media` is installed anywhere Stage 0 runs, so
+the check that depends only on torch should not be gated behind a package from another extra.
+
+**2. Four stub-based wiring tests defaulted to `cuda:0` and moved stub tensors there.** On a
+CPU-only torch that is `AssertionError: Torch not compiled with CUDA enabled`. The device is
+incidental to what they assert — `video_metadata` at the top level, the float32 weight-row score,
+`add_generation_prompt` — so they now pass `device="cpu"` explicitly, as the Path B and Stage 5
+wiring tests already did. `DEFAULT_DEVICE` stays `cuda:0`, and the one test that *is* about the
+refusal keeps asking for `cuda:0`.
+
+**The lesson, which is D-053's from a new direction.** That audit found five guards revertible
+because the tests covered only refusals reachable without weights. These tests covered the wiring —
+and still only ran on hardware the runner does not have. "Runs without weights" and "runs on the
+machine that will check it" are different properties, and only the second is what CI measures.
+
+---
