@@ -39,6 +39,7 @@ from hawedit.render import (
     Encoder,
     Reframe,
     RenderError,
+    _publish_render,
     assert_encoded_span,
     crop_filter,
     encoder_available,
@@ -222,6 +223,79 @@ def test_a_clip_that_has_not_cleared_qc_is_never_encoded(tmp_path: Path) -> None
             SOURCE_HEIGHT,
         )
     assert not (tmp_path / "out.mp4").exists(), "a refused clip must leave no artifact"
+
+
+def test_an_existing_render_is_never_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry or colliding worker must not replace an artifact a client may already use."""
+    output = tmp_path / "out.mp4"
+    original = b"the first worker's verified artifact"
+    output.write_bytes(original)
+
+    def ffmpeg_must_not_run() -> None:
+        pytest.fail("an existing publication target should be refused before probing ffmpeg")
+
+    monkeypatch.setattr("hawedit.render.find_ffmpeg", ffmpeg_must_not_run)
+    with pytest.raises(RenderError, match="refusing to overwrite"):
+        render_clip(
+            _clip(),
+            FIXTURE,
+            _write_ass(tmp_path),
+            FONTS,
+            output,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+        )
+    assert output.read_bytes() == original
+
+
+def test_atomic_publication_preserves_the_worker_that_won_the_name(tmp_path: Path) -> None:
+    """The final race is settled by the filesystem, not by a check-then-overwrite sequence."""
+    staging = tmp_path / ".clip.staging.mp4"
+    output = tmp_path / "clip.mp4"
+    staging.write_bytes(b"second worker")
+    output.write_bytes(b"first worker")
+
+    with pytest.raises(RenderError, match="another job published"):
+        _publish_render(staging, output)
+
+    assert output.read_bytes() == b"first worker"
+    assert staging.read_bytes() == b"second worker"
+
+
+@needs_ffmpeg
+def test_an_interrupted_encode_leaves_no_partial_or_final_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ffmpeg may create bytes before failing; those bytes must never occupy the final name."""
+    real_run = subprocess.run
+    output = tmp_path / "interrupted.mp4"
+
+    def interrupt_the_real_encode(args: object, **kwargs: object) -> object:
+        command = list(args) if isinstance(args, list | tuple) else []
+        destination = Path(str(command[-1])) if command else Path()
+        if destination.parent == tmp_path and destination.name.startswith(".interrupted."):
+            destination.write_bytes(b"plausible but incomplete mp4 bytes")
+            return subprocess.CompletedProcess(
+                command, returncode=1, stdout=b"", stderr=b"simulated interruption"
+            )
+        return real_run(args, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr("hawedit.render.subprocess.run", interrupt_the_real_encode)
+    with pytest.raises(RenderError, match="simulated interruption"):
+        render_clip(
+            _clip(),
+            FIXTURE,
+            _write_ass(tmp_path),
+            FONTS,
+            output,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+        )
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".interrupted.*.mp4")), "private staging file leaked"
 
 
 def test_an_incomplete_sentence_cannot_even_reach_a_clip() -> None:

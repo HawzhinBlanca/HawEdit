@@ -20,6 +20,11 @@ for NVENC on a machine without it and getting x264 anyway means a throughput mea
 is quietly about the wrong encoder — the same class of mistake §3 Stage 1 warns about with
 published RTF figures. Ask for what is not there and it raises.
 
+**It never encodes into the client-visible path.** ffmpeg writes a private sibling, that file
+is measured, and only then is it linked into place with write-once semantics. An interrupted
+encode leaves no plausible partial MP4, and a concurrent worker cannot replace the artifact
+that won the name first.
+
 The burn-in goes through `captions.subtitle_filter`, which hard-codes `shaping=complex` and an
 explicit `fontsdir`. §4.3.1 is emphatic that `auto` must not be relied on and §4.3.4 that
 fontconfig must not be trusted to find the font, and the golden render (§4.3.6) proves the
@@ -28,6 +33,7 @@ difference is real on this build rather than theoretical.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -84,6 +90,20 @@ ENCODER_PROBE_SIZE: Final = (VERTICAL_WIDTH, VERTICAL_HEIGHT)
 
 class RenderError(RuntimeError):
     """Raised when Stage 6 cannot produce a clip it would be honest to ship."""
+
+
+def _publish_render(staging: Path, output: Path) -> None:
+    """Atomically publish one verified render without replacing a competing artifact."""
+    try:
+        # Same-directory hard-link publication is atomic and refuses EEXIST on both POSIX
+        # and Windows. os.replace would be atomic but would silently overwrite the winner.
+        os.link(staging, output)
+    except FileExistsError as exc:
+        raise RenderError(
+            f"refusing to overwrite render artifact {output}; another job published it"
+        ) from exc
+    except OSError as exc:
+        raise RenderError(f"could not atomically publish render artifact {output}: {exc}") from exc
 
 
 class Reframe(Enum):
@@ -350,6 +370,14 @@ def render_clip(
     """
     clip.assert_renderable()
 
+    # The final name is a write-once publication target, never ffmpeg's working file. Checking
+    # before the expensive probes/encode gives deterministic reruns, while the atomic link at
+    # publication time closes the race with another worker that passes this same preflight.
+    if os.path.lexists(output):
+        raise RenderError(
+            f"refusing to overwrite render artifact {output}; choose a new clip/run id"
+        )
+
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
         raise RenderError("no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT_FFMPEG")
@@ -403,45 +431,61 @@ def render_clip(
         ]
     )
 
-    result = subprocess.run(
-        [
-            str(binary),
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-threads",
-            "1",  # §6: parallelism across clips, not inside one encode
-            "-ss",
-            f"{clip.in_ms / 1000:.3f}",
-            "-t",
-            f"{duration_ms / 1000:.3f}",
-            "-i",
-            str(source),
-            "-vf",
-            filters,
-            "-c:v",
-            encoder.value,
-            "-crf",
-            str(crf),
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-y",
-            str(output),
-        ],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0 or not output.exists():
-        raise RenderError(
-            f"encode failed ({result.returncode}): "
-            f"{result.stderr.decode('utf-8', 'replace')[-800:]}"
-        )
+    # Keep the container suffix: ffmpeg infers its muxer from the path. NamedTemporaryFile is
+    # closed before ffmpeg starts so Windows can replace its empty placeholder with the encode.
+    with tempfile.NamedTemporaryFile(
+        dir=output.parent,
+        prefix=f".{output.stem}.",
+        suffix=output.suffix,
+        delete=False,
+    ) as staging_file:
+        staging = Path(staging_file.name)
 
-    # The artifact, measured. Until this existed, `duration_ms` was the request echoed back.
-    measured_ms = probe_duration_ms(output, binary)
-    assert_encoded_span(measured_ms, duration_ms, frame_duration_ms(output, binary))
+    try:
+        result = subprocess.run(
+            [
+                str(binary),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-threads",
+                "1",  # §6: parallelism across clips, not inside one encode
+                "-ss",
+                f"{clip.in_ms / 1000:.3f}",
+                "-t",
+                f"{duration_ms / 1000:.3f}",
+                "-i",
+                str(source),
+                "-vf",
+                filters,
+                "-c:v",
+                encoder.value,
+                "-crf",
+                str(crf),
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-y",
+                str(staging),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0 or not staging.exists() or staging.stat().st_size == 0:
+            raise RenderError(
+                f"encode failed ({result.returncode}): "
+                f"{result.stderr.decode('utf-8', 'replace')[-800:]}"
+            )
+
+        # Measure before publication. A short/broken file is never visible under the delivery
+        # name, even briefly.
+        measured_ms = probe_duration_ms(staging, binary)
+        assert_encoded_span(measured_ms, duration_ms, frame_duration_ms(staging, binary))
+
+        _publish_render(staging, output)
+    finally:
+        staging.unlink(missing_ok=True)
 
     return RenderResult(
         clip_id=clip.clip_id,

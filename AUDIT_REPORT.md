@@ -56,8 +56,10 @@ These cannot be truthfully solved from the checkout alone:
 
 ## Secondary debt
 
-- Interrupted delivery can require a fresh work directory, by design, because artifact
-  overwrite is refused rather than repaired in place.
+- Render publication is now atomic and write-once: ffmpeg stages privately, the MP4 is measured
+  before publication, partial encodes are removed, and a competing worker cannot overwrite the
+  winner. The complete MP4/ASS/SRT/JSON/EDL bundle is still not one transaction, so a failure
+  after render can require a fresh work directory rather than resuming the bundle in place.
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.
