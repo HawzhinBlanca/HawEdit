@@ -2860,3 +2860,48 @@ front; a run that fails halfway can still strand a partial `.ass` or `.mp4` and 
 directory.
 
 Gate: `VERIFY OK — 1079 passed, 0 skipped`.
+
+## D-072
+
+**On ordinary NTSC footage the run left four fifths of §2's delivery set on disk and it looked
+whole.** The runner wrote the editing JSON, then the SRT, then *built* the EDL — and the EDL is
+the one that legitimately refuses, because `build_edl` will not fake SMPTE drop-frame timecode
+for 29.97 fps (non-drop drifts ~3.6 s per hour and looks correct throughout). Measured on a real
+transcode: a complete, playable 1080×1920 captioned MP4 plus ASS, JSON and SRT, no EDL, stage
+reported skipped (`evidence/partial-delivery-set.md`). D-071 named delivery atomicity as an open
+shortfall; this closes it for the sidecar set.
+
+**Decision: build all three, then write all three.** The defect was interleaving fallible
+computation with writes, and nothing in the sequence needs a file to exist before the next step.
+The `except` additionally unlinks the three sidecar paths, so a write failing partway — disk
+full, permissions — is all-or-none too, and `OSError` joined the caught set for that reason.
+
+**The MP4 and ASS are deliberately kept.** Stage 6 genuinely succeeded and `run.render` reports
+that path, so deleting its output because a later stage failed would make the report a lie and
+would discard an encode over a sidecar. Rejected explicitly, not overlooked — and pinned by a
+mutation that deletes them and is CAUGHT.
+
+**Mutation audit 4/4, after two corrections that are the real content here.**
+
+*The audit first reported the original defect as SURVIVED, correctly.* The cleanup loop alone
+makes the final disk state right, so reverting the build-before-write ordering changed nothing
+observable: two changes were made and only one was load-bearing. The ordering still earns its
+place — written-then-deleted leaves a window in which the partial set exists, and a crash inside
+it strands exactly what this fixes — but an untested property is not a property. So
+`test_a_refused_edl_never_writes_a_sidecar_at_all` records every `Path.write_text` and asserts
+no sidecar write is *attempted*, which is the only way to distinguish "cleaned up" from "never
+written".
+
+*Then the mutation itself was wrong:* it inserted a second `build_edl` while leaving the early
+one, so the refusal still fired before any write and the bug was never reintroduced. A mutation
+that does not restore the defect measures nothing — the same class of error as a green baseline
+nobody verified. Rewritten to remove the early build; it is CAUGHT.
+
+*And the first write-attempt test failed for the wrong reason,* matching sidecars by suffix while
+Stage 1 writes `transcript.raw.json` under the same work directory. It compares exact paths now.
+
+**Not fixed, and not claimed:** an NTSC source still produces no EDL. That is correct — refusing
+drop-frame beats shipping a conform that drifts — and the run says so. Writing real drop-frame
+timecode is separate work.
+
+Gate: `VERIFY OK — 1083 passed, 0 skipped`.

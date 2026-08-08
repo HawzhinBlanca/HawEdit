@@ -1097,26 +1097,35 @@ def run_pipeline(
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
     # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
     try:
-        editing_json_path.write_text(
-            json.dumps(clip.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        srt_path.write_text(
-            build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms),
-            encoding="utf-8",
-        )
+        # Build all three before writing any. This used to write the JSON, then the SRT, then
+        # build the EDL — and the EDL is the one that legitimately refuses: an NTSC 29.97 fps
+        # source needs drop-frame timecode, which `build_edl` will not fake. So on ordinary
+        # broadcast footage the run left a playable captioned MP4, an ASS, a JSON and an SRT
+        # on disk with no EDL beside them, reported the stage skipped, and anyone reading the
+        # work directory for deliverables had four fifths of a delivery set that looked whole.
+        # Nothing here needs a file to exist before the next step, so the fallible part now
+        # happens first. D-072.
+        editing_json = json.dumps(clip.to_dict(), ensure_ascii=False, indent=2)
+        srt = build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms)
         # The EDL's source timecodes are the *source's* timeline — where this clip was cut
         # from — so it takes the source's own frame rate. An NTSC rate is refused there rather
         # than rounded, and lands here as a named gap instead of a silently drifting conform.
-        edl_path.write_text(
-            build_edl(
-                clip_in_ms=clip.in_ms,
-                clip_out_ms=clip.out_ms,
-                fps=frame_rate(source, ffmpeg),
-                title=f"{identifier} {clip.clip_id}",
-            ),
-            encoding="utf-8",
+        edl = build_edl(
+            clip_in_ms=clip.in_ms,
+            clip_out_ms=clip.out_ms,
+            fps=frame_rate(source, ffmpeg),
+            title=f"{identifier} {clip.clip_id}",
         )
-    except (DeliveryError, RenderError) as exc:
+        editing_json_path.write_text(editing_json, encoding="utf-8")
+        srt_path.write_text(srt, encoding="utf-8")
+        edl_path.write_text(edl, encoding="utf-8")
+    except (DeliveryError, RenderError, OSError) as exc:
+        # Building first makes the refusal case leave nothing behind; this covers a write that
+        # fails partway through the three — disk full, permissions — so the set is all or none
+        # either way. The MP4 and ASS are deliberately kept: Stage 6 genuinely succeeded and
+        # `run.render` reports that path, so deleting them would make the report a lie.
+        for path in (editing_json_path, srt_path, edl_path):
+            path.unlink(missing_ok=True)
         return replace(
             run,
             delivery=StageSkipped(

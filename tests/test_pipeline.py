@@ -25,6 +25,7 @@ shot cuts (§3 Stage 5), and renders a vertical clip with burned-in Kurdish capt
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -1305,3 +1306,174 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
     assert Path(run.render.path) in guarded, (
         f"the run wrote {run.render.path}, which the overwrite guard does not check"
     )
+
+
+# =========================================================================================
+# §2's delivery set is all-or-none
+#
+# The runner wrote the editing JSON, then the SRT, then *built* the EDL — and the EDL is the
+# one that legitimately refuses. An NTSC 29.97 fps source needs SMPTE drop-frame timecode,
+# which `build_edl` will not fake, so on ordinary broadcast footage the run left a playable
+# captioned MP4, an ASS, a JSON and an SRT on disk with no EDL, reported the stage skipped,
+# and anyone reading the work directory for deliverables had four fifths of a set that looked
+# whole. Nothing in the sequence needed a file to exist before the next step. D-072.
+#
+# The fixture is 25 fps, which is EDL-safe — that is what makes the control below possible.
+# =========================================================================================
+
+_SIDECARS = (".json", ".srt", ".edl")
+
+
+def _ntsc_copy(source: Path, dest: Path) -> Path:
+    """A real 29.97 fps transcode of the fixture. `frame_rate` reads 30000/1001 from it."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            str(ffmpeg),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-r",
+            "30000/1001",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(dest),
+        ],
+        check=True,
+    )
+    return dest
+
+
+def _sidecars_on_disk(work: Path) -> list[str]:
+    return sorted(p.name for p in work.glob("*") if p.suffix in _SIDECARS)
+
+
+@needs_ffmpeg
+def test_a_refused_edl_leaves_no_partial_delivery_set(tmp_path: Path) -> None:
+    """Asserted on the work directory, because the defect was files nobody meant to keep."""
+    ntsc = _ntsc_copy(FIXTURE, tmp_path / "ntsc.mp4")
+    from hawedit.render import frame_rate
+
+    assert frame_rate(ntsc) != int(frame_rate(ntsc)), "the transcode must be a non-integer rate"
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        ntsc,
+        work,
+        media_id="ntsc",
+        transcript=a_transcript("ntsc"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert isinstance(run.delivery, StageSkipped)
+    assert run.delivery.blocked_by == ("§2 delivery set",)
+    assert "drop-frame" in run.delivery.reason
+    assert not run.complete
+    # The point: none of the three sidecars survived the refusal.
+    assert _sidecars_on_disk(work) == [], f"stranded {_sidecars_on_disk(work)}"
+    # Stage 6 genuinely succeeded, so its output stays and the report stays true.
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    assert Path(run.render.path).exists()
+
+
+@needs_ffmpeg
+def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) -> None:
+    """The control. Cleaning up unconditionally, or never building the set, passes the test
+    above and fails this one — the fixture is 25 fps and must deliver all three sidecars."""
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="safe",
+        transcript=a_transcript("safe"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert not isinstance(run.delivery, StageSkipped), run.delivery
+    assert _sidecars_on_disk(work) == ["safe-s0-0.edl", "safe-s0-0.json", "safe-s0-0.srt"]
+
+
+@needs_ffmpeg
+def test_a_write_failing_partway_through_the_sidecars_leaves_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Building first fixes the refusal case; this covers the disk filling up mid-sequence.
+
+    The JSON is written, the SRT write raises, and the JSON must not survive it.
+    """
+    real_write_text = Path.write_text
+
+    def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+        if self.suffix == ".srt":
+            raise OSError("no space left on device")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing_write_text)
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="nospace",
+        transcript=a_transcript("nospace"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert isinstance(run.delivery, StageSkipped)
+    assert "no space left" in run.delivery.reason
+    assert _sidecars_on_disk(work) == [], f"stranded {_sidecars_on_disk(work)}"
+
+
+@needs_ffmpeg
+def test_a_refused_edl_never_writes_a_sidecar_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stronger than "no sidecars survive": none is ever created.
+
+    The cleanup loop alone makes the *final* disk state correct, so a mutation audit found
+    that reverting the build-before-write ordering changed nothing observable. It does change
+    something that matters: written-then-deleted leaves a window in which the files exist, and
+    a crash inside it — power loss, SIGKILL — strands exactly the partial set this fixes. The
+    only way to see the difference is to watch the writes rather than the leftovers.
+    """
+    ntsc = _ntsc_copy(FIXTURE, tmp_path / "ntsc.mp4")
+    real_write_text = Path.write_text
+    attempted: list[Path] = []
+
+    def recording_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+        attempted.append(Path(self))
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", recording_write_text)
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        ntsc,
+        work,
+        media_id="ntsc",
+        transcript=a_transcript("ntsc"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert isinstance(run.delivery, StageSkipped)
+    # Compared against the exact sidecar paths, not by suffix: Stage 1 writes
+    # `transcript.raw.json` under the work directory too, and an earlier version of this test
+    # counted that as a delivery sidecar and failed for the wrong reason.
+    from hawedit.pipeline import _clip_id, _delivery_artifact_paths
+
+    ass_path, _, *sidecar_paths = _delivery_artifact_paths(work, _clip_id("ntsc", (0,)))
+    stranded = [p.name for p in attempted if p in set(sidecar_paths)]
+    assert stranded == [], f"wrote {stranded} before discovering the EDL was refused"
+    # The ASS is the render's input and is expected; this is not a claim that nothing is written.
+    assert ass_path in attempted
