@@ -120,15 +120,15 @@ hawedit-release --project-root .
 
 The command derives `SOURCE_DATE_EPOCH` from `HEAD`, builds the wheel twice in independent
 temporary directories, requires identical filenames and SHA-256 digests, checks the archive for
-the Kurdish font/licence and model source/revision manifests, then atomically publishes a write-once
-directory under `dist/`. That directory contains the wheel, `SHA256SUMS`, and
+the Kurdish font/licence and model source/revision manifests, then atomically publishes a
+write-once directory under `dist/`. That directory contains the wheel, `SHA256SUMS`, and
 `release-provenance.json` binding the digest to the full Git revision and commit timestamp. A
 dirty checkout, non-reproducible build, missing runtime file, corrupt wheel, or existing release
 directory is refused.
 
-This proves repeatable source-to-wheel bytes. It is not a signature, an SBOM, or proof that the
-separately downloaded model weights match reviewed revisions; those remain release hardening
-work rather than claims hidden inside a green wheel build.
+This proves repeatable source-to-wheel bytes. It is not a signature, an SBOM, an OmniASR byte
+manifest, or proof that a machine's separately downloaded weights match the tracked revisions;
+those require their own provisioning evidence rather than a claim hidden inside a green wheel.
 
 ## Models and weights
 

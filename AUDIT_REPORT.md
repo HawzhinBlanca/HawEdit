@@ -65,12 +65,11 @@ These cannot be truthfully solved from the checkout alone:
   real §8.2 set.
 - The WSL2 setup installs pinned PyPI packages but package-manager integrity is not the same as
   vendored/checksummed model assets; Meta's model-card downloader still owns those remote bytes.
-- **Hugging Face model revisions are pinned as of 2026-08-09** (D-073). `models/revisions.json`
-  fixes all five downloaded repositories to commit SHAs that were read from the Hub and then
-  verified against the weights on this machine, and `fetch-models.sh` refuses a repository with
-  no pin rather than resolving a branch head. `pyannote/speaker-diarization-community-1` is
-  deliberately unpinned — gated, never downloaded here (`BLOCKED.md` #4) — and a test asserts it
-  is the only one.
+- **All six Hugging Face repository revisions are pinned as of 2026-08-09** (D-073/D-075).
+  `models/revisions.json` fixes every fetchable repository to a full commit obtained from Hub
+  metadata, and `fetch-models.sh` refuses any repository with no pin. Four local visual
+  checkpoints were cross-checked against their commits; pyannote's revision is public metadata,
+  while its gated file downloads remain blocked by `BLOCKED.md` #4.
 - The project-fetched Linux ffmpeg archive is addressed by an immutable upstream commit and its
   Git-LFS SHA-256 is verified before unpacking.
 - `hawedit-release` makes source-to-wheel bytes reproducible and emits a checksum plus Git
@@ -91,14 +90,14 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
 - Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
-  `hawedit-editorial-bench`, `hawedit-asr-setup` and `hawedit-release` all start from the
-  installed wheel.
+  `hawedit-editorial-bench`, `hawedit-asr-setup`, `hawedit-credentials` and `hawedit-release`
+  all start from the installed wheel.
 - Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker and setup module.
 - `hawedit-release` derives `SOURCE_DATE_EPOCH` from clean Git `HEAD`, builds independently
   twice, refuses unequal bytes, validates release-critical package data, and atomically emits
   the wheel with `SHA256SUMS` and stable revision provenance. The digest intentionally lives
-  beside the artifact instead of in this changing source file. Signing, SBOM generation and
-  pinned model revisions remain open supply-chain work.
+  beside the artifact instead of in this changing source file. Signing, SBOM generation and a
+  project-owned OmniASR byte manifest remain open supply-chain work.
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex
