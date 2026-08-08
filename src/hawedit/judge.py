@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
 
+from hawedit.boundary import _strict_bool
 from hawedit.clip import Editorial, Output, Sv6d
 from hawedit.discovery import MergedCandidate
 from hawedit.normalize import normalize_sorani
@@ -103,21 +104,6 @@ MIN_REGRESSION_ITEMS: Final = 20
 
 
 NARRATIVE_ROLES: Final = frozenset({"setup", "escalation", "payoff", "aside"})
-
-
-def _strict_bool(value: object, field: str) -> bool:
-    """Refuse anything that is not a real JSON boolean.
-
-    `bool("false")` is True. The guard existed in `gemini.py` for the live-response path and
-    was missing from this one — the sibling that rebuilds a verdict from persisted JSON. A
-    guard at one call site is not a guard; that is the whole lesson of both reviews.
-    """
-    if not isinstance(value, bool):
-        raise ValueError(
-            f"{field} is {value!r} ({type(value).__name__}), not a JSON boolean. "
-            f"bool({value!r}) would be {bool(value)}, and this field ships to the client."
-        )
-    return value
 
 
 class NotRoutable(ValueError):

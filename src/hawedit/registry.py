@@ -130,254 +130,250 @@ class NonCommercialLicence(ValueError):
     """Raised when a NonCommercial licence reaches a decision point. Hard reject."""
 
 
-def _registry() -> Mapping[str, ModelEntry]:
-    entries = (
-        ModelEntry(
-            model_id="PySceneDetect",
-            component="Scene detection",
-            provisioning=Provisioning.PIP,
-            blueprint_model_cell="PySceneDetect",
-            licence=OPEN_PER_SECTION_7,
-            role="shot_detection",
-            notes="§3 Stage 0: ContentDetector, threshold ~27, tuned per content type.",
+_ENTRIES: Final = (
+    ModelEntry(
+        model_id="PySceneDetect",
+        component="Scene detection",
+        provisioning=Provisioning.PIP,
+        blueprint_model_cell="PySceneDetect",
+        licence=OPEN_PER_SECTION_7,
+        role="shot_detection",
+        notes="§3 Stage 0: ContentDetector, threshold ~27, tuned per content type.",
+    ),
+    ModelEntry(
+        model_id="Silero VAD",
+        component="VAD",
+        provisioning=Provisioning.PIP,
+        blueprint_model_cell="Silero VAD",
+        licence=MIT,
+        role="vad",
+        notes="§3 Stage 0: max_speech_duration_s=38, margin under OmniASR's 40 s ceiling.",
+    ),
+    ModelEntry(
+        model_id="pyannote/speaker-diarization-community-1",
+        component="Diarization",
+        provisioning=Provisioning.WEIGHTS,
+        hf_repo="pyannote/speaker-diarization-community-1",
+        blueprint_model_cell="pyannote/speaker-diarization-community-1",
+        licence=CC_BY_4_0,
+        role="diarization",
+        gated=True,
+        notes=(
+            "§3 Stage 0: exclusive speaker diarization, chosen for reconciliation with "
+            "transcript timestamps. Gated on Hugging Face — acceptance is a deploy step. "
+            "speaker-diarization-3.1 (MIT) is kept as the §8.1 benchmark control."
         ),
-        ModelEntry(
-            model_id="Silero VAD",
-            component="VAD",
-            provisioning=Provisioning.PIP,
-            blueprint_model_cell="Silero VAD",
-            licence=MIT,
-            role="vad",
-            notes="§3 Stage 0: max_speech_duration_s=38, margin under OmniASR's 40 s ceiling.",
+    ),
+    ModelEntry(
+        model_id="omniASR_LLM_7B_v2",
+        component="Canonical ASR",
+        provisioning=Provisioning.WEIGHTS,
+        blueprint_model_cell="omniASR_LLM_7B_v2",
+        licence=APACHE_2_0,
+        role="canonical_asr",
+        notes=(
+            "§3 Stage 1: GPU 0, ~17 GiB. Canonical Sorani transcript. ckb_Arab CER 6.0 is "
+            "Meta's only published Central Kurdish figure — provisional pending §8.1."
         ),
-        ModelEntry(
-            model_id="pyannote/speaker-diarization-community-1",
-            component="Diarization",
-            provisioning=Provisioning.WEIGHTS,
-            hf_repo="pyannote/speaker-diarization-community-1",
-            blueprint_model_cell="pyannote/speaker-diarization-community-1",
-            licence=CC_BY_4_0,
-            role="diarization",
-            gated=True,
-            notes=(
-                "§3 Stage 0: exclusive speaker diarization, chosen for reconciliation with "
-                "transcript timestamps. Gated on Hugging Face — acceptance is a deploy step. "
-                "speaker-diarization-3.1 (MIT) is kept as the §8.1 benchmark control."
-            ),
+    ),
+    ModelEntry(
+        model_id="omniASR_CTC_3B_v2",
+        component="ASR confidence + emissions",
+        provisioning=Provisioning.WEIGHTS,
+        blueprint_model_cell="omniASR_CTC_3B_v2",
+        licence=APACHE_2_0,
+        role="asr_emissions",
+        notes=(
+            "§3 Stage 1: GPU 1, ~8 GiB. The LLM decoder gives no frame-level posteriors; "
+            "these emissions are what forced alignment consumes (§4.2)."
         ),
-        ModelEntry(
-            model_id="omniASR_LLM_7B_v2",
-            component="Canonical ASR",
-            provisioning=Provisioning.WEIGHTS,
-            blueprint_model_cell="omniASR_LLM_7B_v2",
-            licence=APACHE_2_0,
-            role="canonical_asr",
-            notes=(
-                "§3 Stage 1: GPU 0, ~17 GiB. Canonical Sorani transcript. ckb_Arab CER 6.0 is "
-                "Meta's only published Central Kurdish figure — provisional pending §8.1."
-            ),
+    ),
+    ModelEntry(
+        model_id="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+        component="ASR validator",
+        provisioning=Provisioning.WEIGHTS,
+        hf_repo="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+        blueprint_model_cell="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+        licence=APACHE_2_0,
+        role="asr_validator",
+        notes=(
+            "§3 Stage 1: ~4 GiB. Escalation target for the bottom log-prob quartile and "
+            "material LLM/CTC disagreement. Never escalate on duration or word count."
         ),
-        ModelEntry(
-            model_id="omniASR_CTC_3B_v2",
-            component="ASR confidence + emissions",
-            provisioning=Provisioning.WEIGHTS,
-            blueprint_model_cell="omniASR_CTC_3B_v2",
-            licence=APACHE_2_0,
-            role="asr_emissions",
-            notes=(
-                "§3 Stage 1: GPU 1, ~8 GiB. The LLM decoder gives no frame-level posteriors; "
-                "these emissions are what forced alignment consumes (§4.2)."
-            ),
+    ),
+    ModelEntry(
+        model_id="Custom Viterbi on CTC emissions",
+        component="Forced alignment",
+        provisioning=Provisioning.IN_HOUSE,
+        blueprint_model_cell="Custom Viterbi on CTC emissions",
+        licence=IN_HOUSE,
+        role="forced_alignment",
+        notes="§4.2: an engineering module with its own tests, not a library call.",
+    ),
+    ModelEntry(
+        model_id="KLPT",
+        component="Normalization",
+        provisioning=Provisioning.PIP,
+        blueprint_model_cell="KLPT",
+        licence=CC_BY_SA_4_0,
+        role="normalization",
+        notes=(
+            "§4.1. §7 records 'open'; the shipped wheel metadata says CC BY-SA 4.0 — "
+            "narrower, and verified in DECISIONS.md D-002. Attribution required; "
+            "share-alike attaches only if we adapt its rule tables."
         ),
-        ModelEntry(
-            model_id="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
-            component="ASR validator",
-            provisioning=Provisioning.WEIGHTS,
-            hf_repo="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
-            blueprint_model_cell="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
-            licence=APACHE_2_0,
-            role="asr_validator",
-            notes=(
-                "§3 Stage 1: ~4 GiB. Escalation target for the bottom log-prob quartile and "
-                "material LLM/CTC disagreement. Never escalate on duration or word count."
-            ),
+    ),
+    ModelEntry(
+        model_id="Qwen3-VL-Embedding-2B",
+        component="Visual embedding",
+        provisioning=Provisioning.WEIGHTS,
+        blueprint_model_cell="Qwen3-VL-Embedding-2B",
+        licence=APACHE_2_0,
+        role="visual_embedding",
+        notes="§3 Stage 2: one embedding per scene, ~1 fps, max 64 frames.",
+    ),
+    ModelEntry(
+        model_id="Qwen3-VL-Reranker-2B",
+        component="Reranking",
+        provisioning=Provisioning.WEIGHTS,
+        blueprint_model_cell="Qwen3-VL-Reranker-2B",
+        licence=APACHE_2_0,
+        role="visual_rerank",
+        notes="§3 Stage 2: top 50 retrieved, reranked to top 5–10.",
+    ),
+    ModelEntry(
+        model_id="MCG-NJU/VideoChat3-4B",
+        component="Local video understanding",
+        provisioning=Provisioning.WEIGHTS,
+        hf_repo="MCG-NJU/VideoChat3-4B",
+        blueprint_model_cell="MCG-NJU/VideoChat3-4B",
+        licence=APACHE_2_0,
+        role="visual_discovery",
+        notes=(
+            "§3 Stage 3 Path B. Provisional, not proven superior — replacement must stay "
+            "a config change. Segmentation mandatory: ~17.7 GB at 256 frames."
         ),
-        ModelEntry(
-            model_id="Custom Viterbi on CTC emissions",
-            component="Forced alignment",
-            provisioning=Provisioning.IN_HOUSE,
-            blueprint_model_cell="Custom Viterbi on CTC emissions",
-            licence=IN_HOUSE,
-            role="forced_alignment",
-            notes="§4.2: an engineering module with its own tests, not a library call.",
+    ),
+    ModelEntry(
+        model_id="MCG-NJU/TimeLens2-4B",
+        component="Visual temporal evidence",
+        provisioning=Provisioning.WEIGHTS,
+        hf_repo="MCG-NJU/TimeLens2-4B",
+        blueprint_model_cell="MCG-NJU/TimeLens2-4B",
+        licence=APACHE_2_0,
+        role="temporal_evidence",
+        notes=(
+            "§3 Stage 5: returns intervals containing visual evidence, NOT editorial "
+            "cuts. One input among five to boundary fusion."
         ),
-        ModelEntry(
-            model_id="KLPT",
-            component="Normalization",
-            provisioning=Provisioning.PIP,
-            blueprint_model_cell="KLPT",
-            licence=CC_BY_SA_4_0,
-            role="normalization",
-            notes=(
-                "§4.1. §7 records 'open'; the shipped wheel metadata says CC BY-SA 4.0 — "
-                "narrower, and verified in DECISIONS.md D-002. Attribution required; "
-                "share-alike attaches only if we adapt its rule tables."
-            ),
+    ),
+    ModelEntry(
+        model_id="gemini-2.5-pro",
+        component="Kurdish judge (both stages)",
+        provisioning=Provisioning.CLOUD,
+        blueprint_model_cell="gemini-2.5-pro, pinned",
+        licence=COMMERCIAL,
+        role="kurdish_editorial_judge",
+        routable=True,
+        notes=(
+            "§4: pinned on tested Sorani evidence. All cloud calls route through the "
+            "KURDISH_EDITORIAL_JUDGE interface so a provider swap is config, not refactor."
         ),
-        ModelEntry(
-            model_id="Qwen3-VL-Embedding-2B",
-            component="Visual embedding",
-            provisioning=Provisioning.WEIGHTS,
-            blueprint_model_cell="Qwen3-VL-Embedding-2B",
-            licence=APACHE_2_0,
-            role="visual_embedding",
-            notes="§3 Stage 2: one embedding per scene, ~1 fps, max 64 frames.",
+    ),
+    ModelEntry(
+        model_id="gemini-3.1-pro",
+        component="Judge shadow",
+        provisioning=Provisioning.CLOUD,
+        blueprint_model_cell="gemini-3.1-pro",
+        licence=COMMERCIAL,
+        role="judge_shadow",
+        routable=False,
+        notes=(
+            "§4: 'evaluated, not routed'. Switch only when it beats 2.5 Pro on the Sorani "
+            "regression set — newer is not automatically better on Kurdish."
         ),
-        ModelEntry(
-            model_id="Qwen3-VL-Reranker-2B",
-            component="Reranking",
-            provisioning=Provisioning.WEIGHTS,
-            blueprint_model_cell="Qwen3-VL-Reranker-2B",
-            licence=APACHE_2_0,
-            role="visual_rerank",
-            notes="§3 Stage 2: top 50 retrieved, reranked to top 5–10.",
+    ),
+    ModelEntry(
+        model_id="ASS + libass/HarfBuzz/FriBidi",
+        component="Captions",
+        provisioning=Provisioning.SYSTEM,
+        blueprint_model_cell="ASS + libass/HarfBuzz/FriBidi",
+        licence=LGPL_GPL,
+        role="captions",
+        notes=(
+            "§4.3: shaping=complex explicitly, libass built with HarfBuzz verified at "
+            "deploy, golden-file render test in CI."
         ),
-        ModelEntry(
-            model_id="MCG-NJU/VideoChat3-4B",
-            component="Local video understanding",
-            provisioning=Provisioning.WEIGHTS,
-            hf_repo="MCG-NJU/VideoChat3-4B",
-            blueprint_model_cell="MCG-NJU/VideoChat3-4B",
-            licence=APACHE_2_0,
-            role="visual_discovery",
-            notes=(
-                "§3 Stage 3 Path B. Provisional, not proven superior — replacement must stay "
-                "a config change. Segmentation mandatory: ~17.7 GB at 256 frames."
-            ),
-        ),
-        ModelEntry(
-            model_id="MCG-NJU/TimeLens2-4B",
-            component="Visual temporal evidence",
-            provisioning=Provisioning.WEIGHTS,
-            hf_repo="MCG-NJU/TimeLens2-4B",
-            blueprint_model_cell="MCG-NJU/TimeLens2-4B",
-            licence=APACHE_2_0,
-            role="temporal_evidence",
-            notes=(
-                "§3 Stage 5: returns intervals containing visual evidence, NOT editorial "
-                "cuts. One input among five to boundary fusion."
-            ),
-        ),
-        ModelEntry(
-            model_id="gemini-2.5-pro",
-            component="Kurdish judge (both stages)",
-            provisioning=Provisioning.CLOUD,
-            blueprint_model_cell="gemini-2.5-pro, pinned",
-            licence=COMMERCIAL,
-            role="kurdish_editorial_judge",
-            routable=True,
-            notes=(
-                "§4: pinned on tested Sorani evidence. All cloud calls route through the "
-                "KURDISH_EDITORIAL_JUDGE interface so a provider swap is config, not refactor."
-            ),
-        ),
-        ModelEntry(
-            model_id="gemini-3.1-pro",
-            component="Judge shadow",
-            provisioning=Provisioning.CLOUD,
-            blueprint_model_cell="gemini-3.1-pro",
-            licence=COMMERCIAL,
-            role="judge_shadow",
-            routable=False,
-            notes=(
-                "§4: 'evaluated, not routed'. Switch only when it beats 2.5 Pro on the Sorani "
-                "regression set — newer is not automatically better on Kurdish."
-            ),
-        ),
-        ModelEntry(
-            model_id="ASS + libass/HarfBuzz/FriBidi",
-            component="Captions",
-            provisioning=Provisioning.SYSTEM,
-            blueprint_model_cell="ASS + libass/HarfBuzz/FriBidi",
-            licence=LGPL_GPL,
-            role="captions",
-            notes=(
-                "§4.3: shaping=complex explicitly, libass built with HarfBuzz verified at "
-                "deploy, golden-file render test in CI."
-            ),
-        ),
-    )
-    return MappingProxyType({e.model_id: e for e in entries})
+    ),
+)
 
+_EXCLUDED_ENTRIES: Final = (
+    ExcludedEntry(
+        model_id="CLIP",
+        blueprint_model_cell="CLIP as primary retrieval",
+        licence=NOT_ASSESSED,
+        reason="Frame-averaging loses temporal structure — 0.325 vs 0.75+ NDCG@10",
+    ),
+    ExcludedEntry(
+        model_id="Whisper",
+        blueprint_model_cell="Whisper",
+        licence=NOT_ASSESSED,
+        reason="OmniASR is stronger for ckb",
+    ),
+    ExcludedEntry(
+        model_id="Qwen3.6-35B-A3B",
+        blueprint_model_cell="Qwen3.6-35B-A3B",
+        licence=NOT_ASSESSED,
+        reason="GPTQ-Int4 checkpoint is 24.4 GB of weights — no margin on a 24 GB card",
+    ),
+    ExcludedEntry(
+        model_id="mms-300m-1130-forced-aligner",
+        blueprint_model_cell="mms-300m-1130-forced-aligner",
+        licence=CC_BY_NC_4_0,
+        reason="CC-BY-NC-4.0 (NonCommercial — hard reject)",
+    ),
+    ExcludedEntry(
+        model_id="RevgeAI/vekol-stt-ckb-small",
+        blueprint_model_cell="RevgeAI/vekol-stt-ckb-small",
+        licence=CC_BY_NC_4_0,
+        reason="CC-BY-NC-4.0 (NonCommercial — hard reject)",
+    ),
+    ExcludedEntry(
+        model_id="Leum-VL-8B",
+        blueprint_model_cell="Leum-VL-8B (the model)",
+        licence=NOT_ASSESSED,
+        reason=(
+            "39 downloads/mo, unchanged since March 2026. The SV6D schema is kept; "
+            "the weights are not"
+        ),
+    ),
+    ExcludedEntry(
+        model_id="Seed2.1 Pro",
+        blueprint_model_cell="Seed2.1 Pro (in v1)",
+        licence=NOT_ASSESSED,
+        reason=(
+            "Best published video scores anywhere but zero Sorani evidence; do not add a "
+            "second cloud dependency on benchmarks alone — benchmark in §8.2 first"
+        ),
+    ),
+    ExcludedEntry(
+        model_id="Gemini YouTube-URL input",
+        blueprint_model_cell="Gemini YouTube-URL input",
+        licence=NOT_ASSESSED,
+        reason="No audio track means no OmniASR pass. Triage only, never a pipeline input",
+    ),
+    ExcludedEntry(
+        model_id="OmniASR Unlimited (as default)",
+        blueprint_model_cell="OmniASR Unlimited as default",
+        licence=NOT_ASSESSED,
+        reason=("VAD already yields sub-40 s units; internal N=15, M=1 segmentation remains"),
+    ),
+)
 
-def _excluded() -> Mapping[str, ExcludedEntry]:
-    entries = (
-        ExcludedEntry(
-            model_id="CLIP",
-            blueprint_model_cell="CLIP as primary retrieval",
-            licence=NOT_ASSESSED,
-            reason="Frame-averaging loses temporal structure — 0.325 vs 0.75+ NDCG@10",
-        ),
-        ExcludedEntry(
-            model_id="Whisper",
-            blueprint_model_cell="Whisper",
-            licence=NOT_ASSESSED,
-            reason="OmniASR is stronger for ckb",
-        ),
-        ExcludedEntry(
-            model_id="Qwen3.6-35B-A3B",
-            blueprint_model_cell="Qwen3.6-35B-A3B",
-            licence=NOT_ASSESSED,
-            reason="GPTQ-Int4 checkpoint is 24.4 GB of weights — no margin on a 24 GB card",
-        ),
-        ExcludedEntry(
-            model_id="mms-300m-1130-forced-aligner",
-            blueprint_model_cell="mms-300m-1130-forced-aligner",
-            licence=CC_BY_NC_4_0,
-            reason="CC-BY-NC-4.0 (NonCommercial — hard reject)",
-        ),
-        ExcludedEntry(
-            model_id="RevgeAI/vekol-stt-ckb-small",
-            blueprint_model_cell="RevgeAI/vekol-stt-ckb-small",
-            licence=CC_BY_NC_4_0,
-            reason="CC-BY-NC-4.0 (NonCommercial — hard reject)",
-        ),
-        ExcludedEntry(
-            model_id="Leum-VL-8B",
-            blueprint_model_cell="Leum-VL-8B (the model)",
-            licence=NOT_ASSESSED,
-            reason=(
-                "39 downloads/mo, unchanged since March 2026. The SV6D schema is kept; "
-                "the weights are not"
-            ),
-        ),
-        ExcludedEntry(
-            model_id="Seed2.1 Pro",
-            blueprint_model_cell="Seed2.1 Pro (in v1)",
-            licence=NOT_ASSESSED,
-            reason=(
-                "Best published video scores anywhere but zero Sorani evidence; do not add a "
-                "second cloud dependency on benchmarks alone — benchmark in §8.2 first"
-            ),
-        ),
-        ExcludedEntry(
-            model_id="Gemini YouTube-URL input",
-            blueprint_model_cell="Gemini YouTube-URL input",
-            licence=NOT_ASSESSED,
-            reason="No audio track means no OmniASR pass. Triage only, never a pipeline input",
-        ),
-        ExcludedEntry(
-            model_id="OmniASR Unlimited (as default)",
-            blueprint_model_cell="OmniASR Unlimited as default",
-            licence=NOT_ASSESSED,
-            reason=("VAD already yields sub-40 s units; internal N=15, M=1 segmentation remains"),
-        ),
-    )
-    return MappingProxyType({e.model_id: e for e in entries})
-
-
-REGISTRY: Final[Mapping[str, ModelEntry]] = _registry()
-EXCLUDED: Final[Mapping[str, ExcludedEntry]] = _excluded()
+REGISTRY: Final[Mapping[str, ModelEntry]] = MappingProxyType({e.model_id: e for e in _ENTRIES})
+EXCLUDED: Final[Mapping[str, ExcludedEntry]] = MappingProxyType(
+    {e.model_id: e for e in _EXCLUDED_ENTRIES}
+)
 
 # Benchmark controls: models the blueprint requires for *measurement* but deliberately keeps
 # out of §7's production table. §3 Stage 0 — "Keep speaker-diarization-3.1 (MIT) as a
