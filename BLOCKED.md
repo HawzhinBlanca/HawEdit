@@ -1,10 +1,25 @@
 # BLOCKED — needs Hawa
 
 The only legitimate reason to stop the loop. Everything here is a hard external dependency:
-no amount of engineering in this container resolves it.
+no amount of engineering on this machine resolves it.
 
-Environment this was assessed in: cloud container, no GPU, no ffmpeg, no client media,
-no API credentials. Python 3.11, PyPI reachable.
+Environment this was **originally** assessed in: cloud container, no GPU, no ffmpeg, no client
+media, no API credentials. Python 3.11, PyPI reachable.
+
+**Re-assessed 2026-08-08 on hawapc01, and the machine is not that machine.** Two entries below
+were blockers of the environment, not of the project, and they do not hold here. Measured:
+
+| Fact | Value |
+|---|---|
+| Hostname | `HAWAPC01` — §6's box |
+| GPU | 2 × NVIDIA GeForce RTX 3090 Ti, 24564 MiB each (§6's "2×24 GiB"), driver 596.36 |
+| ffmpeg | 8.1.1-full on `PATH`, `--enable-libass --enable-libharfbuzz --enable-libfribidi --enable-nvenc` |
+| `huggingface.co` | **200** (was: refused by proxy) |
+| `commonvoice.mozilla.org` · `www.openslr.org` · `zenodo.org` | **200** (were: refused by proxy) |
+| OS | Windows 11 Pro — see D-044, six defects the project had never met |
+
+An entry keeps its heading after it is resolved; the record of what was in the way is worth
+more than a tidy file, and `tests/test_claims.py` reads "resolved" off the heading.
 
 ---
 
@@ -33,7 +48,20 @@ dialect the product is used in.
 
 ---
 
-## #2 · hawapc01 (or any GPU) — blocks M0.11, M0.13
+## #2 · hawapc01 (or any GPU) — **RESOLVED 2026-08-08**
+
+**Resolved: this checkout is on hawapc01.** Hostname `HAWAPC01`, two RTX 3090 Ti at 24564 MiB
+each — the 2×24 GiB §6 describes and the layout §3 Stage 1 assumes (`LLM_7B` on GPU 0 at
+~17 GiB, `CTC_3B` on GPU 1 at ~8 GiB). NVENC is compiled into the ffmpeg on `PATH`, so M3.3's
+second shortfall has its hardware too.
+
+What this does **not** resolve: the weights themselves are a separate fact (see #6, now also
+resolved for reachability, and the source-id question below it), and a measurement still has to
+be *run* before M0.13 can be marked. The GPU stopped being the reason.
+
+Original entry, kept for the record:
+
+## #2 (original) · hawapc01 (or any GPU) — blocks M0.11, M0.13
 
 Real ASR adapters need `omniASR_LLM_7B_v2` (~17 GiB VRAM) and `omniASR_CTC_3B_v2` (~8 GiB).
 This container has no GPU. Two specific consequences:
@@ -97,7 +125,23 @@ ffmpeg a CI runner happens to ship.
 
 ---
 
-## #6 · The interim corpus is authorised but not reachable — network policy
+## #6 · The interim corpus is authorised but not reachable — **RESOLVED 2026-08-08**
+
+**Resolved: every host in the table below answers 200 from hawapc01.** `huggingface.co`,
+`commonvoice.mozilla.org`, `www.openslr.org` and `zenodo.org` are all reachable. The network
+policy was the container's, not this machine's.
+
+Two things it does **not** resolve, and they are the ones now in the way:
+
+1. **Two of the four unnamed §7 checkpoints still have no repository id.** Reaching the network
+   does not supply one — a host you can 404 against is not progress. The two Qwen entries are
+   now resolved and configured; `omniASR_LLM_7B_v2` and `omniASR_CTC_3B_v2` are **#10**, which
+   this entry was masking.
+2. **The gated repo still needs an accepted licence and a token** — that is #4, untouched.
+
+Original entry, kept for the record:
+
+## #6 (original) · The interim corpus is authorised but not reachable — network policy
 
 **Status:** Hawa authorised a public Sorani corpus as an interim set (D-012). The importer
 is built and tested (M0.14). **The data cannot be downloaded from this container.**
@@ -205,5 +249,52 @@ project and would end the question there.
 Until both clear, M8 stays TODO and is not startable. Recorded here rather than left as an
 ordinary backlog row, because "not started" and "cannot be started" are different facts and
 this project does not let those serialize to the same thing.
+
+---
+
+## #10 · §7's two omniASR checkpoints do not exist under the names §7 gives them
+
+**Needs:** Hawa, one decision. No credentials, no hardware — and, now, no network excuse.
+
+This was invisible while #6 was live. "The weights are unreachable" and "we do not know which
+repository the weights are in" produce the same symptom — no model on disk — and the first
+masked the second. With `huggingface.co` reachable from hawapc01, only the second is left.
+
+§7 names four components as *checkpoint names* rather than repository ids. Two resolve exactly
+and are now configured in `models/sources.json`, verified rather than guessed:
+
+| §7 name | Repository | Evidence |
+|---|---|---|
+| `Qwen3-VL-Embedding-2B` | `Qwen/Qwen3-VL-Embedding-2B` | exact name match, official `Qwen` namespace, `license:apache-2.0` — the licence §7 records — 1.1M downloads |
+| `Qwen3-VL-Reranker-2B` | `Qwen/Qwen3-VL-Reranker-2B` | exact name match, same namespace and licence, 580K downloads |
+
+**The other two do not resolve.** §7 says `omniASR_LLM_7B_v2` and `omniASR_CTC_3B_v2`. Meta
+publishes thirteen omniASR checkpoints under `facebook/` — `omniASR-LLM-{300M,1B,3B,7B}`,
+`omniASR-LLM-7B-ZS`, `omniASR-CTC-{300M,1B,3B,7B}`, `omniASR-W2V-{300M,1B,3B,7B}`, all
+Apache-2.0 — and **not one carries a `_v2` suffix**. The sizes and roles §7 wants exist
+(`facebook/omniASR-LLM-7B`, `facebook/omniASR-CTC-3B`); the version marker in their §7 names
+does not.
+
+Two readings, and they are not equivalent:
+
+1. `_v2` is an internal or in-repo checkpoint name and §7 means the published checkpoints. Then
+   the mapping is `omniASR_LLM_7B_v2 → facebook/omniASR-LLM-7B` and `omniASR_CTC_3B_v2 →
+   facebook/omniASR-CTC-3B`.
+2. `_v2` denotes a genuinely different, later checkpoint — in which case downloading the
+   published ones gives a model that loads, runs, produces plausible Sorani, and is **not the
+   model §8.1's numbers would be about**. That failure is silent, and it contaminates every
+   threshold derived from the benchmark.
+
+Reading 2 is why this is not being decided here. D-022's rule was written against a 404 at 3am;
+this is worse than a 404, because it succeeds. §7 is also the table `tests/test_registry.py`
+parses out of the frozen `BLUEPRINT.md` and asserts set equality against, so the names cannot be
+changed in code alone.
+
+**The question:** does §7's `_v2` mean `facebook/omniASR-LLM-7B` and `facebook/omniASR-CTC-3B`,
+or does it name something else? If the former, either amend §7's cells or say the word and the
+mapping goes into `models/sources.json` citing this entry.
+
+Until answered, `omniASR_LLM_7B_v2` and `omniASR_CTC_3B_v2` have no source, `models.py` refuses
+to invent one, and §3 Stage 1 cannot run — which keeps M1.4, M0.11 and M0.13 open.
 
 ---

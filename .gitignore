@@ -18,5 +18,11 @@ __pycache__/
 /out/
 /corpus/audio/
 .ffmpeg/
-models/
+# Weights never enter the repository. `sources.json` is not weights — it is the few dozen bytes
+# that say which repository each §7 checkpoint comes from, and it must be the same on every
+# checkout. Ignored, it had to be re-derived per machine, and re-deriving it is precisely the
+# guessing D-022 forbids. `models/*` rather than `models/`, because git cannot re-include a
+# file whose parent *directory* is excluded.
+models/*
+!models/sources.json
 /.gate/

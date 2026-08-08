@@ -97,7 +97,12 @@ class ModelStore:
         configured: dict[str, str] = {}
         source_file = self.root / "sources.json"
         if source_file.exists():
-            configured = dict(json.loads(source_file.read_text(encoding="utf-8")))
+            # JSON has no comments and this file needs one — it is the file most likely to be
+            # "helpfully" completed by guessing the two entries that are deliberately absent.
+            # A `_`-prefixed key carries the warning; dropping it here keeps the returned
+            # mapping honestly str -> str rather than str -> whatever the note happened to be.
+            raw = json.loads(source_file.read_text(encoding="utf-8"))
+            configured = {k: v for k, v in raw.items() if not k.startswith("_")}
         merged = {e.model_id: e.hf_repo for e in REGISTRY.values() if e.hf_repo}
         merged.update(configured)
         return merged

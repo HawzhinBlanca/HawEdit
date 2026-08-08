@@ -1,0 +1,5 @@
+{
+  "_comment": "Repository ids for the §7 names that are checkpoint names, not repos (D-022). Tracked on purpose — see .gitignore; weights are not. Entries are VERIFIED against the Hub, never guessed. omniASR_LLM_7B_v2 and omniASR_CTC_3B_v2 are absent deliberately: Meta publishes facebook/omniASR-LLM-7B and facebook/omniASR-CTC-3B and nothing with §7's _v2 suffix, so that mapping is a decision — BLOCKED.md #10. Keys starting with _ are ignored by models.py.",
+  "Qwen3-VL-Embedding-2B": "Qwen/Qwen3-VL-Embedding-2B",
+  "Qwen3-VL-Reranker-2B": "Qwen/Qwen3-VL-Reranker-2B"
+}

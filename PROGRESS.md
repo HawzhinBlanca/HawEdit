@@ -37,21 +37,26 @@ decision from Hawa is built, tested and gated. `bash scripts/setup.sh` takes a c
 gate; `python -m hawedit.pipeline VIDEO.mp4` runs §3 as far as the available models allow and
 exits non-zero naming every stage it could not.
 
-What remains is not a backlog. Every open row below is waiting on one of six things:
+**Re-assessed 2026-08-08: this checkout moved to hawapc01, and two of those six went away.**
+The GPU is here (2×24 GiB, §6's own figure) and `huggingface.co` is reachable, both measured in
+`evidence/hawapc01-environment.md`. That is a change of desk, not of code — but it makes three
+rows startable that had been marked impossible, and it exposed one blocker the other two were
+hiding.
 
 | Waiting on | Blocks |
 |---|---|
-| `huggingface.co` reachable | M0.11–M0.13, M0.16, M1.4, M5 — every model weight |
-| A GPU (hawapc01) | M0.13, M1.4, M5, M6, M8, NVENC in M3.3 |
+| ~~`huggingface.co` reachable~~ | **Resolved** — every §7 repo that has an id now serves files; measured per repo, not per host |
+| ~~A GPU (hawapc01)~~ | **Resolved** — this *is* hawapc01, so NVENC in M3.3 and every model row lose their hardware reason |
+| **A repository id for §7's two omniASR checkpoints** (`BLOCKED.md` #10) | M0.11, M0.13, M1.4 — still the one thing between this and a runnable product, but for a new reason: not "the weights are unreachable", "§7's names resolve to nothing that exists" |
 | The §3 ZDR governance answer (credentials themselves are now handled) | confidential material only — `gemini.Governance` refuses it until ZDR is configured and attributed |
-| **§3 Stage 1 ASR weights** | the one thing between this and a runnable product: no transcript, so nothing downstream can start from a video alone |
-| The gated `pyannote/speaker-diarization-community-1` repo | M0.10, M1.3, the speaker-tracked reframe in M3.3 |
+| The gated `pyannote/speaker-diarization-community-1` repo | M0.10, M1.3, the speaker-tracked reframe in M3.3 — measured **401** from here, so the network opening did not touch it |
 | Human annotators + real footage | M7.2, and M7.3 behind it |
-| Hawa, one decision each | `BLOCKED.md` #7 (required CI check) · #9 (M8 names two models §7 does not contain) · #8 answered, but `BLUEPRINT.md` §5 needs the matching amendment (D-033) |
+| Hawa, one decision each | `BLOCKED.md` #7 (required CI check) · #9 (M8 names two models §7 does not contain) · #10 (the omniASR `_v2` names) · #8 answered, but `BLUEPRINT.md` §5 needs the matching amendment (D-033) |
 
-No amount of further work in this environment moves any of them. The contracts those models
-plug into are built and tested ahead of them, so landing each one is a matter of producing the
-type its stage already expects.
+**Now available and simply not started** — no external dependency, ordinary work: M0.16 (the
+interim corpus downloads today), M5.2, M5.4, M6.3 (all three model integrations), and M7.3
+behind M7.2. The contracts they plug into are built and tested ahead of them, so landing each
+is a matter of producing the type its stage already expects.
 
 ## M0 — task ledger
 
@@ -70,12 +75,12 @@ M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisit
 | M0.8 | Alignment-accuracy metric against CTC emissions (§8.1 last metric) | DONE | `src/hawedit/alignment.py` + `tests/test_alignment.py` (12 tests). Kurdish invariant #5 enforced at construction in `AsrProvenance`/`RawTranscript`, not just at scoring. |
 | M0.9 | Benchmark runner → comparable report JSON + §8.1 decision rule (LLM-7B stays canonical unless material gain) | DONE | `src/hawedit/bench.py` + `tests/test_bench.py` (16 tests). Five clauses enforced, per-dialect always reported alongside the aggregate, thresholds recorded in D-010. |
 | M0.10 | Diarization benchmark: Community-1 vs 3.1 DER on Kurdish multi-speaker material | PARTIAL | `src/hawedit/diarization.py` + `tests/test_diarization.py` (16 tests). DER with optimal speaker mapping and a reported breakdown, plus §8.1's boundary-reconciliation metric against word alignment. Control-model handling: D-011. **Shortfall (audit #10):** this is the *metric*, not the benchmark. No DER has been computed on Kurdish multi-speaker material — that needs the gated Community-1 weights (`BLOCKED.md` #4) and multi-speaker audio (`BLOCKED.md` #1, #6). The task as written is not done and cannot be until both clear. |
-| M0.11 | Real-model adapters (`LLM_7B_v2`, `CTC_3B_v2`, `LLM_Unlimited_3B_v2`, `rzgar-ckb-v1`, Gemini native audio) | BLOCKED | `BLOCKED.md` #2 |
+| M0.11 | Real-model adapters (`LLM_7B_v2`, `CTC_3B_v2`, `LLM_Unlimited_3B_v2`, `rzgar-ckb-v1`, Gemini native audio) | BLOCKED | `BLOCKED.md` #10 (the two omniASR names resolve to no repository), #3 (Gemini). The GPU is no longer a reason — #2 is resolved, this checkout is on hawapc01. `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` is fetchable today (measured, `evidence/hawapc01-environment.md`) but it is §3 Stage 1's *validator*, not a canonical transcript, so it does not unblock the row on its own. |
 | M0.12 | Labelled Sorani audio set — several hours, per §8.1 category list | BLOCKED | `BLOCKED.md` #1 |
-| M0.13 | Benchmark executed on real Kurdish audio on hawapc01; numbers recorded | BLOCKED | `BLOCKED.md` #1, #2 |
+| M0.13 | Benchmark executed on real Kurdish audio on hawapc01; numbers recorded | BLOCKED | `BLOCKED.md` #1 (no labelled audio), #10 (no canonical ASR weights). **The hawapc01 half is done**: this checkout is on it — 2×24 GiB, `evidence/hawapc01-environment.md` — so §8.1's "RTF measured on hawapc01" is now a matter of having something to measure. |
 | M0.14 | Public-corpus importer (Common Voice `ckb`) producing an interim, unlabelled manifest | DONE | `src/hawedit/corpus_import.py` + `tests/test_corpus_import.py` (12 tests). Refuses to invent dialect, condition or duration. Authorised in D-012. |
 | M0.15 | Measure §4.1 collision incidence on real Sorani | DONE | `evidence/collision-incidence.md` — 24,894 real entries; 0.21% of distinct forms would have failed to match. Surfaced a collision §4.1's table omits (D-013). |
-| M0.16 | Download the interim audio corpus | BLOCKED | `BLOCKED.md` #6 — every corpus host is denied by the container's network policy |
+| M0.16 | Download the interim audio corpus | TODO | **Unblocked 2026-08-08.** `BLOCKED.md` #6 was the container's network policy; from hawapc01 `commonvoice.mozilla.org`, `www.openslr.org` and `huggingface.co` all answer 200 (`evidence/hawapc01-environment.md`). The importer exists (M0.14) and D-012 authorises the interim set. Not started — an available task, not an external blocker. |
 
 **M0 cannot be closed while M0.12/M0.13 are blocked.** The harness is buildable and testable
 without the audio; the *measurement* — which is what M0 exists to produce, and what every
@@ -90,7 +95,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M1.3 | Stage 0 ingest: ffmpeg demux, PySceneDetect, Silero VAD, diarization | PARTIAL | `src/hawedit/ingest.py` + `tests/test_ingest.py` (20 tests) run against real media: `tests/fixtures/kurdish-speech-3cuts.mp4`, built from three 1.4 s segments so the cuts are known. Measured: shot detection on the **source** finds both cuts with **0 ms** error; on the 1 fps proxy it finds **none** (D-023). VAD returns the two utterances, returns nothing on silence, and every segment of a 62 s file stays under the 38 s ceiling. **Shortfall:** diarization is not run — `IngestResult.diarization` is `None`, never `[]` — pending the gated Community-1 repo (`BLOCKED.md` #4). |
 | M1.6 | Model provisioning: readiness report + registry-driven fetcher | DONE | `src/hawedit/models.py` + `tests/test_models.py` (21 tests) + `scripts/fetch-models.sh`. `python -m hawedit.models` reports all 15 §7 components. Sources §7 leaves open are refused, not guessed (D-022). |
 | M1.7 | §4.1 conjunctive `و` separation (the collision KLPT does not cover) | DONE | `normalize.separate_conjunctive_waw` + `tests/test_waw.py` (18 tests). Rule: split `و`+R only if R is a valid Sorani word **and** `و`+R is not — a refusal, not a prediction. Measured over all 24,894 dictionary entries (`evidence/waw-separation.md`, D-026): **0 words damaged**, 98.91% of joined forms recovered, 19 `و`-initial words permanently unsplittable because they are words themselves. The 1.09% shortfall has one cause — bare medial `ه` U+0647 — which is D-013's finding seen through a second instrument. |
-| M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
+| M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | BLOCKED | `BLOCKED.md` #10. Both original reasons are gone — the GPU is here (#2) and the Hub is reachable (#6) — and what they were hiding is that §7's `omniASR_LLM_7B_v2` / `omniASR_CTC_3B_v2` name no repository that exists. One decision from startable. |
 | M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | DONE | `src/hawedit/escalation.py` + `tests/test_escalation.py` (16 tests). §3's "never escalate on duration or word-count" prohibition asserted directly. Threshold: D-015. |
 
 ## M2 — task ledger
@@ -122,16 +127,16 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 |---|---|---|---|
 | M3.1 | §4.3 caption generation: shaping, stack check, font coverage, own line breaks | DONE | `src/hawedit/captions.py` + `tests/test_captions.py` (33 tests). Font coverage asserted against the real OFL-1.1 Noto Naskh Arabic shipped in `assets/fonts` — full Kurdish coverage measured (D-018). |
 | M3.2 | §4.3.6 golden-file render compared per build | DONE | `tests/golden/kurdish-caption.png` rendered on a verified libass build; compared on decoded pixels every gate run. `shaping=simple` must fail the same comparison — without that control the test measures nothing. D-021, `evidence/rtl-shaping.md`. |
-| M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | PARTIAL | `src/hawedit/render.py` + `tests/test_render.py` (21 tests). Cut, 9:16 crop, `shaping=complex` burn-in and x264 encode all run and are verified on decoded pixels: a captioned render must differ from an uncaptioned one, and a `shaping=simple` render must differ from the shipped one. **Shortfall:** §3 Stage 6 reframes by tracking the active speaker from diarization plus face detection; neither runs (`BLOCKED.md` #4), so the crop is static and says so — `Reframe.STATIC_CENTRE`, never `SPEAKER_TRACKED`. NVENC needs hawapc01 (`BLOCKED.md` #2) and is refused here rather than substituted. |
+| M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | PARTIAL | `src/hawedit/render.py` + `tests/test_render.py`. Cut, 9:16 crop, `shaping=complex` burn-in and encode all run and are verified on decoded pixels: a captioned render must differ from an uncaptioned one, and a `shaping=simple` render must differ from the shipped one. **NVENC now runs** — a real 1080×1920 clip encoded on hawapc01's 3090 Ti with captions verified in the NVENC pixels (`evidence/m3-3-nvenc.md`, `evidence/m3-3-nvenc-clip.mp4`). Getting there found a defect in the check itself: `encoder_available` probed at **64×64**, below NVENC's minimum frame, so the function written because a capability listing cannot be trusted called a working encoder unavailable — and `render_clip` refuses rather than substitutes, so NVENC would have raised on the one machine §6 puts it on. It probes at Stage 6's own output size now, and a GPU-free test pins that. D-045. **Shortfall (one, was two):** §3 Stage 6 reframes by tracking the active speaker from diarization plus face detection; neither runs — Community-1 measured **401** from here (`BLOCKED.md` #4) — so the crop is static and says so by name, `Reframe.STATIC_CENTRE`, never `SPEAKER_TRACKED`. |
 
 ## M5 — task ledger
 
 | Task | Definition of Done | Status | Evidence |
 |---|---|---|---|
 | M5.1 | §3 Stage 2 visual index: scenes segmented to the reference settings, retrieval, and the top-50 → rerank → keep-5–10 contract | DONE | `src/hawedit/visual_index.py` + `tests/test_visual_index.py` (51 tests). Runs in `pipeline.py` on real media: Stage 0's own cuts at 1400/2800 ms become three windows tiling 0→4162 ms, `evidence/m5-1-scene-windows.md`. The 64-frame ceiling and ~1 fps are enforced as one setting because either alone is satisfiable while the pair is broken — a 180 s scene at 0.35 fps is 63 frames, under the ceiling, and its embedding is indistinguishable from an honest one. A zero or NaN vector is refused rather than scored 0.0. The reranker may reorder and score; it may not invent a window, duplicate one, drop below the survivor count, or restate the retrieval score it was handed. D-037. **The splitting path is exercised by tests only** — there is no long Kurdish episode here to run it against (`BLOCKED.md` #1). |
-| M5.2 | Real `Qwen3-VL-Embedding-2B` / `-Reranker-2B` behind the interfaces above | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
+| M5.2 | Real `Qwen3-VL-Embedding-2B` / `-Reranker-2B` behind the interfaces above | TODO | **Unblocked 2026-08-08.** GPU present (#2 resolved), repos resolved to `Qwen/Qwen3-VL-Embedding-2B` and `Qwen/Qwen3-VL-Reranker-2B` — exact name, official namespace, Apache-2.0 — configured in `models/sources.json`, and `config.json` fetched from both (`evidence/hawapc01-environment.md`). 2.1B params each, comfortable on 24 GiB. Ordinary unstarted work now. |
 | M5.3 | §3 Stage 3 Path B: `VideoChat3-4B` over scenes, producing `Candidate`s the §3 union already accepts | DONE | `src/hawedit/path_b.py` + `tests/test_path_b.py` (26 tests). Found a real defect in `clip.py`: `Sv6d` checked that a label *cites* a timestamp and could not check *which scene* — `speaker gestures at 9999s` (2.78 hours) constructed cleanly for a 12-second window (`evidence/m5-3-path-b.md`). `assert_sv6d_within_window` closes it, requiring *some* cited time inside the window so an honest duration alongside a moment still passes. §3's 256-frame budget is refused **before** the call, since past it the failure is an OOM kill rather than a wrong answer. `run_pipeline(..., read_scenes=…)` makes the union two-sided over the windows Stage 2 planned on that video. D-039. The **model** is still `BLOCKED.md` #2, #6, and the prompt is unwritten. |
-| M5.4 | Real `MCG-NJU/VideoChat3-4B` behind the Path B contract, and the SV6D prompt | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
+| M5.4 | Real `MCG-NJU/VideoChat3-4B` behind the Path B contract, and the SV6D prompt | TODO | **Unblocked 2026-08-08.** §7 names the repo outright; it exists, Apache-2.0, 4472.4M params, and `config.json` fetches (`evidence/hawapc01-environment.md`). GPU present. §3's 256-frame budget (~17.7 GB) fits one 24 GiB card and `path_b.py` already refuses past it. The SV6D prompt is still unwritten — that was always work, never a blocker. |
 
 ## M6 — task ledger
 
@@ -139,7 +144,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 |---|---|---|---|
 | M6.1 | §3 Stage 5 TimeLens2 contract: intervals as evidence, never as cuts, and only where they are about the clip | DONE | `src/hawedit/timelens.py` + `tests/test_timelens.py` (23 tests). Found a real defect in `boundary.py`: `timelens_interval_end_ms` arrived as a bare integer, so §3's "latest of { …, timelens_interval_end }" read as `max()` over the episode — measured, a 4.0 s anchored sentence became a **295 s clip with Kurdish invariant #2 still passing**, because the invariant constrains direction and nothing constrained relevance (`evidence/m6-1-timelens-relevance.md`). Eligibility is now overlap with the anchored sentence, checked in the selector **and** at the fusion site, because `BoundaryInputs` accepting a naked end is what let it happen. D-038. |
 | M6.2 | Sentence-hard fusion (the HARD/SOFT rule itself) | DONE | Delivered in M2.2 — `boundary.py`, invariant #2 exhaustive over 3,125 soft-input combinations. |
-| M6.3 | Real `MCG-NJU/TimeLens2-4B` behind the contract above | BLOCKED | `BLOCKED.md` #2 (GPU), #6 (weights unreachable) |
+| M6.3 | Real `MCG-NJU/TimeLens2-4B` behind the contract above | TODO | **Unblocked 2026-08-08.** §7 names the repo outright; it exists, Apache-2.0, 4437.8M params, `config.json` fetches (`evidence/hawapc01-environment.md`). GPU present. The contract and its relevance gate are DONE (M6.1); this is the model behind them. |
 
 | M3.4 | §8.3's third render-regression bullet: the boundary invariant asserted on every **shipped** clip | DONE | `render.py` (`assert_encoded_span`, `frame_duration_ms`) + `boundary.py` (`media_duration_ms`) + `tests/test_render.py`, `tests/test_boundary.py`. The invariant had been asserted on the `Clip` object; `RenderResult.duration_ms` was the request echoed back and the file was never opened. Measured: requesting 8000 ms of a 4162 ms source makes ffmpeg exit 0 and write 4180 ms. The new check immediately caught the runner's own end-to-end fixture — §3 Stage 5's 200 ms tail pushed `final_out` 138 ms past the end of the file, so **every `run_pipeline` render had been silently truncated** while the suite stayed green (`evidence/m3-4-shipped-clip-invariant.md`). D-040. |
 
