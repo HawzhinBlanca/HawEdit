@@ -1925,3 +1925,55 @@ of its own, `visual_index.VisualReranker` is an unimplemented Protocol, and unti
 §3 Stage 2's "top 50 → rerank → keep 5–10" is retrieval only. M5.2 stays PARTIAL.
 
 ---
+
+## D-051 · "Same arithmetic on paper" is not a claim about a number until the dtypes are in it
+
+**What was built.** `qwen_visual.QwenVisualReranker` behind `visual_index.VisualReranker`,
+closing M5.2's named shortfall. It reorders on real media — scene 0 moved from third to second —
+carries every retrieval score through untouched, and reads its instruction, its system turn and
+its two score-token ids out of the checkpoint. `evidence/m5-2-reranker.md`.
+
+**Decision 1 — the score is formed the way the model forms it, in float32.** The shipped
+`scripts/qwen3_vl_reranker.py` applies a bias-free `Linear` of
+`lm_head.weight[yes] - lm_head.weight[no]` to the last hidden state. The first implementation
+here differenced the two **logits** instead and a docstring called it "the same arithmetic" —
+true on paper, and false as a number:
+
+    shipped formula (W_yes - W_no)·h = -0.263168
+    logits difference                = -0.250000     <- bfloat16, on a representable step
+    after sigmoid                     0.434585  vs  0.437824
+
+The error is 0.0032. With the formula corrected, the gap between rank 1 and rank 2 on the
+fixture is `0.448391 - 0.442759 = 0.0056`. **The shortcut's error was 57% of the margin it was
+deciding.** Every §7 checkpoint here declares `bfloat16`, so this is a class of mistake rather
+than a line of it: an algebraic identity says nothing about precision, and the two-line
+"simplification" was inside the ordering it produced.
+
+Implemented by indexing the two weight rows and casting each before subtracting, cached once —
+casting the head first would allocate 151k × 2048 float32 to use two rows.
+
+**Decision 2 — `read_frames` is injected rather than re-extracted.** `VisualHit` carries a
+`SceneWindow`, not pixels, so the reranker needs a source. It takes a reader — the same shape as
+`pipeline.run_pipeline`'s `read_scenes` for Path B — so the frames a window was *embedded* from
+are the frames it is *scored* from. Two independent extractions of "the same" window differ at
+the tail (D-049 measured the centred-sampling offset), and the reranker would be judging footage
+the index does not hold.
+
+**Decision 3 — one loader for both Stage 2 models.** `load_processor_and_model` carries the
+CUDA refusal that §6 requires. Two classes with two copies of that check is one class away from
+having only one of them, which is the pattern both independent reviews kept finding.
+
+**Decision 4 — ties break by time then id, matching `VisualIndex.retrieve`.** §8.2 counts
+Recall@K on this order and an unstable tie-break makes that number noise. Two different
+tie-breaks in one pipeline is the same defect as none.
+
+**Decision 5 — the contract is satisfied, not merely survived.** `rerank_and_keep` refuses a
+reranker that invents a window, returns one twice, comes back short, or restates the retrieval
+score. The tests drive that real function with five synthetic windows rather than restating its
+rules, because the four checks have to hold *at once* and a paraphrase would drift from it.
+
+**Not exercisable here.** §3 Stage 2's keep-5–10 slice. The floor is five survivors, the fixture
+has three scenes, and `rerank_and_keep` correctly refuses — the range is covered synthetically
+and needs real footage (`BLOCKED.md` #1). D-050's unexplained 0.955 also stands.
+
+---

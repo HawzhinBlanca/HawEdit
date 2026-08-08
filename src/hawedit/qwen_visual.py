@@ -45,6 +45,7 @@ get slightly-wrong scores and no error.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -59,13 +60,20 @@ from hawedit.video_input import (
     video_content,
     window_video_metadata,
 )
-from hawedit.visual_index import SceneWindow, VisualEmbedding
+from hawedit.visual_index import RerankedHit, SceneWindow, VisualEmbedding, VisualHit
 
 __all__ = [
     "EMBEDDING_MODEL_ID",
+    "RERANK_MODEL_ID",
+    "RERANK_SYSTEM",
+    "BinaryScoreTokens",
     "EmbedderUnavailable",
     "QwenVisualEmbedder",
+    "QwenVisualReranker",
+    "load_processor_and_model",
+    "read_pooling_prompt",
     "read_pooling_recipe",
+    "read_score_tokens",
 ]
 
 EMBEDDING_MODEL_ID: Final = "Qwen3-VL-Embedding-2B"
@@ -79,7 +87,40 @@ DEFAULT_DEVICE: Final = "cuda:0"
 
 
 class EmbedderUnavailable(RuntimeError):
-    """The embedding model could not be loaded, or this machine cannot run it."""
+    """A Stage 2 model could not be loaded, or this machine cannot run it."""
+
+
+def load_processor_and_model(model_dir: Path, device: str) -> tuple[Any, Any]:
+    """One loader for both Stage 2 models, so both get the same refusals.
+
+    The CUDA check in particular: §6 puts Stage 2 on a GPU, and a silent CPU fallback would
+    change what every number measured afterwards is about. Two classes with two copies of that
+    check is one class away from having only one of them.
+    """
+    try:
+        import torch
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+    except ImportError as exc:  # the `gpu` extra is not installed
+        raise EmbedderUnavailable(
+            f"{exc}. §3 Stage 2 needs the GPU extra: see README 'GPU'."
+        ) from exc
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise EmbedderUnavailable(
+            f"device {device!r} was asked for and torch reports no CUDA. §6 puts Stage 2 on a "
+            f"GPU; silently using the CPU would change what every measurement taken afterwards "
+            f"is about."
+        )
+    # transformers ships `py.typed` while leaving `AutoProcessor.from_pretrained` untyped.
+    processor = AutoProcessor.from_pretrained(str(model_dir))  # type: ignore[no-untyped-call]
+    # `.to()` is wrapped by transformers and its stub takes a `PreTrainedModel` rather than a
+    # device string, so strict mode rejects the documented call. Ignored on this one line rather
+    # than relaxed for the module — a real type error in our own code still fails the gate.
+    model = (
+        AutoModelForImageTextToText.from_pretrained(str(model_dir), dtype=torch.bfloat16)
+        .to(device)  # type: ignore[arg-type]
+        .eval()
+    )
+    return processor, model
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,22 +150,48 @@ class PoolingRecipe:
             )
 
 
+def read_pooling_prompt(model_dir: Path, prompt_name: str | None = None) -> str:
+    """One named prompt out of `config_sentence_transformers.json`.
+
+    The embedder's is `default` and the reranker's is `query`; both are the checkpoint's own
+    wording and neither is retyped here. A paraphrase would be a different instruction to a
+    model trained on the original, and nothing in the output would say so.
+    """
+    st_file = model_dir / "config_sentence_transformers.json"
+    if not st_file.exists():
+        raise EmbedderUnavailable(
+            f"{st_file} is missing, so this checkpoint does not state its own instruction. "
+            f"Inventing one changes what the model was asked."
+        )
+    config = json.loads(st_file.read_text(encoding="utf-8"))
+    prompts = config.get("prompts") or {}
+    name = prompt_name or config.get("default_prompt_name") or "default"
+    prompt = prompts.get(name)
+    if not prompt:
+        raise EmbedderUnavailable(
+            f"{st_file} has no prompt named {name!r}; it declares {sorted(prompts)}."
+        )
+    return str(prompt)
+
+
 def read_pooling_recipe(model_dir: Path) -> PoolingRecipe:
     """The checkpoint's declared pooling, dimension and default prompt."""
     pooling_file = model_dir / "1_Pooling" / "config.json"
-    st_file = model_dir / "config_sentence_transformers.json"
     if not pooling_file.exists():
         raise EmbedderUnavailable(
             f"{pooling_file} is missing, so this checkpoint does not state how its embeddings "
             f"are pooled. Guessing is how two runs produce incomparable vectors."
         )
     pooling = json.loads(pooling_file.read_text(encoding="utf-8"))
-    prompt = "Represent the user's input."
-    if st_file.exists():
-        st_config = json.loads(st_file.read_text(encoding="utf-8"))
-        prompts = st_config.get("prompts") or {}
-        default_name = st_config.get("default_prompt_name") or "default"
-        prompt = prompts.get(default_name, prompt)
+    # One parser for that file, two policies, and the difference is deliberate. The reranker
+    # raises on a missing instruction because it writes it into `<Instruct>:` — the model is
+    # answering a different question without it. The embedder falls back to the literal, because
+    # its chat template injects that same string as a default system message anyway, so the
+    # model receives it either way and refusing would break a usable checkpoint over nothing.
+    try:
+        prompt = read_pooling_prompt(model_dir)
+    except EmbedderUnavailable:
+        prompt = "Represent the user's input."
     return PoolingRecipe(
         pooling_mode=str(pooling["pooling_mode"]),
         dimension=int(pooling["embedding_dimension"]),
@@ -162,33 +229,8 @@ class QwenVisualEmbedder:
         self._loaded: tuple[Any, Any] | None = None
 
     def _load(self) -> tuple[Any, Any]:
-        if self._loaded is not None:
-            return self._loaded
-        try:
-            import torch
-            from transformers import AutoModelForImageTextToText, AutoProcessor
-        except ImportError as exc:  # the `gpu` extra is not installed
-            raise EmbedderUnavailable(
-                f"{exc}. §3 Stage 2 needs the GPU extra: see README 'GPU'."
-            ) from exc
-        if self.device.startswith("cuda") and not torch.cuda.is_available():
-            raise EmbedderUnavailable(
-                f"device {self.device!r} was asked for and torch reports no CUDA. §6 puts "
-                f"Stage 2 on a GPU; silently using the CPU would change what every "
-                f"measurement taken afterwards is about."
-            )
-        # transformers ships `py.typed` while leaving `AutoProcessor.from_pretrained` untyped.
-        processor = AutoProcessor.from_pretrained(str(self.model_dir))  # type: ignore[no-untyped-call]
-        # `.to()` is wrapped by transformers and its stub takes a `PreTrainedModel` rather than
-        # a device string, so strict mode rejects the documented call. Ignored on this one line
-        # rather than relaxed for the module — everything else here stays strict, and a real
-        # type error in our own code still fails the gate.
-        model = (
-            AutoModelForImageTextToText.from_pretrained(str(self.model_dir), dtype=torch.bfloat16)
-            .to(self.device)  # type: ignore[arg-type]
-            .eval()
-        )
-        self._loaded = (processor, model)
+        if self._loaded is None:
+            self._loaded = load_processor_and_model(self.model_dir, self.device)
         return self._loaded
 
     def _conversation(self, content: dict[str, Any]) -> list[dict[str, Any]]:
@@ -271,3 +313,178 @@ class QwenVisualEmbedder:
             return_tensors="pt",
         )
         return self._pool(dict(batch))
+
+
+# =========================================================================================
+# §3 Stage 2's second half: "Retrieve top 50 → Qwen3-VL-Reranker-2B → keep top 5–10."
+# =========================================================================================
+
+RERANK_MODEL_ID: Final = "Qwen3-VL-Reranker-2B"
+_RERANK_ROLE: Final = frozenset({"visual_rerank"})
+
+# The reranker's system turn, verbatim from the `scripts/qwen3_vl_reranker.py` that ships inside
+# the checkpoint. Quoted rather than paraphrased: the model was trained to answer this exact
+# question, and "yes"/"no" is what the two scored token ids below are the logits of.
+RERANK_SYSTEM: Final = (
+    "Judge whether the Document meets the requirements based on the Query and the Instruct "
+    'provided. Note that the answer can only be "yes" or "no".'
+)
+
+
+@dataclass(frozen=True, slots=True)
+class BinaryScoreTokens:
+    """The two token ids whose logits are this reranker's score.
+
+    Read from `1_LogitScore/config.json`, never hardcoded. They are vocabulary offsets for one
+    tokenizer version — a checkpoint bump that shifted them would still produce scores in
+    [0, 1] that ranked footage by the logits of two arbitrary tokens.
+    """
+
+    true_id: int
+    false_id: int
+
+
+def read_score_tokens(model_dir: Path) -> BinaryScoreTokens:
+    """The reranker's `true`/`false` token ids, from the checkpoint's own config."""
+    config_file = model_dir / "1_LogitScore" / "config.json"
+    if not config_file.exists():
+        raise EmbedderUnavailable(
+            f"{config_file} is missing, so this checkpoint does not say which tokens its score "
+            f"is the logits of. Every candidate would still get a number in [0, 1]."
+        )
+    config = json.loads(config_file.read_text(encoding="utf-8"))
+    return BinaryScoreTokens(
+        true_id=int(config["true_token_id"]), false_id=int(config["false_token_id"])
+    )
+
+
+class QwenVisualReranker:
+    """`Qwen3-VL-Reranker-2B` behind `visual_index.VisualReranker`.
+
+    §3 Stage 2 reranks the top 50 down to 5–10, and `rerank_and_keep` enforces what a reranker
+    may do: reorder and score, but never invent a window, return one twice, drop below the
+    survivor count, or restate the retrieval score it was handed. This produces output that
+    satisfies those checks rather than relying on them — `retrieval_similarity` is copied
+    straight off the hit it came from and never recomputed.
+
+    **The score is the model's own recipe, formed the model's own way.** `sigmoid` of
+    `(lm_head.weight[yes] - lm_head.weight[no]) · h_last`, with both token ids read from
+    `1_LogitScore/config.json` and the subtraction done in float32 — exactly the bias-free
+    `Linear` the shipped `scripts/qwen3_vl_reranker.py` builds.
+
+    Subtracting the two *logits* instead is the same arithmetic on paper and measurably not the
+    same number: the logits are bfloat16, so their difference quantises. Measured on one real
+    window, `-0.263168` the model's way against `-0.250000` from the logits — that suspiciously
+    round value is bfloat16 landing on an exactly representable step — and 0.434585 against
+    0.437824 after the sigmoid. A 0.0032 error is a fifth of the smallest gap between the three
+    scores this reranker produced on the fixture, so it is inside the range that decides an
+    order. The two weight rows are indexed and cast before subtracting, which keeps it to two
+    vectors rather than materialising a 151k × 2048 float32 matrix.
+
+    **The reranker needs pixels, and the Protocol hands it only windows.** `VisualHit` carries a
+    `SceneWindow`, not frames, so `read_frames` supplies them — the same shape as
+    `pipeline.run_pipeline`'s `read_scenes` for Path B. Passing a reader rather than re-extracting
+    internally means the frames a window was *embedded* from are the frames it is *scored* from;
+    two independent extractions of "the same" window would differ at the tail, and the reranker
+    would be judging footage the index does not hold.
+    """
+
+    def __init__(
+        self,
+        model_dir: Path,
+        read_frames: Callable[[SceneWindow], WindowFrames],
+        device: str = DEFAULT_DEVICE,
+        model_id: str = RERANK_MODEL_ID,
+        instruct: str | None = None,
+    ) -> None:
+        resolve_role(model_id, _RERANK_ROLE, "the visual reranker")
+        if not model_dir.is_dir():
+            raise EmbedderUnavailable(
+                f"no weights at {model_dir}. Run `bash scripts/fetch-models.sh {model_id}`."
+            )
+        self.model_dir = model_dir
+        self.read_frames = read_frames
+        self.device = device
+        self.model_id = model_id
+        self.tokens = read_score_tokens(model_dir)
+        # `prompts.query` in the checkpoint's own config — its default instruction.
+        self.instruct = instruct or read_pooling_prompt(model_dir, "query")
+        self._loaded: tuple[Any, Any] | None = None
+        self._direction: Any | None = None
+
+    def _load(self) -> tuple[Any, Any]:
+        if self._loaded is None:
+            self._loaded = load_processor_and_model(self.model_dir, self.device)
+        return self._loaded
+
+    def score(self, query: str, frames: WindowFrames) -> float:
+        """How relevant this window is to `query`, in [0, 1].
+
+        `query` is normalised here for the same reason `embed_text` normalises: Kurdish
+        invariant #3, and a query that reached the reranker unnormalised while the embedder saw
+        it normalised would have the two halves of Stage 2 scoring different strings.
+        """
+        import torch
+
+        processor, model = self._load()
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": RERANK_SYSTEM}]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"<Instruct>: {self.instruct}"},
+                    {"type": "text", "text": f"<Query>: {normalize_sorani(query)}"},
+                    {"type": "text", "text": "\n<Document>:"},
+                    video_content(load_window_images(frames)),
+                ],
+            },
+        ]
+        batch = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            # The shipped script uses add_generation_prompt=True: the score is the logits of the
+            # *answer* token, so the prompt has to end where the answer would begin. Without it
+            # the two logits read are for whatever token the template happens to end on.
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+            video_metadata=[window_video_metadata(frames)],
+        )
+        assert_timestamps_span_window(processor.decode(batch["input_ids"][0]), frames)
+        placed = {k: (v.to(self.device) if hasattr(v, "to") else v) for k, v in batch.items()}
+        with torch.no_grad():
+            hidden = model(**placed, output_hidden_states=True).hidden_states[-1][:, -1].float()
+            delta = (self._score_direction() * hidden[0]).sum()
+        return float(torch.sigmoid(delta))
+
+    def _score_direction(self) -> Any:
+        """`lm_head.weight[yes] - lm_head.weight[no]`, in float32, computed once.
+
+        Two rows indexed and cast individually: casting the whole head first would be a
+        151k × 2048 float32 allocation for two vectors' worth of arithmetic.
+        """
+        if self._direction is None:
+            _, model = self._load()
+            weight = model.lm_head.weight.data
+            self._direction = (
+                weight[self.tokens.true_id].float() - weight[self.tokens.false_id].float()
+            )
+        return self._direction
+
+    def rerank(self, query: str, hits: Sequence[VisualHit]) -> tuple[RerankedHit, ...]:
+        """Reorder `hits` by model relevance, carrying each retrieval score through untouched."""
+        scored = [(self.score(query, self.read_frames(hit.window)), hit) for hit in hits]
+        # Ties broken by time then id, exactly as `VisualIndex.retrieve` does, so two windows the
+        # model scores identically cannot swap places between runs — §8.2 counts Recall@K on
+        # this order, and an unstable order makes that number noise.
+        scored.sort(key=lambda pair: (-pair[0], pair[1].window.in_ms, pair[1].window.window_id))
+        return tuple(
+            RerankedHit(
+                window=hit.window,
+                retrieval_similarity=hit.similarity,
+                rerank_score=score,
+                rank=position,
+                model_id=self.model_id,
+            )
+            for position, (score, hit) in enumerate(scored, start=1)
+        )
