@@ -136,9 +136,8 @@ class Delivery:
     """§2's two sidecars, once they are on disk.
 
     Separate from `RenderResult` because they are separate deliverables: a run can produce a
-    correct MP4 and still be unable to write an honest EDL — an NTSC source needs drop-frame
-    timecode, which `delivery.py` refuses rather than approximates. That gap is a named
-    `StageSkipped`, not a missing file nobody mentions.
+    correct MP4 and still be unable to write an honest EDL when its rate has no supported CMX
+    representation. That gap is a named `StageSkipped`, not a missing file nobody mentions.
     """
 
     srt_path: str
@@ -1098,18 +1097,15 @@ def run_pipeline(
     # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
     try:
         # Build all three before writing any. This used to write the JSON, then the SRT, then
-        # build the EDL — and the EDL is the one that legitimately refuses: an NTSC 29.97 fps
-        # source needs drop-frame timecode, which `build_edl` will not fake. So on ordinary
-        # broadcast footage the run left a playable captioned MP4, an ASS, a JSON and an SRT
-        # on disk with no EDL beside them, reported the stage skipped, and anyone reading the
-        # work directory for deliverables had four fifths of a delivery set that looked whole.
-        # Nothing here needs a file to exist before the next step, so the fallible part now
-        # happens first. D-072.
+        # build the EDL — formerly an NTSC 29.97 fps source legitimately refused because
+        # drop-frame support did not exist. The build-first ordering remains load-bearing for
+        # unsupported fractional rates and any future sidecar validation failure: no partial
+        # delivery set is briefly exposed before cleanup. D-072.
         editing_json = json.dumps(clip.to_dict(), ensure_ascii=False, indent=2)
         srt = build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms)
         # The EDL's source timecodes are the *source's* timeline — where this clip was cut
-        # from — so it takes the source's own frame rate. An NTSC rate is refused there rather
-        # than rounded, and lands here as a named gap instead of a silently drifting conform.
+        # from — so it takes the source's own frame rate. NTSC 30000/1001 selects SMPTE
+        # drop-frame numbering; unsupported rates land here instead of silently drifting.
         edl = build_edl(
             clip_in_ms=clip.in_ms,
             clip_out_ms=clip.out_ms,

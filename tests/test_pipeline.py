@@ -1311,12 +1311,9 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
 # =========================================================================================
 # §2's delivery set is all-or-none
 #
-# The runner wrote the editing JSON, then the SRT, then *built* the EDL — and the EDL is the
-# one that legitimately refuses. An NTSC 29.97 fps source needs SMPTE drop-frame timecode,
-# which `build_edl` will not fake, so on ordinary broadcast footage the run left a playable
-# captioned MP4, an ASS, a JSON and an SRT on disk with no EDL, reported the stage skipped,
-# and anyone reading the work directory for deliverables had four fifths of a set that looked
-# whole. Nothing in the sequence needed a file to exist before the next step. D-072.
+# The runner once wrote JSON and SRT before discovering that its EDL builder could not represent
+# an NTSC source. Building all three first closed that partial-set window. NTSC drop-frame is now
+# supported, but the ordering remains load-bearing for unsupported fractional rates. D-072.
 #
 # The fixture is 25 fps, which is EDL-safe — that is what makes the control below possible.
 # =========================================================================================
@@ -1324,8 +1321,7 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
 _SIDECARS = (".json", ".srt", ".edl")
 
 
-def _ntsc_copy(source: Path, dest: Path) -> Path:
-    """A real 29.97 fps transcode of the fixture. `frame_rate` reads 30000/1001 from it."""
+def _fractional_rate_copy(source: Path, dest: Path, rate: str) -> Path:
     ffmpeg = find_ffmpeg()
     assert ffmpeg is not None
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1339,7 +1335,7 @@ def _ntsc_copy(source: Path, dest: Path) -> Path:
             "-i",
             str(source),
             "-r",
-            "30000/1001",
+            rate,
             "-c:v",
             "libx264",
             "-c:a",
@@ -1351,13 +1347,17 @@ def _ntsc_copy(source: Path, dest: Path) -> Path:
     return dest
 
 
+def _ntsc_copy(source: Path, dest: Path) -> Path:
+    """A real 29.97 fps transcode of the fixture. `frame_rate` reads 30000/1001 from it."""
+    return _fractional_rate_copy(source, dest, "30000/1001")
+
+
 def _sidecars_on_disk(work: Path) -> list[str]:
     return sorted(p.name for p in work.glob("*") if p.suffix in _SIDECARS)
 
 
 @needs_ffmpeg
-def test_a_refused_edl_leaves_no_partial_delivery_set(tmp_path: Path) -> None:
-    """Asserted on the work directory, because the defect was files nobody meant to keep."""
+def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(tmp_path: Path) -> None:
     ntsc = _ntsc_copy(FIXTURE, tmp_path / "ntsc.mp4")
     from hawedit.render import frame_rate
 
@@ -1373,15 +1373,11 @@ def test_a_refused_edl_leaves_no_partial_delivery_set(tmp_path: Path) -> None:
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         verdict=a_verdict(100, 1_700),
     )
-    assert isinstance(run.delivery, StageSkipped)
-    assert run.delivery.blocked_by == ("§2 delivery set",)
-    assert "drop-frame" in run.delivery.reason
-    assert not run.complete
-    # The point: none of the three sidecars survived the refusal.
-    assert _sidecars_on_disk(work) == [], f"stranded {_sidecars_on_disk(work)}"
-    # Stage 6 genuinely succeeded, so its output stays and the report stays true.
-    assert run.render is not None and not isinstance(run.render, StageSkipped)
-    assert Path(run.render.path).exists()
+    assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
+    assert _sidecars_on_disk(work) == ["ntsc-s0-0.edl", "ntsc-s0-0.json", "ntsc-s0-0.srt"]
+    edl = Path(run.delivery.edl_path).read_text(encoding="utf-8")
+    assert "FCM: DROP FRAME" in edl
+    assert ";" in next(line for line in edl.splitlines() if line.startswith("001"))
 
 
 @needs_ffmpeg
@@ -1435,7 +1431,7 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
 
 
 @needs_ffmpeg
-def test_a_refused_edl_never_writes_a_sidecar_at_all(
+def test_an_unsupported_fractional_edl_never_writes_a_sidecar_at_all(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Stronger than "no sidecars survive": none is ever created.
@@ -1446,7 +1442,7 @@ def test_a_refused_edl_never_writes_a_sidecar_at_all(
     a crash inside it — power loss, SIGKILL — strands exactly the partial set this fixes. The
     only way to see the difference is to watch the writes rather than the leftovers.
     """
-    ntsc = _ntsc_copy(FIXTURE, tmp_path / "ntsc.mp4")
+    fractional = _fractional_rate_copy(FIXTURE, tmp_path / "fractional.mp4", "24000/1001")
     real_write_text = Path.write_text
     attempted: list[Path] = []
 
@@ -1458,21 +1454,22 @@ def test_a_refused_edl_never_writes_a_sidecar_at_all(
 
     work = tmp_path / "work"
     run = run_pipeline(
-        ntsc,
+        fractional,
         work,
-        media_id="ntsc",
-        transcript=a_transcript("ntsc"),
+        media_id="fractional",
+        transcript=a_transcript("fractional"),
         select_sentences=(0,),
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         verdict=a_verdict(100, 1_700),
     )
     assert isinstance(run.delivery, StageSkipped)
+    assert "fractional frame rate" in run.delivery.reason
     # Compared against the exact sidecar paths, not by suffix: Stage 1 writes
     # `transcript.raw.json` under the work directory too, and an earlier version of this test
     # counted that as a delivery sidecar and failed for the wrong reason.
     from hawedit.pipeline import _clip_id, _delivery_artifact_paths
 
-    ass_path, _, *sidecar_paths = _delivery_artifact_paths(work, _clip_id("ntsc", (0,)))
+    ass_path, _, *sidecar_paths = _delivery_artifact_paths(work, _clip_id("fractional", (0,)))
     stranded = [p.name for p in attempted if p in set(sidecar_paths)]
     assert stranded == [], f"wrote {stranded} before discovering the EDL was refused"
     # The ASS is the render's input and is expected; this is not a claim that nothing is written.

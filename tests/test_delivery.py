@@ -19,7 +19,7 @@ its record timecodes are the finished timeline's. An EDL in clip time is an EDL 
 the wrong footage — and it looks perfectly well-formed.
 
 And an EDL counts **frames**, not milliseconds, so it cannot be written without knowing the
-rate. 29.97 is where that becomes a refusal rather than a rounding.
+rate. NTSC 29.97 is where drop-frame numbering becomes mandatory rather than optional.
 """
 
 from __future__ import annotations
@@ -152,17 +152,53 @@ def test_an_hour_is_an_hour() -> None:
     assert ms_to_timecode(3_600_000, 25) == "01:00:00:00"
 
 
-def test_a_non_integer_frame_rate_is_refused_with_the_drift_it_would_cause() -> None:
-    """29.97 needs SMPTE drop-frame timecode. Writing non-drop instead produces an EDL that
-    looks correct and drifts against the footage — about 3.6 s per hour. Refusing names the
-    number; guessing would hand an editor a conform that goes wrong slowly."""
-    with pytest.raises(DeliveryError, match="drop-frame"):
-        ms_to_timecode(1_000, 29.97)
+def test_ntsc_drop_frame_skips_the_first_two_counts_outside_tenth_minutes() -> None:
+    """Apple's canonical transition: 00:00:59;29 advances to 00:01:00;02."""
+    ntsc = 30_000 / 1_001
+    assert ms_to_timecode(60_027, ntsc) == "00:00:59;29"
+    assert ms_to_timecode(60_060, ntsc) == "00:01:00;02"
+
+
+def test_ntsc_drop_frame_does_not_skip_at_tenth_minutes_and_stays_aligned_at_an_hour() -> None:
+    ntsc = 30_000 / 1_001
+    assert ms_to_timecode(600_000, ntsc) == "00:10:00;00"
+    assert ms_to_timecode(3_600_000, ntsc) == "01:00:00;00"
+
+
+def test_the_common_29_97_decimal_is_treated_as_30000_over_1001() -> None:
+    assert ms_to_timecode(3_600_000, 29.97) == "01:00:00;00"
+
+
+def test_every_ntsc_frame_in_the_first_hour_has_one_legal_drop_frame_label() -> None:
+    ntsc = 30_000 / 1_001
+    frame_count = round(3_600 * ntsc)
+    labels = [ms_to_timecode(round(frame * 1000 / ntsc), ntsc) for frame in range(frame_count)]
+    assert len(set(labels)) == frame_count
+    for label in labels:
+        _, minute, second, frame = (int(part) for part in label.replace(";", ":").split(":"))
+        if minute % 10:
+            assert (second, frame) not in ((0, 0), (0, 1)), label
+
+
+def test_an_unsupported_fractional_rate_is_refused_instead_of_rounded() -> None:
+    with pytest.raises(DeliveryError, match="fractional frame rate.*unsupported"):
+        ms_to_timecode(1_000, 24_000 / 1_001)
 
 
 def test_a_non_positive_rate_is_refused() -> None:
-    with pytest.raises(DeliveryError, match="frame rate"):
+    with pytest.raises(DeliveryError, match="finite and positive"):
         ms_to_timecode(1_000, 0)
+
+
+@pytest.mark.parametrize("fps", [float("nan"), float("inf")])
+def test_a_non_finite_rate_is_refused(fps: float) -> None:
+    with pytest.raises(DeliveryError, match="finite and positive"):
+        ms_to_timecode(1_000, fps)
+
+
+def test_a_negative_timecode_time_is_refused() -> None:
+    with pytest.raises(DeliveryError, match="negative"):
+        ms_to_timecode(-1, 25)
 
 
 # =========================================================================================
@@ -198,6 +234,18 @@ def test_source_and_record_ranges_use_the_same_quantized_frame_duration() -> Non
 
 def test_the_edl_declares_non_drop_frame() -> None:
     assert "FCM: NON-DROP FRAME" in build_edl(clip_in_ms=0, clip_out_ms=1_000, fps=25)
+
+
+def test_an_ntsc_edl_declares_and_uses_drop_frame_timecode() -> None:
+    edl = build_edl(clip_in_ms=60_060, clip_out_ms=120_120, fps=30_000 / 1_001)
+    event = next(line for line in edl.splitlines() if line.startswith("001"))
+    assert "FCM: DROP FRAME" in edl
+    assert event.split()[-4:] == [
+        "00:01:00;02",
+        "00:02:00;04",
+        "00:00:00;00",
+        "00:01:00;02",
+    ]
 
 
 def test_the_title_appears_and_is_sanitised_to_one_line() -> None:

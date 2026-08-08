@@ -507,31 +507,18 @@ load natively on Windows, and they are being integrated regardless.
 
 ---
 
-## #12 · Two sessions share this checkout, and the history no longer says who decided what
+## #12 · Two sessions shared one checkout — **RESOLVED 2026-08-09**
 
-> **Refreshed 2026-08-09 (D-075).** The shared-index half of this is gone: the second agent now
-> works on its own branch (`codex/production-readiness-20260809`, `576dfed`, CI green, no PR
-> open) and `main` no longer changes under this session. The failure mode moved rather than
-> ended — from silently reverting each other's files to silently **duplicating each other's
-> work**. Both branches independently implemented Hugging Face revision pinning within the same
-> day, agreeing on all four visual-checkpoint SHAs and disagreeing on where they live
-> (`models/revisions.json` keyed by repo, versus `models/sources.json` restructured to
-> `name → {repo, revision}`). Their branch also pinned the ffmpeg archive, which `main` had
-> deferred and named as an open gap. Nothing has been reverted in either direction; whoever
-> merges has to pick one structure deliberately, because a naive merge leaves `models.py`
-> reading a file the fetcher no longer writes. **The decision this entry still needs is
-> unchanged in substance and sharper in form:** not "who owns the tree" any more, but who
-> merges the branch and which of the two supply-chain implementations survives.
->
-> One thing in its favour: the duplicate is what caught a real error. D-073 had refused to pin
-> the gated pyannote repo on the grounds that its contents were unseen; their branch pinned it,
-> which prompted a re-measurement showing gating covers downloads and not metadata
-> (`model_info` and `list_repo_files` succeed with no token; `hf_hub_download` raises
-> `GatedRepoError`). Corrected in D-075.
+> **Resolved by isolation and explicit reconciliation.** The production-readiness work moved to
+> its own worktree/branch and never stages broad paths. That branch rebased onto `main`, kept
+> `main`'s tracked `models/revisions.json` design, dropped its duplicate source-manifest design,
+> and retained the non-overlapping ffmpeg, release, and CI action hardening. The pyannote metadata
+> correction from D-075 is present. GitHub Actions passed on the reconciled branch at `69dc68e`.
+> No shared index, unresolved file ownership, or competing model-pin implementation remains.
 
 
-**Needs:** Hawa, one decision — which session owns this working tree, and whether work lands on
-`main` or on a branch. No code, no credentials, no hardware.
+**Needs:** nothing. The historical incident and four concrete losses remain below because they
+are why isolated worktrees, file claims, explicit path commits, and force-with-lease are required.
 
 This is not a complaint about speed. It is that the record has stopped being reliable, which is the
 one thing this project's process exists to protect.
@@ -595,8 +582,6 @@ unit". Confirm whether that still holds.
 Until this is answered the loop keeps running and the gate stays green — 1067 passed, 0 skipped as of
 `9d1292d` — but a commit here no longer tells you who did what, and neither session can fix that from
 inside the checkout.
-
-
 ---
 
 ## #13 · §4.1's fifth collision has no defined target form

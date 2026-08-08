@@ -3288,3 +3288,26 @@ agents had the same red baseline (M0.2, M1.2, M2.1); their remaining findings ar
 measured the same way, and the worktree harness needs the venv made visible before the next pass.
 
 Gate: `VERIFY OK — 1119 passed, 0 skipped`.
+
+---
+
+## D-082 · NTSC 30000/1001 uses SMPTE drop-frame EDL timecode
+
+**Supersedes D-042's NTSC refusal and D-072's remaining drop-frame shortfall.** Refusing 29.97
+was safer than rounding it, but it made §2 delivery impossible on ordinary NTSC footage. The
+pipeline already passed the exact `30000/1001` rate through, so the missing piece was honest
+physical-frame-count to time-address conversion.
+
+**Decision.** Recognize only NTSC `30000/1001` (including conventional decimal `29.97`) as the
+supported fractional rate. Quantize milliseconds at the physical rate, then apply SMPTE's
+nominal 30-count drop-frame rule: skip counts 00 and 01 at each minute except every tenth.
+Emit semicolon labels and `FCM: DROP FRAME`. Whole-number rates remain non-drop; every other
+fractional rate is refused. In particular, do not infer 59.94 CMX behavior from a 29.97 rule.
+
+**Evidence.** SMPTE EG 35:2012 §2.1 supplies the skip rule, Apple TN2310 supplies the canonical
+minute transition, and FFmpeg's `av_timecode_adjust_ntsc_framenum2` supplies an independent
+implementation reference. Tests cover every physical frame in the first hour plus a real
+30000/1001 pipeline transcode. `evidence/m3-6-drop-frame-edl.md`.
+
+**Still open.** This makes NTSC delivery complete; it does not make the complete
+MP4/ASS/SRT/JSON/EDL bundle one atomic transaction.

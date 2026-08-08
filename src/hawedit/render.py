@@ -305,8 +305,8 @@ def frame_rate(video: Path, ffmpeg: Path | None = None) -> float:
     """`video`'s frame rate, from `r_frame_rate`, kept as the exact ratio ffprobe reports.
 
     `30000/1001` is 29.97002997…, and rounding it to 30 here is the difference between an EDL
-    that conforms and one that drifts — `delivery.ms_to_timecode` refuses the non-integer rate
-    on purpose, and can only do so if it is told the truth about it.
+    that selects drop-frame numbering and one that drifts. `delivery.ms_to_timecode` can make
+    that decision only if it is told the source's true rate.
     """
     try:
         rate = probe_stream(video, "stream=r_frame_rate", ffmpeg, video_only=True)
