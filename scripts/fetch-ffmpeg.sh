@@ -19,6 +19,12 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 dest="${here}/.ffmpeg"
 mkdir -p "$dest"
 
+# Immutable source and content identity. The second value is the Git-LFS object's own SHA-256,
+# read from v8.0/linux.zip's pointer at this exact commit. A commit-pinned URL prevents a branch
+# move; the digest independently prevents a compromised/misrouted response from being unpacked.
+ffmpeg_bins_commit="df95abcb0ce6efff710dda5ef28a2f6f1dc21493"
+linux_zip_sha256="ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad"
+
 # §4.3.2's requirement is a *verified* build, not a downloaded one. Check what is already
 # reachable before spending 200 MB — and check it the same way, so an ffmpeg accepted from
 # PATH has cleared exactly the bar a fetched one clears. `captions.find_ffmpeg` resolves
@@ -63,9 +69,17 @@ if [[ -x "${dest}/ffmpeg" ]]; then
 else
   # Served through the Git-LFS media endpoint: the plain raw.githubusercontent URL returns a
   # 134-byte LFS pointer, not the archive.
-  url="https://media.githubusercontent.com/media/zackees/ffmpeg_bins/main/v8.0/linux.zip"
+  url="https://media.githubusercontent.com/media/zackees/ffmpeg_bins/${ffmpeg_bins_commit}/v8.0/linux.zip"
   echo "==> downloading ffmpeg (~140 MB) from ${url}"
-  curl -sSL -o "${dest}/linux.zip" "$url"
+  curl --fail --silent --show-error --location --retry 3 \
+    --proto '=https' --tlsv1.2 -o "${dest}/linux.zip" "$url"
+  echo "${linux_zip_sha256}  ${dest}/linux.zip" | sha256sum --check --status || {
+    actual="$(sha256sum "${dest}/linux.zip" | cut -d' ' -f1)"
+    rm -f "${dest}/linux.zip"
+    echo "REFUSED: ffmpeg archive SHA-256 ${actual} did not match ${linux_zip_sha256}." >&2
+    echo "Nothing was extracted or installed." >&2
+    exit 1
+  }
   unzip -oq "${dest}/linux.zip" -d "${dest}/extract"
   find "${dest}/extract" -name ffmpeg -type f -exec cp {} "${dest}/ffmpeg" \;
   find "${dest}/extract" -name ffprobe -type f -exec cp {} "${dest}/ffprobe" \;

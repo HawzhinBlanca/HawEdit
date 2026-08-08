@@ -71,14 +71,11 @@ These cannot be truthfully solved from the checkout alone:
   no pin rather than resolving a branch head. `pyannote/speaker-diarization-community-1` is
   deliberately unpinned — gated, never downloaded here (`BLOCKED.md` #4) — and a test asserts it
   is the only one.
-- **`fetch-ffmpeg.sh` is still unpinned.** It downloads
-  `media.githubusercontent.com/…/ffmpeg_bins/main/v8.0/linux.zip` — a branch path, so the bytes
-  behind it can change — then unzips and executes it with no SHA-256 comparison. The versioned
-  path segment is not a substitute for a fixed ref, and no published digest for that archive has
-  been found to compare against.
-- `hawedit-release` now makes source-to-wheel bytes reproducible and emits a checksum plus Git
-  provenance, but releases are not yet signed, carry no SBOM, and package-managed OmniASR assets
-  still lack a project-owned byte manifest.
+- The project-fetched Linux ffmpeg archive is addressed by an immutable upstream commit and its
+  Git-LFS SHA-256 is verified before unpacking.
+- `hawedit-release` makes source-to-wheel bytes reproducible and emits a checksum plus Git
+  provenance, but releases are still unsigned, carry no SBOM, and package-managed OmniASR assets
+  lack a project-owned byte manifest.
 
 ## Honest release call
 

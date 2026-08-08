@@ -99,11 +99,12 @@ against. That is also why setup ends with the gate rather than with an install.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,media]'
-bash scripts/fetch-ffmpeg.sh     # ~200 MB, lands in .ffmpeg/ (git-ignored)
+bash scripts/fetch-ffmpeg.sh     # ~142 MB, lands in .ffmpeg/ (git-ignored)
 bash scripts/verify.sh
 ```
 
-`fetch-ffmpeg.sh` verifies the RTL stack and refuses a build that cannot shape Arabic script.
+`fetch-ffmpeg.sh` addresses an immutable upstream commit, verifies the Git-LFS SHA-256 before
+unpacking, then verifies the RTL stack and refuses a build that cannot shape Arabic script.
 `verify.sh` discovers the binary automatically; without it §4.3.6's golden render — the only
 real safeguard on Kurdish invariant #4 — skips.
 
