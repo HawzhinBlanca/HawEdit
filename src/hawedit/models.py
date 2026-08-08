@@ -42,6 +42,7 @@ __all__ = [
     "ModelNotProvisioned",
     "ModelStatus",
     "ModelStore",
+    "RevisionNotPinned",
     "SourceNotConfigured",
     "WeightsIncomplete",
     "assert_fully_loaded",
@@ -65,6 +66,7 @@ def _default_models_root() -> Path:
 
 DEFAULT_MODELS_ROOT: Final = _default_models_root()
 INSTALLED_SOURCES: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "sources.json"
+INSTALLED_REVISIONS: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "revisions.json"
 
 # Which pip package supplies each PIP-provisioned component. Kept here rather than in the
 # registry because it describes this implementation's packaging, not §7's content.
@@ -121,6 +123,10 @@ def assert_fully_loaded(model_id: str, missing_keys: Iterable[str]) -> None:
 
 class SourceNotConfigured(RuntimeError):
     """Raised when a checkpoint's download source was never configured (and not guessed)."""
+
+
+class RevisionNotPinned(RuntimeError):
+    """Raised when a repository would be downloaded at whatever its branch head is today."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +195,53 @@ class ModelStore:
                 f'  {{"{entry.model_id}": "<org>/<repo>"}}'
             )
         return source
+
+    def revisions(self) -> Mapping[str, str]:
+        """Pinned commit revisions, keyed by *repository id* rather than by §7 name.
+
+        Keyed by repo because that is what `snapshot_download` takes, and because two §7 names
+        could legitimately resolve to one repository.
+        """
+        configured: dict[str, str] = {}
+        revision_file = self.root / "revisions.json"
+        if (
+            not revision_file.exists()
+            and self._use_installed_sources
+            and INSTALLED_REVISIONS.exists()
+        ):
+            revision_file = INSTALLED_REVISIONS
+        if revision_file.exists():
+            raw = json.loads(revision_file.read_text(encoding="utf-8"))
+            configured = {k: v for k, v in raw.items() if not k.startswith("_")}
+        return configured
+
+    def revision_for(self, repo_id: str) -> str:
+        """The commit to download `repo_id` at.
+
+        `snapshot_download` without `revision=` resolves whatever the branch head points at on
+        the day it runs. Two machines then hold different weights under one name, and every
+        number in `evidence/` is about weights nobody can identify — which is the same failure
+        the project's "a number carries the hardware and adapter that produced it" rule exists
+        to prevent, one level down. Measured 2026-08-09: nothing on disk or in the tree
+        recorded which revision produced the 27 GB already here.
+
+        Raises:
+            RevisionNotPinned: no pin for this repository. Refused rather than resolved
+                silently, mirroring `source_for` — the fetcher does not guess a repo id and it
+                does not guess a revision either.
+        """
+        revision = self.revisions().get(repo_id)
+        if not revision:
+            raise RevisionNotPinned(
+                f"no pinned revision for {repo_id!r}. Downloading a branch head makes the "
+                f"weights unidentifiable and every measurement taken against them "
+                f"unreproducible. Resolve the commit and record it in "
+                f"{self.root / 'revisions.json'}:\n"
+                f'  {{"{repo_id}": "<40-hex commit sha>"}}\n'
+                f'  python -c "from huggingface_hub import HfApi; '
+                f"print(HfApi().model_info('{repo_id}').sha)\""
+            )
+        return revision
 
     def status(self) -> tuple[ModelStatus, ...]:
         """Availability of every §7 component on this machine, in registry order."""

@@ -22,9 +22,24 @@ from hawedit.models import (
 )
 from hawedit.registry import REGISTRY, Provisioning
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def store(tmp_path: Path) -> ModelStore:
     return ModelStore(root=tmp_path)
+
+
+def _fetcher_download_block() -> str:
+    """The download block out of `fetch-models.sh`, as executable source.
+
+    Deliberately not a grep of the script: an assertion about the text of a command is not an
+    assertion about what it does — the mistake D-067 recorded, one layer up. The tests that use
+    this execute the real block against a stubbed Hub and inspect the call it makes.
+    """
+    script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
+    blocks = [b for b in script.split("<<'PYEOF'")[1:] if "snapshot_download" in b]
+    assert len(blocks) == 1, f"expected exactly one download block, found {len(blocks)}"
+    return blocks[0].split("\nPYEOF")[0]
 
 
 # --- provisioning is classified, not assumed -------------------------------------------
@@ -223,3 +238,146 @@ def test_the_refusal_names_every_invented_weight() -> None:
     with pytest.raises(WeightsIncomplete) as raised:
         assert_fully_loaded("m", ["b.weight", "a.weight"])
     assert "a.weight" in str(raised.value) and "b.weight" in str(raised.value)
+
+
+# --- revisions are pinned, never resolved at download time -------------------------------
+#
+# `snapshot_download` without `revision=` resolves whatever the branch head points at on the
+# day it runs. Measured 2026-08-09: nothing on disk or in the tree recorded which revision
+# produced the 27 GB of weights already on hawapc01, so every number in `evidence/m5-*.md` was
+# about weights nobody could identify. D-073.
+
+
+def test_a_repository_with_no_pinned_revision_is_refused_not_resolved(tmp_path: Path) -> None:
+    """The whole point: a missing pin must stop the download, not fall back to the head."""
+    from hawedit.models import RevisionNotPinned
+
+    with pytest.raises(RevisionNotPinned, match="revisions.json"):
+        store(tmp_path).revision_for("Qwen/Qwen3-VL-Embedding-2B")
+
+
+def test_a_pinned_revision_is_returned_for_download(tmp_path: Path) -> None:
+    """The control. A `revision_for` that raised unconditionally passes the test above."""
+    (tmp_path / "revisions.json").write_text(json.dumps({"Qwen/repo": "0" * 40}), encoding="utf-8")
+    assert store(tmp_path).revision_for("Qwen/repo") == "0" * 40
+
+
+def test_comment_keys_are_not_mistaken_for_repositories(tmp_path: Path) -> None:
+    """`revisions.json` carries its provenance in `_`-prefixed keys, as `sources.json` does."""
+    (tmp_path / "revisions.json").write_text(
+        json.dumps({"_measured": "2026-08-09 from the Hub", "Qwen/repo": "a" * 40}),
+        encoding="utf-8",
+    )
+    assert dict(store(tmp_path).revisions()) == {"Qwen/repo": "a" * 40}
+
+
+def test_every_repository_the_fetcher_would_download_is_pinned() -> None:
+    """The tracked manifest must cover what this checkout actually fetches.
+
+    Reads the real `models/revisions.json` rather than a fixture: a pin file that is correct
+    in a temp directory and incomplete in the repository would protect nothing.
+    """
+    from hawedit.models import DEFAULT_MODELS_ROOT, ModelStore, SourceNotConfigured
+
+    real = ModelStore()
+    pinned = set(real.revisions())
+    assert pinned, f"no pinned revisions found under {DEFAULT_MODELS_ROOT}"
+    unpinned = []
+    for entry in REGISTRY.values():
+        try:
+            source = real.source_for(entry)
+        except SourceNotConfigured:
+            continue  # §7 names a checkpoint, not a repo — covered by the source tests above
+        if source not in pinned:
+            unpinned.append(source)
+    # pyannote is gated and has never been downloaded here, so it is deliberately absent:
+    # pinning a revision for contents nobody in this project has seen records a number, not a
+    # fact (`BLOCKED.md` #4).
+    assert unpinned == ["pyannote/speaker-diarization-community-1"], unpinned
+
+
+def test_every_pinned_revision_is_a_full_commit_sha() -> None:
+    """A tag or a branch name here would reintroduce exactly what the pin removes."""
+    import re
+
+    from hawedit.models import ModelStore
+
+    for repo, revision in ModelStore().revisions().items():
+        assert re.fullmatch(r"[0-9a-f]{40}", revision), f"{repo} is pinned to {revision!r}"
+
+
+def test_the_installed_revision_manifest_location_is_stable() -> None:
+    from hawedit.models import INSTALLED_REVISIONS
+
+    assert INSTALLED_REVISIONS.parts[-4:] == ("share", "hawedit", "models", "revisions.json")
+
+
+def test_the_fetcher_passes_the_pinned_revision_to_snapshot_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runs the download block out of `fetch-models.sh` itself, against a stubbed Hub.
+
+    Deliberately not a grep of the script. An assertion about the text of a command is not an
+    assertion about what the command does — the same mistake D-067 recorded one layer up. This
+    executes the real block and inspects the call it makes.
+    """
+    import sys as _sys
+    import types
+
+    source_code = _fetcher_download_block()
+
+    calls: list[dict[str, object]] = []
+    stub = types.ModuleType("huggingface_hub")
+    stub.snapshot_download = lambda **kwargs: calls.append(kwargs)  # type: ignore[attr-defined]
+    monkeypatch.setitem(_sys.modules, "huggingface_hub", stub)
+
+    (tmp_path / "revisions.json").write_text(json.dumps({"Qwen/repo": "b" * 40}), encoding="utf-8")
+    monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(_sys, "argv", ["fetch", "Qwen/repo", str(tmp_path / "dest")])
+
+    import importlib
+
+    import hawedit.models
+
+    importlib.reload(hawedit.models)  # pick up HAWEDIT_MODELS_DIR
+    try:
+        exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        assert calls == [
+            {"repo_id": "Qwen/repo", "revision": "b" * 40, "local_dir": str(tmp_path / "dest")}
+        ], calls
+    finally:
+        monkeypatch.undo()
+        importlib.reload(hawedit.models)
+
+
+def test_the_fetcher_refuses_a_repository_that_is_not_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control for the test above: no pin means no download call at all, and exit 1."""
+    import sys as _sys
+    import types
+
+    source_code = _fetcher_download_block()
+
+    calls: list[dict[str, object]] = []
+    stub = types.ModuleType("huggingface_hub")
+    stub.snapshot_download = lambda **kwargs: calls.append(kwargs)  # type: ignore[attr-defined]
+    monkeypatch.setitem(_sys.modules, "huggingface_hub", stub)
+
+    (tmp_path / "revisions.json").write_text(json.dumps({}), encoding="utf-8")
+    monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(_sys, "argv", ["fetch", "Qwen/unpinned", str(tmp_path / "dest")])
+
+    import importlib
+
+    import hawedit.models
+
+    importlib.reload(hawedit.models)
+    try:
+        with pytest.raises(SystemExit) as exited:
+            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        assert exited.value.code == 1
+        assert calls == [], f"downloaded despite no pin: {calls}"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(hawedit.models)

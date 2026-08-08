@@ -2905,3 +2905,50 @@ drop-frame beats shipping a conform that drifts — and the run says so. Writing
 timecode is separate work.
 
 Gate: `VERIFY OK — 1083 passed, 0 skipped`.
+
+## D-073
+
+**27 GB of weights were on this machine and nothing recorded which revision produced them.**
+`fetch-models.sh` called `snapshot_download(repo_id=source, local_dir=dest)` with no `revision=`,
+which resolves whatever the branch head points at on the day it runs. Measured: every §7
+repository resolves to a head, and no marker on disk and no tracked file named any of them
+(`evidence/model-revision-pinning.md`). So the numbers in `evidence/m5-2-embedder.md`,
+`m5-2-reranker.md`, `m5-4-path-b.md` and `m6-3-grounding.md` were measured against weights whose
+identity was unrecoverable — this project's own "a number carries the hardware and adapter that
+produced it" rule, failing one level down at the adapter's weights.
+
+**Decision: a tracked `models/revisions.json`, and `revision_for` refuses rather than resolving.**
+Shaped deliberately like D-022's `source_for`: the fetcher does not guess a repository id, and it
+does not guess a revision either. An unpinned repo is refused with the command that resolves it
+honestly, and the fetcher moves on to the rest exactly as it does for an unconfigured source.
+Pinning is also the checksum — the Hub resolves a commit to exact file hashes, so a pinned
+download yields those bytes or fails.
+
+**The pins are measured, not chosen.** Each was read live from `HfApi().model_info(repo).sha`
+and then **verified against the weights already here**, by comparing the git blob id of the local
+`config.json` with the Hub's blob id for the same path: all four visual checkpoints MATCH. So the
+file names the revision that produced the existing evidence, which is what makes those
+measurements reproducible rather than merely recorded.
+
+**`pyannote/speaker-diarization-community-1` is deliberately unpinned.** It is gated, measured
+401 from here, and has never been downloaded (`BLOCKED.md` #4); pinning a revision for contents
+nobody in this project has seen would record a number rather than a fact. A test asserts it is
+the *only* unpinned repository, so the exemption cannot spread quietly.
+
+**The tests execute the fetcher's own download block rather than grepping it.**
+`_fetcher_download_block()` pulls the real heredoc out of `fetch-models.sh` and `exec`s it against
+a stubbed `huggingface_hub`, asserting the actual call carries `revision=`. A grep would have been
+an assertion about the text of a command rather than about what it does — D-067's mistake, one
+layer up. The control is the unpinned case: no download call at all, exit 1.
+
+**Mutation audit 6/6**, two of them mutating `fetch-models.sh` rather than `models.py`, which is
+what shows the tests cover the chain an operator actually runs.
+
+**Not fixed, and named rather than folded in:** `fetch-ffmpeg.sh` still downloads
+`…/ffmpeg_bins/main/v8.0/linux.zip` — a branch path — and unzips and executes it with no SHA-256
+check. Different supply chain, different verification story (it needs a published digest to
+compare against, which that repository does not appear to offer), and combining them would have
+made neither testable. And the weights on disk were verified against the pin by `config.json`
+blob id, not by re-downloading and hashing all 27 GB.
+
+Gate: `VERIFY OK — 1091 passed, 0 skipped`.

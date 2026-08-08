@@ -110,14 +110,27 @@ while IFS=$'\t' read -r model_id source gated dest; do
 import sys
 from huggingface_hub import snapshot_download
 
+from hawedit.models import ModelStore, RevisionNotPinned
+
 source, dest = sys.argv[1], sys.argv[2]
+# Without `revision=` this resolves whatever the branch head points at today, so two machines
+# hold different weights under one name and every number measured against them is about
+# weights nobody can identify. Refused rather than resolved silently, exactly as an
+# unconfigured repo id is (D-022, D-073).
 try:
-    snapshot_download(repo_id=source, local_dir=dest)
+    revision = ModelStore().revision_for(source)
+except RevisionNotPinned as exc:
+    print(f"    REFUSED: {exc}", file=sys.stderr)
+    raise SystemExit(1) from None
+print(f"    revision {revision}")
+try:
+    snapshot_download(repo_id=source, revision=revision, local_dir=dest)
 except Exception as exc:  # network, auth, or a repo that moved
     print(f"    FAILED: {type(exc).__name__}: {exc}"[:400], file=sys.stderr)
     print(
-        "    Check network access to huggingface.co, HF_TOKEN for gated repos, and that "
-        "the repo id in models/sources.json is right.",
+        "    Check network access to huggingface.co, HF_TOKEN for gated repos, that "
+        "the repo id in models/sources.json is right, and that the pinned revision in "
+        "models/revisions.json still exists in that repo.",
         file=sys.stderr,
     )
     raise SystemExit(1) from None
