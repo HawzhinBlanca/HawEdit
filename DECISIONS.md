@@ -1802,3 +1802,72 @@ route are established and recorded; M5.2, M5.4 and M6.3 remain unstarted, which 
 ledger says.
 
 ---
+
+## D-049 · A warning is not a measurement, and the timestamps were worse than the warning
+
+**What D-048 got wrong.** It recorded that `sentence-transformers` warns *"no video metadata was
+provided ... Defaulting to `fps=24`"* and concluded that §3 Stage 2 must use the `transformers`
+processor. The conclusion holds. The **reason** was a warning string, and this project does not
+build architecture on those. Measured properly, the situation is worse and more specific.
+
+A Qwen3-VL processor writes timestamp tokens into the prompt — `<0.5 seconds>` — which is how
+each temporal group is placed in time. For the fixture's 4162 ms window at 1 fps:
+
+| Input | Timestamps |
+|---|---|
+| no metadata | **(0.0, 0.1)** |
+| `fps` in the content dict | (0.0, 0.1) — accepted and ignored |
+| `video_metadata` in the content dict | (0.0, 0.1) — accepted and ignored |
+| `video_metadata=` **top-level** to `apply_chat_template` | **(0.5, 2.5)** |
+
+A 4.162-second window presented as 0.1 seconds. Not a warning about precision — a forty-fold
+compression of the timeline, and `sentence-transformers` cannot express the fix at all
+(`unrecognized modality keys: ['video_metadata']`).
+
+**Decision 1 — one module builds this, for all three models.** `video_input.py`.
+`Qwen3-VL-Embedding-2B`, `MCG-NJU/VideoChat3-4B` and `MCG-NJU/TimeLens2-4B` all take video this
+way, so three adapters would otherwise each have to remember a top-level argument whose absence
+is invisible. The metadata is derived from the window and from the frames that exist, never
+passed by hand.
+
+**Decision 2 — the check reads the decoded prompt, not the arguments.** Every other layer
+accepts the wrong answer: the ignored keys return no error, and the tokenised ids are
+byte-identical either way (same shape, same `video_grid_thw`, `(a == b).all()` true). The
+timestamps in the prompt are the only place the mistake is visible, so that is the artifact
+`assert_timestamps_span_window` reads — the same rule as M3.4, where the fix was to open the
+written file instead of trusting the request.
+
+**Decision 3 — the threshold is "the stamps reach half the window", and it is set against the
+failure.** Not against a notion of precision. One temporal group is one timestamp and Qwen3-VL
+pairs frames, so the last stamp sits near the middle of the final group and never equals the
+duration — an exact check would be wrong. The broken default reaches 2.4% of the window; half is
+comfortably clear of tail rounding in both directions.
+
+**Decision 4 — a window that arrives as one frame is refused, and the remedy is named.** Found
+by measuring `plan_scene_windows` on the real fixture: its three 1400 ms scenes each plan 2
+frames at 1 fps and yield **1**, because ffmpeg's `fps` filter samples at interval *centres* —
+0.5 s exists, 1.5 s is past the end. A one-frame video block has no temporal structure, which is
+§7's stated reason for excluding CLIP reached from the other side, and its embedding is
+indistinguishable from an honest window's. `SceneWindow` permits any rate at or above the
+reference and enforces the 64-frame ceiling against it, so the answer for a short scene is a
+higher rate; the error says so. The first tolerance written here — "one frame short" — is exactly
+the systematic `ceil` overshoot and therefore also permitted 1-of-2. That is the defect: a
+tolerance calibrated on the common case, silently covering the pathological one.
+
+**Decision 5 — the plan is recorded as a plan.** `SceneWindow.frame_count` is `ceil(duration ×
+fps)` and runs one high whenever the duration is not a whole number of frames (4162 ms: plan 5,
+actual 4). `WindowFrames.count` is what exists on disk and is what reaches
+`total_num_frames`; reporting the plan would place the last frame at a time no frame was taken.
+
+**Measured, and stated with its limit.** The defect moves one window 0.009609 in cosine distance,
+against 0.186–0.224 between the fixture's three distinct scenes — about 5%, which on *this*
+footage would not reorder retrieval. Three unrelated shots is close to the easiest case there
+is. The product's input is a single-speaker Kurdish podcast where consecutive windows differ by
+far less, so the ratio there is unmeasured, and `BLOCKED.md` #1 is why. The claim recorded is
+that the defect is real and its significance on representative material is not yet known — not
+that it is small.
+
+**Not done here.** M5.2 itself. This is the input layer the adapter will use, with the two ways
+of getting it wrong now caught rather than commented.
+
+---

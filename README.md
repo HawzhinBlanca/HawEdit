@@ -209,6 +209,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |
 | `index.py` | §2 | BM25 + character 3-grams over normalized Sorani. |
 | `visual_index.py` | §3 Stage 2 | The visual half: scenes segmented to ~1 fps × 64 frames, cosine retrieval, and the top-50 → rerank → keep-5–10 contract. |
+| `video_input.py` | §3 Stages 2, 3B, 5 | Putting a scene window in front of a Qwen3-VL model *at the right time*. Without `video_metadata` the processor stamps a 4.16 s window as 0.1 s long, silently. |
 | `boundary.py` | §3 Stage 5 | Boundary fusion. Kurdish invariant #2, at construction and at the render gate. |
 | `timelens.py` | §3 Stage 5, §7 | TimeLens2's intervals as evidence, never as cuts — and only the ones that overlap the anchored sentence may move a boundary. |
 | `clip.py` | §5 | The clip contract, validated. Rejection is a first-class type. |
