@@ -49,6 +49,11 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 "Runs" means: on real media, in a test, in the gate. Nothing here is marked done because it
 compiles. `PROGRESS.md` carries the per-task evidence and `BLOCKED.md` carries what needs Hawa.
 
+A successful delivery is one directory named for the clip, containing exactly ASS, MP4, SRT,
+EDL and editing JSON. The runner builds all five in a hidden sibling directory and publishes
+the directory only after the complete set is non-empty and flushed. If render or sidecar work
+fails, no partial delivery becomes public; an existing bundle is write-once and wins unchanged.
+
 | File | What it is |
 |---|---|
 | `BLUEPRINT.md` | The frozen source of truth. Not edited by implementation work. |
@@ -313,6 +318,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, and fail-closed confidential routing. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) and CMX 3600 EDL (source timeline), including SMPTE drop-frame for NTSC 30000/1001. Unsupported fractional rates are refused rather than rounded. |
+| `artifact_bundle.py` | §2 | Private staging and atomic, write-once publication of the exact ASS/MP4/SRT/EDL/JSON delivery directory. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `release.py` | — | Clean-HEAD, double-build wheel reproducibility; validates runtime data and atomically publishes checksum plus Git provenance. |

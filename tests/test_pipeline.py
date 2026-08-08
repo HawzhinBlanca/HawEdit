@@ -1160,6 +1160,7 @@ def _existing_artifact(work_dir: Path, media_id: str, sentence: int) -> Path:
 
     work_dir.mkdir(parents=True, exist_ok=True)
     planted = _delivery_artifact_paths(work_dir, _clip_id(media_id, (sentence,)))[0]
+    planted.parent.mkdir(parents=True)
     planted.write_text("a previous run left this here", encoding="utf-8")
     return planted
 
@@ -1198,7 +1199,7 @@ def test_an_overwriting_run_refuses_before_the_billed_judge_call(tmp_path: Path)
             judge=Judge(),
         )
 
-    assert str(planted) in str(raised.value)
+    assert str(planted.parent) in str(raised.value)
     # The whole point. Not "it refused" — it refused without spending anything.
     assert calls == [], f"the billed judge ran {len(calls)} time(s) before the refusal"
 
@@ -1306,6 +1307,9 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
     assert Path(run.render.path) in guarded, (
         f"the run wrote {run.render.path}, which the overwrite guard does not check"
     )
+    assert Path(run.render.path).parent == next(iter(guarded)).parent
+    assert set(Path(run.render.path).parent.iterdir()) == guarded
+    assert not tuple(work.glob(".paths-s0-0.*.staging"))
 
 
 # =========================================================================================
@@ -1353,7 +1357,9 @@ def _ntsc_copy(source: Path, dest: Path) -> Path:
 
 
 def _sidecars_on_disk(work: Path) -> list[str]:
-    return sorted(p.name for p in work.glob("*") if p.suffix in _SIDECARS)
+    return sorted(
+        p.name for p in work.rglob("*") if p.suffix in _SIDECARS and p.parent.name == p.stem
+    )
 
 
 @needs_ffmpeg
@@ -1406,14 +1412,16 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
 
     The JSON is written, the SRT write raises, and the JSON must not survive it.
     """
-    real_write_text = Path.write_text
+    from hawedit.artifact_bundle import ArtifactBundle
 
-    def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-        if self.suffix == ".srt":
+    real_write_text = ArtifactBundle.write_text
+
+    def failing_write_text(self: ArtifactBundle, suffix: str, payload: str) -> Path:
+        if suffix == "srt":
             raise OSError("no space left on device")
-        return real_write_text(self, *args, **kwargs)
+        return real_write_text(self, suffix, payload)
 
-    monkeypatch.setattr(Path, "write_text", failing_write_text)
+    monkeypatch.setattr(ArtifactBundle, "write_text", failing_write_text)
 
     work = tmp_path / "work"
     run = run_pipeline(
@@ -1425,9 +1433,40 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         verdict=a_verdict(100, 1_700),
     )
+    assert isinstance(run.render, StageSkipped)
+    assert "not published" in run.render.reason
     assert isinstance(run.delivery, StageSkipped)
     assert "no space left" in run.delivery.reason
     assert _sidecars_on_disk(work) == [], f"stranded {_sidecars_on_disk(work)}"
+    assert not (work / "nospace-s0-0").exists()
+    assert not tuple(work.glob(".nospace-s0-0.*.staging"))
+
+
+@needs_ffmpeg
+def test_an_ass_staging_failure_is_reported_and_leaves_no_private_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.artifact_bundle import ArtifactBundle, BundleError
+
+    def fail_ass(self: ArtifactBundle, suffix: str, payload: str) -> Path:
+        raise BundleError(f"could not stage {suffix}: permission denied")
+
+    monkeypatch.setattr(ArtifactBundle, "write_text", fail_ass)
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="noass",
+        transcript=a_transcript("noass"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+
+    assert isinstance(run.render, StageSkipped)
+    assert "permission denied" in run.render.reason
+    assert not (work / "noass-s0-0").exists()
+    assert not tuple(work.glob(".noass-s0-0.*.staging"))
 
 
 @needs_ffmpeg
@@ -1442,15 +1481,17 @@ def test_an_unsupported_fractional_edl_never_writes_a_sidecar_at_all(
     a crash inside it — power loss, SIGKILL — strands exactly the partial set this fixes. The
     only way to see the difference is to watch the writes rather than the leftovers.
     """
+    from hawedit.artifact_bundle import ArtifactBundle
+
     fractional = _fractional_rate_copy(FIXTURE, tmp_path / "fractional.mp4", "24000/1001")
-    real_write_text = Path.write_text
-    attempted: list[Path] = []
+    real_write_text = ArtifactBundle.write_text
+    attempted: list[str] = []
 
-    def recording_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-        attempted.append(Path(self))
-        return real_write_text(self, *args, **kwargs)
+    def recording_write_text(self: ArtifactBundle, suffix: str, payload: str) -> Path:
+        attempted.append(suffix)
+        return real_write_text(self, suffix, payload)
 
-    monkeypatch.setattr(Path, "write_text", recording_write_text)
+    monkeypatch.setattr(ArtifactBundle, "write_text", recording_write_text)
 
     work = tmp_path / "work"
     run = run_pipeline(
@@ -1464,13 +1505,6 @@ def test_an_unsupported_fractional_edl_never_writes_a_sidecar_at_all(
     )
     assert isinstance(run.delivery, StageSkipped)
     assert "fractional frame rate" in run.delivery.reason
-    # Compared against the exact sidecar paths, not by suffix: Stage 1 writes
-    # `transcript.raw.json` under the work directory too, and an earlier version of this test
-    # counted that as a delivery sidecar and failed for the wrong reason.
-    from hawedit.pipeline import _clip_id, _delivery_artifact_paths
-
-    ass_path, _, *sidecar_paths = _delivery_artifact_paths(work, _clip_id("fractional", (0,)))
-    stranded = [p.name for p in attempted if p in set(sidecar_paths)]
-    assert stranded == [], f"wrote {stranded} before discovering the EDL was refused"
-    # The ASS is the render's input and is expected; this is not a claim that nothing is written.
-    assert ass_path in attempted
+    assert attempted == ["ass"], f"wrote {attempted[1:]} before discovering the EDL refusal"
+    assert not (work / "fractional-s0-0").exists()
+    assert not tuple(work.glob(".fractional-s0-0.*.staging"))

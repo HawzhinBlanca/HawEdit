@@ -3311,3 +3311,39 @@ implementation reference. Tests cover every physical frame in the first hour plu
 
 **Still open.** This makes NTSC delivery complete; it does not make the complete
 MP4/ASS/SRT/JSON/EDL bundle one atomic transaction.
+
+---
+
+## D-083 · Publish the complete delivery as one write-once directory
+
+**Supersedes D-071's remaining transaction shortfall.** Atomic MP4 publication and
+build-before-write sidecars prevented corrupt renders and some partial sets, but they did not
+make the client delivery indivisible. A process or disk failure after the encode could expose a
+valid MP4/ASS beside only some of JSON/SRT/EDL. The run then needed a new work directory, and a
+consumer watching the output could mistake the partial set for completion.
+
+**Decision.** Each clip owns one final directory. A worker creates a uniquely named hidden
+sibling directory, renders there, stages the textual artifacts with exclusive creation and
+`fsync`, and refuses publication unless the directory contains exactly five regular, non-empty
+files: ASS, MP4, SRT, EDL and editing JSON. One same-filesystem directory rename is the public
+commit point. `PipelineRun.render` is not populated until that rename succeeds. Any earlier
+failure discards only the worker's private known files and reports render/delivery skipped.
+
+**Write-once and concurrency.** The old flat artifact paths remain overwrite guards so an
+upgrade cannot trample a previous run. An existing final directory is refused before billed/GPU
+work and again at publication. Two workers may stage independently; exactly one non-empty
+directory rename wins, the loser discards its private set, and the winner cannot contain files
+from both workers. Media identifiers are validated centrally before Stage 0 so path separators,
+parent references, controls and cross-platform reserved names never become output paths.
+
+**Recovery boundary.** An orderly failure removes its private directory. A process crash may
+leave a hidden staging directory; it does not block a clean retry because staging names are
+unique. Cleanup deliberately refuses recursive deletion or unexpected content. This decision
+guarantees atomic namespace visibility on one filesystem; it does not claim that every storage
+controller preserves directory metadata across sudden power loss.
+
+**Evidence.** `tests/test_artifact_bundle.py` covers every missing member, empty/extra content,
+write-once publication, two simultaneous workers, crashed staging and cleanup confinement.
+Real-media pipeline tests prove the successful exact set, inject ASS and mid-sidecar failures,
+and verify neither a public MP4 nor a partial sidecar set survives. See
+`evidence/atomic-delivery-bundle.md`.

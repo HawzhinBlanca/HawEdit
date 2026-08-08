@@ -54,6 +54,7 @@ __all__ = [
     "Word",
     "assert_model_input",
     "normalize_transcript",
+    "validate_media_id",
 ]
 
 
@@ -67,6 +68,33 @@ class RawTranscriptTampered(RuntimeError):
 
 class StaleNormalizedTranscript(RuntimeError):
     """Raised when a normalized artifact was derived from a different raw transcript."""
+
+
+def validate_media_id(media_id: str) -> str:
+    """Return a cross-platform path-safe identifier or refuse it before any work starts."""
+    if not isinstance(media_id, str) or not media_id.strip():
+        raise ValueError("media_id must be a non-empty string")
+    if media_id != media_id.strip():
+        raise ValueError(f"media_id {media_id!r} contains leading or trailing whitespace")
+    if len(media_id.encode("utf-8")) > 180:
+        raise ValueError("media_id is longer than the 180-byte portable filename limit")
+    invalid = '<>:"/\\|?*\x00'
+    if any(character in invalid or ord(character) < 32 for character in media_id):
+        raise ValueError(
+            f"media_id {media_id!r} contains a control, path separator, or reserved filename "
+            "character"
+        )
+    if media_id.startswith("."):
+        raise ValueError(f"media_id {media_id!r} would create a hidden delivery")
+    if media_id in {".", ".."} or ".." in media_id:
+        raise ValueError(f"media_id {media_id!r} contains a parent reference")
+    stem = media_id.split(".", 1)[0].upper()
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
+    }
+    if stem in reserved or media_id.endswith((".", " ")):
+        raise ValueError(f"media_id {media_id!r} is a reserved filename on Windows")
+    return media_id
 
 
 _WORD_EDGE_PUNCTUATION = ".,!?;:،؛؟۔…"
@@ -133,8 +161,7 @@ class RawTranscript:
     asr: AsrProvenance
 
     def __post_init__(self) -> None:
-        if not isinstance(self.media_id, str) or not self.media_id.strip():
-            raise ValueError("media_id must be a non-empty string")
+        validate_media_id(self.media_id)
         if not isinstance(self.text_ckb, str):
             raise ValueError("text_ckb must be a string")
         if self.text_ckb and not self.text_ckb.strip():
@@ -208,6 +235,9 @@ class NormalizedTranscript:
     source_sha256: str
     words: tuple[Word, ...] = field(default=())
 
+    def __post_init__(self) -> None:
+        validate_media_id(self.media_id)
+
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
 
@@ -267,15 +297,7 @@ class TranscriptStore:
         write-once guarantee means nothing if the path it guards is attacker-chosen. Audit
         finding #9.
         """
-        if not media_id or media_id in {".", ".."}:
-            raise ValueError("media_id must not be empty or a path component")
-        if any(sep in media_id for sep in ("/", "\\", "\x00")) or ".." in media_id:
-            raise ValueError(
-                f"media_id {media_id!r} contains a path separator or parent reference. "
-                f"Transcript paths are derived from it, so this would write outside the "
-                f"store (Kurdish invariant #1)."
-            )
-        return media_id
+        return validate_media_id(media_id)
 
     def raw_path(self, media_id: str) -> Path:
         return self.root / f"{self._safe(media_id)}.transcript.raw.json"

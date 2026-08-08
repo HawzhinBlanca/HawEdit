@@ -41,12 +41,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
+from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import CaptionStyle, build_ass
@@ -72,6 +74,7 @@ from hawedit.transcripts import (
     TranscriptStore,
     Word,
     normalize_transcript,
+    validate_media_id,
 )
 from hawedit.visual_index import (
     DECLARED_SAMPLING_FPS,
@@ -569,7 +572,12 @@ def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
 
 
 def _delivery_artifact_paths(work_dir: Path, clip_id: str) -> tuple[Path, ...]:
-    """The five files a completed run writes: captions, render, and §2's three sidecars."""
+    """The five files in the atomically published directory for one delivered clip."""
+    return ArtifactBundle.final_paths_for(work_dir, clip_id)
+
+
+def _legacy_delivery_artifact_paths(work_dir: Path, clip_id: str) -> tuple[Path, ...]:
+    """Flat paths written before atomic bundle directories existed; never overwrite them."""
     return tuple(
         work_dir / f"{clip_id}.{suffix}" for suffix in ("ass", "mp4", "srt", "edl", "json")
     )
@@ -593,11 +601,11 @@ def _assert_no_existing_artifacts(
     if not select_sentences:
         # No selection, no clip, no artifacts. `run_pipeline` returns before the render step.
         return
-    existing = [
-        path
-        for path in _delivery_artifact_paths(work_dir, _clip_id(identifier, select_sentences))
-        if path.exists()
-    ]
+    clip_id = _clip_id(identifier, select_sentences)
+    final_paths = _delivery_artifact_paths(work_dir, clip_id)
+    final_dir = final_paths[0].parent
+    candidates = (final_dir, *_legacy_delivery_artifact_paths(work_dir, clip_id))
+    existing = [path for path in candidates if os.path.lexists(path)]
     if existing:
         raise FileExistsError(
             "refusing to overwrite existing delivery artifact(s): "
@@ -690,7 +698,7 @@ def run_pipeline(
             "so Qwen retrieval/reranking bounds the scenes sent to VideoChat3"
         )
 
-    identifier = media_id or source.stem
+    identifier = validate_media_id(media_id or source.stem)
     if transcript is not None and transcript.media_id != identifier:
         raise ValueError(
             f"transcript media_id {transcript.media_id!r} is not {identifier!r}. A transcript "
@@ -1039,7 +1047,7 @@ def run_pipeline(
             ),
         )
 
-    ass_path, render_path, srt_path, edl_path, editing_json_path = _delivery_artifact_paths(
+    _, final_render, final_srt, final_edl, final_json = _delivery_artifact_paths(
         work_dir, clip.clip_id
     )
     # Kept as well as hoisted, and it costs nothing: the guard above runs before the expensive
@@ -1057,7 +1065,23 @@ def run_pipeline(
         )
 
     try:
-        ass_path.write_text(
+        bundle = ArtifactBundle.create(work_dir, clip.clip_id)
+    except BundleError as exc:
+        return replace(
+            run,
+            render=StageSkipped(
+                stage="render", reason=str(exc), blocked_by=("§2 atomic delivery bundle",)
+            ),
+            delivery=StageSkipped(
+                stage="delivery", reason=str(exc), blocked_by=("§2 atomic delivery bundle",)
+            ),
+        )
+    ass_path = bundle.staged_path("ass")
+    render_path = bundle.staged_path("mp4")
+
+    try:
+        bundle.write_text(
+            "ass",
             # The clip's own timeline. Without this every caption is scheduled at its source
             # time, lands past the end of a clip cut from mid-episode, and libass draws
             # nothing — a playable MP4 with no captions and no error.
@@ -1067,7 +1091,6 @@ def run_pipeline(
                 clip_in_ms=clip.in_ms,
                 clip_duration_ms=clip.out_ms - clip.in_ms,
             ),
-            encoding="utf-8",
         )
         width, height = _proxy_dimensions(source, ffmpeg)
         rendered = render_clip(
@@ -1081,9 +1104,11 @@ def run_pipeline(
             focus_points=tuple((point.at_ms, point.center_x) for point in focus_points),
             ffmpeg=ffmpeg,
         )
-    except (IngestError, RenderError, ValueError) as exc:
-        ass_path.unlink(missing_ok=True)
-        render_path.unlink(missing_ok=True)
+    except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:
+        try:
+            bundle.discard()
+        except BundleError as cleanup_error:
+            exc = RenderError(f"{exc}; private bundle cleanup also failed: {cleanup_error}")
         return replace(
             run,
             render=StageSkipped(
@@ -1091,10 +1116,8 @@ def run_pipeline(
             ),
         )
 
-    run = replace(run, render=rendered)
-
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
-    # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
+    # Nothing is public yet: the render and all sidecars live in one private sibling directory.
     try:
         # Build all three before writing any. This used to write the JSON, then the SRT, then
         # build the EDL — formerly an NTSC 29.97 fps source legitimately refused because
@@ -1112,18 +1135,22 @@ def run_pipeline(
             fps=frame_rate(source, ffmpeg),
             title=f"{identifier} {clip.clip_id}",
         )
-        editing_json_path.write_text(editing_json, encoding="utf-8")
-        srt_path.write_text(srt, encoding="utf-8")
-        edl_path.write_text(edl, encoding="utf-8")
-    except (DeliveryError, RenderError, OSError) as exc:
-        # Building first makes the refusal case leave nothing behind; this covers a write that
-        # fails partway through the three — disk full, permissions — so the set is all or none
-        # either way. The MP4 and ASS are deliberately kept: Stage 6 genuinely succeeded and
-        # `run.render` reports that path, so deleting them would make the report a lie.
-        for path in (editing_json_path, srt_path, edl_path):
-            path.unlink(missing_ok=True)
+        bundle.write_text("json", editing_json)
+        bundle.write_text("srt", srt)
+        bundle.write_text("edl", edl)
+        bundle.publish()
+    except (DeliveryError, RenderError, BundleError, OSError) as exc:
+        try:
+            bundle.discard()
+        except BundleError as cleanup_error:
+            exc = DeliveryError(f"{exc}; private bundle cleanup also failed: {cleanup_error}")
         return replace(
             run,
+            render=StageSkipped(
+                stage="render",
+                reason=f"render completed privately but was not published: {exc}",
+                blocked_by=("§2 atomic delivery bundle",),
+            ),
             delivery=StageSkipped(
                 stage="delivery",
                 reason=str(exc),
@@ -1131,12 +1158,14 @@ def run_pipeline(
             ),
         )
 
+    rendered = replace(rendered, path=str(final_render))
     return replace(
         run,
+        render=rendered,
         delivery=Delivery(
-            srt_path=str(srt_path),
-            edl_path=str(edl_path),
-            editing_json_path=str(editing_json_path),
+            srt_path=str(final_srt),
+            edl_path=str(final_edl),
+            editing_json_path=str(final_json),
         ),
     )
 

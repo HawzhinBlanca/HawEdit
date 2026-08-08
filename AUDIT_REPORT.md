@@ -32,6 +32,9 @@ on real Sorani client footage.
   shifted to the media clock, and only evidence overlapping the anchored sentence can extend it.
 - Rendering accepts time-varying focus points from dominant-face continuity tracking and labels
   the result `face_tracked`; it no longer claims every crop is static centre.
+- A delivered clip is now one write-once directory transaction. ASS, MP4, SRT, EDL and editing
+  JSON remain private until the exact non-empty set has been flushed and atomically renamed;
+  a sidecar failure publishes no render, and concurrent workers cannot mix or replace bundles.
 - Confidential routing exists through Vertex REST with Application Default Credentials. It
   requires an attributed zero-data-retention confirmation and never places credentials in URLs.
 - A strict editorial regression manifest now requires real source media, exact paired spans,
@@ -56,10 +59,10 @@ These cannot be truthfully solved from the checkout alone:
 
 ## Secondary debt
 
-- Render publication is now atomic and write-once: ffmpeg stages privately, the MP4 is measured
-  before publication, partial encodes are removed, and a competing worker cannot overwrite the
-  winner. The complete MP4/ASS/SRT/JSON/EDL bundle is still not one transaction, so a failure
-  after render can require a fresh work directory rather than resuming the bundle in place.
+- Atomic delivery is a namespace-visibility guarantee on one filesystem, not a promise that a
+  storage controller survives power loss. File contents are flushed before the directory
+  rename; a process crash may leave a hidden staging directory, which does not block a retry and
+  is intentionally not recursively deleted without inspection.
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.
@@ -84,7 +87,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,109 collected, 1,109 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,140 collected, 1,140 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -95,6 +98,8 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 - Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker and setup module.
 - A real 30000/1001 transcode completes JSON/SRT/EDL delivery with SMPTE drop-frame timecode;
   25 fps remains non-drop and unsupported 24000/1001 refuses before any sidecar write.
+- Real pipeline delivery publishes one exact ASS/MP4/SRT/EDL/JSON directory. Tests inject ASS
+  and sidecar write failures and a two-worker publication race; failures expose no partial set.
 - `hawedit-release` derives `SOURCE_DATE_EPOCH` from clean Git `HEAD`, builds independently
   twice, refuses unequal bytes, validates release-critical package data, and atomically emits
   the wheel with `SHA256SUMS` and stable revision provenance. The digest intentionally lives

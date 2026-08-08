@@ -31,6 +31,7 @@ from hawedit.transcripts import (
     Word,
     assert_model_input,
     normalize_transcript,
+    validate_media_id,
 )
 
 CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
@@ -46,6 +47,30 @@ def a_raw(text: str = "ئه‌مه‌ زۆر باشه‌") -> RawTranscript:
         else (),
         asr=CANONICAL,
     )
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "",
+        "../escape",
+        "a/b",
+        "a\\b",
+        "clip:one",
+        "NUL",
+        "COM1.json",
+        " trailing",
+        ".hidden",
+        "a" * 181,
+    ],
+)
+def test_media_ids_are_refused_before_they_can_become_paths(unsafe: str) -> None:
+    with pytest.raises(ValueError, match="media_id"):
+        validate_media_id(unsafe)
+
+
+def test_sorani_and_spaces_inside_a_media_id_remain_legal() -> None:
+    assert validate_media_id("هەوا episode-12") == "هەوا episode-12"
 
 
 # --- invariant #1: raw is written once and never mutated ------------------------------
