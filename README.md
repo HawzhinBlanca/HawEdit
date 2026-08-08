@@ -210,6 +210,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `index.py` | §2 | BM25 + character 3-grams over normalized Sorani. |
 | `visual_index.py` | §3 Stage 2 | The visual half: scenes segmented to ~1 fps × 64 frames, cosine retrieval, and the top-50 → rerank → keep-5–10 contract. |
 | `video_input.py` | §3 Stages 2, 3B, 5 | Putting a scene window in front of a Qwen3-VL model *at the right time*. Without `video_metadata` the processor stamps a 4.16 s window as 0.1 s long, silently. |
+| `qwen_visual.py` | §3 Stage 2 | `Qwen3-VL-Embedding-2B` behind the embedding contract. Pooling read from the checkpoint, §7 role checked before the weights load, and no silent CPU fallback. |
 | `boundary.py` | §3 Stage 5 | Boundary fusion. Kurdish invariant #2, at construction and at the render gate. |
 | `timelens.py` | §3 Stage 5, §7 | TimeLens2's intervals as evidence, never as cuts — and only the ones that overlap the anchored sentence may move a boundary. |
 | `clip.py` | §5 | The clip contract, validated. Rejection is a first-class type. |

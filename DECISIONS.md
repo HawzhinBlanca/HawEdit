@@ -1871,3 +1871,57 @@ that it is small.
 of getting it wrong now caught rather than commented.
 
 ---
+
+## D-050 · Stage 2's embedder, and a 0.045 that is recorded rather than rounded off
+
+**What was built.** `qwen_visual.QwenVisualEmbedder` produces `visual_index.VisualEmbedding`
+from real frames on hawapc01's `cuda:0` in bfloat16, and `embed_text` produces the query vector
+`rerank_and_keep` takes. Measured: three windows over the fixture, 2048-d, |v| = 1.0000, index
+built in 10.4 s at 7.94 GiB peak, and a Kurdish query retrieves against it with dense 1-based
+ranks. `evidence/m5-2-embedder.md`.
+
+**Decision 1 — the pooling is read from the checkpoint and the recipe is enforced, not assumed
+to persist.** `1_Pooling/config.json` declares `lasttoken` and 2048. A checkpoint that switched
+to `mean` would load, run, and return 2048 finite non-zero floats passing every check
+`VisualEmbedding` makes, so `assert_supported` refuses the mismatch. Reading a recipe and then
+ignoring it is the same as not reading it, which is why the refusal has its own test.
+
+**Decision 2 — §7's role check runs before the weights load.** `resolve_role` at construction,
+so `PySceneDetect` cannot be handed in as the embedder and a non-§7 model never reaches disk.
+Audit finding #8's rule, applied at the earliest point it can be.
+
+**Decision 3 — no silent CPU fallback.** `cuda:0` asked for on a machine reporting no CUDA is a
+refusal. §6 puts Stage 2 on a GPU, and a 2B VLM on CPU is not a degraded mode — it is a
+different throughput regime, and every number measured afterwards would be about that instead.
+Same rule as `asr.Hardware` refusing cross-hardware comparison and `render_clip` refusing an
+absent encoder rather than substituting x264. Its test answers `torch.cuda.is_available`
+directly rather than branching on what the box has, because deciding by hardware would delete
+the check on the only machine where it matters.
+
+**Decision 4 — Kurdish invariant #3 is enforced inside `embed_text`, not asked of the caller.**
+`normalize_sorani` runs on the query at the boundary, exactly as `index.index_tokens` does for
+§2. Both halves of retrieval must pass through the same §4.1 normalisation or they compare two
+different alphabets, and the failure is not an error — it is a slightly wrong score.
+
+**The open discrepancy, stated as open.** The checkpoint names `sentence-transformers` as its
+loader and on identical text the two routes differ by cosine **0.955300**. Chased, not rounded:
+four prompt placements were measured (system turn 0.955300, prefixed 0.942398, prefixed with
+space 0.948999, no prompt 0.955300) and none closes it. Two findings came out of that. The chat
+template contains `default_system_message = 'Represent the user\'s input.'`, so it injects the
+declared prompt itself — which is why *system turn* and *no prompt* give the identical vector,
+and means supplying it here is redundant rather than load-bearing. And the residual 0.045 is
+**not** the pooling mode, the normalisation, or the prompt.
+
+It is recorded as unexplained. It does not invalidate the index — `embed_text` and
+`embed_frames` share one convention, which is the only property retrieval depends on — but it
+*would* matter if it meant this route places text differently relative to video than the trained
+convention does, which would cost cross-modal retrieval quality while changing no number's
+shape. Settling that needs labelled Kurdish candidates (§8.2, `BLOCKED.md` #1). Recording an
+unexplained 0.045 is the honest position; calling the cross-check a validation would not be, and
+an earlier draft of this module's docstring did exactly that until the number was measured.
+
+**Not done here.** The reranker. `Qwen3-VL-Reranker-2B` is on disk with a `1_LogitScore` module
+of its own, `visual_index.VisualReranker` is an unimplemented Protocol, and until it exists
+§3 Stage 2's "top 50 → rerank → keep 5–10" is retrieval only. M5.2 stays PARTIAL.
+
+---
