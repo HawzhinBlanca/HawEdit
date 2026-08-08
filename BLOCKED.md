@@ -40,11 +40,42 @@ dialect the product is used in.
 **What unblocks it, in order of preference:**
 1. Your own labelled material (client or archive footage) with reference transcripts.
 2. Pointer to an existing annotated Sorani set you already trust.
-3. Authorisation to bootstrap from a public Sorani corpus (e.g. Common Voice `ckb`) as an
-   *interim* set. This is read speech: it would exercise the harness end-to-end on genuinely
-   real Kurdish audio but would **not** satisfy the podcast / overlapping-speaker / dialect
-   split §8.1 asks for, so it cannot close M0 — only de-risk it. Say the word and I will do
-   this, and label the report as interim so no threshold is derived from it.
+3. ~~Authorisation to bootstrap from a public Sorani corpus (e.g. Common Voice `ckb`) as an
+   *interim* set.~~ **Authorised in D-012 and now closed — see below.** It was read speech:
+   it would have exercised the harness end-to-end on genuinely real Kurdish audio without
+   satisfying the podcast / overlapping-speaker / dialect split §8.1 asks for, so it could
+   only ever de-risk M0, not close it.
+
+### Option 3 closed, 2026-08-08 — the interim route no longer exists publicly
+
+`BLOCKED.md` #6 tracked whether the authorised corpus was *reachable*, and from hawapc01 every
+host answers 200. That turned out to be the wrong question. Searched and measured, not assumed:
+
+| Source | Finding |
+|---|---|
+| Common Voice `ckb` on Hugging Face | `mozilla-foundation/common_voice_17_0` is now a **stub**. Its README: *"Effective October 2025, Mozilla Common Voice datasets are now exclusively available through Mozilla Data Collective"* |
+| `datacollective.mozillafoundation.org` | Needs an account and accepted terms. Creating an account and accepting terms on your behalf is not something I will do — that is yours to click |
+| OpenSLR | Reachable, and **156 resources parsed, 0 Kurdish**. There is no Kurdish set there |
+| `facebook/omnilingual-asr-corpus` | Ungated, CC-BY-4.0, and the natural match for §7's own ASR — but the released repo carries **348 languages / 349 configs and no `ckb`**. §7's "ckb_Arab CER 6.0" is a figure about the *model*; the corpus subset Meta published does not include ckb |
+| `akam-ot/sorani-tts` | Real Sorani audio with reference text, 5.7K clips, ungated — and **no licence at all**. D-002 makes that a hard reject, not a judgement call |
+| `roshna-omer/common_voice_16_0_*_ckb_*` | Common Voice 16 ckb re-uploads, ungated — but **metadata only**: 23 columns of `path`/`text`/`snr`/`pitch`, no `Audio` feature, 766 KB for 5,000 rows. No audio to transcribe, and no licence either |
+
+So there is currently **no ungated, licensed, reference-transcribed Sorani audio corpus** this
+machine can fetch. The importer (M0.14) is built and tested and has nothing to import.
+
+**Any one of these reopens it:**
+
+1. **You accept Mozilla Data Collective's terms and download Common Voice `ckb`.** Point me at
+   the extracted directory — `validated.tsv` plus `clip_durations.tsv` from the *same* release —
+   and `import_common_voice` takes it from there. It refuses a non-`ckb` locale and refuses to
+   run without the durations file, so a wrong download fails loudly rather than quietly.
+2. **Your own footage**, which is option 1 above and worth more than any of this.
+3. **Authorise `akam-ot/sorani-tts` despite the missing licence.** I am recording it rather than
+   recommending it: D-002's rule is no data without a licence, this ships to clients, and TTS
+   read speech is further from §8.1's conditions than Common Voice was.
+
+Until then M0.16 is BLOCKED again, on #1 rather than on #6. I marked it TODO earlier today on
+the strength of the hosts answering — that was true and it was not the question.
 
 ---
 

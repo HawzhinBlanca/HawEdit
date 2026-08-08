@@ -1702,3 +1702,44 @@ makes canonical — which is the worst place for it to be, and is why it is its 
 than a footnote on #10.
 
 ---
+
+## D-047 · The interim corpus was authorised, is reachable, and no longer exists
+
+**What happened.** D-012 authorised a public Sorani corpus — Common Voice `ckb` — as an interim
+set, and `BLOCKED.md` #6 recorded that the container's proxy blocked every corpus host. From
+hawapc01 every one of those hosts answers 200. M0.16 was re-statused TODO on that basis this
+morning, and that was a true measurement of the wrong thing: **reachability of a host is not
+availability of a corpus.**
+
+**Measured, in order of preference:**
+
+| Source | Finding |
+|---|---|
+| `mozilla-foundation/common_voice_17_0` | A stub. *"Effective October 2025, Mozilla Common Voice datasets are now exclusively available through Mozilla Data Collective"* |
+| Mozilla Data Collective | Account plus accepted terms |
+| OpenSLR | 156 resources parsed, **0 Kurdish** |
+| `facebook/omnilingual-asr-corpus` | CC-BY-4.0, ungated, the natural match for §7's own ASR — and **349 configs, no `ckb`**. §7's "ckb_Arab CER 6.0" describes the model, not this release |
+| `akam-ot/sorani-tts` | Real Sorani audio + reference text, 5.7K clips, ungated — **no licence** |
+| `roshna-omer/common_voice_16_0_*_ckb_*` | CV16 ckb re-uploads — metadata only, no `Audio` feature (766 KB for 5,000 rows), no licence |
+
+**Decision 1 — no account is created and no terms are accepted on Hawa's behalf.** Mozilla Data
+Collective is one form away, and that form is a licence agreement. Clicking it is Hawa's, and a
+project this careful about attribution obligations does not have an agent agree to terms for it.
+
+**Decision 2 — the unlicensed datasets are refused, not weighed.** `akam-ot/sorani-tts` is real
+Sorani audio with reference text and it would work. It carries no licence tag and no licence
+file. D-002's rule is no dependency or data without one, and this ships to clients; "probably
+fine" is not a licence. It is recorded in `BLOCKED.md` #1 as something Hawa may authorise
+explicitly, with the reason it is not recommended, rather than quietly used.
+
+**Decision 3 — M0.16 goes back to BLOCKED, and the mistake is written down.** The row said TODO
+for a few hours today on the strength of the hosts answering. Silently correcting it would have
+left the ledger right and the reasoning invisible, and the reasoning is the transferable part:
+`BLOCKED.md` #6 asked "can we reach it", the useful question was "is it still there", and those
+came apart the moment the network opened.
+
+**What this does not change.** The importer (M0.14) is built and tested and refuses to invent
+dialect, condition or duration. It has nothing to import — which is a fact about the world in
+August 2026, not a gap in the code.
+
+---

@@ -53,9 +53,11 @@ hiding.
 | Human annotators + real footage | M7.2, and M7.3 behind it |
 | Hawa, one decision each | `BLOCKED.md` #7 (required CI check) · #9 (M8 names two models §7 does not contain) · #11 (where Stage 1 runs) · #8 and #10 answered, with `BLUEPRINT.md` §5 and §7 both needing the matching amendment (D-033, D-046) |
 
-**Now available and simply not started** — no external dependency, ordinary work: M0.16 (the
-interim corpus downloads today), M5.2, M5.4, M6.3 (all three model integrations), and M7.3
-behind M7.2. The contracts they plug into are built and tested ahead of them, so landing each
+**Now available and simply not started** — no external dependency, ordinary work: M5.2, M5.4
+and M6.3, the three model integrations, whose weights are downloading. **Not** M0.16: it was
+listed here this morning and is BLOCKED again, because the hosts answering 200 turned out not
+to be the question — the interim corpus itself is no longer publicly distributed. And M7.3
+sits behind M7.2. The contracts they plug into are built and tested ahead of them, so landing each
 is a matter of producing the type its stage already expects.
 
 ## M0 — task ledger
@@ -80,7 +82,7 @@ M0 decomposed from §8.1 (ASR benchmark) + §4.1 (normalization is a prerequisit
 | M0.13 | Benchmark executed on real Kurdish audio on hawapc01; numbers recorded | BLOCKED | `BLOCKED.md` #1 (no labelled audio), #11 (the canonical weights have no loader on this OS). **The hawapc01 half is done**: this checkout is on it — 2×24 GiB, `evidence/hawapc01-environment.md` — so §8.1's "RTF measured on hawapc01" is now a matter of having something to measure. |
 | M0.14 | Public-corpus importer (Common Voice `ckb`) producing an interim, unlabelled manifest | DONE | `src/hawedit/corpus_import.py` + `tests/test_corpus_import.py` (12 tests). Refuses to invent dialect, condition or duration. Authorised in D-012. |
 | M0.15 | Measure §4.1 collision incidence on real Sorani | DONE | `evidence/collision-incidence.md` — 24,894 real entries; 0.21% of distinct forms would have failed to match. Surfaced a collision §4.1's table omits (D-013). |
-| M0.16 | Download the interim audio corpus | TODO | **Unblocked 2026-08-08.** `BLOCKED.md` #6 was the container's network policy; from hawapc01 `commonvoice.mozilla.org`, `www.openslr.org` and `huggingface.co` all answer 200 (`evidence/hawapc01-environment.md`). The importer exists (M0.14) and D-012 authorises the interim set. Not started — an available task, not an external blocker. |
+| M0.16 | Download the interim audio corpus | BLOCKED | `BLOCKED.md` #1 — the route itself is gone, not merely unreachable. #6 tracked whether the hosts answered, and from here they do; the corpus does not. Common Voice moved to Mozilla Data Collective in October 2025 (account + accepted terms, which is Hawa's to click, not mine); OpenSLR has **0 Kurdish resources of 156**; `facebook/omnilingual-asr-corpus` is CC-BY-4.0 and ungated but ships **349 configs with no `ckb`**; the two ungated ckb candidates that remain have **no licence** — a D-002 hard reject — and one of them has no audio column at all. Measured, see `BLOCKED.md` #1 §"Option 3 closed". I marked this TODO earlier today on the strength of the hosts answering 200; that was true and it was the wrong question. The importer (M0.14) is built, tested, and has nothing to import. |
 
 **M0 cannot be closed while M0.12/M0.13 are blocked.** The harness is buildable and testable
 without the audio; the *measurement* — which is what M0 exists to produce, and what every
