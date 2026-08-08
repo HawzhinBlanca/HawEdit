@@ -257,7 +257,30 @@ incidence on the only real Sorani reachable here — KLPT's bundled 24,894-entry
 
 ---
 
-## #7 · The hawedit CI job is not a *required* status check
+## #7 · The hawedit CI job is not a *required* status check — **RESOLVED 2026-08-08**
+
+**Resolved: `gate` is now a required status check on `main`.** Hawa supplied the GitHub CLI and
+authorised the change; it was made only after the runner went green, so `main` was never protected
+against a check that was failing.
+
+```
+required_checks: ["gate"]   strict: true   allow_force_pushes: false   allow_deletions: false
+```
+
+`strict: true` means a branch must be up to date with `main` before merging, so the check runs
+against what will actually land. `enforce_admins` is left **off** deliberately: this is a
+single-maintainer repository and locking the owner out of their own `main` in an emergency buys
+nothing here. That is a judgment call and it is the one part of this a second pair of eyes might
+change.
+
+**What it cost to get here, which is the part worth keeping.** The requirement could not be
+switched on honestly until the runner was green, and it was not: `mypy --strict` had been failing
+there since the first Stage 2 commit (D-067), four stub tests only ran on a CUDA machine (D-068),
+and a skipped stage had stopped naming its blocker. Three commits, all of them defects this
+machine could not see. The entry below said "treat every DONE mark as resting on a local run plus
+an advisory CI run" — that sentence was carrying more weight than anyone had checked.
+
+Original entry, kept for the record:
 
 **Needs:** Hawa, in the GitHub repository settings. One click, no code.
 
