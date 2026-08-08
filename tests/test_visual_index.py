@@ -373,8 +373,8 @@ def test_two_sampling_rates_in_one_index_are_refused() -> None:
     """
     index = VisualIndex("m1")
     index.add(an_embedding(a_window(0, 10_000, scene_index=0, fps=1.0), vector=(1.0, 0.0)))
-    with pytest.raises(VisualIndexError, match="sampled at 4.0 fps"):
-        index.add(an_embedding(a_window(10_000, 20_000, scene_index=1, fps=4.0), vector=(0.0, 1.0)))
+    with pytest.raises(VisualIndexError, match="sampled at 2.0 fps"):
+        index.add(an_embedding(a_window(10_000, 20_000, scene_index=1, fps=2.0), vector=(0.0, 1.0)))
 
 
 def test_one_sampling_rate_above_the_reference_is_accepted_throughout() -> None:
@@ -388,7 +388,7 @@ def test_one_sampling_rate_above_the_reference_is_accepted_throughout() -> None:
     for scene in range(3):
         index.add(
             an_embedding(
-                a_window(scene * 10_000, scene * 10_000 + 10_000, scene_index=scene, fps=4.0),
+                a_window(scene * 10_000, scene * 10_000 + 10_000, scene_index=scene, fps=2.0),
                 vector=(1.0, float(scene)),
             )
         )
@@ -558,13 +558,11 @@ def test_a_reranker_that_rewrites_the_retrieval_score_is_refused() -> None:
         rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker("fabricate"), keep=5)
 
 
-def test_an_index_smaller_than_the_keep_floor_is_refused_not_quietly_shortened() -> None:
-    """§3 fixes the survivor count at 5–10. A three-scene video cannot satisfy it, and
-    returning three while the caller asked for five would put a number into §8.2's Recall@K
-    that does not mean what the column says."""
+def test_short_media_keeps_every_available_window_after_reranking() -> None:
+    """The 5–10 target is a ceiling on survivors, not a reason to reject a three-shot clip."""
     index = _index_of(3)
-    with pytest.raises(VisualIndexError, match="3 window"):
-        rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker(), keep=5)
+    kept = rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker(), keep=5)
+    assert len(kept) == 3
 
 
 def test_a_reranked_hit_from_the_wrong_role_is_refused() -> None:

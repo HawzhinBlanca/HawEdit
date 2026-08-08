@@ -24,10 +24,8 @@ system; a hole in this plan makes a moment invisible to Path B, and reports noth
 pre-filtered set, everything, ten — produces numbers that look the same and mean something
 else. The counts are checked, and so is the identity of what the reranker was handed.
 
-The models are `BLOCKED.md` #2 (GPU) and #6 (weights unreachable). This module is built and
-tested ahead of them, as `discovery.py` and `judge.py` were: landing the embedder is a matter
-of producing `VisualEmbedding`s, and landing the reranker is a matter of satisfying
-`VisualReranker`. The retrieval arithmetic in between needs no weights and is tested directly.
+The real Qwen adapters live in ``qwen_visual.py`` and are composed in ``visual_pipeline.py``.
+The retrieval arithmetic remains independent of model loading and is tested directly.
 """
 
 from __future__ import annotations
@@ -41,11 +39,13 @@ from typing import Final, Protocol
 from hawedit.registry import resolve_role
 
 __all__ = [
+    "DECLARED_SAMPLING_FPS",
     "KEEP_MAX",
     "KEEP_MIN",
     "MAX_FRAMES_PER_WINDOW",
     "REFERENCE_FPS",
     "RETRIEVE_K",
+    "TEMPORAL_PATCH_FRAMES",
     "RerankedHit",
     "SceneWindow",
     "VisualEmbedding",
@@ -62,6 +62,23 @@ __all__ = [
 MAX_FRAMES_PER_WINDOW: Final = 64
 REFERENCE_FPS: Final = 1.0
 
+# The other end of the rate, and it is not §3's — it is the checkpoints'. All four §7 visual
+# models ship `do_sample_frames: true` with `fps: 2`, `min_frames: 4` and
+# `temporal_patch_size: 2` in `video_preprocessor_config.json`, so their processors re-sample
+# whatever they are handed. Measured off `video_grid_thw` (D-060):
+#
+#     extracted  rate    the model read
+#            64  4 fps   32
+#            45  3 fps   30
+#            64  1 fps   64
+#
+# So §3's "~1 fps" has a hard upper bound of 2: past it, frames are extracted and thrown away.
+# `SceneWindow` refuses above it for the same reason it refuses below `REFERENCE_FPS` — a window
+# that misreports how much of itself the model saw embeds indistinguishably from an honest one.
+DECLARED_SAMPLING_FPS: Final = 2.0
+_MIN_SAMPLED_FRAMES: Final = 4
+TEMPORAL_PATCH_FRAMES: Final = 2
+
 # §3 Stage 2: "Retrieve top 50 → Qwen3-VL-Reranker-2B → keep top 5–10."
 RETRIEVE_K: Final = 50
 KEEP_MIN: Final = 5
@@ -73,6 +90,11 @@ _RERANK_ROLE: Final = frozenset({"visual_rerank"})
 
 class VisualIndexError(RuntimeError):
     """The visual index refused something it cannot do honestly."""
+
+
+def _frames_the_model_reads(duration_ms: int) -> int:
+    """What a processor re-sampling at its declared rate will actually take (D-060)."""
+    return max(_MIN_SAMPLED_FRAMES, round(DECLARED_SAMPLING_FPS * duration_ms / 1000))
 
 
 def _max_window_ms(fps: float) -> int:
@@ -105,6 +127,17 @@ class SceneWindow:
                 f"reference {REFERENCE_FPS} fps. Lowering the rate is how a long scene fits "
                 f"under the 64-frame ceiling without being segmented, and the resulting "
                 f"embedding is indistinguishable from an honest one. Split the scene instead."
+            )
+        if self.fps > DECLARED_SAMPLING_FPS:
+            raise ValueError(
+                f"window {self.window_id} samples at {self.fps} fps, above the "
+                f"{DECLARED_SAMPLING_FPS} fps every §7 visual checkpoint declares in its "
+                f"`video_preprocessor_config.json`. Their processors re-sample whatever they are "
+                f"handed, so a higher rate is extracted and then discarded: measured, this "
+                f"window's {self.frame_count} frames would reach the model as "
+                f"{_frames_the_model_reads(self.duration_ms)}. The rate is the ceiling's other "
+                f"half — raising it costs ffmpeg time and buys "
+                f"the model nothing. D-063, D-065."
             )
         if self.out_ms <= self.in_ms:
             raise ValueError(
@@ -457,21 +490,17 @@ def rerank_and_keep(
         raise VisualIndexError(
             f"keep={keep} is outside §3 Stage 2's survivor range of {KEEP_MIN}–{KEEP_MAX}"
         )
-    if len(index) < keep:
-        raise VisualIndexError(
-            f"the index holds {len(index)} windows and {keep} survivors were asked for. "
-            f"Returning {len(index)} would put a number into §8.2's Recall@K that does not "
-            f"mean what the column says; lower the source's ambition, not the count silently."
-        )
-
     hits = index.retrieve(query_vector, k=k)
+    if not hits:
+        return ()
     retrieved = {hit.window.window_id: hit for hit in hits}
     reranked = reranker.rerank(query_text, hits)
 
-    if len(reranked) < keep:
+    if len(reranked) != len(hits):
         raise VisualIndexError(
             f"the reranker was given {len(hits)} hits and returned {len(reranked)}; "
-            f"{keep} survivors were asked for"
+            "it must score every retrieved window. On media with fewer than the configured "
+            "survivor target, every available window survives, but none may disappear."
         )
     seen: set[str] = set()
     for hit in reranked:
@@ -495,6 +524,8 @@ def rerank_and_keep(
 
     # Ranks are renumbered densely over the survivors so that Recall@K counts positions in
     # what actually ships, not positions in a list that was cut afterwards.
+    survivor_count = min(keep, len(reranked))
     return tuple(
-        replace(hit, rank=position) for position, hit in enumerate(reranked[:keep], start=1)
+        replace(hit, rank=position)
+        for position, hit in enumerate(reranked[:survivor_count], start=1)
     )

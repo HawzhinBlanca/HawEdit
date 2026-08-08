@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from hawedit.captions import find_ffmpeg
-from hawedit.visual_index import SceneWindow
+from hawedit.visual_index import TEMPORAL_PATCH_FRAMES, SceneWindow
 
 __all__ = [
     "TIMESTAMP_TOKEN",
@@ -205,6 +205,14 @@ def extract_window_frames(
         )
 
     paths = tuple(sorted(dest_dir.glob(f"{window.window_index:03d}_*.jpg")))
+    # An odd count is padded by the processor **repeating the last frame** (D-060), so the model
+    # would see a frame that was never filmed, at the moment the window ends — which biases a
+    # temporal reading toward its own tail. Dropping the last real frame instead costs at most one
+    # sampling interval of footage and leaves every frame the model sees a frame that existed.
+    # Measured: 2 frames is always delivered intact at every rate, so the floor here is 2 and
+    # `WindowFrames` / the one-frame refusal below still catch anything shorter.
+    if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
+        paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
     frames = WindowFrames(window=window, paths=paths)
     if frames.count > window.frame_count:
         raise FrameCountMismatch(

@@ -49,7 +49,7 @@ narrative | 0.0 | The number "1" suggests a countdown or a list
 retention | 0.0 | The simplicity and boldness of the number may capture attention"""
 
 
-def a_window(in_ms: int = 1_400, duration_ms: int = 1_400, fps: float = 4.0) -> SceneWindow:
+def a_window(in_ms: int = 1_400, duration_ms: int = 1_400, fps: float = 2.0) -> SceneWindow:
     return SceneWindow(
         media_id="kurdish-speech-3cuts",
         scene_index=1,
@@ -242,7 +242,7 @@ class _VideoProcessor:
 class StubProcessor:
     """Records what it was handed, and returns a prompt with real VideoChat3 timestamps."""
 
-    def __init__(self, answer: str, frames_seen: int = 6) -> None:
+    def __init__(self, answer: str, frames_seen: int = 2) -> None:
         self.prompt = "<0.6 seconds>"
         self.answer = answer
         self.frames_seen = frames_seen
@@ -274,7 +274,7 @@ def a_reader(tmp_path: Path, answer: str = REAL_OUTPUT) -> Any:
     processor, model = StubProcessor(answer), StubModel()
     reader = VideoChat3Reader(
         tmp_path,
-        read_frames=lambda w: WindowFrames(w, tuple(Path(f"f{i}.jpg") for i in range(6))),
+        read_frames=lambda w: WindowFrames(w, tuple(Path(f"f{i}.jpg") for i in range(2))),
         score_window=lambda w: 0.4321,
         device="cpu",
     )
@@ -286,7 +286,7 @@ def a_reader(tmp_path: Path, answer: str = REAL_OUTPUT) -> Any:
 def _no_pillow_or_torch(monkeypatch: pytest.MonkeyPatch) -> None:
     """These run on a machine with neither Pillow nor torch — `models/` is git-ignored too."""
     monkeypatch.setattr(
-        "hawedit.video_reader.load_window_images", lambda frames, processor=None: ["img"] * 6
+        "hawedit.video_reader.load_window_images", lambda frames, processor=None: ["img"] * 2
     )
     monkeypatch.setitem(__import__("sys").modules, "torch", _FakeTorch())
 
@@ -313,7 +313,7 @@ def test_the_reader_passes_video_metadata_at_the_top_level(tmp_path: Path) -> No
     call = processor.calls[0]
     assert call["add_generation_prompt"] is True
     metadata = call["video_metadata"][0]
-    assert metadata["fps"] == 4.0
+    assert metadata["fps"] == 2.0
     assert metadata["fps"] * metadata["duration"] == pytest.approx(metadata["total_num_frames"])
 
 
@@ -345,7 +345,7 @@ def test_read_scenes_drives_the_union_end_to_end(tmp_path: Path) -> None:
             window_index=0,
             in_ms=i * 1_400,
             out_ms=i * 1_400 + 1_400,
-            fps=4.0,
+            fps=2.0,
         )
         for i in range(3)
     )
@@ -386,6 +386,6 @@ def test_a_window_whose_frames_the_processor_resampled_stops_the_read(tmp_path: 
 
     window = a_window(in_ms=1_400)
     reader, processor, _ = a_reader(tmp_path)
-    processor.frames_seen = 4
+    processor.frames_seen = 0
     with pytest.raises(VideoInputError, match="dropped 2"):
         reader.read_window(window)

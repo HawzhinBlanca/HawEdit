@@ -17,6 +17,7 @@ The processor itself needs 4 GB of weights, so the end-to-end run is recorded in
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,13 @@ from hawedit.video_input import (
     window_batch,
     window_video_metadata,
 )
-from hawedit.visual_index import SceneWindow
+from hawedit.visual_index import (
+    DECLARED_SAMPLING_FPS,
+    REFERENCE_FPS,
+    TEMPORAL_PATCH_FRAMES,
+    SceneWindow,
+    plan_scene_windows,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -56,6 +63,31 @@ def a_window(duration_ms: int = FIXTURE_MS, fps: float = 1.0, in_ms: int = 0) ->
         out_ms=in_ms + duration_ms,
         fps=fps,
     )
+
+
+def an_unplannable_window(duration_ms: int, fps: float, in_ms: int = 0) -> SceneWindow:
+    """A window at a rate `SceneWindow` now refuses (D-063), constructed anyway.
+
+    `assert_frames_reached_model` reads the frame count back off the batch precisely because the
+    checkpoints' declared preprocessing is *theirs*, not ours: if a future checkpoint ships a
+    different `fps` or `min_frames`, the planner's bound is stale and the guard is the only thing
+    left. So the guard has to stay tested at rates the planner can no longer produce, with the
+    numbers that were actually measured (D-060) rather than re-derived at a legal rate — and at
+    every legal rate nothing is dropped, which is the whole point of the bound.
+
+    The bypass is here, once, and nowhere in `src/`.
+    """
+    window = object.__new__(SceneWindow)
+    for field, value in (
+        ("media_id", "kurdish-speech-3cuts"),
+        ("scene_index", 0),
+        ("window_index", 0),
+        ("in_ms", in_ms),
+        ("out_ms", in_ms + duration_ms),
+        ("fps", fps),
+    ):
+        object.__setattr__(window, field, value)
+    return window
 
 
 def frames_for(window: SceneWindow, count: int) -> WindowFrames:
@@ -79,7 +111,9 @@ def test_duration_is_the_identity_videochat3_demands() -> None:
     byte-identical embeddings for both forms. D-056.
     """
     for count, fps in ((4, 1.0), (6, 4.0), (5, 4.0), (32, 2.0)):
-        metadata = window_video_metadata(frames_for(a_window(fps=fps), count))
+        metadata = window_video_metadata(
+            frames_for(an_unplannable_window(4_162, fps) if fps > 2.0 else a_window(fps=fps), count)
+        )
         assert metadata["fps"] * metadata["duration"] == pytest.approx(
             metadata["total_num_frames"], abs=1e-6
         )
@@ -99,7 +133,7 @@ def test_metadata_reports_the_frames_that_exist_not_the_frames_planned() -> None
 
 
 def test_a_window_at_a_higher_rate_reports_that_rate() -> None:
-    window = a_window(duration_ms=8_000, fps=4.0)
+    window = an_unplannable_window(8_000, 4.0)
     assert window_video_metadata(frames_for(window, 32))["fps"] == 4.0
 
 
@@ -146,7 +180,7 @@ def test_the_real_videochat3_timestamps_are_accepted() -> None:
     `0.6`. The previous rule wanted half the window, 0.7, and rejected all three of the
     fixture's windows for being correct. D-057.
     """
-    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    frames = frames_for(an_unplannable_window(1_400, 4.0), 6)
     assert assert_timestamps_span_window("<0.6 seconds>", frames) == (0.6,)
 
 
@@ -156,7 +190,7 @@ def test_the_24_fps_counterfactual_of_that_same_window_is_refused() -> None:
     The defect scales every stamp by `fps / 24`, so the same group lands at 0.1 s. A floor that
     accepted 0.6 and 0.1 alike would have replaced a mis-calibrated check with no check.
     """
-    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    frames = frames_for(an_unplannable_window(1_400, 4.0), 6)
     with pytest.raises(TimestampsOutsideWindow, match="cannot stamp the last group"):
         assert_timestamps_span_window("<0.1 seconds>", frames)
 
@@ -235,7 +269,7 @@ def test_the_same_short_window_at_a_higher_rate_is_accepted(tmp_path: Path) -> N
     also refuse the fix. `SceneWindow` permits any rate at or above the reference and enforces
     the 64-frame ceiling against it, so 4 fps over 1400 ms is legal and has real frames.
     """
-    faster = a_window(duration_ms=1_400, fps=4.0)
+    faster = an_unplannable_window(1_400, 4.0)
     frames = extract_window_frames(FIXTURE, faster, tmp_path)
     assert frames.count >= 2, frames.count
     assert window_video_metadata(frames)["fps"] == 4.0
@@ -316,7 +350,7 @@ def test_a_batch_with_no_video_reports_nothing_rather_than_zero() -> None:
 
 def test_m5_2s_own_index_window_is_refused_because_two_frames_never_arrived() -> None:
     """The defect, at the numbers it was measured at: 6 extracted at 4 fps, 4 seen."""
-    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    frames = frames_for(an_unplannable_window(1_400, 4.0), 6)
     processor = _Processor(seen=4)
     with pytest.raises(VideoInputError, match="the processor dropped 2"):
         assert_frames_reached_model(processor, processor.apply_chat_template([]), frames)
@@ -324,7 +358,7 @@ def test_m5_2s_own_index_window_is_refused_because_two_frames_never_arrived() ->
 
 def test_a_full_window_above_the_declared_rate_loses_half_of_itself() -> None:
     """64 frames at 4 fps is exactly §3 Stage 2's published ceiling, and the model sees 32."""
-    frames = frames_for(a_window(duration_ms=16_000, fps=4.0), 64)
+    frames = frames_for(an_unplannable_window(16_000, 4.0), 64)
     processor = _Processor(seen=32)
     with pytest.raises(VideoInputError, match="the processor dropped 32"):
         assert_frames_reached_model(processor, processor.apply_chat_template([]), frames)
@@ -356,7 +390,7 @@ def test_the_refusal_names_both_branches_of_the_remedy() -> None:
     and 1 fps yields 1, which `extract_window_frames` already refuses. The condition really has
     two branches, because `min_frames` dominates at short durations: 4 frames at 3 fps is clean.
     """
-    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    frames = frames_for(an_unplannable_window(1_400, 4.0), 6)
     processor = _Processor(seen=4)
     with pytest.raises(VideoInputError, match="at or below 2 fps or the count at most 4"):
         assert_frames_reached_model(processor, processor.apply_chat_template([]), frames)
@@ -369,7 +403,7 @@ def test_four_frames_above_the_declared_rate_is_accepted() -> None:
     A guard that only allowed rates at or below 2 fps would refuse this and leave a 1400 ms
     scene with no legal rate at all.
     """
-    frames = frames_for(a_window(duration_ms=1_400, fps=3.0), 4)
+    frames = frames_for(an_unplannable_window(1_400, 3.0), 4)
     processor = _Processor(seen=4)
     assert assert_frames_reached_model(processor, processor.apply_chat_template([]), frames) == 4
 
@@ -396,7 +430,7 @@ def test_window_batch_refuses_a_prompt_that_compresses_the_window() -> None:
 
 def test_window_batch_refuses_frames_that_did_not_arrive() -> None:
     """Both guards, one function — so an adapter cannot be written with only one of them."""
-    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    frames = frames_for(an_unplannable_window(1_400, 4.0), 6)
     processor = _Processor(seen=4, prompt="<0.2 seconds><1.0 seconds>")
     with pytest.raises(VideoInputError, match="dropped 2"):
         window_batch(processor, [], frames, add_generation_prompt=True)
@@ -408,3 +442,90 @@ def test_window_batch_returns_the_batch_when_both_guards_pass() -> None:
     batch = window_batch(processor, [], frames, add_generation_prompt=True)
     assert "input_ids" in batch
     assert processor.calls[0]["add_generation_prompt"] is True
+
+
+# --- the planner and the guard now agree, swept rather than spot-checked -------------------
+#
+# D-060 added `assert_frames_reached_model` and left the planner free to emit windows it
+# refuses: at the rate the CLI forced, a 30 s source planned two 45-frame windows and the model
+# read 30 of each. D-063 bounds the rate at the checkpoints' declared 2 fps and trims an odd
+# emitted count to even, so every window a planner can produce is delivered whole.
+
+
+def _model_reads(count: int, fps: float, declared: float = 2.0, minimum: int = 4) -> int:
+    """The processor's own arithmetic, from the measured table in `assert_frames_reached_model`.
+
+    Asks for `max(min_frames, declared_fps x duration)`, caps at what exists, pads up to a whole
+    temporal patch. Reproduced here so the sweep can assert without 4 GB of weights; the real
+    numbers it was derived from are pinned in the tests above.
+    """
+    wanted = max(minimum, round(declared * count / fps))
+    taken = min(wanted, count)
+    return taken + (taken % TEMPORAL_PATCH_FRAMES)
+
+
+def test_every_plannable_window_is_delivered_to_the_model_whole() -> None:
+    """The sweep. Every legal rate, a spread of durations, real `plan_scene_windows` output."""
+    checked = 0
+    for fps in (REFERENCE_FPS, 1.5, DECLARED_SAMPLING_FPS):
+        for duration_ms in (2_000, 4_162, 7_001, 15_500, 31_000, 64_000, 121_000, 300_000):
+            for window in plan_scene_windows(
+                "m", duration_ms=duration_ms, shot_cuts_ms=(), fps=fps
+            ):
+                # What ffmpeg really emits: interval centres, so one short of the plan whenever
+                # the duration is not a whole number of frames — then trimmed to even.
+                emitted = math.floor(window.duration_ms * window.fps / 1000)
+                if emitted < 2:
+                    continue
+                emitted -= emitted % TEMPORAL_PATCH_FRAMES
+                assert _model_reads(emitted, window.fps) == emitted, (
+                    f"{window.window_id} {window.duration_ms} ms @ {window.fps} fps: "
+                    f"{emitted} frames extracted, {_model_reads(emitted, window.fps)} read"
+                )
+                checked += 1
+    assert checked > 40, f"the sweep only covered {checked} windows"
+
+
+def test_the_rate_the_cli_used_to_force_is_refused_at_planning_time() -> None:
+    """The negative control, at the number that was actually shipping.
+
+    3.0 fps planned two 45-frame windows over 30 s and the model read 30 of each — a third of
+    every window discarded after ffmpeg had written it. The refusal now arrives before any frame
+    is extracted, and it names what the model would have read.
+    """
+    with pytest.raises(ValueError, match="above the 2.0 fps"):
+        plan_scene_windows("m", duration_ms=30_000, shot_cuts_ms=(), fps=3.0)
+
+
+def test_the_sweep_would_fail_at_a_rate_the_bound_now_excludes() -> None:
+    """And the control on the control: the arithmetic really does drop frames above 2 fps.
+
+    Without this, `test_every_plannable_window_is_delivered_to_the_model_whole` would pass for a
+    `_model_reads` that returned its input.
+    """
+    assert _model_reads(44, 3.0) == 30
+    assert _model_reads(64, 4.0) == 32
+    assert _model_reads(64, 1.0) == 64
+
+
+@needs_ffmpeg
+def test_an_odd_emitted_count_is_trimmed_rather_than_padded_by_the_processor(
+    tmp_path: Path,
+) -> None:
+    """Real ffmpeg, real files on disk. 1400 ms at 2 fps emits three frames.
+
+    Three is odd, and the processor pads an odd count by **repeating the last frame** (D-060) —
+    so the model would see a frame that was never filmed, at the moment the window ends, biasing
+    a temporal reading toward its own tail. Trimming to two costs one sampling interval of tail
+    and leaves every frame the model sees a frame that existed. D-063.
+
+    Asserted on the artifact: the JPEGs `extract_window_frames` actually kept.
+    """
+    window = a_window(duration_ms=1_400, fps=DECLARED_SAMPLING_FPS)
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    assert frames.count == 2, f"expected the odd third frame trimmed, got {frames.count}"
+    assert frames.count % TEMPORAL_PATCH_FRAMES == 0
+    assert all(path.exists() for path in frames.paths)
+    # The trimmed frame is still on disk — trimming is a decision about what to hand over, not a
+    # deletion, so nothing about the extraction has to be re-run to change it.
+    assert len(sorted(tmp_path.glob("000_*.jpg"))) == 3

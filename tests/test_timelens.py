@@ -290,7 +290,7 @@ def test_the_producer_and_the_fusion_site_agree() -> None:
 # `[[0.0, 0.8]]`.
 
 
-def a_scene_window(in_ms: int = 2_800, out_ms: int = 4_162, fps: float = 3.0) -> SceneWindow:
+def a_scene_window(in_ms: int = 2_800, out_ms: int = 4_162, fps: float = 2.0) -> SceneWindow:
     return SceneWindow(
         media_id="kurdish-speech-3cuts",
         scene_index=2,

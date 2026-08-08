@@ -2465,3 +2465,46 @@ path rather than a regression. Stated rather than smoothed over: a green gate cl
 that was red is the thing this project's DONE rule exists to prevent.
 
 ---
+
+## D-065 · What the sampling ceiling moved, and the evidence it retired
+
+**Context:** D-063 (recorded by a concurrent session) and this implementation were arrived at
+independently within the same hour, from the same measurement — 64 frames at 4 fps read as 32,
+45 at 3 fps read as 30, odd counts padded by repeating the last frame. The decision there is the
+decision; this records only what it cost, which that entry does not cover.
+
+**The implementation, for the record of where the guard lives.** `SceneWindow.__post_init__`
+refuses `fps > DECLARED_SAMPLING_FPS`, beside the existing refusal of `fps < REFERENCE_FPS`, so
+the rate is bounded from both directions in the type every planner and adapter routes through.
+`extract_window_frames` trims an odd emitted count down to a whole temporal patch, and leaves the
+trimmed file on disk — trimming is a decision about what to hand over, not a deletion, so revising
+it needs no re-extraction. `pipeline.py`'s composed path takes the constant instead of a literal
+`3.0`, and `--visual-fps` defaults to `None` so its own sentinel branch is reachable.
+
+**Third re-measurement of the same index.** D-055 moved it with the library pin, D-060 with the
+frame re-sampling, and this with the rate bound:
+
+    rate    handed / read    rank-1 to rank-2 rerank margin
+    4 fps   6 / 4            0.005644
+    3 fps   4 / 4            0.015441
+    2 fps   2 / 2            0.027870
+
+The margin widened monotonically as fewer frames were discarded — a factor of five end to end —
+and at 2 fps the reranker reverses retrieval outright, promoting the window retrieval ranked last.
+Path B's peak VRAM fell 11.99 -> 9.56 GiB, because the discarded frames were being encoded first.
+
+**A wider margin is not a better index, and this file does not claim one.** At 2 fps a 1400 ms
+scene is **two** frames — the minimum `extract_window_frames` accepts — and whether that is a good
+index entry is §8.2's question. `BLOCKED.md` #1.
+
+**Evidence retired.** `evidence/m5-2-*.md` and `evidence/m5-4-path-b.md` record runs at 4 and 3
+fps; both rates are now refused at construction, so neither run is reproducible from the code that
+produced it. Annotated rather than rewritten, as D-055 and D-060 were. Three re-measurements of one
+index in one day is itself the finding: every number here carries a library version, a frame
+delivery rate, and now a sampling rate, and none of those was visible in the first write-up.
+
+**Audit.** 4/4 mutations caught against a baseline verified green first. The trim survived the
+first pass, because the sweep simulates the processor's arithmetic rather than running ffmpeg; a
+real extraction closed it — 1400 ms at 2 fps writes three JPEGs and hands over two.
+
+---

@@ -1,5 +1,12 @@
 # §3 Stage 2 builds a real index on real media — and one number that does not add up
 
+> **Rate superseded, 2026-08-08 (D-063/D-065).** The run below is at a sampling rate
+> `SceneWindow` now **refuses**: all four §7 visual checkpoints declare `fps: 2`, and above it the
+> processor discards frames. The index was re-measured at 2 fps — rank-1/rank-2 rerank margin
+> 0.005644 (4 fps) -> 0.015441 (3 fps) -> **0.027870** (2 fps), reranking still reversing
+> retrieval. This run is no longer reproducible from the code that produced it. See
+> `evidence/m5-1-declared-sampling-rate.md`.
+
 > **Superseded in part, 2026-08-08 (D-060).** Every §7 visual checkpoint declares
 > `do_sample_frames: true` with `fps: 2` and `min_frames: 4`, so the processor **re-samples**
 > what it is handed. The windows below were extracted at 4 fps and the model received 4 of every

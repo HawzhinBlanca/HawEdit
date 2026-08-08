@@ -31,7 +31,7 @@ from hawedit.video_input import VideoInputError, WindowFrames
 from hawedit.visual_index import SceneWindow
 
 
-def a_window(in_ms: int = 2_800, out_ms: int = 4_162, fps: float = 3.0) -> SceneWindow:
+def a_window(in_ms: int = 2_800, out_ms: int = 4_162, fps: float = 2.0) -> SceneWindow:
     return SceneWindow(
         media_id="kurdish-speech-3cuts",
         scene_index=2,
@@ -232,7 +232,7 @@ def test_the_grounder_passes_video_metadata_at_the_top_level(tmp_path: Path) -> 
     call = processor.calls[0]
     assert call["add_generation_prompt"] is True
     metadata = call["video_metadata"][0]
-    assert metadata["fps"] == 3.0
+    assert metadata["fps"] == 2.0
     assert metadata["fps"] * metadata["duration"] == pytest.approx(metadata["total_num_frames"])
 
 
@@ -261,7 +261,7 @@ def test_ground_all_flattens_every_windows_evidence(tmp_path: Path) -> None:
             window_index=0,
             in_ms=i * 1_400,
             out_ms=i * 1_400 + 1_362,
-            fps=3.0,
+            fps=2.0,
         )
         for i in range(3)
     )

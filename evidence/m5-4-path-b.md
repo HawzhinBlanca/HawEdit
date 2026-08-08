@@ -1,5 +1,12 @@
 # Path B reads scenes, and the model's clock is not the media's
 
+> **Rate superseded, 2026-08-08 (D-063/D-065).** The run below is at a sampling rate
+> `SceneWindow` now **refuses**: all four §7 visual checkpoints declare `fps: 2`, and above it the
+> processor discards frames. The index was re-measured at 2 fps — rank-1/rank-2 rerank margin
+> 0.005644 (4 fps) -> 0.015441 (3 fps) -> **0.027870** (2 fps), reranking still reversing
+> retrieval. This run is no longer reproducible from the code that produced it. See
+> `evidence/m5-1-declared-sampling-rate.md`.
+
 > Measured on `transformers` 4.57.6 (the pin, D-055), hawapc01 `cuda:0`, bfloat16.
 
 `MCG-NJU/VideoChat3-4B` behind `path_b.VideoUnderstanding`, closing M5.4. §3 Stage 3:
@@ -181,10 +188,7 @@ differ needs footage where they do: `BLOCKED.md` #1.
 **Whether the readings are good is §8.2's question.** The descriptions are correct about the
 frames. Nothing here says they are the descriptions that surface the right clip.
 
-**`discover_visual`'s frame budget is over the whole set, not per call.** §3's 256 frames is a
-single-call VRAM figure and `discover_visual` sums every window before any call — correct while
-Path B was a stub with no model, and now a ceiling on the number of *scenes* a media may have:
-three windows of 6 frames is 18, but a 30-minute episode at 1 fps is far past 256 and would be
-refused outright. This reader calls the model once per window, so the VRAM figure the budget
-protects is per window (11.99 GiB peak at 6 frames). Left alone rather than loosened: it refuses
-loudly, and moving a §3 ceiling is not something to do inside another task.
+**The episode-length frame-budget defect is closed (D-059).** The 256-frame figure is a
+single-call VRAM ceiling. `discover_visual` now packs arbitrary episode windows into deterministic
+≤256-frame calls; `VideoChat3Reader` remains stricter and invokes the model once per window. A
+30-minute source is no longer refused merely because all of its segmented scenes sum past 256.
