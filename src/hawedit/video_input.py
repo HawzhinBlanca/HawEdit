@@ -52,6 +52,7 @@ __all__ = [
     "TimestampsOutsideWindow",
     "VideoInputError",
     "WindowFrames",
+    "align_to_patch_grid",
     "assert_frames_reached_model",
     "assert_timestamps_span_window",
     "extract_window_frames",
@@ -275,7 +276,7 @@ def window_video_metadata(frames: WindowFrames) -> dict[str, Any]:
     }
 
 
-def load_window_images(frames: WindowFrames) -> list[Any]:
+def load_window_images(frames: WindowFrames, processor: Any | None = None) -> list[Any]:
     """`frames` as decoded RGB images, which is the only form the processor accepts.
 
     Measured against `Qwen3-VL-Embedding-2B`'s processor, same frames three ways:
@@ -292,7 +293,48 @@ def load_window_images(frames: WindowFrames) -> list[Any]:
     """
     from PIL import Image
 
-    return [Image.open(path).convert("RGB") for path in frames.paths]
+    images = [Image.open(path).convert("RGB") for path in frames.paths]
+    return images if processor is None else align_to_patch_grid(processor, images)
+
+
+def align_to_patch_grid(processor: Any, images: list[Any]) -> list[Any]:
+    """Snap `images` to the patch grid when the checkpoint expects the caller to have done it.
+
+    `MCG-NJU/TimeLens2-4B` is the only §7 visual checkpoint shipping **`do_resize: false`**, which
+    means its processor will not resize and its patch grid is computed by integer division. The
+    fixture is 640x**360**, and 360 is not a multiple of `patch_size x merge_size` = 32, so the
+    grid comes out 22 rows — 352 px — against a 360 px tensor:
+
+        RuntimeError: shape '[1, 4, 2, 3, 11, 2, 16, 20, 2, 16]' is invalid for input of size
+        5529600
+
+    Loud, but it names a tensor shape rather than the cause, and the remedy is not guessable from
+    it. The model card's own example resizes before the processor sees anything, via
+    `process_vision_info`; this does the same with the checkpoint's own `smart_resize`, so the
+    dimensions are the library's arithmetic rather than ours. Measured: 640x360 -> 640x352.
+
+    A no-op for the three checkpoints that declare `do_resize: true` — they resize internally, and
+    passing the processor everywhere means no adapter has to know which kind it has.
+    """
+    if getattr(processor.video_processor, "do_resize", True):
+        return images
+    from transformers.models.qwen3_vl.video_processing_qwen3_vl import smart_resize
+
+    video = processor.video_processor
+    width, height = images[0].size
+    factor = video.patch_size * video.merge_size
+    new_height, new_width = smart_resize(
+        len(images),
+        height,
+        width,
+        temporal_factor=video.temporal_patch_size,
+        factor=factor,
+        min_pixels=video.size["shortest_edge"],
+        max_pixels=video.size["longest_edge"],
+    )
+    if (new_width, new_height) == (width, height):
+        return images
+    return [image.resize((new_width, new_height)) for image in images]
 
 
 def video_content(images: Sequence[Any]) -> dict[str, Any]:

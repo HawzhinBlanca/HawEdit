@@ -29,6 +29,7 @@ from hawedit.timelens import (
     VisualEvidenceInterval,
     interval_end_for_fusion,
 )
+from hawedit.visual_index import SceneWindow
 
 ANCHOR_IN = 10_000
 ANCHOR_OUT = 14_000
@@ -279,3 +280,87 @@ def test_the_producer_and_the_fusion_site_agree() -> None:
         )
     )
     assert boundary.final_out_ms == 18_000
+
+
+# --- the window-relative clock, and what an unshifted interval does to a boundary ----------
+#
+# TimeLens2 is shown one window and answers in seconds from ITS start; every number
+# `boundary.py` fuses is media-absolute. Measured on the fixture (`evidence/m6-3-grounding.md`):
+# shown only scene 2 — 2800..4162 ms — and asked about the red "2" on blue, the model returned
+# `[[0.0, 0.8]]`.
+
+
+def a_scene_window(in_ms: int = 2_800, out_ms: int = 4_162, fps: float = 3.0) -> SceneWindow:
+    return SceneWindow(
+        media_id="kurdish-speech-3cuts",
+        scene_index=2,
+        window_index=0,
+        in_ms=in_ms,
+        out_ms=out_ms,
+        fps=fps,
+    )
+
+
+def test_a_window_relative_span_lands_on_the_medias_clock() -> None:
+    interval = VisualEvidenceInterval.from_window(
+        a_scene_window(), 0.0, 0.8, "evidence for: a red number 2 on a blue background"
+    )
+    assert interval.span == (2_800, 3_600)
+    assert interval.media_id == "kurdish-speech-3cuts"
+    assert interval.confidence is None, "the model returns no confidence; 0.0 would invent one"
+
+
+def test_a_span_past_the_end_of_the_window_is_refused() -> None:
+    """The model reporting a moment outside its own input has no footage behind the claim."""
+    with pytest.raises(ValueError, match="outside the window"):
+        VisualEvidenceInterval.from_window(a_scene_window(), 0.0, 2.0, "too long")
+
+
+def test_a_span_reaching_the_windows_end_is_allowed_its_rounding() -> None:
+    """ffmpeg samples at interval centres and the model answers to one decimal, so the end is
+    reachable only within that rounding. 1.362 s + 0.04 is tail rounding; + 0.2 is not."""
+    assert VisualEvidenceInterval.from_window(a_scene_window(), 0.0, 1.40, "ok").end_ms == 4_200
+    with pytest.raises(ValueError, match="outside the window"):
+        VisualEvidenceInterval.from_window(a_scene_window(), 0.0, 1.562, "past it")
+
+
+def test_an_unshifted_interval_extends_a_clip_on_evidence_from_elsewhere() -> None:
+    """The harm, through the real selector — and the reason the shift is not cosmetic.
+
+    A sentence anchored at 0..600 ms. The model's real answer about scene 2 is 0.0..0.8 s of
+    *that scene*, which is 2800..3600 ms absolute and has nothing to do with the anchor.
+
+    Shifted, `interval_end_for_fusion` returns None: no overlap, no adjustment.
+    Unshifted, the same numbers read as 0..800 ms, which DOES overlap 0..600 and ends after it —
+    so the clip is extended to 800 ms on the strength of footage 2.8 seconds away, and Kurdish
+    invariant #2 is satisfied throughout because it constrains direction, not relevance.
+    """
+    window = a_scene_window()
+    shifted = VisualEvidenceInterval.from_window(window, 0.0, 0.8, "evidence for: the blue 2")
+    assert shifted.span == (2_800, 3_600)
+    assert interval_end_for_fusion((shifted,), 0, 600, media_id=window.media_id) is None
+
+    unshifted = VisualEvidenceInterval(
+        media_id=window.media_id, start_ms=0, end_ms=800, claim="evidence for: the blue 2"
+    )
+    assert unshifted.overlaps(0, 400) is True
+    assert interval_end_for_fusion((unshifted,), 0, 400, media_id=window.media_id) == 800
+
+    # And on through the real fusion, which is where it reaches a client: the clip is 200 ms
+    # longer AND records visual evidence as the reason, for footage 2.8 seconds away.
+    def fused(interval: VisualEvidenceInterval) -> tuple[int, str | None]:
+        end = interval_end_for_fusion((interval,), 0, 400, media_id=window.media_id)
+        boundary = fuse_boundary(
+            BoundaryInputs(
+                anchor_in_ms=0,
+                anchor_out_ms=400,
+                sentence_complete=True,
+                media_duration_ms=4_162,
+                timelens_interval_start_ms=interval.start_ms if end is not None else None,
+                timelens_interval_end_ms=end,
+            )
+        )
+        return boundary.final_out_ms, boundary.out_extended_by
+
+    assert fused(shifted) == (600, "tail")
+    assert fused(unshifted) == (800, "timelens_interval_end")

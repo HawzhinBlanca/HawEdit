@@ -232,7 +232,7 @@ class VideoChat3Reader:
             {
                 "role": "user",
                 "content": [
-                    video_content(load_window_images(frames)),
+                    video_content(load_window_images(frames, processor)),
                     {"type": "text", "text": SV6D_PROMPT.format(duration=duration_s)},
                 ],
             }
@@ -261,9 +261,9 @@ class VideoChat3Reader:
     def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
         """§3 Stage 3 Path B over these scenes, one reading each.
 
-        One call per window rather than one batched call: §3 calls segmentation mandatory and
-        gives VRAM figures per frame count, and `discover_visual` refuses the whole set past
-        256 frames before any of this runs.
+        One call per window rather than one model batch: §3 calls segmentation mandatory and
+        gives VRAM figures per frame count. `discover_visual` additionally packs its input into
+        at-most-256-frame calls for any other implementation of this protocol.
         """
         return tuple(self.read_window(window) for window in windows)
 

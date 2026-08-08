@@ -306,7 +306,7 @@ class QwenVisualEmbedder:
         and the index holds a vector about footage the model mislocated (D-049).
         """
         processor, _ = self._load()
-        content = video_content(load_window_images(frames))
+        content = video_content(load_window_images(frames, processor))
         batch = window_batch(
             processor, self._conversation(content), frames, add_generation_prompt=False
         )
@@ -469,7 +469,7 @@ class QwenVisualReranker:
                     {"type": "text", "text": f"<Instruct>: {self.instruct}"},
                     {"type": "text", "text": f"<Query>: {normalize_sorani(query)}"},
                     {"type": "text", "text": "\n<Document>:"},
-                    video_content(load_window_images(frames)),
+                    video_content(load_window_images(frames, processor)),
                 ],
             },
         ]

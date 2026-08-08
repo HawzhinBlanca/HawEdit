@@ -2403,3 +2403,65 @@ has claims. "Fully enforced" was four-fifths true, and the missing fifth was inv
 because the sentence read as one assertion.
 
 ---
+
+## D-062 · A grounding model's interval is on the window's clock, and the shift lives beside the type
+
+**Context:** M6.3. `MCG-NJU/TimeLens2-4B` is shown one scene window and answers in seconds from
+**its** start. Every number `boundary.py` fuses is media-absolute. Measured: shown only scene 2 of
+the fixture — 2800..4162 ms — and asked about the red "2" on blue, the model returned
+`[[0.0, 0.8]]`.
+
+**Why this is worse than D-058's version of the same trap.** Path B's offset corrupts a *label*;
+this one moves a *boundary*. Put through the real selector and the real fusion, with a sentence
+anchored at 0..400 ms:
+
+    shifted     (2800, 3600) ms   overlaps False   selector None   final 0..600   extended by tail
+    unshifted   (0, 800) ms       overlaps True    selector 800    final 0..800   extended by
+                                                                                  timelens_interval_end
+
+The clip is 200 ms longer and records **visual evidence** as the reason, for footage 2.8 seconds
+away. Kurdish invariant #2 holds throughout — it constrains direction, not relevance. That is
+verbatim the sentence M6.1 was written about, reached through the offset instead of through
+`max()`.
+
+At an anchor of 0..600 the two agree on 800 ms and differ only in `out_extended_by`. **The number
+coincides and the attribution is still wrong**, which is the harder failure to see, and §8.2 reads
+boundary provenance off exactly that field.
+
+**Decision 1 — `VisualEvidenceInterval.from_window`, beside the type, not in the adapter.** A
+second producer — a batch grounder, a rehydrated JSON document — cannot omit what the constructor
+does. It also refuses a span outside the window the model was shown, with a tolerance of 0.05 s:
+ffmpeg samples at interval centres and the model answers to one decimal, so reaching the end is
+only expressible within that rounding. 1.40 s of a 1.362 s window is accepted; 1.562 s is not.
+
+**Decision 2 — the claim is the query and the confidence is `None`.** TimeLens2 returns spans and
+nothing else. `claim` records what was asked (`"evidence for: <query>"`) because
+`VisualEvidenceInterval` refuses an empty one, and `confidence` stays `None` — 0.0 would be a
+measurement the model never made.
+
+**Decision 3 — the prompt is the card's wording, quoted.** A reworded question to the same weights
+is a different question and the reply would still parse.
+
+**Decision 4 — `align_to_patch_grid` uses the checkpoint's own `smart_resize`.** TimeLens2 is the
+only §7 visual checkpoint shipping `do_resize: false`, so its frames must arrive a multiple of
+`patch_size x merge_size` = 32; the 640x**360** fixture otherwise raises a patch-grid shape error
+naming a tensor whose remedy is not guessable from it. Measured: 640x360 -> 640x352. A no-op for
+the other three, so `load_window_images` takes the processor everywhere rather than making each
+adapter know which kind it has.
+
+**The parser defect the real model found on its first run.** Asked about a scene the query is not
+in, TimeLens2 answered `[]`. The first `parse_spans` searched for `[[…]]` with a regex and refused
+it as malformed — so the commonest correct reply would have crashed, on exactly the scenes where
+the query is absent, which is most of them. It decodes from the first bracket now. This is the
+second time here that "found nothing" was nearly an error; `interval_end_for_fusion` already
+distinguishes absence from an out-point of zero, and the adapter now agrees with it.
+
+**Recorded because the gate could not be run where it usually is.** A concurrent session was
+editing this checkout throughout the iteration — three consecutive gate runs gave 23 failures, then
+5, then 3 lint errors, all in its files. This change set was proved in a worktree at HEAD plus
+these files: ruff, format and mypy clean, full suite exit 0 excluding `tests/test_gate.py`, whose
+9 failures reproduce identically at plain HEAD in the same worktree and are the editable-install
+path rather than a regression. Stated rather than smoothed over: a green gate claimed on a tree
+that was red is the thing this project's DONE rule exists to prevent.
+
+---

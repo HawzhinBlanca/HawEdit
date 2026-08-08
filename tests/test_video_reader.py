@@ -285,7 +285,9 @@ def a_reader(tmp_path: Path, answer: str = REAL_OUTPUT) -> Any:
 @pytest.fixture(autouse=True)
 def _no_pillow_or_torch(monkeypatch: pytest.MonkeyPatch) -> None:
     """These run on a machine with neither Pillow nor torch — `models/` is git-ignored too."""
-    monkeypatch.setattr("hawedit.video_reader.load_window_images", lambda frames: ["img"] * 6)
+    monkeypatch.setattr(
+        "hawedit.video_reader.load_window_images", lambda frames, processor=None: ["img"] * 6
+    )
     monkeypatch.setitem(__import__("sys").modules, "torch", _FakeTorch())
 
 

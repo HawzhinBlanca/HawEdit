@@ -356,7 +356,9 @@ def stubbed(
     """Point `obj._load` at stubs, and make frame loading independent of Pillow."""
     processor, model = StubProcessor(), StubModel(hidden, weight)
     monkeypatch.setattr(type(obj), "_load", lambda _self: (processor, model))
-    monkeypatch.setattr("hawedit.qwen_visual.load_window_images", lambda f: ["frame"] * f.count)
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.load_window_images", lambda f, p=None: ["frame"] * f.count
+    )
     return processor, model
 
 

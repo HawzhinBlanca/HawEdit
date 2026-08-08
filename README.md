@@ -219,6 +219,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `path_a.py` | §3 Stage 3 Path A | The Kurdish judge over the **whole** transcript. Refuses to send a subset, and refuses to split one. |
 | `path_b.py` | §3 Stage 3 Path B | `VideoChat3-4B` over scenes. Frame budget refused before the call; every SV6D label must cite a time **inside the scene it describes**. |
 | `video_reader.py` | §3 Stage 3 Path B | `MCG-NJU/VideoChat3-4B` and the SV6D prompt. The model is shown one scene starting at zero, so every time it cites is moved onto the media's clock here — the invariant alone accepts an unshifted one whenever it happens to land in range. |
+| `video_grounding.py` | §3 Stage 5 | `MCG-NJU/TimeLens2-4B` grounding a query in one scene. It answers in seconds from the window's start; `VisualEvidenceInterval.from_window` moves that onto the media's clock, because an unshifted span can overlap the anchored sentence and extend the clip on footage from elsewhere. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |
