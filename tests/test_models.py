@@ -290,10 +290,10 @@ def test_every_repository_the_fetcher_would_download_is_pinned() -> None:
             continue  # §7 names a checkpoint, not a repo — covered by the source tests above
         if source not in pinned:
             unpinned.append(source)
-    # pyannote is gated and has never been downloaded here, so it is deliberately absent:
-    # pinning a revision for contents nobody in this project has seen records a number, not a
-    # fact (`BLOCKED.md` #4).
-    assert unpinned == ["pyannote/speaker-diarization-community-1"], unpinned
+    # No exemptions. This asserted `== ["pyannote/speaker-diarization-community-1"]` until
+    # D-075: that repo is gated for *downloads* and public for *metadata*, so its revision was
+    # always a verifiable fact here and leaving it unpinned was an error, not a principle.
+    assert unpinned == [], unpinned
 
 
 def test_every_pinned_revision_is_a_full_commit_sha() -> None:

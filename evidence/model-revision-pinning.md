@@ -56,10 +56,22 @@ All four match. So `models/revisions.json` does not merely name a plausible comm
 **the revision that produced every visual measurement in `evidence/`**, which is what makes those
 numbers reproducible rather than merely recorded.
 
-`pyannote/speaker-diarization-community-1` is deliberately absent. It is gated, measured 401 from
-here, and has never been downloaded (`BLOCKED.md` #4). Pinning a revision for contents nobody in
-this project has seen would record a number rather than a fact — and the test below asserts it is
-the *only* unpinned repository, so its absence cannot quietly spread.
+**Corrected 2026-08-09 (D-075): `pyannote/speaker-diarization-community-1` is pinned too.**
+This file first omitted it, arguing that pinning a repository nobody here has downloaded would
+record a number rather than a fact. That was wrong, and a parallel branch pinning it is what
+prompted the re-check. Gating on this repo covers file **downloads**, not metadata — measured
+from this machine with no `HF_TOKEN`:
+
+```
+model_info()        -> sha=3533c8cf8e369892e6b79ff1bf80f7b0286a54ee
+list_repo_files()   -> 10 files ['.gitattributes', 'README.md', 'config.yaml', …]
+hf_hub_download()   -> GatedRepoError: 401 Client Error
+```
+
+So the revision was always a verifiable fact here, and pinning it means that the day
+`BLOCKED.md` #4 is resolved the download lands on a known commit rather than a head. The test
+now asserts **no** repository is unpinned, which is strictly stronger than the exemption it
+replaced. `BLOCKED.md` #4 itself is unchanged and still accurate: downloads 401.
 
 ## The fix, shaped like the one already there
 

@@ -2977,3 +2977,47 @@ this machine until CI agrees, which is why the loop pushes and waits rather than
 `VERIFY OK`.
 
 Gate: `VERIFY OK — 1092 passed, 0 skipped`.
+
+## D-075
+
+**D-073 refused to pin `pyannote/speaker-diarization-community-1` for a reason that is false,
+and a parallel agent pinning it is what prompted the check.** That entry argued a gated repo
+nobody here has downloaded cannot honestly be pinned — "recording a number rather than a fact".
+Measured from this machine with no `HF_TOKEN`:
+
+```
+model_info()      -> sha=3533c8cf8e369892e6b79ff1bf80f7b0286a54ee
+list_repo_files() -> 10 files ['.gitattributes', 'README.md', 'config.yaml', …]
+hf_hub_download() -> GatedRepoError: 401 Client Error
+```
+
+Gating covers **downloads**, not metadata. The revision was always a verifiable fact here. It is
+pinned now, and `test_every_repository_the_fetcher_would_download_is_pinned` asserts **no**
+repository is unpinned — strictly stronger than the exemption it replaces, and verified red by
+removing the pin. `BLOCKED.md` #4 is unchanged and still accurate: downloads 401, so Hawa still
+has to accept the licence.
+
+**The conflict, recorded rather than resolved unilaterally.** `codex/production-readiness-20260809`
+(`576dfed`, CI green, no PR open) implements the same guard independently and differently:
+
+| | this branch (`main`) | `codex/production-readiness-20260809` |
+|---|---|---|
+| where | new `models/revisions.json`, keyed by repo id | `models/sources.json` restructured to name → `{repo, revision}` |
+| refusal | `revision_for` raises `RevisionNotPinned` | plan omits/refuses in the shell |
+| ffmpeg | untouched, named as an open gap | **pinned and verified** (`evidence/ffmpeg-source.md`) |
+| pyannote | omitted, now corrected here | pinned from the start |
+
+Both pin the same four SHAs for the visual checkpoints, so the *facts* agree; the *structure*
+does not. Their single-file `name → {repo, revision}` is arguably the better shape — one file,
+one entry per §7 name, no second lookup — and they covered the ffmpeg archive this branch
+deferred. Neither implementation is reverted here: whoever merges must pick one deliberately,
+because two divergent supply-chain guards is worse than either, and a naive merge would leave
+`models.py` reading a file the fetcher no longer writes.
+
+**This is `BLOCKED.md` #12 in a new form.** That entry describes two agents sharing one index.
+They no longer do — the other works on its own branch — and the failure mode simply moved: from
+silently reverting each other's files to silently duplicating each other's work. The cost this
+time was one wasted implementation and one caught error; the error was caught only because the
+duplicate existed, which is the one thing to say in its favour.
+
+Gate: `VERIFY OK` recorded with the commit.
