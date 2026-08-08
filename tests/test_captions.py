@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from hawedit.captions import (
+    DEFAULT_MAX_CHARS_PER_LINE,
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
     CaptionStyle,
@@ -36,6 +37,7 @@ from hawedit.captions import (
     assert_rtl_stack,
     build_ass,
     compare_golden_render,
+    decode_to_rgb,
     find_ffmpeg,
     render_caption_png,
     subtitle_filter,
@@ -377,3 +379,116 @@ def test_simple_shaping_fails_the_golden_test(tmp_path: Path) -> None:
     )
     with pytest.raises(AssertionError, match="differs"):
         compare_golden_render(GOLDEN, broken, ffmpeg=ffmpeg)
+
+
+# --- §4.3.5 our own line breaks, on the decoded pixels -------------------------------------
+#
+# The adversarial pass of 2026-08-08 found that "line breaks are ours" was asserted three ways —
+# `wrap_caption_lines` unit-tested on word tuples, `\N` present in the ASS, and `WrapStyle: 2`
+# present in the header — and never once rendered. The golden reference is 28 characters against
+# a 32-character limit, so it is a single line and cannot exercise wrapping at all.
+#
+# Every row and band count below is measured, in `evidence/rtl-shaping-wrapping.md`.
+
+
+def _ink_bands(raw: bytes, width: int = 1080, height: int = 1920) -> list[tuple[int, int]]:
+    """Contiguous runs of rows containing ink — one band per rendered caption line."""
+    rows = [y for y in range(height) if any(raw[(y * width + x) * 3] > 40 for x in range(width))]
+    bands: list[tuple[int, int]] = []
+    for y in rows:
+        if bands and y == bands[-1][1] + 1:
+            bands[-1] = (bands[-1][0], y)
+        else:
+            bands.append((y, y))
+    return bands
+
+
+def _two_line_sentence() -> Sentence:
+    """A real Sorani sentence of 50 characters — past the 32-character limit, so it wraps."""
+    return Sentence(
+        words=words(
+            ("ڕۆژنامەوانی", 0, 500),
+            ("کوردی", 500, 900),
+            ("لە", 900, 1100),
+            ("هەولێر", 1100, 1600),
+            ("باسی", 1600, 1900),
+            ("گرنگی", 1900, 2300),
+            ("زمان", 2300, 2700),
+            ("دەکات.", 2700, 3200),
+        ),
+        complete=True,
+    )
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_our_line_break_is_the_break_that_renders(tmp_path: Path) -> None:
+    """The claim, on the artifact: two lines out, because we put a break in.
+
+    Measured on this fixture: bands at rows 1667-1707 and 1728-1765. Asserting the *count*
+    rather than the exact rows so a font-metric change does not fail a render that is still
+    two correctly broken lines.
+    """
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    sentence = _two_line_sentence()
+    assert len(wrap_caption_lines(sentence.words, max_chars=DEFAULT_MAX_CHARS_PER_LINE)) == 2
+
+    ass_path = tmp_path / "two.ass"
+    ass_path.write_text(build_ass((sentence,)), encoding="utf-8")
+    assert "\\N" in ass_path.read_text(encoding="utf-8")
+    rendered = render_caption_png(ffmpeg, ass_path, FONTS_DIR, tmp_path / "two.png")
+    assert len(_ink_bands(decode_to_rgb(ffmpeg, rendered))) == 2
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_without_our_break_the_same_text_renders_as_one_line(tmp_path: Path) -> None:
+    """The negative control. Two bands mean nothing unless one band is reachable.
+
+    The same 50 characters fit on a single line at this size, so the second band exists only
+    because `wrap_caption_lines` put it there — not because the text ran out of room.
+    """
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "one.ass"
+    ass_path.write_text(build_ass((_two_line_sentence(),)).replace("\\N", " "), encoding="utf-8")
+    rendered = render_caption_png(ffmpeg, ass_path, FONTS_DIR, tmp_path / "one.png")
+    assert len(_ink_bands(decode_to_rgb(ffmpeg, rendered))) == 1
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_wrap_style_2_really_stops_libass_wrapping(tmp_path: Path) -> None:
+    """What `test_wrap_style_disables_automatic_wrapping` asserts as a string, measured.
+
+    That test checks the header says `WrapStyle: 2`; nothing checked the setting does anything.
+    It does, and only for a line wider than the play area — which is why production output
+    cannot demonstrate it: our own 32-character limit breaks lines long before libass would.
+    Twelve words on one line, 960 px of play area:
+
+        WrapStyle 2  ->  1 band,  x-span 0..1079   (kept on one line, clipped at the frame)
+        WrapStyle 0  ->  3 bands, x-span 262..818  (libass broke it where it chose)
+    """
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    wide = build_ass((_two_line_sentence(),)).replace("\\N", " ")
+    assert "WrapStyle: 2" in wide
+
+    kept = tmp_path / "ws2.ass"
+    kept.write_text(
+        wide + "Dialogue: 0,0:00:00.00,0:00:03.20,Kurdish,,0,0,0,," + "x " * 40 + "\n",
+        encoding="utf-8",
+    )
+    broken = tmp_path / "ws0.ass"
+    broken.write_text(
+        kept.read_text(encoding="utf-8").replace("WrapStyle: 2", "WrapStyle: 0"), encoding="utf-8"
+    )
+
+    two = _ink_bands(
+        decode_to_rgb(ffmpeg, render_caption_png(ffmpeg, kept, FONTS_DIR, tmp_path / "a.png"))
+    )
+    zero = _ink_bands(
+        decode_to_rgb(ffmpeg, render_caption_png(ffmpeg, broken, FONTS_DIR, tmp_path / "b.png"))
+    )
+    assert len(zero) > len(two), (
+        f"WrapStyle 0 produced {len(zero)} bands and WrapStyle 2 produced {len(two)}: the setting "
+        f"is doing nothing, so the header assertion is measuring a string and not a behaviour."
+    )

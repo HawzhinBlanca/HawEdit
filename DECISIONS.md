@@ -2356,3 +2356,50 @@ non-monotonicity: its "4 fps" arm was eight frames read, not sixteen, so a compa
 1-vs-4 was really 4-frames-vs-8. D-052's conclusion is unchanged and now overdetermined.
 
 ---
+
+## D-061 · "Fully enforced" covered five claims and four of them were tested
+
+**Context:** iteration 10's adversarial pass on Kurdish invariant #4. The PROGRESS row read
+*"fully enforced. Shaping, stack check on a real build, font coverage on the real font, our own
+line breaks, and a golden render compared per gate run with `shaping=simple` as a failing
+negative control."*
+
+**What held.** The reference reproduces **pixel-exact** on ffmpeg 8.1.1 here; it contains real
+shaped text (2734 ink px, one band at rows 1731-1771, the sentence-final period at the left where
+an RTL run ends); `shaping=simple` differs by 4803 px (0.232%) and the comparison is exact
+equality on decoded pixels, so a subtler shaping failure cannot slip past a tolerance; six of six
+mutations caught; and CI has a dedicated step that fails if the golden test *skips*.
+
+**What did not.** "Our own line breaks" had no rendered evidence. It was asserted as a unit test
+over word tuples, a `\\N` in the ASS text and the string `WrapStyle: 2` in the header — and
+`GOLDEN_CAPTION_TEXT` is 28 characters against a 32-character limit, so the golden render is a
+single line and cannot exercise wrapping at all. The one claim about layout was the one never
+rendered.
+
+**Decision 1 — three tests on the decoded pixels, not a second golden file.** Band counting
+(contiguous rows containing ink) asserts what the claim is about — two lines out because we put a
+break in, one line without it — and needs no committed reference, so it cannot fail on a
+font-metric change that is still two correctly broken lines. Measured: rows 1667-1707 and
+1728-1765 with `\\N`, one band at 1728-1771 without.
+
+**Decision 2 — the `WrapStyle` claim is demonstrated on deliberately over-wide input, and the
+string assertion is kept.** With our own `\\N` present, `WrapStyle: 0` renders **byte-identical**
+to `WrapStyle: 2`; the setting only bites on a line wider than the play area, which our
+32-character limit means production never emits. So a pixel test on production output *cannot*
+catch that mutation, and pretending otherwise would be worse than saying it. The new test feeds
+twelve words on one line — `WrapStyle: 2` gives 1 band clipped at the frame, `WrapStyle: 0` gives
+3 — which is the first evidence that the header does anything.
+
+**Decision 3 — no guard for the clipping case, because it was measured and cannot happen.**
+`WrapStyle: 2` clips an over-wide line instead of wrapping it, and `wrap_caption_lines` refuses to
+split a word longer than `max_chars` (splitting Arabic-script mid-word breaks shaping). That reads
+like a path to clipped Kurdish, so the threshold was measured: ~14.3 px per character, so a single
+word needs about **67 characters** to reach the 960 px play area. `بەرپرسیارێتییەکانیشیانەوە` is
+25. The 32-character limit carries a >2x margin. Writing a check for a case Kurdish cannot produce
+is the "invent work to look busy" the loop forbids, so it is recorded here instead.
+
+**The generalisable part.** A summary phrase covering several claims is worth as many audits as it
+has claims. "Fully enforced" was four-fifths true, and the missing fifth was invisible precisely
+because the sentence read as one assertion.
+
+---
