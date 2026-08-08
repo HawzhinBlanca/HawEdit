@@ -479,3 +479,74 @@ Stage 5's TimeLens2 and the Stage 1 validator are all ordinary `transformers` re
 load natively on Windows, and they are being integrated regardless.
 
 ---
+
+---
+
+## #12 · Two sessions share this checkout, and the history no longer says who decided what
+
+**Needs:** Hawa, one decision — which session owns this working tree, and whether work lands on
+`main` or on a branch. No code, no credentials, no hardware.
+
+This is not a complaint about speed. It is that the record has stopped being reliable, which is the
+one thing this project's process exists to protect.
+
+### Measured, on 2026-08-08 between 16:00 and 17:10
+
+| Fact | Value |
+|---|---|
+| Sessions editing this repository | 2 (this one; "Ponytail audit", `local_723777a0`) |
+| Files modified in the shared tree at one point | 68 |
+| Gate results in three consecutive runs, all from one session's in-flight edits | 23 failed, then 5 failed, then 3 lint errors |
+| Branch at the start of the afternoon | `main` |
+| Branch now | `codex/production-pipeline-hardening`, 2 commits ahead of `main` |
+| `main` vs `origin/main` | ahead by 14, unpushed |
+
+### Four concrete losses, each verifiable in the log
+
+1. **I committed a reversal of a recorded decision without reading it.** `3c270f7` carries
+   `survivor_count = min(keep, len(reranked))` — the alternative D-037 clause 4 considered and
+   rejected — because I ran `git add src/hawedit/visual_index.py` to land a rate bound and the file
+   on disk held someone else's edit too. `git add <file>` stages the file, not the change. Recorded
+   as D-066 and restored.
+
+2. **The other session committed my work under its message.** `4e0a80b` ("feat: compose and harden
+   the production pipeline") contains my survivor-floor restore, my `PROGRESS.md` amendment and my
+   D-066 entry. `9d1292d` ("docs: record survivor floor mutation audit") contains my evidence file.
+   Neither message is wrong; neither describes what the commit actually holds.
+
+3. **The same work was done twice, twice.** Both sessions independently wrote a TimeLens2 adapter
+   (mine landed as `video_grounding.py`; theirs was backed out of `timelens.py` after Hawa's
+   instruction), and both independently derived the 2 fps sampling ceiling from the same measurement
+   inside the same hour — recorded as their D-063 and my D-065.
+
+4. **I reset the shared git index while it held their staged work.** `git reset` to keep my own
+   commit from carrying their files unstaged theirs. Nothing was lost — a mixed reset leaves the
+   working tree alone — but two sessions cannot share one index safely, and I should not have needed
+   to touch it.
+
+### Why this is BLOCKED rather than something to engineer around
+
+The project's DONE rule is "code + test + gate green + evidence", and its commit convention is one
+unit per commit with the measurement in the message. Both now fail for a reason no guard can catch:
+a commit's contents are decided by whatever is on disk when it is written, and two writers means
+neither message is trustworthy. `tests/test_claims.py` can check that a claim matches the code; it
+cannot check that a commit message matches its diff.
+
+**Any one of these resolves it:**
+
+1. **One session at a time in this checkout.** Simplest, and costs nothing but wall-clock.
+2. **A worktree each** — `git worktree add ../hawedit-b <branch>` gives the second session its own
+   index and working tree on the same repository. This is what I used to prove M6.3 while the shared
+   tree was red, and it worked.
+3. **Say which session continues, and stop the other.** Either is capable of the remaining work; the
+   duplication above is the cost of not choosing.
+
+**Also needed, and smaller:** the branch. Work moved from `main` to
+`codex/production-pipeline-hardening` with no recorded decision, and `main` is 14 commits ahead of
+`origin/main`, unpushed. The recorded preference in this session's notes is "commit to main, split by
+unit". Confirm whether that still holds.
+
+Until this is answered the loop keeps running and the gate stays green — 1067 passed, 0 skipped as of
+`9d1292d` — but a commit here no longer tells you who did what, and neither session can fix that from
+inside the checkout.
+
