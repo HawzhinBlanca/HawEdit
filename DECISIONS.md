@@ -1743,3 +1743,62 @@ dialect, condition or duration. It has nothing to import — which is a fact abo
 August 2026, not a gap in the code.
 
 ---
+
+## D-048 · §3 Stage 2 cannot go through the loader its own checkpoint declares
+
+**Context.** With hawapc01's GPUs available and the Hub reachable, `Qwen3-VL-Embedding-2B` and
+`Qwen3-VL-Reranker-2B` are on disk (4.0 GB each, Apache-2.0) and M5.2 became ordinary work. The
+embedder loads on `cuda:0` in bfloat16 in 4.9 s, uses 3.98 GiB, and returns 2048-d L2-normalised
+vectors for real Kurdish text. Its recipe was read from the files it shipped with rather than
+guessed: `lasttoken` pooling, dimension 2048, then Normalize, prompt `"Represent the user's
+input."`, cosine similarity — which `visual_index._cosine` already matches.
+
+**Decision 1 — a scene window is embedded as a *video*, never as a list of frames.** Measured on
+four frames of the fixture: a list of PIL images returns `(4, 2048)`, four separate embeddings;
+`{"video": frames}` returns `(2048,)`, one embedding for the window. Both are available and both
+type-check. The list form is the one that invites a mean afterwards, and §7 excludes CLIP with
+the reason *"Frame-averaging loses temporal structure — 0.325 vs 0.75+ NDCG@10"*. Taking the
+convenient shape here would reimplement, inside Stage 2, the exact thing §7 rejected — and the
+index would look identical.
+
+**Decision 2 — Stage 2 uses the `transformers` processor directly, not `sentence-transformers`.**
+This is the awkward one, because `sentence-transformers` is the loader the checkpoint *declares*,
+in its own `modules.json` and `config_sentence_transformers.json`. It works. It also emits, on
+every video encode:
+
+> `Asked to sample fps frames per second but no video metadata was provided ... Defaulting to fps=24.`
+
+§3 Stage 2's reference setting is **~1 fps**. The frames handed over are one second apart and the
+model is told they are 1/24 s apart. There is no channel to correct it: `video_metadata` is
+refused — *"Multimodal dict input contains unrecognized modality keys: ['video_metadata']"*.
+
+So the declared loader has no way to express the one setting §3 Stage 2 is specific about.
+`visual_index.SceneWindow` already refuses a window that quietly lowers its rate, and says why —
+*"the resulting embedding is indistinguishable from an honest one"*. A model misinformed about
+the rate is the same defect one layer down, and it would be invisible in every artifact. The
+processor route can pass `video_metadata` alongside `pixel_values_videos` / `video_grid_thw`, and
+it is what the `scripts/qwen3_vl_embedding.py` inside the checkpoint itself uses.
+
+**Consequence for M5.2:** it is not `SentenceTransformer.encode`. It is the processor route, with
+the window's real fps passed through, plus a test asserting the fps reaches the model — because
+if it does not, every embedding in the index is honest-looking and about footage sampled at a
+rate the model was lied to about.
+
+**Decision 3 — whatever embeds a window records the frames it actually saw.** `SceneWindow`
+plans `ceil(4.162 × 1) = 5` frames for the fixture; ffmpeg's `fps=1` filter emits **4**. The
+window's count is a plan and ffmpeg's output is the fact, which is M3.4's lesson in a new place —
+there `RenderResult.duration_ms` was the request echoed back and the file was never opened.
+
+**Decision 4 — the CUDA build is a `gpu` extra with an installation note, not a pin change.**
+`pip install torch==2.13.0 --index-url .../cu130` reports success and changes nothing: the
+installed CPU wheel *is* 2.13.0, so the requirement is already satisfied. A green install, and
+`cuda.is_available()` still False. `torch==2.13.0+cu130` is required, and PEP 440 makes
+`pyproject.toml`'s `==2.13.0` match any local version, so nothing had to be loosened. `cu130` is
+also the only channel carrying 2.13.0 for cp311/Windows, so keeping the pin and getting CUDA are
+one choice rather than a trade. Licences audited: all Apache-2.0, BSD-3-Clause or MIT-CMU.
+
+**Not done here.** The three integrations themselves. Weights, GPU, loader stack and the correct
+route are established and recorded; M5.2, M5.4 and M6.3 remain unstarted, which is what the
+ledger says.
+
+---

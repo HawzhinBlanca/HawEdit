@@ -101,14 +101,37 @@ excludes and refuses a NonCommercial licence before any bytes move. Needs
 `huggingface.co` reachable, `HF_TOKEN` for the gated Community-1 repo, and ~50 GB free.
 
 Four checkpoints — `omniASR_LLM_7B_v2`, `omniASR_CTC_3B_v2`, `Qwen3-VL-Embedding-2B`,
-`Qwen3-VL-Reranker-2B` — are named in §7 as *checkpoints*, not repository ids. The script
-refuses to guess a repo for them; supply one in `models/sources.json`:
+`Qwen3-VL-Reranker-2B` — are named in §7 as *checkpoints*, not repository ids, and the script
+refuses to guess. All four are now resolved in `models/sources.json`, which is **tracked** — it
+is configuration, not weights, and re-deriving it per machine is the guessing D-022 forbids. The
+two Qwen rows are verified name matches; the two omniASR rows are a recorded decision, because
+§7's `_v2` suffix appears on no published Meta checkpoint (`BLOCKED.md` #10, D-046).
 
-```json
-{ "omniASR_LLM_7B_v2": "<org>/<repo>" }
+Weights themselves never enter the repository: `models/*` and `.ffmpeg/` are git-ignored.
+
+**The two omniASR checkpoints cannot be loaded on Windows** — they are raw fairseq2 `.pt` files
+and `fairseq2n` publishes no Windows wheel, so §3 Stage 1 needs WSL2, a container, or a Linux
+host. That is `BLOCKED.md` #11, and it is the one thing between this and a runnable product.
+
+## GPU (§3 Stages 2, 3 Path B, 5)
+
+Stage 0 runs on CPU by design (§6), so `setup.sh` installs the CPU build of torch. For the
+model stages, install the CUDA build **first** — naming the local version, because the CPU wheel
+already satisfies a bare `torch==2.13.0` and pip will report success while changing nothing:
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://pypi.org/simple "torch==2.13.0+cu130" "torchvision==0.28.0+cu130"
 ```
 
-`models/` and `.ffmpeg/` are git-ignored — weights never enter the repository.
+Then the extra:
+
+```bash
+pip install -e '.[dev,media,gpu]'
+```
+
+Verified on hawapc01: both RTX 3090 Ti doing bfloat16 work, and `Qwen3-VL-Embedding-2B`
+returning 2048-d vectors for Kurdish text at 3.98 GiB. See `evidence/gpu-stack.md` — it also
+records two traps that decide how Stage 2 must be written (D-048).
 
 ## Gemini access (§3 Stage 4)
 

@@ -31,6 +31,29 @@ media = [
     "torch==2.13.0",        # BSD-3-Clause — silero-vad's tensor interface
     "numpy==2.2.1",         # BSD-3-Clause — WAV frames to tensor without torchaudio
 ]
+# §3 Stages 2, 3 Path B and 5 — the models that need a GPU. Split from `media` because Stage 0
+# runs on CPU by design (§6) and nothing in §4.1/§4.2/§4.3/§8.1 needs any of this.
+#
+# The CUDA build of torch is NOT expressible here: it lives on a separate index and its version
+# carries a local segment. Install it first, then this extra:
+#
+#   pip install --index-url https://download.pytorch.org/whl/cu130 \
+#     --extra-index-url https://pypi.org/simple "torch==2.13.0+cu130" "torchvision==0.28.0+cu130"
+#   pip install -e '.[dev,media,gpu]'
+#
+# `torch==2.13.0+cu130` and not `torch==2.13.0`: the CPU wheel already installed *is* 2.13.0, so
+# pip reports success and changes nothing, leaving `cuda.is_available()` False after a green
+# install. PEP 440 makes `==2.13.0` above match any local version, so the pin still holds.
+# cu130 is also the only channel with torch 2.13.0 for cp311/Windows. See evidence/gpu-stack.md.
+#
+# Licences audited per D-002; NonCommercial is a hard reject and none of these are.
+gpu = [
+    "transformers>=4.57.1",         # Apache-2.0 — every §7 checkpoint's config declares 4.57.1
+    "sentence-transformers>=5.4.0", # Apache-2.0 — the loader Qwen3-VL-Embedding-2B declares
+    "accelerate>=1.0",              # Apache-2.0 — device placement for the 4B models
+    "pillow>=10",                   # MIT-CMU (HPND) — frames between ffmpeg and the processor
+    "torchvision>=0.28",            # BSD-3-Clause — required by Qwen3VLVideoProcessor
+]
 
 [build-system]
 requires = ["setuptools>=68"]
