@@ -2618,3 +2618,46 @@ a test for a branch that cannot be reached would be a test that measures nothing
 first (1067 passed, 0 skipped).
 
 ---
+
+## D-067 · Optional dependencies must be declared missing to mypy, and no ignore may depend on one
+
+**Context:** `gh` became available and showed the remote gate had been red since 14:07 while
+`verify.sh` printed VERIFY OK here. Four errors, all on lines I added across iterations 8-12 and
+never pushed: three `import-not-found` for `PIL` and `transformers`, and one `unused-ignore`.
+
+CI installs `.[dev,media]` and deliberately not `gpu`, so `mypy --strict` checks two different
+programs in the two places. The fourth error is the same fact from the other side and the more
+interesting one: `# type: ignore[no-untyped-call]` is **required** where transformers is installed
+(it ships `py.typed` and leaves `AutoProcessor.from_pretrained` untyped) and **forbidden** where it
+is absent. No single annotation satisfies both.
+
+**Decision 1 — `transformers.*` and `PIL.*` join the existing `ignore_missing_imports` list.** That
+list already holds `torch.*`, `klpt.*`, `scenedetect.*` and the rest; these two were never added.
+Every import of them already sits inside a function behind `try: ... except ImportError`, which is
+what makes them optional at runtime. The override says the same thing to the type checker.
+
+**Decision 2 — the environment-dependent ignore is removed, not relocated.** Binding the loader
+through an explicitly-`Any` local is correct in both environments and needs no ignore at all.
+
+**Decision 3 — the gate now runs the type checker in the runner's condition.**
+`mypy --strict --no-site-packages` over the two modules that import the extra, asserting exit 0.
+Scoped to those two files deliberately: over all of `src` that flag is *stricter* than CI, which
+installs `media`, and an override for `numpy` would discard the stubs it ships.
+
+**Two wrong versions of that check, both worth keeping in the record.** The first parsed
+`pyproject.toml` and asserted each gpu distribution appeared in the override list — it passed while
+the real condition still failed, which is this very finding repeated one layer up: an assertion
+about configuration is not an assertion about the type checker. The second passed for a worse
+reason — the subprocess reused `.mypy_cache` written by the ordinary typecheck, which ran *with*
+the packages installed, so mutating an override away changed nothing it could see.
+`--no-incremental` is load-bearing, not tidiness.
+
+**Audit.** 3/3 mutations caught against a baseline verified green first, and the cache defect was
+found by exactly that audit reporting SURVIVED twice.
+
+**What it says about the DONE rule.** `BLOCKED.md` #7 has said since it was written that the second
+half of "verify.sh green AND required CI checks green" refers to nothing, because the workflow runs
+without blocking. This is the first time that gap was measured rather than described: green here,
+red there, for three hours, and nothing in the repository could tell.
+
+---

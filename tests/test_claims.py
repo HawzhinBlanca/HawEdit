@@ -263,3 +263,65 @@ def test_the_docs_name_workflows_that_exist() -> None:
         assert named <= on_disk, (
             f"{doc} names workflows that do not exist: {sorted(named - on_disk)}"
         )
+
+
+# =========================================================================================
+# The gate is green here and on a clean runner, or it is not a gate
+#
+# CI installs `.[dev,media]` — §6 puts Stage 0 on CPU and the CUDA build of torch is ~2 GB of
+# runner disk for kernels nothing in the gate calls. So every distribution in the `gpu` extra
+# is ABSENT there and present on hawapc01, and `mypy --strict` therefore checks two different
+# programs in the two places.
+#
+# It has already diverged once: four errors on the runner — three `import-not-found` and one
+# `unused-ignore` — against `Success` locally, for imports added across four iterations that
+# were never pushed. D-067.
+# =========================================================================================
+
+
+# The two modules that import the `gpu` extra. Checked directly rather than by reasoning about
+# `pyproject.toml`: an indirect check on the config passed while the real condition still failed,
+# which is the same mistake this whole finding is about.
+_GPU_IMPORTING_MODULES = ("src/hawedit/video_input.py", "src/hawedit/qwen_visual.py")
+
+
+def test_the_gpu_modules_typecheck_with_the_gpu_extra_absent() -> None:
+    """`mypy --strict` must pass on a machine without the `gpu` extra, because CI is one.
+
+    This is the check that would have caught D-067 locally. It runs the real type checker with
+    `--no-site-packages`, which reproduces "the package is not installed" exactly, over the only
+    two modules that import the extra. Four errors were live on the runner while `verify.sh`
+    printed VERIFY OK here: three `import-not-found` and one `unused-ignore`.
+
+    Scoped to those two files on purpose. Run over all of `src`, `--no-site-packages` is
+    *stricter* than CI — CI installs `media`, so `numpy` and `cv2` resolve there — and silencing
+    those would throw away the stubs numpy ships.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--strict",
+            "--no-site-packages",
+            # Without this the run reuses `.mypy_cache` from the ordinary gate typecheck, which
+            # was made WITH the packages installed — so this test reported success while the
+            # condition it exists to reproduce was still broken. Found by mutating the override
+            # away and watching it pass.
+            "--no-incremental",
+            *_GPU_IMPORTING_MODULES,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "mypy --strict fails when the gpu extra is absent, which is how CI runs:\n"
+        f"{result.stdout}{result.stderr}\n"
+        "Every import of an optional dependency needs an `ignore_missing_imports` override in "
+        "pyproject.toml, and no `# type: ignore` may depend on the package being installed."
+    )

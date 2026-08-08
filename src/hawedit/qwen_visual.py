@@ -133,10 +133,12 @@ def load_processor_and_model(
             f"GPU; silently using the CPU would change what every measurement taken afterwards "
             f"is about."
         )
-    # transformers ships `py.typed` while leaving `AutoProcessor.from_pretrained` untyped.
-    processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
-        str(model_dir), trust_remote_code=trust_remote_code
-    )
+    # transformers ships `py.typed` while leaving `AutoProcessor.from_pretrained` untyped, so
+    # this call needs an ignore where the package is installed and must NOT have one where it
+    # is absent — the runner reported `unused-ignore` for exactly that reason. Binding the
+    # loader through an explicitly-`Any` local says the same thing in both environments.
+    load_processor: Any = AutoProcessor.from_pretrained
+    processor = load_processor(str(model_dir), trust_remote_code=trust_remote_code)
     extra: dict[str, Any] = {}
     if configure is not None:
         config = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=trust_remote_code)

@@ -275,6 +275,8 @@ status checks to pass → add **`gate`** (workflow `gate`).
 
 Until then, treat every DONE mark as resting on a local run plus an advisory CI run.
 
+**Measured 2026-08-08, and it is no longer hypothetical.** With `gh` available, the remote gate turned out to have been **red since 14:07** while `verify.sh` printed VERIFY OK here — `mypy --strict` fails on a runner that does not install the `gpu` extra, on four lines added across four iterations. Nothing in the repository could tell, because the workflow runs without blocking and nobody had looked. Fixed in D-067, and the gate now runs the type checker in the runner's condition so the two cannot diverge silently again — but the *structural* gap this entry describes is untouched: a red run is still a red tick beside a mergeable PR.
+
 ---
 
 ## #8 · §3 Stage 4 and §5 disagree about two judge outputs — **RESOLVED 2026-08-07**
