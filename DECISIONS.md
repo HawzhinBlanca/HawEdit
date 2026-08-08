@@ -1654,3 +1654,51 @@ everywhere. Neither skips, which also keeps the gate's floor a single number acr
 needs diarization plus face detection, and Community-1 measures **401** from here.
 
 ---
+
+## D-046 · The canonical ASR has a repository now, and no loader on this OS
+
+**Context.** `BLOCKED.md` #10 asked whether §7's `omniASR_LLM_7B_v2` / `omniASR_CTC_3B_v2` mean
+Meta's published `facebook/omniASR-LLM-7B` / `facebook/omniASR-CTC-3B`, since no published Meta
+checkpoint carries a `_v2` suffix. Hawa answered yes on 2026-08-08.
+
+**Decision 1 — the mapping goes in `models/sources.json`, labelled as a decision.** The two
+Qwen entries beside it are verified name matches: exact name, official namespace, the licence §7
+records. These two are not, and the file says so in a `_`-prefixed note, because in six months
+the difference between "verified" and "decided" is the difference between trusting the row and
+re-deriving it. `BLUEPRINT.md` §7 keeps its `_v2` cells — it is frozen, implementation does not
+edit it, and this is the second recorded place where the code is deliberately ahead of the spec
+(the first is #8 / D-033). `tests/test_registry.py` is unaffected: it asserts §7's *model ids*,
+and a repository id is not one of those.
+
+**What the answer exposed.** Not a transcript. The two checkpoints are single raw fairseq2 `.pt`
+files — 31.2 GB and 12.3 GB — with a SentencePiece tokenizer, no `config.json`, no safetensors,
+and `library: None` on the Hub. `transformers` has nothing to dispatch on. The loader is
+`omnilingual-asr`, which requires `fairseq2[arrow] <=0.6.0`, which requires **`fairseq2n`** — a
+compiled native extension whose only published wheels are `manylinux_2_28_x86_64` and
+`macosx_14_0_arm64`.
+
+**hawapc01 is Windows.** So the model §7 makes canonical is, on the machine §6 names, a 31 GB
+file with no way to open it. Measured on PyPI rather than inferred from a failed install.
+
+**Decision 2 — this is recorded as `BLOCKED.md` #11 and not engineered around.** Three shapes
+are available (WSL2 on this box, a GPU container, a Linux host) and choosing among them is an
+architecture decision about where §3 Stage 1 runs, plus a measurement-provenance question §8.1
+cares about: it requires "real-time factor measured on hawapc01", and whether WSL2 on hawapc01
+*is* hawapc01 for that purpose is a claim about what a number means. My reading is that it is —
+same silicon, same driver, `nvidia-smi` inside WSL reports both cards — but `asr.Hardware`
+exists precisely so that this project cannot make such a claim by implication, and picking the
+environment quietly would bake it into every RTF figure that follows.
+
+**What was verified while establishing that, so the decision is made against facts:** WSL2
+Ubuntu 26.04 is installed and running here; `nvidia-smi` inside it reports **both** RTX 3090 Ti
+at 24564 MiB on driver 596.36, so CUDA passthrough is live; 740 GB free on `/`; ffmpeg 8.0.1
+present. One gap: Ubuntu 26.04 ships **Python 3.14**, and `omnilingual-asr` caps at 3.12, so
+that route needs its own interpreter rather than the distro's.
+
+**Decision 3 — nothing else waits on it.** `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` (§3 Stage 1's
+*validator*) and every Stage 2 / 3 / 5 model are ordinary `safetensors` repositories that load
+natively on Windows. Those integrations proceed. The scope of #11 is exactly the two models §7
+makes canonical — which is the worst place for it to be, and is why it is its own entry rather
+than a footnote on #10.
+
+---

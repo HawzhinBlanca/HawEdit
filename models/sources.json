@@ -1,5 +1,8 @@
 {
-  "_comment": "Repository ids for the §7 names that are checkpoint names, not repos (D-022). Tracked on purpose — see .gitignore; weights are not. Entries are VERIFIED against the Hub, never guessed. omniASR_LLM_7B_v2 and omniASR_CTC_3B_v2 are absent deliberately: Meta publishes facebook/omniASR-LLM-7B and facebook/omniASR-CTC-3B and nothing with §7's _v2 suffix, so that mapping is a decision — BLOCKED.md #10. Keys starting with _ are ignored by models.py.",
+  "_comment": "Repository ids for the §7 names that are checkpoint names, not repos (D-022). Tracked on purpose — see .gitignore; weights are not. Entries are VERIFIED against the Hub, never guessed. Keys starting with _ are ignored by models.py.",
+  "_omniasr": "The two omniASR entries are Hawa's decision of 2026-08-08, not a lookup: §7's `_v2` suffix appears on no published Meta checkpoint. BLOCKED.md #10 records the question, the evidence, and the answer. Note D-046 — these are raw fairseq2 .pt checkpoints and cannot be loaded on Windows.",
+  "omniASR_LLM_7B_v2": "facebook/omniASR-LLM-7B",
+  "omniASR_CTC_3B_v2": "facebook/omniASR-CTC-3B",
   "Qwen3-VL-Embedding-2B": "Qwen/Qwen3-VL-Embedding-2B",
   "Qwen3-VL-Reranker-2B": "Qwen/Qwen3-VL-Reranker-2B"
 }

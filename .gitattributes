@@ -7,6 +7,10 @@
 *.toml text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
+# models/sources.json is tracked (see .gitignore) and read on both platforms; §5's clip
+# documents and every fixture are JSON too. One line ending, so a checkout on Windows and a
+# checkout on the CI runner hash the same bytes.
+*.json text eol=lf
 
 # Binary evidence: the golden caption render is compared pixel by pixel (§4.3.6). Any
 # newline translation would corrupt it into a test failure with a baffling diff.

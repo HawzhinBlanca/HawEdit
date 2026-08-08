@@ -252,7 +252,30 @@ this project does not let those serialize to the same thing.
 
 ---
 
-## #10 · §7's two omniASR checkpoints do not exist under the names §7 gives them
+## #10 · §7's two omniASR checkpoints do not exist under the names §7 gives them — **ANSWERED 2026-08-08**
+
+**Answered by Hawa: `_v2` names the published checkpoints.** `omniASR_LLM_7B_v2` is
+`facebook/omniASR-LLM-7B` and `omniASR_CTC_3B_v2` is `facebook/omniASR-CTC-3B`. Both are
+configured in `models/sources.json`, which records that they are a decision rather than a
+lookup so nobody later mistakes them for verified name matches the way the two Qwen entries
+beside them are.
+
+**`BLUEPRINT.md` §7 still carries the `_v2` cells.** The blueprint is frozen and implementation
+work does not edit it, so the code is deliberately ahead of the spec in a second recorded place
+— the same arrangement as #8 / D-033. `tests/test_registry.py` is unaffected: it asserts §7's
+*model ids* against the registry, and the repository id lives in `sources.json`, which §7 does
+not describe.
+
+**This did not make Stage 1 runnable, and the reason is new — see D-046.** The two checkpoints
+are single raw fairseq2 `.pt` files (31.2 GB and 12.3 GB) with a SentencePiece tokenizer and no
+`config.json`, so `transformers` cannot load them; they need `omnilingual-asr`, which needs
+`fairseq2`, which needs `fairseq2n` — a compiled native extension published **only** as
+`manylinux_2_28_x86_64` and `macosx_14_0_arm64` wheels. hawapc01 is Windows. That is recorded
+as **#11**, because it is a different question from this one and answering this one exposed it.
+
+Original entry, kept for the record:
+
+## #10 (original) · §7's two omniASR checkpoints do not exist under the names §7 gives them
 
 **Needs:** Hawa, one decision. No credentials, no hardware — and, now, no network excuse.
 
@@ -296,5 +319,74 @@ mapping goes into `models/sources.json` citing this entry.
 
 Until answered, `omniASR_LLM_7B_v2` and `omniASR_CTC_3B_v2` have no source, `models.py` refuses
 to invent one, and §3 Stage 1 cannot run — which keeps M1.4, M0.11 and M0.13 open.
+
+---
+
+## #11 · §7's canonical ASR cannot be loaded on Windows, and hawapc01 is Windows
+
+**Needs:** Hawa, one decision — where §3 Stage 1 runs. No credentials, no purchase.
+
+Answering #10 supplied the repository ids and immediately produced a different obstacle. This
+is not a naming question and not a network question; it is a platform one, and it is the last
+thing standing between this project and a transcript.
+
+**What the checkpoints actually are.** `facebook/omniASR-LLM-7B` and
+`facebook/omniASR-CTC-3B` are not `transformers` repositories. Each is a single raw
+`.pt` file plus a SentencePiece tokenizer, and nothing else:
+
+| Repo | Files | Size |
+|---|---|---|
+| `facebook/omniASR-LLM-7B` | `omniASR-LLM-7B.pt`, `omniASR_tokenizer_v7.model`, README | **31.2 GB** |
+| `facebook/omniASR-CTC-3B` | `omniASR-CTC-3B.pt`, `omniASR_tokenizer.model`, README | **12.3 GB** |
+
+No `config.json`, no `model.safetensors`, no processor config, and the Hub reports
+`library: None`. `AutoModel` has nothing to dispatch on. The model card points at
+`facebookresearch/omnilingual-asr`, which is the loader.
+
+**Why that loader will not install here.** Measured on PyPI, not assumed:
+
+- `omnilingual-asr` 0.2.0 requires `fairseq2[arrow] >=0.5.2,<=0.6.0`, and `requires_python`
+  is `>=3.10,<=3.12`.
+- `fairseq2` requires `fairseq2n`, a compiled native extension.
+- `fairseq2n` publishes wheels for **`manylinux_2_28_x86_64`** and **`macosx_14_0_arm64`**.
+  There is no Windows wheel, and no pure-Python fallback — it is a C++/CUDA extension.
+
+So on Windows the canonical Sorani ASR is a 31 GB file with no loader. Note what this does
+*not* mean: `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` — §3 Stage 1's **validator** — is a normal
+`safetensors` repo and loads fine here, as do every Stage 2/3/5 model. This is specific to the
+two models §7 makes canonical, which is the worst place for it.
+
+**WSL2 is on this machine and it works.** Measured, not assumed:
+
+| Fact | Value |
+|---|---|
+| Distro | Ubuntu 26.04 LTS, WSL 2, already running |
+| GPU inside WSL | `nvidia-smi` reports **both** RTX 3090 Ti at 24564 MiB, driver 596.36 — CUDA passthrough is live |
+| Disk inside WSL | 740 GB free on `/` |
+| ffmpeg inside WSL | 8.0.1 |
+| Python inside WSL | **3.14.4 — too new.** `omnilingual-asr` caps at 3.12 |
+
+`docker-desktop` is also registered as a WSL distro, so a container is a second route.
+
+**The question — three shapes, and it is an architecture choice, not a preference:**
+
+1. **Stage 1 runs in WSL2** on this box: install a 3.12 there (deadsnakes or `uv`), plus
+   `omnilingual-asr` and CUDA torch. §6 says Stage 1 runs on hawapc01's GPUs and this satisfies
+   that literally — same hardware, same driver. It splits the pipeline across two environments,
+   so `asr.Hardware` has to record which one produced a number, and §8.1's "RTF measured on
+   hawapc01" needs a decision about whether WSL2 counts as hawapc01 for that purpose. My
+   reading is that it does — same silicon, same driver — but that is a measurement-provenance
+   claim and this project does not let me make it quietly.
+2. **Stage 1 runs in a Linux container** with GPU passthrough. Cleaner isolation, reproducible,
+   and the natural shape if §6's "server" ever stops being this desktop. More moving parts.
+3. **Stage 1 runs on a Linux host** and hawapc01 does Stage 0 and Stage 6. Matches §6's
+   split most closely and needs hardware that is not here.
+
+Until one is chosen, M0.11, M0.13 and M1.4 stay open: the weights are identified, downloadable
+and licensed Apache-2.0, and nothing on this OS can open them.
+
+**Not blocked by this:** every other §7 model. Stage 2's embedder and reranker, Stage 3 Path B,
+Stage 5's TimeLens2 and the Stage 1 validator are all ordinary `transformers` repositories that
+load natively on Windows, and they are being integrated regardless.
 
 ---
