@@ -8,19 +8,35 @@ every DONE mark downstream of it would be worthless.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "verify.sh"
+BASH = shutil.which("bash") or "bash"
 
 FULL_GATE_SUCCESS_LINE = "VERIFY OK"
 
 
 def _run_gate(*args: str, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    """Run the real gate script, the way a developer or CI runs it.
+
+    Two Windows-only traps, both of which turn every refusal assertion below into a false
+    pass — the tests that exist to prove the gate cannot be neutered, neutered by the harness.
+
+    `BASH`, not `"bash"`: `CreateProcess` searches `C:\\Windows\\system32` *before* PATH, and
+    that is where WSL's `bash.exe` lives. Python would launch a Linux interpreter that cannot
+    see a Windows path at all, exit 127, and every `returncode == 3` assertion would read the
+    failure as "did not refuse". `shutil.which` walks PATH only, so it finds the Git Bash that
+    a developer here actually uses.
+
+    `as_posix()`, not `str()`: bash reads `C:\\Users\\…` as escape sequences and hands itself
+    `C:UsersWareen…`. `C:/Users/…` passes through unchanged.
+    """
     env = {**os.environ, **env_overrides}
     return subprocess.run(
-        ["bash", str(GATE), *args],
+        [BASH, GATE.as_posix(), *args],
         capture_output=True,
         text=True,
         env=env,
@@ -37,7 +53,7 @@ def test_gate_is_executable() -> None:
 def test_gate_refuses_a_noop_test_command() -> None:
     """`TEST_CMD=true` is the canonical cheat: the gate would run nothing and print green."""
     result = _run_gate(TEST_CMD="true")
-    assert result.returncode == 3, f"expected refusal exit 3, got {result.returncode}"
+    assert result.returncode == 5, f"expected refusal exit 5, got {result.returncode}"
     assert "REFUSED" in result.stderr
     assert FULL_GATE_SUCCESS_LINE not in result.stdout
 
@@ -50,21 +66,21 @@ def test_gate_refuses_an_empty_lint_command() -> None:
     linter and the gate would look configured while the operator asked for nothing.
     """
     result = _run_gate(LINT_CMD="")
-    assert result.returncode == 3, f"expected refusal exit 3, got {result.returncode}"
+    assert result.returncode == 5, f"expected refusal exit 5, got {result.returncode}"
     assert "REFUSED" in result.stderr
     assert FULL_GATE_SUCCESS_LINE not in result.stdout
 
 
 def test_gate_refuses_a_whitespace_only_command() -> None:
     result = _run_gate(FORMAT_CMD="   ")
-    assert result.returncode == 3
+    assert result.returncode == 5
     assert "REFUSED" in result.stderr
 
 
 def test_gate_refuses_a_colon_noop() -> None:
     """`:` is a shell no-op that is not spelled `true` — the refusal must catch it too."""
     result = _run_gate(TYPECHECK_CMD=":")
-    assert result.returncode == 3
+    assert result.returncode == 5
     assert "REFUSED" in result.stderr
 
 

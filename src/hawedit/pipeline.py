@@ -44,7 +44,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc
 from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.index import Bm25Index
-from hawedit.ingest import IngestResult, ingest
+from hawedit.ingest import IngestError, IngestResult, ingest, probe_stream
 from hawedit.judge import EditorialJudge, JudgeRequest, JudgeVerdict
 from hawedit.path_b import VideoUnderstanding, discover_visual
 from hawedit.render import RenderError, RenderResult, frame_rate, render_clip
@@ -420,7 +420,7 @@ def run_pipeline(
     vad_pauses = _pauses_between(ingested)
     sentences = segment_sentences(transcript.words, vad_pauses=vad_pauses)
 
-    run = _replace(run, transcript=normalized, index=index, sentences=sentences)
+    run = replace(run, transcript=normalized, index=index, sentences=sentences)
 
     # --- §3 Stage 3, both paths -------------------------------------------------------------
     merged: tuple[MergedCandidate, ...] = ()
@@ -434,7 +434,7 @@ def run_pipeline(
         if read_scenes is not None:
             visual = discover_visual(run.visual_windows, read_scenes, media_id=identifier)
         merged = merge_candidates(list(verbal), list(visual))
-        run = _replace(
+        run = replace(
             run,
             discovery=None if merged else _STAGE_3_NOTHING_FOUND,
             candidates=merged,
@@ -450,7 +450,7 @@ def run_pipeline(
                 text_ckb=normalized.text_ckb,
             )
         )
-        run = _replace(run, editorial=None)
+        run = replace(run, editorial=None)
 
     if not select_sentences:
         return run
@@ -471,7 +471,7 @@ def run_pipeline(
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------
     anchors = anchors_for(selected)
     if anchors is None:
-        return _replace(
+        return replace(
             run,
             boundary=StageSkipped(
                 stage="boundary",
@@ -525,13 +525,13 @@ def run_pipeline(
         ),
         qc=qc,
     )
-    run = _replace(run, boundary=boundary, clip=clip)
+    run = replace(run, boundary=boundary, clip=clip)
 
     # --- §3 Stage 6 render ----------------------------------------------------------------
     if verdict is None:
         # Not a shortcut around the gate — the gate's own conclusion, reached before spending
         # an encode on a clip that `assert_renderable` would refuse anyway.
-        return _replace(
+        return replace(
             run,
             render=StageSkipped(
                 stage="render",
@@ -568,11 +568,11 @@ def run_pipeline(
         # The render gate refused. That is the gate working — §2 puts QC before output always,
         # and invariant #2 forbids rendering an unfinished sentence — so it is reported rather
         # than raised: the run is a partial result, not a crash.
-        return _replace(
+        return replace(
             run, render=StageSkipped(stage="render", reason=str(exc), blocked_by=("§2 QC gate",))
         )
 
-    run = _replace(run, render=rendered)
+    run = replace(run, render=rendered)
 
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
     # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
@@ -596,7 +596,7 @@ def run_pipeline(
             encoding="utf-8",
         )
     except (DeliveryError, RenderError) as exc:
-        return _replace(
+        return replace(
             run,
             delivery=StageSkipped(
                 stage="delivery",
@@ -605,13 +605,7 @@ def run_pipeline(
             ),
         )
 
-    return _replace(run, delivery=Delivery(srt_path=str(srt_path), edl_path=str(edl_path)))
-
-
-def _replace(run: PipelineRun, **changes: object) -> PipelineRun:
-    from dataclasses import replace
-
-    return replace(run, **changes)  # type: ignore[arg-type]
+    return replace(run, delivery=Delivery(srt_path=str(srt_path), edl_path=str(edl_path)))
 
 
 def _pauses_between(ingested: IngestResult) -> tuple[tuple[int, int], ...]:
@@ -630,32 +624,11 @@ def _pauses_between(ingested: IngestResult) -> tuple[tuple[int, int], ...]:
 
 def _proxy_dimensions(source: Path, ffmpeg: Path | None) -> tuple[int, int]:
     """Source frame size, probed rather than assumed — the crop arithmetic depends on it."""
-    import subprocess
-
-    from hawedit.captions import find_ffmpeg
-    from hawedit.ingest import IngestError
-
-    binary = ffmpeg or find_ffmpeg()
-    if binary is None:
-        raise IngestError("no ffmpeg available — run scripts/fetch-ffmpeg.sh")
-    output = subprocess.run(
-        [
-            str(binary.with_name("ffprobe")),
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height",
-            "-of",
-            "csv=p=0:s=x",
-            str(source),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    width, height = (int(value) for value in output.split("x")[:2])
+    output = probe_stream(source, "stream=width,height", ffmpeg, video_only=True)
+    try:
+        width, height = (int(value) for value in output.split("x")[:2])
+    except ValueError as exc:
+        raise IngestError(f"could not read frame dimensions from {source}: {output!r}") from exc
     return width, height
 
 

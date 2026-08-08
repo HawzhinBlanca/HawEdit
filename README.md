@@ -52,8 +52,15 @@ bash scripts/setup.sh
 ```
 
 It creates the venv, installs the dev and §3 Stage 0 media dependencies (CPU torch — §6 puts
-Stage 0 on CPU by design), fetches an ffmpeg whose libass has HarfBuzz, reports §7 model
-readiness, and finishes by running the gate. If it exits 0 the checkout is genuinely ready.
+Stage 0 on CPU by design), verifies or fetches an ffmpeg whose libass has HarfBuzz, reports §7
+model readiness, and finishes by running the gate. If it exits 0 the checkout is genuinely
+ready, and the last thing it prints is the interpreter path for *this* machine.
+
+> **Windows.** hawapc01 is a Windows box, so every `.venv/bin/python` below is
+> `.venv/Scripts/python.exe` there. `setup.sh` and `verify.sh` detect the layout themselves;
+> only the commands quoted in this file are written one way. An ffmpeg on `PATH` with libass,
+> HarfBuzz and FriBidi is accepted as-is — `winget install Gyan.FFmpeg` (the *full* build)
+> supplies one, and `fetch-ffmpeg.sh` verifies it rather than downloading a Linux binary over it.
 
 The media extra is not optional here even though `pyproject.toml` marks it optional: without
 it the Stage 0 tests *skip*, and a skipped test is the quiet green this project is written

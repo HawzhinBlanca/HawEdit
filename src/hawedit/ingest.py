@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.captions import find_ffmpeg
+from hawedit.captions import ffprobe_for, find_ffmpeg
 from hawedit.diarization import Segment
 
 __all__ = [
@@ -58,6 +58,7 @@ __all__ = [
     "ingest",
     "media_stack_available",
     "probe_duration_ms",
+    "probe_stream",
 ]
 
 # §3 Stage 0's literal parameters.
@@ -108,10 +109,21 @@ def _ffmpeg(ffmpeg: Path | None) -> Path:
     return resolved
 
 
-def probe_duration_ms(source: Path, ffmpeg: Path | None = None) -> int:
-    """Media duration in milliseconds, via ffprobe beside the ffmpeg binary."""
+def probe_stream(
+    source: Path,
+    entries: str,
+    ffmpeg: Path | None = None,
+    video_only: bool = False,
+    separator: str = "x",
+) -> str:
+    """Ask ffprobe for `entries` about `source`, as one stripped string.
+
+    One resolver and one argv for every probe in the system. Three call sites had grown their
+    own — with three different behaviours when ffprobe failed, including one that let a raw
+    `CalledProcessError` escape into the pipeline runner.
+    """
     binary = _ffmpeg(ffmpeg)
-    ffprobe = binary.with_name("ffprobe")
+    ffprobe = ffprobe_for(binary)
     if not ffprobe.exists():
         raise IngestError(f"no ffprobe beside {binary}")
     result = _run(
@@ -119,14 +131,20 @@ def probe_duration_ms(source: Path, ffmpeg: Path | None = None) -> int:
             str(ffprobe),
             "-v",
             "error",
+            *(("-select_streams", "v:0") if video_only else ()),
             "-show_entries",
-            "format=duration",
+            entries,
             "-of",
-            "default=nw=1:nk=1",
+            f"csv=p=0:s={separator}" if video_only else "default=nw=1:nk=1",
             str(source),
         ]
     )
-    return round(float(result.stdout.decode().strip()) * 1000)
+    return result.stdout.decode().strip()
+
+
+def probe_duration_ms(source: Path, ffmpeg: Path | None = None) -> int:
+    """Media duration in milliseconds, via ffprobe beside the ffmpeg binary."""
+    return round(float(probe_stream(source, "format=duration", ffmpeg)) * 1000)
 
 
 def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:

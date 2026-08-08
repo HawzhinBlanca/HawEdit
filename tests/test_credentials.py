@@ -11,8 +11,11 @@ toward putting one somewhere convenient.
 
 from __future__ import annotations
 
+import getpass
 import json
+import os
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -69,20 +72,49 @@ def test_the_projects_own_env_file_is_ignored() -> None:
     assert_ignored_by_git(ENV_FILE)  # must not raise
 
 
+def assert_owner_only(env_file: Path) -> None:
+    """The stored key must not be readable by another local account — on either platform.
+
+    Windows ignores every mode bit but read-only, so `S_IMODE == 0o600` is unsatisfiable
+    there and asserting it would only ever have two outcomes: a red suite, or the check
+    deleted. Neither tests the property. So the property is asserted in the terms each
+    platform actually has, and read back from the OS rather than from the code that set it —
+    `icacls` is the authority on a Windows ACL the way `stat` is on a POSIX mode.
+    """
+    if os.name != "nt":
+        mode = stat.S_IMODE(env_file.stat().st_mode)
+        assert mode == 0o600, f"{oct(mode)} — a credential file other users can read"
+        return
+
+    acl = subprocess.run(
+        ["icacls", str(env_file)], capture_output=True, text=True, check=True
+    ).stdout
+    # `icacls` prints the path once, then one `PRINCIPAL:(perms)` per ACE, continuation lines
+    # indented, then a summary line.
+    granted = set()
+    for line in acl.splitlines():
+        ace = line.replace(str(env_file), "", 1).strip()
+        if ace and not ace.startswith("Successfully"):
+            granted.add(ace.split(":(")[0])
+    assert len(granted) == 1 and granted.pop().endswith("\\" + getpass.getuser()), (
+        f"{env_file} is readable by more than its owner — a credential file must not be.\n{acl}"
+    )
+
+
 def test_the_stored_file_is_not_world_readable(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
     write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
-    mode = stat.S_IMODE(env_file.stat().st_mode)
-    assert mode == 0o600, f"{oct(mode)} — a credential file other users can read"
+    assert_owner_only(env_file)
 
 
 def test_an_existing_permissive_file_is_tightened(tmp_path: Path) -> None:
-    """An existing .env may predate this module, so the mode is set on every write."""
+    """An existing .env may predate this module, so it is narrowed on every write."""
     env_file = tmp_path / ".env"
     env_file.write_text("OTHER=1\n", encoding="utf-8")
-    env_file.chmod(0o644)
+    if os.name != "nt":
+        env_file.chmod(0o644)
     write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+    assert_owner_only(env_file)
 
 
 # --- refusal 2: never store a key that has not been verified ------------------------------

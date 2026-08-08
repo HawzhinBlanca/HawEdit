@@ -18,11 +18,19 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
-PY="${PY:-$here/.venv/bin/python}"
 models_root="${HAWEDIT_MODELS:-$here/models}"
 
-if [[ ! -x "$PY" ]]; then
-  echo "✗ no interpreter at $PY — run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
+# `bin/` on POSIX, `Scripts/` on Windows — and hawapc01, the box that will actually hold 50 GB
+# of §7 weights, is Windows. Deliberately spelled out here rather than sourced from a shared
+# file: verify.sh is the gate and must stand alone, so this stays the same six lines in both
+# places instead of one of them growing a dependency the other cannot have.
+if [[ -z "${PY:-}" ]]; then
+  for candidate in "$here/.venv/bin/python" "$here/.venv/Scripts/python.exe"; do
+    if [[ -x "$candidate" ]]; then PY="$candidate"; break; fi
+  done
+fi
+if [[ -z "${PY:-}" || ! -x "$PY" ]]; then
+  echo "✗ no interpreter in .venv — run: bash scripts/setup.sh" >&2
   exit 2
 fi
 

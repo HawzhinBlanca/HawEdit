@@ -1525,3 +1525,132 @@ the `.ttf` — it is what the licence asks for and the file is asserted present,
 licence question and I am not counsel.
 
 ---
+
+## D-044 · The environment changed: this checkout now runs on hawapc01, and the code did not
+
+**What happened.** Every prior entry was written from a cloud container: no GPU, no ffmpeg, a
+proxy that denied `huggingface.co`. This checkout is on **hawapc01** — the machine §6 names and
+§8.1 requires the ASR benchmark to run on. Measured, not assumed: hostname `HAWAPC01`, two
+NVIDIA RTX 3090 Ti at 24564 MiB each (§6's "2×24 GiB"), `ffmpeg 8.1.1-full` on `PATH` built
+`--enable-libass --enable-libharfbuzz --enable-libfribidi --enable-nvenc`, and
+`huggingface.co`, `commonvoice.mozilla.org`, `www.openslr.org` and `zenodo.org` all answering
+200 where `BLOCKED.md` #6 recorded a proxy denial.
+
+It is also **Windows**, and nothing in this project had ever run there. `bash scripts/setup.sh`
+— the one command the README promises takes a clone to a green gate — stopped at its first
+line. Six defects, none of them cosmetic, each fixed at the one place all callers route
+through rather than at the call site that happened to fail first:
+
+**1 — `ffprobe` was resolved as `with_name("ffprobe")`.** `shutil.which` returns `ffmpeg.EXE`
+here, whose sibling is `ffprobe.EXE`; the bare name does not exist. Four call sites had the
+same line, so Stage 0 ingest, the frame-rate probe, the pipeline's dimension probe and a test
+helper all failed identically. `captions.ffprobe_for` keeps the binary's own suffix, and
+`ingest.probe_stream` now gives every probe in the system one resolver and one argv.
+
+**2 — the ffmpeg filtergraph paths were under-escaped, on every platform.** ffmpeg unescapes a
+filter option **twice** — once splitting the filtergraph, once parsing the filter's arguments —
+so `\:` survives the first pass and is consumed by the second. The escaping was one backslash.
+This was invisible on Linux because a POSIX path contains none of the characters being escaped,
+so the substitutions never fired; a Windows path carries `C:` and `\` at once and the burn-in
+died. Measured against the real binary: `C\:\Users\…` and `C\:/Users/…` both fail, `C\:/Users/…`
+renders. Separators are normalised to `/`, which ffmpeg accepts everywhere. **The dangerous
+direction is not the one that failed:** a path in the last filter position truncates the
+argument in silence and libass falls back to `shaping=auto`, which is exactly §4.3's failure —
+correct-looking output, wrong Arabic shaping, invisible until a client sees it.
+
+**3 — `os.O_NOFOLLOW` does not exist on Windows,** and it is the syscall protecting the one
+file in this project that holds a secret. `getattr(os, "O_NOFOLLOW", 0)` alone would have made
+the flag evaporate on the box that will hold the real key while the code still read as
+protected. The guarantee is reconstructed in two halves — refuse a link before the open, then
+prove with `fstat`/`lstat` that the handle is the file that was checked — because the pre-check
+alone is a TOCTOU window, which is the original symlink bug back again, just narrower.
+
+**4 — `chmod(0o600)` is decoration on Windows.** Measured: the file lands at `0o666` and
+inherits the directory's ACL. `restrict_to_owner` now does `chmod` on POSIX and an `icacls`
+`/inheritance:r` + owner-only grant on Windows, and **refuses** rather than warning if that
+fails. The tests assert the property in the terms each platform has, read back from the OS
+rather than from the code that set it, and the umask test became "make the surroundings as
+permissive as the OS allows, then check" — on Windows that is a wide-open parent directory ACL,
+which is the real check on `/inheritance:r`.
+
+**5 — `subprocess.run(["bash", …])` on Windows launches WSL.** `CreateProcess` searches
+`C:\Windows\system32` *before* `PATH`, and that is where WSL's `bash.exe` lives, so Python and
+`shutil.which` disagreed about which interpreter `"bash"` meant. Every `test_gate.py` assertion
+is `returncode == 3` or `== 5`; WSL exited 127 for a path it could not see, and **the ten tests
+whose entire job is proving the gate cannot be neutered were themselves neutered, by the
+harness.** They resolve the interpreter through `shutil.which` and pass `as_posix()` now.
+
+**6 — `python3` is a Microsoft Store stub here, and `python` is another tool's virtualenv.**
+The stub is on `PATH`, prints "Python was not found", installs nothing and exits non-zero; the
+venv is a real 3.11 that cannot build a venv (`ensurepip` exits 1). `setup.sh` now picks an
+interpreter by asking each candidate whether it is a base 3.11+, not by trusting a name — and
+`PY_BIN`, when set, is the only candidate, so a deliberate choice is never silently replaced.
+
+**Decision — `fetch-ffmpeg.sh` verifies before it fetches.** §4.3.2's requirement is a
+*verified* build, not a downloaded one. It now checks `HAWEDIT_FFMPEG`, then `.ffmpeg/`, then
+`PATH` — the same order and the same libass/HarfBuzz/FriBidi test `captions.find_ffmpeg` uses,
+so the script and the library cannot disagree about which binary is in play — and exits 0 if
+one already qualifies. On a non-Linux host with nothing qualifying it **refuses with what to
+install**, rather than unpacking a Linux binary that would then fail the RTL check and report a
+true-sounding error about the wrong thing.
+
+**Decision — the symlink test does not skip.** A `pytest.skip` on Windows would stop that test
+running on the one machine that will hold the real key, and it collided with the gate's floor:
+the floor is one committed number and the runnable-test count would have differed per platform,
+so the suite could not be green on both. What Windows lacks is the privilege to *build* the
+attack, not the refusal that stops it — so where `os.symlink` raises, `is_symlink` is answered
+directly and the same assertions run. A POSIX runner still drives the real link through the
+real syscall, in the same test. 873 collected, 873 passed, **0 skipped**, on both.
+
+**Note on the ratchet.** The first green run here wrote a floor of 873 from `collected` while
+the check gated on `passed`, so one skipped test raised the bar the next run was refused for
+missing. Both now read the number of tests that actually ran.
+
+**Not decided here.** Whether `BLOCKED.md` #2 and #6 are resolved *as facts about the project*
+or only about this machine — recorded separately in `BLOCKED.md`, because a blocker that lifts
+when you change desks is a different claim from one that is gone.
+
+---
+
+## D-045 · The encoder probe asked the wrong question, and answered it confidently
+
+**The defect.** `render.encoder_available` exists because `ffmpeg -encoders` lists what was
+*compiled in*, which is a different question from what this machine can encode. Its answer came
+from encoding one real frame and checking bytes came out — the right method. The frame was
+**64×64**, and NVENC refuses anything below roughly 145×49: *"Frame Dimension less than the
+minimum supported value"*, with ffmpeg exiting **0** and writing nothing.
+
+So on hawapc01 — 3090 Ti present, `--enable-nvenc` in the build — the probe reported
+`h264_nvenc` unavailable. §6 puts NVENC on hawapc01 and `render_clip` refuses an unavailable
+encoder rather than silently substituting x264 (deliberately, and correctly). The two rules
+compose into: **asking for NVENC on the one machine the blueprint says to use it on would
+raise.** The function written because a listing cannot be trusted was itself the untrustworthy
+answer, and nothing downstream could tell the difference — a wrong "no" looks exactly like a
+correct "no".
+
+Measured on this box, same binary, same encoder: 64×64 → 0 bytes, 128×128 → 0 bytes, 145×49 →
+1032 bytes, 1080×1920 → 1300 bytes.
+
+**Decision — the probe encodes at Stage 6's own output size.** `ENCODER_PROBE_SIZE` is
+`(VERTICAL_WIDTH, VERTICAL_HEIGHT)`. The question `render_clip` needs answered is "can this
+encoder encode what Stage 6 will hand it", so the probe hands it that. A smaller frame is
+cheaper and can fail for reasons that say nothing about availability, which is the whole bug.
+
+**Decision — `NVENC_MIN_FRAME = (145, 49)` is recorded as a constant with a test.** The value
+is NVIDIA's, not ours; recording it gives the probe geometry something to be checked against.
+The test is arithmetic — no ffmpeg, no GPU — so it holds on a CI runner that could never
+observe the failure.
+
+**Decision — the two GPU-shaped tests assert the property, not the environment.** One asserted
+NVENC was *unavailable*; its own message admitted it would "outlive the environment it
+documents", and it did, by going red the moment the project reached its own hardware. It now
+asserts what `encoder_available` reports equals whether an independently spelled-out real
+encode writes bytes — true in both directions, on a GPU box and on a bare runner. The other
+skipped itself whenever NVENC worked, i.e. exactly on hawapc01; the refusal is what it is
+testing, not the graphics card, so availability is answered directly and the refusal runs
+everywhere. Neither skips, which also keeps the gate's floor a single number across platforms.
+
+**Not changed.** M3.3 stays PARTIAL. It had two shortfalls and now has one: the reframe still
+needs diarization plus face detection, and Community-1 measures **401** from here.
+
+---

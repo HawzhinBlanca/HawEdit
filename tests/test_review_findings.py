@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 from pathlib import Path
 
@@ -34,6 +33,7 @@ import pytest
 from hawedit.boundary import Boundary, BoundaryInvariantViolated, assert_boundary_invariant
 from hawedit.credentials import GEMINI_API_KEY, CredentialError, write_credential
 from hawedit.gate import NoTestEvidence, check_test_evidence, write_floor
+from test_credentials import assert_owner_only
 
 # --- BLOCKER: invariant #2's universal gate used plain truthiness -------------------------
 
@@ -138,6 +138,7 @@ def _git_repo(tmp_path: Path) -> Path:
 
 def test_a_symlinked_env_file_cannot_be_used_to_write_the_key_into_a_tracked_file(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`git check-ignore` answers about the *pathname*, never the symlink target.
 
@@ -148,7 +149,16 @@ def test_a_symlinked_env_file_cannot_be_used_to_write_the_key_into_a_tracked_fil
     `Path.write_text`, which follows symlinks.
     """
     repo = _git_repo(tmp_path)
-    (repo / ".env").symlink_to("README.md")
+    try:
+        (repo / ".env").symlink_to("README.md")
+    except OSError:  # Windows without SeCreateSymbolicLinkPrivilege
+        # Not a skip. hawapc01 is the machine that will hold the real key, and a test that
+        # stops running exactly there protects the least useful host. What is unavailable is
+        # the privilege to *build* the attack, not the refusal that stops it: on a platform
+        # with no O_NOFOLLOW, `write_credential` decides from `is_symlink()`, so that is the
+        # answer supplied here. A POSIX runner takes the branch above and drives the real
+        # link through the real syscall — same test, same assertions, both halves covered.
+        monkeypatch.setattr(Path, "is_symlink", lambda _self: True)
 
     with pytest.raises(CredentialError, match="symlink"):
         write_credential(GEMINI_API_KEY, "sk-LEAKED-VIA-SYMLINK", env_file=repo / ".env")
@@ -167,7 +177,7 @@ def test_the_key_is_never_world_readable_even_briefly(tmp_path: Path) -> None:
     """
     env_file = tmp_path / ".env"
     write_credential(GEMINI_API_KEY, "sk-test", env_file=env_file, check_ignored=False)
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+    assert_owner_only(env_file)
 
     # The window is invisible after the fact, so assert the mechanism: an O_CREAT with 0600
     # cannot expose a wider mode, whereas write_text+chmod always can.
@@ -444,15 +454,30 @@ def test_no_stray_environment_variable_from_the_old_name_survives() -> None:
         assert "HAWEDIT2_" not in path.read_text(encoding="utf-8"), f"stale env var in {path}"
 
 
-def test_the_umask_cannot_widen_the_credential_file(tmp_path: Path) -> None:
-    """Belt and braces on the 0600 claim: set a permissive umask and check the result."""
-    old = os.umask(0o000)
-    try:
-        env_file = tmp_path / ".env"
+def test_a_permissive_environment_cannot_widen_the_credential_file(tmp_path: Path) -> None:
+    """Belt and braces: make the surroundings as permissive as the OS allows, then check.
+
+    The hostile condition is not the same on both platforms, and asserting the POSIX one on
+    Windows would test nothing — `os.umask` is accepted there and changes no ACL. What a
+    Windows file actually inherits is its directory's ACL, so that is what gets opened up
+    here. It is the direct analogue, and it is the check on `restrict_to_owner`'s
+    `/inheritance:r`: without that flag the file below comes out readable by Everyone.
+    """
+    env_file = tmp_path / ".env"
+    if os.name == "nt":
+        subprocess.run(
+            ["icacls", str(tmp_path), "/grant", "Everyone:(OI)(CI)F"],
+            capture_output=True,
+            check=True,
+        )
         write_credential(GEMINI_API_KEY, "sk-test", env_file=env_file, check_ignored=False)
-        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
-    finally:
-        os.umask(old)
+    else:
+        old = os.umask(0o000)
+        try:
+            write_credential(GEMINI_API_KEY, "sk-test", env_file=env_file, check_ignored=False)
+        finally:
+            os.umask(old)
+    assert_owner_only(env_file)
 
 
 # =========================================================================================

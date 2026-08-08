@@ -21,16 +21,19 @@ producing something plausible.
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from hawedit.boundary import BoundaryInputs, fuse_boundary
-from hawedit.captions import build_ass, find_ffmpeg
+from hawedit.captions import build_ass, ffprobe_for, find_ffmpeg
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
 from hawedit.ingest import probe_duration_ms
 from hawedit.render import (
+    ENCODER_PROBE_SIZE,
+    NVENC_MIN_FRAME,
     VERTICAL_HEIGHT,
     VERTICAL_WIDTH,
     Encoder,
@@ -117,7 +120,7 @@ def _probe(path: Path, entries: str) -> str:
     assert ffprobe is not None
     return subprocess.run(
         [
-            str(ffprobe.with_name("ffprobe")),
+            str(ffprobe_for(ffprobe)),
             "-v",
             "error",
             "-show_entries",
@@ -260,15 +263,34 @@ def test_a_hand_built_incomplete_boundary_is_still_refused_at_the_render(tmp_pat
     assert not (tmp_path / "out.mp4").exists(), "a refused clip must leave no artifact"
 
 
-@needs_ffmpeg
-def test_a_listed_but_unusable_encoder_is_not_reported_as_available() -> None:
-    """§4.3.2's lesson, applied to encoders — measured on this exact build.
+def test_the_encoder_probe_is_not_smaller_than_nvenc_will_accept() -> None:
+    """A probe below NVENC's minimum frame calls a working encoder unavailable.
 
-    `ffmpeg -encoders` lists what was compiled in. The static build fetched by
-    `scripts/fetch-ffmpeg.sh` lists `h264_nvenc` and cannot encode one frame with it: NVENC is
-    loaded at runtime and there is no NVIDIA driver here. Reading the listing would have this
-    machine claim an encoder §6 puts on hawapc01, and the failure would surface deep inside a
-    real encode. So the probe encodes a frame and checks bytes came out.
+    This is the guard on a real defect. `encoder_available` probed at 64x64, and NVENC refuses
+    anything under roughly `NVENC_MIN_FRAME` with "Frame Dimension less than the minimum
+    supported value" — so on hawapc01, the one machine §6 says to use NVENC on, the function
+    written *because* a capability listing cannot be trusted returned a confident wrong answer,
+    and `render_clip` would have refused NVENC exactly where it is required. Needs no ffmpeg:
+    it is arithmetic about the probe's own geometry, so it holds on a runner with no GPU too.
+    """
+    assert ENCODER_PROBE_SIZE[0] >= NVENC_MIN_FRAME[0]
+    assert ENCODER_PROBE_SIZE[1] >= NVENC_MIN_FRAME[1]
+
+
+@needs_ffmpeg
+def test_encoder_availability_is_decided_by_a_real_encode_not_by_the_listing() -> None:
+    """§4.3.2's lesson applied to encoders, in whichever direction this machine sits.
+
+    `ffmpeg -encoders` lists what was compiled in. A container with no NVIDIA driver lists
+    `h264_nvenc` and cannot encode one frame with it; hawapc01 lists it and can. Neither
+    answer is safe to hardcode, and this test used to hardcode the pessimistic one — it
+    asserted NVENC was *unavailable*, which is wrong on the box §6 names, so it was written to
+    go red the moment the project reached its own hardware.
+
+    The property, both ways: what `encoder_available` reports equals whether a real encode at
+    Stage 6's output size writes bytes. The encode below is spelled out separately on purpose
+    — sharing the helper would make this test agree with the bug it exists to catch, and the
+    bug it did catch was a probe at the wrong size.
     """
     binary = find_ffmpeg()
     assert binary is not None
@@ -278,22 +300,53 @@ def test_a_listed_but_unusable_encoder_is_not_reported_as_available() -> None:
         text=True,
         check=True,
     ).stdout
-    listed = any(line.split()[1:2] == [Encoder.NVENC.value] for line in listing.splitlines())
-    if not listed:
-        pytest.skip("this build does not compile in NVENC — nothing to distinguish")
-    assert not encoder_available(Encoder.NVENC, binary), (
-        "h264_nvenc is listed and reported available, but no NVIDIA driver is present. If this "
-        "machine really has a working GPU, this test has outlived the environment it documents."
-    )
+
+    for encoder in (Encoder.X264, Encoder.NVENC):
+        listed = any(line.split()[1:2] == [encoder.value] for line in listing.splitlines())
+        with tempfile.TemporaryDirectory() as work:
+            out = Path(work) / "probe.mp4"
+            subprocess.run(
+                [
+                    str(binary),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=black:s={VERTICAL_WIDTH}x{VERTICAL_HEIGHT}:d=0.1",
+                    "-frames:v",
+                    "1",
+                    "-c:v",
+                    encoder.value,
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-y",
+                    str(out),
+                ],
+                capture_output=True,
+                check=False,
+            )
+            really_encodes = out.exists() and out.stat().st_size > 0
+        assert encoder_available(encoder, binary) == really_encodes, (
+            f"{encoder.value} is listed={listed} and really encodes={really_encodes}, but "
+            f"encoder_available says {encoder_available(encoder, binary)}. Availability must "
+            f"come from encoding, not from the listing — in both directions."
+        )
 
 
 @needs_ffmpeg
-def test_an_unusable_encoder_raises_instead_of_falling_back(tmp_path: Path) -> None:
-    """§6 puts NVENC on hawapc01. Getting x264 instead would measure the wrong encoder."""
-    binary = find_ffmpeg()
-    assert binary is not None
-    if encoder_available(Encoder.NVENC, binary):
-        pytest.skip("this ffmpeg can genuinely encode with NVENC — nothing to refuse")
+def test_an_unavailable_encoder_raises_instead_of_falling_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§6 puts NVENC on hawapc01. Getting x264 instead would measure the wrong encoder.
+
+    The refusal is what is under test, not the graphics card. Deciding by what this machine
+    happens to have made the test run only on hardware that could not do the thing — and on
+    hawapc01 it stopped running altogether, which is a skip on the exact box the rule is for.
+    So availability is answered directly and the refusal is exercised everywhere.
+    """
+    monkeypatch.setattr("hawedit.render.encoder_available", lambda *_: False)
     with pytest.raises(RenderError, match="nvenc"):
         render_clip(
             _clip(),

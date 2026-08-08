@@ -10,9 +10,17 @@ FAST="${1:-}"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
-PY="${PY:-$here/.venv/bin/python}"
-if [[ ! -x "$PY" ]]; then
-  echo "✗ no interpreter at $PY — run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
+# A venv puts the interpreter in `bin/` on POSIX and `Scripts/` on Windows. hawapc01 — the
+# box §6 names and §8.1 requires the benchmark to run on — is Windows, so hardcoding `bin/`
+# made "one command from a fresh clone to a green gate" false on the one machine that has to
+# run it. Both layouts, first match wins; PY still overrides for a deliberate interpreter.
+if [[ -z "${PY:-}" ]]; then
+  for candidate in "$here/.venv/bin/python" "$here/.venv/Scripts/python.exe"; do
+    if [[ -x "$candidate" ]]; then PY="$candidate"; break; fi
+  done
+fi
+if [[ -z "${PY:-}" || ! -x "$PY" ]]; then
+  echo "✗ no interpreter in .venv — run: bash scripts/setup.sh" >&2
   exit 2
 fi
 
@@ -44,29 +52,12 @@ FORMAT_CMD="${FORMAT_CMD-$PY -m ruff format --check src tests}"
 TYPECHECK_CMD="${TYPECHECK_CMD-$PY -m mypy}"
 TEST_CMD="${TEST_CMD-$PY -m pytest --junitxml=$TEST_REPORT}"
 
-# Anti-cheat, layer 1: a *_CMD that resolves to a no-op would make this gate print green while
-# running nothing. Refuse loudly BEFORE running anything. Only the steps that will actually run
-# are checked. (Same reasoning as the host repo's scripts/verify.sh.)
-_noop_check() {
-  local name="$1" trimmed
-  trimmed="$(printf '%s' "$2" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-  case "$trimmed" in
-    "" | ":" | "true" | "/bin/true" | "/usr/bin/true")
-      echo "REFUSED: ${name} resolves to a no-op ('${trimmed}') — the gate would pass while running nothing." >&2
-      exit 3 ;;
-  esac
-}
-_noop_check "LINT_CMD" "$LINT_CMD"
-_noop_check "TYPECHECK_CMD" "$TYPECHECK_CMD"
-if [[ "$FAST" != "--fast" ]]; then
-  _noop_check "FORMAT_CMD" "$FORMAT_CMD"
-  _noop_check "TEST_CMD" "$TEST_CMD"
-fi
-
-# Anti-cheat, layer 2 (audit finding #5). The blacklist above knows five spellings of "do
-# nothing"; TEST_CMD="echo skipped" is a sixth, and `pytest -k nothing_matches` a seventh. No
-# blacklist of ways to run nothing can be complete, so the rule is inverted: the gate's steps
-# are not configurable. A replaced step is refused outright rather than judged on its content.
+# Anti-cheat (audit finding #5). There was a blacklist here first, knowing five spellings of
+# "do nothing"; TEST_CMD="echo skipped" is a sixth and `pytest -k nothing_matches` a seventh.
+# No blacklist of ways to run nothing can be complete, so the rule is inverted: the gate's
+# steps are not configurable. A replaced step is refused outright rather than judged on its
+# content — which also made the blacklist unreachable, since every value it could have caught
+# is an override, and overrides are refused here first.
 if [[ ${#_overridden[@]} -gt 0 ]]; then
   echo "REFUSED: ${_overridden[*]} overridden — the gate's steps are not configurable." >&2
   echo "A run with a replaced step proves nothing about this project, so it cannot be green." >&2

@@ -198,10 +198,25 @@ def _escape_filter_path(path: Path) -> str:
 
     An unescaped `:` silently truncates the argument and the filter then renders with
     default options — including `shaping=auto`, which is the exact failure §4.3 is about.
+
+    **Two backslashes, not one.** ffmpeg unescapes a filter option twice: once when it splits
+    the filtergraph description into filters and their arguments, and again when the filter
+    parses its own options. A single backslash survives the first pass and is consumed by the
+    second, so the `:` it was protecting reappears as a separator. The old single-escape form
+    was therefore wrong on every platform; it only ever *showed* on one, because a POSIX path
+    rarely contains any of these characters and the substitutions simply never fired.
+
+    Windows separators become `/`, which ffmpeg accepts everywhere. A Windows path carries
+    two metacharacters at once — the drive `:` and `\\` as the separator — and escaping
+    backslashes through two passes is a second problem that not having them removes.
+
+    Measured on hawapc01 against the real binary, all three forms on the same font directory:
+    `C\\:\\\\Users\\\\…` and `C\\:/Users/…` both die with "No option name near"; `C\\\\:/Users/…`
+    renders. `tests/test_captions.py` pins the survivor.
     """
-    escaped = str(path).replace("\\", "\\\\")
+    escaped = str(path).replace("\\", "/")
     for character in (":", "'", "[", "]", ","):
-        escaped = escaped.replace(character, f"\\{character}")
+        escaped = escaped.replace(character, f"\\\\{character}")
     return escaped
 
 
@@ -446,11 +461,24 @@ def find_ffmpeg() -> Path | None:
         return Path(configured)
     # Where scripts/fetch-ffmpeg.sh puts it, so the readiness report and the gate agree
     # without anyone having to remember an environment variable.
-    vendored = Path(__file__).resolve().parents[2] / ".ffmpeg" / "ffmpeg"
-    if vendored.exists():
-        return vendored
+    vendored = Path(__file__).resolve().parents[2] / ".ffmpeg"
+    for name in ("ffmpeg", "ffmpeg.exe"):
+        if (vendored / name).exists():
+            return vendored / name
     located = which("ffmpeg")
     return Path(located) if located else None
+
+
+def ffprobe_for(ffmpeg: Path) -> Path:
+    """The ffprobe that ships beside `ffmpeg`, keeping the binary's own suffix.
+
+    `with_name("ffprobe")` is right on POSIX and wrong everywhere `ffmpeg` has an extension:
+    `shutil.which` returns `ffmpeg.EXE` on Windows, whose sibling is `ffprobe.EXE`, and the
+    bare name does not exist. Every caller took the same shortcut, so on hawapc01 — the box
+    §6 names — Stage 0 ingest, the frame-rate probe and the pipeline's own duration check all
+    failed identically at the first probe. One resolver, so the next caller cannot repeat it.
+    """
+    return ffmpeg.with_name("ffprobe" + ffmpeg.suffix)
 
 
 def render_caption_png(

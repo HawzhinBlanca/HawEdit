@@ -44,9 +44,11 @@ from hawedit.captions import (
     subtitle_filter,
 )
 from hawedit.clip import Clip
-from hawedit.ingest import probe_duration_ms
+from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
 
 __all__ = [
+    "ENCODER_PROBE_SIZE",
+    "NVENC_MIN_FRAME",
     "VERTICAL_HEIGHT",
     "VERTICAL_WIDTH",
     "Encoder",
@@ -67,6 +69,17 @@ __all__ = [
 # never scaling text — scaled text is the failure the golden render would otherwise measure.
 VERTICAL_WIDTH: Final = 1080
 VERTICAL_HEIGHT: Final = 1920
+
+# NVENC's smallest accepted H.264 frame, measured on hawapc01's RTX 3090 Ti with ffmpeg
+# 8.1.1: 64x64 and 128x128 write zero bytes with "Frame Dimension less than the minimum
+# supported value"; 145x49 encodes. Recorded as a constant so `encoder_available`'s probe
+# geometry has something to be checked against — the value itself is NVIDIA's, not ours.
+NVENC_MIN_FRAME: Final = (145, 49)
+
+# What `encoder_available` encodes when it asks whether an encoder works. Stage 6's own output
+# size, because that is the frame the encoder will really be handed, and because anything
+# smaller can fail for reasons that say nothing about availability. See `encoder_available`.
+ENCODER_PROBE_SIZE: Final = (VERTICAL_WIDTH, VERTICAL_HEIGHT)
 
 
 class RenderError(RuntimeError):
@@ -105,8 +118,18 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
 
     This is §4.3.2's lesson applied to encoders: "a build accepting the option may still lack
     the backing library". The only answer worth having comes from trying it, so this encodes
-    one 64x64 frame to a real file and checks that bytes came out. Cached — the answer cannot
-    change within a process, and the probe costs an ffmpeg launch.
+    one frame to a real file and checks that bytes came out. Cached — the answer cannot change
+    within a process, and the probe costs an ffmpeg launch.
+
+    **The probe encodes at the size Stage 6 actually outputs, and that is not a detail.** It
+    used to use 64x64, and on hawapc01 — the machine §6 says to use NVENC on — that reported
+    `h264_nvenc` unavailable while NVENC worked perfectly: NVENC refuses a frame below roughly
+    `NVENC_MIN_FRAME` with "Frame Dimension less than the minimum supported value", and the
+    probe was under it. Measured on this box: 64x64 and 128x128 write **0 bytes**, 145x49 and
+    1080x1920 both encode. So the one function written because a capability listing cannot be
+    trusted was itself returning a confident wrong answer, and `render_clip` would have refused
+    NVENC exactly where §6 requires it. The question is "can this encoder encode what Stage 6
+    will hand it", so the probe asks that question at that size.
     """
     with tempfile.TemporaryDirectory() as work:
         probe = Path(work) / "probe.mp4"
@@ -119,7 +142,7 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=black:s=64x64:d=0.1",
+                f"color=c=black:s={ENCODER_PROBE_SIZE[0]}x{ENCODER_PROBE_SIZE[1]}:d=0.1",
                 "-frames:v",
                 "1",
                 "-c:v",
@@ -249,28 +272,10 @@ def frame_rate(video: Path, ffmpeg: Path | None = None) -> float:
     that conforms and one that drifts — `delivery.ms_to_timecode` refuses the non-integer rate
     on purpose, and can only do so if it is told the truth about it.
     """
-    binary = ffmpeg or find_ffmpeg()
-    if binary is None:
-        raise RenderError("no ffmpeg available to probe the frame rate")
-    ffprobe = binary.with_name("ffprobe")
-    result = subprocess.run(
-        [
-            str(ffprobe),
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=r_frame_rate",
-            "-of",
-            "default=nw=1:nk=1",
-            str(video),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    rate = result.stdout.strip()
+    try:
+        rate = probe_stream(video, "stream=r_frame_rate", ffmpeg, video_only=True)
+    except IngestError as exc:
+        raise RenderError(str(exc)) from exc
     try:
         numerator, denominator = (int(part) for part in rate.split("/"))
         if numerator <= 0 or denominator <= 0:

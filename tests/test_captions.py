@@ -165,9 +165,29 @@ def test_the_filter_references_the_font_directory() -> None:
 
 
 def test_filter_paths_are_escaped() -> None:
-    """An unescaped colon in a path silently truncates the filtergraph argument."""
+    """An unescaped colon in a path silently truncates the filtergraph argument.
+
+    Two backslashes, because ffmpeg unescapes a filter option twice — once splitting the
+    filtergraph, once parsing the filter's own arguments. One backslash survives the first
+    pass and is eaten by the second, leaving the `:` it was protecting as a separator again.
+    """
     rendered = subtitle_filter(Path("/w/od:d/captions.ass"), Path("/w/fonts"))
-    assert r"od\:d" in rendered
+    assert r"od\\:d" in rendered
+
+
+def test_a_windows_path_is_escaped_for_both_unescaping_passes() -> None:
+    """hawapc01 is Windows, and `C:\\Users\\…` carries both metacharacters at once.
+
+    Escaped wrong this fails loudly — but only because `fontsdir` follows the ass path and
+    ffmpeg then sees an option name it does not know. Put a path last and the same mistake
+    truncates in silence into `shaping=auto`, which §4.3 says is invisible until a client
+    sees the captions. `Path` keeps the string verbatim on POSIX, so this pins the same
+    bytes on the CI runner as on the render box.
+    """
+    rendered = subtitle_filter(Path(r"C:\Users\w\captions.ass"), Path(r"C:\Users\w\fonts"))
+    assert rendered == (
+        r"ass=C\\:/Users/w/captions.ass:shaping=complex:fontsdir=C\\:/Users/w/fonts"
+    )
 
 
 # --- §4.3.5 our own line breaks ---------------------------------------------------------

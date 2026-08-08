@@ -17,9 +17,10 @@ Both are now closed, in opposite directions:
   runs pytest under `--junitxml`, and reads the report back. Exit code is not evidence; the
   report is.
 
-The floor ratchets. Growth is recorded automatically; shrinkage is refused. Deleting tests
-stays possible — you edit the committed number — but it becomes a line in a diff a reviewer
-sees, rather than a suite that quietly got smaller between two green runs.
+The floor ratchets on the number of tests that actually **ran**, which is also the number it
+gates on. Growth is recorded automatically; shrinkage is refused. Deleting tests stays possible
+— you edit the committed number — but it becomes a line in a diff a reviewer sees, rather than
+a suite that quietly got smaller between two green runs.
 """
 
 from __future__ import annotations
@@ -152,24 +153,23 @@ def check_test_evidence(
             f"skipped — nothing actually ran. A suite that skips itself is not a passing suite."
         )
 
+    # One number, gated and ratcheted: tests that actually RAN. Ratcheting on `collected` while
+    # gating on `passed` made the gate poison itself — one legitimately skipped test (a symlink
+    # a Windows account may not create) collected 873 and passed 872, so the first run raised
+    # the floor to 873 and every run after it was refused for missing a bar the previous run
+    # invented. Two floors, one job, and they disagreed on any host with a skip.
     floor = read_floor(floor_path)
     if evidence.passed < floor:
         raise NoTestEvidence(
             f"only {evidence.passed} tests passed against a floor of {floor} "
-            f"({evidence.skipped} skipped of {evidence.collected} collected). The tests still "
-            f"exist, so the collected count clears the floor while the number that ran does "
-            f"not — which is what a creeping skip condition looks like. If ffmpeg or the media "
-            f"stack is missing, install it: `bash scripts/setup.sh`."
+            f"({evidence.skipped} skipped of {evidence.collected} collected). Either "
+            f"{floor - evidence.passed} test(s) disappeared, or a skip condition is creeping. "
+            f"If ffmpeg or the media stack is missing, install it: `bash scripts/setup.sh`. If "
+            f"the removal is intentional, lower the floor in the same commit that removes them "
+            f"— a shrinking suite must be a visible edit, not a quieter green run."
         )
-    if evidence.collected < floor:
-        raise NoTestEvidence(
-            f"the suite collected {evidence.collected} tests but the committed floor is "
-            f"{floor} ({floor_path.name}). {floor - evidence.collected} tests disappeared. "
-            f"If that is intentional, lower the floor in the same commit that removes them — "
-            f"a shrinking suite must be a visible edit, not a quieter green run."
-        )
-    if evidence.collected > floor:
-        write_floor(floor_path, evidence.collected)
+    if evidence.passed > floor:
+        write_floor(floor_path, evidence.passed)
 
     return evidence
 
