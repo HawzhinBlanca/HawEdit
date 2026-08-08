@@ -35,6 +35,7 @@ def _release_source(root: Path) -> Path:
     (project / "assets" / "fonts" / "NotoNaskhArabic-Regular.ttf").write_bytes(b"font")
     (project / "assets" / "fonts" / "OFL.txt").write_text("OFL", encoding="utf-8")
     (project / "models" / "sources.json").write_text("{}\n", encoding="utf-8")
+    (project / "models" / "revisions.json").write_text("{}\n", encoding="utf-8")
     (project / ".gitignore").write_text("/build/\n/dist/\n*.egg-info/\n", encoding="utf-8")
     (project / "pyproject.toml").write_text(
         """[build-system]
@@ -53,7 +54,7 @@ where = ["src"]
     "assets/fonts/NotoNaskhArabic-Regular.ttf",
     "assets/fonts/OFL.txt",
 ]
-"share/hawedit/models" = ["models/sources.json"]
+"share/hawedit/models" = ["models/sources.json", "models/revisions.json"]
 """,
         encoding="utf-8",
     )
@@ -96,6 +97,9 @@ def test_release_builds_twice_and_publishes_verified_provenance(tmp_path: Path) 
     with zipfile.ZipFile(artifact.wheel) as wheel:
         assert wheel.testzip() is None
         assert any(name.endswith("share/hawedit/models/sources.json") for name in wheel.namelist())
+        assert any(
+            name.endswith("share/hawedit/models/revisions.json") for name in wheel.namelist()
+        )
 
     with pytest.raises(ReleaseError, match="refusing to overwrite"):
         build_reproducible_wheel(project, destination, python=Path(sys.executable))

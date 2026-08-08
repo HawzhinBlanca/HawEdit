@@ -32,6 +32,7 @@ _REQUIRED_WHEEL_MEMBERS: Final = (
     "share/hawedit/assets/fonts/NotoNaskhArabic-Regular.ttf",
     "share/hawedit/assets/fonts/OFL.txt",
     "share/hawedit/models/sources.json",
+    "share/hawedit/models/revisions.json",
 )
 
 

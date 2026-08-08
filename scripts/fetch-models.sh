@@ -91,9 +91,9 @@ if (( free_gb < 55 )); then
   echo "⚠ this may not be enough for every checkpoint — fetching what fits, in order." >&2
 fi
 
-"$PY" -c "import huggingface_hub" 2>/dev/null || {
-  echo "==> installing huggingface_hub (Apache-2.0)"
-  "$PY" -m pip install -q "huggingface_hub>=0.26"
+"$PY" -c 'from importlib.metadata import version; raise SystemExit(version("huggingface_hub") != "0.36.2")' 2>/dev/null || {
+  echo "==> installing huggingface_hub 0.36.2 (Apache-2.0)"
+  "$PY" -m pip install -q "huggingface_hub==0.36.2"
 }
 
 while IFS=$'\t' read -r model_id source gated dest; do

@@ -85,7 +85,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,072 collected, 1,072 passed** on 2026-08-08.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,101 collected, 1,101 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -93,7 +93,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 - Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
   `hawedit-editorial-bench`, `hawedit-asr-setup` and `hawedit-release` all start from the
   installed wheel.
-- Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
+- Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker and setup module.
 - `hawedit-release` derives `SOURCE_DATE_EPOCH` from clean Git `HEAD`, builds independently
   twice, refuses unequal bytes, validates release-critical package data, and atomically emits
   the wheel with `SHA256SUMS` and stable revision provenance. The digest intentionally lives
