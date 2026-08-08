@@ -3347,3 +3347,40 @@ write-once publication, two simultaneous workers, crashed staging and cleanup co
 Real-media pipeline tests prove the successful exact set, inject ASS and mid-sidecar failures,
 and verify neither a public MP4 nor a partial sidecar set survives. See
 `evidence/atomic-delivery-bundle.md`.
+
+---
+
+## D-084 · Every release carries a deterministic SPDX 2.3 SBOM
+
+**A reproducible wheel without a component manifest is reproducibly opaque.** D-074 made the
+release-critical data files ship and the release tool proved exact wheel bytes, but a recipient
+still had to open METADATA and the archive to discover dependencies and the bundled third-party
+font. The audit correctly kept M3.7 PARTIAL with “no SBOM”.
+
+**Decision.** Generate SPDX 2.3 JSON directly from the completed wheel, not from the mutable
+build environment. The root package carries the exact wheel SHA-256, version and purl. The
+bundled Noto Naskh Arabic font is a contained component with its own archive-byte SHA-256 and
+OFL-1.1 declaration. Every `Requires-Dist` entry becomes a package relationship: base
+requirements are `DEPENDS_ON`, extras are `OPTIONAL_DEPENDENCY_OF`, and the exact PEP 508 string
+is retained as the relationship comment.
+
+**Do not invent an installed graph.** The wheel does not bundle those dependencies. Open ranges,
+platform markers and extras do not identify one installed version, so their SPDX packages omit
+version/checksum and say why. The document comment also states that external model assets live
+under the separately pinned model manifests. This is a release-artifact SBOM, not a claim that
+one particular deployment was resolved or scanned.
+
+**Reproducibility and binding.** Creation time comes from `SOURCE_DATE_EPOCH`; namespace contains
+the full Git revision and wheel digest; package/relationship order is stable; two generations
+from the same wheel are byte-identical. `SHA256SUMS` covers the wheel, SPDX JSON and provenance,
+and provenance names and hashes the SBOM. All four files publish under the existing write-once
+directory transaction.
+
+**Independent evidence.** The focused regression builds a real fixture wheel twice, verifies the
+exact four-file release set, wheel/font hashes, base/optional relationships and deterministic
+SBOM bytes. The emitted HawEdit document was parsed and validated independently by
+`spdx-tools==0.8.5` as SPDX 2.3. `evidence/release-sbom.md`.
+
+**Still open.** Checksums prove integrity only when their source is trusted. The release has no
+signature/attestation identity, and Meta's package-managed OmniASR downloads have no
+project-owned byte manifest. M3.7 therefore remains PARTIAL.

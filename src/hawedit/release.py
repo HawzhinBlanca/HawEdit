@@ -3,8 +3,8 @@
 A successful ``pip wheel`` exit is not release evidence. This command derives
 ``SOURCE_DATE_EPOCH`` from the source commit, builds twice in independent directories, requires
 the wheel bytes to have the same SHA-256, inspects the archive for HawEdit's runtime data, and
-only then atomically publishes a directory containing the wheel, ``SHA256SUMS`` and stable
-provenance JSON.
+only then atomically publishes a directory containing the wheel, an SPDX 2.3 SBOM,
+``SHA256SUMS`` and stable provenance JSON.
 
 The output directory is write-once. Re-running against an existing release refuses instead of
 replacing an artifact that may already have been distributed.
@@ -16,14 +16,17 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.parser import BytesParser
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 __all__ = ["ReleaseArtifact", "ReleaseError", "build_reproducible_wheel", "main"]
 
@@ -33,6 +36,10 @@ _REQUIRED_WHEEL_MEMBERS: Final = (
     "share/hawedit/assets/fonts/OFL.txt",
     "share/hawedit/models/sources.json",
     "share/hawedit/models/revisions.json",
+)
+_REQUIREMENT_NAME: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
+_EXACT_REQUIREMENT_VERSION: Final = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^]]+\])?\s*==\s*([^,;\s*]+)(?:\s*;.*)?$"
 )
 
 
@@ -46,9 +53,12 @@ class ReleaseArtifact:
     wheel: Path
     checksum_file: Path
     provenance_file: Path
+    sbom_file: Path
     revision: str
     source_date_epoch: int
     sha256: str
+    sbom_sha256: str
+    provenance_sha256: str
     size_bytes: int
 
     def to_dict(self) -> dict[str, str | int]:
@@ -57,9 +67,12 @@ class ReleaseArtifact:
             "wheel": str(self.wheel),
             "checksum_file": str(self.checksum_file),
             "provenance_file": str(self.provenance_file),
+            "sbom_file": str(self.sbom_file),
             "revision": self.revision,
             "source_date_epoch": self.source_date_epoch,
             "sha256": self.sha256,
+            "sbom_sha256": self.sbom_sha256,
+            "provenance_sha256": self.provenance_sha256,
             "size_bytes": self.size_bytes,
         }
 
@@ -174,6 +187,204 @@ def _validate_hawedit_wheel(wheel: Path) -> None:
         raise ReleaseError("built wheel is missing runtime files: " + ", ".join(missing))
 
 
+def _wheel_metadata(wheel: Path) -> tuple[str, str, tuple[str, ...]]:
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            members = tuple(
+                name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+            )
+            if len(members) != 1:
+                raise ReleaseError(
+                    f"built wheel must contain exactly one METADATA member, found {len(members)}"
+                )
+            message = BytesParser().parsebytes(archive.read(members[0]))
+    except (OSError, zipfile.BadZipFile, KeyError) as exc:
+        raise ReleaseError(f"could not read wheel metadata from {wheel}: {exc}") from exc
+    name = str(message.get("Name", "")).strip()
+    version = str(message.get("Version", "")).strip()
+    if not name or not version:
+        raise ReleaseError("built wheel METADATA must name the distribution and version")
+    requirements = tuple(
+        sorted(
+            {str(value).strip() for value in cast(list[str], message.get_all("Requires-Dist", []))}
+        )
+    )
+    if any(not requirement for requirement in requirements):
+        raise ReleaseError("built wheel METADATA contains an empty Requires-Dist value")
+    return name, version, requirements
+
+
+def _wheel_member_bytes(wheel: Path, suffix: str) -> bytes:
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            matches = tuple(name for name in archive.namelist() if name.endswith(suffix))
+            if len(matches) != 1:
+                raise ReleaseError(
+                    f"built wheel must contain exactly one {suffix}, found {len(matches)}"
+                )
+            return archive.read(matches[0])
+    except (OSError, zipfile.BadZipFile, KeyError) as exc:
+        raise ReleaseError(f"could not read {suffix} from {wheel}: {exc}") from exc
+
+
+def _requirement_name(requirement: str) -> str:
+    match = _REQUIREMENT_NAME.match(requirement)
+    if match is None:
+        raise ReleaseError(f"wheel METADATA contains an invalid requirement {requirement!r}")
+    return match.group(0)
+
+
+def _spdx_id(requirement: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9.-]", "-", _requirement_name(requirement))
+    digest = hashlib.sha256(requirement.encode()).hexdigest()[:12]
+    return f"SPDXRef-Dependency-{name}-{digest}"
+
+
+def _pypi_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _exact_requirement_version(requirement: str) -> str | None:
+    match = _EXACT_REQUIREMENT_VERSION.match(requirement)
+    return match.group(1) if match is not None else None
+
+
+def _spdx_sbom(
+    wheel: Path,
+    *,
+    revision: str,
+    epoch: int,
+    wheel_sha256: str,
+) -> bytes:
+    """Describe the wheel and its declared, unbundled requirements without inventing versions."""
+    name, version, requirements = _wheel_metadata(wheel)
+    font_bytes = _wheel_member_bytes(
+        wheel, "share/hawedit/assets/fonts/NotoNaskhArabic-Regular.ttf"
+    )
+    root_id = "SPDXRef-Package-HawEdit"
+    font_id = "SPDXRef-Package-NotoNaskhArabic"
+    packages: list[dict[str, object]] = [
+        {
+            "SPDXID": root_id,
+            "name": name,
+            "versionInfo": version,
+            "packageFileName": wheel.name,
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "checksums": [{"algorithm": "SHA256", "checksumValue": wheel_sha256}],
+            "licenseConcluded": "NOASSERTION",
+            "licenseDeclared": "NOASSERTION",
+            "copyrightText": "NOASSERTION",
+            "primaryPackagePurpose": "APPLICATION",
+            "externalRefs": [
+                {
+                    "referenceCategory": "PACKAGE-MANAGER",
+                    "referenceType": "purl",
+                    "referenceLocator": f"pkg:pypi/{_pypi_name(name)}@{version}",
+                }
+            ],
+        },
+        {
+            "SPDXID": font_id,
+            "name": "Noto Naskh Arabic",
+            "packageFileName": "share/hawedit/assets/fonts/NotoNaskhArabic-Regular.ttf",
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "checksums": [
+                {
+                    "algorithm": "SHA256",
+                    "checksumValue": hashlib.sha256(font_bytes).hexdigest(),
+                }
+            ],
+            "licenseConcluded": "OFL-1.1",
+            "licenseDeclared": "OFL-1.1",
+            "copyrightText": "NOASSERTION",
+            "primaryPackagePurpose": "FILE",
+            "comment": (
+                "Third-party font bundled inside the HawEdit wheel. Its OFL-1.1 license text "
+                "is shipped beside the font."
+            ),
+        },
+    ]
+    relationships: list[dict[str, str]] = [
+        {
+            "spdxElementId": "SPDXRef-DOCUMENT",
+            "relationshipType": "DESCRIBES",
+            "relatedSpdxElement": root_id,
+        }
+    ]
+    relationships.append(
+        {
+            "spdxElementId": root_id,
+            "relationshipType": "CONTAINS",
+            "relatedSpdxElement": font_id,
+        }
+    )
+    for requirement in requirements:
+        dependency_id = _spdx_id(requirement)
+        dependency_name = _requirement_name(requirement)
+        exact_version = _exact_requirement_version(requirement)
+        purl = f"pkg:pypi/{_pypi_name(dependency_name)}"
+        dependency: dict[str, object] = {
+            "SPDXID": dependency_id,
+            "name": dependency_name,
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "licenseConcluded": "NOASSERTION",
+            "licenseDeclared": "NOASSERTION",
+            "copyrightText": "NOASSERTION",
+            "comment": (
+                f"Declared by wheel METADATA as {requirement!r}. This wheel does not bundle "
+                "or resolve that dependency, so no installed checksum is asserted."
+            ),
+            "externalRefs": [
+                {
+                    "referenceCategory": "PACKAGE-MANAGER",
+                    "referenceType": "purl",
+                    "referenceLocator": (
+                        f"{purl}@{exact_version}" if exact_version is not None else purl
+                    ),
+                }
+            ],
+        }
+        if exact_version is not None:
+            dependency["versionInfo"] = exact_version
+        packages.append(dependency)
+        optional = "extra ==" in requirement or "extra==" in requirement
+        relationships.append(
+            {
+                "spdxElementId": dependency_id if optional else root_id,
+                "relationshipType": "OPTIONAL_DEPENDENCY_OF" if optional else "DEPENDS_ON",
+                "relatedSpdxElement": root_id if optional else dependency_id,
+                "comment": requirement,
+            }
+        )
+
+    created = datetime.fromtimestamp(epoch, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    document = {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": f"{name}-{version}-{revision[:12]}",
+        "documentNamespace": (
+            f"https://github.com/HawzhinBlanca/HawEdit/spdx/{revision}/{wheel_sha256}"
+        ),
+        "creationInfo": {
+            "created": created,
+            "creators": [f"Tool: hawedit-release-{version}"],
+            "comment": (
+                "Generated from the reproducible wheel's exact bytes and METADATA. Declared "
+                "dependencies are not a resolved environment graph; external model assets are "
+                "recorded separately in HawEdit's pinned model manifests."
+            ),
+        },
+        "documentDescribes": [root_id],
+        "packages": packages,
+        "relationships": relationships,
+    }
+    return (json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
+
+
 def _copy_synced(source: Path, destination: Path) -> None:
     with source.open("rb") as incoming, destination.open("xb") as outgoing:
         shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
@@ -249,18 +460,36 @@ def build_reproducible_wheel(
             size = staged_wheel.stat().st_size
             checksum_name = "SHA256SUMS"
             provenance_name = "release-provenance.json"
-            _write_synced(f"{first_digest}  {first.name}\n".encode(), staging / checksum_name)
+            sbom_name = f"{first.name}.spdx.json"
+            sbom_payload = _spdx_sbom(
+                staged_wheel,
+                revision=revision,
+                epoch=epoch,
+                wheel_sha256=first_digest,
+            )
+            sbom_digest = hashlib.sha256(sbom_payload).hexdigest()
             provenance = {
-                "schema": 1,
+                "schema": 2,
                 "revision": revision,
                 "source_date_epoch": epoch,
                 "wheel": first.name,
                 "sha256": first_digest,
                 "size_bytes": size,
+                "sbom": sbom_name,
+                "sbom_format": "SPDX-2.3-json",
+                "sbom_sha256": sbom_digest,
             }
+            provenance_payload = (json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode()
+            provenance_digest = hashlib.sha256(provenance_payload).hexdigest()
+            _write_synced(sbom_payload, staging / sbom_name)
+            _write_synced(provenance_payload, staging / provenance_name)
             _write_synced(
-                (json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode(),
-                staging / provenance_name,
+                (
+                    f"{first_digest}  {first.name}\n"
+                    f"{sbom_digest}  {sbom_name}\n"
+                    f"{provenance_digest}  {provenance_name}\n"
+                ).encode(),
+                staging / checksum_name,
             )
             _publish_directory(staging, output)
         finally:
@@ -272,9 +501,12 @@ def build_reproducible_wheel(
         wheel=output / first.name,
         checksum_file=output / "SHA256SUMS",
         provenance_file=output / "release-provenance.json",
+        sbom_file=output / sbom_name,
         revision=revision,
         source_date_epoch=epoch,
         sha256=first_digest,
+        sbom_sha256=sbom_digest,
+        provenance_sha256=provenance_digest,
         size_bytes=size,
     )
 

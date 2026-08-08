@@ -75,9 +75,11 @@ These cannot be truthfully solved from the checkout alone:
   while its gated file downloads remain blocked by `BLOCKED.md` #4.
 - The project-fetched Linux ffmpeg archive is addressed by an immutable upstream commit and its
   Git-LFS SHA-256 is verified before unpacking.
-- `hawedit-release` makes source-to-wheel bytes reproducible and emits a checksum plus Git
-  provenance, and CI's remote GitHub Actions are pinned to full commits. Releases are still
-  unsigned, carry no SBOM, and package-managed OmniASR assets lack a project-owned byte manifest.
+- `hawedit-release` makes source-to-wheel bytes reproducible and emits checksummed Git
+  provenance plus a deterministic SPDX 2.3 SBOM. The SBOM binds the exact wheel, bundled Noto
+  font, and every base/optional `Requires-Dist` relationship without inventing unresolved
+  dependency versions. Releases are still unsigned, and package-managed OmniASR assets lack a
+  project-owned byte manifest.
 
 ## Honest release call
 
@@ -102,9 +104,10 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   and sidecar write failures and a two-worker publication race; failures expose no partial set.
 - `hawedit-release` derives `SOURCE_DATE_EPOCH` from clean Git `HEAD`, builds independently
   twice, refuses unequal bytes, validates release-critical package data, and atomically emits
-  the wheel with `SHA256SUMS` and stable revision provenance. The digest intentionally lives
-  beside the artifact instead of in this changing source file. Signing, SBOM generation and a
-  project-owned OmniASR byte manifest remain open supply-chain work.
+  the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision provenance. The independent
+  `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally live beside
+  the artifacts instead of in this changing source file. Signing and a project-owned OmniASR
+  byte manifest remain open supply-chain work.
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

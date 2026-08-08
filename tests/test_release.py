@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import pytest
 from hawedit.release import (
     ReleaseError,
     _publish_directory,
+    _spdx_sbom,
     build_reproducible_wheel,
 )
 
@@ -45,6 +47,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hawedit-release-fixture"
 version = "1.0.0"
+dependencies = ["base-dep==2.3.4"]
+
+[project.optional-dependencies]
+feature = ["optional-dep>=5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -84,15 +90,75 @@ def test_release_builds_twice_and_publishes_verified_provenance(tmp_path: Path) 
     assert artifact.wheel.is_file()
     assert artifact.checksum_file.read_text(encoding="utf-8") == (
         f"{artifact.sha256}  {artifact.wheel.name}\n"
+        f"{artifact.sbom_sha256}  {artifact.sbom_file.name}\n"
+        f"{artifact.provenance_sha256}  {artifact.provenance_file.name}\n"
     )
     provenance = json.loads(artifact.provenance_file.read_text(encoding="utf-8"))
     assert provenance == {
-        "schema": 1,
+        "schema": 2,
         "revision": _git(project, "rev-parse", "HEAD"),
         "source_date_epoch": artifact.source_date_epoch,
         "wheel": artifact.wheel.name,
         "sha256": artifact.sha256,
         "size_bytes": artifact.size_bytes,
+        "sbom": artifact.sbom_file.name,
+        "sbom_format": "SPDX-2.3-json",
+        "sbom_sha256": artifact.sbom_sha256,
+    }
+    sbom = json.loads(artifact.sbom_file.read_text(encoding="utf-8"))
+    assert sbom["spdxVersion"] == "SPDX-2.3"
+    assert sbom["dataLicense"] == "CC0-1.0"
+    assert sbom["documentDescribes"] == ["SPDXRef-Package-HawEdit"]
+    assert sbom["documentNamespace"].endswith(f"/{artifact.revision}/{artifact.sha256}")
+    packages = {package["name"]: package for package in sbom["packages"]}
+    assert set(packages) == {
+        "hawedit-release-fixture",
+        "Noto Naskh Arabic",
+        "base-dep",
+        "optional-dep",
+    }
+    assert packages["hawedit-release-fixture"]["checksums"] == [
+        {"algorithm": "SHA256", "checksumValue": artifact.sha256}
+    ]
+    assert packages["base-dep"]["versionInfo"] == "2.3.4"
+    assert "versionInfo" not in packages["optional-dep"]
+    relationships = {
+        (
+            relationship["spdxElementId"],
+            relationship["relationshipType"],
+            relationship["relatedSpdxElement"],
+        )
+        for relationship in sbom["relationships"]
+    }
+    root = "SPDXRef-Package-HawEdit"
+    font_id = packages["Noto Naskh Arabic"]["SPDXID"]
+    base_id = packages["base-dep"]["SPDXID"]
+    optional_id = packages["optional-dep"]["SPDXID"]
+    assert ("SPDXRef-DOCUMENT", "DESCRIBES", root) in relationships
+    assert (root, "CONTAINS", font_id) in relationships
+    assert (root, "DEPENDS_ON", base_id) in relationships
+    assert (optional_id, "OPTIONAL_DEPENDENCY_OF", root) in relationships
+    assert packages["Noto Naskh Arabic"]["checksums"] == [
+        {"algorithm": "SHA256", "checksumValue": hashlib.sha256(b"font").hexdigest()}
+    ]
+    expected_sbom = _spdx_sbom(
+        artifact.wheel,
+        revision=artifact.revision,
+        epoch=artifact.source_date_epoch,
+        wheel_sha256=artifact.sha256,
+    )
+    assert artifact.sbom_file.read_bytes() == expected_sbom
+    assert expected_sbom == _spdx_sbom(
+        artifact.wheel,
+        revision=artifact.revision,
+        epoch=artifact.source_date_epoch,
+        wheel_sha256=artifact.sha256,
+    )
+    assert {path.name for path in destination.iterdir()} == {
+        artifact.wheel.name,
+        artifact.sbom_file.name,
+        "SHA256SUMS",
+        "release-provenance.json",
     }
     with zipfile.ZipFile(artifact.wheel) as wheel:
         assert wheel.testzip() is None
