@@ -27,8 +27,8 @@ ruff check: passed
 mypy (artifact_bundle.py, pipeline.py, transcripts.py): passed
 ```
 
-The complete project gate then reported `1,140 collected, 1,140 passed, 0 skipped` with Ruff,
-format checking and mypy clean. `scripts/test-count.floor` ratcheted to 1,140.
+The complete rebased project gate then reported `1,145 collected, 1,145 passed, 0 skipped` with
+Ruff, format checking and mypy clean. `scripts/test-count.floor` ratcheted to 1,145.
 
 The real 4.162 s media fixture completes one exact five-file directory. Injecting failure at
 the first ASS write and after JSON but before SRT produces `StageSkipped` and leaves no final

@@ -89,7 +89,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,140 collected, 1,140 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,145 collected, 1,145 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;

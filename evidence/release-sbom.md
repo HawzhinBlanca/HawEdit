@@ -20,7 +20,7 @@ by wheel METADATA without presenting unresolved requirements as installed versio
 
 Focused result: `3 passed`; Ruff and mypy pass for `release.py` and its tests.
 
-Full project gate: `1,140 collected, 1,140 passed, 0 skipped`; Ruff, format and mypy clean.
+Full rebased project gate: `1,145 collected, 1,145 passed, 0 skipped`; Ruff, format and mypy clean.
 
 ## Independent standards validation
 
