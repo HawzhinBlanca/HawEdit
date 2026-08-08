@@ -1,0 +1,10 @@
+{
+  "_comment": "Commit revisions for every §7 repository the fetcher downloads. `snapshot_download` without `revision=` resolves whatever the branch head points at on the day it runs, so two machines can hold different weights under the same name and every number in evidence/ would be about weights nobody can identify. Keys starting with _ are ignored. D-073.",
+  "_measured": "2026-08-09 from huggingface.co via HfApi().model_info(repo).sha. Not guessed and not copied from a model card. Each SHA below was additionally verified against the weights already on hawapc01 by comparing the git blob id of the local config.json with the Hub's blob id for the same path at that revision — all four visual checkpoints MATCHED, so these are the revisions that produced the measurements in evidence/m5-*.md and evidence/m6-*.md.",
+  "_pyannote": "pyannote/speaker-diarization-community-1 is absent because it is gated and has never been downloaded here (BLOCKED.md #4, measured 401). Pinning a revision for a repo whose contents nobody in this project has seen would record a number rather than a fact.",
+  "Qwen/Qwen3-VL-Embedding-2B": "9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda",
+  "Qwen/Qwen3-VL-Reranker-2B": "4bd860ac4f15ad1897a214615cccc700f8f71818",
+  "MCG-NJU/VideoChat3-4B": "37fa901ec5913f84bc31108ebc1e60ad1903634c",
+  "MCG-NJU/TimeLens2-4B": "ddbb6cb944f13ce21e59e85da23c5f356107260e",
+  "rzgar/qwen3-asr-sorani-kurdish-ckb-v1": "d71490a623113b4b069ac07cfc85b409389dde4c"
+}

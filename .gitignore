@@ -26,5 +26,10 @@ __pycache__/
 # file whose parent *directory* is excluded.
 models/*
 !models/sources.json
+# Same reasoning, same trap: `revisions.json` pins the commit each repository is downloaded at
+# (D-073). Ignored, it existed on the machine that wrote it and nowhere else — which is how it
+# first shipped: `git add -A` skipped it in silence, the local gate passed against a file CI
+# never received, and the runner failed on `no pinned revisions found`.
+!models/revisions.json
 /.gate/
 /build/

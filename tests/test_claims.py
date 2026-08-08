@@ -438,3 +438,38 @@ def test_every_test_count_in_the_audit_is_dated() -> None:
         "AUDIT_REPORT.md quotes a test count with no measurement date, so it reads as a claim "
         f"about the suite as it stands today: {undated}. Date it, or drop the figure."
     )
+
+
+def test_every_data_file_the_wheel_ships_is_tracked_by_git() -> None:
+    """A file that exists only on the machine that wrote it is not a file this project has.
+
+    `models/revisions.json` shipped exactly that way: `models/*` is git-ignored, `git add -A`
+    skipped it in silence, the local gate passed against a file the runner never received, and
+    CI failed on `no pinned revisions found`. The same trap already had a `!models/sources.json`
+    exception and a comment explaining it — which is why this is a test now rather than a
+    third comment.
+
+    Reads `[tool.setuptools.data-files]`, so anything added to the wheel is covered without
+    anyone remembering to extend a list here.
+    """
+    import subprocess
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    shipped = [
+        Path(rel)
+        for paths in pyproject["tool"]["setuptools"]["data-files"].values()
+        for rel in paths
+    ]
+    assert shipped, "no data-files declared; this test would assert nothing"
+    tracked = {
+        Path(line)
+        for line in subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+    }
+    untracked = [str(p) for p in shipped if p not in tracked]
+    assert not untracked, (
+        f"the wheel ships {untracked}, which git does not track — so it exists on this machine "
+        "and on no other. Add a `!` exception in .gitignore and commit the file."
+    )

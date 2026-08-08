@@ -115,4 +115,28 @@ folding it into this change would have made neither testable. Named as an open g
 revision by `config.json` blob id, not by re-fetching 27 GB. A full byte-level verification of
 every safetensors shard is possible and was not done.
 
-Gate: `VERIFY OK — 1091 passed, 0 skipped`.
+## The pin file shipped to nobody, and the local gate could not tell
+
+The first push of this change was **red on the runner**:
+
+```
+FAILED tests/test_models.py::test_every_repository_the_fetcher_would_download_is_pinned
+  AssertionError: no pinned revisions found under /home/runner/work/HawEdit/HawEdit/models
+```
+
+`models/*` is git-ignored — with a `!models/sources.json` exception and a comment explaining
+exactly this trap — so `git add -A` skipped `models/revisions.json` **in silence**. The file
+existed on hawapc01, the local gate passed against it, and the commit shipped the code that
+requires it without the file itself. `git diff --cached --stat` showed nine files and not that
+one; I read the number, not the list.
+
+The `.gitignore` now carries a second exception, and the class of defect is closed by a test
+rather than a third comment: `test_every_data_file_the_wheel_ships_is_tracked_by_git` reads
+`[tool.setuptools.data-files]` out of `pyproject.toml` and asserts every path it declares is in
+`git ls-files`. Verified red before the fix — it named `models/revisions.json` — and green after.
+Anything added to the wheel is covered without anyone extending a list.
+
+This is D-067's shape a third time: the local gate and the runner were checking different
+programs, and only the runner could see it.
+
+Gate: `VERIFY OK — 1092 passed, 0 skipped`.

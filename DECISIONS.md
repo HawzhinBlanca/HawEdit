@@ -2952,3 +2952,28 @@ made neither testable. And the weights on disk were verified against the pin by 
 blob id, not by re-downloading and hashing all 27 GB.
 
 Gate: `VERIFY OK — 1091 passed, 0 skipped`.
+
+## D-074
+
+**The pin file from D-073 shipped to nobody.** `models/*` is git-ignored — with a
+`!models/sources.json` exception and a comment explaining precisely this trap — so `git add -A`
+skipped `models/revisions.json` in silence. The code that requires it was committed without it;
+the local gate passed because the file was on this machine, and the runner failed with
+`no pinned revisions found under /home/runner/work/HawEdit/HawEdit/models`. `git diff --cached
+--stat` had listed nine files and not that one, and I read the total rather than the list.
+
+**Decision: close the class with a test, not a third comment.**
+`test_every_data_file_the_wheel_ships_is_tracked_by_git` reads
+`[tool.setuptools.data-files]` from `pyproject.toml` and asserts every declared path appears in
+`git ls-files`. Driven off the packaging declaration on purpose, so a file added to the wheel
+later is covered without anyone remembering to extend a list. Verified red before the fix — it
+named `models/revisions.json` — and green after, alongside the `.gitignore` exception.
+
+**This is D-067's shape for the third time**: the local gate and the runner were checking
+different programs, and only the runner could see the difference. The first two were an optional
+dependency and a CUDA device; this one is a file git was told to ignore. The lesson that
+generalises is not about any of those three — it is that "it works here" is a statement about
+this machine until CI agrees, which is why the loop pushes and waits rather than stopping at
+`VERIFY OK`.
+
+Gate: `VERIFY OK — 1092 passed, 0 skipped`.
