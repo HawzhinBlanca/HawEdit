@@ -323,7 +323,9 @@ _STAGE_4_JUDGE = StageSkipped(
     reason=(
         "no Stage 4 judge or persisted verdict was supplied. Use --gemini for non-confidential "
         "work, --vertex-project with governance confirmation for confidential work, or "
-        "--verdict for an already-reviewed exact span."
+        "--verdict for an already-reviewed exact span. Note that §4 pins gemini-2.5-pro and it "
+        "has a free-tier limit of exactly zero, so --gemini needs billing on the key's project "
+        "— BLOCKED.md #3."
     ),
     blocked_by=("Stage 4 judgment not enabled",),
 )
