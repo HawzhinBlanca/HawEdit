@@ -63,6 +63,42 @@ __all__ = [
 # What the Qwen3-VL chat template writes into the prompt to place each temporal group in time.
 TIMESTAMP_TOKEN: Final = re.compile(r"<([0-9]+(?:\.[0-9]+)?) seconds>")
 
+# Both templates write the stamp with `f"<{t:.1f} seconds>"`, so a value read back out of the
+# prompt can sit up to half of the last printed digit below the number the processor computed.
+PRINTED_PRECISION_S: Final = 0.05
+
+# The rate a Qwen3-VL processor falls back to when it is told nothing — the defect D-049 is
+# about. Kept as a constant so the guard's message can name the counterfactual it is refusing.
+_ASSUMED_FPS: Final = 24.0
+
+
+def _last_stamp_floor(frames: WindowFrames) -> float:
+    """The earliest a correct prompt can place this window's final temporal group.
+
+    Derived rather than tuned. Both templates stamp a group with the mean of its frames' times,
+    and a frame's time is its index divided by the sampling rate — so the largest stamp a
+    correct processor can write is `(count - 1) / fps`, and the *smallest* is that halved: one
+    group spanning every frame, stamped at its midpoint. Any finer grouping puts the last stamp
+    higher, so this is a floor for every grouping at once.
+
+    The previous bar was "half the window", which silently assumed Qwen3-VL's pairing. Measured,
+    `MCG-NJU/VideoChat3-4B` merges **four** frames per group and resamples first, so six frames
+    of a 1400 ms window become one group stamped 0.6 s — 42.9% of the window, and the old bar
+    rejected all three of the fixture's windows. It rejected them for being correct: 0.625 s is
+    exactly `(6 - 1) / (2 x 4)`, the midpoint of frames at 0.00 … 1.25 s.
+
+    The bar still separates the failure it was written for by a wide margin, because that
+    failure scales every stamp by `fps / 24`:
+
+        window   frames  fps   floor    real stamp   at 24 fps
+        s0:w0    6       4.0   0.5750   0.600        0.1000
+        s1:w0    6       4.0   0.5750   0.600        0.1000
+        s2:w0    5       4.0   0.4500   0.500        0.0833
+
+    D-057.
+    """
+    return (frames.count - 1) / (2 * frames.window.fps) - PRINTED_PRECISION_S
+
 
 class VideoInputError(RuntimeError):
     """A scene window could not be presented to a model honestly."""
@@ -208,15 +244,30 @@ def window_video_metadata(frames: WindowFrames) -> dict[str, Any]:
         video_metadata inside the content  -> <0.0 seconds> <0.1 seconds>   (accepted, ignored)
         video_metadata= top level          -> <0.5 seconds> <2.5 seconds>   correct
 
-    `duration` is the *window's*, and `fps` is the window's own sampling rate, so the times the
-    model sees run 0 → `window.duration_ms / 1000`. `total_num_frames` is the count that exists
-    on disk, never `window.frame_count` — reporting the plan would put the last frame at a time
-    no frame was taken at.
+    `fps` is the window's own sampling rate. `total_num_frames` is the count that exists on
+    disk, never `window.frame_count` — reporting the plan would put the last frame at a time no
+    frame was taken at.
+
+    **`duration` is `total_num_frames / fps`, not the window's length**, and the difference is
+    up to one frame period. `MCG-NJU/VideoChat3-4B` demands that identity in its own metadata
+    type and refuses anything else — *"fps * duration must be equal to total_num_frames, but got
+    5.6 != 6"* on a 1400 ms window at 4 fps. Reporting the window's 1.400 s there is not a
+    rounding disagreement, it is a hard refusal, and the frames really do represent 6 slots of
+    250 ms whatever the window's boundaries are.
+
+    Nothing is given up on the other side. Measured on `Qwen3-VL-Embedding-2B`, both forms, two
+    windows: identical prompt timestamps and **byte-identical** embeddings —
+
+        4162 ms @ 1 fps, 4 frames   duration 4.1620 vs 4.0000   stamps (0.5, 2.5) both
+        1400 ms @ 4 fps, 6 frames   duration 1.4000 vs 1.5000   stamps (0.2, 1.0) both
+
+    so the field is inert for the model that was already reading it and required by the one
+    added next. D-056.
     """
     window = frames.window
     return {
         "fps": window.fps,
-        "duration": window.duration_ms / 1000.0,
+        "duration": frames.count / window.fps,
         "total_num_frames": frames.count,
     }
 
@@ -279,9 +330,10 @@ def assert_timestamps_span_window(prompt_text: str, frames: WindowFrames) -> tup
         The timestamps, once accepted, so a caller can record them as evidence.
 
     Raises:
-        TimestampsOutsideWindow: no timestamps at all, or they do not reach the window's own
-            length. The failing case is real and is the default: 0.0 and 0.1 seconds for a
-            4162 ms window.
+        TimestampsOutsideWindow: no timestamps at all, some stamp lands outside the window, or
+            the last one falls below `_last_stamp_floor` — the earliest a correct processor can
+            place it, given the frames and the rate. The failing case is real and is the
+            default: 0.0 and 0.1 seconds for a 4162 ms window.
     """
     stamps = prompt_timestamps(prompt_text)
     window = frames.window
@@ -298,18 +350,14 @@ def assert_timestamps_span_window(prompt_text: str, frames: WindowFrames) -> tup
             f"{list(stamps)} — outside the window."
         )
 
-    # One temporal group is one timestamp, and Qwen3-VL groups frames in pairs, so the last
-    # stamp sits near the middle of the final group rather than at the window's end. The bar is
-    # therefore "the stamps reach most of the way", not "the last one equals the duration".
-    # It is set against the failure it exists to catch: the broken default reaches 0.1 s of
-    # 4.162, which is 2.4%. Anything under half the window is not tail rounding.
-    reach = max(stamps) / duration_s if duration_s else 0.0
-    if reach < 0.5:
+    if max(stamps) < _last_stamp_floor(frames):
+        broken = max(stamps) * window.fps / _ASSUMED_FPS
         raise TimestampsOutsideWindow(
-            f"{window.window_id} spans {duration_s:.3f} s but the prompt's last timestamp is "
-            f"{max(stamps):.3f} s — {reach:.1%} of the window. The frames are being placed in a "
-            f"fraction of the time they cover, which is what happens when video_metadata is not "
-            f"passed as a top-level argument: the processor assumes 24 fps and these frames are "
-            f"{window.fps} fps apart. Nothing downstream can see this."
+            f"{window.window_id} holds {frames.count} frames {window.fps} fps apart, so a "
+            f"correct prompt cannot stamp the last group before "
+            f"{_last_stamp_floor(frames):.3f} s — this one stamps it at {max(stamps):.3f} s. "
+            f"That is what happens when video_metadata is not passed as a top-level argument: "
+            f"the processor assumes {_ASSUMED_FPS:g} fps, which would put it near "
+            f"{broken:.3f} s. Nothing downstream can see this."
         )
     return stamps

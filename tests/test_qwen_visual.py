@@ -367,7 +367,9 @@ def two_frames(fps: float = 1.0, duration_ms: int = 4_162) -> WindowFrames:
     return WindowFrames(window=window, paths=(Path("f0.jpg"), Path("f1.jpg")))
 
 
-EXPECTED_METADATA = [{"fps": 1.0, "duration": 4.162, "total_num_frames": 2}]
+# `duration` is `total_num_frames / fps`, the identity VideoChat3 validates and Qwen3-VL is
+# measurably indifferent to — byte-identical embeddings either way. D-056.
+EXPECTED_METADATA = [{"fps": 1.0, "duration": 2.0, "total_num_frames": 2}]
 
 
 def test_the_embedder_passes_video_metadata_top_level(
@@ -404,7 +406,7 @@ def test_the_embedder_refuses_a_prompt_that_compresses_the_window(
             self, conv, **{k: v for k, v in kw.items() if k != "video_metadata"}
         ),
     )
-    with pytest.raises(TimestampsOutsideWindow, match="2.4%"):
+    with pytest.raises(TimestampsOutsideWindow, match="assumes 24 fps"):
         embedder.embed_frames(two_frames())
 
 

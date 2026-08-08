@@ -62,11 +62,26 @@ def frames_for(window: SceneWindow, count: int) -> WindowFrames:
 # --- the metadata, built from the window and the frames that exist ------------------------
 
 
-def test_metadata_carries_the_windows_own_duration_and_rate() -> None:
-    """The model places frames using these two numbers; a constant would place them wrongly."""
-    metadata = window_video_metadata(frames_for(a_window(), 4))
-    assert metadata["duration"] == pytest.approx(4.162)
-    assert metadata["fps"] == 1.0
+def test_metadata_carries_the_windows_own_rate() -> None:
+    """The model places frames using this number; a constant would place them wrongly."""
+    assert window_video_metadata(frames_for(a_window(), 4))["fps"] == 1.0
+
+
+def test_duration_is_the_identity_videochat3_demands() -> None:
+    """`fps x duration == total_num_frames`, exactly — the checkpoint's own validator.
+
+    Reporting the window's 4.162 s here is not a rounding disagreement with
+    `MCG-NJU/VideoChat3-4B`, it is a refusal: *"fps * duration must be equal to
+    total_num_frames, but got 5.6 != 6"*. Measured free on the other side — Qwen3-VL returns
+    byte-identical embeddings for both forms. D-056.
+    """
+    for count, fps in ((4, 1.0), (6, 4.0), (5, 4.0), (32, 2.0)):
+        metadata = window_video_metadata(frames_for(a_window(fps=fps), count))
+        assert metadata["fps"] * metadata["duration"] == pytest.approx(
+            metadata["total_num_frames"], abs=1e-6
+        )
+    # And it is genuinely not the window's own length, which is what it used to be.
+    assert window_video_metadata(frames_for(a_window(), 4))["duration"] == pytest.approx(4.0)
 
 
 def test_metadata_reports_the_frames_that_exist_not_the_frames_planned() -> None:
@@ -116,8 +131,31 @@ def test_the_real_broken_timestamps_are_refused() -> None:
     """
     frames = frames_for(a_window(), 4)
     broken = "<|vision_start|><0.0 seconds><|video_pad|><0.1 seconds><|video_pad|>"
-    with pytest.raises(TimestampsOutsideWindow, match="2.4%"):
+    with pytest.raises(TimestampsOutsideWindow, match="assumes 24 fps"):
         assert_timestamps_span_window(broken, frames)
+
+
+def test_the_real_videochat3_timestamps_are_accepted() -> None:
+    """One stamp at 0.6 s for six frames of a 1400 ms window — and the old bar rejected it.
+
+    `MCG-NJU/VideoChat3-4B` merges **four** frames per temporal group and resamples first, so
+    six frames become one group stamped at their midpoint: `(0 + 5/4) / 2 = 0.625`, printed
+    `0.6`. The previous rule wanted half the window, 0.7, and rejected all three of the
+    fixture's windows for being correct. D-057.
+    """
+    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    assert assert_timestamps_span_window("<0.6 seconds>", frames) == (0.6,)
+
+
+def test_the_24_fps_counterfactual_of_that_same_window_is_refused() -> None:
+    """The negative control for the bar above, at the same frame count and rate.
+
+    The defect scales every stamp by `fps / 24`, so the same group lands at 0.1 s. A floor that
+    accepted 0.6 and 0.1 alike would have replaced a mis-calibrated check with no check.
+    """
+    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    with pytest.raises(TimestampsOutsideWindow, match="cannot stamp the last group"):
+        assert_timestamps_span_window("<0.1 seconds>", frames)
 
 
 def test_the_real_correct_timestamps_are_accepted() -> None:

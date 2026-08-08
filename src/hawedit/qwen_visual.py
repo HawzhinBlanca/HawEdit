@@ -91,16 +91,39 @@ class EmbedderUnavailable(RuntimeError):
     """A Stage 2 model could not be loaded, or this machine cannot run it."""
 
 
-def load_processor_and_model(model_dir: Path, device: str) -> tuple[Any, Any]:
-    """One loader for both Stage 2 models, so both get the same refusals.
+def load_processor_and_model(
+    model_dir: Path,
+    device: str,
+    *,
+    trust_remote_code: bool = False,
+    causal_lm: bool = False,
+    configure: Callable[[Any], None] | None = None,
+) -> tuple[Any, Any]:
+    """One loader for every §7 visual checkpoint, so all of them get the same refusals.
 
     The CUDA check in particular: §6 puts Stage 2 on a GPU, and a silent CPU fallback would
-    change what every number measured afterwards is about. Two classes with two copies of that
-    check is one class away from having only one of them.
+    change what every number measured afterwards is about. Three classes with three copies of
+    that check is one class away from having only two of them.
+
+    The three keyword arguments are facts about a checkpoint, not preferences:
+
+    * `trust_remote_code` — the checkpoint ships its own modelling code. Both Qwen entries are
+      native `transformers`; `MCG-NJU/VideoChat3-4B` is not.
+    * `causal_lm` — which auto class the checkpoint's `auto_map` actually names. VideoChat3's
+      lists `AutoModel` and `AutoModelForCausalLM` and no `AutoModelForImageTextToText`, so the
+      default here would fail to dispatch on it.
+    * `configure` — mutate the config before the weights are read. VideoChat3's vision tower
+      defaults to `flash_attention_2`, which resolves to `None` without flash-attn, and
+      flash-attn publishes no Windows wheels.
     """
     try:
         import torch
-        from transformers import AutoModelForImageTextToText, AutoProcessor
+        from transformers import (
+            AutoConfig,
+            AutoModelForCausalLM,
+            AutoModelForImageTextToText,
+            AutoProcessor,
+        )
     except ImportError as exc:  # the `gpu` extra is not installed
         raise EmbedderUnavailable(
             f"{exc}. §3 Stage 2 needs the GPU extra: see README 'GPU'."
@@ -112,13 +135,25 @@ def load_processor_and_model(model_dir: Path, device: str) -> tuple[Any, Any]:
             f"is about."
         )
     # transformers ships `py.typed` while leaving `AutoProcessor.from_pretrained` untyped.
-    processor = AutoProcessor.from_pretrained(str(model_dir))  # type: ignore[no-untyped-call]
+    processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
+        str(model_dir), trust_remote_code=trust_remote_code
+    )
+    extra: dict[str, Any] = {}
+    if configure is not None:
+        config = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=trust_remote_code)
+        configure(config)
+        extra["config"] = config
+    auto = AutoModelForCausalLM if causal_lm else AutoModelForImageTextToText
     # `output_loading_info=True` rather than a bare load: anything absent from the checkpoint is
     # filled with a fresh random initialisation and the load succeeds anyway. Measured on
     # VideoChat3-4B, whose `lm_head.weight` arrives random at std 0.0200 against the real
     # embedding's 0.0201 — indistinguishable by statistics, visible only in this list. D-054.
-    result: Any = AutoModelForImageTextToText.from_pretrained(
-        str(model_dir), dtype=torch.bfloat16, output_loading_info=True
+    result: Any = auto.from_pretrained(
+        str(model_dir),
+        dtype=torch.bfloat16,
+        output_loading_info=True,
+        trust_remote_code=trust_remote_code,
+        **extra,
     )
     loaded, info = result
     assert_fully_loaded(model_dir.name, info.get("missing_keys") or ())

@@ -2206,3 +2206,99 @@ under the pin belong to whatever next needs them — §8.2 above all, which is w
 finally gets judged rather than just observed.
 
 ---
+
+## D-056 · `video_metadata.duration` is `frames / fps`, not the window's length
+
+**Context:** M5.4. `MCG-NJU/VideoChat3-4B`'s own metadata type validates
+`fps × duration == total_num_frames` to within 1e-6 and refuses anything else —
+*"fps * duration must be equal to total_num_frames, but got 5.6 != 6"* on a 1400 ms window at
+4 fps. `window_video_metadata` reported the window's own 1.400 s, which two shipped Stage 2
+models already consume.
+
+**Decision:** report `frames.count / window.fps`. The difference is up to one frame period.
+
+**Why this is not a loss on the Stage 2 side, measured rather than argued.** Same frames, both
+forms, `Qwen3-VL-Embedding-2B` on `cuda:0`:
+
+    4162 ms @ 1 fps, 4 frames   4.1620 vs 4.0000   stamps (0.5, 2.5) both   embeddings byte-identical
+    1400 ms @ 4 fps, 6 frames   1.4000 vs 1.5000   stamps (0.2, 1.0) both   embeddings byte-identical
+
+The field is inert for Qwen3-VL — it derives stamps from frame index over rate — and required by
+VideoChat3. Confirmed a third time end to end: the reranker scores in `evidence/m5-4-path-b.md`
+reproduce `evidence/m5-2-reranker.md` to six decimals under the change.
+
+**What is given up, stated plainly.** The number no longer answers "how long is this window". It
+answers "how much time do these frames represent", which is what every consumer of it actually
+computes with, and the window's own length remains on `SceneWindow` where the guards read it.
+
+---
+
+## D-057 · The timestamp guard's bar is derived from the frames, not set at half the window
+
+**Context:** M5.4. `assert_timestamps_span_window` refused a stamp under 50% of the window's
+duration. That threshold was written against Qwen3-VL, which merges frames in **pairs**.
+`MCG-NJU/VideoChat3-4B` merges **four** and resamples first, so six frames of a 1400 ms window
+arrive as one temporal group stamped at their midpoint — 0.625 s, printed `0.6`, 42.9%. The
+guard rejected all three of the fixture's windows **for being correct**.
+
+**Decision:** the bar is `(count - 1) / (2 × fps) - 0.05`. A stamp is a frame index over the
+sampling rate, so the largest a correct processor can write is `(count-1)/fps`; the smallest is
+that halved — a single group spanning every frame, stamped at its midpoint. Any finer grouping
+puts the last stamp higher, so the halved value is a floor across every grouping at once. The
+0.05 is half of the last printed digit: both templates write `f"<{t:.1f} seconds>"`.
+
+**This replaces a threshold with a derivation; it does not relax one.** The defect it exists to
+catch scales every stamp by `fps / 24`, so it stays 5.4–6× below the new bar:
+
+    window   frames  fps   floor    real stamp   at 24 fps
+    s0:w0    6       4.0   0.5750   0.600        0.1000
+    s1:w0    6       4.0   0.5750   0.600        0.1000
+    s2:w0    5       4.0   0.4500   0.500        0.0833
+
+It still refuses `(0.0, 0.1)` on the 4162 ms window D-049 was written for. Both directions are
+pinned at the same frame count and rate in `tests/test_video_input.py`, because a floor that
+accepted 0.600 and 0.100 alike would have replaced a mis-calibrated check with no check.
+
+**Rule this cost.** The project's own rule is not to weaken a check to make something pass, and
+proving the check wrong first is what that requires. The proof is that 0.625 is exactly
+`(6-1)/(2×4)` — the arithmetic midpoint of frames at 0.00 … 1.25 s, computed from the rate the
+processor was handed. The old bar was not measuring the defect, it was measuring Qwen3-VL's
+grouping.
+
+---
+
+## D-058 · Path B's SV6D time is a field the model fills, and the shift onto media time is ours
+
+**Context:** M5.4. `MCG-NJU/VideoChat3-4B` is shown one window and told it starts at zero;
+`Sv6d` and `assert_sv6d_within_window` are checked against media-absolute milliseconds.
+
+**The offset cannot be pushed into the model.** VideoChat3 computes a frame's time as
+`video_start_time + index / fps` and then validates `video_start_time < duration`. For the
+fixture's second window that offset is 1.4 s against a 1.4 s clip — its own validator rejects
+it. Measured, not assumed.
+
+**Decision 1 — shift in code, not in the prompt.** Asking the model to add its own offset gets
+a number that is right most of the time, and the wrong ones are silent: a window-relative time
+frequently lands inside the window's absolute range. Measured on the fixture, an unshifted
+reading is *rejected* for two of three windows and *accepted* for the first — the one anyone
+checks. `tests/test_video_reader.py` pins the silent case explicitly.
+
+**Decision 2 — the time comes back in a field of its own.** `parse_timestamps_ms` cannot tell a
+moment from a duration ("slow push-in over 3s, starting 5:04" cites both), so shifting times
+found inside free text would corrupt the durations. The prompt asks for
+`dimension | seconds | text` and this module builds the label. A description carrying a second
+time is refused rather than shipped, because that one is on the clip's clock and nothing
+downstream marks which clock a number is on. Measured: 0 of 18 real lines did it.
+
+**Decision 3 — the score is the caller's, never the model's.** §3: *"Path B — visual.
+`VideoChat3-4B` over scenes, **plus embedding/rerank retrieval**."* The ranking half is Stage
+2's, so `score_window` is injected. Asking a describer for a relevance number would have
+produced one, in [0, 1], about nothing — the same class of mistake as `encoder_available`
+trusting a capability listing.
+
+**Decision 4 — the prompt's wording is a measurement, not a draft.** `name: text, and cite a
+timestamp` produced a constant `0.0s:` prefix on two windows and **no timestamp at all** on the
+third — output §3 requires be rejected, from the model §3 names. The pipe form returned 18 of 18
+lines parseable. Recorded because a prompt looks like prose and behaves like an interface.
+
+---
