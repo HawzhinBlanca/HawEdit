@@ -2084,3 +2084,62 @@ five fixes that three iterations of measurement paid for are now defended by the
 than by a document.
 
 ---
+
+## D-054 · A model that loads is not a model that works
+
+**Found while verifying M5.4's premise**, before writing any adapter. `MCG-NJU/VideoChat3-4B`
+loads in 4.8 s, reports `VideoChat3ForConditionalGeneration` and 4.86B parameters, and raises
+nothing — with `lm_head.weight` **absent from the checkpoint and filled with a fresh random
+initialisation**. `lm_head` is the projection from hidden states to token logits, so §3 Stage 3
+Path B would have produced SV6D labels that looked exactly like labels.
+
+    missing_keys: {'lm_head.weight'}      lm_head std 0.02000    embed std 0.02014
+    tied by identity: False               equal by value: False
+
+**The two standard deviations are 0.0200 and 0.0201.** No statistic separates a random head
+from a trained one; `missing_keys` is the only signal, and nothing was reading it.
+
+**Why, established rather than assumed.** All three shards are present and the index holds 734
+tensors with no `lm_head` — the checkpoint is complete. `config.json` says
+`tie_word_embeddings: False` at the top level and `text_config.tie_word_embeddings: True`
+inside; the shapes are identical; transformers 5.14.1 resolves the contradiction from the top
+level. The checkpoint declares `transformers_version: 4.57.0.dev0` and its own demo scripts do
+a plain `from_pretrained`, so on the version its authors tested the head was tied. A behaviour
+change, not an untied head.
+
+**Decision 1 — the guard is `missing_keys`, checked at the loader, not per adapter.**
+`models.assert_fully_loaded` refuses a non-empty list and
+`qwen_visual.load_processor_and_model` asks for it via `output_loading_info=True`. Every §7
+checkpoint this project loads goes through a loader; a per-adapter check is three chances to
+forget. This is `encoder_available`'s lesson applied to weights: that function exists because
+`ffmpeg -encoders` lists what was compiled in rather than what works, and this exists because
+`from_pretrained` returning a model says what was constructed rather than what was loaded.
+
+**Decision 2 — the positive control is not optional.** Both Qwen checkpoints report no missing
+keys, so a guard that refused every load would satisfy the refusal test and break Stage 2. One
+test refuses the real VideoChat3 case, one accepts a complete checkpoint, one requires *every*
+invented weight to be named rather than the first — the fix differs per tensor.
+
+**Decision 3 — the tying is M5.4's, with its own record.** Tying restores the authors' intent,
+but overriding a third-party config is a judgment call about someone else's checkpoint and its
+consequences belong beside the adapter that depends on it. Setting a flag quietly here would
+have been the same mistake one layer up: a thing that works for a reason nobody wrote down.
+
+**Retroactive check, and the reason it was urgent.** The reranker's score reads
+`lm_head.weight` directly (D-051). Had M5.2's checkpoints shared this problem, "the reranker
+reorders the windows" would have been a measurement of a random head. Verified: both
+`Qwen3-VL-Reranker-2B` and `Qwen3-VL-Embedding-2B` report `missing_keys: NONE` and tie
+`lm_head` to their embeddings. **M5.2's evidence stands** — recorded as a verified fact,
+because until this iteration it was an assumption.
+
+**Also this iteration, and it found nothing.** The same mutation audit that exposed five
+unprotected guards in M5.2 (D-053) was run against the §3 Stage 3/4 Gemini path — the one with
+legal consequences. Eight mutations: dropping the ZDR requirement, accepting an unattributed
+confirmation, skipping governance in `judge()`, in `count_request_tokens()` and in Path A's
+`discover()`, skipping the 200K tier ceiling, trusting the caller's token count, and moving
+temperature off 0.0. **All eight caught, each by a behavioural test** — verified separately
+from lint, since three of them also happen to break `ruff` and a lint failure is not evidence
+about a guard. That path is defended. Recorded because a negative result from an audit is a
+result, and because it says the M5.2 gap was specific rather than systemic.
+
+---

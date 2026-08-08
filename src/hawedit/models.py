@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -39,6 +39,8 @@ __all__ = [
     "ModelStatus",
     "ModelStore",
     "SourceNotConfigured",
+    "WeightsIncomplete",
+    "assert_fully_loaded",
     "readiness_report",
 ]
 
@@ -55,6 +57,44 @@ _PIP_MODULES: Final[Mapping[str, str]] = {
 
 class ModelNotProvisioned(RuntimeError):
     """Raised when a stage is asked to run without the weights it needs."""
+
+
+class WeightsIncomplete(RuntimeError):
+    """Raised when a checkpoint loaded but some of its weights were invented."""
+
+
+def assert_fully_loaded(model_id: str, missing_keys: Iterable[str]) -> None:
+    """Refuse a model whose checkpoint did not supply every weight.
+
+    `from_pretrained` fills anything absent from the checkpoint with a **fresh random
+    initialisation** and carries on. The model then loads in a few seconds, reports the right
+    parameter count, produces output of the right shape, and is wrong in a way no downstream
+    check can see. It is reported — as a line in a printed load report — and nothing raises.
+
+    Measured on `MCG-NJU/VideoChat3-4B`: `missing_keys = {'lm_head.weight'}`, randomly
+    initialised at std 0.0200, against the real embedding's 0.0201 — so the statistics cannot
+    tell them apart and only this list can. `lm_head` is the projection that turns hidden
+    states into tokens, so a Path B run would have produced confident nonsense.
+
+    This is `encoder_available`'s lesson for weights: a thing that loads is not a thing that
+    works, and the only answer worth having is the one the loader was asked for directly.
+
+    Args:
+        model_id: for the message — §7's id, so the refusal names the component.
+        missing_keys: `from_pretrained(..., output_loading_info=True)`'s `missing_keys`.
+
+    Raises:
+        WeightsIncomplete: any weight was invented.
+    """
+    missing = sorted(missing_keys)
+    if missing:
+        raise WeightsIncomplete(
+            f"{model_id} loaded with {len(missing)} weight(s) absent from the checkpoint and "
+            f"filled with random values: {missing}. The model would run and produce output of "
+            f"the right shape. If these are meant to be tied to another tensor, the config says "
+            f"so and the load did not honour it — tie them explicitly and record why "
+            f"(§7 permits the model, not a differently-initialised copy of it)."
+        )
 
 
 class SourceNotConfigured(RuntimeError):

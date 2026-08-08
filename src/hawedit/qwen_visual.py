@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from hawedit.models import assert_fully_loaded
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
@@ -112,14 +113,19 @@ def load_processor_and_model(model_dir: Path, device: str) -> tuple[Any, Any]:
         )
     # transformers ships `py.typed` while leaving `AutoProcessor.from_pretrained` untyped.
     processor = AutoProcessor.from_pretrained(str(model_dir))  # type: ignore[no-untyped-call]
+    # `output_loading_info=True` rather than a bare load: anything absent from the checkpoint is
+    # filled with a fresh random initialisation and the load succeeds anyway. Measured on
+    # VideoChat3-4B, whose `lm_head.weight` arrives random at std 0.0200 against the real
+    # embedding's 0.0201 — indistinguishable by statistics, visible only in this list. D-054.
+    result: Any = AutoModelForImageTextToText.from_pretrained(
+        str(model_dir), dtype=torch.bfloat16, output_loading_info=True
+    )
+    loaded, info = result
+    assert_fully_loaded(model_dir.name, info.get("missing_keys") or ())
     # `.to()` is wrapped by transformers and its stub takes a `PreTrainedModel` rather than a
     # device string, so strict mode rejects the documented call. Ignored on this one line rather
     # than relaxed for the module — a real type error in our own code still fails the gate.
-    model = (
-        AutoModelForImageTextToText.from_pretrained(str(model_dir), dtype=torch.bfloat16)
-        .to(device)  # type: ignore[arg-type]
-        .eval()
-    )
+    model = loaded.to(device).eval()
     return processor, model
 
 

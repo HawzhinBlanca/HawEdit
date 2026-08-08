@@ -169,3 +169,39 @@ def test_the_report_covers_every_component(tmp_path: Path) -> None:
     report = readiness_report(store(tmp_path).status())
     for entry in REGISTRY.values():
         assert entry.model_id in report
+
+
+# --- a model that loads is not a model that works ------------------------------------------
+
+
+def test_a_checkpoint_missing_a_weight_is_refused() -> None:
+    """`from_pretrained` invents anything the checkpoint omits and carries on.
+
+    Measured on `MCG-NJU/VideoChat3-4B` (D-054): `missing_keys = {'lm_head.weight'}`, filled
+    with a fresh random initialisation at std 0.0200 — against the real embedding's 0.0201, so
+    no statistic separates them. `lm_head` turns hidden states into tokens, so §3 Stage 3
+    Path B would have produced confident nonsense from a model that loaded in 4.8 s and
+    reported 4.86B parameters.
+    """
+    from hawedit.models import WeightsIncomplete, assert_fully_loaded
+
+    with pytest.raises(WeightsIncomplete, match="lm_head.weight"):
+        assert_fully_loaded("MCG-NJU/VideoChat3-4B", ["lm_head.weight"])
+
+
+def test_a_complete_checkpoint_is_accepted() -> None:
+    """The positive control. Measured: both Qwen3-VL checkpoints report no missing keys and
+    tie `lm_head` to their embeddings, so this guard must not refuse them — a check that
+    refused every load would pass the test above and stop Stage 2 working."""
+    from hawedit.models import assert_fully_loaded
+
+    assert_fully_loaded("Qwen3-VL-Reranker-2B", [])  # must not raise
+
+
+def test_the_refusal_names_every_invented_weight() -> None:
+    """One name would let a second silently through, and the fix differs per tensor."""
+    from hawedit.models import WeightsIncomplete, assert_fully_loaded
+
+    with pytest.raises(WeightsIncomplete) as raised:
+        assert_fully_loaded("m", ["b.weight", "a.weight"])
+    assert "a.weight" in str(raised.value) and "b.weight" in str(raised.value)
