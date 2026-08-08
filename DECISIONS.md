@@ -3081,3 +3081,42 @@ literal `|` delimiters, which split the markdown cell and broke
 become invisible to the checker that exists to require one.
 
 Gate: `VERIFY OK — 1096 passed, 0 skipped`.
+
+## D-077
+
+**§8.2's collapse metric reported a zero for a measurement that never happened.** For a gold set
+with no winners, `recall_at_k` returned `None` and `recall_at_k_by_path` returned `{}` — both
+saying *unmeasured* — while `path_unique_wins` returned `{verbal: 0, visual: 0, both: 0}`. §8.2's
+collapse test is *"If Path B never surfaces a winner Path A missed, collapse it"*, so that third
+line reads as licence to delete a path: GPU 0, a segmented 4B checkpoint and the whole of §3
+Stage 3's visual half, on the strength of an empty measurement. The project's own rule —
+unmeasured is None, never 0.0 — held in one half of a metric pair and not the other.
+
+**Decision: return `{}`, matching `recall_at_k_by_path`, not `None`.** For a by-path mapping the
+established signal is already empty-means-unmeasured, non-empty-means-every-path-present-with-its-
+real-value-including-zero. `None` was considered and rejected: it would make the two halves of one
+metric pair disagree in *shape* while agreeing in meaning, and `float | None` is the right signal
+for a scalar rather than a mapping. One line, no signature change; `grep` finds no production
+caller, only prose and tests.
+
+**A measured zero must still be reported, which is what keeps the fix narrow.** With a real winner
+retrieved only by the verbal path, `visual: 0` is *the finding* — exactly the evidence §8.2 wants —
+so "stop reporting zeros" would have been the wrong fix. The control
+(`test_a_measured_zero_is_still_reported_for_every_path`) fails for a `return {}` that ignores the
+distinction, and the new test also pins that the three metrics agree with each other about whether
+anything was measured at all.
+
+**Mutation audit 3/3**, run over `tests/test_repurposing.py` *and* `tests/test_discovery.py`
+because the latter also calls this function — a mutation only the discovery tests caught would
+otherwise have read as unprotected (`evidence/unmeasured-unique-wins.md`).
+
+**What M7.1 shows about self-certifying rows.** That row had no evidence file: its Definition of
+Done listed six §8.2 metrics and the ledger cell listed the same six back. All six exist, so the
+row was not lying about coverage — the defect was that one of them answered a question nobody
+asked it, which a cell restating its own DoD can never surface.
+
+**Still open on this row, deliberately not bundled:** `iou_match` is accepted unvalidated, so
+`1.5` or `-1` yields silent nonsense rather than a refusal. A different defect in a different
+function; folding it in would have made neither individually auditable.
+
+Gate: `VERIFY OK — 1099 passed, 0 skipped`.

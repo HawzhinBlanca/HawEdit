@@ -175,12 +175,20 @@ def path_unique_wins(
     collapse it." A path with zero unique wins is paying for itself with nothing — and for
     the visual path that means GPU 0, a segmented 4B model, and the whole of §3's Path B.
 
-    Every path appears in the result. Zero is the answer that justifies removing a path, so
-    it must be reported rather than absent.
+    Every path appears in the result **when there is something to measure**. Zero is the answer
+    that justifies removing a path, so a measured zero must be reported rather than absent.
+
+    An empty mapping means *unmeasured*, matching `recall_at_k_by_path`. This used to return
+    `{verbal: 0, visual: 0, both: 0}` for a gold set with no winners, which is the one thing this
+    function must never say: §8.2's collapse test reads a zero here as licence to delete a path —
+    GPU 0, a 4B checkpoint and the whole of §3 Stage 3 Path B — and a gold set nobody found a clip
+    in has not earned that. `recall_at_k` returns `None` for exactly this case and this disagreed
+    with it, so "unmeasured is None, never 0.0" held in one metric of the pair and not the other.
+    D-077.
     """
     winners = [candidate for candidate in gold if candidate.is_winner]
     if not winners:
-        return dict.fromkeys(DiscoveryPath, 0)
+        return {}
 
     per_path = {
         path: _found_winners(

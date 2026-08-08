@@ -271,3 +271,37 @@ def test_dividing_by_no_source_hours_is_refused() -> None:
         cost_per_source_hour(total_cost_usd=1.0, source_hours=0.0)
     with pytest.raises(ValueError, match="source_hours"):
         wallclock_per_source_hour(total_seconds=1.0, source_hours=0.0)
+
+
+# --- unmeasured is not zero, in BOTH halves of the collapse metric ------------------------
+#
+# `path_unique_wins` returned `{verbal: 0, visual: 0, both: 0}` for a gold set with no winners,
+# while `recall_at_k` returned `None` for the same input. §8.2's collapse test reads a zero here
+# as licence to delete a path, so an unmeasured zero is a decision-grade wrong number. Found by
+# the 2026-08-09 adversarial pass. D-077.
+
+
+def test_unique_wins_are_unmeasured_not_zero_when_no_gold_winner_exists() -> None:
+    """Empty mapping, matching `recall_at_k_by_path` — not a zero for every path."""
+    gold = (GoldCandidate("g1", "m", 0, 1_000, DiscoveryPath.VERBAL, is_winner=False),)
+    retrieved = (RetrievedCandidate("m", 0, 1_000, DiscoveryPath.VERBAL, 1),)
+    assert path_unique_wins(retrieved, gold) == {}
+    assert path_unique_wins(retrieved, ()) == {}
+    # The pair must agree about whether anything was measured at all.
+    assert recall_at_k(retrieved, gold) is None
+    assert recall_at_k_by_path(retrieved, gold) == {}
+
+
+def test_a_measured_zero_is_still_reported_for_every_path() -> None:
+    """The control, and the reason the fix is not `return {}` unconditionally.
+
+    With a real winner that only the verbal path retrieved, `visual` must appear carrying 0 —
+    that zero is §8.2's collapse finding and dropping it would hide the answer the metric exists
+    to give.
+    """
+    gold = (GoldCandidate("g1", "m", 0, 1_000, DiscoveryPath.VERBAL, is_winner=True),)
+    retrieved = (RetrievedCandidate("m", 0, 1_000, DiscoveryPath.VERBAL, 1),)
+    wins = path_unique_wins(retrieved, gold)
+    assert set(wins) == set(DiscoveryPath), f"a path went missing from a measured result: {wins}"
+    assert wins[DiscoveryPath.VERBAL] == 1
+    assert wins[DiscoveryPath.VISUAL] == 0
