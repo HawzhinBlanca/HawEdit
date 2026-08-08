@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -26,7 +28,7 @@ from hawedit.qwen_visual import (
     read_score_tokens,
 )
 from hawedit.registry import WrongRole
-from hawedit.video_input import WindowFrames
+from hawedit.video_input import TimestampsOutsideWindow, WindowFrames
 from hawedit.visual_index import SceneWindow, VisualHit, rerank_and_keep
 
 
@@ -290,3 +292,160 @@ def test_a_section_7_model_with_the_wrong_job_cannot_be_the_reranker(tmp_path: P
             read_frames=lambda w: WindowFrames(window=w, paths=(Path("f0.jpg"),)),
             model_id=EMBEDDING_MODEL_ID,
         )
+
+
+# =========================================================================================
+# What actually reaches the processor, tested without weights.
+#
+# An adversarial pass over M5.2 mutated seven guards one at a time and asked whether the gate
+# noticed. Five survived: dropping `video_metadata` from either model (the whole D-049 fix),
+# dropping the timestamp assertion, flipping `add_generation_prompt`, and replacing D-051's
+# float32 score formula with a constant. Every headline fix of three iterations was silently
+# revertible, because the tests covered refusals reachable without weights and nothing covered
+# the *wiring* — which arguments actually arrive.
+#
+# The stubs below close that. The processor stub is not invented behaviour: it reproduces what
+# the real one was measured to do — timestamps inside the window when `video_metadata` arrives
+# as a top-level argument, and the 24-fps fallback `<0.0 seconds><0.1 seconds>` when it does
+# not. So a mutation that drops the argument fails here for the same reason it fails on real
+# weights.
+# =========================================================================================
+
+
+class StubProcessor:
+    """Mimics the measured behaviour of a Qwen3-VL processor's chat template."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.text = ""
+
+    def apply_chat_template(self, conversation: Any, **kwargs: Any) -> dict[str, Any]:
+        import torch
+
+        self.calls.append(kwargs)
+        metadata = kwargs.get("video_metadata")
+        if metadata:
+            duration = float(metadata[0]["duration"])
+            stamps = f"<0.0 seconds><{duration * 0.6:.3f} seconds>"
+        else:
+            # Exactly what the real processor produced for a 4162 ms window, assuming 24 fps.
+            stamps = "<0.0 seconds><0.1 seconds>"
+        self.text = f"<|vision_start|>{stamps}<|video_pad|>"
+        return {"input_ids": torch.tensor([[1, 2, 3]])}
+
+    def decode(self, _ids: Any) -> str:
+        return self.text
+
+
+class StubModel:
+    """A fixed hidden state and a tiny `lm_head`, so the score is arithmetic we know."""
+
+    def __init__(self, hidden: Any, weight: Any) -> None:
+        self.lm_head = SimpleNamespace(weight=SimpleNamespace(data=weight))
+        self._hidden = hidden
+        self.forward_kwargs: dict[str, Any] = {}
+
+    def __call__(self, **kwargs: Any) -> Any:
+        self.forward_kwargs = kwargs
+        return SimpleNamespace(hidden_states=[self._hidden])
+
+
+def stubbed(
+    obj: Any, monkeypatch: pytest.MonkeyPatch, hidden: Any, weight: Any
+) -> tuple[StubProcessor, StubModel]:
+    """Point `obj._load` at stubs, and make frame loading independent of Pillow."""
+    processor, model = StubProcessor(), StubModel(hidden, weight)
+    monkeypatch.setattr(type(obj), "_load", lambda _self: (processor, model))
+    monkeypatch.setattr("hawedit.qwen_visual.load_window_images", lambda f: ["frame"] * f.count)
+    return processor, model
+
+
+def two_frames(fps: float = 1.0, duration_ms: int = 4_162) -> WindowFrames:
+    window = SceneWindow(
+        media_id="m", scene_index=0, window_index=0, in_ms=0, out_ms=duration_ms, fps=fps
+    )
+    return WindowFrames(window=window, paths=(Path("f0.jpg"), Path("f1.jpg")))
+
+
+EXPECTED_METADATA = [{"fps": 1.0, "duration": 4.162, "total_num_frames": 2}]
+
+
+def test_the_embedder_passes_video_metadata_top_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The D-049 fix, protected. Dropping this argument was silently revertible."""
+    import torch
+
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2))
+    processor, _ = stubbed(embedder, monkeypatch, torch.zeros(1, 1, 2) + 0.5, torch.eye(2))
+    embedding = embedder.embed_frames(two_frames())
+    assert embedding.dimension == 2
+    assert processor.calls[0]["video_metadata"] == EXPECTED_METADATA
+
+
+def test_the_embedder_refuses_a_prompt_that_compresses_the_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The negative control, and the second mutation that survived: delete the assertion in
+    `embed_frames` and this passes.
+
+    The stub returns the real 24-fps fallback when no metadata arrives, so the failure here is
+    the actual one — a 4.162 s window stamped 0.1 s — rather than a synthetic stand-in.
+    """
+    import torch
+
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2))
+    stubbed(embedder, monkeypatch, torch.zeros(1, 1, 2) + 0.5, torch.eye(2))
+    original = StubProcessor.apply_chat_template
+    monkeypatch.setattr(
+        StubProcessor,
+        "apply_chat_template",
+        lambda self, conv, **kw: original(
+            self, conv, **{k: v for k, v in kw.items() if k != "video_metadata"}
+        ),
+    )
+    with pytest.raises(TimestampsOutsideWindow, match="2.4%"):
+        embedder.embed_frames(two_frames())
+
+
+def test_the_reranker_score_is_the_float32_weight_difference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-051's formula, protected by arithmetic rather than by a docstring.
+
+    `lm_head.weight` rows are `[1, 0]` for false and `[0, 1]` for true, so the direction is
+    `[-1, 1]`; the hidden state is `[3, 1]`, so the score is `sigmoid(-3 + 1) = sigmoid(-2)`.
+    Replacing the formula with a constant — the mutation that survived the audit — cannot
+    produce this number.
+    """
+    import torch
+
+    reranker = QwenVisualReranker(
+        a_reranker_checkpoint(tmp_path, true_id=1, false_id=0),
+        read_frames=lambda w: WindowFrames(window=w, paths=(Path("f0.jpg"),)),
+    )
+    stubbed(reranker, monkeypatch, torch.tensor([[[3.0, 1.0]]]), torch.eye(2))
+    score = reranker.score("ڕۆژنامەوانی", two_frames())
+    assert score == pytest.approx(float(torch.sigmoid(torch.tensor(-2.0))), abs=1e-6)
+
+
+def test_the_reranker_asks_for_the_answer_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`add_generation_prompt=True` — flipping it survived the audit.
+
+    The score is the logits of the *answer* token, so the prompt must end where the answer
+    would begin. Without it the two logits read belong to whatever token the template ended
+    on, and every candidate still gets a plausible number in [0, 1].
+    """
+    import torch
+
+    reranker = QwenVisualReranker(
+        a_reranker_checkpoint(tmp_path),
+        read_frames=lambda w: WindowFrames(window=w, paths=(Path("f0.jpg"),)),
+    )
+    processor, model = stubbed(reranker, monkeypatch, torch.zeros(1, 1, 2), torch.zeros(9694, 2))
+    reranker.score("ڕۆژنامەوانی", two_frames())
+    assert processor.calls[0]["add_generation_prompt"] is True
+    assert processor.calls[0]["video_metadata"] == EXPECTED_METADATA
+    assert model.forward_kwargs["output_hidden_states"] is True

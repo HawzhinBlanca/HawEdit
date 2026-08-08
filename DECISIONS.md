@@ -2029,3 +2029,58 @@ recorded here so that whoever has real footage knows it is a decision waiting, r
 inheriting whichever rate an example happened to use.
 
 ---
+
+## D-053 · The evidence held and the tests did not: five fixes were silently revertible
+
+**The adversarial pass on M5.2** did not re-read the row — it broke each guard one at a time,
+restoring from git between mutations, and asked whether the gate noticed.
+
+Every claim in the row reproduced exactly: three windows, 10.1 s against a recorded 10.4 s,
+ranks `[1, 2, 3]`, the reranker moving scene 0 from third to second, retrieval scores carried
+through, 8.17 GiB, unit-norm vectors. Nothing had to be withdrawn.
+
+**Five of seven mutations passed the gate untouched:**
+
+    embed_frames: drop video_metadata — the entire D-049 fix          MISSED
+    embed_frames: drop the timestamp assertion                        MISSED
+    reranker score: drop video_metadata                               MISSED
+    reranker score: add_generation_prompt True -> False               MISSED
+    reranker score: replace D-051's float32 formula with a constant   MISSED
+
+Every headline fix of the previous three iterations was silently revertible.
+
+**The cause is one shape, and it is worth naming.** The tests covered every *refusal reachable
+without weights* — recipe missing, pooling unsupported, wrong §7 role, no CUDA — and nothing
+covered the **wiring**: which arguments actually arrive at the processor. That lives in the one
+path the tests could not reach, and the evidence files recorded that it *worked once* rather
+than that it *keeps working*. An evidence file measures a moment; only a test measures every
+moment after it. This project has caught the same shape three times already at other levels —
+M0.10's metric with no benchmark, M3.4's `duration_ms` echoing the request,
+`encoder_available` trusting a listing. Here the thing doing the trusting was the test suite.
+
+**Decision 1 — wiring gets stub-level tests, and the stub reproduces measured behaviour.** The
+stub processor writes timestamps inside the window when `video_metadata` arrives top-level and
+`<0.0 seconds><0.1 seconds>` when it does not — which is exactly what the real processor
+produced for the 4162 ms window. A mutation therefore fails for the same reason it would fail
+on real weights, rather than for a reason a stub invented. Inventing the stub's behaviour would
+have reproduced the original defect one layer out: a check that passes because it agrees with
+itself.
+
+**Decision 2 — the score is tested as arithmetic, not as a call.** `lm_head.weight` rows
+`[1, 0]` and `[0, 1]` give direction `[-1, 1]`, hidden state `[3, 1]`, so the score must be
+`sigmoid(-2) = 0.119203`. Asserting that `_score_direction` was *called* would pass for a
+constant; asserting the number does not.
+
+**Decision 3 — no weights, so CI runs it.** `models/` is git-ignored and a runner has no
+checkpoint. Wiring tests that needed 4 GB would be wiring tests that never run where it matters.
+
+**Decision 4 — the audit script is not committed.** `scratchpad/mutate.py` rewrites tracked
+source and restores with `git checkout`. That is fine to run deliberately and hostile to leave
+in a repository, where a dirty tree at the wrong moment loses work.
+
+**What this does not establish.** The mutation set is seven hand-chosen guards, not exhaustive;
+a survivor elsewhere would not have shown up. The narrower claim is the one worth having: the
+five fixes that three iterations of measurement paid for are now defended by the gate rather
+than by a document.
+
+---
