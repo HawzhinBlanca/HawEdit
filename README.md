@@ -40,7 +40,7 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 |---|---|---|
 | 0 · Ingest | **runs** | Diarization — Community-1 is a gated repo (`BLOCKED.md` #4). |
 | 1 · Speech | **wired** | `--omni-asr` runs official OmniASR inference plus CTC-Viterbi timing. Real weights and labelled Sorani validation remain external. |
-| 2 · Index | **wired** | `--visual` extracts each scene once, embeds all windows, retrieves top 50, reranks all hits and retains 5–10 (or all scenes on shorter media). |
+| 2 · Index | **wired** | `--visual` extracts each scene once, embeds all windows, retrieves top 50, reranks all hits and retains 5–10. Media with fewer scenes than the survivor count is **refused**, not silently shortened — measured on the 3-scene fixture, `evidence/unlisted-modules.md`. |
 | 3 · Discovery | **wired** | Path A and composed Path B union without promoting non-survivor scenes; `--auto-select` anchors complete contiguous sentences. |
 | 4 · Editorial judge | **wired** | Requests carry actual source JPEG bytes. Developer API handles non-confidential work; Vertex uses ADC bearer auth and an attributed ZDR gate. Credentials/billing remain external. |
 | 5 · Boundary fusion | **wired** | `--timelens` runs TimeLens2 per overlapping scene window and fuses only relevant media-clock intervals. |
@@ -237,8 +237,10 @@ The gate is deliberately hard to fool, because it is the only thing that decides
   inverted. Use `--fast` for a partial check; it cannot print the success line.
 - **The exit code is not the evidence.** The report is. The gate deletes it, runs pytest
   under `--junitxml`, and then requires a fresh report with zero failures and at least
-  `scripts/test-count.floor` tests collected. That floor ratchets up on its own and never
-  down, so a suite that shrinks has to shrink in a diff someone can see.
+  `scripts/test-count.floor` tests **passed**. Passed, not collected: the two differ by
+  exactly the skips, and a skip creeping into the suite is the case the floor exists to
+  catch. That floor ratchets up on its own and never down, so a suite that shrinks has to
+  shrink in a diff someone can see.
 - **A nested invocation refuses its own test step** — it would otherwise recurse, and once
   did (D-005).
 

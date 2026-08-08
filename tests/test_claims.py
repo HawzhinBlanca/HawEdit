@@ -325,3 +325,116 @@ def test_the_gpu_modules_typecheck_with_the_gpu_extra_absent() -> None:
         "Every import of an optional dependency needs an `ignore_missing_imports` override in "
         "pyproject.toml, and no `# type: ignore` may depend on the package being installed."
     )
+
+
+# =========================================================================================
+# The ledger has to account for every module, and the docs for the survivor floor
+#
+# `test_the_module_map_covers_every_module` above binds the README's map to the filesystem,
+# and it passes. PROGRESS.md had no equivalent, and eight modules had drifted out of it —
+# `visual_pipeline.py` and `reframe.py` described in floating prose blocks *after* the tables
+# with no filename and no status mark, the other six unmentioned. A module with no status is
+# invisible to the DONE/PARTIAL/BLOCKED tally the ledger exists to publish, so "35 DONE" was
+# counting a smaller program than the one that ships.
+# =========================================================================================
+
+
+def _ledger_rows() -> list[list[str]]:
+    """Every `| Mx.y | deliverable | STATUS | evidence |` row, split into cells."""
+    marks = {"DONE", "PARTIAL", "WIP", "TODO", "BLOCKED"}
+    rows = []
+    for line in PROGRESS.splitlines():
+        if not re.match(r"^\| M\d+\.\d+ \|", line):
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        if len(cells) > 4 and cells[3] in marks:
+            rows.append(cells)
+    return rows
+
+
+def test_the_ledger_accounts_for_every_module() -> None:
+    """A module named only in prose, or not at all, is a module with no recorded status.
+
+    Deliberately reads the *evidence* cell of a row whose *status* cell is a legend mark, not
+    the file as a whole: a mention in a floating amendment below the table is exactly the
+    failure this catches, because it leaves the module out of the published tally.
+    """
+    claimed: set[str] = set()
+    for cells in _ledger_rows():
+        claimed |= set(re.findall(r"(\w+\.py)", " ".join(cells[4:])))
+    on_disk = {p.name for p in (ROOT / "src" / "hawedit").glob("*.py")} - {"__init__.py"}
+    assert on_disk <= claimed, (
+        f"modules with no status in any PROGRESS.md ledger row: {sorted(on_disk - claimed)}. "
+        "Add a row, or name the module in an existing row's evidence cell — a description in "
+        "prose after the table does not put it in the DONE/PARTIAL tally."
+    )
+
+
+def test_no_document_promises_that_short_media_keeps_every_scene() -> None:
+    """`rerank_and_keep` refuses media with fewer windows than §3's survivor floor.
+
+    Three documents said the opposite — that short media keeps all its scenes — which is the
+    single most consequential doc/code contradiction in the repo: it describes a graceful
+    degradation the code deliberately does not do, so a reader sizing a job would expect
+    output where they get a refusal.
+    """
+    from hawedit.visual_index import KEEP_MIN
+
+    forbidden = re.compile(
+        r"(all scenes on shorter|short(er)? media keeps all|keeps? (all|every) "
+        r"(available )?scenes?)",
+        re.IGNORECASE,
+    )
+    for name in ("README.md", "AUDIT_REPORT.md", "PROGRESS.md", "DECISIONS.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        hits = [m.group(0) for m in forbidden.finditer(text)]
+        assert not hits, (
+            f"{name} says short media keeps every scene; `rerank_and_keep` raises below "
+            f"{KEEP_MIN} survivors instead: {hits}"
+        )
+
+
+def test_the_readme_describes_the_gate_floor_as_tests_that_passed() -> None:
+    """`gate.py` compares `evidence.passed`, not `collected`.
+
+    The two differ by exactly the skips, which is the case the floor exists to catch — a
+    README promising a floor on *collected* tests describes a ratchet that a creeping skip
+    condition would slide straight through.
+    """
+    gate = (ROOT / "src" / "hawedit" / "gate.py").read_text(encoding="utf-8")
+    assert "if evidence.passed < floor:" in gate, "gate.py no longer gates on passed"
+    sentence = next(
+        (line for line in README.splitlines() if "test-count.floor" in line),
+        None,
+    )
+    assert sentence is not None, "the README no longer describes scripts/test-count.floor"
+    # The claim itself, not the absence of a word: the prose around it is free to contrast the
+    # two, and an earlier version of this test failed on that contrast.
+    claim = re.search(r"test-count\.floor`\s+tests\s+\*{0,2}(\w+)", sentence)
+    assert claim is not None, f"the README states no floor unit: {sentence.strip()!r}"
+    assert claim.group(1) == "passed", (
+        f"the README calls the floor a count of tests {claim.group(1)}: {sentence.strip()!r} — "
+        "gate.py gates on tests that passed"
+    )
+
+
+def test_every_test_count_in_the_audit_is_dated() -> None:
+    """An audit figure is a measurement at an instant; unlabelled, it reads as current.
+
+    The first version of this test asserted the count *equalled* `scripts/test-count.floor`.
+    That was wrong twice over: it went red the moment anyone added a test — pressuring the next
+    person to edit a historical document or delete the check — and it misstated the defect. The
+    audit's 1,063 was not wrong because 1,063 differs from today's floor; it was wrong because
+    nothing on the line said when it was true. So require the date and let the number age.
+    """
+    audit = (ROOT / "AUDIT_REPORT.md").read_text(encoding="utf-8")
+    undated = [
+        line.strip()
+        for line in audit.splitlines()
+        if re.search(r"[\d,]{3,} (?:collected|passed)", line)
+        and not re.search(r"\d{4}-\d{2}-\d{2}", line)
+    ]
+    assert not undated, (
+        "AUDIT_REPORT.md quotes a test count with no measurement date, so it reads as a claim "
+        f"about the suite as it stands today: {undated}. Date it, or drop the figure."
+    )

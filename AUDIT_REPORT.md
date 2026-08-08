@@ -20,7 +20,8 @@ on real Sorani client footage.
   the process is running from a checkout.
 - `VisualComposer` owns extraction → embedding → top-50 retrieval → rerank-all → keep 5–10 →
   VideoChat3. Only exact survivors reach Path B, and returned IDs/scores must match reranker
-  provenance. Short media keeps all available scenes; episode length is not treated as one
+  provenance. Media with fewer scenes than the survivor count is refused outright, not
+  shortened to whatever it has; episode length is not treated as one
   model-call VRAM budget. The old unranked `read_scenes=` injection is now refused, so library
   callers cannot bypass the survivor slice and promote an episode wholesale.
 - Stage 4 extracts up to 20 real JPEG keyframes from the exact candidate slice. The identical
@@ -71,12 +72,22 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate: Ruff, formatting and mypy clean; **1,063 collected, 1,063 passed, 0 skipped**.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,072 collected, 1,072 passed** on 2026-08-08.
+  That is a measurement at a date, not a running total — the suite ratchets, so this figure will
+  fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
+  recorded here was 1,063 and read as current for as long as nobody checked it;
+  `tests/test_claims.py` now requires the date rather than pinning the number.
 - Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
   `hawedit-editorial-bench` and `hawedit-asr-setup` all start from the installed wheel.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
-- Audited wheel: `hawedit-0.1.0-py3-none-any.whl`, 308,654 bytes, SHA-256
-  `1DAEC3F4C1A25F9856283B1319BA4691B6FB83A3BC1F68F46B41995300EABF2C`.
+- Audited wheel: `hawedit-0.1.0-py3-none-any.whl`, **309,536 bytes** at the commit this line was
+  last re-measured against. **No SHA-256 is quoted, deliberately.** The build is not
+  reproducible: two consecutive `pip wheel --no-deps` runs at one unchanged commit produced the
+  same 309,536 bytes and the hashes `89CA7434…` and `A77FEEA0…`, because nothing sets
+  `SOURCE_DATE_EPOCH` and the ZIP entries carry build mtimes. A digest here would therefore
+  identify one build at one instant rather than this code, and would read as a supply-chain
+  guarantee the project does not yet make. Pinning it is tracked as an open reproducibility
+  gap alongside the unpinned model revisions below.
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

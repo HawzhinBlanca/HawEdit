@@ -2695,3 +2695,66 @@ and still only ran on hardware the runner does not have. "Runs without weights" 
 machine that will check it" are different properties, and only the second is what CI measures.
 
 ---
+
+## D-069
+
+**A module described in prose after the table has no status, and eight of them had drifted
+there or out entirely.** An external review reported four modules with "no PROGRESS ledger row."
+Reproduced and undercounted: eight had no status, and `gate.py` was a ninth that nothing but the
+new test found, because M0.1 cited `tests/test_gate.py` and never the module under it.
+
+**The failure is structural, not clerical.** `visual_pipeline.py` and `reframe.py` each *were*
+described — in a `>` blockquote below their table, naming neither the file nor a legend mark. So
+the composed Stage 2 → Path B pipeline that §9's M5 row calls "DONE in code" was absent from the
+35 DONE / 7 PARTIAL tally the ledger exists to publish, and unreachable by any test, because a
+test that greps `PROGRESS.md` passes on the prose. This is the same shape as the corrections
+problem the review named separately: M5.3's cell still advertised `run_pipeline(read_scenes=…)`,
+retired and refused at `pipeline.py:618`, with the correction eight lines below the row.
+
+**Decision: a correction belongs in the cell, and a module belongs in a row with a mark.**
+`test_the_ledger_accounts_for_every_module` reads the evidence cell of rows whose *status* cell
+is a legend mark — deliberately not the document — so a prose-only mention still fails. The
+mutation that proves this is the control: reintroducing the original defect (module named only
+in a blockquote) is CAUGHT. Two floating amendments were promoted to rows carrying measured
+status: **M5.5** (`visual_pipeline.py`, PARTIAL) and **M8.1** (`reframe.py`, PARTIAL, M8's own
+§3-mandated prerequisite rather than a SAM 3 substitute). **M2.9** is new for `keyframes.py`;
+`smoke.py`, `collisions.py`, `asr_worker.py`, `wsl_setup.py`, `editorial_bench.py` and `gate.py`
+attach to the rows that already own their deliverable.
+
+**Statuses are measured, not judged** (`evidence/unlisted-modules.md`). M5.5 is PARTIAL because
+the composed path *refuses* on the only media here — 3 planned windows against a survivor floor
+of 7 — at **4.08 GiB** peak against the 8.16 GiB of both models resident, which measures D-066's
+claim that the floor sits ahead of the reranker's weights rather than merely ahead of its call.
+M8.1 is PARTIAL because the tracker returns **0 focus points** on a fixture with no face: the
+`STATIC_CENTRE` fallback is verified on real pixels and `FACE_TRACKED` is not. M2.9 is DONE
+because the transport is complete and measured — 6 JPEGs, `FFD8`, 6 distinct stamps inside the
+requested span — and the *call* those bytes would ride is M2.6's shortfall, not this row's.
+
+**Three documents claimed the survivor floor degrades gracefully; it refuses.** `README.md`,
+`AUDIT_REPORT.md` and the code disagreed about the one behaviour a reader sizing a job would act
+on. Fixed in both documents and bound by a test that greps all four top-level docs for the
+claim.
+
+**`collected` is not `passed`, and the README said the wrong one.** `gate.py:162` compares
+`evidence.passed`; the README described the floor as tests *collected*. The two differ by
+exactly the skips — the case the ratchet exists to catch — so the README documented a gate that
+a creeping skip condition walks straight through.
+
+**One test was redesigned mid-audit rather than kept.** The audit-count check first asserted the
+figure equalled `scripts/test-count.floor`, and went red at baseline: these four tests ratcheted
+the floor past the recorded number. A check that fails whenever anyone adds a test, whose cheap
+fixes are editing a historical document or deleting the check, manufactures exactly the pressure
+to weaken the gate this project forbids. It also misstated the defect — `1,063` was wrong
+because nothing said *when* it was true, not because it differed from today's floor. The test
+now requires a date beside any test count and lets the number age.
+
+**No digest is recorded for the wheel, deliberately.** The review quoted a current wheel hash and
+faulted `AUDIT_REPORT.md` for an obsolete one. Two consecutive `pip wheel` runs at one unchanged
+commit: 309,536 bytes both times, digests `89CA7434…` and `A77FEEA01C…`. Nothing sets
+`SOURCE_DATE_EPOCH`, so every wheel hash this project has recorded was obsolete when written —
+the audit's figure was not stale, it was never meaningful. Quoting one reads as a supply-chain
+guarantee the project does not make; the size stays, the digest goes, and reproducible builds
+join the unpinned model revisions as a named gap.
+
+Gate: `VERIFY OK — 1072 passed, 0 skipped`. Mutation audit 5/5 against a baseline verified green
+first. Tally moves 35/7/4/1 → 36/9/4/1, which is the point: the program was always this size.
