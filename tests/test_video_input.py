@@ -27,10 +27,13 @@ from hawedit.video_input import (
     TimestampsOutsideWindow,
     VideoInputError,
     WindowFrames,
+    assert_frames_reached_model,
     assert_timestamps_span_window,
     extract_window_frames,
+    frames_seen_by_model,
     prompt_timestamps,
     video_content,
+    window_batch,
     window_video_metadata,
 )
 from hawedit.visual_index import SceneWindow
@@ -248,3 +251,160 @@ def test_a_window_running_past_the_end_of_the_media_is_refused(tmp_path: Path) -
     beyond = a_window(duration_ms=20_000, in_ms=0)
     with pytest.raises(FrameCountMismatch, match="past the end of the media"):
         extract_window_frames(FIXTURE, beyond, tmp_path)
+
+
+# --- the frames the model actually reads, which is a different number ----------------------
+#
+# Every §7 visual checkpoint ships `do_sample_frames: true` with its own `fps: 2` and
+# `min_frames: 4`, so the processor re-samples whatever it is handed and pads to a whole number
+# of temporal patches. Measured on `Qwen3-VL-Embedding-2B` by reading `video_grid_thw` back:
+# M5.2's shipped 4 fps index handed over 6 frames and the model saw 4. Every number below is
+# from that table (`evidence/m5-2-frames-reaching-the-model.md`), not invented.
+
+
+class _Grid:
+    """`video_grid_thw`: one row per video, `[grid_t, grid_h, grid_w]`."""
+
+    def __init__(self, grid_t: int) -> None:
+        self.rows = [[grid_t, 22, 40]]
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, index: int) -> list[int]:
+        return self.rows[index]
+
+
+class _VideoProcessor:
+    """The three fields the guard reads, at `Qwen3-VL-Embedding-2B`'s declared values."""
+
+    fps = 2
+    min_frames = 4
+    temporal_patch_size = 2
+
+
+class _Processor:
+    def __init__(self, seen: int | None, prompt: str = "<0.5 seconds><2.5 seconds>") -> None:
+        self.seen = seen
+        self.prompt = prompt
+        self.calls: list[dict[str, object]] = []
+        self.video_processor = _VideoProcessor()
+
+    def apply_chat_template(self, messages: object, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"messages": messages, **kwargs})
+        batch: dict[str, object] = {"input_ids": [[1, 2, 3]]}
+        if self.seen is not None:
+            batch["video_grid_thw"] = _Grid(self.seen // self.video_processor.temporal_patch_size)
+        return batch
+
+    def decode(self, ids: object, **kwargs: object) -> str:
+        return self.prompt
+
+
+def test_the_frame_count_is_read_off_the_grid_not_off_the_request() -> None:
+    """`WindowFrames.count` is what we handed over; `video_grid_thw` is what arrived."""
+    processor = _Processor(seen=4)
+    batch = processor.apply_chat_template([])
+    assert frames_seen_by_model(processor, batch) == 4
+
+
+def test_a_batch_with_no_video_reports_nothing_rather_than_zero() -> None:
+    """`embed_text` has no frames. Zero would be a measurement; `None` is the absence of one."""
+    processor = _Processor(seen=None)
+    assert frames_seen_by_model(processor, processor.apply_chat_template([])) is None
+
+
+def test_m5_2s_own_index_window_is_refused_because_two_frames_never_arrived() -> None:
+    """The defect, at the numbers it was measured at: 6 extracted at 4 fps, 4 seen."""
+    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    processor = _Processor(seen=4)
+    with pytest.raises(VideoInputError, match="the processor dropped 2"):
+        assert_frames_reached_model(processor, processor.apply_chat_template([]), frames)
+
+
+def test_a_full_window_above_the_declared_rate_loses_half_of_itself() -> None:
+    """64 frames at 4 fps is exactly §3 Stage 2's published ceiling, and the model sees 32."""
+    frames = frames_for(a_window(duration_ms=16_000, fps=4.0), 64)
+    processor = _Processor(seen=32)
+    with pytest.raises(VideoInputError, match="the processor dropped 32"):
+        assert_frames_reached_model(processor, processor.apply_chat_template([]), frames)
+
+
+def test_an_odd_frame_count_gains_a_frame_that_was_never_filmed() -> None:
+    """The second rule, and the other direction: 3 extracted, 4 seen, the last one repeated."""
+    frames = frames_for(a_window(duration_ms=1_400, fps=2.0), 3)
+    processor = _Processor(seen=4)
+    with pytest.raises(VideoInputError, match="duplicated the last frame of 1"):
+        assert_frames_reached_model(processor, processor.apply_chat_template([]), frames)
+
+
+def test_a_window_at_the_declared_rate_is_accepted() -> None:
+    """The positive control. A guard that refused every batch would pass all three tests above.
+
+    64 frames at 1 fps: measured SAME — the sampler asks for 128 and caps at what exists.
+    """
+    frames = frames_for(a_window(duration_ms=64_000, fps=1.0), 64)
+    processor = _Processor(seen=64)
+    assert assert_frames_reached_model(processor, processor.apply_chat_template([]), frames) == 64
+
+
+def test_the_refusal_names_both_branches_of_the_remedy() -> None:
+    """A refusal naming a remedy that does not work gets worked around rather than fixed.
+
+    The first draft of this message said "extract an even count at or below 2 fps". For a
+    1400 ms scene that is unachievable — 2 fps yields 3 frames, which is odd and gets padded,
+    and 1 fps yields 1, which `extract_window_frames` already refuses. The condition really has
+    two branches, because `min_frames` dominates at short durations: 4 frames at 3 fps is clean.
+    """
+    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    processor = _Processor(seen=4)
+    with pytest.raises(VideoInputError, match="at or below 2 fps or the count at most 4"):
+        assert_frames_reached_model(processor, processor.apply_chat_template([]), frames)
+
+
+def test_four_frames_above_the_declared_rate_is_accepted() -> None:
+    """The other branch, and the rate M5.2's index was rebuilt at: 4 frames at 3 fps.
+
+    `max(min_frames=4, 2 x 4/3) = 4`, capped at 4, already patch-aligned — so all four arrive.
+    A guard that only allowed rates at or below 2 fps would refuse this and leave a 1400 ms
+    scene with no legal rate at all.
+    """
+    frames = frames_for(a_window(duration_ms=1_400, fps=3.0), 4)
+    processor = _Processor(seen=4)
+    assert assert_frames_reached_model(processor, processor.apply_chat_template([]), frames) == 4
+
+
+# --- one call, both guards ------------------------------------------------------------------
+
+
+def test_window_batch_passes_video_metadata_at_the_top_level() -> None:
+    """D-049, now in the one place all three adapters go through."""
+    frames = frames_for(a_window(), 4)
+    processor = _Processor(seen=4)
+    window_batch(processor, [], frames, add_generation_prompt=False)
+    metadata = processor.calls[0]["video_metadata"][0]  # type: ignore[index]
+    assert metadata["fps"] == 1.0
+    assert metadata["total_num_frames"] == 4
+
+
+def test_window_batch_refuses_a_prompt_that_compresses_the_window() -> None:
+    frames = frames_for(a_window(), 4)
+    processor = _Processor(seen=4, prompt="<0.0 seconds><0.1 seconds>")
+    with pytest.raises(TimestampsOutsideWindow):
+        window_batch(processor, [], frames, add_generation_prompt=False)
+
+
+def test_window_batch_refuses_frames_that_did_not_arrive() -> None:
+    """Both guards, one function — so an adapter cannot be written with only one of them."""
+    frames = frames_for(a_window(duration_ms=1_400, fps=4.0), 6)
+    processor = _Processor(seen=4, prompt="<0.2 seconds><1.0 seconds>")
+    with pytest.raises(VideoInputError, match="dropped 2"):
+        window_batch(processor, [], frames, add_generation_prompt=True)
+
+
+def test_window_batch_returns_the_batch_when_both_guards_pass() -> None:
+    frames = frames_for(a_window(), 4)
+    processor = _Processor(seen=4)
+    batch = window_batch(processor, [], frames, add_generation_prompt=True)
+    assert "input_ids" in batch
+    assert processor.calls[0]["add_generation_prompt"] is True

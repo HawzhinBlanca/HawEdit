@@ -47,10 +47,9 @@ from hawedit.qwen_visual import DEFAULT_DEVICE, EmbedderUnavailable, load_proces
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
     WindowFrames,
-    assert_timestamps_span_window,
     load_window_images,
     video_content,
-    window_video_metadata,
+    window_batch,
 )
 from hawedit.visual_index import SceneWindow
 
@@ -238,16 +237,8 @@ class VideoChat3Reader:
                 ],
             }
         ]
-        batch = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            # The reading is generated, so the prompt has to end where the answer begins.
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-            video_metadata=[window_video_metadata(frames)],
-        )
-        assert_timestamps_span_window(processor.decode(batch["input_ids"][0]), frames)
+        # The reading is generated, so the prompt has to end where the answer begins.
+        batch = window_batch(processor, messages, frames, add_generation_prompt=True)
         placed = {k: (v.to(self.device) if hasattr(v, "to") else v) for k, v in dict(batch).items()}
         for key in ("pixel_values", "pixel_values_videos"):
             if hasattr(placed.get(key), "to"):

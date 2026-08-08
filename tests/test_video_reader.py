@@ -231,18 +231,29 @@ class _Ids:
         return self.rows[index]
 
 
+class _VideoProcessor:
+    """VideoChat3's declared preprocessing, which is what the frame-arrival guard reads."""
+
+    fps = 2
+    min_frames = 4
+    temporal_patch_size = 1
+
+
 class StubProcessor:
     """Records what it was handed, and returns a prompt with real VideoChat3 timestamps."""
 
-    def __init__(self, answer: str) -> None:
+    def __init__(self, answer: str, frames_seen: int = 6) -> None:
         self.prompt = "<0.6 seconds>"
         self.answer = answer
+        self.frames_seen = frames_seen
         self.calls: list[dict[str, Any]] = []
         self.tokenizer = self
+        self.video_processor = _VideoProcessor()
 
     def apply_chat_template(self, messages: Any, **kwargs: Any) -> dict[str, Any]:
         self.calls.append({"messages": messages, **kwargs})
-        return {"input_ids": _Ids([[1, 2, 3]])}
+        grid = [[self.frames_seen // self.video_processor.temporal_patch_size, 26, 46]]
+        return {"input_ids": _Ids([[1, 2, 3]]), "video_grid_thw": grid}
 
     def decode(self, ids: Any, **kwargs: Any) -> str:
         # The processor decodes the *prompt*; its tokenizer decodes the *answer*. `read_window`
@@ -361,3 +372,18 @@ class _FakeTorch:
                 return None
 
         return _Ctx()
+
+
+def test_a_window_whose_frames_the_processor_resampled_stops_the_read(tmp_path: Path) -> None:
+    """The frame-arrival guard, through the adapter rather than only in isolation.
+
+    Six frames handed over, four received — which is exactly what a 1400 ms window at 4 fps did
+    on the real checkpoint, and what M5.4's own first evidence run was measuring. D-060.
+    """
+    from hawedit.video_input import VideoInputError
+
+    window = a_window(in_ms=1_400)
+    reader, processor, _ = a_reader(tmp_path)
+    processor.frames_seen = 4
+    with pytest.raises(VideoInputError, match="dropped 2"):
+        reader.read_window(window)

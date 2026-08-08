@@ -55,11 +55,10 @@ from hawedit.normalize import normalize_sorani
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
     WindowFrames,
-    assert_timestamps_span_window,
     extract_window_frames,
     load_window_images,
     video_content,
-    window_video_metadata,
+    window_batch,
 )
 from hawedit.visual_index import RerankedHit, SceneWindow, VisualEmbedding, VisualHit
 
@@ -308,15 +307,9 @@ class QwenVisualEmbedder:
         """
         processor, _ = self._load()
         content = video_content(load_window_images(frames))
-        batch = processor.apply_chat_template(
-            self._conversation(content),
-            tokenize=True,
-            add_generation_prompt=False,
-            return_dict=True,
-            return_tensors="pt",
-            video_metadata=[window_video_metadata(frames)],
+        batch = window_batch(
+            processor, self._conversation(content), frames, add_generation_prompt=False
         )
-        assert_timestamps_span_window(processor.decode(batch["input_ids"][0]), frames)
         return VisualEmbedding(
             window=frames.window,
             vector=self._pool(dict(batch)),
@@ -480,18 +473,10 @@ class QwenVisualReranker:
                 ],
             },
         ]
-        batch = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            # The shipped script uses add_generation_prompt=True: the score is the logits of the
-            # *answer* token, so the prompt has to end where the answer would begin. Without it
-            # the two logits read are for whatever token the template happens to end on.
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-            video_metadata=[window_video_metadata(frames)],
-        )
-        assert_timestamps_span_window(processor.decode(batch["input_ids"][0]), frames)
+        # `add_generation_prompt=True` as the shipped script does: the score is the logits of the
+        # *answer* token, so the prompt has to end where the answer would begin. Without it the
+        # two logits read are for whatever token the template happens to end on.
+        batch = window_batch(processor, messages, frames, add_generation_prompt=True)
         placed = {k: (v.to(self.device) if hasattr(v, "to") else v) for k, v in batch.items()}
         with torch.no_grad():
             hidden = model(**placed, output_hidden_states=True).hidden_states[-1][:, -1].float()

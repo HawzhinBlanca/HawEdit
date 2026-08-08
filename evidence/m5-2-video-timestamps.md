@@ -1,5 +1,13 @@
 # A 4.16-second window reached the model marked 0.1 seconds long
 
+> **Superseded in part, 2026-08-08 (D-060).** Every §7 visual checkpoint declares
+> `do_sample_frames: true` with `fps: 2` and `min_frames: 4`, so the processor **re-samples**
+> what it is handed. The windows below were extracted at 4 fps and the model received 4 of every
+> 6 frames — measured off `video_grid_thw`, which nothing here was reading. The index was rebuilt
+> at 3 fps, the only rate a 1400 ms scene is legal at, and every score moved: rank-1/rank-2
+> margin 0.005644 -> 0.015441, one score by 0.011. See
+> `evidence/m5-2-frames-reaching-the-model.md` for what in this file stands and what does not.
+
 > **Measured on `transformers` 5.14.1.** The project now pins **4.57.6** (D-055), which every
 > §7 visual checkpoint declares and which is the only version where VideoChat3 works at all.
 > The library moves these numbers: on 4.57.6 the same run gives retrieval similarities

@@ -2302,3 +2302,57 @@ third — output §3 requires be rejected, from the model §3 names. The pipe fo
 lines parseable. Recorded because a prompt looks like prose and behaves like an interface.
 
 ---
+
+## D-060 · The frames handed to a model must be the frames it reads, checked on the batch
+
+**Context:** M6.3's premise check. Every §7 visual checkpoint's
+`video_preprocessor_config.json` declares `do_sample_frames: true` with `fps: 2` and
+`min_frames: 4`. No adapter in this project had read those fields, so the processor was
+re-sampling every window and nothing reported it. Measured off `video_grid_thw`:
+
+    extracted  rate    model saw
+            6  4 fps   4    <- M5.2's shipped index, two frames dropped
+           64  4 fps   32   <- half of §3 Stage 2's own 64-frame ceiling
+            3  any     4    <- the last frame repeated, a frame never filmed
+            4  1 fps   4    same
+           64  1 fps   64   same
+
+**Why it was invisible.** The vector is 2048-d and unit-norm either way, and the timestamps are
+computed from the rate *we* supplied — so `assert_timestamps_span_window`, the guard written for
+this exact class of defect, passes. Correct arithmetic about the frames that survived, silent
+about the ones that did not.
+
+**Decision 1 — read the count back off the batch, not off the request.** `frames_seen_by_model`
+takes `video_grid_thw[0][0] x temporal_patch_size`; `assert_frames_reached_model` refuses any
+mismatch. Reading the artifact rather than reimplementing the sampler's arithmetic is
+deliberate: that arithmetic is version-specific and a reimplementation would agree with the
+library right up until it stopped.
+
+**Decision 2 — refuse rather than accept the checkpoint's re-sampling as its recipe.** The
+opposite reading is defensible — `fps: 2` *is* declared preprocessing, so extracting at 4 fps is
+our error. Both readings agree on the action: extracting a rate the model will not read is the
+mistake, and it should be loud. The refusal names both branches of the remedy, because the
+obvious one-line version ("come back at or below 2 fps") is unachievable for a 1400 ms scene —
+2 fps yields three frames, which is odd and gets padded, and 1 fps yields one, which
+`extract_window_frames` already refuses.
+
+**Decision 3 — one function tokenises a window, with all three checks inside it.** `window_batch`
+replaces the same eight lines copied into the embedder, the reranker and the Path B reader. Two
+of the three checks it now carries were originally found by adding one to a single call site and
+discovering the others had never had it; a fourth adapter should not be able to repeat that.
+
+**Decision 4 — M5.2's evidence index is rebuilt at 3 fps, and 3 is derived rather than chosen.**
+For a 1400 ms scene: 1 fps gives one frame (refused), 2 fps gives three (padded), 3 fps gives
+four (clean, because `min_frames` dominates at short durations). It is the only legal rate at
+that length. Every Stage 2 number moved — the rank-1/rank-2 margin from 0.005644 to 0.015441, one
+score by 0.011, which is 3.5x the bfloat16 error D-051 rejected for being 57% of a margin. The
+reranker now reverses retrieval outright rather than making one swap, so M5.2's central claim is
+better supported by the corrected run than by the original.
+
+**What this costs, stated plainly.** Four evidence files carry numbers measured on partially
+delivered frames and are annotated as superseded rather than rewritten, the same arrangement as
+D-055's version pin. It also supplies the missing explanation for D-052's unresolved
+non-monotonicity: its "4 fps" arm was eight frames read, not sixteen, so a comparison labelled
+1-vs-4 was really 4-frames-vs-8. D-052's conclusion is unchanged and now overdetermined.
+
+---

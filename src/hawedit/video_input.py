@@ -52,11 +52,14 @@ __all__ = [
     "TimestampsOutsideWindow",
     "VideoInputError",
     "WindowFrames",
+    "assert_frames_reached_model",
     "assert_timestamps_span_window",
     "extract_window_frames",
+    "frames_seen_by_model",
     "load_window_images",
     "prompt_timestamps",
     "video_content",
+    "window_batch",
     "window_video_metadata",
 ]
 
@@ -307,6 +310,109 @@ def video_content(images: Sequence[Any]) -> dict[str, Any]:
     if not images:
         raise VideoInputError("a video content block with no frames describes nothing")
     return {"type": "video", "video": list(images)}
+
+
+def frames_seen_by_model(processor: Any, batch: Any) -> int | None:
+    """How many frames the vision tower actually received, read off `video_grid_thw`.
+
+    `None` for a batch with no video in it, which is `embed_text`'s case.
+
+    This is the *artifact*, in M3.4's sense: `WindowFrames.count` is what we handed over, and
+    `video_grid_thw` is what arrived. The two are not the same number, and until this function
+    existed nothing anywhere reported the difference.
+    """
+    grid = batch.get("video_grid_thw") if hasattr(batch, "get") else None
+    if grid is None or len(grid) == 0:
+        return None
+    temporal_patch = getattr(processor.video_processor, "temporal_patch_size", 1)
+    return int(grid[0][0]) * int(temporal_patch)
+
+
+def assert_frames_reached_model(processor: Any, batch: Any, frames: WindowFrames) -> int | None:
+    """Refuse a batch in which the frames extracted are not the frames the model reads.
+
+    Every §7 visual checkpoint here ships `do_sample_frames: true` with its own `fps` and
+    `min_frames` in `video_preprocessor_config.json`, so the processor **re-samples** whatever it
+    is handed. Measured on `Qwen3-VL-Embedding-2B` (declared `fps: 2`, `min_frames: 4`,
+    `temporal_patch_size: 2`), reading the count back off `video_grid_thw`:
+
+        extracted  fps    what the model saw
+                6  4.0    4   two frames dropped   <- M5.2's shipped index
+               64  4.0    32  half the window dropped
+               12  3.0    8
+                3  any    4   one frame duplicated
+                5  2.0    6   one frame duplicated
+                4  1.0    4   same
+               64  1.0    64  same
+
+    Two independent rules produce it. Above the declared rate the sampler asks for fewer frames
+    than exist and takes a `linspace` subset. And any count that is not a whole number of
+    temporal patches is padded by **repeating the last frame**, so an odd count gains a frame
+    that was never filmed.
+
+    Neither is visible downstream. The embedding is the right shape and the right norm, the
+    timestamps are still computed from the rate we supplied — so `assert_timestamps_span_window`
+    passes — and the vector simply describes fewer frames than the window claims. That is
+    `extract_window_frames`'s own objection to a one-frame window, one layer further in: *"its
+    embedding is indistinguishable from an honest window's"*.
+
+    It also silently overrides §3 Stage 2's ceiling from the other side. A 16 s scene at 4 fps is
+    64 frames, exactly the published setting, and the model sees 32.
+
+    Returns:
+        The frame count the model saw, so a caller can record it as evidence.
+
+    Raises:
+        VideoInputError: the model saw a different number of frames than were extracted.
+    """
+    seen = frames_seen_by_model(processor, batch)
+    if seen is None or seen == frames.count:
+        return seen
+    declared = getattr(processor.video_processor, "fps", None)
+    minimum = getattr(processor.video_processor, "min_frames", None)
+    patch = getattr(processor.video_processor, "temporal_patch_size", 1)
+    verb = "dropped" if seen < frames.count else "duplicated the last frame of"
+    raise VideoInputError(
+        f"{frames.window.window_id} was extracted as {frames.count} frames at "
+        f"{frames.window.fps} fps and the model received {seen}: the processor {verb} "
+        f"{abs(frames.count - seen)}. It asks for "
+        f"max(min_frames={minimum}, fps={declared} x {frames.count}/{frames.window.fps}) frames, "
+        f"caps that at what exists, and pads up to a whole {patch}-frame temporal patch. "
+        f"Nothing downstream can see this — the embedding comes out the right shape either way. "
+        f"To hand over exactly what is read, the count must be a multiple of {patch} **and** "
+        f"either the rate must be at or below {declared} fps or the count at most {minimum}: "
+        f"above the declared rate this checkpoint will not look at more than {minimum} frames of "
+        f"a scene, however many are extracted."
+    )
+
+
+def window_batch(
+    processor: Any,
+    messages: Sequence[Any],
+    frames: WindowFrames,
+    *,
+    add_generation_prompt: bool,
+) -> Any:
+    """Tokenise `messages` for one window, with both frame-placement guards applied.
+
+    Three adapters put a window in front of a model — the Stage 2 embedder, the Stage 2 reranker
+    and Stage 3 Path B's reader — and each was repeating the same call with the same two checks
+    after it. Two of the three defects this module exists for were found by adding a check to one
+    call site and discovering the others had never had it, so the call and its checks are one
+    function: `video_metadata` at the top level (D-049), the timestamps read back off the decoded
+    prompt (D-057), and the frame count read back off `video_grid_thw` (D-060).
+    """
+    batch = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=add_generation_prompt,
+        return_dict=True,
+        return_tensors="pt",
+        video_metadata=[window_video_metadata(frames)],
+    )
+    assert_timestamps_span_window(processor.decode(batch["input_ids"][0]), frames)
+    assert_frames_reached_model(processor, batch, frames)
+    return batch
 
 
 def prompt_timestamps(prompt_text: str) -> tuple[float, ...]:
