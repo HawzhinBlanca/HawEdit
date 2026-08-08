@@ -358,7 +358,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     print("hawedit credentials — §3 Stage 4 judge access")
-    print(f"store: {ENV_FILE}  (git-ignored, 0600)\n")
+    # "0600" was printed unconditionally, and on Windows it is not what the file gets — the mode
+    # argument carries only the read-only bit there and `restrict_to_owner` rewrites the ACL
+    # instead. A status line that names the wrong mechanism is a small lie in the one panel whose
+    # job is telling you where your secret is and how it is protected.
+    protection = "chmod 0600" if os.name != "nt" else "ACL: owner only"
+    print(f"store: {ENV_FILE}  (git-ignored, {protection})\n")
 
     key, check = credential_status()
     if key is None:
