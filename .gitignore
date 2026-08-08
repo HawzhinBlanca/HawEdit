@@ -33,3 +33,4 @@ models/*
 !models/revisions.json
 /.gate/
 /build/
+/dist/

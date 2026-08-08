@@ -76,6 +76,9 @@ These cannot be truthfully solved from the checkout alone:
   behind it can change — then unzips and executes it with no SHA-256 comparison. The versioned
   path segment is not a substitute for a fixed ref, and no published digest for that archive has
   been found to compare against.
+- `hawedit-release` now makes source-to-wheel bytes reproducible and emits a checksum plus Git
+  provenance, but releases are not yet signed, carry no SBOM, and package-managed OmniASR assets
+  still lack a project-owned byte manifest.
 
 ## Honest release call
 
@@ -91,16 +94,14 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
 - Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
-  `hawedit-editorial-bench` and `hawedit-asr-setup` all start from the installed wheel.
+  `hawedit-editorial-bench`, `hawedit-asr-setup` and `hawedit-release` all start from the
+  installed wheel.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
-- Audited wheel: `hawedit-0.1.0-py3-none-any.whl`, **309,536 bytes** at the commit this line was
-  last re-measured against. **No SHA-256 is quoted, deliberately.** The build is not
-  reproducible: two consecutive `pip wheel --no-deps` runs at one unchanged commit produced the
-  same 309,536 bytes and the hashes `89CA7434…` and `A77FEEA0…`, because nothing sets
-  `SOURCE_DATE_EPOCH` and the ZIP entries carry build mtimes. A digest here would therefore
-  identify one build at one instant rather than this code, and would read as a supply-chain
-  guarantee the project does not yet make. Pinning it is tracked as an open reproducibility
-  gap alongside the unpinned model revisions below.
+- `hawedit-release` derives `SOURCE_DATE_EPOCH` from clean Git `HEAD`, builds independently
+  twice, refuses unequal bytes, validates release-critical package data, and atomically emits
+  the wheel with `SHA256SUMS` and stable revision provenance. The digest intentionally lives
+  beside the artifact instead of in this changing source file. Signing, SBOM generation and
+  pinned model revisions remain open supply-chain work.
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

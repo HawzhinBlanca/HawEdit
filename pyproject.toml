@@ -89,6 +89,7 @@ hawedit-asr-bench = "hawedit.bench:main"
 hawedit-asr-setup = "hawedit.wsl_setup:main"
 hawedit-credentials = "hawedit.credentials:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
+hawedit-release = "hawedit.release:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

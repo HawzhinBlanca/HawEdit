@@ -109,6 +109,26 @@ real safeguard on Kurdish invariant #4 — skips.
 
 </details>
 
+## Reproducible release
+
+Release from a clean, committed checkout with one command:
+
+```bash
+hawedit-release --project-root .
+```
+
+The command derives `SOURCE_DATE_EPOCH` from `HEAD`, builds the wheel twice in independent
+temporary directories, requires identical filenames and SHA-256 digests, checks the archive for
+the Kurdish font/licence and model-source manifest, then atomically publishes a write-once
+directory under `dist/`. That directory contains the wheel, `SHA256SUMS`, and
+`release-provenance.json` binding the digest to the full Git revision and commit timestamp. A
+dirty checkout, non-reproducible build, missing runtime file, corrupt wheel, or existing release
+directory is refused.
+
+This proves repeatable source-to-wheel bytes. It is not a signature, an SBOM, or proof that the
+separately downloaded model weights match reviewed revisions; those remain release hardening
+work rather than claims hidden inside a green wheel build.
+
 ## Models and weights
 
 Check what this machine has:
@@ -292,6 +312,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) and the CMX 3600 EDL (source timeline). Refuses NTSC rather than writing timecode that drifts. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
+| `release.py` | — | Clean-HEAD, double-build wheel reproducibility; validates runtime data and atomically publishes checksum plus Git provenance. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |
 | `models.py` | §7 | Which §7 components this machine actually has, and the registry-driven fetcher. |
