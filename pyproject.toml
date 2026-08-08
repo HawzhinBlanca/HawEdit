@@ -48,8 +48,14 @@ media = [
 #
 # Licences audited per D-002; NonCommercial is a hard reject and none of these are.
 gpu = [
-    "transformers>=4.57.1",         # Apache-2.0 — every §7 checkpoint's config declares 4.57.1
-    "sentence-transformers>=5.4.0", # Apache-2.0 — the loader Qwen3-VL-Embedding-2B declares
+    # PINNED, not a floor. Every §7 visual checkpoint declares 4.57.x in its own config —
+    # Qwen3-VL-Embedding 4.57.1, Qwen3-VL-Reranker 4.57.0, TimeLens2 4.57.3,
+    # VideoChat3 4.57.0.dev0 — and 5.x breaks VideoChat3 three ways, one of them silently
+    # (a randomly-initialised lm_head). It also *moves the numbers*: the reranker's scores on
+    # the fixture are 0.448/0.443/0.400 on 5.14.1 and 0.056/0.050/0.023 on 4.57.6, and the
+    # final order differs. §8.1's rule that a number carries the hardware it was measured on
+    # extends to the library that produced it. See D-055.
+    "transformers==4.57.6",         # Apache-2.0
     "accelerate>=1.0",              # Apache-2.0 — device placement for the 4B models
     "pillow>=10",                   # MIT-CMU (HPND) — frames between ffmpeg and the processor
     "torchvision>=0.28",            # BSD-3-Clause — required by Qwen3VLVideoProcessor

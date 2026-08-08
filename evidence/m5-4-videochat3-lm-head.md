@@ -87,9 +87,34 @@ This is `encoder_available`'s lesson applied to weights. That function exists be
 answers look identical from the outside, and in both cases the honest answer had to be asked
 for directly.
 
+## Two more incompatibilities, and then the model works
+
+Chasing the tie found that 5.14.1 breaks this checkpoint in two further ways:
+
+- `prepare_inputs_for_generation` raises `KeyError: 'inputs_embeds'` — the checkpoint reads a
+  key 5.x no longer provides. 5.x also warns that `cache_position`, which the code uses, "has
+  been removed from the Transformers library".
+- the vision tower calls `flash_attn_varlen_func`, which is `None` without flash-attn — and
+  flash-attn publishes no Windows wheels. Not fatal: `VL_VISION_ATTENTION_FUNCTIONS` also holds
+  `sdpa` and `eager`, selected by `vision_config.attn_impl`, which defaults to
+  `flash_attention_2`.
+
+On **`transformers` 4.57.6** with `attn_impl="sdpa"`, all three go away and the tie resolves by
+itself — 4.57 reads `text_config.tie_word_embeddings` correctly:
+
+```
+transformers 4.57.6, vision attn=sdpa | missing_keys: NONE | lm_head tied: True
+GENERATED: 'A red number "0" is centered on a black background.'
+```
+
+Coherent and specific about a real frame of the fixture. A working model.
+
+So the fix is not to override a third-party config after all — it is to run the version the
+checkpoint was released against. `transformers` is pinned to `==4.57.6` (D-055), which is what
+every §7 visual checkpoint declares.
+
 ## M5.4 status
 
-Not started, and now with a named obstacle rather than an assumed clear path: the adapter must
-tie `lm_head` explicitly and **verify the tie**, and the decision to override a third-party
-config needs recording. The 256-frame budget, the SV6D prompt and D-049's timestamp handling
-are all still ahead of it.
+Startable, with the obstacle gone rather than merely characterised. Still to write: the
+`VideoUnderstanding` implementation, the SV6D prompt, §3's 256-frame budget, and D-049's
+`video_metadata` handling — which was re-measured under the pin and holds identically.

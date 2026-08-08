@@ -1,5 +1,14 @@
 # Two sampling rates in one index, and the rate was 63% of the signal
 
+> **Measured on `transformers` 5.14.1.** The project now pins **4.57.6** (D-055), which every
+> §7 visual checkpoint declares and which is the only version where VideoChat3 works at all.
+> The library moves these numbers: on 4.57.6 the same run gives retrieval similarities
+> 0.381785 / 0.373741 / 0.342425 (order unchanged) and reranker scores **0.0556 / 0.049956 /
+> 0.022751** with the final order **[0, 1, 2]** rather than [1, 0, 2]. The *properties* hold on
+> both — unit-norm vectors, dense ranks, retrieval scores carried through untouched, reranking
+> changing the order — and the *values* do not. §8.1 says a number carries the hardware that
+> produced it; this says it carries the library too.
+
 Found by auditing the previous iteration's own evidence rather than by a bug report. M5.2's
 index was built at **4 fps** while §3 Stage 2's reference is **~1 fps**, and nothing in the code
 required a media's windows to share a rate. Both halves of that turned out to matter.

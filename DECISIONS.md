@@ -2143,3 +2143,66 @@ about a guard. That path is defended. Recorded because a negative result from an
 result, and because it says the M5.2 gap was specific rather than systemic.
 
 ---
+
+## D-055 · The library version is part of the measurement, and 5.x broke a model silently
+
+**M5.4's premise check, continued.** D-054 found `VideoChat3-4B` loading with a randomly
+initialised `lm_head` on `transformers` 5.14.1. Pursuing that turned up two more
+incompatibilities and then a fact about every number this project has recorded for Stage 2.
+
+**Three ways 5.14.1 breaks VideoChat3-4B**, in the order they appear:
+
+1. **`lm_head.weight` randomly initialised.** `config.json` says `tie_word_embeddings: False`
+   at the top level and `text_config.tie_word_embeddings: True` inside; 5.x resolves from the
+   top. Silent — the model loads in 4.8 s and reports 4.86B parameters (D-054).
+2. **`prepare_inputs_for_generation` raises `KeyError: 'inputs_embeds'`.** The checkpoint's code
+   reads a key 5.x no longer provides. 5.x also warns that `cache_position`, which the code
+   uses, "has been removed from the Transformers library".
+3. **The vision tower calls `flash_attn_varlen_func`, which is `None`.** Not fatal on its own —
+   `VL_VISION_ATTENTION_FUNCTIONS` also holds `sdpa` and `eager`, and `vision_config.attn_impl`
+   selects. flash-attn has no Windows wheels, so `sdpa` is the setting here.
+
+**On 4.57.6 with `attn_impl="sdpa"` the model works.** `missing_keys: NONE`, `lm_head` tied,
+and asked to describe a real frame of the fixture it answered:
+
+    'A red number "0" is centered on a black background.'
+
+Coherent and specific — a working model, not a random head.
+
+**Decision 1 — `transformers` is pinned to `==4.57.6`, not floored.** Every §7 visual checkpoint
+declares 4.57.x in its own config: Qwen3-VL-Embedding 4.57.1, Qwen3-VL-Reranker 4.57.0,
+TimeLens2 4.57.3, VideoChat3 4.57.0.dev0. §7 is the table this project treats as closed, and the
+version those checkpoints were released against is part of what they are. A floor of `>=4.57.1`
+is what installed 5.14.1 in the first place.
+
+**Decision 2 — `sentence-transformers` leaves the `gpu` extra.** Nothing in `src/` or `tests/`
+imports it; it was used once, for the D-050 cross-check recorded in evidence. 5.7 wants
+`transformers>=5`, which would fight the pin, and keeping a dependency to support a footnote is
+how a pin gets quietly widened later.
+
+**The finding that outlives this pin — the library moves the numbers.** Same code, same weights,
+same GPU, same fixture:
+
+    transformers 5.14.1   retrieval 0.353194 0.337843 0.333372   rerank 0.448391 0.442759 0.400027   order [1,0,2]
+    transformers 4.57.6   retrieval 0.381785 0.373741 0.342425   rerank 0.055600 0.049956 0.022751   order [0,1,2]
+
+Retrieval order is stable; the reranker's scores differ by an order of magnitude and **the final
+ordering changed**. Every *property* holds on both — unit-norm vectors, dense 1-based ranks,
+retrieval scores carried through untouched, reranking changing the order — and every *value*
+moved. §8.1 already requires a throughput number to carry the hardware that produced it and an
+accuracy number to carry the adapter class; this extends the same rule to the library. The four
+Stage 2 evidence files now state the version they were measured on, because until this iteration
+they recorded numbers that could not be reproduced from the information in them.
+
+**Decision 3 — D-049 was re-measured under the pin rather than assumed to survive it.** It
+holds identically on 4.57.6: no metadata `(0.0, 0.1)`, `fps` in the content dict `(0.0, 0.1)`,
+`video_metadata` top-level `(0.5, 2.5)`. So the timestamp defect is a property of the model's
+chat template, not of one library version — worth knowing, and worth not having guessed.
+
+**Not re-recorded.** M5.2's evidence keeps its 5.14.1 numbers with the version stated, rather
+than being rewritten under the pin. The measurements were real, the analysis stands, and
+overwriting the numbers a conclusion was drawn from is how a record stops being one. Fresh runs
+under the pin belong to whatever next needs them — §8.2 above all, which is where an ordering
+finally gets judged rather than just observed.
+
+---
