@@ -2758,3 +2758,54 @@ join the unpinned model revisions as a named gap.
 
 Gate: `VERIFY OK — 1072 passed, 0 skipped`. Mutation audit 5/5 against a baseline verified green
 first. Tally moves 35/7/4/1 → 36/9/4/1, which is the point: the program was always this size.
+
+## D-070
+
+**Stage 5 fused three of §3's five out-point signals, and the missing one was already being
+measured.** `fuse_boundary` has always carried a `natural_silence` branch; the runner's single
+`BoundaryInputs(` site never set it, so the branch was unreachable from `run_pipeline` and every
+clip this project has ever cut had its out point decided by tail / shot cut / TimeLens alone.
+
+The reason it counts as a wiring defect rather than a missing feature: `_pauses_between` derives
+the silences between Stage 0's VAD speech regions a hundred and fifty lines earlier in the same
+function, hands them to §4.2's `segment_sentences`, and drops them. The measurement Stage 5
+needed had already been taken.
+
+**Decision: "natural silence" is the end of the VAD speech region containing `anchor_out`.** The
+mirror of `_vad_onset_for_anchor`, which takes the *start* of the region holding the first
+anchor. `anchor_out` is a transcript time — a word's end, from §4.2's Viterbi alignment — while
+VAD measured when the audio actually went quiet; when the audible tail runs past the last aligned
+word, that is the point §3 means by ending on silence.
+
+**Rejected: the onset of the next speech region.** That is the far side of the pause, and
+reaching across an entire silence to butt against the next utterance lengthens every mid-episode
+clip and clips the following speaker's first phoneme. On the fixture it puts a sentence-0 clip
+at 1954 ms rather than 1790 ms. The rejected reading is pinned by the control test below, not
+just by this paragraph.
+
+**No threshold is invented, per the standing rule.** Every value returned is a measured region
+edge, which is also why the result cannot run into the following region: a region's end precedes
+the next region's start. `None` when `anchor_out` is not inside a speech region — the clip
+already ends in silence and there is nothing to extend to; a number there would be
+indistinguishable from a measurement, and §8.2 reads which signal moved the boundary.
+
+**The control is the test that proves it, not the positive case** (`evidence/stage-5-natural-silence.md`).
+On the stock fixture transcript the tail reaches 1900 ms and natural silence 1790 ms, so the tail
+wins and the fix changes nothing — that case is asserted as-is. Ending the same word 200 ms
+earlier inverts it to 1700 vs 1790 and the out point lands on the silence. A positive test alone
+would have certified the rejected reading equally well; the control fails for it. Both assert on
+`run.clip.boundary`, through a real `run_pipeline` over the real media with real VAD.
+
+**An edge the measurement exposed:** Silero reports region 2 ending at 4180 ms on a 4162 ms file.
+`media_duration_ms`'s existing clamp absorbs it, which makes that clamp load-bearing for a second
+independent reason. The boundary invariant is safe regardless, because the 200 ms tail is always
+in the `max()`.
+
+§3's fifth out-point signal, `speaker_turn_end`, still needs the gated diarization model
+(`BLOCKED.md` #4, measured 401 from here). Four of five, with the fifth absent for a stated
+reason rather than by omission.
+
+Gate: `VERIFY OK — 1075 passed, 0 skipped`. Mutation audit 5/5 against a baseline verified green
+first, including the next-onset misreading and a mutation in `boundary.py` rather than
+`pipeline.py`, which confirms the tests cover the chain from Stage 0's VAD to the emitted
+boundary rather than the argument merely being present.

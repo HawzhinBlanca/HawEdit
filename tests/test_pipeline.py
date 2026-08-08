@@ -1046,3 +1046,97 @@ def test_subject_tracking_marks_output_for_dynamic_reframing(tmp_path: Path) -> 
     )
     assert run.clip is not None and run.clip.output is not None
     assert run.clip.output.crop_target == "face_tracked"
+
+
+# =========================================================================================
+# §3 Stage 5's fifth out-point signal
+#
+# `fuse_boundary` has always had a `natural_silence` branch. This runner computed the VAD
+# silences (`_pauses_between`), spent them on §4.2's sentence segmentation, and never handed
+# Stage 5 its own — so the branch was unreachable from the runner and the fused out point was
+# three of §3's five signals. D-070.
+#
+# Both directions are asserted on the fused artifact, and the pair is the point: the same
+# wiring bug is also consistent with reading "natural silence" as *the next speech onset*,
+# which is the plausible wrong answer. On this fixture that would put the out point at 1954 ms
+# — across the whole 164 ms pause, butting against the next utterance — so the control below
+# fails for it while the positive test passes either way.
+# =========================================================================================
+
+
+def _transcript_ending_speech_early(media_id: str) -> RawTranscript:
+    """The same fixture transcript with sentence 0's last word ending 200 ms sooner.
+
+    Stage 0's real VAD puts speech at 0..1790 ms and 1954..4180 ms on this media. With the
+    stock timings the last word of sentence 0 ends at 1700, so §3's 200 ms tail reaches 1900
+    and beats the 1790 ms silence — which is why the stock case is the control, not the proof.
+    Ending the word at 1500 is the ordinary situation this signal exists for: the speaker's
+    audible tail runs past the last aligned word.
+    """
+    words = (WORDS[0], replace(WORDS[1], end_ms=1_500), WORDS[2], WORDS[3])
+    return RawTranscript(
+        media_id=media_id,
+        text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
+        words=words,
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+    )
+
+
+@needs_ffmpeg
+def test_the_fused_out_point_ends_on_stage_0s_real_natural_silence(tmp_path: Path) -> None:
+    """The out point lands where this run's VAD says speech stopped, not 200 ms after a word."""
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="silence",
+        transcript=_transcript_ending_speech_early("silence"),
+        select_sentences=(0,),
+    )
+    assert run.clip is not None, run.boundary
+    # 1790 ms is Stage 0's own measurement on this file, not a constant in this test.
+    assert run.clip.boundary.final_out_ms == 1_790
+    assert run.clip.boundary.out_extended_by == "natural_silence"
+    # The invariant Stage 5 exists to protect, on the artifact.
+    assert run.clip.boundary.final_out_ms >= run.clip.boundary.anchor_out_ms
+
+
+@needs_ffmpeg
+def test_natural_silence_does_not_extend_past_where_speech_stopped(tmp_path: Path) -> None:
+    """The control. With the stock timings §3's tail is later, so the tail must win.
+
+    This fails if `natural_silence` is read as the next speech onset (1954 ms here): that
+    reaches across the entire pause to the following utterance, which is the opposite of a
+    natural stop and would silently lengthen every clip in the middle of an episode.
+    """
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="tailwins",
+        transcript=a_transcript("tailwins"),
+        select_sentences=(0,),
+    )
+    assert run.clip is not None, run.boundary
+    assert run.clip.boundary.final_out_ms == 1_900
+    assert run.clip.boundary.out_extended_by == "tail"
+
+
+def test_there_is_no_natural_silence_to_extend_to_inside_a_pause() -> None:
+    """An anchor already sitting in a silence has nothing to extend to, so the signal is None.
+
+    `None`, never the pause's own edge: a number here would be indistinguishable from a
+    measurement, and §3 counts which signal moved the boundary.
+    """
+    from typing import cast
+
+    from hawedit.ingest import SpeechSegment
+    from hawedit.pipeline import _natural_silence_for_anchor
+
+    class Ingested:
+        speech = (SpeechSegment(0, 1_790), SpeechSegment(1_954, 4_180))
+
+    ingested = cast(Any, Ingested())
+    assert _natural_silence_for_anchor(ingested, 1_700) == 1_790
+    assert _natural_silence_for_anchor(ingested, 1_850) is None  # inside the 164 ms pause
+    assert _natural_silence_for_anchor(ingested, 4_180) is None  # past all speech
+    # Exactly on the edge: speech already stopped there, so there is nothing to extend to.
+    assert _natural_silence_for_anchor(ingested, 1_790) is None

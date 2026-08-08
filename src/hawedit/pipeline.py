@@ -560,6 +560,29 @@ def _vad_onset_for_anchor(
     return min(overlapping, key=lambda segment: segment.start_ms).start_ms if overlapping else None
 
 
+def _natural_silence_for_anchor(ingested: IngestResult, anchor_out_ms: int) -> int | None:
+    """Where speech actually stops after the last selected word — §3 Stage 5's natural silence.
+
+    The mirror of `_vad_onset_for_anchor`: that reads the *start* of the VAD region holding the
+    first anchor, this reads the *end* of the region holding the last one. That the two are
+    measured on different clocks is the whole point — `anchor_out` is a transcript time (a word's
+    end, from §4.2's Viterbi alignment) while VAD measured when sound stopped, independently and
+    from the audio itself. When the
+    audible tail runs past the last word, §3 says the clip may end on the silence rather than
+    mid-breath.
+
+    `None` when `anchor_out` is not inside a speech region: the clip already ends in silence, so
+    there is nothing to extend to. Deliberately **not** the next speech onset — that is the far
+    side of the pause, and reaching across a whole silence to butt against the next speaker is
+    the opposite of a natural stop. No threshold is invented here; every value returned is a
+    measured region edge, which is also why it cannot run into the following region.
+    """
+    containing = [
+        segment for segment in ingested.speech if segment.start_ms <= anchor_out_ms < segment.end_ms
+    ]
+    return max(segment.end_ms for segment in containing) if containing else None
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
@@ -858,6 +881,14 @@ def run_pipeline(
             # measured on *this* video by Stage 0 a few lines above, not supplied as fixtures.
             shot_cuts_ms=ingested.shot_cuts_ms,
             vad_onset_ms=_vad_onset_for_anchor(ingested, anchor_in, anchor_out),
+            # §3 Stage 5 takes the latest of five out-point signals. This runner computed the
+            # VAD silences a few hundred lines above (`_pauses_between`), spent them on §4.2's
+            # sentence segmentation and then never handed Stage 5 its own — so `fuse_boundary`
+            # had a `natural_silence` branch no caller could reach, and the fused out point was
+            # three of the five. Four now; the fifth is `speaker_turn_end`, which needs the
+            # gated diarization model (`BLOCKED.md` #4) and is absent for a stated reason
+            # rather than by omission. D-070.
+            natural_silence_ms=_natural_silence_for_anchor(ingested, anchor_out),
             timelens_interval_start_ms=(
                 timelens_interval.start_ms if timelens_interval is not None else None
             ),
