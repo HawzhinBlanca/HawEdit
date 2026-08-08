@@ -377,12 +377,33 @@ class VisualIndex:
                 f"retrieved."
             )
         if self._embeddings:
-            existing = next(iter(self._embeddings.values())).dimension
-            if embedding.dimension != existing:
+            first = next(iter(self._embeddings.values()))
+            if embedding.dimension != first.dimension:
                 raise VisualIndexError(
                     f"{window.window_id} has dimension {embedding.dimension}; the index holds "
-                    f"{existing}. Two dimensions means two models, and their scores are not "
-                    f"comparable."
+                    f"{first.dimension}. Two dimensions means two models, and their scores are "
+                    f"not comparable."
+                )
+            # Two sampling rates means two descriptions of the same kind of footage, and the
+            # difference is not small. Measured on the fixture, the *same* 0–4162 ms span
+            # embedded at three rates: 1 vs 2 fps sit 0.117 apart in cosine distance, 1 vs 4
+            # fps 0.057, 2 vs 4 fps 0.034. Three visually distinct scenes sit 0.186–0.224
+            # apart. So the rate alone accounts for up to 63% of the distance between genuinely
+            # different footage, and a window can outrank a more relevant one for having been
+            # sampled differently. The rate reaches the model explicitly — `video_metadata`
+            # carries it (D-049) — so this is the model describing different inputs, not noise.
+            #
+            # `plan_scene_windows` already takes one rate for a whole media, so the honest path
+            # produces a uniform index; nothing enforced it, which is the defect. §3's reference
+            # is ~1 fps, and a choice to raise it for short scenes (D-052) is a choice for the
+            # whole index, not per window.
+            if window.fps != first.window.fps:
+                raise VisualIndexError(
+                    f"{window.window_id} was sampled at {window.fps} fps; the index holds "
+                    f"{first.window.fps} fps. The same footage embedded at two rates lands up "
+                    f"to 0.117 apart in cosine distance, against 0.186–0.224 between different "
+                    f"scenes — so mixing them lets the sampling rate outweigh the content. "
+                    f"Embed the whole media at one rate."
                 )
         self._embeddings[window.window_id] = embedding
 

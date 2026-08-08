@@ -359,6 +359,42 @@ def test_a_dimension_mismatch_is_refused_on_add() -> None:
         index.add(an_embedding(a_window(10_000, 20_000, scene_index=1), vector=(1.0, 0.0, 0.0)))
 
 
+def test_two_sampling_rates_in_one_index_are_refused() -> None:
+    """The rate is not a detail of how a window was read — it changes what the vector says.
+
+    Measured on the real fixture, the *same* 0–4162 ms span embedded three ways
+    (`evidence/m5-2-sampling-rate.md`): 1 vs 2 fps sit **0.117** apart in cosine distance,
+    1 vs 4 fps **0.057**, 2 vs 4 fps **0.034**. Three visually distinct scenes sit
+    **0.186–0.224** apart. So the rate alone is up to 63% of the distance between different
+    footage, and in a mixed index a window can outrank a more relevant one for having been
+    sampled differently. `plan_scene_windows` already takes one rate per media, so the honest
+    path was uniform; nothing enforced it, which is what let the M5.2 evidence index be built
+    at 4 fps without anything saying so.
+    """
+    index = VisualIndex("m1")
+    index.add(an_embedding(a_window(0, 10_000, scene_index=0, fps=1.0), vector=(1.0, 0.0)))
+    with pytest.raises(VisualIndexError, match="sampled at 4.0 fps"):
+        index.add(an_embedding(a_window(10_000, 20_000, scene_index=1, fps=4.0), vector=(0.0, 1.0)))
+
+
+def test_one_sampling_rate_above_the_reference_is_accepted_throughout() -> None:
+    """The positive control, and the remedy the refusal above names.
+
+    Without this the guard could be satisfied by refusing every rate but 1 fps — which would
+    also refuse D-049's fix for short scenes, where a 1400 ms window at 1 fps is a single frame
+    with no temporal structure at all. A whole index at 4 fps is legal; a mixed one is not.
+    """
+    index = VisualIndex("m1")
+    for scene in range(3):
+        index.add(
+            an_embedding(
+                a_window(scene * 10_000, scene * 10_000 + 10_000, scene_index=scene, fps=4.0),
+                vector=(1.0, float(scene)),
+            )
+        )
+    assert len(index) == 3
+
+
 def test_a_dimension_mismatch_is_refused_on_query() -> None:
     index = _index_of(3)
     with pytest.raises(VisualIndexError, match="dimension"):

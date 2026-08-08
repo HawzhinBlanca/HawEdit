@@ -1977,3 +1977,55 @@ has three scenes, and `rerank_and_keep` correctly refuses — the range is cover
 and needs real footage (`BLOCKED.md` #1). D-050's unexplained 0.955 also stands.
 
 ---
+
+## D-052 · The sampling rate was 63% of the signal, and one index could hold two of them
+
+**Found by auditing the previous iteration's evidence**, not by a failure. M5.2's index was built
+at **4 fps** while §3 Stage 2's reference is **~1 fps**, and that departure was never recorded.
+Checking whether it mattered turned up something worse: nothing required a media's windows to
+share a rate at all.
+
+Reproduced — `VisualIndex.add` accepted a 1 fps and a 4 fps window together. It checked
+`media_id`, duplicate `window_id` and dimension, and said nothing about the rate.
+
+Then measured, because "not comparable" is not a number. The **same** 0–4162 ms span of the
+fixture, same model, same weights, only the rate differing:
+
+    1 fps vs 2 fps   cosine distance 0.117419
+    1 fps vs 4 fps                   0.057461
+    2 fps vs 4 fps                   0.033594
+
+Against three **visually distinct** scenes of that fixture at 0.186–0.224 apart. **The sampling
+rate alone is up to 63% of the distance between genuinely different footage.** In a mixed index
+a window can outrank a more relevant one for having been read at a different rate, with every
+score looking ordinary. And it is not noise: the rate reaches the model explicitly through
+`video_metadata` (D-049), so this is the model describing inputs it was told differ.
+
+The relationship is also not monotonic — 1 vs 2 fps is *further* than 1 vs 4 fps — so it is not
+a small correction that could be tolerated or compensated.
+
+**Decision 1 — one rate per index, enforced at `add`.** The single funnel, beside the dimension
+check it mirrors, with the measurement in the message. `plan_scene_windows` already takes one
+`fps` per media, so the honest path was uniform; nothing required it, which is precisely how the
+M5.2 evidence index came to be 4 fps with no record.
+
+**Decision 2 — the guard is not "1 fps only".** That would pass the mixing test and break
+D-049's remedy: a 1400 ms scene at 1 fps is a single frame with no temporal structure, which
+`extract_window_frames` refuses. A uniform index at any rate at or above the reference is legal.
+A positive control test builds a whole index at 4 fps and requires acceptance, so the refusal
+cannot be satisfied by refusing everything.
+
+**Decision 3 — the rate is a per-media decision with a cost, recorded not absorbed.** The
+64-frame ceiling is enforced against whatever rate is chosen, so the longest legal window is
+64 s at 1 fps, 32 s at 2, **16 s at 4**. A 4 fps index splits long scenes into four times as
+many windows: more embeddings, more reranker calls, and a different number of candidates
+competing for §3's 5–10 survivor slots.
+
+**Not decided here — and it is a real open question, not a formality.** Which rate a Kurdish
+episode should use. §3 says ~1 fps; D-049 showed 1 fps cannot represent a scene shorter than
+about two seconds; and this entry shows the choice is global and materially changes every score.
+Three seconds of fixture cannot answer it. It is §8.2's question and it needs `BLOCKED.md` #1 —
+recorded here so that whoever has real footage knows it is a decision waiting, rather than
+inheriting whichever rate an example happened to use.
+
+---
