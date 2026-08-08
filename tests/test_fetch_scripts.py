@@ -24,3 +24,19 @@ def test_model_fetch_passes_a_full_revision_and_pins_its_download_client() -> No
     script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
     assert "snapshot_download(repo_id=source, revision=revision" in script
     assert '"huggingface_hub==0.36.2"' in script
+
+
+def test_every_remote_github_action_is_pinned_to_a_full_commit() -> None:
+    workflows = tuple((ROOT / ".github" / "workflows").glob("*.yml"))
+    assert workflows
+    uses: list[tuple[Path, str]] = []
+    for workflow in workflows:
+        for line in workflow.read_text(encoding="utf-8").splitlines():
+            match = re.search(r"\buses:\s*([^\s#]+)", line)
+            if match and not match.group(1).startswith(("./", "docker://")):
+                uses.append((workflow, match.group(1)))
+    assert uses
+    for workflow, action in uses:
+        assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action), (
+            f"{workflow}: remote action {action!r} is not pinned to a full commit"
+        )

@@ -74,8 +74,8 @@ These cannot be truthfully solved from the checkout alone:
 - The project-fetched Linux ffmpeg archive is addressed by an immutable upstream commit and its
   Git-LFS SHA-256 is verified before unpacking.
 - `hawedit-release` makes source-to-wheel bytes reproducible and emits a checksum plus Git
-  provenance, but releases are still unsigned, carry no SBOM, and package-managed OmniASR assets
-  lack a project-owned byte manifest.
+  provenance, and CI's remote GitHub Actions are pinned to full commits. Releases are still
+  unsigned, carry no SBOM, and package-managed OmniASR assets lack a project-owned byte manifest.
 
 ## Honest release call
 

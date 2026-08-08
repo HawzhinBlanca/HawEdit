@@ -249,6 +249,8 @@ bash scripts/verify.sh --fast   # lint + typecheck only, for editor feedback
 
 A task is DONE when this exits 0 **and** its evidence is recorded in `PROGRESS.md`. Nothing
 is marked done by judgment.
+Remote actions in the gate workflow are pinned to full commits; moving major-version tags are
+rejected by the test suite (`evidence/ci-actions.md`).
 
 The gate is deliberately hard to fool, because it is the only thing that decides DONE:
 
