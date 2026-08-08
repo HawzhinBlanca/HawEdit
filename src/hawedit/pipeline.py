@@ -560,6 +560,53 @@ def _vad_onset_for_anchor(
     return min(overlapping, key=lambda segment: segment.start_ms).start_ms if overlapping else None
 
 
+def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
+    """The clip's id, derived in exactly one place.
+
+    Both the overwrite guard and the files the run actually writes read it from here. A guard
+    that computes a path a second way is a guard that can pass while the write collides.
+    """
+    return f"{identifier}-s{select_sentences[0]}-{select_sentences[-1]}"
+
+
+def _delivery_artifact_paths(work_dir: Path, clip_id: str) -> tuple[Path, ...]:
+    """The five files a completed run writes: captions, render, and §2's three sidecars."""
+    return tuple(
+        work_dir / f"{clip_id}.{suffix}" for suffix in ("ass", "mp4", "srt", "edl", "json")
+    )
+
+
+def _assert_no_existing_artifacts(
+    work_dir: Path, identifier: str, select_sentences: Sequence[int]
+) -> None:
+    """Refuse an overwriting run *before* it spends GPU time or money.
+
+    This check used to live beside the render step, ~180 lines after the billed Stage 4
+    `generateContent` and after Stage 2/3's model calls — so a re-run into a used work
+    directory paid Gemini, held both Qwen checkpoints and VideoChat3 on the GPU, and only then
+    refused with nothing to show. The condition was knowable the whole time: it depends on
+    `work_dir`, the media id and the sentence selection, and nothing else. D-071.
+
+    Called at each point where the selection first becomes knowable — after an explicit
+    selection is validated, and again after `--auto-select` settles one — because those are
+    genuinely different times, not two copies of the rule.
+    """
+    if not select_sentences:
+        # No selection, no clip, no artifacts. `run_pipeline` returns before the render step.
+        return
+    existing = [
+        path
+        for path in _delivery_artifact_paths(work_dir, _clip_id(identifier, select_sentences))
+        if path.exists()
+    ]
+    if existing:
+        raise FileExistsError(
+            "refusing to overwrite existing delivery artifact(s): "
+            + ", ".join(str(path) for path in existing)
+            + ". Use a new work directory for a new run."
+        )
+
+
 def _natural_silence_for_anchor(ingested: IngestResult, anchor_out_ms: int) -> int | None:
     """Where speech actually stops after the last selected word — §3 Stage 5's natural silence.
 
@@ -731,6 +778,10 @@ def run_pipeline(
     select_sentences, selected, selected_anchors = _prepare_selection(
         transcript, sentences, select_sentences
     )
+    # Before Stage 2/3 touch the GPU and before Stage 4 is billed. Deliberately after
+    # `_prepare_selection`, so a selection naming a sentence that does not exist is still
+    # reported as that error rather than as a collision.
+    _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
 
     # --- §3 Stage 3, both paths -------------------------------------------------------------
     merged: tuple[MergedCandidate, ...] = ()
@@ -780,6 +831,10 @@ def run_pipeline(
         select_sentences, selected, selected_anchors = _prepare_selection(
             transcript, sentences, automatic
         )
+        # `--auto-select` only knows which sentences it wants once Stage 3 has ranked
+        # candidates, so this is the first moment the artifact names exist in that mode. Still
+        # ahead of the billed Stage 4 call below.
+        _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
 
     selected_candidate: MergedCandidate | None = None
     if merged and selected_anchors is not None:
@@ -936,7 +991,7 @@ def run_pipeline(
         else ()
     )
     clip = Clip(
-        clip_id=f"{identifier}-s{select_sentences[0]}-{select_sentences[-1]}",
+        clip_id=_clip_id(identifier, select_sentences),
         media_id=identifier,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
@@ -985,22 +1040,13 @@ def run_pipeline(
             ),
         )
 
-    ass_path = work_dir / f"{clip.clip_id}.ass"
-    render_path = work_dir / f"{clip.clip_id}.mp4"
-    srt_path = work_dir / f"{clip.clip_id}.srt"
-    edl_path = work_dir / f"{clip.clip_id}.edl"
-    editing_json_path = work_dir / f"{clip.clip_id}.json"
-    existing = [
-        path
-        for path in (ass_path, render_path, srt_path, edl_path, editing_json_path)
-        if path.exists()
-    ]
-    if existing:
-        raise FileExistsError(
-            "refusing to overwrite existing delivery artifact(s): "
-            + ", ".join(str(path) for path in existing)
-            + ". Use a new work directory for a new run."
-        )
+    ass_path, render_path, srt_path, edl_path, editing_json_path = _delivery_artifact_paths(
+        work_dir, clip.clip_id
+    )
+    # Kept as well as hoisted, and it costs nothing: the guard above runs before the expensive
+    # stages, this one runs immediately before the first write. Anything that appeared in the
+    # work directory while the models were running is still caught here.
+    _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
     try:
         clip.assert_renderable()
     except (ValueError, IncompleteSentence) as exc:

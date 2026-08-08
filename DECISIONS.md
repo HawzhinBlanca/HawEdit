@@ -2809,3 +2809,54 @@ Gate: `VERIFY OK — 1075 passed, 0 skipped`. Mutation audit 5/5 against a basel
 first, including the next-onset misreading and a mutation in `boundary.py` rather than
 `pipeline.py`, which confirms the tests cover the chain from Stage 0's VAD to the emitted
 boundary rather than the argument merely being present.
+
+## D-071
+
+**A re-run into a used work directory paid Gemini and loaded two GPU models before refusing to
+overwrite.** The `FileExistsError` guard lived beside the render step, ~180 lines after the
+billed Stage 4 `generateContent` at line 814 and after Stage 2/3 had put Qwen and VideoChat3 on
+the GPU. The condition depends on `work_dir`, the media id and the sentence selection — nothing a
+model produces — so it was knowable before any of that was spent.
+
+**Decision: hoist the guard to each point where the selection first becomes knowable, and keep
+the one before the first write.** Three call sites of one function, because they are three
+different moments rather than three copies of a rule:
+
+* after `_prepare_selection` for an explicit selection — saves the GPU work *and* the billed call;
+* after `--auto-select` settles a selection, which it cannot do until Stage 3 has ranked
+  candidates — saves the billed call, and the GPU work there is what produced the selection, so
+  it is not savable;
+* immediately before the first write — costs nothing and still catches a file that appeared while
+  the models were running.
+
+**`clip_id` and the five artifact paths now derive from `_clip_id` and
+`_delivery_artifact_paths`, once each.** A guard that computes a path a second way can pass while
+the write collides, which is the obvious way this fix goes wrong.
+
+**The artifact is a request that never happened**, so the tests assert the billed call *count* is
+zero, not merely that an exception was raised. `--auto-select` is a separate test because without
+the second call site it still reaches the judge: the first guard sees an empty selection and
+returns.
+
+**The control did real work.** `test_a_clean_work_directory_still_reaches_the_judge` runs the same
+call with nothing planted and requires the judge exactly once — a guard hoisted somewhere
+`select_sentences` is always empty, or one that refused everything, passes both refusal tests and
+fails this. Its first version failed on `_assert_verdict_matches_request`, the pipeline's own
+refusal of a verdict whose `candidate_id` does not match the request; that only fires on a run
+which truly reaches Stage 4, so the control was shown to reach the judge before it was made to
+pass.
+
+**Mutation audit 4/5 targeted, 5/5 at the gate** (`evidence/billed-before-refusing.md`). The
+survivor is mutating `_clip_id`, which moves guard and writer together by design and so is
+invisible to those four tests. It is still behaviour-changing and the full suite catches it —
+dropping `select_sentences[-1]` collides `(0,)` with `(0, 1)` and three pre-existing tests fail,
+led by `test_distinct_selections_do_not_overwrite_each_others_deliveries`. Measured by running the
+whole suite under the mutation, not assumed. No test pins the filename format: that is a naming
+convention, not a requirement, and pinning it would fail on an intentional rename while catching
+nothing this fix concerns.
+
+**Not fixed, and not claimed:** delivery is still not atomic. This refuses a colliding run up
+front; a run that fails halfway can still strand a partial `.ass` or `.mp4` and force a new work
+directory.
+
+Gate: `VERIFY OK — 1079 passed, 0 skipped`.

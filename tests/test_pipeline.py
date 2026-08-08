@@ -1140,3 +1140,168 @@ def test_there_is_no_natural_silence_to_extend_to_inside_a_pause() -> None:
     assert _natural_silence_for_anchor(ingested, 4_180) is None  # past all speech
     # Exactly on the edge: speech already stopped there, so there is nothing to extend to.
     assert _natural_silence_for_anchor(ingested, 1_790) is None
+
+
+# =========================================================================================
+# The overwrite refusal used to fire after the money was spent
+#
+# `_assert_no_existing_artifacts` lived beside the render step, ~180 lines after the billed
+# Stage 4 `generateContent` and after Stage 2/3's model calls. A re-run into a used work
+# directory paid Gemini, loaded both Qwen checkpoints and VideoChat3, and *then* refused with
+# nothing to show for it. The condition depended only on the work dir, the media id and the
+# sentence selection — all knowable before any of that. D-071.
+# =========================================================================================
+
+
+def _existing_artifact(work_dir: Path, media_id: str, sentence: int) -> Path:
+    """Plant one of the five files a completed run writes, exactly as the run names it."""
+    from hawedit.pipeline import _clip_id, _delivery_artifact_paths
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    planted = _delivery_artifact_paths(work_dir, _clip_id(media_id, (sentence,)))[0]
+    planted.write_text("a previous run left this here", encoding="utf-8")
+    return planted
+
+
+def test_an_overwriting_run_refuses_before_the_billed_judge_call(tmp_path: Path) -> None:
+    """The artifact of this fix is a request that never happened."""
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    work = tmp_path / "work"
+    planted = _existing_artifact(work, "billed", 0)
+
+    calls: list[JudgeRequest] = []
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            calls.append(request)
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    with pytest.raises(FileExistsError) as raised:
+        run_pipeline(
+            FIXTURE,
+            work,
+            media_id="billed",
+            transcript=a_transcript("billed"),
+            select_sentences=(0,),
+            discover=lambda _n: [
+                Candidate("v1", "billed", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
+            ],
+            judge=Judge(),
+        )
+
+    assert str(planted) in str(raised.value)
+    # The whole point. Not "it refused" — it refused without spending anything.
+    assert calls == [], f"the billed judge ran {len(calls)} time(s) before the refusal"
+
+
+def test_an_overwriting_auto_selected_run_also_refuses_before_the_judge(tmp_path: Path) -> None:
+    """`--auto-select` picks its sentences after Stage 3, so it needs its own guard point.
+
+    Without the second call site this run reaches the judge: the first guard sees an empty
+    selection, returns, and nothing re-checks once auto-selection has named sentence 0.
+    """
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    work = tmp_path / "work"
+    _existing_artifact(work, "autobilled", 0)
+
+    calls: list[JudgeRequest] = []
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            calls.append(request)
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    with pytest.raises(FileExistsError):
+        run_pipeline(
+            FIXTURE,
+            work,
+            media_id="autobilled",
+            transcript=a_transcript("autobilled"),
+            discover=lambda _n: [
+                Candidate("v1", "autobilled", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
+            ],
+            auto_select=True,
+            judge=Judge(),
+        )
+
+    assert calls == [], f"the billed judge ran {len(calls)} time(s) before the refusal"
+
+
+def test_a_clean_work_directory_still_reaches_the_judge(tmp_path: Path) -> None:
+    """The control. A guard that refused every run would pass both tests above.
+
+    Same call, nothing planted: the judge must be reached exactly once, so the tests above
+    are measuring the collision and not a pipeline that stopped working.
+    """
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    calls: list[JudgeRequest] = []
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            calls.append(request)
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="billed",
+        transcript=a_transcript("billed"),
+        select_sentences=(0,),
+        discover=lambda _n: [
+            Candidate("v1", "billed", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
+        ],
+        judge=Judge(),
+    )
+    assert len(calls) == 1, f"expected one billed call, got {len(calls)}"
+    assert run.clip is not None
+
+
+def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> None:
+    """The guard and the writer must derive names from one place, or the guard can miss.
+
+    Asserted against the rendered artifact rather than against the helper: whatever the run
+    puts on disk has to be a file the guard would have refused on a second run.
+    """
+    if find_ffmpeg() is None:
+        pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
+    from hawedit.pipeline import _clip_id, _delivery_artifact_paths
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="paths",
+        transcript=a_transcript("paths"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert run.render is not None and not isinstance(run.render, StageSkipped), run.render
+    guarded = set(_delivery_artifact_paths(work, _clip_id("paths", (0,))))
+    assert Path(run.render.path) in guarded, (
+        f"the run wrote {run.render.path}, which the overwrite guard does not check"
+    )
