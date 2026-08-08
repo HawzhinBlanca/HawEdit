@@ -130,15 +130,25 @@ def _kurdish_field(value: str, field: str) -> str:
     stripped = value.strip()
     if not stripped:
         raise ValueError(f"{field} is empty — §3 Stage 4 lists it among the judge's outputs")
-    if not _is_kurdish(stripped):
-        raise ValueError(
-            f"{field} {stripped!r} contains no Kurdish script. The judge answered in another "
-            f"language and every type downstream would accept it as finished work."
-        )
     # §4.1 governs text this system *produces* as well as text it receives: an unnormalized
     # title makes the clip unfindable by its own name in the §2 index (Kurdish invariant #3's
     # reasoning, one step downstream).
-    return normalize_sorani(stripped)
+    normalized = normalize_sorani(stripped)
+    # Checked on the NORMALIZED text, not the raw. The check used to run first, and §4.1
+    # normalization can remove the very characters that satisfied it: `٠١٢` is Arabic-Indic,
+    # so it is inside the block `_is_kurdish` tests, and `unify_numeral` rewrites it to `012`.
+    # Measured — `_kurdish_field('٠١٢', 'title_ckb')` returned `'012'`, a title with no Kurdish
+    # script at all, past a guard whose whole purpose is to refuse exactly that. Checking after
+    # is strictly stronger than checking before, because normalization never *adds* Kurdish
+    # script, so anything the late check accepts the early one would have too. D-076.
+    if not _is_kurdish(normalized):
+        raise ValueError(
+            f"{field} {stripped!r} contains no Kurdish script"
+            + (f" once §4.1-normalized to {normalized!r}" if normalized != stripped else "")
+            + ". The judge answered in another language and every type downstream would accept "
+            "it as finished work."
+        )
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)

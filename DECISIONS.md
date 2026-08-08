@@ -3021,3 +3021,63 @@ time was one wasted implementation and one caught error; the error was caught on
 duplicate existed, which is the one thing to say in its favour.
 
 Gate: `VERIFY OK` recorded with the commit.
+
+## D-076
+
+**§3 Stage 4's Kurdish-script gate could be satisfied and then invalidated by the normalization
+that runs right after it.** `_kurdish_field` tested `_is_kurdish` on the raw string and returned
+`normalize_sorani(stripped)`. Measured: `'٠١٢'` is Arabic-Indic, inside the block the check tests,
+so it passed — and `unify_numeral` rewrote it to `'012'`, which the function then returned. A
+title, description or hashtag with no Kurdish script at all reached `JudgeVerdict`, past the guard
+written to refuse precisely that, and §5 and the delivery set consume that as finished work.
+
+**Decision: check the normalized text, not the raw.** One guard in the shared function, four call
+sites. Strictly stronger than checking first — normalization never *adds* Kurdish script, so
+anything the late check accepts the early one would have accepted too. The refusal names the
+normalized form, because `'٠١٢'` looks Kurdish to a reader and `'012'` is what actually failed.
+Controls pin both directions: Kurdish-plus-digits is still accepted with the digits unified, and
+normalization is still applied to accepted fields. Mutation audit 4/4
+(`evidence/adversarial-pass-2026-08-09.md`).
+
+**Found by an adversarial pass over ten DONE rows**, ten agents in ten isolated worktrees, all
+baselines verified green first. 118 claims, **19 falsified, 26 guards revertible with no test
+noticing, 59 prose/code disagreements.** The full triage is in the evidence file; two entries
+matter enough to record here.
+
+**M0.3 is demoted to PARTIAL: §4.1's fifth collision is not the one the row names.** Read out of
+the frozen blueprint, `BLUEPRINT.md:228-232` lists ZWNJ, Farsi/Arabic `ی`/`ک`, Numerals (**one**
+row), conjunctive `و`, and **`Diacritics ř / ł`**. Conjunctive `و` is row *four*; the row reached
+"four by KLPT" by counting the single Numerals row twice, and row five is unimplemented —
+`normalize_sorani` leaves `ř`/`ł` untouched and no file in `src/` or `tests/` mentions either
+character. Coverage is 4 of 5.
+
+**Not fixed, because the fix needs a decision rather than code.** §4.1 says "Normalize in
+Latin-script material" without saying what `ř`/`ł` normalize *to*. In Kurdish Latin orthography
+they mark a trilled r and a velarized l — distinct phonemes — so folding them to `r`/`l` destroys
+information and anything else is invented. Refused and recorded per the standing rule. Two
+questions for Hawa, in `BLOCKED.md` #13: the target form, and whether Latin-script Kurdish is in
+scope at all when §7's ASR emits `ckb_Arab`.
+
+**The existing claim test could not have caught this**, because it encoded the same miscount:
+`test_the_ledger_tracks_whether_all_five_collisions_are_handled` defined "all five handled" as
+"conjunctive `و` separates". I intended to leave it for the next increment, and the demotion
+removed that option — it went red the moment M0.3 stopped saying DONE, which is the test doing
+its job through a wrong premise. So it is rewritten here: `_SECTION_4_1_PROBES` carries one probe
+per collision, `_section_4_1_collisions()` parses the table out of `BLUEPRINT.md`, and
+`test_every_section_4_1_collision_has_a_probe` asserts **set equality both ways** — the §7
+discipline `tests/test_registry.py` already applies, now applied to §4.1, so a row cannot hide
+behind a probe list nobody updated. The `ř`/`ł` probe asserts only that *something* changes, which
+is the weakest honest form while `BLOCKED.md` #13 is open.
+
+Mutation audit on those tests, **3/4**: dropping the unprobed row is CAUGHT, making its probe pass
+trivially is CAUGHT, quietly restoring M0.3 to DONE is CAUGHT. The survivor is replacing the
+blueprint parse with a retyped copy of the same five names — semantically neutral while
+`BLUEPRINT.md` is frozen, and it would only diverge if §4.1 gained a row, which the freeze
+forbids. Reported rather than papered over with a test about implementation.
+
+**Also corrected in the same edit:** the demoted M0.3 cell first quoted §4.1's row with its
+literal `|` delimiters, which split the markdown cell and broke
+`test_every_ledger_row_marked_partial_names_its_shortfall` — a PARTIAL row whose shortfall had
+become invisible to the checker that exists to require one.
+
+Gate: `VERIFY OK — 1096 passed, 0 skipped`.

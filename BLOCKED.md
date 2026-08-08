@@ -596,3 +596,41 @@ Until this is answered the loop keeps running and the gate stays green — 1067 
 `9d1292d` — but a commit here no longer tells you who did what, and neither session can fix that from
 inside the checkout.
 
+
+---
+
+## #13 · §4.1's fifth collision has no defined target form
+
+**Needs:** Hawa, two answers. No code, no credentials, no hardware.
+
+§4.1's collision table has five rows. Four are handled. The fifth —
+`| Diacritics ř / ł | Normalize in Latin-script material. |` (`BLUEPRINT.md:232`) — is
+unimplemented, and M0.3 claimed all five were done by counting the single Numerals row twice and
+calling conjunctive `و` "the fifth". `و` is row four. Demoted to PARTIAL, D-076.
+
+### Measured 2026-08-09 on hawapc01
+
+```
+normalize_sorani('řoj baş')  -> 'řoj baş'   changed=False
+normalize_sorani('łe gułan') -> 'łe gułan'  changed=False
+grep -rlniE "ř|ł" --include=*.py src/ tests/  ->  no files
+tests/test_normalize.py SECTION_4_1_COLLISIONS  ->  4 entries, no ř/ł case
+```
+
+### Why this is not a code task
+
+**1. What do `ř` and `ł` normalize to?** §4.1 says "Normalize" and does not say to what. In
+Kurdish Latin orthography `ř` is a trilled r and `ł` a velarized l — *distinct phonemes*, not
+decorated variants. Folding them to `r`/`l` throws away a phonemic distinction that a Kurdish
+reader can hear; folding them to anything else is invented. The standing rule is to refuse and
+record rather than guess a rule, so nothing was implemented.
+
+**2. Is Latin-script Kurdish in scope at all?** §7's canonical ASR emits `ckb_Arab`, every
+Kurdish invariant is written about Arabic-script Sorani, and the caption stack is built on
+libass RTL shaping. If Latin-script material never enters this pipeline, the honest resolution is
+a recorded scope exclusion in `DECISIONS.md`, not a normalizer nobody calls. If it does — a
+transliterated feed, a Kurmanji source — then it needs a defined target form and test cases in
+real material.
+
+Either answer closes this. Guessing at the first without the second is how a normalizer that
+silently destroys a phonemic contrast ends up in a Kurdish pipeline.

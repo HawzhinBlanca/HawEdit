@@ -488,3 +488,46 @@ def test_an_object_missing_the_judge_method_does_not() -> None:
         model_id = JUDGE
 
     assert not isinstance(NotAJudge(), EditorialJudge)
+
+
+# --- the Kurdish-script gate must survive §4.1 normalization ------------------------------
+#
+# `_kurdish_field` checked `_is_kurdish` on the RAW string and then returned
+# `normalize_sorani(...)`. §4.1 normalization can remove the characters that satisfied the
+# check: `٠١٢` is Arabic-Indic, inside the block the check tests, and `unify_numeral` rewrites
+# it to `012`. Measured before the fix: `_kurdish_field('٠١٢', 'title_ckb')` returned `'012'` —
+# a title with no Kurdish script at all, past the guard written to refuse exactly that. Found by
+# the 2026-08-09 adversarial pass. D-076.
+
+
+def test_a_field_that_loses_its_kurdish_script_to_normalization_is_refused() -> None:
+    """Asserted on the constructed verdict, which is what §5 and delivery consume."""
+    with pytest.raises(ValueError, match="no Kurdish script"):
+        a_verdict(title_ckb="٠١٢")
+    with pytest.raises(ValueError, match="no Kurdish script"):
+        a_verdict(description_ckb="٠١٢")
+    with pytest.raises(ValueError, match="no Kurdish script"):
+        a_verdict(hashtags_ckb=("٠١٢",))
+
+
+def test_the_refusal_names_the_normalized_form_that_failed() -> None:
+    """`٠١٢` looks Kurdish to a reader; the message has to show what it became."""
+    with pytest.raises(ValueError) as raised:
+        a_verdict(title_ckb="٠١٢")
+    assert "'012'" in str(raised.value), str(raised.value)
+
+
+def test_kurdish_text_that_merely_contains_digits_is_still_accepted() -> None:
+    """The control. A guard that refused anything normalization touches passes the tests above.
+
+    Kurdish script plus Arabic-Indic digits must survive, with the digits unified per §4.1 —
+    otherwise the fix would reject ordinary titles that happen to carry a number.
+    """
+    verdict = a_verdict(title_ckb="یک ٠١")
+    assert verdict.title_ckb == "یک 01"
+
+
+def test_normalization_is_still_applied_to_an_accepted_field() -> None:
+    """The second control: checking after normalizing must not stop normalizing."""
+    verdict = a_verdict(title_ckb="ئه‌مه‌ باشه‌")
+    assert verdict.title_ckb == "ئەمە باشە"

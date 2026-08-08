@@ -41,24 +41,73 @@ def _status(task: str) -> str:
 # --- #10 a DONE mark must be backed by the thing it claims -------------------------------
 
 
-def test_the_ledger_tracks_whether_all_five_collisions_are_handled() -> None:
-    """§4.1 lists five collisions. The ledger's mark on M0.3 must follow the code, both ways.
+# One probe per §4.1 collision: input that must change, and what it must become. Keyed by the
+# collision's name **as the blueprint writes it**, so the set equality below can catch a row
+# nobody wrote a probe for.
+_SECTION_4_1_PROBES: dict[str, tuple[str, str]] = {
+    "`ه` + ZWNJ vs `ە`": ("ئه‌مه‌", "ئەمە"),
+    "Farsi vs Arabic `ی` / `ک`": ("كوردي", "کوردی"),
+    "Numerals": ("٢٠٢٦", "2026"),
+    "Conjunctive `و`": ("وکتێبەکان", "و کتێبەکان"),
+    # `ř`/`ł` are Latin-script Kurdish. §4.1 says "Normalize in Latin-script material" and does
+    # not say to what, so this probe asserts only that *something* changes — the weakest honest
+    # form. See BLOCKED.md #13.
+    "Diacritics `ř` / `ł`": ("řoj baş", ""),
+}
 
-    The probe is a token that *should* separate — an inflected noun with a conjunctive `و`
-    joined on. D-003's `وتو` is the wrong probe: it is ambiguous, the rule declines it by
+
+def _section_4_1_collisions() -> list[str]:
+    """§4.1's collision names, parsed out of the frozen blueprint rather than retyped."""
+    blueprint = (ROOT / "BLUEPRINT.md").read_text(encoding="utf-8")
+    table = blueprint.split("| Collision | Detail |")[1].split("\n\n")[0]
+    return [
+        line.split("|")[1].strip()
+        for line in table.splitlines()
+        if line.startswith("|") and not line.startswith("|---")
+    ]
+
+
+def test_every_section_4_1_collision_has_a_probe() -> None:
+    """A row added to §4.1 must not be able to hide behind a probe list nobody updated.
+
+    This is `tests/test_registry.py`'s §7 discipline applied to §4.1: parse the table, assert set
+    equality both ways. Written because M0.3 claimed "all five collisions handled" while the
+    fifth — `Diacritics ř / ł` — had no probe, no implementation and no mention anywhere, and the
+    old version of this test could not see it: it defined "all five handled" as "conjunctive `و`
+    separates", encoding the very miscount it existed to prevent (D-076).
+    """
+    assert set(_section_4_1_collisions()) == set(_SECTION_4_1_PROBES), (
+        f"§4.1 lists {sorted(_section_4_1_collisions())}; probes cover "
+        f"{sorted(_SECTION_4_1_PROBES)}"
+    )
+
+
+def test_the_ledger_tracks_whether_all_five_collisions_are_handled() -> None:
+    """The ledger's mark on M0.3 must follow the code, in both directions.
+
+    The conjunctive `و` probe is a token that *should* separate — an inflected noun with the
+    `و` joined on. D-003's `وتو` is the wrong probe: it is ambiguous, the rule declines it by
     design, and it therefore reads as "unimplemented" forever.
     """
-    handled = normalize_sorani("وکتێبەکان") == "و کتێبەکان"
+    unhandled = []
+    for collision, (probe, expected) in _SECTION_4_1_PROBES.items():
+        result = normalize_sorani(probe)
+        # An empty `expected` means §4.1 fixes no target form, so any change counts as handled.
+        handled = result != probe if expected == "" else result == expected
+        if not handled:
+            unhandled.append(f"{collision} ({probe!r} -> {result!r})")
+
     status = _status("M0.3")
-    if handled:
-        assert status == "DONE", (
-            "conjunctive `و` separation is implemented (M1.7), so §4.1's fifth collision is "
-            f"handled — M0.3 is still marked {status}. Promote it and record the evidence."
+    if unhandled:
+        assert status != "DONE", (
+            f"M0.3 claims every §4.1 collision is handled, but {len(unhandled)} of "
+            f"{len(_SECTION_4_1_PROBES)} leave their probe unchanged: {unhandled}. Mark the row "
+            "PARTIAL and name the shortfall."
         )
     else:
-        assert status != "DONE", (
-            "M0.3 claims §4.1 normalization is done, but conjunctive `و` separation — one of "
-            "the five collisions §4.1 lists — leaves input unchanged."
+        assert status == "DONE", (
+            f"every §4.1 collision is handled, so M0.3 should not be {status}. Promote it and "
+            "record the evidence."
         )
 
 
