@@ -4397,3 +4397,61 @@ the file verified byte-identical to the verified-green version before committing
 retries every write and re-reads to confirm — an audit that can corrupt the tree it audits is worse
 than no audit.
 `evidence/frame-count-guard-graded-its-own-output.md`.
+
+## D-105
+
+**All three visual models took one device flag, so §6's two-GPU video phase ran on one GPU.**
+BLUEPRINT §6 is explicit and frozen:
+
+```
+VIDEO PHASE      GPU 0 → VideoChat3-4B      (segmented)
+                 GPU 1 → Embedding / Reranker / TimeLens2  (sequential)
+```
+
+`pipeline.py` handed `--visual-device` (default `cuda:0`) to the embedder, the reranker **and** the
+reader, so on hawapc01 all three landed on GPU 0 while GPU 1 held 1.3 GiB. The real 38-minute run died
+with `CUDA out of memory. Tried to allocate 21.83 GiB. GPU 0 has a total capacity of 23.99 GiB of
+which 3.59 GiB is free. Of the allocated memory 18.30 GiB is allocated by PyTorch`.
+
+**Decision: `--index-device` (default `cuda:1`) carries Stage 2's embedding and reranking;
+`--visual-device` keeps the Path B reader on GPU 0.** §6 supplies both assignments, so nothing is
+chosen here. `--timelens-device` was already `cuda:1` and is unchanged. `build_parser` was extracted
+from `main` so the defaults can be asserted: a comment claiming §6 is not §6 being followed.
+
+**A refusal, because the defaults are two-GPU defaults.** On a one-GPU machine `cuda:1` used to die
+inside torch with a device-ordinal error naming neither the stage nor the remedy. It now refuses up
+front, names which stage wanted which device, and gives the flag to pass instead. The control is that
+the devices a machine *does* have are accepted — a check refusing every CUDA device would satisfy the
+refusal test and stop the machine §6 was written for from running at all.
+
+**The first version of this fix had a test that measured nothing.** It asserted the *parsed
+defaults*, and the audit showed reverting either Qwen model to `--visual-device` left the suite green:
+a default nothing reads is not an assignment — D-094's substring failure in a new place. So the
+composer construction was extracted into `build_visual_composer` and the test now asserts which
+device each of the three models actually receives. Mutation audit **5/5** afterwards, with both
+survivors caught by that one test.
+
+**Measured after the change, and it did not clear the OOM:**
+
+```
+before   GPU 0: 18.30 GiB allocated,  3.59 GiB free      (embedder + reranker + reader)
+after    GPU 0: 10.44 GiB allocated, 12.18 GiB free      (reader alone)
+still    Tried to allocate 21.83 GiB
+```
+
+7.86 GiB freed on GPU 0 and Stage 2 moved to GPU 1, exactly as §6 intends — and the reader still asks
+for a single 21.83 GiB tensor. So the packing was a real divergence with a real cost, and it was not
+the whole cause. Reported as such rather than as a fix that worked.
+
+**A hypothesis I checked and dropped.** §6 says the reader is "(segmented)", and I suspected the code
+batched all windows into one forward. It does not: `read_scenes` is one call per window, with the
+docstring "One call per window rather than one model batch: §3 calls segmentation mandatory". The
+21.83 GiB is **one window**.
+
+**What remains, measured but not guessed:** the largest survivor window holds **64 frames**, exactly
+`MAX_FRAMES_PER_WINDOW`. One 64-frame window through VideoChat3-4B's preprocessing wants 21.83 GiB
+beside its own 10.44 GiB of weights, which does not fit in 24 GiB. §3's ceiling and this checkpoint's
+appetite are in tension on a 3090 Ti. Lowering the frame cap would be picking a threshold, which the
+hard rules forbid — the next step is to **measure** the largest window this GPU can actually read and
+record that number with the hardware that produced it.
+`evidence/section-6-put-the-video-phase-on-one-gpu.md`.
