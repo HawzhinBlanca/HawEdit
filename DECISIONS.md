@@ -5828,3 +5828,52 @@ echoed back.
 
 **Mutation audit 7/7 after.** No production code changed.
 `evidence/adversarial-pass-16-2026-08-09.md`.
+
+## D-130
+
+**Adversarial pass #17 took M0.7 — the ASR throughput harness, DONE and never attacked. Seven of nine
+mechanisms held. Both survivors were the hard rule verbatim, in the layer that publishes the report.**
+
+Every claim in this row is a number, and the rule is *"Unmeasured is None, never 0.0 — and never a
+score."* The per-measurement layer holds it. The aggregate did not:
+
+```
+CAUGHT  a corpus with no long audio reports a 0.0 failure rate
+CAUGHT  the long-audio rate no longer refuses mixed hardware
+CAUGHT  measurements from two machines are combined
+CAUGHT  RTF is inverted — duration over wall clock
+CAUGHT  a failed item reads as a successful one
+CAUGHT  an unprobed VRAM figure becomes 0 instead of None      (per measurement)
+MISSED  an unmeasured peak VRAM aggregates to 0                (per model report)
+MISSED  an empty score set reports mean RTF 0.0
+CAUGHT  the adapter is named by class alone, not module-qualified (D-097)
+
+7/9
+```
+
+**`mean_rtf … if self.scores else 0.0` is not a missing number — it is *infinitely fast*.** The most
+flattering possible wrong answer, in the one field §3 Stage 1 warns about: *"Do not derive wall-clock
+promises for hawapc01 from them. Measure on your own hardware in §8.1 and put **that** number in the
+capacity plan."* And `worst_rtf` would read 0.0 alongside it: never slower than instant.
+
+**`peak_vram_bytes=max(vram) if vram else 0` reads as "measured, and it used none"** — for a model §7
+sizes at ~17 GiB. §6's whole two-GPU layout is derived from that figure, so a zero is not a gap in a
+report, it is a capacity plan that fits anything.
+
+**Asserted on the written document, not the property.** Both tests read `to_dict()`, because the JSON
+is what a capacity plan gets read off and a `float | None` property is not what anybody sees.
+
+**A control was needed, and it is the interesting half.** Returning `None` unconditionally satisfies
+both tests and erases every real measurement — the harness exists to produce these figures. So a
+probed run must still report 17 GiB, and a scored run must still report its mean and worst RTF.
+
+**My first VRAM test was one call away from the defect, and the audit said so.** The mutation lives in
+`run_benchmark`'s aggregation; my test constructed a `ModelReport` directly and so only exercised
+`to_dict`'s passthrough — it passed with the mutation in place. That is the same pattern this pass
+series keeps finding in the suite, now in my own test, caught because the audit was re-run rather than
+assumed. The test drives `run_benchmark` now, whose session supplies no VRAM probe, with a
+probe-supplying control beside it.
+
+**Mutation audit 9/9 after.** No production code changed: all nine mechanisms were already right and
+two were unheld one layer up from where they are enforced.
+`evidence/adversarial-pass-17-2026-08-09.md`.
