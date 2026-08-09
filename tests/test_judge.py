@@ -49,6 +49,7 @@ from hawedit.judge import (
     WITH_VIDEO_TOKENS_PER_HOUR,
     EditorialJudge,
     InputMode,
+    JudgeFrame,
     JudgeRequest,
     JudgeVerdict,
     NotRoutable,
@@ -531,3 +532,87 @@ def test_normalization_is_still_applied_to_an_accepted_field() -> None:
     """The second control: checking after normalizing must not stop normalizing."""
     verdict = a_verdict(title_ckb="ئه‌مه‌ باشه‌")
     assert verdict.title_ckb == "ئەمە باشە"
+
+
+# --- what adversarial pass #15 found revertible (D-128) ---------------------------------
+
+
+def test_a_tie_above_the_regression_floor_is_still_not_a_win() -> None:
+    """`test_a_shadow_that_merely_ties_is_not_promoted` measures the floor, not the tie.
+
+    It calls `decide_judge(incumbent_wins=5, shadow_wins=5)` — **10 items**, below the 20-item
+    floor — so the answer comes from *"10 items is below the 20-item floor"* and never reaches
+    the tie rule. Measured. And its reason assertion looks for `"tie"`, which matches the word
+    **ties** in the header line every decision carries, so it would pass whatever the tie rule
+    did. Changing `shadow_wins <= incumbent_wins` to `<` left the whole suite green.
+
+    Ten and ten clears the floor, so only the tie rule can answer.
+    """
+    decision = decide_judge(incumbent_wins=10, shadow_wins=10, ties=0)
+    assert not decision.switch
+    assert any("tied with" in reason for reason in decision.reasons), decision.reasons
+    assert not any("below the" in reason for reason in decision.reasons), (
+        "the floor answered this, so the tie rule is still unmeasured"
+    )
+
+
+def test_a_one_win_margin_above_the_floor_does_promote() -> None:
+    """The control. Refusing every tie *and* every win satisfies the test above and would pin
+    the incumbent for ever — §3 asks for a managed migration, not a locked door."""
+    decision = decide_judge(incumbent_wins=10, shadow_wins=11, ties=0)
+    assert decision.switch, decision.reasons
+    assert any("beat" in reason for reason in decision.reasons)
+
+
+def test_a_request_exactly_at_the_tier_ceiling_is_refused() -> None:
+    """§3: "Keep each request **under** 200K tokens." Exactly 200,000 is not under it.
+
+    The existing tests assert the constant and refuse requests well over it, so `>=` could
+    become `>` unnoticed — the boundary followed the operator, which is D-098's and D-122's
+    shape. At the ceiling a request leaves the lower Pro price tier while reading as compliant.
+    """
+    at_ceiling = JudgeRequest(
+        candidate_id="at-ceiling",
+        mode=InputMode.STAGE_4_WITH_VIDEO,
+        tokens=PRO_TIER_TOKEN_CEILING,
+    )
+    with pytest.raises(RequestTooLarge, match="ceiling"):
+        at_ceiling.assert_within_tier()
+
+    # The control: one token below it is compliant, so this is a boundary and not a blanket
+    # refusal of the with-video mode §3 prescribes.
+    JudgeRequest(
+        candidate_id="under-ceiling",
+        mode=InputMode.STAGE_4_WITH_VIDEO,
+        tokens=PRO_TIER_TOKEN_CEILING - 1,
+    ).assert_within_tier()
+
+
+def test_more_keyframes_than_section_3_prescribes_are_refused() -> None:
+    """§3 Stage 4's payload is "~20 keyframes", and the cap had no test.
+
+    Inline image bytes are billed, so an unbounded count is a cost defect as well as a contract
+    one — D-126 found the same module's frames could come from anywhere in the media.
+    """
+    frames = tuple(
+        JudgeFrame(timestamp_ms=index * 100, mime_type="image/jpeg", data=b"\xff\xd8jpeg")
+        for index in range(21)
+    )
+    with pytest.raises(ValueError, match="at most 20"):
+        JudgeRequest(
+            candidate_id="too-many",
+            mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
+            tokens=1_000,
+            keyframes=frames,
+        )
+    # The control: exactly 20 is what §3 prescribes and must be accepted. The span is given
+    # because `JudgeRequest` also refuses frames from outside the candidate — the >20 check runs
+    # first, which is why the refusal above is the count and not the span.
+    JudgeRequest(
+        candidate_id="exactly-twenty",
+        mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
+        tokens=1_000,
+        keyframes=frames[:20],
+        clip_in_ms=0,
+        clip_out_ms=2_100,
+    )

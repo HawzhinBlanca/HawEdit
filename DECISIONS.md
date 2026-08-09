@@ -5708,3 +5708,62 @@ pin without opening the script, a moved pin must be republished, and an unpinned
 other way. **3/3** on its own audit — the wrong count restored CAUGHT, the published commit removed
 CAUGHT, the script unpinned CAUGHT.
 `evidence/adversarial-pass-14-2026-08-09.md`.
+
+## D-128
+
+**Adversarial pass #15 took M2.6 — the §3 Stage 4 judge contract, DONE and never attacked — and six
+of nine mechanisms held. The row's own words, "promotion needs a clear win on ≥20 real items, never a
+tie", were the thing that was not held.**
+
+```
+CAUGHT  the tier ceiling becomes the 360K with-video figure it exists to refuse
+MISSED  the ceiling is exclusive, so a request exactly at 200,000 tokens passes
+CAUGHT  an uncounted request is treated as a small one
+CAUGHT  a candidate Path A already scored can be re-sent for discovery
+CAUGHT  the regression floor drops to one item
+CAUGHT  an empty regression set promotes the shadow
+CAUGHT  a set below the floor promotes the shadow
+MISSED  a tie promotes the shadow
+MISSED  more than 20 keyframes are accepted
+
+6/9
+```
+
+**The tie test measures the floor, and its assertion matches a word every decision prints.**
+`test_a_shadow_that_merely_ties_is_not_promoted` calls `decide_judge(incumbent_wins=5,
+shadow_wins=5)` — **10 items**, below the 20-item floor — so the answer comes from the floor branch
+and the tie rule is never reached. Measured:
+
+```
+total 10   switch False   answered by "10 items is below the 20-item floor"
+total 20   switch False   answered by "gemini-3.1-pro tied with the incumbent"
+```
+
+And its reason assertion looks for `"tie"`, which matches **ties 0** in the header line every
+decision carries whatever it decided. Two independent reasons to pass, neither of them the tie rule,
+so `shadow_wins <= incumbent_wins` → `<` left the whole suite green. Ten and ten clears the floor, so
+only the tie rule can answer; the new test also asserts the floor did *not* answer, which is what
+makes it stay honest if the floor ever moves.
+
+**A control was needed in the other direction.** Refusing every tie *and* every win satisfies the
+tie test and pins the incumbent for ever — §3 asks for a managed migration, not a locked door. So
+eleven against ten must promote.
+
+**The ceiling boundary.** §3: *"Keep each request **under** 200K tokens."* Exactly 200,000 is not
+under it, and `>=` → `>` was free: the existing tests assert the constant and refuse requests well
+over it, so the operator could move. D-098's and D-122's shape, third occurrence. Pinned at the
+ceiling, with one token below it as the control — otherwise a blanket refusal of the with-video mode
+§3 prescribes would pass.
+
+**The keyframe cap.** §3 Stage 4's payload is "~20 keyframes" and nothing held the limit. Inline
+image bytes are billed, so an unbounded count is a cost defect as much as a contract one — D-126
+found the same module's frames could come from anywhere in the media.
+
+**A control failed for a real reason, and the code was right.** The 20-frame control first raised
+*"judge keyframes … fall outside candidate 0..0ms"*: `JudgeRequest` validates the span as well as the
+count, and the count check runs first. The control now supplies a span, and the ordering is recorded
+in the test — that is why the 21-frame refusal is the count and not the span.
+
+**Mutation audit 9/9 after.** No production code changed: all nine mechanisms were already right, and
+three were unheld.
+`evidence/adversarial-pass-15-2026-08-09.md`.
