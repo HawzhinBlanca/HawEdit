@@ -5878,3 +5878,23 @@ previous complete norm; private-stage cleanup never masks the primary exception.
 stale guard remains because an old build or out-of-band actor can still place an artifact.
 
 `evidence/adversarial-pass-21-2026-08-10.md`.
+
+## D-167 - The transcript store directory is a bound security boundary
+
+Hardening the final normalized filename did not protect a higher-level redirect. `TranscriptStore`
+called `root.mkdir(parents=True, exist_ok=True)` and then trusted the pathname forever. An existing
+POSIX symlink or Windows junction at `work/transcripts` was followed, putting canonical raw bytes,
+their digest, the publication lock and derived norms in an external directory. Replacing the root
+after construction was likewise invisible.
+
+The store now keeps a lexical absolute path rather than calling `resolve`, lstat-validates a real
+directory without reparse indirection, records its device/inode identity, and revalidates it before
+and after every publication lock and around unlocked norm reads. This is deliberately narrower
+than trusting the resolved target: the declared path is the boundary, so an intentional symlink is
+still indirection the application cannot distinguish from a planted one.
+
+Controls simulate a POSIX symlink and a Windows reparse point on every host and perform a real
+rename/recreate identity swap. Each is refused before a lock or transcript artifact appears in the
+replacement root.
+
+`evidence/adversarial-pass-22-2026-08-10.md`.

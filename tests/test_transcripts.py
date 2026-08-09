@@ -80,6 +80,65 @@ def test_sorani_and_spaces_inside_a_media_id_remain_legal() -> None:
     assert validate_media_id("هەوا episode-12") == "هەوا episode-12"
 
 
+def test_transcript_store_refuses_a_symlink_root_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = os.lstat
+
+    def symlink_root(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) == tmp_path:
+            values = list(result)
+            values[0] = stat.S_IFLNK | 0o777
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "lstat", symlink_root)
+    with pytest.raises(RuntimeError, match="root must be.*symlink"):
+        TranscriptStore(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_transcript_store_refuses_a_windows_reparse_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = os.lstat
+
+    def reparse_root(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> object:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) != tmp_path:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_file_attributes=0x400,
+        )
+
+    monkeypatch.setattr(os, "lstat", reparse_root)
+    with pytest.raises(RuntimeError, match="root must be.*reparse"):
+        TranscriptStore(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_transcript_store_refuses_a_replaced_root_before_publication(tmp_path: Path) -> None:
+    root = tmp_path / "store"
+    store = TranscriptStore(root)
+    displaced = tmp_path / "displaced"
+    root.rename(displaced)
+    root.mkdir()
+
+    with pytest.raises(RuntimeError, match="root changed identity"):
+        store.write_raw(a_raw())
+
+    assert list(root.iterdir()) == []
+    assert list(displaced.iterdir()) == []
+
+
 # --- invariant #1: raw is written once and never mutated ------------------------------
 
 

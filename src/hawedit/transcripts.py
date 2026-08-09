@@ -95,6 +95,13 @@ def _invalid_lock_metadata(metadata: os.stat_result) -> bool:
     )
 
 
+def _invalid_store_root_metadata(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return not stat.S_ISDIR(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & reparse_flag
+    )
+
+
 @contextmanager
 def _exclusive_file_lock(path: Path) -> Iterator[None]:
     """Serialize a transcript publication across threads and processes."""
@@ -541,8 +548,40 @@ class TranscriptStore:
     """On-disk home of the §4.1 artifact triple for one working directory."""
 
     def __init__(self, root: Path) -> None:
-        self.root = root
-        self.root.mkdir(parents=True, exist_ok=True)
+        # Keep a lexical absolute path: ``resolve`` would follow precisely the final-component
+        # symlink/junction this boundary must refuse.
+        self.root = Path(os.path.abspath(root))
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            metadata = os.lstat(self.root)
+        except OSError as exc:
+            raise RuntimeError(f"cannot prepare transcript store root {self.root}: {exc}") from exc
+        if _invalid_store_root_metadata(metadata):
+            raise RuntimeError(
+                "transcript store root must be a real directory without symlink or reparse "
+                f"indirection: {self.root}"
+            )
+        self._root_identity = metadata.st_dev, metadata.st_ino
+
+    def _assert_root_identity(self) -> None:
+        try:
+            current = os.lstat(self.root)
+        except OSError as exc:
+            raise RuntimeError(
+                f"transcript store root disappeared or became unreadable: {self.root}: {exc}"
+            ) from exc
+        if (
+            _invalid_store_root_metadata(current)
+            or (
+                current.st_dev,
+                current.st_ino,
+            )
+            != self._root_identity
+        ):
+            raise RuntimeError(
+                "transcript store root changed identity or became a symlink/reparse point: "
+                f"{self.root}"
+            )
 
     @staticmethod
     def _safe(media_id: str) -> str:
@@ -565,8 +604,10 @@ class TranscriptStore:
         return self.root / f"{self._safe(media_id)}.transcript.raw.sha256"
 
     def write_raw(self, raw: RawTranscript) -> Path:
+        self._assert_root_identity()
         lock = self.root / f".{self._safe(raw.media_id)}.transcript.raw.lock"
         with _exclusive_file_lock(lock):
+            self._assert_root_identity()
             return self._write_raw_locked(raw)
 
     def _write_raw_locked(self, raw: RawTranscript) -> Path:
@@ -635,8 +676,10 @@ class TranscriptStore:
         return path
 
     def read_raw(self, media_id: str) -> RawTranscript:
+        self._assert_root_identity()
         lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
         with _exclusive_file_lock(lock):
+            self._assert_root_identity()
             path = self.raw_path(media_id)
             try:
                 content = path.read_text(encoding="utf-8")
@@ -652,8 +695,10 @@ class TranscriptStore:
 
     def raw_digest(self, media_id: str) -> str:
         """The digest of the raw file as it is on disk right now."""
+        self._assert_root_identity()
         lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
         with _exclusive_file_lock(lock):
+            self._assert_root_identity()
             content = self.raw_path(media_id).read_bytes()
             return hashlib.sha256(content).hexdigest()
 
@@ -663,8 +708,10 @@ class TranscriptStore:
         Raises:
             RawTranscriptTampered: the file no longer matches.
         """
+        self._assert_root_identity()
         lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
         with _exclusive_file_lock(lock):
+            self._assert_root_identity()
             self._verify_raw_integrity_locked(media_id)
 
     def _verify_raw_integrity_locked(self, media_id: str) -> None:
@@ -699,9 +746,11 @@ class TranscriptStore:
         final name follows a planted hardlink/symlink and exposes half-written JSON to readers.
         """
         path = self.norm_path(norm.media_id)
+        self._assert_root_identity()
         lock = self.root / f".{self._safe(norm.media_id)}.transcript.raw.lock"
         staging: Path | None = None
         with _exclusive_file_lock(lock):
+            self._assert_root_identity()
             self._verify_raw_integrity_locked(norm.media_id)
             source_digest = hashlib.sha256(self.raw_path(norm.media_id).read_bytes()).hexdigest()
             if norm.source_sha256 != source_digest:
@@ -758,7 +807,9 @@ class TranscriptStore:
         Raises:
             StaleNormalizedTranscript: `source_sha256` does not match the stored raw.
         """
+        self._assert_root_identity()
         norm = NormalizedTranscript.from_json(self.norm_path(media_id).read_text(encoding="utf-8"))
+        self._assert_root_identity()
         expected = self.read_raw(media_id).sha256()
         if norm.source_sha256 != expected:
             raise StaleNormalizedTranscript(
