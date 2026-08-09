@@ -82,7 +82,14 @@ def test_every_entry_carries_the_commits_timestamp_not_the_clock(tmp_path: Path)
     asserts the mechanism instead: every ZIP entry is stamped with the commit, in UTC, which is
     false the moment the epoch stops being set.
     """
-    expected = dt.datetime.fromtimestamp(commit_epoch(), tz=dt.UTC).timetuple()[:6]
+    # ZIP stores the second as `sec // 2`, so every stamp it can hold is an even second. The
+    # first version of this compared against the raw epoch and passed here only because HEAD
+    # happened to carry an even timestamp; CI's commit was odd and it failed by exactly one
+    # second. Rounding down is not a tolerance — it is the value the format can represent, and
+    # a clock-based mtime is wrong by far more than a second in every entry.
+    epoch = commit_epoch()
+    epoch -= epoch % 2
+    expected = dt.datetime.fromtimestamp(epoch, tz=dt.UTC).timetuple()[:6]
     with zipfile.ZipFile(build(tmp_path / "c")) as archive:
         stamps = {info.date_time for info in archive.infolist()}
-    assert stamps == {expected}, sorted(stamps)
+    assert stamps == {expected}, f"{sorted(stamps)} != {expected}"

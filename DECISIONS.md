@@ -5259,5 +5259,10 @@ unpinned among them                       0   (the report says pyannote is "deli
 D-075 removed the pyannote one. And line 101 called the model revisions "unpinned" while line 66 of
 the same file called them pinned. Corrected in place.
 
-**Mutation audit 4/4.**
+**Mutation audit 4/4** — and the first push was **red on CI while the local gate was green**, which
+is the divergence the loop's own rule about the gate of record exists for. The test compared the ZIP
+stamps against the raw epoch, and `450684b` happened to carry an even timestamp; ZIP stores the second
+as `sec // 2`, so the runner's odd-second commit failed by exactly one second. The expectation rounds
+down now — the value the format can represent, not a tolerance — and HEAD here is odd, so the fix is
+verified against the parity that failed rather than the one that passed.
 `evidence/two-builds-of-one-commit.md`.
