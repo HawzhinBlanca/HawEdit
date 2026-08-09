@@ -147,6 +147,11 @@ def test_find_ffmpeg_discovers_the_installed_user_generation(
     binary.write_bytes(b"launcher")
     monkeypatch.delenv("HAWEDIT_FFMPEG", raising=False)
     monkeypatch.setenv("HAWEDIT_FFMPEG_DIR", str(install))
+    # CI provisions the checkout generation before running the suite. Move this module's
+    # synthetic checkout root away so the test isolates the next resolver tier it names.
+    monkeypatch.setattr(
+        "hawedit.captions.__file__", str(tmp_path / "src" / "hawedit" / "captions.py")
+    )
     monkeypatch.setattr("shutil.which", lambda _name: None)
 
     assert find_ffmpeg() == binary
