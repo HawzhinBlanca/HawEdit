@@ -36,6 +36,7 @@ import pytest
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import DiscoveryPath, Qc
 from hawedit.discovery import MergedCandidate
+from hawedit.ingest import IngestError
 from hawedit.judge import JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
@@ -443,6 +444,59 @@ def test_a_missing_source_file_is_named(tmp_path: Path) -> None:
         run_pipeline(tmp_path / "absent.mp4", tmp_path / "work")
 
 
+def test_an_operational_ingest_failure_is_a_complete_structured_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stage 0 used to escape before ``PipelineRun`` existed, contradicting this module's API.
+
+    The downstream skips matter as much as the ingest record: a consumer must not need to infer
+    that an absent transcript/index/render all share the same root blocker.
+    """
+
+    def fail_ingest(*_args: object, **_kwargs: object) -> None:
+        raise IngestError("ffmpeg could not open the media")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", fail_ingest)
+    run = run_pipeline(FIXTURE, tmp_path / "work")
+
+    assert not run.complete
+    assert [name for name, _ in run.skipped()] == [
+        "ingest",
+        "transcript",
+        "index",
+        "visual_index",
+        "discovery",
+        "editorial",
+        "boundary",
+        "render",
+        "delivery",
+    ]
+    assert isinstance(run.ingest, StageSkipped)
+    assert "ffmpeg could not open the media" in run.ingest.reason
+    assert run.ingest.blocked_by == ("Stage 0 ingest",)
+    for name, skip in run.skipped()[1:]:
+        assert skip.blocked_by == ("Stage 0 ingest",), name
+
+
+def test_an_ingest_os_error_is_normalized_but_programmer_errors_still_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def os_failure(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("media read denied")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", os_failure)
+    run = run_pipeline(FIXTURE, tmp_path / "os-work")
+    assert isinstance(run.ingest, StageSkipped)
+    assert "PermissionError" in run.ingest.reason
+
+    def control(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("programmer control")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", control)
+    with pytest.raises(AssertionError, match="programmer control"):
+        run_pipeline(FIXTURE, tmp_path / "control-work")
+
+
 # --- the command-line surface --------------------------------------------------------------
 
 
@@ -453,6 +507,28 @@ def test_the_cli_reports_and_exits_nonzero_when_the_run_is_incomplete(tmp_path: 
 
     code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work")])
     assert code != 0
+
+
+def test_cli_json_reports_an_operational_stage_0_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from hawedit.pipeline import main
+
+    def fail_ingest(*_args: object, **_kwargs: object) -> None:
+        raise IngestError("ffprobe launch was denied")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", fail_ingest)
+    code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), "--json"])
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert code == 1
+    assert captured.err == ""
+    assert report["ingest"]["skipped"] is True
+    assert report["ingest"]["blocked_by"] == ["Stage 0 ingest"]
+    assert report["delivery"]["blocked_by"] == ["Stage 0 ingest"]
 
 
 @needs_ffmpeg

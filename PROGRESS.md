@@ -300,6 +300,10 @@ face-centred attempt is M8's own prerequisite rather than a substitute for it, a
   Stage 4 work; candidate traversal is refused before filesystem use; lazy credential/model
   failures make no transport/billed call. Every exception-derived JSON reason is printable and
   bounded, while assertions/schema errors remain visible. `evidence/pipeline-failures.md`.
+- **M2.7 / D-155:** Stage 0 now obeys the same structured-failure contract. Expected ingest and OS
+  failures produce one bounded ingest refusal plus eight explicit downstream skips rooted at
+  `Stage 0 ingest`; `--json` remains parseable and exits 1. Static/schema/programmer errors still
+  take the exit-2 exception path. `evidence/stage-0-failure-reporting.md`.
 
 These amendments close code-solvable failure/reporting gaps. They do **not** close CUDA/GPU
 dependency locking, WSL native-build provenance/live VEX enforcement, real Sorani/editorial

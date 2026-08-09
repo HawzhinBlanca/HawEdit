@@ -734,7 +734,16 @@ Until it is answered,
 measurement so the relevance gate cannot be read as bounding how far evidence may reach. That test
 going red means the fix landed — re-status M6.1, close this entry, delete the test.
 
-## #16 · The validator's weights are here and its loader is not
+## #16 · The validator's weights are here and its loader is not — **RESOLVED 2026-08-09**
+
+**Resolved.** This entry preserves the measurement that exposed the missing dependency. The
+production route now pins licensed `qwen-asr==0.0.6`, provisions it in the isolated WSL Stage 1
+environment, verifies the rzgar checkpoint before load, and keeps the shared checkpoint lease
+through configuration, CUDA checks and `Qwen3ASRModel.from_pretrained`. The real validator has run
+through the Windows→WSL CLI route; `evidence/m1-4-stage1-validator.md` is the superseding execution
+record. Unlimited-3B, Gemini native audio and labelled Sorani accuracy remain separate open work.
+
+**Historical measurement follows.**
 
 **Measured 2026-08-09 on hawapc01.** `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` — §3 Stage 1's validator,
 Apache 2.0 per §7 — is downloaded in full: `model.safetensors` is 4,076,191,640 bytes, 10.1 GB with the

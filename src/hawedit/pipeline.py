@@ -452,6 +452,34 @@ def _operational_failure(stage: str, component: str, exc: Exception) -> StageSki
     )
 
 
+def _ingest_failure_run(
+    identifier: str, source: Path, work_dir: Path, exc: IngestError | OSError
+) -> PipelineRun:
+    """Report an operational Stage 0 refusal without pretending later stages ran.
+
+    Ingest is the root of the media clock, audio, VAD and shot-window graph. There is no
+    meaningful partial object to synthesize when it fails, but there is a meaningful run
+    report: Stage 0's concrete refusal followed by every dependent stage naming that root
+    blocker. Returning it keeps ``--json`` machine-readable for the same operational failures
+    that model stages already normalize, while source/argument/schema errors remain exceptions.
+    """
+    dependency = "Stage 0 ingest"
+    return PipelineRun(
+        media_id=identifier,
+        source=str(source),
+        work_dir=str(work_dir),
+        ingest=_operational_failure("ingest", dependency, exc),
+        transcript=_not_reached("transcript", dependency),
+        index=_not_reached("index", dependency),
+        visual_index=_not_reached("visual_index", dependency),
+        discovery=_not_reached("discovery", dependency),
+        editorial=_not_reached("editorial", dependency),
+        boundary=_not_reached("boundary", dependency),
+        render=_not_reached("render", dependency),
+        delivery=_not_reached("delivery", dependency),
+    )
+
+
 def _safe_exception_text(value: str, budget: int) -> str:
     """A printable, single-line exception detail within a deterministic hard limit."""
     if budget <= 0:
@@ -1008,7 +1036,10 @@ def run_pipeline(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # --- §3 Stage 0 ----------------------------------------------------------------------
-    ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
+    try:
+        ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
+    except (IngestError, OSError) as exc:
+        return _ingest_failure_run(identifier, source, work_dir, exc)
 
     asr_failure: StageSkipped | None = None
     if transcript is None and asr is not None:

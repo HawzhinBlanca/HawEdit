@@ -5060,3 +5060,18 @@ fallback is gone. The independent model-boundary sweep measured 200–8,000 char
 allocation. Its five query/refusal mutations were all caught. Full measurements remain in
 `evidence/adversarial-pass-9-2026-08-09.md`; the composed contract and provenance are in
 `evidence/the-whole-transcript-was-a-visual-query.md`.
+
+## D-155 - An operational Stage 0 refusal is still a pipeline run
+
+The module contract says every stage yields either a result or a `StageSkipped`, but Stage 0 ran
+before `PipelineRun` was constructed. An unavailable/denied FFmpeg process, unreadable media, or
+other expected ingest `OSError` therefore escaped through `main`, made `--json` write no JSON, and
+exited as a command/configuration error. Every model stage already preserved the same class of
+operational failure in the report.
+
+**Decision:** `run_pipeline` normalizes only `IngestError` and `OSError` at the ingest boundary. The
+returned report contains Stage 0's bounded concrete failure plus an explicit skip for each of its
+eight downstream dependants, all naming `Stage 0 ingest` as the root blocker. Missing source,
+invalid media identity, transcript/schema errors, and programmer assertions remain exceptions;
+this is not a broad catch. The CLI now exits 1 and emits valid JSON for an operational Stage 0
+refusal, while static invocation errors retain exit 2. `evidence/stage-0-failure-reporting.md`.

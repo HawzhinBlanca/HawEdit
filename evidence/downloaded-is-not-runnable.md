@@ -1,5 +1,10 @@
 # The readiness report said OK for a checkpoint nothing on this machine can load
 
+> **Superseded 2026-08-09.** This is the preserved failure measurement that justified adding the
+> loader. `qwen-asr==0.0.6` is now pinned and provisioned, checkpoint access is integrity-bound, and
+> the validator has executed through the Windows→WSL Stage 1 route. The current proof is
+> `evidence/m1-4-stage1-validator.md`; `BLOCKED.md` #16 is resolved.
+
 > Measured 2026-08-09 on hawapc01 against `18e0509`, against a green 1,172 baseline.
 
 M1.4 is PARTIAL, and its named shortfall said the way was clear:
