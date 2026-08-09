@@ -5074,3 +5074,65 @@ satisfies the positive test and deletes the one invocation that works), a verbal
 supplying a query CAUGHT (the second control), the skip recorded while the composer runs anyway
 CAUGHT, and the refusal naming no blocker CAUGHT.
 `evidence/adversarial-pass-9-2026-08-09.md`.
+
+## D-118
+
+**One survivor Path B could not read discarded every other candidate.** `VideoChat3Reader.read_scenes`
+was `tuple(self.read_window(w) for w in windows)` — no per-window failure path — so a single
+`PathBError` aborted the whole of Stage 3 Path B. Found by running the real 38-minute file with a
+bounded query (D-117), which reached the reader for the first time:
+
+```
+Stage 0 demux 38 min -> 641 windows planned and embedded -> 50 retrieved -> 7 survivors
+window 1 of 7:
+  ✗ the model returned no usable line for ['subject', 'aesthetics', 'camera', 'editing',
+    'narrative', 'retention']
+result: 0 candidates
+```
+
+The refusal itself is **correct**. §3 Stage 3 fixes the schema at six dimensions and rejects output
+with no timeline evidence; `SV6D_PROMPT` asks for *"the number alone, no unit"* and this window — a
+static logo card — answered `subject | 0.0 - 3.5 | …`, a range. What was wrong was the blast radius.
+This is the shape D-103 fixed in Stage 1, where one unalignable region discarded a 38-minute
+transcript.
+
+**The format is not the defect, and that was measured before assuming it.** Twelve real windows from
+the same run were read back through the real checkpoint on `cuda:0`:
+
+```
+12 windows, 4.00 / 3.50 / 2.50 s, 8.39 GiB weights resident
+lines parseable : 72/72
+shape of the time: {'point': 12}
+```
+
+So the prompt's contract holds on real footage and the range is the exception. Widening `_LINE` to
+accept a range would mean choosing whether the moment is the start, the end or the middle — a
+guessed answer to a question the model did not answer — so the refusal stays and the run survives it.
+
+**Decision: a window the reader refuses is recorded, not raised.** `UnreadableScene(window_id, in_ms,
+out_ms, reason)` carries each one; `SceneReadings` is what `read_scenes` returns and `PathBDiscovery`
+what `discover_visual` returns; `VisualDiscoveryResult.unreadable` puts it in the emitted report,
+empty case included (D-110's rule).
+
+**`discover_visual` still refuses when nothing was readable.** Some readings is a partial answer with
+its gaps named; none at all is Path B reporting a result having produced nothing. That is the only
+bound here that needs no chosen threshold, and D-103 drew the same line.
+
+**The exactness guard was kept, not relaxed.** It was "candidates == survivors"; it is now
+"candidates ∪ unreadable == survivors". A scene still cannot go missing between the reranker and
+Stage 4, which is what the guard was for — and a *model* that silently omits a window is still
+refused, because the omission and the refusal are now different facts.
+
+**Rejected: skipping the window silently.** "Six candidates" and "seven, one of which vanished" are
+different, and §8.2 counts Recall@K on this list.
+
+**Rejected: `UnreadableScene` reusing `RejectedCandidate` (D-116).** A rejected candidate is one a
+decision ruled out; this is a survivor no decision ever got to see. Filing them together would put
+scenes in the recall denominator that Stage 3 never scored.
+
+**Mutation audit 8/8** — and the first run was **7/8**, with the defect itself surviving. Every test
+written for it used a fake reader that builds `SceneReadings` directly, so reverting `read_scenes` to
+abort left the suite green: the function is tested, the trip to it is not, for the fourth time
+(D-105, D-108, D-112). Closed by driving the **real** `read_scenes` through the file's existing stub
+processor with the recorded range output as one of three answers.
+`evidence/one-window-discarded-every-candidate.md`.

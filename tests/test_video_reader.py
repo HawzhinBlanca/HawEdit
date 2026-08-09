@@ -350,7 +350,7 @@ def test_read_scenes_drives_the_union_end_to_end(tmp_path: Path) -> None:
         for i in range(3)
     )
     reader, _, _ = a_reader(tmp_path)
-    candidates = discover_visual(windows, reader, media_id="kurdish-speech-3cuts")
+    candidates = discover_visual(windows, reader, media_id="kurdish-speech-3cuts").candidates
 
     assert [c.candidate_id for c in candidates] == [w.window_id for w in windows]
     assert [c.rank for c in candidates] == [1, 2, 3]
@@ -389,3 +389,81 @@ def test_a_window_whose_frames_the_processor_resampled_stops_the_read(tmp_path: 
     processor.frames_seen = 0
     with pytest.raises(VideoInputError, match="dropped 2"):
         reader.read_window(window)
+
+
+# --- D-118: one unreadable window discarded every other reading -------------------------------
+
+# Verbatim from `MCG-NJU/VideoChat3-4B` on a survivor of the real 38-minute file — a static logo
+# card. Six well-formed dimensions, and a time *range* where SV6D_PROMPT asks for "the number
+# alone, no unit", so §3's "reject output with no timeline evidence" refuses all six. That single
+# refusal discarded all seven candidates after Stage 0, 641 embeddings, retrieval and reranking.
+REAL_RANGE_OUTPUT = (
+    "subject | 0.0 - 3.5 | A logo with white and orange shapes and text on a blue "
+    "background\n"
+    "aesthetics | 0.0 - 3.5 | Blue background with white and orange shapes and text\n"
+    "camera | 0.0 - 3.5 | Static shot\n"
+    "editing | 0.0 - 3.5 | No cuts or transitions\n"
+    "narrative | 0.0 - 3.5 | No narrative\n"
+    "retention | 0.0 - 3.5 | The logo and its design elements"
+)
+
+
+class _AnswersInOrder(StubProcessor):
+    """One recorded answer per window, consumed in the order `read_scenes` asks."""
+
+    def __init__(self, answers: list[str]) -> None:
+        super().__init__(answers[0])
+        self.answers = answers
+        self.answered = 0
+
+    def decode(self, ids: Any, **kwargs: Any) -> str:
+        if not kwargs.get("skip_special_tokens"):
+            return self.prompt
+        answer = self.answers[min(self.answered, len(self.answers) - 1)]
+        self.answered += 1
+        return answer
+
+
+def _three_windows() -> tuple[SceneWindow, ...]:
+    return tuple(
+        SceneWindow(
+            media_id="kurdish-speech-3cuts",
+            scene_index=i,
+            window_index=0,
+            in_ms=i * 1_400,
+            out_ms=i * 1_400 + 1_400,
+            fps=2.0,
+        )
+        for i in range(3)
+    )
+
+
+def test_read_scenes_records_one_unreadable_window_and_keeps_the_others(tmp_path: Path) -> None:
+    """Driven through the real `read_scenes`, not a fake that builds `SceneReadings` itself.
+
+    That distinction is not academic: this test's first version used a fake, and the mutation
+    audit reported the defect as **SURVIVED** — reverting `read_scenes` to abort on the first
+    refusal left the whole suite green. The function is tested, the trip to it is not, for the
+    fourth time in this project (D-105, D-108, D-112).
+    """
+    reader, _, _ = a_reader(tmp_path)
+    reader._loaded = (_AnswersInOrder([REAL_OUTPUT, REAL_RANGE_OUTPUT, REAL_OUTPUT]), StubModel())
+    windows = _three_windows()
+
+    produced = reader.read_scenes(windows)
+
+    assert len(produced.readings) == 2
+    assert len(produced.unreadable) == 1
+    assert produced.unreadable[0].window_id == windows[1].window_id
+    assert "no usable line" in produced.unreadable[0].reason
+    assert produced.unreadable[0].in_ms == windows[1].in_ms
+
+
+def test_read_scenes_reports_nothing_unreadable_when_every_window_reads(tmp_path: Path) -> None:
+    """The control. Recording a refusal for every window satisfies the test above and is false
+    on every clean run — and a clean run is what the fixture produces."""
+    reader, _, _ = a_reader(tmp_path)
+    produced = reader.read_scenes(_three_windows())
+
+    assert len(produced.readings) == 3
+    assert produced.unreadable == ()

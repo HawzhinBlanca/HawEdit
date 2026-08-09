@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Protocol
 
 from hawedit.discovery import Candidate
-from hawedit.path_b import VideoUnderstanding, discover_visual
+from hawedit.path_b import UnreadableScene, VideoUnderstanding, discover_visual
 from hawedit.video_input import WindowFrames, extract_window_frames
 from hawedit.visual_index import (
     RETRIEVE_K,
@@ -65,6 +65,10 @@ class VisualDiscoveryResult:
     retrieved: int
     survivors: tuple[RerankedHit, ...]
     candidates: tuple[Candidate, ...]
+    # Survivors Path B reached and could not turn into a reading. Reported rather than dropped:
+    # "six candidates" and "seven, one of which vanished" are different facts, and §8.2 counts
+    # Recall@K on this list. D-118.
+    unreadable: tuple[UnreadableScene, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -83,6 +87,9 @@ class VisualDiscoveryResult:
                 for hit in self.survivors
             ],
             "candidate_ids": [candidate.candidate_id for candidate in self.candidates],
+            # Emitted even when empty, so "nothing was unreadable" is readable and cannot be
+            # confused with a build that does not record it (D-110's rule).
+            "unreadable": [scene.to_dict() for scene in self.unreadable],
         }
 
 
@@ -182,10 +189,16 @@ class VisualComposer:
                 ) from exc
 
         reader = self.reader_factory(read_frames, score_window)
-        candidates = discover_visual(
+        discovery = discover_visual(
             tuple(hit.window for hit in survivors), reader, media_id=media_id
         )
-        if {candidate.candidate_id for candidate in candidates} != set(scores):
+        candidates = discovery.candidates
+        # Every survivor is either a candidate or a named refusal — still exact, so a scene
+        # cannot go missing between the reranker and Stage 4, which is what this guard was for.
+        accounted = {candidate.candidate_id for candidate in candidates} | {
+            scene.window_id for scene in discovery.unreadable
+        }
+        if accounted != set(scores):
             raise VisualPipelineError(
                 "Path B candidates do not exactly match the reranked survivors"
             )
@@ -206,4 +219,5 @@ class VisualComposer:
             retrieved=min(len(index), self.retrieve_k),
             survivors=survivors,
             candidates=candidates,
+            unreadable=discovery.unreadable,
         )
