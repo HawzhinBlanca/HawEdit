@@ -166,7 +166,7 @@ wheel, or existing release directory is refused.
 On the default branch, `.github/workflows/release.yml` consumes only a successful official
 `gate` **push** run on `main`, checks out that run's exact SHA, invokes the same fail-closed release
 verifier in a read-only job, then requires fresh no-checkout Python 3.11 and 3.12 runners to install
-the exact wheel, run `pip check`, resolve installed package data and start all six CLIs. Only after
+the exact wheel, run `pip check`, resolve installed package data and start all seven CLIs. Only after
 both pass does it transfer the four explicit payloads to a fresh runner. Only that isolated job has
 OIDC/attestation authority; it refuses any extra, nested,
 linked, malformed or digest-mismatched entry and binds schema-4 provenance to the triggering run
@@ -211,25 +211,51 @@ Check what this machine has:
 Fetch what it does not:
 
 ```bash
-bash scripts/fetch-models.sh             # everything §7 needs, into models/
-bash scripts/fetch-models.sh --status    # same as the readiness report
+# Source checkout; use .model-fetch/Scripts/python.exe on Windows Git Bash.
+python -m venv .model-fetch
+bash scripts/install-host.sh .model-fetch/bin/python models
+PY=.model-fetch/bin/python bash scripts/fetch-models.sh
 ```
 
-The fetcher is driven by the §7 registry, so it cannot download a model the blueprint
+The wheel-installed fetcher is driven by the §7 registry, so it cannot download a model the blueprint
 excludes and refuses a NonCommercial licence before any bytes move. Needs
 `huggingface.co` reachable, `HF_TOKEN` for the gated Community-1 repo, and ~50 GB free.
+Four wheel-packaged `models` locks cover Linux/Windows on Python 3.11/3.12 with one exact wheel
+hash per dependency. The dedicated environment above uses the matching lock; the command then
+audits every locked transitive before importing `huggingface-hub==0.36.2`. It never installs or
+upgrades packages from inside an operator command. The checkout shell file is only a launcher for
+the wheel's Python transaction.
+
+For a wheel-only install, install the local wheel without dependencies, ask that wheel for its
+target lock, then install/audit the lock explicitly (set `PY=.model-fetch/Scripts/python.exe` on
+Windows Git Bash):
+
+```bash
+python -m venv .model-fetch
+PY=.model-fetch/bin/python
+"$PY" -m pip install --no-index --no-deps /path/to/hawedit-0.1.0-py3-none-any.whl
+LOCK="$("$PY" -I -m hawedit.environment --show-lock models)"
+"$PY" -m pip install --require-hashes --only-binary=:all: -r "$LOCK"
+"$PY" -m pip check
+"$PY" -I -m hawedit.environment --extra models --lock "$LOCK"
+"$PY" -m hawedit.model_fetch             # use --status for readiness only
+```
 It plans from verified status rather than directory existence, resumes each pinned revision in a
 private sibling, exact-verifies it, and atomically publishes under a writer lock. Existing resume
 trees are recursively checked for owner, private mode, regular single-link members and
-reparse/symlink objects **before** the Hub client can write through them, then activated under a
-random private name. A planted link cannot turn a failed download into an external-file write.
+reparse/symlink objects **before** the Hub client can write through them. Fresh staging is created
+under an unpredictable name and atomically published as the revision-specific resume tree before
+transfer. POSIX uses mode 0700; Windows creates a protected DACL granting only the current user,
+SYSTEM and Administrators, and validates every inherited member ACL. A planted link or
+`Everyone:F` volume cannot turn a failed download into an external-file write. The stable private
+resume name survives Ctrl-C and hard process death without leaking an undiscoverable partial tree.
 An empty, partial
 or corrupt final directory is preserved and refused—move/quarantine it explicitly before retrying.
 Any target failure makes the command exit nonzero after the full status report. Use only the same
 override the runtime reads:
 
 ```bash
-HAWEDIT_MODELS_DIR=/absolute/model/root bash scripts/fetch-models.sh
+HAWEDIT_MODELS_DIR=/absolute/model/root "$PY" -m hawedit.model_fetch
 ```
 
 The two Qwen checkpoint names are resolved in tracked `models/sources.json`; the fetcher never
@@ -255,6 +281,13 @@ environment from `.[gpu]`: fairseq2n requires Torch 2.8 while the visual checkpo
 verified on Torch 2.13, so resolving both extras together is intentionally unsupported. On
 Windows that isolation is automatic through WSL2; run `scripts/setup-wsl-asr.ps1`. Model loading
 is lazy, so a missing package or checkpoint is reported without making basic ingest unusable.
+Provisioning uses reviewed hashes for 137 runtime requirements plus four build requirements and
+the readiness receipt rechecks the exact 140-distribution union. KenLM and Sox remain named source
+builds: source archives are hashed, but compiler, system headers and produced native bytes are not
+yet attested. `security/wsl-asr-vex.json` is a 30-day policy bound to those lock digests, the full
+receipt and the three OmniASR assets. It does not call the runtime vulnerability-free: five Torch
+families remain affected and CVE-2026-24747 is affected-but-mitigated. The policy parser ships in
+the wheel; live `pip-audit==2.10.1` enforcement on the dual-GPU WSL job remains an acceptance task.
 The full canonical pair and rzgar routing have run on hawapc01, including through the real CLI.
 The committed media fixture is synthetic Kurmanji, so this is execution evidence—not Sorani
 accuracy evidence. See `evidence/m1-4-stage1-validator.md`.
@@ -264,6 +297,10 @@ accuracy evidence. See `evidence/m1-4-stage1-validator.md`.
 Stage 0 runs on CPU by design (§6), so `setup.sh` installs the CPU build of torch. For the
 model stages, install the CUDA build **first** — naming the local version, because the CPU wheel
 already satisfies a bare `torch==2.13.0` and pip will report success while changing nothing:
+
+> **Production gap:** this CUDA command is a measured bootstrap, not a hash-locked deployment.
+> The CPU base/gate/model-fetch graphs are locked; a complete Windows CPython 3.11 cu130 lock and
+> clean dual-GPU smoke are still required before calling GPU deployment reproducible.
 
 ```bash
 pip install --index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://pypi.org/simple "torch==2.13.0+cu130" "torchvision==0.28.0+cu130"
@@ -386,6 +423,7 @@ disabled (`BLOCKED.md` #7 records the live setting).
 | `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
+| `wsl_asr_locks.py` | §3 Stage 1, §6 | Hash-locked PyPI inputs and exact installed name/version identity for the isolated Linux/Python 3.12 ASR generation; KenLM/Sox remain explicitly disclosed native source builds, not binary reproducibility proof. |
 | `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
@@ -419,11 +457,15 @@ disabled (`BLOCKED.md` #7 records the live setting).
 | `artifact_bundle.py` | §2 | Private staging and atomic, write-once publication of the exact ASS/MP4/SRT/EDL/JSON delivery directory. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `environment.py` | — | Binds the canonical `.venv`, editable distribution root, supported Python/project versions and active exact requirements to this checkout before the gate runs. |
+| `host_lock_hashes.py` | — | Generated source-bound SHA-256 identities for every supported host dependency lock. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `release.py` | — | Exact-SHA official main-gate proof, clean-HEAD double-build wheel reproducibility, runtime-data validation and atomic checksummed provenance. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |
-| `models.py` | §7 | Which §7 components this machine actually has, and the registry-driven fetcher. |
+| `models.py` | §7 | Which §7 components this machine actually has, plus trusted source/revision/byte identities and reader/writer checkpoint binding. |
+| `model_fetch.py` | §7 | Installed-wheel checkpoint planning, private resume validation, exact byte verification and atomic no-replace publication. |
+| `windows_security.py` | §7 | Native protected-DACL creation and inspection for Windows checkpoint staging. |
+| `vex.py` | §6/§7 | Identity-bound WSL-ASR vulnerability disposition gate over pip-audit output and runtime receipts. |
 | `repurposing.py` | §8.2 | Per-path Recall@K, temporal IoU, misleading-edit rate, cost per source hour. |
 
 ## Two conventions worth knowing before reading the code

@@ -74,6 +74,19 @@ def _release_source(root: Path) -> Path:
     (project / "requirements" / "release-build.txt").write_text(
         RELEASE_BUILD_LOCK, encoding="utf-8"
     )
+    for target in (
+        "host-base-linux-py311.txt",
+        "host-base-linux-py312.txt",
+        "host-base-windows-py311.txt",
+        "host-base-windows-py312.txt",
+        "host-models-linux-py311.txt",
+        "host-models-linux-py312.txt",
+        "host-models-windows-py311.txt",
+        "host-models-windows-py312.txt",
+    ):
+        (project / "requirements" / target).write_text("# fixture lock\n", encoding="utf-8")
+    (project / "security").mkdir()
+    (project / "security" / "wsl-asr-vex.json").write_text("{}\n", encoding="utf-8")
     (project / ".gitignore").write_text("/build/\n/dist/\n*.egg-info/\n", encoding="utf-8")
     (project / "pyproject.toml").write_text(
         """[build-system]
@@ -101,6 +114,17 @@ where = ["src"]
     "models/revisions.json",
     "models/integrity.json",
 ]
+"share/hawedit/requirements" = [
+    "requirements/host-base-linux-py311.txt",
+    "requirements/host-base-linux-py312.txt",
+    "requirements/host-base-windows-py311.txt",
+    "requirements/host-base-windows-py312.txt",
+    "requirements/host-models-linux-py311.txt",
+    "requirements/host-models-linux-py312.txt",
+    "requirements/host-models-windows-py311.txt",
+    "requirements/host-models-windows-py312.txt",
+]
+"share/hawedit/security" = ["security/wsl-asr-vex.json"]
 """,
         encoding="utf-8",
     )
@@ -301,6 +325,22 @@ def test_release_builds_twice_and_publishes_verified_provenance(
         )
         assert any(
             name.endswith("share/hawedit/models/integrity.json") for name in wheel.namelist()
+        )
+        for target in (
+            "host-base-linux-py311.txt",
+            "host-base-linux-py312.txt",
+            "host-base-windows-py311.txt",
+            "host-base-windows-py312.txt",
+            "host-models-linux-py311.txt",
+            "host-models-linux-py312.txt",
+            "host-models-windows-py311.txt",
+            "host-models-windows-py312.txt",
+        ):
+            assert any(
+                name.endswith(f"share/hawedit/requirements/{target}") for name in wheel.namelist()
+            )
+        assert any(
+            name.endswith("share/hawedit/security/wsl-asr-vex.json") for name in wheel.namelist()
         )
 
     with pytest.raises(ReleaseError, match="refusing to overwrite"):

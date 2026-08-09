@@ -51,6 +51,26 @@ if [[ -z "$matched" ]]; then
 fi
 PY="$matched"
 
+_lock_identity="$({ "$PY" -I - <<'PY'
+import platform
+import sys
+
+system = platform.system().lower()
+version = sys.version_info[:2]
+if system not in {"linux", "windows"} or version not in {(3, 11), (3, 12)}:
+    raise SystemExit(2)
+print(f"{system}-py{version[0]}{version[1]}")
+PY
+} 2>/dev/null)" || {
+  echo "REFUSED: canonical gate supports only CPython 3.11/3.12 on Linux/Windows" >&2
+  exit 3
+}
+HOST_LOCK="$here/requirements/host-gate-${_lock_identity}.txt"
+if [[ ! -f "$HOST_LOCK" ]]; then
+  echo "REFUSED: canonical host dependency lock is missing: $HOST_LOCK" >&2
+  exit 3
+fi
+
 # Path identity closes the executable-forgery hole; this second check closes environment drift.
 # Importing *some* hawedit is insufficient: this checkout's shared venv was measured importing
 # an editable install from another checkout, with duplicate HawEdit metadata and stale direct
@@ -58,7 +78,7 @@ PY="$matched"
 # token is now a response from the path-bound interpreter, not an authentication mechanism.
 # Installed code therefore cannot grade the checkout whose source is about to run. D-104.
 _probe="$("$PY" -I "$here/src/hawedit/environment.py" \
-  --project-root "$here" --extra dev --extra media 2>&1 || true)"
+  --project-root "$here" --extra dev --extra media --lock "$HOST_LOCK" 2>&1 || true)"
 if [[ "$_probe" != hawedit-environment-ok ]]; then
   echo "REFUSED: $PY cannot verify the exact HawEdit environment for this checkout." >&2
   echo "A gate graded by another checkout, stale dependencies, or a non-Python executable" >&2

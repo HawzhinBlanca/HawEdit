@@ -127,7 +127,7 @@ def test_missing_weights_are_lazy_at_construction_and_refused_at_runtime(tmp_pat
     grounder = TimeLens2Grounder(absent, read_frames=lambda w: None)
 
     assert grounder.model_dir == absent
-    with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
+    with pytest.raises(EmbedderUnavailable, match="hawedit-fetch-models"):
         grounder.ground(a_window(), "a speaker gestures")
 
 

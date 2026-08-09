@@ -4448,3 +4448,74 @@ verification refused the stage.
 before giving an existing resume tree to the downloader. Atomically move a safe resume tree to a
 random private stage and revalidate its bound name; fresh stages are private and unpredictable.
 Safe failures move back for retry. `evidence/checkpoint-provisioning.md`.
+
+## D-121 - Provisioning belongs to the installed product, not a checkout shell
+
+The verified checkpoint transaction existed only inside `scripts/fetch-models.sh`. A built wheel
+could diagnose missing weights but told its user to run a script the wheel did not contain. The
+script also owned dependency acquisition, so an operator command could change the Python
+environment whose behavior it was meant to make reproducible.
+
+**Decision:** `hawedit-fetch-models` is a wheel console command and `hawedit.model_fetch` is the
+single owner of planning, private resume activation, exact revision/byte verification and atomic
+no-replace publication. The checkout script only locates the checkout interpreter and calls that
+module. Download capability is an explicit `models` extra at one reviewed
+`huggingface-hub==0.36.2`; absent or drifting clients are refused, never installed or upgraded at
+runtime. All model adapters name the installed command in their remedy. Legacy hardlink,
+permission, invalid-final, unpinned-revision and failed-download regressions execute the Python
+transaction with a fake Hub client rather than asserting shell text.
+`evidence/checkpoint-provisioning.md`.
+
+## D-122 - Host dependency graphs are reviewed artifacts, not resolver output
+
+Exact direct pins still allowed pip to select different transitive wheels by date, platform and
+Python minor. Local verification could also run in a stale editable environment while importing
+the current source through `PYTHONPATH`, and the released wheel was installed against a live
+resolver before attestation.
+
+**Decision:** commit separate base, gate and minimal model-fetch locks for Linux/Windows CPython
+3.11/3.12. Every line selects one exact wheel hash; sdists are forbidden. A pinned generator and
+cutoff reproduce the twelve graphs, while a generated source mapping binds each lock's exact bytes
+so the file cannot authorize its own edits. Setup, gate and release smoke use hash mode and audit
+the complete installed inventory. Installed locks and model manifests are located from exactly one
+authoritative HawEdit distribution's raw `RECORD`, authenticated by recorded size/SHA-256, so
+ordinary, editable and real `pip --target` layouts cannot silently select another checkout.
+
+This decision covers CPU host and model-fetch environments. CUDA and WSL native build outputs are
+separate identities and remain explicit work. `evidence/host-dependency-locks.md`.
+
+## D-123 - Vulnerability acceptance expires and is bound to the runtime identity
+
+The isolated WSL ASR graph must retain Torch 2.8 for fairseq2/torchaudio compatibility. A current
+OSV audit reports eight Torch advisory families and four distinct Transformers families. Calling
+that graph clean would be false; ignoring scanner output would be worse.
+
+**Decision:** a strict 30-day VEX may disposition a finding only for the exact Python, complete
+package inventory, build/runtime lock digests and three OmniASR asset identities in the canonical
+receipt. Unknown, missing, duplicate or stale findings, expired review, aliases not covered, and
+identity drift all refuse. CVE-2026-24747's weights-only loader is affected-but-mitigated by exact
+checkpoint bytes and descriptor binding, not declared unreachable; five tensor-operation families
+remain affected. The policy ships as authenticated wheel data.
+
+This is a parser/policy closure, not live acceptance evidence. A protected hardware job must still
+generate the exact `pip-audit==2.10.1` report from a canonical live receipt and fail on VEX refusal.
+`evidence/wsl-asr-vex.md`.
+
+## D-124 - Crash-resumable checkpoint staging must be private by access control
+
+D-120 moved a validated deterministic resume tree to a random active name. That reduced pathname
+guessing but made hard process death strand multi-gigabyte partials which the next run could not
+discover. Writing directly to a predictable resume name is recoverable only if another principal
+cannot replace or mutate it; POSIX 0700 supplied that boundary, inherited Windows ACLs did not.
+
+**Decision:** create fresh staging unpredictably, validate it, then atomically publish it as the
+revision-specific active resume before the first Hub write. POSIX requires owner-only mode.
+Windows creates the directory atomically with a protected DACL granting full control only to the
+current user, SYSTEM and Administrators, then inspects every root/member owner and ACE without
+localized command parsing. Ctrl-C, `SystemExit` and hard process death all leave the same validated
+resume for the next run. Hardlinks, reparse points, permissive POSIX modes and a real injected
+`Everyone:F` ACE are refused before the client writes.
+
+The boundary excludes privileged and same-account out-of-band mutation; exact post-download byte
+verification and the HawEdit reader/writer lock remain mandatory. D-124 supersedes D-120's random
+active-name mechanism, not its pre-write validation rule. `evidence/checkpoint-provisioning.md`.

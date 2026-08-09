@@ -207,7 +207,7 @@ def test_a_model_outside_path_bs_role_is_refused(tmp_path: Path) -> None:
 
 
 def test_missing_weights_are_refused_naming_the_fetch_script(tmp_path: Path) -> None:
-    with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
+    with pytest.raises(EmbedderUnavailable, match="hawedit-fetch-models"):
         VideoChat3Reader(
             tmp_path / "absent",
             read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),

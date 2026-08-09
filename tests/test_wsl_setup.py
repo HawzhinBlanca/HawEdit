@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -12,6 +13,14 @@ from typing import Any
 import pytest
 
 from hawedit.omni_assets import OMNI_ASSETS
+from hawedit.wsl_asr_locks import (
+    BUILD_LOCK_SHA256,
+    BUILD_REQUIREMENTS,
+    LOCKED_DISTRIBUTIONS,
+    RUNTIME_LOCK_SHA256,
+    RUNTIME_REQUIREMENTS,
+    SDIST_EXCEPTIONS,
+)
 from hawedit.wsl_setup import (
     _IDENTITY_PROBE_SCRIPT,
     WSL_MODEL_METADATA_DIRECTORY,
@@ -31,20 +40,16 @@ from hawedit.wsl_setup import (
 
 def _candidate_payload() -> dict[str, object]:
     return {
-        "schema": 1,
+        "schema": 2,
         "distro": "Ubuntu",
         "uid": 1000,
         "home": "/home/ai",
         "python": "/runtime/venv/bin/python",
         "python_version": "3.12.13",
-        "packages": {
-            "fairseq2": "0.6",
-            "fonttools": "4.60.2",
-            "klpt": "0.1.7",
-            "omnilingual-asr": "0.2.0",
-            "qwen-asr": "0.0.6",
-            "torch": "2.8.0",
-            "torchaudio": "2.8.0",
+        "packages": dict(LOCKED_DISTRIBUTIONS),
+        "dependency_locks": {
+            "build_sha256": BUILD_LOCK_SHA256,
+            "runtime_sha256": RUNTIME_LOCK_SHA256,
         },
         "cuda_device_count": 2,
         "asset_cache": "/home/ai/.cache/fairseq2/assets",
@@ -63,6 +68,9 @@ def _candidate_payload() -> dict[str, object]:
 def _write_candidate(
     runtime: Path, package: Path, payload: dict[str, object] | None = None
 ) -> None:
+    generations = tuple((runtime / "venvs").iterdir())
+    assert len(generations) == 1
+    (generations[0] / "environment").mkdir(exist_ok=True)
     source = default_wsl_source(package, runtime)
     candidates = tuple(source.glob(".runtime-candidate-*.json"))
     assert len(candidates) == 1
@@ -77,6 +85,7 @@ def _identity_payload() -> dict[str, object]:
         "python": candidate["python"],
         "python_version": candidate["python_version"],
         "packages": candidate["packages"],
+        "dependency_locks": candidate["dependency_locks"],
     }
 
 
@@ -131,12 +140,24 @@ def test_package_fingerprint_changes_with_worker_source(tmp_path: Path) -> None:
 
 
 def test_identity_probe_is_self_contained_and_executable(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     expected_packages = _candidate_payload()["packages"]
     assert isinstance(expected_packages, dict)
     monkeypatch.setattr(os, "getuid", lambda: 1000, raising=False)
-    monkeypatch.setattr("importlib.metadata.version", lambda name: expected_packages[name])
+    distributions = [
+        SimpleNamespace(metadata={"Name": name}, version=version)
+        for name, version in expected_packages.items()
+    ]
+    monkeypatch.setattr("importlib.metadata.distributions", lambda: distributions)
+    build_lock = tmp_path / "build.txt"
+    runtime_lock = tmp_path / "runtime.txt"
+    build_lock.write_bytes(BUILD_REQUIREMENTS.encode("utf-8"))
+    runtime_lock.write_bytes(RUNTIME_REQUIREMENTS.encode("utf-8"))
+    monkeypatch.setenv("HAWEDIT_WSL_BUILD_LOCK", str(build_lock))
+    monkeypatch.setenv("HAWEDIT_WSL_RUNTIME_LOCK", str(runtime_lock))
 
     exec(compile(_IDENTITY_PROBE_SCRIPT, "<wsl-identity-probe>", "exec"), {})
 
@@ -144,6 +165,24 @@ def test_identity_probe_is_self_contained_and_executable(
     assert payload["uid"] == 1000
     assert payload["home"] == str(Path.home().resolve())
     assert payload["packages"] == expected_packages
+    assert payload["dependency_locks"] == _candidate_payload()["dependency_locks"]
+
+
+def test_dependency_locks_are_complete_hash_requirements_with_named_sdist_exceptions() -> None:
+    runtime_entries = re.findall(r"(?m)^([a-z0-9-]+)==([^\s\\]+)", RUNTIME_REQUIREMENTS)
+    build_entries = re.findall(r"(?m)^([a-z0-9-]+)==([^\s\\]+)", BUILD_REQUIREMENTS)
+
+    assert len(runtime_entries) == 137
+    assert len(dict(runtime_entries)) == len(runtime_entries)
+    assert {name for name, _version in build_entries} == {"cmake", "pip", "setuptools", "wheel"}
+    assert set(SDIST_EXCEPTIONS) == {"kenlm", "sox"}
+    for requirements, entries in (
+        (RUNTIME_REQUIREMENTS, runtime_entries),
+        (BUILD_REQUIREMENTS, build_entries),
+    ):
+        blocks = re.split(r"(?m)(?=^[a-z0-9-]+==)", requirements)
+        assert len([block for block in blocks if block.strip()]) == len(entries)
+        assert all("--hash=sha256:" in block for block in blocks if block.strip())
 
 
 def test_wsl_path_uses_forward_slashes_so_wsl_does_not_drop_separators(
@@ -207,13 +246,24 @@ def test_wheel_safe_setup_copies_only_the_package_and_marks_success(
     assert "HAWEDIT_WSL_SOURCE=/mnt/c/runtime" in setup_call
     assert any(value.startswith("HAWEDIT_WSL_VENV=") for value in setup_call)
     assert "HAWEDIT_WSL_ENV_REUSE=0" in setup_call
+    assert any(value.startswith("HAWEDIT_WSL_BUILD_LOCK=") for value in setup_call)
+    assert any(value.startswith("HAWEDIT_WSL_RUNTIME_LOCK=") for value in setup_call)
     assert "HAWEDIT_WSL_ENV_REUSE=1" in setup_calls[1]
     assert setup_call[-3:] == ["bash", "-l", "-s"]
     setup_script = setup_scripts[0].decode("utf-8")
-    assert "'torch==2.8.0' 'torchaudio==2.8.0'" in setup_script
-    assert "'qwen-asr==0.0.6'" in setup_script
-    assert setup_script.count("'fairseq2==0.6'") == 2
-    assert setup_script.count("'fonttools==4.60.2'") == 2
+    assert "--require-hashes --no-deps" in setup_script
+    assert "--only-binary=:all:" in setup_script
+    assert (
+        tuple(
+            option.removeprefix("--no-binary=")
+            for option in setup_script.split()
+            if option.startswith("--no-binary=")
+        )
+        == SDIST_EXCEPTIONS
+    )
+    assert (
+        "installed OmniASR distribution identity does not match the reviewed lock" in setup_script
+    )
     assert "from qwen_asr import Qwen3ASRModel" in setup_script
     assert 'torchaudio_version = torchaudio.__version__.split("+", 1)[0]' in setup_script
     assert "from hawedit.omni_assets import (" in setup_script
@@ -454,6 +504,8 @@ def test_failed_concurrent_revalidation_preserves_the_last_valid_receipt(
         assert setup_entered.wait(5)
         concurrent = load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
         assert concurrent.source_root == original_snapshot
+        assert concurrent.generation_root.name == "environment"
+        assert concurrent.generation_root.is_dir()
         assert ready.read_bytes() == original_marker
     finally:
         release_setup.set()
@@ -895,6 +947,66 @@ def test_receipt_runtime_must_match_versioned_generation(
     marker.write_text(json.dumps(receipt), encoding="utf-8")
 
     with pytest.raises(WslRuntimeError, match="does not match.*environment generation"):
+        load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
+
+
+def test_receipt_refuses_mutated_generation_dependency_lock_before_wsl_executes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package = tmp_path / "hawedit"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    runtime = tmp_path / "runtime"
+
+    def fake_setup(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        if "bash" in args:
+            _write_candidate(runtime, package)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_setup)
+    provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
+    source = default_wsl_source(package, runtime)
+    ready = json.loads((source / ".ready").read_text(encoding="utf-8"))
+    generation = ready["generation"]
+    assert isinstance(generation, str)
+    runtime_lock = (
+        runtime / "venvs" / generation / ".hawedit-dependency-locks" / "runtime-requirements.txt"
+    )
+    runtime_lock.write_bytes(runtime_lock.read_bytes() + b"\nforged==1 --hash=sha256:" + b"0" * 64)
+    monkeypatch.setattr(
+        "hawedit.wsl_setup.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("lock drift must fail before WSL executes"),
+    )
+
+    with pytest.raises(WslRuntimeError, match="dependency lock content drifted"):
+        load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
+
+
+def test_receipt_refuses_forged_dependency_lock_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package = tmp_path / "hawedit"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    runtime = tmp_path / "runtime"
+
+    def fake_setup(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        if "bash" in args:
+            _write_candidate(runtime, package)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_setup)
+    provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
+    marker = default_wsl_source(package, runtime) / ".ready"
+    receipt = json.loads(marker.read_text(encoding="utf-8"))
+    receipt["runtime"]["dependency_locks"]["runtime_sha256"] = "0" * 64
+    marker.write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(WslRuntimeError, match="dependency locks drifted"):
         load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
 
 

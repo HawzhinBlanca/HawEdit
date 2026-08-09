@@ -93,16 +93,38 @@ def _stub_local_omni_runtime(
 
 
 def _fetcher_download_block() -> str:
-    """The download block out of `fetch-models.sh`, as executable source.
+    """Compatibility harness that executes the installed module's real transaction.
 
-    Deliberately not a grep of the script: an assertion about the text of a command is not an
-    assertion about what it does — the mistake D-067 recorded, one layer up. The tests that use
-    this execute the real block against a stubbed Hub and inspect the call it makes.
+    The checkout wrapper is intentionally shell-only now. These older adversarial regressions
+    still execute the production ``fetch_checkpoint`` function against a stubbed Hub instead of
+    degrading into source-text assertions.
     """
-    script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
-    blocks = [b for b in script.split("<<'PYEOF'")[1:] if "snapshot_download" in b]
-    assert len(blocks) == 1, f"expected exactly one download block, found {len(blocks)}"
-    return blocks[0].split("\nPYEOF")[0]
+    return """
+import importlib
+import sys
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+import hawedit.model_fetch as model_fetch
+from hawedit.models import ModelStore, RevisionNotPinned
+from hawedit.registry import REGISTRY
+
+model_fetch = importlib.reload(model_fetch)
+model_id, source, destination = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+store = ModelStore()
+try:
+    revision = store.revision_for(source)
+except RevisionNotPinned as exc:
+    print(f"REFUSED: {exc}", file=sys.stderr)
+    raise SystemExit(1) from None
+item = model_fetch.FetchItem(REGISTRY[model_id], source, revision, destination)
+try:
+    report = model_fetch.fetch_checkpoint(item, store, snapshot_download)
+except Exception as exc:
+    print(f"FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+    raise SystemExit(1) from None
+print(f"done: {report.files_verified} files, {report.size_bytes} bytes")
+"""
 
 
 # --- provisioning is classified, not assumed -------------------------------------------
@@ -164,10 +186,62 @@ def test_a_configured_source_supplies_what_section_7_leaves_open(tmp_path: Path)
     assert store(tmp_path).source_for(REGISTRY["Qwen3-VL-Embedding-2B"]) == "Qwen/repo"
 
 
+@pytest.mark.parametrize(
+    "document",
+    [
+        [],
+        {"Qwen3-VL-Embedding-2B": ["Qwen/repo"]},
+        {"Qwen3-VL-Embedding-2B": "https://user:hf_SECRET@host/Qwen/repo"},
+        {"unknown/model": "Qwen/repo"},
+    ],
+)
+def test_source_metadata_requires_a_typed_allowlisted_object(
+    tmp_path: Path, document: object
+) -> None:
+    (tmp_path / "sources.json").write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(
+        CheckpointIntegrityError, match="JSON object|repository id|unknown"
+    ) as raised:
+        store(tmp_path).sources()
+    assert "hf_SECRET" not in str(raised.value)
+
+
 def test_the_installed_source_manifest_location_is_stable() -> None:
     from hawedit.models import INSTALLED_SOURCES
 
     assert INSTALLED_SOURCES.parts[-4:] == ("share", "hawedit", "models", "sources.json")
+
+
+def test_installed_metadata_uses_authenticated_distribution_files_under_target_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit import models as models_module
+
+    target = tmp_path / "target"
+    metadata = target / "share" / "hawedit" / "models"
+    metadata.mkdir(parents=True)
+    for name in ("sources.json", "revisions.json", "integrity.json"):
+        (metadata / name).write_text("{}", encoding="utf-8")
+    fake_module = target / "hawedit" / "models.py"
+    fake_module.parent.mkdir()
+    fake_module.write_text("", encoding="utf-8")
+    requested: list[str] = []
+
+    def resolve(relative: str) -> Path:
+        requested.append(relative)
+        return target / relative
+
+    monkeypatch.setattr(models_module, "__file__", str(fake_module))
+    monkeypatch.setattr(models_module, "resolve_installed_hawedit_data", resolve)
+
+    model_store = models_module.ModelStore(root=tmp_path / "weights")
+
+    assert model_store.metadata_root == metadata
+    assert requested == [
+        "share/hawedit/models/sources.json",
+        "share/hawedit/models/revisions.json",
+        "share/hawedit/models/integrity.json",
+    ]
 
 
 def test_fresh_custom_checkpoint_root_uses_tracked_metadata_only_for_identity(
@@ -918,6 +992,15 @@ def test_a_pinned_revision_is_returned_for_download(tmp_path: Path) -> None:
     assert store(tmp_path).revision_for("Qwen/repo") == "0" * 40
 
 
+@pytest.mark.parametrize("document", [[], {"Qwen/repo": ["a" * 40]}, {"https://bad": "a" * 40}])
+def test_revision_metadata_requires_a_typed_allowlisted_object(
+    tmp_path: Path, document: object
+) -> None:
+    (tmp_path / "revisions.json").write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises((CheckpointIntegrityError, RuntimeError)):
+        store(tmp_path).revisions()
+
+
 @pytest.mark.parametrize("revision", ["A" * 40, "a" * 39, "main", 7])
 def test_revision_for_rejects_every_noncanonical_commit_pin(
     tmp_path: Path, revision: object
@@ -982,7 +1065,7 @@ def test_the_installed_revision_manifest_location_is_stable() -> None:
 def test_the_fetcher_passes_the_pinned_revision_to_snapshot_download(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Runs the download block out of `fetch-models.sh` itself, against a stubbed Hub.
+    """Runs the installed Python transaction itself against a stubbed Hub.
 
     Deliberately not a grep of the script. An assertion about the text of a command is not an
     assertion about what the command does — the same mistake D-067 recorded one layer up. This
@@ -1030,13 +1113,13 @@ def test_the_fetcher_passes_the_pinned_revision_to_snapshot_download(
 
     monkeypatch.setattr(hawedit.models.ModelStore, "verify_checkpoint", verify)
     try:
-        exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        exec(compile(source_code, "hawedit.model_fetch:harness", "exec"), {"__name__": "__main__"})
         assert len(calls) == 1
         assert calls[0]["repo_id"] == "Qwen/repo"
         assert calls[0]["revision"] == "b" * 40
         staging = Path(str(calls[0]["local_dir"]))
         assert staging.parent == tmp_path
-        assert staging.name.startswith(".dest.download-")
+        assert staging.name == ".dest.resume-" + "b" * 40
         assert verified == [staging]
         assert (destination / "downloaded.bin").read_bytes() == b"verified"
     finally:
@@ -1073,7 +1156,10 @@ def test_the_fetcher_refuses_a_repository_that_is_not_pinned(
     importlib.reload(hawedit.models)
     try:
         with pytest.raises(SystemExit) as exited:
-            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+            exec(
+                compile(source_code, "hawedit.model_fetch:harness", "exec"),
+                {"__name__": "__main__"},
+            )
         assert exited.value.code == 1
         assert calls == [], f"downloaded despite no pin: {calls}"
     finally:
@@ -1118,7 +1204,10 @@ def test_fetcher_preserves_and_refuses_invalid_existing_final(
     monkeypatch.setattr(hawedit.models.ModelStore, "verify_checkpoint", invalid)
     try:
         with pytest.raises(SystemExit) as exited:
-            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+            exec(
+                compile(source_code, "hawedit.model_fetch:harness", "exec"),
+                {"__name__": "__main__"},
+            )
         assert exited.value.code == 1
         assert calls == []
         assert sentinel.read_bytes() == b"preserve-me"
@@ -1165,7 +1254,10 @@ def test_fetcher_preserves_private_stage_when_manifest_verification_fails(
     monkeypatch.setattr(hawedit.models.ModelStore, "verify_checkpoint", invalid)
     try:
         with pytest.raises(SystemExit) as exited:
-            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+            exec(
+                compile(source_code, "hawedit.model_fetch:harness", "exec"),
+                {"__name__": "__main__"},
+            )
         assert exited.value.code == 1
         assert not destination.exists()
         staging = tuple(tmp_path.glob(".dest.resume-*"))
@@ -1217,7 +1309,10 @@ def test_fetcher_refuses_preplanted_staging_hardlink_before_downloader_write(
 
     try:
         with pytest.raises(SystemExit) as exited:
-            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+            exec(
+                compile(source_code, "hawedit.model_fetch:harness", "exec"),
+                {"__name__": "__main__"},
+            )
         assert exited.value.code == 1
         assert calls == []
         assert victim.read_bytes() == b"ORIGINAL"
@@ -1279,7 +1374,10 @@ def test_fetcher_refuses_nonprivate_posix_resume_mode_before_download(
     monkeypatch.setattr(os, "lstat", public_resume_lstat)
     try:
         with pytest.raises(SystemExit) as exited:
-            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+            exec(
+                compile(source_code, "hawedit.model_fetch:harness", "exec"),
+                {"__name__": "__main__"},
+            )
         assert exited.value.code == 1
         assert calls == []
         assert resume.is_dir()

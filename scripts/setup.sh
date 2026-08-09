@@ -68,17 +68,15 @@ if ! "$VENV_PY" -c "$_supported" >/dev/null 2>&1; then
   echo "✗ existing .venv is not Python 3.11 or 3.12; move it aside and rerun setup" >&2
   exit 2
 fi
-# `python -m pip`, not the pip shim: on Windows pip cannot replace its own running .exe.
-"$VENV_PY" -m pip install --quiet --upgrade pip
-
-step "dependencies (including the §3 Stage 0 media stack)"
+step "hash-locked dependencies (including the §3 Stage 0 media stack)"
 # CPU wheels on purpose: §6 puts Stage 0 on CPU by design, and the CUDA build of torch is ~2 GB
 # of kernels nothing here calls. A GPU box that wants the CUDA build can install it after.
 # The media extra is NOT optional here even though pyproject makes it optional — without it the
 # Stage 0 tests skip, and a skipped test is the quiet green this project is written against.
-"$VENV_PY" -m pip install --quiet \
-  --extra-index-url https://download.pytorch.org/whl/cpu \
-  -e '.[dev,media]'
+# `install-host.sh` chooses only the lock matching this OS and Python minor, validates its
+# dependency-contract digest before any network request, requires one wheel hash per package,
+# and installs the checkout with no dependency resolution or isolated build environment.
+bash scripts/install-host.sh "$VENV_PY" gate
 
 step "ffmpeg with a verified RTL stack (§4.3)"
 # fetch-ffmpeg.sh is idempotent and refuses a build that cannot shape Arabic script.

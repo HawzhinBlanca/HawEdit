@@ -88,17 +88,21 @@ These cannot be truthfully solved from the checkout alone:
   (`evidence/omniasr-asset-integrity.md`).
 - WSL readiness is a validated receipt over an exact source snapshot and one
   versioned/revalidated venv generation. Setup is cross-process serialized; launch re-hashes the
-  copied worker and probes the recorded interpreter, package versions, assets and CUDA route.
-  Importability alone cannot make OmniASR appear ready. This does not claim transitive venv-byte
-  immutability (`evidence/wsl-runtime-receipt.md`).
+  copied worker and probes the recorded interpreter, exact 140-distribution lock union, assets and
+  CUDA route. Importability alone cannot make OmniASR appear ready. KenLM/Sox source archives are
+  hashed, but compiler/header/native-output bytes are not attested; the VEX is identity-bound and
+  honest about affected findings, but still lacks a canonical live report
+  (`evidence/wsl-runtime-receipt.md`, `evidence/wsl-asr-vex.md`).
 - **All six Hugging Face repository revisions are pinned as of 2026-08-09** (D-073/D-075).
   `models/revisions.json` fixes every fetchable repository to a full commit obtained from Hub
-  metadata, and `fetch-models.sh` refuses any repository with no pin. Four local visual
+  metadata, and the wheel-installed `hawedit-fetch-models` refuses any repository with no pin;
+  the checkout script is only a launcher for that same transaction. Four local visual
   checkpoints were cross-checked against their commits; pyannote's revision is public metadata,
   while its gated file downloads remain blocked by `BLOCKED.md` #4.
 - Project-managed checkpoint provisioning is transactional and automation-visible: verified-status
   planning, a byte-only root override with separate trusted metadata, full-SHA runtime validation,
-  private resumable staging, exact manifest verification, locked native no-replace publication,
+  0700/protected-DACL crash-resumable staging, exact manifest verification, locked native
+  no-replace publication,
   preserved invalid/concurrent finals and aggregate nonzero
   failure (`evidence/checkpoint-provisioning.md`). Consumers hold the matching shared lock from
   byte verification through config/recipe parsing and model construction, preventing a verified
@@ -118,8 +122,10 @@ These cannot be truthfully solved from the checkout alone:
   wheel smokes before defining GitHub-OIDC attestations for the exact four-file release set without
   exposing attestation authority to repository build code; its
   first post-merge protected-`main` run is still required before authenticity has live evidence.
-  Versioned durable publication and transitive deployment hash locks remain open; OmniASR
-  package-asset byte identity is closed separately at runtime.
+  CPU base/gate/model-fetch graphs are code-digest-bound hash locks and installed through exact
+  wheel inventories (`evidence/host-dependency-locks.md`). Versioned durable publication, CUDA
+  locking and WSL native-build provenance remain open; OmniASR package-asset byte identity is
+  closed separately at runtime.
 
 ## Current hardening delta - 2026-08-09
 
@@ -127,17 +133,20 @@ These cannot be truthfully solved from the checkout alone:
   canonical `.venv` interpreter is accepted and its editable-root/distribution/dependency identity
   is checked before the gate (`evidence/environment-identity.md`).
 - WSL snapshots carry their trusted checkpoint manifests, preserve prior valid receipts across
-  failed reprovision and publish results through a random descriptor-bound file. Resume checkpoint
-  trees are recursively validated before any downloader write (`evidence/wsl-runtime-receipt.md`,
+  failed reprovision and publish results through a random descriptor-bound file. Checkpoint resume
+  trees survive hard process death and are recursively validated before any downloader write;
+  Windows roots use native protected DACLs (`evidence/wsl-runtime-receipt.md`,
   `evidence/checkpoint-provisioning.md`).
+- Twelve host locks cover CPU base, gate and model-fetch environments on Linux/Windows 3.11/3.12.
+  The wheel authenticates its locks and VEX through raw `RECORD`, including `pip --target` layouts.
 - Expected model/transport failures now terminate only their stage, with zero forbidden downstream
   work. Candidate traversal is refused, empty selection is no-bill, and all exception-derived JSON
   is printable and bounded. Credential/ADC I/O is lazy and zero-transport; programmer/schema
   failures remain visible (`evidence/pipeline-failures.md`).
 
 This improves robustness; it does not create the absent real Sorani corpus, human editorial set,
-authorized Vertex acceptance, real 5-or-more-scene visual run, pyannote access, speaker reframing evidence
-or transitive dependency hash locks.
+authorized Vertex acceptance, real 5-or-more-scene visual run, pyannote access, speaker reframing
+evidence, a CUDA lock, WSL native-build attestation or a live hardware VEX report.
 
 ## Honest release call
 
@@ -147,8 +156,8 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Clean Git-clone Windows/Python 3.12.13 gate, Ruff/formatting/mypy clean:
-  **1,525 collected, 1,525 passed, 0 skipped** on 2026-08-09.
+- Clean isolated-worktree Windows/Python 3.12.10 gate, Ruff/formatting/mypy clean:
+  **1,603 collected, 1,603 passed, 0 skipped** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;

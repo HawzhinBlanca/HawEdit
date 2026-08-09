@@ -201,7 +201,7 @@ class VideoChat3Reader:
         resolve_role(model_id, _DISCOVERY_ROLE, "the Path B video reader")
         if not model_dir.is_dir():
             raise EmbedderUnavailable(
-                f"no weights at {model_dir}. Run `bash scripts/fetch-models.sh {model_id}` — "
+                f"no weights at {model_dir}. Run `hawedit-fetch-models {model_id}` — "
                 f"§7's registry drives it, so it cannot fetch the wrong model."
             )
         self.model_dir = model_dir

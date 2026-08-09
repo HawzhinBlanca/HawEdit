@@ -21,36 +21,43 @@ def test_ffmpeg_fetch_uses_an_immutable_commit_and_lfs_digest_before_unpacking()
 
 
 def test_model_fetch_passes_a_full_revision_and_pins_its_download_client() -> None:
-    script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
-    assert "snapshot_download(" in script
-    assert "repo_id=source" in script and "revision=revision" in script
-    assert '"huggingface_hub==0.36.2"' in script
+    implementation = (ROOT / "src" / "hawedit" / "model_fetch.py").read_text(encoding="utf-8")
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "repo_id=item.repository" in implementation
+    assert "revision=item.revision" in implementation
+    assert 'DOWNLOAD_CLIENT_VERSION: Final = "0.36.2"' in implementation
+    assert '"huggingface-hub==0.36.2"' in project
 
 
 def test_model_fetch_uses_one_models_root_and_failures_survive_the_status_report() -> None:
     script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
-    assert 'models_root="${HAWEDIT_MODELS_DIR:-$here/models}"' in script
-    assert 'export HAWEDIT_MODELS_DIR="$models_root"' in script
-    assert "HAWEDIT_MODELS:-" not in script
-    assert 'exit "$failures"' in script
-    assert '"$PY" -m hawedit.models\nexit "$failures"' in script
+    implementation = (ROOT / "src" / "hawedit" / "model_fetch.py").read_text(encoding="utf-8")
+    assert 'exec "$PY" -m hawedit.model_fetch "$@"' in script
+    assert "ModelStore(root=args.models_dir)" in implementation
+    assert "HAWEDIT_MODELS" not in script
+    assert "status_ok = _print_status(store)" in implementation
+    assert "return int(failures or not status_ok)" in implementation
 
 
 def test_model_fetch_stages_verifies_locks_and_atomically_publishes() -> None:
-    script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
-    assert "checkpoint_publish_lock(destination)" in script
-    assert ".download-{revision}" in script
-    assert ".resume-{revision}" in script
-    assert "tempfile.mkdtemp(" in script
-    assert "resume_download=True" in script
-    assert "metadata.st_nlink != 1" in script
-    assert "stat.S_IMODE(root_before.st_mode) & 0o077" in script
-    assert script.index("validate_private_stage(resume)") < script.index("snapshot_download(")
-    assert script.index("validate_private_stage(staging)") < script.index("snapshot_download(")
-    assert script.index("store.verify_checkpoint(model_id, staging)") < script.index(
-        "_publish_checkpoint_directory(staging, destination)"
+    implementation = (ROOT / "src" / "hawedit" / "model_fetch.py").read_text(encoding="utf-8")
+    assert "checkpoint_publish_lock(destination)" in implementation
+    assert ".download-{revision}" in implementation
+    assert ".resume-{item.revision}" in implementation
+    assert "tempfile.mkdtemp(" in implementation
+    assert "resume_download=True" in implementation
+    assert "metadata.st_nlink != 1" in implementation
+    assert "stat.S_IMODE(root_before.st_mode) & 0o077" in implementation
+    assert implementation.index("validate_private_stage(resume)") < implementation.index(
+        "download("
     )
-    assert "existing final checkpoint is invalid and was preserved" in script
+    assert implementation.index("validate_private_stage(staging)") < implementation.index(
+        "download("
+    )
+    assert implementation.index(
+        "store.verify_checkpoint(item.entry.model_id, staging)"
+    ) < implementation.index("_publish_checkpoint_directory(staging, destination)")
+    assert "existing final checkpoint is invalid and was preserved" in implementation
 
 
 def test_every_remote_github_action_is_pinned_to_a_full_commit() -> None:

@@ -207,7 +207,7 @@ class QwenSoraniValidator:
         resolve_role(model_id, frozenset({"asr_validator"}), "the ASR validator")
         if not model_dir.is_dir():
             raise RuntimeError(
-                f"no validator weights at {model_dir}. Run scripts/fetch-models.sh {model_id}."
+                f"no validator weights at {model_dir}. Run hawedit-fetch-models {model_id}."
             )
         self.model_id = model_id
         self.model_dir = model_dir

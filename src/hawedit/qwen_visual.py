@@ -369,7 +369,7 @@ class QwenVisualEmbedder:
         if self._loaded is None:
             if not self.model_dir.is_dir():
                 raise EmbedderUnavailable(
-                    f"no weights at {self.model_dir}. Run `bash scripts/fetch-models.sh "
+                    f"no weights at {self.model_dir}. Run `hawedit-fetch-models "
                     f"{self.model_id}` — §7's registry drives it, so it cannot fetch the "
                     "wrong model."
                 )
@@ -590,7 +590,7 @@ class QwenVisualReranker:
         resolve_role(model_id, _RERANK_ROLE, "the visual reranker")
         if not model_dir.is_dir():
             raise EmbedderUnavailable(
-                f"no weights at {model_dir}. Run `bash scripts/fetch-models.sh {model_id}`."
+                f"no weights at {model_dir}. Run `hawedit-fetch-models {model_id}`."
             )
         self.model_dir = model_dir
         self.read_frames = read_frames

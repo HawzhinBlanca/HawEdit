@@ -28,6 +28,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Final, cast
 
+from hawedit.wsl_asr_locks import (
+    BUILD_LOCK_SHA256,
+    BUILD_REQUIREMENTS,
+    LOCKED_DISTRIBUTIONS,
+    RUNTIME_LOCK_SHA256,
+    RUNTIME_REQUIREMENTS,
+    SDIST_EXCEPTIONS,
+)
+
 __all__ = [
     "WSL_MODEL_METADATA_DIRECTORY",
     "WslRuntimeError",
@@ -45,15 +54,15 @@ __all__ = [
 
 
 _RECEIPT_SCHEMA: Final = 2
-_ENVIRONMENT_SCHEMA: Final = 1
-_EXPECTED_PACKAGES: Final[Mapping[str, str]] = {
-    "fairseq2": "0.6",
-    "fonttools": "4.60.2",
-    "klpt": "0.1.7",
-    "omnilingual-asr": "0.2.0",
-    "qwen-asr": "0.0.6",
-    "torch": "2.8.0",
-    "torchaudio": "2.8.0",
+_ENVIRONMENT_SCHEMA: Final = 2
+_EXPECTED_PACKAGES: Final[Mapping[str, str]] = LOCKED_DISTRIBUTIONS
+_LOCK_FILES: Final[Mapping[str, tuple[str, str]]] = {
+    "build_sha256": ("build-requirements.txt", BUILD_REQUIREMENTS),
+    "runtime_sha256": ("runtime-requirements.txt", RUNTIME_REQUIREMENTS),
+}
+_EXPECTED_LOCKS: Final[Mapping[str, str]] = {
+    "build_sha256": BUILD_LOCK_SHA256,
+    "runtime_sha256": RUNTIME_LOCK_SHA256,
 }
 _LOCKS_GUARD = threading.Lock()
 _PROCESS_LOCKS: dict[Path, threading.Lock] = {}
@@ -78,6 +87,7 @@ class WslRuntimeReceipt:
     home: str
     python_version: str
     packages: Mapping[str, str]
+    dependency_locks: Mapping[str, str]
     asset_cache: str
     asset_bytes: int
     cuda_device_count: int
@@ -470,6 +480,62 @@ def _atomic_json(path: Path, document: Mapping[str, object]) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _atomic_bytes(path: Path, payload: bytes) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b", prefix=f".{path.name}-", dir=path.parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _generation_lock_directory(generation_root: Path) -> Path:
+    return generation_root / ".hawedit-dependency-locks"
+
+
+def _generation_environment(generation_root: Path) -> Path:
+    return generation_root / "environment"
+
+
+def _write_generation_locks(generation_root: Path) -> None:
+    lock_directory = _generation_lock_directory(generation_root)
+    _ensure_plain_directory(lock_directory, "OmniASR dependency locks directory")
+    for filename, requirements in _LOCK_FILES.values():
+        _atomic_bytes(lock_directory / filename, requirements.encode("utf-8"))
+
+
+def _generation_lock_identity(generation_root: Path) -> dict[str, str]:
+    lock_directory = _generation_lock_directory(generation_root)
+    _validate_plain_directory(lock_directory, "OmniASR dependency locks directory")
+    actual: dict[str, str] = {}
+    for key, (filename, requirements) in _LOCK_FILES.items():
+        path = lock_directory / filename
+        try:
+            payload = _read_bound_regular_file(
+                path, "OmniASR dependency lock", require_single_link=True
+            )
+        except RuntimeError as exc:
+            raise WslRuntimeError(f"cannot verify OmniASR dependency lock {path}: {exc}") from exc
+        expected = requirements.encode("utf-8")
+        if payload != expected:
+            raise WslRuntimeError(f"OmniASR dependency lock content drifted: {path}")
+        actual[key] = hashlib.sha256(payload).hexdigest()
+    if actual != dict(_EXPECTED_LOCKS):
+        raise WslRuntimeError(
+            f"OmniASR dependency lock digests drifted: expected {dict(_EXPECTED_LOCKS)!r}, "
+            f"got {actual!r}"
+        )
+    return actual
+
+
 def _create_runtime_candidate(source_root: Path) -> tuple[Path, tuple[int, int]]:
     """Create the unguessable, empty file that the WSL validator may populate once."""
     candidate: Path | None = None
@@ -711,7 +777,12 @@ def _runtime_transaction_lock(runtime: Path) -> Iterator[None]:
 
 def _environment_digest() -> str:
     payload = json.dumps(
-        {"schema": _ENVIRONMENT_SCHEMA, "packages": _EXPECTED_PACKAGES},
+        {
+            "schema": _ENVIRONMENT_SCHEMA,
+            "packages": dict(_EXPECTED_PACKAGES),
+            "dependency_locks": dict(_EXPECTED_LOCKS),
+            "sdist_exceptions": SDIST_EXCEPTIONS,
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
@@ -738,6 +809,12 @@ def _parse_runtime_payload(value: object, label: str) -> dict[str, object]:
     if packages != dict(_EXPECTED_PACKAGES):
         raise WslRuntimeError(
             f"{label} package set drifted: expected {dict(_EXPECTED_PACKAGES)!r}, got {packages!r}"
+        )
+    dependency_locks = _object(payload.get("dependency_locks"), f"{label}: dependency locks")
+    if dependency_locks != dict(_EXPECTED_LOCKS):
+        raise WslRuntimeError(
+            f"{label} dependency locks drifted: expected {dict(_EXPECTED_LOCKS)!r}, "
+            f"got {dependency_locks!r}"
         )
     if _integer(payload, "cuda_device_count", label) < 2:
         raise WslRuntimeError(f"{label} does not prove two visible CUDA devices")
@@ -776,37 +853,31 @@ def _read_json(path: Path, label: str) -> dict[str, object]:
     return _object(raw, str(path))
 
 
-_FONTOOLS_VERSION = "4.60.2"
-
 _SETUP_SCRIPT = r"""
 set -euo pipefail
 venv="$HAWEDIT_WSL_VENV"
 if [[ "$HAWEDIT_WSL_ENV_REUSE" != 1 ]]; then
-  if command -v uv >/dev/null 2>&1; then
-    uv venv --python 3.12 "$venv"
-    uv pip install --python "$venv/bin/python" \
-      'torch==2.8.0' 'torchaudio==2.8.0' \
-      'omnilingual-asr==0.2.0' 'fairseq2==0.6' \
-      'qwen-asr==0.0.6' 'klpt==0.1.7' \
-      'fonttools==__FONTOOLS_VERSION__'
-  elif command -v python3.12 >/dev/null 2>&1; then
-    python3.12 -m venv "$venv"
-    "$venv/bin/python" -m pip install --upgrade pip
-    "$venv/bin/python" -m pip install \
-      'torch==2.8.0' 'torchaudio==2.8.0' \
-      'omnilingual-asr==0.2.0' 'fairseq2==0.6' \
-      'qwen-asr==0.0.6' 'klpt==0.1.7' \
-      'fonttools==__FONTOOLS_VERSION__'
-  else
-    printf '%s\n' 'Install uv or Python 3.12 inside WSL2.' >&2
+  if ! command -v uv >/dev/null 2>&1; then
+    printf '%s\n' 'Install uv inside WSL2 to provision the hash-locked OmniASR runtime.' >&2
     exit 1
   fi
+  uv venv --python 3.12 "$venv"
+  uv pip install --python "$venv/bin/python" \
+    --require-hashes --no-deps \
+    -r "$HAWEDIT_WSL_BUILD_LOCK"
+  uv pip install --python "$venv/bin/python" \
+    --require-hashes --no-deps --no-build-isolation \
+    --only-binary=:all: --no-binary=kenlm --no-binary=sox \
+    -r "$HAWEDIT_WSL_RUNTIME_LOCK"
+  uv pip check --python "$venv/bin/python"
 fi
 PYTHONPATH="$HAWEDIT_WSL_SOURCE" "$venv/bin/python" - <<'PY'
 import importlib.metadata
+import hashlib
 import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 
@@ -816,6 +887,7 @@ from hawedit.omni_assets import (
     freeze_fairseq2_asset_overrides,
     provision_omni_assets,
 )
+from hawedit.wsl_asr_locks import LOCKED_DISTRIBUTIONS
 from hawedit.wsl_setup import _publish_runtime_candidate
 
 # Download into fairseq2's exact cache layout, but publish nothing until HawEdit's
@@ -846,26 +918,35 @@ if not torch.cuda.is_available():
     raise SystemExit("OmniASR installed, but CUDA is not visible inside WSL2")
 if torch.cuda.device_count() < 2:
     raise SystemExit("HawEdit OmniASR needs two visible GPUs (LLM cuda:0, CTC cuda:1)")
-packages = {
-    name: importlib.metadata.version(name)
-    for name in (
-        "fairseq2",
-        "fonttools",
-        "klpt",
-        "omnilingual-asr",
-        "qwen-asr",
-        "torch",
-        "torchaudio",
-    )
+packages = {}
+for distribution in importlib.metadata.distributions():
+    raw_name = distribution.metadata.get("Name")
+    if not raw_name:
+        raise SystemExit("installed distribution without a Name field")
+    name = re.sub(r"[-_.]+", "-", raw_name).lower()
+    if name in packages:
+        raise SystemExit(f"duplicate installed distribution identity: {name}")
+    packages[name] = distribution.version
+packages = dict(sorted(packages.items()))
+if packages != dict(LOCKED_DISTRIBUTIONS):
+    raise SystemExit("installed OmniASR distribution identity does not match the reviewed lock")
+dependency_locks = {
+    "build_sha256": hashlib.sha256(
+        Path(os.environ["HAWEDIT_WSL_BUILD_LOCK"]).read_bytes()
+    ).hexdigest(),
+    "runtime_sha256": hashlib.sha256(
+        Path(os.environ["HAWEDIT_WSL_RUNTIME_LOCK"]).read_bytes()
+    ).hexdigest(),
 }
 receipt = {
-    "schema": 1,
+    "schema": 2,
     "distro": os.environ.get("WSL_DISTRO_NAME", ""),
     "uid": os.getuid(),
     "home": str(Path.home().resolve()),
     "python": sys.executable,
     "python_version": platform.python_version(),
     "packages": packages,
+    "dependency_locks": dependency_locks,
     "cuda_device_count": torch.cuda.device_count(),
     "asset_cache": str(assets[0].path.parents[1]),
     "assets": [
@@ -881,7 +962,7 @@ receipt = {
 _publish_runtime_candidate(Path(os.environ["HAWEDIT_WSL_RECEIPT_CANDIDATE"]), receipt)
 print(f"OmniASR import OK; CUDA GPUs visible: {torch.cuda.device_count()}")
 PY
-""".replace("__FONTOOLS_VERSION__", _FONTOOLS_VERSION).strip()
+""".strip()
 
 
 def _build_receipt(
@@ -921,11 +1002,16 @@ def _generation_is_complete(path: Path, generation: str) -> bool:
     if not marker.is_file() or marker.is_symlink():
         return False
     try:
+        _validate_plain_directory(
+            _generation_environment(path), "OmniASR venv generation environment"
+        )
         document = _read_json(marker, "WSL environment generation receipt")
         return (
             document.get("schema") == _ENVIRONMENT_SCHEMA
             and document.get("generation") == generation
             and document.get("environment_sha256") == _environment_digest()
+            and document.get("dependency_locks") == dict(_EXPECTED_LOCKS)
+            and _generation_lock_identity(path) == dict(_EXPECTED_LOCKS)
         )
     except WslRuntimeError:
         return False
@@ -996,6 +1082,7 @@ def load_wsl_runtime_receipt(
         raise WslRuntimeError(
             f"WSL generation escapes the runtime root: {generation_root}"
         ) from exc
+    _generation_lock_identity(generation_root)
     if not _generation_is_complete(generation_root, generation):
         raise WslRuntimeError(f"WSL environment generation is incomplete: {generation_root}")
     runtime_payload = _parse_runtime_payload(receipt.get("runtime"), f"{marker}: runtime")
@@ -1014,10 +1101,14 @@ def load_wsl_runtime_receipt(
         )
     try:
         translated_generation = wsl_path(generation_root, actual_distro, executable)
-        interpreter = f"{translated_generation}/bin/python"
+        interpreter = f"{translated_generation}/environment/bin/python"
+        translated_lock_directory = f"{translated_generation}/.hawedit-dependency-locks"
         interpreter_probe = subprocess.run(
             [
                 *_prefix(actual_distro, executable),
+                "env",
+                f"HAWEDIT_WSL_BUILD_LOCK={translated_lock_directory}/build-requirements.txt",
+                f"HAWEDIT_WSL_RUNTIME_LOCK={translated_lock_directory}/runtime-requirements.txt",
                 interpreter,
                 "-c",
                 _IDENTITY_PROBE_SCRIPT,
@@ -1048,6 +1139,9 @@ def load_wsl_runtime_receipt(
         "python": _string(runtime_payload, "python", f"{marker}: runtime"),
         "python_version": _string(runtime_payload, "python_version", f"{marker}: runtime"),
         "packages": _object(runtime_payload.get("packages"), f"{marker}: packages"),
+        "dependency_locks": _object(
+            runtime_payload.get("dependency_locks"), f"{marker}: dependency locks"
+        ),
     }
     if live_identity != expected_identity:
         raise WslRuntimeError(
@@ -1059,12 +1153,13 @@ def load_wsl_runtime_receipt(
         source_root=source_snapshot,
         source_sha256=expected_digest,
         generation=generation,
-        generation_root=generation_root,
+        generation_root=_generation_environment(generation_root),
         distro=actual_distro,
         uid=_integer(runtime_payload, "uid", f"{marker}: runtime"),
         home=_string(runtime_payload, "home", f"{marker}: runtime"),
         python_version=_string(runtime_payload, "python_version", f"{marker}: runtime"),
         packages={key: cast(str, value) for key, value in packages.items()},
+        dependency_locks=dict(_EXPECTED_LOCKS),
         asset_cache=_string(runtime_payload, "asset_cache", f"{marker}: runtime"),
         asset_bytes=sum(_integer(_object(asset, "asset"), "size", "asset") for asset in assets),
         cuda_device_count=_integer(runtime_payload, "cuda_device_count", f"{marker}: runtime"),
@@ -1073,29 +1168,36 @@ def load_wsl_runtime_receipt(
 
 _IDENTITY_PROBE_SCRIPT: Final = r"""
 import importlib.metadata
+import hashlib
 import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 
-distributions = (
-    "fairseq2",
-    "fonttools",
-    "klpt",
-    "omnilingual-asr",
-    "qwen-asr",
-    "torch",
-    "torchaudio",
-)
+packages = {}
+for distribution in importlib.metadata.distributions():
+    raw_name = distribution.metadata.get("Name")
+    if not raw_name:
+        raise SystemExit("installed distribution without a Name field")
+    name = re.sub(r"[-_.]+", "-", raw_name).lower()
+    if name in packages:
+        raise SystemExit(f"duplicate installed distribution identity: {name}")
+    packages[name] = distribution.version
 print(json.dumps({
     "uid": os.getuid(),
     "home": str(Path.home().resolve()),
     "python": sys.executable,
     "python_version": platform.python_version(),
-    "packages": {
-        distribution: importlib.metadata.version(distribution)
-        for distribution in distributions
+    "packages": dict(sorted(packages.items())),
+    "dependency_locks": {
+        "build_sha256": hashlib.sha256(
+            Path(os.environ["HAWEDIT_WSL_BUILD_LOCK"]).read_bytes()
+        ).hexdigest(),
+        "runtime_sha256": hashlib.sha256(
+            Path(os.environ["HAWEDIT_WSL_RUNTIME_LOCK"]).read_bytes()
+        ).hexdigest(),
     },
 }, sort_keys=True))
 """.strip()
@@ -1199,9 +1301,14 @@ def provision_wsl_runtime(
             if generation_root.exists() and not complete:
                 shutil.rmtree(generation_root)
             _ensure_plain_directory(generation_root, "OmniASR venv generation")
+            if not complete:
+                _write_generation_locks(generation_root)
+            dependency_locks = _generation_lock_identity(generation_root)
             translated = wsl_path(runtime, distro)
             translated_source = wsl_path(source_snapshot, distro)
             translated_generation = wsl_path(generation_root, distro)
+            translated_environment = f"{translated_generation}/environment"
+            translated_lock_directory = f"{translated_generation}/.hawedit-dependency-locks"
             candidate, candidate_identity = _create_runtime_candidate(source_root)
             translated_candidate = wsl_path(candidate, distro)
             result = subprocess.run(
@@ -1210,8 +1317,10 @@ def provision_wsl_runtime(
                     "env",
                     f"HAWEDIT_WSL_RUNTIME={translated}",
                     f"HAWEDIT_WSL_SOURCE={translated_source}",
-                    f"HAWEDIT_WSL_VENV={translated_generation}",
+                    f"HAWEDIT_WSL_VENV={translated_environment}",
                     f"HAWEDIT_WSL_ENV_REUSE={int(complete)}",
+                    f"HAWEDIT_WSL_BUILD_LOCK={translated_lock_directory}/build-requirements.txt",
+                    f"HAWEDIT_WSL_RUNTIME_LOCK={translated_lock_directory}/runtime-requirements.txt",
                     f"HAWEDIT_WSL_RECEIPT_CANDIDATE={translated_candidate}",
                     "bash",
                     "-l",
@@ -1248,6 +1357,7 @@ def provision_wsl_runtime(
                         "schema": _ENVIRONMENT_SCHEMA,
                         "generation": generation,
                         "environment_sha256": _environment_digest(),
+                        "dependency_locks": dependency_locks,
                         "runtime": dict(parsed_payload),
                     },
                 )

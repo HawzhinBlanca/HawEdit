@@ -8,7 +8,7 @@ blueprint requires can be quietly forgotten.
 components, five arrive with a pip package or package-managed model card (Silero VAD ships its
 ONNX model inside the wheel), one is our own code, two are cloud APIs needing credentials, one is
 a system library, and **six are explicitly provisioned multi-gigabyte checkpoints**. Only that
-last group is downloaded by `fetch-models.sh`.
+last group is downloaded by `hawedit-fetch-models` (or its checkout wrapper).
 
 **Source ids are configured, never guessed.** §7 names four models in unambiguous
 `org/name` form and those are used directly. The two Qwen models are *checkpoint names*, not
@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final, cast
 
+from hawedit.environment import EnvironmentAuditError, resolve_installed_hawedit_data
 from hawedit.registry import REGISTRY, ModelEntry, Provisioning
 from hawedit.wsl_setup import WSL_MODEL_METADATA_DIRECTORY, probe_wsl_runtime
 
@@ -64,6 +65,7 @@ __all__ = [
     "assert_transformers_config_safe",
     "checkpoint_publish_lock",
     "readiness_report",
+    "validate_hf_repository_id",
     "verified_checkpoint_access",
 ]
 
@@ -265,6 +267,27 @@ class RevisionNotPinned(RuntimeError):
     """Raised when a repository would be downloaded at whatever its branch head is today."""
 
 
+_HF_REPOSITORY_ID: Final = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,47}/[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+)
+
+
+def validate_hf_repository_id(repository: object, label: str = "repository") -> str:
+    """Return one plain Hub ``namespace/name`` id without echoing rejected secret bytes."""
+    if not isinstance(repository, str):
+        raise CheckpointIntegrityError(f"{label} must be a repository id string")
+    if (
+        len(repository) > 96
+        or _HF_REPOSITORY_ID.fullmatch(repository) is None
+        or ".." in repository
+        or "--" in repository
+        or repository.lower().endswith(".git")
+        or any(segment.endswith((".", "-")) for segment in repository.split("/"))
+    ):
+        raise CheckpointIntegrityError(f"{label} must be an allowlisted namespace/repository id")
+    return repository
+
+
 @dataclass(frozen=True, slots=True)
 class ModelStatus:
     """Whether one §7 component is actually available on this machine."""
@@ -399,7 +422,21 @@ class ModelStore:
             elif (checkout_metadata / "sources.json").is_file():
                 self.metadata_root = checkout_metadata
             else:
-                self.metadata_root = INSTALLED_SOURCES.parent
+                try:
+                    installed = tuple(
+                        resolve_installed_hawedit_data(f"share/hawedit/models/{name}")
+                        for name in ("sources.json", "revisions.json", "integrity.json")
+                    )
+                except EnvironmentAuditError as exc:
+                    raise CheckpointIntegrityError(
+                        f"cannot authenticate installed checkpoint metadata: {exc}"
+                    ) from exc
+                parents = {path.parent for path in installed}
+                if len(parents) != 1:
+                    raise CheckpointIntegrityError(
+                        "installed checkpoint identity manifests are not colocated"
+                    )
+                self.metadata_root = installed[0].parent
         self._omni_runtime_probe: tuple[bool, str, Path | None, int | None] | None = None
 
     def _omni_runtime_status(self) -> tuple[bool, str, Path | None, int | None]:
@@ -432,11 +469,30 @@ class ModelStore:
             # "helpfully" completed by guessing the two entries that are deliberately absent.
             # A `_`-prefixed key carries the warning; dropping it here keeps the returned
             # mapping honestly str -> str rather than str -> whatever the note happened to be.
-            raw = json.loads(source_file.read_text(encoding="utf-8"))
-            configured = {k: v for k, v in raw.items() if not k.startswith("_")}
+            try:
+                raw: object = json.loads(source_file.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise CheckpointIntegrityError(
+                    f"cannot read checkpoint sources metadata {source_file}: {exc}"
+                ) from exc
+            document = _object_mapping(raw, str(source_file))
+            for model_id, repository in document.items():
+                if model_id.startswith("_"):
+                    continue
+                entry = REGISTRY.get(model_id)
+                if entry is None or entry.provisioning is not Provisioning.WEIGHTS:
+                    raise CheckpointIntegrityError(
+                        f"{source_file} names unknown downloadable model {model_id!r}"
+                    )
+                configured[model_id] = validate_hf_repository_id(
+                    repository, f"{source_file}: source for {model_id!r}"
+                )
         merged = {e.model_id: e.hf_repo for e in REGISTRY.values() if e.hf_repo}
         merged.update(configured)
-        return merged
+        return {
+            model_id: validate_hf_repository_id(repository, f"source for {model_id!r}")
+            for model_id, repository in merged.items()
+        }
 
     def source_for(self, entry: ModelEntry) -> str:
         """The repo id to download `entry` from.
@@ -465,9 +521,78 @@ class ModelStore:
         configured: dict[str, str] = {}
         revision_file = self.metadata_root / "revisions.json"
         if revision_file.exists():
-            raw = json.loads(revision_file.read_text(encoding="utf-8"))
-            configured = {k: v for k, v in raw.items() if not k.startswith("_")}
+            try:
+                raw: object = json.loads(revision_file.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise CheckpointIntegrityError(
+                    f"cannot read checkpoint revisions metadata {revision_file}: {exc}"
+                ) from exc
+            document = _object_mapping(raw, str(revision_file))
+            for repository, revision in document.items():
+                if repository.startswith("_"):
+                    continue
+                valid_repository = validate_hf_repository_id(
+                    repository, f"{revision_file}: repository"
+                )
+                if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+                    raise RevisionNotPinned(
+                        f"{revision_file} has no full lowercase 40-hex commit for "
+                        f"{valid_repository!r}"
+                    )
+                configured[valid_repository] = revision
         return configured
+
+    def assert_checkpoint_provisionable(
+        self, model_id: str, repository: str, revision: str
+    ) -> None:
+        """Validate the complete manifest identity before any checkpoint bytes are fetched."""
+        entry = REGISTRY.get(model_id)
+        if entry is None or entry.provisioning is not Provisioning.WEIGHTS:
+            raise CheckpointIntegrityError(
+                f"{model_id!r} is not an explicitly downloaded §7 checkpoint"
+            )
+        model_manifest = _object_mapping(
+            self.integrity().get(model_id), f"integrity manifest for {model_id}"
+        )
+        manifest_repository = validate_hf_repository_id(
+            _required_string(model_manifest, "repository", model_id),
+            f"integrity manifest for {model_id}: repository",
+        )
+        manifest_revision = _required_string(model_manifest, "revision", model_id)
+        if re.fullmatch(r"[0-9a-f]{40}", manifest_revision) is None:
+            raise CheckpointIntegrityError(
+                f"integrity manifest for {model_id} has no full lowercase 40-hex revision"
+            )
+        if (manifest_repository, manifest_revision) != (repository, revision):
+            raise CheckpointIntegrityError(
+                f"{model_id} integrity manifest names {manifest_repository}@{manifest_revision}, "
+                f"but provisioning selects {repository}@{revision}"
+            )
+        status = _required_string(model_manifest, "status", model_id)
+        if status != "verified":
+            reason = _required_string(model_manifest, "reason", model_id)
+            raise CheckpointIntegrityError(
+                f"{model_id} checkpoint verification is {status}: {reason}"
+            )
+        files = _object_mapping(model_manifest.get("files"), f"{model_id}: files")
+        if not files:
+            raise CheckpointIntegrityError(f"{model_id} integrity manifest has no files")
+        for manifest_path, raw_expectation in files.items():
+            _safe_manifest_path(manifest_path, model_id)
+            expectation = _object_mapping(raw_expectation, f"{model_id}:{manifest_path}")
+            algorithm = _required_string(expectation, "algorithm", f"{model_id}:{manifest_path}")
+            digest = _required_string(expectation, "digest", f"{model_id}:{manifest_path}")
+            size = _required_int(expectation, "size_bytes", f"{model_id}:{manifest_path}")
+            expected_length = {"git-sha1": 40, "sha256": 64}.get(algorithm)
+            if (
+                expected_length is None
+                or len(digest) != expected_length
+                or re.fullmatch(r"[0-9a-f]+", digest) is None
+                or size == 0
+            ):
+                raise CheckpointIntegrityError(
+                    f"{model_id}:{manifest_path} has an invalid {algorithm!r} byte identity"
+                )
 
     def integrity(self) -> Mapping[str, object]:
         """The tracked byte manifest for every explicitly downloaded checkpoint.
@@ -654,7 +779,7 @@ class ModelStore:
                 f"no pinned revision for {repo_id!r}. Downloading a branch head makes the "
                 f"weights unidentifiable and every measurement taken against them "
                 f"unreproducible. Resolve the commit and record it in "
-                f"{self.root / 'revisions.json'}:\n"
+                f"{self.metadata_root / 'revisions.json'}:\n"
                 f'  {{"{repo_id}": "<40-hex commit sha>"}}\n'
                 f'  python -c "from huggingface_hub import HfApi; '
                 f"print(HfApi().model_info('{repo_id}').sha)\""
@@ -662,7 +787,7 @@ class ModelStore:
         if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
             raise RevisionNotPinned(
                 f"invalid pinned revision for {repo_id!r}: {revision!r}. Expected one full "
-                f"lowercase 40-hex commit SHA in {self.root / 'revisions.json'}"
+                f"lowercase 40-hex commit SHA in {self.metadata_root / 'revisions.json'}"
             )
         return revision
 
@@ -796,7 +921,7 @@ class ModelStore:
         status = self._status_for(entry)
         if not status.available:
             if status.provisioning is Provisioning.WEIGHTS:
-                remedy = "Run scripts/fetch-models.sh."
+                remedy = "Run hawedit-fetch-models (install `hawedit[models]` first)."
             elif status.provisioning is Provisioning.SYSTEM:
                 remedy = "Run scripts/fetch-ffmpeg.sh."
             elif status.provisioning is Provisioning.CLOUD:

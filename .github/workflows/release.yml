@@ -103,8 +103,13 @@ jobs:
           test "${#wheels[@]}" -eq 1
           python -m venv "$SMOKE_ROOT"
           "$SMOKE_ROOT/bin/python" -m pip install \
-            --disable-pip-version-check --no-input --only-binary=:all: "${wheels[0]}"
+            --disable-pip-version-check --no-input --no-index --no-deps "${wheels[0]}"
+          lock="$("$SMOKE_ROOT/bin/python" -I -m hawedit.environment --show-lock base)"
+          "$SMOKE_ROOT/bin/python" -m pip install \
+            --disable-pip-version-check --no-input --require-hashes --only-binary=:all: \
+            -r "$lock"
           "$SMOKE_ROOT/bin/python" -m pip check
+          "$SMOKE_ROOT/bin/python" -I -m hawedit.environment --lock "$lock"
           cd "$RUNNER_TEMP"
           "$SMOKE_ROOT/bin/python" - <<'PY'
           from hawedit.models import INSTALLED_INTEGRITY, INSTALLED_REVISIONS, INSTALLED_SOURCES
@@ -127,6 +132,7 @@ jobs:
             hawedit-editorial-bench \
             hawedit-asr-setup \
             hawedit-credentials \
+            hawedit-fetch-models \
             hawedit-release
           do
             "$SMOKE_ROOT/bin/$command" --help >/dev/null

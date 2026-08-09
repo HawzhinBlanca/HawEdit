@@ -75,6 +75,12 @@ cloud = [
     "google-auth==2.56.3", # Apache-2.0 — measured Vertex ADC bearer authentication
 ]
 
+models = [
+    # Download code is optional, but its version is part of the checkpoint publication boundary.
+    # The command refuses drift instead of installing into its own environment at runtime.
+    "huggingface-hub==0.36.2", # Apache-2.0
+]
+
 [build-system]
 requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
@@ -92,6 +98,17 @@ where = ["src"]
     "models/revisions.json",
     "models/integrity.json",
 ]
+"share/hawedit/requirements" = [
+    "requirements/host-base-linux-py311.txt",
+    "requirements/host-base-linux-py312.txt",
+    "requirements/host-base-windows-py311.txt",
+    "requirements/host-base-windows-py312.txt",
+    "requirements/host-models-linux-py311.txt",
+    "requirements/host-models-linux-py312.txt",
+    "requirements/host-models-windows-py311.txt",
+    "requirements/host-models-windows-py312.txt",
+]
+"share/hawedit/security" = ["security/wsl-asr-vex.json"]
 
 [project.scripts]
 hawedit = "hawedit.pipeline:main"
@@ -99,6 +116,7 @@ hawedit-asr-bench = "hawedit.bench:main"
 hawedit-asr-setup = "hawedit.wsl_setup:main"
 hawedit-credentials = "hawedit.credentials:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
+hawedit-fetch-models = "hawedit.model_fetch:main"
 hawedit-release = "hawedit.release:main"
 
 [tool.pytest.ini_options]
@@ -140,6 +158,9 @@ module = [
   "omnilingual_asr.*",
   "qwen_asr.*",
   "fairseq2.*",
+  # Imported lazily only when auditing marked optional requirements; base-only wheel installs
+  # deliberately do not require packaging at runtime.
+  "packaging.*",
   # The `gpu` extra. CI installs `.[dev,media]` only — §6 puts Stage 0 on CPU and the CUDA
   # build of torch is ~2 GB of runner disk for kernels nothing in the gate calls — so these
   # resolve on hawapc01 and not on a clean runner. Every import of them is already inside a

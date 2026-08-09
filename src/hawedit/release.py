@@ -42,6 +42,15 @@ _REQUIRED_WHEEL_MEMBERS: Final = (
     "share/hawedit/models/sources.json",
     "share/hawedit/models/revisions.json",
     "share/hawedit/models/integrity.json",
+    "share/hawedit/requirements/host-base-linux-py311.txt",
+    "share/hawedit/requirements/host-base-linux-py312.txt",
+    "share/hawedit/requirements/host-base-windows-py311.txt",
+    "share/hawedit/requirements/host-base-windows-py312.txt",
+    "share/hawedit/requirements/host-models-linux-py311.txt",
+    "share/hawedit/requirements/host-models-linux-py312.txt",
+    "share/hawedit/requirements/host-models-windows-py311.txt",
+    "share/hawedit/requirements/host-models-windows-py312.txt",
+    "share/hawedit/security/wsl-asr-vex.json",
 )
 _REQUIREMENT_NAME: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _EXACT_REQUIREMENT_VERSION: Final = re.compile(

@@ -23,9 +23,7 @@ jobs:
       - name: install the complete gate environment on Python 3.12
         run: |
           python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu \
-            -e '.[dev,media]'
+          bash scripts/install-host.sh .venv/bin/python gate
 
       - name: fetch the pinned ffmpeg for Python 3.12 coverage
         run: bash scripts/fetch-ffmpeg.sh
@@ -49,11 +47,9 @@ jobs:
       - name: install
         run: |
           python -m venv .venv
-          .venv/bin/pip install --upgrade pip
           # CPU wheels: §6 puts Stage 0 (ffmpeg, scene detect, VAD) on CPU by design, and the
           # CUDA build of torch is ~2 GB of runner disk for kernels nothing here calls.
-          .venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu \
-            -e '.[dev,media]'
+          bash scripts/install-host.sh .venv/bin/python gate
 
       # §4.3.6's golden render is a pixel comparison, so it needs the *pinned* build the
       # reference was rendered from — a distro ffmpeg is a different libass and would fail on

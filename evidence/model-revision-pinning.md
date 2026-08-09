@@ -2,6 +2,11 @@
 
 > Measured 2026-08-09 on hawapc01 against `cb5194e`, live against huggingface.co.
 
+> Current implementation amendment (D-121): the shell transaction described below was replaced
+> by the wheel-installed `hawedit.model_fetch` transaction. Historical measurements and mutation
+> results remain the evidence for why commit pins were introduced; current transaction evidence is
+> in `evidence/checkpoint-provisioning.md`.
+
 `fetch-models.sh` called `snapshot_download(repo_id=source, local_dir=dest)` — no `revision=`.
 That resolves whatever the branch head points at on the day it runs, so two machines can hold
 different weights under one §7 name and nothing reports it.
@@ -83,10 +88,10 @@ exactly as it does for an unconfigured source.
 Revision pinning is also the checksum: the Hub resolves a commit to exact file hashes, so a
 pinned download either yields those bytes or fails.
 
-## The tests execute the script, they do not grep it
+## The tests execute the transaction, they do not grep it
 
-`_fetcher_download_block()` extracts the real download block out of `fetch-models.sh` and
-`exec`s it against a stubbed `huggingface_hub`, asserting the call is
+The compatibility harness imports and executes the real `hawedit.model_fetch.fetch_checkpoint`
+transaction against a stubbed `huggingface_hub`, asserting the call is
 
 ```python
 {"repo_id": "Qwen/repo", "revision": "bbbb…bbbb", "local_dir": "…/dest"}
@@ -110,8 +115,8 @@ CAUGHT   comment keys are treated as repositories
 6/6
 ```
 
-Two of those mutate `fetch-models.sh` rather than `models.py`, which is what confirms the tests
-cover the chain the operator actually runs.
+The original mutation run included the checkout script. D-121 now separately pins the shell file
+as a transaction-free launcher and tests the installed console entry point and optional dependency.
 
 ## What this does not fix
 

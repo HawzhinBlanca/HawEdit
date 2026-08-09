@@ -171,7 +171,7 @@ def test_missing_weights_are_lazy_at_construction_and_refused_at_runtime(tmp_pat
     embedder = QwenVisualEmbedder(absent)
 
     assert embedder.model_dir == absent
-    with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
+    with pytest.raises(EmbedderUnavailable, match="hawedit-fetch-models"):
         embedder.embed_text("کوردی")
 
 

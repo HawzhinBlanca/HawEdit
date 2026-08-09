@@ -6,7 +6,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from hawedit import wsl_setup
+from hawedit import wsl_asr_locks, wsl_setup
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,11 +44,12 @@ def test_fonttools_pin_contains_the_cve_2025_66034_fix() -> None:
     base_version = _base_dependency_version(document, "fonttools")
     assert base_version >= (4, 60, 2)
 
-    setup_versions = re.findall(r"'fonttools==(\d+(?:\.\d+)+)'", wsl_setup._SETUP_SCRIPT)
-    assert len(setup_versions) == 2
-    assert {tuple(int(part) for part in version.split(".")) for version in setup_versions} == {
-        base_version
-    }
+    locked_version = tuple(
+        int(part) for part in wsl_asr_locks.LOCKED_DISTRIBUTIONS["fonttools"].split(".")
+    )
+    assert locked_version == base_version
+    assert wsl_setup._EXPECTED_PACKAGES["fonttools"] == ".".join(str(part) for part in base_version)
+    assert wsl_setup._EXPECTED_LOCKS["runtime_sha256"] == wsl_asr_locks.RUNTIME_LOCK_SHA256
 
 
 def test_pytest_pin_contains_the_pysec_2026_1845_fix() -> None:
