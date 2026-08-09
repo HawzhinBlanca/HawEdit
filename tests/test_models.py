@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from hawedit import models
 from hawedit.models import (
     ModelNotProvisioned,
     ModelStore,
@@ -381,3 +382,71 @@ def test_the_fetcher_refuses_a_repository_that_is_not_pinned(
     finally:
         monkeypatch.undo()
         importlib.reload(hawedit.models)
+
+
+# --- D-099: downloaded is not runnable ------------------------------------------------------
+
+
+def test_a_downloaded_checkpoint_whose_loader_is_missing_is_not_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The readiness report is read as "can this stage run", so disk alone cannot answer it.
+
+    Measured 2026-08-09: the report said `OK ... weights (10.1 GB)` for the rzgar validator while
+    `transformers` 4.57.6 has no `qwen3_asr` module, `AutoModel` cannot map the config's
+    `model_type`, and `Qwen3ASRForConditionalGeneration` is not importable. M1.4's row then
+    concluded in prose that "what is missing is the composition, not the download" about a
+    checkpoint nothing on this machine can load. D-099.
+    """
+    entry = REGISTRY["MCG-NJU/VideoChat3-4B"]
+    weights = store(tmp_path).path_for(entry)
+    weights.mkdir(parents=True)
+    (weights / "model.safetensors").write_bytes(b"x" * 2048)
+    monkeypatch.setattr(
+        models, "_WEIGHTS_RUNTIMES", {entry.model_id: "hawedit_loader_that_is_not_installed"}
+    )
+
+    status = next(s for s in store(tmp_path).status() if s.model_id == entry.model_id)
+    assert status.available is False
+    assert "hawedit_loader_that_is_not_installed" in status.detail
+    assert "cannot be loaded here" in status.detail
+    assert status.size_bytes == 2048, "the weights are still on disk and still worth reporting"
+
+
+def test_the_same_checkpoint_is_available_once_its_loader_can_be_imported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control. Declaring a runtime must not by itself make a component unavailable.
+
+    Without this, "every entry in the runtime map reports MISS" passes the test above and would
+    retire three working components — VideoChat3, TimeLens2 and the Qwen embedding pair all load
+    today, and M5.4/M6.3 have the decoded-frame evidence to prove it.
+    """
+    entry = REGISTRY["MCG-NJU/VideoChat3-4B"]
+    weights = store(tmp_path).path_for(entry)
+    weights.mkdir(parents=True)
+    (weights / "model.safetensors").write_bytes(b"x" * 2048)
+    monkeypatch.setattr(models, "_WEIGHTS_RUNTIMES", {entry.model_id: "json"})
+
+    status = next(s for s in store(tmp_path).status() if s.model_id == entry.model_id)
+    assert status.available is True
+    assert status.detail.startswith("weights from ")
+    assert "cannot be loaded" not in status.detail
+
+
+def test_the_validators_readiness_tracks_whether_its_loader_is_installed(tmp_path: Path) -> None:
+    """The real entry, asserted as a coupling rather than as today's answer.
+
+    `qwen_asr` is absent here and in CI, so hardcoding "unavailable" would pass for the wrong
+    reason and flip the day someone installs it. This states the property instead: the validator
+    is available exactly when the loader its model card names can be imported.
+    """
+    entry = REGISTRY["rzgar/qwen3-asr-sorani-kurdish-ckb-v1"]
+    weights = store(tmp_path).path_for(entry)
+    weights.mkdir(parents=True)
+    (weights / "model.safetensors").write_bytes(b"x" * 1024)
+
+    status = next(s for s in store(tmp_path).status() if s.model_id == entry.model_id)
+    assert status.available is models._is_importable("qwen_asr")
+    if not status.available:
+        assert "qwen_asr" in status.detail

@@ -4095,3 +4095,60 @@ historical `(64, 64)` CAUGHT, `MATERIAL_GAIN_RATIO` drifting from the value just
 the discovery regex matching nothing — a check that silently examines zero statements — CAUGHT by the
 `>= 7` floor, which fired for real while this was being written and is the reason it exists.
 `evidence/recorded-thresholds-unpinned.md`.
+
+## D-099
+
+**The readiness report said `OK` for a checkpoint nothing on this machine can load.** I picked M1.4 to
+close, on its own written shortfall: "its weights **are** present on this machine (10.1 GB, `python -m
+hawedit.models` reports `OK`), so what is missing is the composition, not the download". The premise
+did not survive contact.
+
+The machine is capable — torch 2.13.0+cu130, CUDA available, 2 devices, transformers 4.57.6,
+accelerate. The loader is absent:
+
+```
+config.json  architectures: ['Qwen3ASRForConditionalGeneration']  model_type: qwen3_asr
+transformers.Qwen3ASRForConditionalGeneration  : NO
+transformers.models.qwen3_asr                  : ModuleNotFoundError
+AutoModel can map 'qwen3_asr'                  : False
+```
+
+`config.json` names the installed version, 4.57.6, and it still cannot load it. The model card gives
+the reason: `from qwen_asr import Qwen3ASRModel  # pip install qwen-asr` — a separate package. So the
+composition was never what was missing, and writing the adapter first would have produced code that
+cannot run, provable only against a stub, which is what D-097 had just finished measuring the cost of.
+
+**The root defect.** `models.py`'s weights branch asked one question — is the directory non-empty.
+`_PIP_MODULES` already existed for components whose *runtime* is the gating fact but is consulted only
+for `Provisioning.PIP` entries, so a checkpoint needing both a download **and** a loader had no way to
+say so. The report is read as "can this stage run" and was answering "is it on disk".
+
+**Decision: a weights entry may declare the loader it needs, and readiness consults it.**
+`_WEIGHTS_RUNTIMES` maps the model id to an import name; a present checkpoint with a missing loader
+reports unavailable, with the loader named and the size still shown — the weights really are there, and
+an operator deciding what to fetch needs to know not to fetch them again. 10/15 becomes **9/15**, which
+is the truer number.
+
+**The import name is evidence, not a guess.** `qwen_asr` comes from the checkpoint's own model card,
+quoted above. Only that one entry is mapped: VideoChat3-4B, TimeLens2-4B and the Qwen embedding pair
+demonstrably load today with decoded-frame evidence behind M5.4 and M6.3, so declaring runtimes for
+them would be inventing requirements.
+
+**Rejected: `pip install qwen-asr`.** One command would have turned the report green. It needs a
+licence under D-002 (§7 records the *model* as Apache 2.0; the loader package is a separate artifact
+whose licence I have not read — "never guess a licence"), a pin and checksum under the supply-chain
+rule, and it would make the local gate and CI's `.[dev,media]` disagree about which program they test,
+which is the failure D-092 and D-093 were about. It is Hawa's call and belongs in a decision with the
+licence quoted. `BLOCKED.md` #16.
+
+**Rejected: leaving the report as it was and only correcting M1.4's prose.** The row was wrong because
+the artifact it quoted was wrong. Fixing the sentence and not the report would leave the next reader —
+or the next agent — to draw the same conclusion from the same `OK`.
+
+**Mutation audit 4/4.** The runtime check never firing CAUGHT (2), the check not reaching `available`
+CAUGHT (2), the validator's entry dropped from the map CAUGHT (1) — by the test that asserts the
+*coupling* (available exactly when `qwen_asr` imports) rather than today's answer, so it holds in CI
+where the loader is also absent and keeps holding the day someone installs it — and **any declared
+runtime marking a component unavailable CAUGHT (1) by the control alone**. Without that control,
+"every mapped entry reports MISS" passes everything else here and retires three working components.
+`evidence/downloaded-is-not-runnable.md`.

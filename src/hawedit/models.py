@@ -78,6 +78,17 @@ _PIP_MODULES: Final[Mapping[str, str]] = {
     "omniASR_CTC_3B_v2": "omnilingual_asr",
 }
 
+# Weights that need a loader this environment does not already have. Downloaded is not runnable,
+# and reporting `OK` for the first while meaning the second is how M1.4's row came to say "what
+# is missing is the composition, not the download" about a model that cannot be loaded here at
+# all. Measured 2026-08-09: `transformers` 4.57.6 has no `qwen3_asr` module, `AutoModel` cannot
+# map the config's `model_type`, and `Qwen3ASRForConditionalGeneration` is not importable — while
+# the checkpoint's own model card says `from qwen_asr import Qwen3ASRModel  # pip install
+# qwen-asr`. The import name comes from that card, not from a guess. D-099.
+_WEIGHTS_RUNTIMES: Final[Mapping[str, str]] = {
+    "rzgar/qwen3-asr-sorani-kurdish-ckb-v1": "qwen_asr",
+}
+
 
 class ModelNotProvisioned(RuntimeError):
     """Raised when a stage is asked to run without the weights it needs."""
@@ -305,12 +316,24 @@ class ModelStore:
             source = self.source_for(entry)
         except SourceNotConfigured:
             source = "<source not configured>"
+
+        # A checkpoint on disk that nothing here can load is not an available component. The
+        # report is read as "can this stage run", so downloaded-but-unloadable has to say so.
+        runtime = _WEIGHTS_RUNTIMES.get(entry.model_id)
+        runtime_missing = runtime is not None and not _is_importable(runtime)
+        detail = f"weights from {source}" if present else f"not downloaded ({source})"
+        if present and runtime_missing:
+            detail = (
+                f"weights from {source} are on disk, but the loader {runtime!r} is not installed "
+                f"— the checkpoint cannot be loaded here, so this component cannot run"
+            )
+
         return ModelStatus(
             model_id=entry.model_id,
             component=entry.component,
             provisioning=entry.provisioning,
-            available=present,
-            detail=f"weights from {source}" if present else f"not downloaded ({source})",
+            available=present and not runtime_missing,
+            detail=detail,
             path=path if present else None,
             size_bytes=_directory_size(path) if present else None,
         )

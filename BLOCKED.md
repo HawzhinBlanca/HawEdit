@@ -746,3 +746,43 @@ Until it is answered,
 `tests/test_timelens.py::test_one_millisecond_of_overlap_currently_qualifies_as_relevant` pins the
 measurement so the relevance gate cannot be read as bounding how far evidence may reach. That test
 going red means the fix landed — re-status M6.1, close this entry, delete the test.
+
+## #16 · The validator's weights are here and its loader is not
+
+**Measured 2026-08-09 on hawapc01.** `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` — §3 Stage 1's validator,
+Apache 2.0 per §7 — is downloaded in full: `model.safetensors` is 4,076,191,640 bytes, 10.1 GB with the
+rest of the checkpoint. The machine is capable: torch 2.13.0+cu130, CUDA available, 2 devices,
+transformers 4.57.6 and accelerate installed.
+
+It still cannot be loaded:
+
+```
+config.json  architectures: ['Qwen3ASRForConditionalGeneration']   model_type: qwen3_asr
+transformers.Qwen3ASRForConditionalGeneration   : NO
+transformers.models.qwen3_asr                   : ModuleNotFoundError
+AutoModel can map 'qwen3_asr'                   : False
+```
+
+`config.json` names `transformers_version: 4.57.6`, the version installed, and that version has no
+`qwen3_asr` module. The checkpoint's own model card gives the loader:
+`from qwen_asr import Qwen3ASRModel  # pip install qwen-asr`.
+
+**What is needed, and why it is not mine to do.** One package. It was not installed because:
+
+1. **A licence.** D-002 admits no dependency without one. §7 records the *model* as Apache 2.0; the
+   `qwen-asr` package is a separate artifact and I have not read its licence. "Never guess a licence."
+2. **A pin and a checksum.** The supply chain is pinned; adding a runtime dependency outside that is
+   the thing `models/revisions.json` exists to prevent.
+3. **CI installs `.[dev,media]`.** A locally-installed loader would make the local gate and the gate of
+   record disagree about which program they are testing — the failure D-092 and D-093 were about.
+
+So this is Hawa's call, and it belongs in a decision with the licence quoted.
+
+**What it blocks.** M1.4's shortfall as written ("what is missing is the composition, not the
+download") was wrong: the composition cannot be written against a loader that is not there, and
+writing it anyway would produce an adapter provable only against a stub — which is what D-097 had just
+finished measuring the cost of. M0.11's rzgar adapter waits on the same package.
+
+**What it does not block.** Nothing else. The escalation *policy* (`select_for_validation`, D-015) is
+implemented and tested; it simply has no consumer yet, and `python -m hawedit.models` now says so
+honestly — 9/15 rather than 10/15, with the reason in the detail line (D-099).
