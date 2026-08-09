@@ -74,7 +74,7 @@ All remote actions are immutable full commits resolved from their official relea
   one declared custom self-hosted label `hawedit-gpu` was ignored explicitly.
 
 The local workflow/security set passed, and actionlint accepted the edited release workflow. The combined
-canonical gate then passed 1,823/1,823 with zero skips; Ruff, format, Mypy and fresh JUnit evidence
+canonical gate then passed 1,825/1,825 with zero skips; Ruff, format, Mypy and fresh JUnit evidence
 passed. Fresh local Python 3.11.15 and 3.12.13 venvs also installed and executed the exact same
 edited-tree wheel contract; see `evidence/python-support.md`.
 
