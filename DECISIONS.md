@@ -5499,3 +5499,70 @@ reported as SKIPPED rather than counting — replaced by `pass`, it is CAUGHT.
 behaviour: the merge does claim in rank order, does sort its output, and does take the better rank.
 The row's claims are true; three of them were unheld.
 `evidence/adversarial-pass-11-2026-08-09.md`.
+
+## D-125
+
+**Adversarial pass #12 took M3.5 — captions timed to the clip, DONE and never attacked — and every
+one of its eight mechanisms held. The gap was where they are proved: not once through the function
+the product calls.**
+
+M3.5's cell calls its origin "the most serious defect found so far": `build_ass` wrote
+source-absolute timestamps into a stream ffmpeg had already cut, and the result was a valid,
+playable, entirely caption-free MP4 with **0 bytes** differing from an uncaptioned render.
+
+```
+CAUGHT  the ASS carries source-absolute timestamps again (the defect)
+CAUGHT  a sentence starting before the clip is captioned anyway
+CAUGHT  a sentence running past the end of the clip is captioned anyway
+CAUGHT  an ASS with no Dialogue line at all is accepted
+CAUGHT  an ASS whose captions all fall outside the clip is accepted
+CAUGHT  full containment required instead of partial overlap
+CAUGHT  the burn no longer checks the file it is handed
+CAUGHT  libass wraps the captions instead of our own line breaks
+
+8/8
+```
+
+**And then the measurement that matters.** Removing the `- clip_in_ms` shift and running only the
+files that drive the real renderer:
+
+```
+tests/test_render.py + tests/test_pipeline.py     0 failures, exit 0
+```
+
+Every catcher is in `tests/test_caption_timing.py`, and its pixel proof builds the ffmpeg command by
+hand. `render_clip` and `run_pipeline` never noticed.
+
+**Why, and it is not a bug in those tests.** `test_render.py`'s `_write_ass` calls
+`build_ass((_sentence(),))` with no offset, and `_sentence()` is 0..1600 **in clip time** — its
+docstring says so. Handing a renderer an already-clip-relative caption file is exactly right for a
+renderer test. The consequence is that the *composition* — §4.2's source-time sentences →
+`build_ass(clip_in_ms=clip.in_ms)` → `render_clip` → pixels — is never assembled by any test that
+uses the product's own encoder. And `run_pipeline`'s fixture clip starts at ~100 ms, where the
+mistake still overlaps the window and libass draws something anyway.
+
+That is the shape M3.5 was born from, one level up: the fix is proved where the offset is chosen by
+the test, and the product path only ever sees offsets too small to matter.
+
+**Decision: one test drives the whole composition through `render_clip` at 2000 ms, asserted on
+decoded pixels, plus a control that the unshifted file is refused at the burn.**
+
+**2000 ms is derived, not picked.** `_sentence()` is 1600 ms long, so an unshifted caption lands
+*entirely* outside a clip starting at 2000 and `assert_captions_within_clip` can refuse it. At the
+500 ms this file's existing clip uses, the same mistake still overlaps and draws — which is why 500
+was never enough.
+
+**The control is the refusal, not a second difference.** Without it the positive test passes for a
+renderer that silently encodes a caption-free MP4, which is precisely what shipped before M3.5.
+
+**Rejected: changing `_sentence()` to source time.** It is used by nine tests in that file as a
+clip-relative caption line, which is what a renderer should be handed; rewriting it would churn
+those and lose the distinction the new test exists to make.
+
+**Rejected: asserting the ASS text instead of the pixels.** `test_caption_timing.py` already does
+that, and it is the assertion that was green while the clip shipped bare.
+
+Measured after: removing the shift now fails
+`test_the_composed_path_burns_captions_into_a_clip_from_mid_media` in `test_render.py`. 8/8 held
+before and after.
+`evidence/adversarial-pass-12-2026-08-09.md`.

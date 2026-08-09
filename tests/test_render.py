@@ -823,3 +823,123 @@ def test_one_frame_is_read_from_the_source_not_assumed_to_be_forty_ms(tmp_path: 
         "loose by a fifth of a frame, and too loose is the direction that ships a truncated clip"
     )
     assert frame_duration_ms(FIXTURE, find_ffmpeg()) == 40, "the 25 fps fixture is still 40 ms"
+
+
+# --- what adversarial pass #12 found unprotected (D-125) --------------------------------
+
+# M3.5's defect was `build_ass` writing source-absolute timestamps into a stream ffmpeg had
+# already cut. Every mechanism of the fix is held (8/8), but measured: removing the
+# `- clip_in_ms` shift leaves **every test in this file and in test_pipeline.py green**. The
+# proof lives in `test_caption_timing.py`, on a hand-built ffmpeg invocation — and the ASS this
+# file hands `render_clip` is already clip-relative (`_sentence()` is 0..1600 in clip time),
+# which is legitimate for a renderer test and means the *composition* never reaches the product's
+# own renderer. That is the shape M3.5 came from: proven where the offset is chosen, exercised
+# where the offset is too small to matter.
+#
+# 2000 ms is not an arbitrary offset: `_sentence()` is 1600 ms long, so an unshifted caption
+# lands entirely outside a clip that starts at 2000 and `assert_captions_within_clip` can refuse
+# it. At the 500 ms this file's clip uses, the same mistake still overlaps and draws.
+SOURCE_TIME_SENTENCE_IN_MS = 2_000
+SOURCE_TIME_SENTENCE_OUT_MS = 3_600
+
+
+def _mid_media_clip() -> Clip:
+    """A clip taken from the middle of the fixture, spanning one spoken sentence."""
+    boundary = fuse_boundary(
+        BoundaryInputs(
+            anchor_in_ms=SOURCE_TIME_SENTENCE_IN_MS,
+            anchor_out_ms=SOURCE_TIME_SENTENCE_OUT_MS,
+            sentence_complete=True,
+        )
+    )
+    return replace(
+        _clip(), in_ms=boundary.final_in_ms, out_ms=boundary.final_out_ms, boundary=boundary
+    )
+
+
+def _source_time_sentence() -> Sentence:
+    """The same line, timed on the *source* clock — which is what §4.2 produces."""
+    return Sentence(
+        words=(
+            Word(w="ڕۆژنامەوانی", start_ms=SOURCE_TIME_SENTENCE_IN_MS, end_ms=2_800, conf=0.95),
+            Word(w="کوردی", start_ms=2_800, end_ms=SOURCE_TIME_SENTENCE_OUT_MS, conf=0.95),
+        ),
+        complete=True,
+    )
+
+
+@needs_ffmpeg
+def test_the_composed_path_burns_captions_into_a_clip_from_mid_media(tmp_path: Path) -> None:
+    """`build_ass(clip_in_ms=clip.in_ms)` then the real `render_clip`, decoded.
+
+    The whole composition, through the function the product calls, at an offset where getting it
+    wrong is visible. Asserted on pixels against an uncaptioned render of the same span, because
+    a caption-free clip is valid, playable and passes every dimension-and-duration check.
+    """
+    binary = find_ffmpeg()
+    assert binary is not None
+    clip = _mid_media_clip()
+    duration_ms = clip.out_ms - clip.in_ms
+
+    ass = tmp_path / "captions.ass"
+    ass.write_text(
+        build_ass((_source_time_sentence(),), clip_in_ms=clip.in_ms, clip_duration_ms=duration_ms),
+        encoding="utf-8",
+    )
+    captioned = render_clip(
+        clip, FIXTURE, ass, FONTS, tmp_path / "captioned.mp4", SOURCE_WIDTH, SOURCE_HEIGHT
+    )
+    assert captioned.captions_burned_in
+
+    bare = tmp_path / "bare.mp4"
+    subprocess.run(
+        [
+            str(binary),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{clip.in_ms / 1000:.3f}",
+            "-t",
+            f"{duration_ms / 1000:.3f}",
+            "-i",
+            str(FIXTURE),
+            "-vf",
+            crop_filter(SOURCE_WIDTH, SOURCE_HEIGHT),
+            "-c:v",
+            "libx264",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            "-y",
+            str(bare),
+        ],
+        check=True,
+    )
+    with_captions = _frame(Path(captioned.path), 0.5, tmp_path / "with.rgb").read_bytes()
+    without = _frame(bare, 0.5, tmp_path / "without.rgb").read_bytes()
+    assert len(with_captions) == len(without) == VERTICAL_WIDTH * VERTICAL_HEIGHT * 3
+    differing = sum(1 for a, b in zip(with_captions, without, strict=True) if a != b)
+    assert differing > 1_000, (
+        f"only {differing} bytes differ between the captioned and uncaptioned renders of a clip "
+        f"cut from {clip.in_ms} ms — libass drew nothing and the clip would ship bare (§4.3)"
+    )
+
+
+@needs_ffmpeg
+def test_an_unshifted_caption_file_is_refused_at_the_burn(tmp_path: Path) -> None:
+    """The control, and the defect itself through the product's renderer.
+
+    `build_ass` without the clip's offset writes the sentence at 2000..3600 while the clip's own
+    window is 0..1600, so nothing is drawable and `render_clip` must refuse rather than encode a
+    caption-free MP4. Without this the test above passes for a renderer that silently ships one.
+    """
+    clip = _mid_media_clip()
+    ass = tmp_path / "unshifted.ass"
+    ass.write_text(build_ass((_source_time_sentence(),)), encoding="utf-8")
+    from hawedit.captions import CaptionsOutsideClip
+
+    with pytest.raises(CaptionsOutsideClip):
+        render_clip(clip, FIXTURE, ass, FONTS, tmp_path / "never.mp4", SOURCE_WIDTH, SOURCE_HEIGHT)
