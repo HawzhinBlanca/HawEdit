@@ -4940,3 +4940,32 @@ hit line 105, not the guard at 169, so the "proof" measured nothing and reported
 line number fixed it. Both errors were caught by checking the result rather than trusting it, which is
 the only reason this entry is not a false claim.
 `evidence/a-test-that-could-delete-itself.md`.
+
+## D-149 - A fetched ffmpeg is a receipted generation, not two copied files
+
+The archive source was already immutable: an exact upstream commit and the Git-LFS object SHA-256.
+The local installation was not. `curl` and `unzip` wrote predictable shared paths, ffmpeg and
+ffprobe were copied independently into their final names, and any executable `ffmpeg` caused the
+download branch to be skipped even when that executable failed the RTL verification immediately
+afterward. An interrupted or corrupt install was therefore a permanent manual-repair state.
+
+**Decision:** the Linux fetch runs under an owner-controlled `.ffmpeg` root and a no-truncate,
+single-link kernel lock whose descriptor is path-bound through `/proc`. It therefore releases after
+process death without a stale-lock guess. The fetch downloads and extracts into an unpredictable
+mode-0700 attempt, authenticates the archive
+before extraction, requires exactly one ffmpeg/ffprobe pair, and verifies both before publication.
+The pair moves into a unique generation with its own `SHA256SUMS`. Exact four-line launchers address
+that generation; ffprobe is published first and ffmpeg last, so the path consumers discover is the
+commit marker. `current-generation`, both launchers, both binary hashes, and the RTL capability are
+revalidated on every reuse. A mismatch is repaired through a new private generation.
+
+**Trust boundary:** an explicit `HAWEDIT_FFMPEG`, a Windows-local `ffmpeg.exe`, or a PATH build remains
+an operator-supplied executable. The script verifies its libass/HarfBuzz/FriBidi capability and does
+not mislabel it as content authenticated by HawEdit. Same-account mutation after a successful check
+is outside the provisioning threat boundary; a later setup invocation detects it for fetched bytes.
+GPL redistribution review remains required before bundling the external executable (D-021).
+
+Executable tests drive the real shell transaction with controlled curl/unzip programs. They prove
+repair of a corrupt executable, refusal before publication, re-download after a byte mutation that
+preserves behavior, hardlink-victim preservation, linked/non-directory root refusal, private curl
+output, cleanup, and lock exclusion. `evidence/ffmpeg-provisioning-transaction.md`.
