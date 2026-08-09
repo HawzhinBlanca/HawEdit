@@ -5735,3 +5735,20 @@ pipeline names eight. The upstream pass called this D-129; the readiness branch 
 identifier, so this semantic integration is D-159.
 
 `evidence/adversarial-pass-16-2026-08-09.md`.
+
+## D-160 - Unmeasured benchmark aggregates remain None
+
+Adversarial pass #17 attacked the M0.7 ASR throughput harness. Seven of nine mutations were already
+caught. The two survivors violated the project's explicit rule one layer above individual
+measurements: an empty score set could publish mean/worst RTF as `0.0`, and an aggregate with no
+VRAM probe could publish peak VRAM as `0`. Those values mean instantaneous transcription and zero
+memory use—not missing evidence—and could mislead the capacity plan.
+
+The new tests assert on `ModelReport.to_dict()`, the document downstream planning reads. They drive
+the unprobed case through `run_benchmark` so the aggregation itself is exercised, rather than
+constructing a report one call after the defect. Opposite-direction controls require measured
+0.25/0.75 RTF values and a 17 GiB probe to survive, preventing a blanket `None` implementation from
+passing. No production code changed. The upstream pass called this D-130; the readiness branch
+already used that identifier, so this semantic integration is D-160.
+
+`evidence/adversarial-pass-17-2026-08-09.md`.

@@ -320,6 +320,10 @@ pyannote access, or real-speaker reframing.
 
 ## Upstream adversarial-pass amendments - 2026-08-09
 
+- **M0.7 / D-160:** published benchmark aggregates now have exact absence controls: no scored items
+  emits `None`, never zero, for mean/worst RTF; no VRAM probe emits `None`, never zero, for peak
+  memory. Opposite controls preserve measured RTF and 17 GiB values, and the unprobed case is driven
+  through `run_benchmark` rather than a fabricated report. `evidence/adversarial-pass-17-2026-08-09.md`.
 - **M2.7 / D-159:** the suite now contains a real `run_pipeline` result for which every completeness
   requirement is satisfied, then proves that a named skip, no visual windows, or no candidates each
   makes it incomplete. Stage 5's `BoundaryInputs` are also bound to the cuts Stage 0 measured from

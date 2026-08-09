@@ -26,6 +26,8 @@ from hawedit.asr import OmniAsrAdapter as OmniAsrAdapterReal
 from hawedit.bench import (
     MATERIAL_GAIN_RATIO,
     BenchmarkReport,
+    ItemScore,
+    ModelReport,
     decide_canonical,
     run_benchmark,
 )
@@ -512,3 +514,79 @@ def test_the_real_canonical_adapter_reports_its_own_module() -> None:
     assert measurement.adapter_impl == "hawedit.asr.OmniAsrAdapter"
     assert measurement.error is not None, "the failure must still be recorded, not raised"
     assert measurement.result is None
+
+
+# --- what adversarial pass #17 found revertible (D-160) ---------------------------------
+
+
+def _a_score(rtf: float) -> ItemScore:
+    """One scored item; only RTF is material to these aggregate controls."""
+    return ItemScore(
+        item_id=f"item-{rtf}",
+        dialect=None,
+        reference_chars=100,
+        normalized_cer=0.05,
+        spacing_free_cer=0.04,
+        named_entity_error=None,
+        code_switch_error=None,
+        alignment=None,
+        rtf=rtf,
+    )
+
+
+def _unmeasured_report() -> ModelReport:
+    return ModelReport(
+        model_id=INCUMBENT,
+        adapter_impls=("hawedit.asr.OmniAsrAdapter",),
+        scores=(),
+        failed_items=0,
+        long_audio_failure_rate=None,
+        peak_vram_bytes=None,
+    )
+
+
+def test_an_unmeasured_throughput_is_none_in_the_written_report_not_zero() -> None:
+    """Zero RTF means instantaneous transcription, not an absent measurement."""
+    emitted = _unmeasured_report().to_dict()
+    for field in ("mean_rtf", "worst_rtf"):
+        assert emitted[field] is None, f"{field} is {emitted[field]!r}, which reads as measured"
+        assert emitted[field] != 0.0
+
+
+def test_an_unprobed_peak_vram_is_none_in_the_written_report_not_zero() -> None:
+    """Drive the aggregation layer where an empty VRAM set could become a plausible zero."""
+    report = a_run({"hew-1": PERFECT, "muk-1": PERFECT})
+    emitted = report.models[INCUMBENT].to_dict()
+    assert emitted["peak_vram_bytes"] is None, emitted["peak_vram_bytes"]
+    assert emitted["peak_vram_bytes"] != 0
+
+
+def test_a_probed_peak_vram_reaches_the_report() -> None:
+    """Control: refusing invented zeroes must not erase a real VRAM measurement."""
+    session = MeasurementSession(
+        hardware=HAWAPC01,
+        clock=iter([0.0, 6.0, 6.0, 12.0]).__next__,
+        vram_probe=lambda: 17 * 1024**3,
+    )
+    report = run_benchmark(
+        TWO_DIALECT_CORPUS,
+        [ScriptedAdapter(INCUMBENT, {"hew-1": PERFECT, "muk-1": PERFECT})],
+        session,
+    )
+    assert report.models[INCUMBENT].to_dict()["peak_vram_bytes"] == 17 * 1024**3
+
+
+def test_a_measured_throughput_is_still_a_number() -> None:
+    """Control: returning None unconditionally would throw away the measurements."""
+    report = ModelReport(
+        model_id=INCUMBENT,
+        adapter_impls=("hawedit.asr.OmniAsrAdapter",),
+        scores=(_a_score(rtf=0.25), _a_score(rtf=0.75)),
+        failed_items=0,
+        long_audio_failure_rate=None,
+        peak_vram_bytes=17 * 1024**3,
+    )
+    emitted = report.to_dict()
+    assert emitted["mean_rtf"] == pytest.approx(0.5)
+    assert emitted["worst_rtf"] == pytest.approx(0.75)
+    assert emitted["peak_vram_bytes"] == 17 * 1024**3
