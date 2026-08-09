@@ -20,7 +20,7 @@ toward under-splitting: leaving a joined `و` costs recall in the index, which c
 normalized transcript, which nothing absorbs.
 
 The safety property is checked exhaustively rather than by example: **no entry in KLPT's
-24,888-word dictionary is ever split**. That is the whole claim, tested over the whole lexicon.
+24,894-word dictionary is ever split**. That is the whole claim, tested over the whole lexicon.
 """
 
 from __future__ import annotations
@@ -189,10 +189,38 @@ def test_the_index_can_now_match_a_joined_conjunction() -> None:
     )
 
 
-def test_the_evidence_file_records_real_counts() -> None:
+def test_the_evidence_file_records_real_counts(lexicon: tuple[str, ...]) -> None:
+    """Every count in the evidence file, recomputed from the lexicon rather than bounded.
+
+    This asserted `lexicon_entries > 20_000`, `dictionary_words_damaged == 0` and that the
+    unsplittable list matched its own length — so three of the seven recorded numbers were
+    unguarded and one of them was **wrong**: `waw_initial_words` read 491 where the lexicon has
+    504, and the file's own `constructible_joined_forms: 24390` proved it, since
+    24894 − 504 = 24390 while 24894 − 491 = 24403. Two adversarial passes reported the
+    discrepancy and each got the true value wrong in turn. Recomputing is the only version of
+    this test that could have caught it. D-099.
+    """
     evidence = Path(__file__).resolve().parents[1] / "evidence" / "waw-separation.md"
     body = evidence.read_text(encoding="utf-8")
     numbers = json.loads(body.split("```json")[1].split("```")[0])
-    assert numbers["lexicon_entries"] > 20_000
+
+    waw_initial = [word for word in lexicon if word.startswith("و")]
+    constructible = [word for word in lexicon if not word.startswith("و")]
+
+    assert numbers["lexicon_entries"] == len(lexicon)
+    assert numbers["waw_initial_words"] == len(waw_initial)
+    assert numbers["constructible_joined_forms"] == len(constructible)
+    # The file's own arithmetic must close, which is what exposed the wrong figure.
+    assert (
+        numbers["lexicon_entries"] - numbers["waw_initial_words"]
+        == (numbers["constructible_joined_forms"])
+    )
+    assert (
+        numbers["joined_forms_recovered"] + numbers["joined_forms_not_recovered"]
+        == (numbers["constructible_joined_forms"])
+    )
+    recall = numbers["joined_forms_recovered"] / numbers["constructible_joined_forms"] * 100
+    assert round(recall, 2) == numbers["recall_pct"]
+
     assert numbers["dictionary_words_damaged"] == 0
     assert numbers["unsplittable_waw_initial_words"] == len(numbers["unsplittable_examples"])

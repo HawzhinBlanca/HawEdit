@@ -28,12 +28,13 @@ Run over every headword in `klpt/data/ckb-Arab.dic`, after §4.1 normalization.
 {
   "lexicon_entries": 24894,
   "dictionary_words_damaged": 0,
-  "waw_initial_words": 491,
+  "waw_initial_words": 504,
   "unsplittable_waw_initial_words": 19,
   "unsplittable_examples": [
     "وتار", "وترێ", "وتوو", "وتووچی", "وسمە", "وشکێنی", "وشیار", "وشە", "ولێرە",
     "وچان", "وڕمان", "وڕک", "وڕێڵە", "وڕە", "وی", "ویست", "ویلەر", "ویکۆڵ", "وێ"
   ],
+  "constructible_joined_forms": 24390,
   "joined_forms_recovered": 24124,
   "joined_forms_not_recovered": 266,
   "recall_pct": 98.91
@@ -82,5 +83,20 @@ known word, and that is the property that had to hold before it could be turned 
 ## Reproduce
 
 ```bash
-.venv/bin/python -m pytest tests/test_waw.py -q
+PY="$PWD/.venv/Scripts/python.exe" bash scripts/verify.sh   # Windows; POSIX: .venv/bin/python
 ```
+
+Every number above is now recomputed from KLPT's lexicon by
+`tests/test_waw.py::test_the_evidence_file_records_real_counts`, including the arithmetic that
+must close: `lexicon_entries - waw_initial_words == constructible_joined_forms`, and
+`recovered + not_recovered == constructible`. The recall percentage is recomputed too.
+
+> **Corrected 2026-08-09 (D-099).** `waw_initial_words` read **491**; the lexicon has **504**, and
+> this file's own `constructible_joined_forms: 24390` proved it — 24 894 − 504 = 24 390, whereas
+> 24 894 − 491 = 24 403. The old version of the test bounded three of the seven numbers
+> (`lexicon_entries > 20_000`, `dictionary_words_damaged == 0`, and the unsplittable list against
+> its own length) and recomputed none, so the wrong figure sat here through two adversarial passes.
+> Both passes flagged it and both got the true value wrong in turn — one reported "504 with
+> duplicates, 492 distinct"; measured, there are 504 with **zero** duplicates. `lexicon_entries:
+> 24894` was right: KLPT's `.dic` is Hunspell format whose first line is an entry count (`24888`,
+> itself stale in KLPT's data), and the suite's `lexicon` fixture already skips it.
