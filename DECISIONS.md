@@ -5752,3 +5752,24 @@ passing. No production code changed. The upstream pass called this D-130; the re
 already used that identifier, so this semantic integration is D-160.
 
 `evidence/adversarial-pass-17-2026-08-09.md`.
+
+## D-161 - Alignment accuracy must reach the benchmark report
+
+Following D-160's audit of aggregate benchmark values exposed a larger omission: `_score_item`
+computed §8.1 alignment accuracy for every item with reference timings and stored it on
+`ItemScore.alignment`, but `ModelReport.to_dict()` never emitted an alignment field. The last metric
+in §8.1 was computed and discarded at the publication boundary.
+
+`ModelReport.alignment` now micro-aggregates timing evidence by matched words. It publishes matched
+and reference word totals, coverage, matched-word-weighted onset/offset errors and within-tolerance
+rate, the one tolerance, and the count of scored items. It returns `None` when nothing aligned—zero
+milliseconds is a perfect score, not absence—and refuses mixed tolerances rather than averaging
+rates measured against different thresholds. Invalid matched/reference counts also fail closed.
+
+The tests use six timed items across all three dialects, prove the emitted values at a 30 ms shift,
+move beyond the 50 ms threshold with a 120 ms control, require coverage beside errors, hold the
+unmeasured `None` case, and refuse a mixed 50/200 ms report. The field-by-field report schema is
+updated deliberately. Upstream recorded this as D-131; the readiness branch already used that
+identifier, so the integration is D-161.
+
+`evidence/section-8-1s-last-metric-never-reached-the-report.md`.

@@ -320,6 +320,11 @@ pyannote access, or real-speaker reframing.
 
 ## Upstream adversarial-pass amendments - 2026-08-09
 
+- **M0.8 / D-161:** §8.1 alignment accuracy now reaches the published benchmark report instead of
+  ending on each `ItemScore`. The aggregate is weighted by matched words, carries coverage and its
+  exact tolerance, emits `None` when unmeasured, and refuses mixed thresholds. Six timed items and
+  an out-of-threshold control exercise the real report boundary.
+  `evidence/section-8-1s-last-metric-never-reached-the-report.md`.
 - **M0.7 / D-160:** published benchmark aggregates now have exact absence controls: no scored items
   emits `None`, never zero, for mean/worst RTF; no VRAM probe emits `None`, never zero, for peak
   memory. Opposite controls preserve measured RTF and 17 GiB values, and the unprobed case is driven

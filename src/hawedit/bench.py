@@ -155,6 +155,53 @@ class ModelReport:
         return sum(measured) / len(measured) if measured else None
 
     @property
+    def alignment(self) -> dict[str, float | int] | None:
+        """Aggregate §8.1 alignment accuracy over items that produced timing evidence.
+
+        Errors and the within-tolerance rate are weighted by matched words, just as CER is
+        weighted by reference characters. Coverage remains beside the errors so a tiny error
+        over a tiny matched subset cannot look like good alignment. Different tolerances are
+        incomparable and therefore refused rather than averaged.
+        """
+        measured = [score.alignment for score in self.scores if score.alignment is not None]
+        if not measured:
+            return None
+        tolerances = {accuracy.tolerance_ms for accuracy in measured}
+        if len(tolerances) != 1:
+            raise ValueError(
+                f"alignment was scored at {sorted(tolerances)} ms tolerances in one report. "
+                "Averaging rates across different thresholds invents a measurement."
+            )
+        if any(
+            accuracy.matched_words <= 0
+            or accuracy.reference_words < accuracy.matched_words
+            or accuracy.reference_words <= 0
+            for accuracy in measured
+        ):
+            raise ValueError("alignment aggregate contains invalid matched/reference word counts")
+        matched = sum(accuracy.matched_words for accuracy in measured)
+        reference = sum(accuracy.reference_words for accuracy in measured)
+        return {
+            "matched_words": matched,
+            "reference_words": reference,
+            "coverage": matched / reference,
+            "mean_onset_abs_error_ms": sum(
+                accuracy.mean_onset_abs_error_ms * accuracy.matched_words for accuracy in measured
+            )
+            / matched,
+            "mean_offset_abs_error_ms": sum(
+                accuracy.mean_offset_abs_error_ms * accuracy.matched_words for accuracy in measured
+            )
+            / matched,
+            "within_tolerance_rate": sum(
+                accuracy.within_tolerance_rate * accuracy.matched_words for accuracy in measured
+            )
+            / matched,
+            "tolerance_ms": tolerances.pop(),
+            "scored_items": len(measured),
+        }
+
+    @property
     def mean_rtf(self) -> float | None:
         return sum(s.rtf for s in self.scores) / len(self.scores) if self.scores else None
 
@@ -177,6 +224,7 @@ class ModelReport:
             "code_switch_error": self.code_switch_error,
             "mean_rtf": self.mean_rtf,
             "worst_rtf": self.worst_rtf,
+            "alignment": self.alignment,
             "long_audio_failure_rate": self.long_audio_failure_rate,
             "peak_vram_bytes": self.peak_vram_bytes,
         }
