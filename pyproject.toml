@@ -2,7 +2,7 @@
 name = "hawedit"
 version = "0.1.0"
 description = "Kurdish (Sorani/ckb) video repurposing system — implements BLUEPRINT.md v1.1"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 # Licences audited in DECISIONS.md D-002. NonCommercial licences are a hard reject.
 dependencies = [
     "klpt==0.1.7",      # CC BY-SA 4.0 — attribution required, share-alike on adaptation

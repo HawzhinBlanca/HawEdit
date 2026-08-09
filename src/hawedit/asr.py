@@ -39,7 +39,7 @@ from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
 from hawedit.escalation import SegmentScore, select_for_validation
 from hawedit.forced_alignment import align_words
-from hawedit.models import ModelStore, assert_checkpoint_integrity, assert_transformers_config_safe
+from hawedit.models import ModelStore, assert_transformers_config_safe, verified_checkpoint_access
 from hawedit.omni_assets import (
     CANONICAL_CTC_CARD,
     CANONICAL_LLM_CARD,
@@ -216,39 +216,42 @@ class QwenSoraniValidator:
 
     def _load(self) -> Any:
         if self._model is None:
-            # Qwen-ASR delegates checkpoint construction to Transformers. Apply the same
-            # pre-deserialisation guard as the visual loaders before qwen_asr imports or reads
-            # config.json; otherwise the canonical Stage 1 route would retain CVE-2026-4372
-            # while Stage 2 refused it. D-094.
-            assert_transformers_config_safe(
-                self.model_dir,
-                frozenset(
-                    {
-                        "qwen3_asr",
-                        "qwen3_asr_audio_encoder",
-                        "qwen3_asr_text",
-                        "qwen3_asr_thinker",
-                    }
-                ),
-            )
-            assert_checkpoint_integrity(self.model_id, self.model_dir)
-            try:
-                import torch
-                from qwen_asr import Qwen3ASRModel
-            except ImportError as exc:
-                raise RuntimeError(
-                    "the Sorani validator needs qwen-asr==0.0.6 and a CUDA Stage 1 runtime"
-                ) from exc
-            if self.device.startswith("cuda") and not torch.cuda.is_available():
-                raise RuntimeError(
-                    f"validator device {self.device!r} was requested but CUDA is unavailable"
+            # Verification owns a shared checkpoint lock through every parse and reopen. Without
+            # it, a same-size hardlink mutation after hashing can change what Qwen-ASR constructs,
+            # including the config surface interpreted by Transformers. D-115.
+            with verified_checkpoint_access(self.model_id, self.model_dir) as verified_dir:
+                # Qwen-ASR delegates checkpoint construction to Transformers. Apply the same
+                # pre-deserialisation guard as the visual loaders before qwen_asr imports or reads
+                # config.json; otherwise the canonical Stage 1 route would retain CVE-2026-4372
+                # while Stage 2 refused it.
+                assert_transformers_config_safe(
+                    verified_dir,
+                    frozenset(
+                        {
+                            "qwen3_asr",
+                            "qwen3_asr_audio_encoder",
+                            "qwen3_asr_text",
+                            "qwen3_asr_thinker",
+                        }
+                    ),
                 )
-            self._model = Qwen3ASRModel.from_pretrained(
-                str(self.model_dir),
-                dtype=torch.bfloat16,
-                device_map=self.device,
-                max_inference_batch_size=1,
-            )
+                try:
+                    import torch
+                    from qwen_asr import Qwen3ASRModel
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "the Sorani validator needs qwen-asr==0.0.6 and a CUDA Stage 1 runtime"
+                    ) from exc
+                if self.device.startswith("cuda") and not torch.cuda.is_available():
+                    raise RuntimeError(
+                        f"validator device {self.device!r} was requested but CUDA is unavailable"
+                    )
+                self._model = Qwen3ASRModel.from_pretrained(
+                    str(verified_dir),
+                    dtype=torch.bfloat16,
+                    device_map=self.device,
+                    max_inference_batch_size=1,
+                )
         return self._model
 
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> str:
@@ -796,55 +799,61 @@ class WslOmniAsrProducer:
         )
         if validator_model_dir is None:
             raise RuntimeError(f"{VALIDATOR_MODEL_ID} did not resolve to a model directory")
-        request_path = work_dir / "omni-asr-request.json"
-        output_path = work_dir / "omni-asr-worker-output.json"
-        request = {
-            "schema_version": 2,
-            "media_id": media_id,
-            "validator_model_dir": self._wsl_path(validator_model_dir),
-            "segments": [
-                {
-                    "path": segment.path.name,
-                    "start_ms": segment.start_ms,
-                    "end_ms": segment.end_ms,
-                }
-                for segment in prepared
-            ],
-        }
-        with request_path.open("x", encoding="utf-8", newline="\n") as stream:
-            json.dump(request, stream, ensure_ascii=False, sort_keys=True, indent=2)
-            stream.write("\n")
+        # Windows msvcrt locks and Linux fcntl locks do not interoperate on DrvFS. Hold the host
+        # shared lease for the complete WSL subprocess so the host fetcher's exclusive publisher
+        # cannot rename this checkpoint while the worker independently verifies and constructs it.
+        with verified_checkpoint_access(
+            VALIDATOR_MODEL_ID, validator_model_dir
+        ) as verified_validator_dir:
+            request_path = work_dir / "omni-asr-request.json"
+            output_path = work_dir / "omni-asr-worker-output.json"
+            request = {
+                "schema_version": 2,
+                "media_id": media_id,
+                "validator_model_dir": self._wsl_path(verified_validator_dir),
+                "segments": [
+                    {
+                        "path": segment.path.name,
+                        "start_ms": segment.start_ms,
+                        "end_ms": segment.end_ms,
+                    }
+                    for segment in prepared
+                ],
+            }
+            with request_path.open("x", encoding="utf-8", newline="\n") as stream:
+                json.dump(request, stream, ensure_ascii=False, sort_keys=True, indent=2)
+                stream.write("\n")
 
-        wsl_request = self._wsl_path(request_path)
-        wsl_output = self._wsl_path(output_path)
-        result = subprocess.run(
-            [
-                *self._prefix(),
-                "env",
-                f"PYTHONPATH={wsl_source}",
-                interpreter,
-                "-m",
-                "hawedit.asr_worker",
-                "--request",
-                wsl_request,
-                "--output",
-                wsl_output,
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode != 0 or not output_path.is_file():
-            stderr = result.stderr.decode("utf-8", "replace")[-1_200:]
-            raise RuntimeError(
-                "canonical OmniASR failed in WSL2. Run hawedit-asr-setup first; "
-                f"worker said: {stderr or 'no transcript was returned'}"
+            wsl_request = self._wsl_path(request_path)
+            wsl_output = self._wsl_path(output_path)
+            result = subprocess.run(
+                [
+                    *self._prefix(),
+                    "env",
+                    f"PYTHONPATH={wsl_source}",
+                    interpreter,
+                    "-m",
+                    "hawedit.asr_worker",
+                    "--request",
+                    wsl_request,
+                    "--output",
+                    wsl_output,
+                ],
+                capture_output=True,
+                check=False,
             )
-        transcript = RawTranscript.from_json(output_path.read_text(encoding="utf-8"))
-        if transcript.media_id != media_id:
-            raise RuntimeError(
-                f"WSL OmniASR returned media_id {transcript.media_id!r} for {media_id!r}"
-            )
-        return transcript
+            if result.returncode != 0 or not output_path.is_file():
+                stderr = result.stderr.decode("utf-8", "replace")[-1_200:]
+                raise RuntimeError(
+                    "canonical OmniASR failed in WSL2. Run hawedit-asr-setup first; "
+                    f"worker said: {stderr or 'no transcript was returned'}"
+                )
+            transcript = RawTranscript.from_json(output_path.read_text(encoding="utf-8"))
+            if transcript.media_id != media_id:
+                raise RuntimeError(
+                    f"WSL OmniASR returned media_id {transcript.media_id!r} for {media_id!r}"
+                )
+            return transcript
 
 
 def create_omni_asr_producer(

@@ -7,8 +7,9 @@ in `visual_index.py` and are enforced against whatever this returns.
 
 **The pooling is read from the checkpoint, not guessed.** `1_Pooling/config.json` and
 `config_sentence_transformers.json` state it: `lasttoken`, dimension 2048, then L2
-normalisation, prompt `"Represent the user's input."`. Those files are read at construction and
-a checkpoint declaring a pooling this module does not implement is refused, because a
+normalisation, prompt `"Represent the user's input."`. Those files are read on first use, only
+after the complete checkpoint and its executable config surface pass verification. A checkpoint
+declaring a pooling this module does not implement is refused, because a
 plausible-but-different pooling produces vectors that are the right shape, the right norm, and
 quietly incomparable to anything the model was trained to place near them.
 
@@ -51,9 +52,9 @@ from pathlib import Path
 from typing import Any, Final
 
 from hawedit.models import (
-    assert_checkpoint_integrity,
     assert_fully_loaded,
     assert_transformers_config_safe,
+    verified_checkpoint_access,
 )
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import resolve_role
@@ -96,6 +97,10 @@ class EmbedderUnavailable(RuntimeError):
     """A Stage 2 model could not be loaded, or this machine cannot run it."""
 
 
+class _PoolingPromptAbsent(EmbedderUnavailable):
+    """The optional embedding prompt is absent, rather than malformed or unreadable."""
+
+
 def load_processor_and_model(
     model_dir: Path,
     device: str,
@@ -105,6 +110,7 @@ def load_processor_and_model(
     trust_remote_code: bool = False,
     causal_lm: bool = False,
     configure: Callable[[Any], None] | None = None,
+    _after_verify: Callable[[Path], None] | None = None,
 ) -> tuple[Any, Any]:
     """One loader for every §7 visual checkpoint, so all of them get the same refusals.
 
@@ -123,11 +129,36 @@ def load_processor_and_model(
       defaults to `flash_attention_2`, which resolves to `None` without flash-attn, and
       flash-attn publishes no Windows wheels.
     """
-    # A config is data only until the loader interprets it. Transformers 4.57.6 can execute a
-    # Hub kernel named by a private field even with trust_remote_code=False (CVE-2026-4372), so
-    # validate before importing or calling any model-stack code. D-094.
-    assert_transformers_config_safe(model_dir, allowed_model_types)
-    assert_checkpoint_integrity(model_id, model_dir)
+    # Integrity precedes parsing: otherwise a constructor can cache a recipe from altered bytes,
+    # the bytes can be restored, and the later loader verifies the restored checkpoint while the
+    # object keeps using the altered recipe. The shared lock remains held after verification so a
+    # writer cannot hardlink-mutate or republish the path before from_pretrained finishes reopening
+    # its files. D-115.
+    with verified_checkpoint_access(model_id, model_dir) as verified_dir:
+        # A config is data only until the loader interprets it. Transformers 4.57.6 can execute a
+        # Hub kernel named by a private field even with trust_remote_code=False (CVE-2026-4372), so
+        # validate before importing or calling any model-stack code.
+        assert_transformers_config_safe(verified_dir, allowed_model_types)
+        if _after_verify is not None:
+            _after_verify(verified_dir)
+        return _load_verified_processor_and_model(
+            verified_dir,
+            device,
+            trust_remote_code=trust_remote_code,
+            causal_lm=causal_lm,
+            configure=configure,
+        )
+
+
+def _load_verified_processor_and_model(
+    verified_dir: Path,
+    device: str,
+    *,
+    trust_remote_code: bool,
+    causal_lm: bool,
+    configure: Callable[[Any], None] | None,
+) -> tuple[Any, Any]:
+    """Construct the processor and model while the caller holds checkpoint read access."""
 
     # torch first and alone, then the CUDA check, then transformers. The order is the point:
     # torch ships in the `media` extra and is therefore present anywhere Stage 0 runs, while
@@ -161,10 +192,10 @@ def load_processor_and_model(
     # is absent — the runner reported `unused-ignore` for exactly that reason. Binding the
     # loader through an explicitly-`Any` local says the same thing in both environments.
     load_processor: Any = AutoProcessor.from_pretrained
-    processor = load_processor(str(model_dir), trust_remote_code=trust_remote_code)
+    processor = load_processor(str(verified_dir), trust_remote_code=trust_remote_code)
     extra: dict[str, Any] = {}
     if configure is not None:
-        config = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=trust_remote_code)
+        config = AutoConfig.from_pretrained(str(verified_dir), trust_remote_code=trust_remote_code)
         configure(config)
         extra["config"] = config
     auto = AutoModelForCausalLM if causal_lm else AutoModelForImageTextToText
@@ -173,14 +204,14 @@ def load_processor_and_model(
     # VideoChat3-4B, whose `lm_head.weight` arrives random at std 0.0200 against the real
     # embedding's 0.0201 — indistinguishable by statistics, visible only in this list. D-054.
     result: Any = auto.from_pretrained(
-        str(model_dir),
+        str(verified_dir),
         dtype=torch.bfloat16,
         output_loading_info=True,
         trust_remote_code=trust_remote_code,
         **extra,
     )
     loaded, info = result
-    assert_fully_loaded(model_dir.name, info.get("missing_keys") or ())
+    assert_fully_loaded(verified_dir.name, info.get("missing_keys") or ())
     # `.to()` is wrapped by transformers and its stub takes a `PreTrainedModel` rather than a
     # device string, so strict mode rejects the documented call. Ignored on this one line rather
     # than relaxed for the module — a real type error in our own code still fails the gate.
@@ -223,31 +254,58 @@ def read_pooling_prompt(model_dir: Path, prompt_name: str | None = None) -> str:
     model trained on the original, and nothing in the output would say so.
     """
     st_file = model_dir / "config_sentence_transformers.json"
-    if not st_file.exists():
-        raise EmbedderUnavailable(
+    try:
+        config = json.loads(st_file.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise _PoolingPromptAbsent(
             f"{st_file} is missing, so this checkpoint does not state its own instruction. "
             f"Inventing one changes what the model was asked."
-        )
-    config = json.loads(st_file.read_text(encoding="utf-8"))
-    prompts = config.get("prompts") or {}
-    name = prompt_name or config.get("default_prompt_name") or "default"
-    prompt = prompts.get(name)
-    if not prompt:
+        ) from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise EmbedderUnavailable(
-            f"{st_file} has no prompt named {name!r}; it declares {sorted(prompts)}."
+            f"cannot read verified checkpoint prompt recipe {st_file}: {exc}"
+        ) from exc
+    if not isinstance(config, dict):
+        raise EmbedderUnavailable(
+            f"verified checkpoint prompt recipe {st_file} must contain a JSON object"
         )
-    return str(prompt)
+    prompts = config.get("prompts", {})
+    if not isinstance(prompts, dict):
+        raise EmbedderUnavailable(
+            f"verified checkpoint prompt recipe {st_file} has a non-object 'prompts' field"
+        )
+    name = prompt_name if prompt_name is not None else config.get("default_prompt_name", "default")
+    if not isinstance(name, str):
+        raise EmbedderUnavailable(
+            f"verified checkpoint prompt recipe {st_file} has a non-string prompt name"
+        )
+    prompt = prompts.get(name)
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise _PoolingPromptAbsent(
+            f"{st_file} has no non-empty prompt named {name!r}; it declares "
+            f"{sorted(str(key) for key in prompts)}."
+        )
+    return prompt
 
 
 def read_pooling_recipe(model_dir: Path) -> PoolingRecipe:
     """The checkpoint's declared pooling, dimension and default prompt."""
     pooling_file = model_dir / "1_Pooling" / "config.json"
-    if not pooling_file.exists():
+    try:
+        pooling = json.loads(pooling_file.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
         raise EmbedderUnavailable(
             f"{pooling_file} is missing, so this checkpoint does not state how its embeddings "
             f"are pooled. Guessing is how two runs produce incomparable vectors."
+        ) from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise EmbedderUnavailable(
+            f"cannot read verified checkpoint pooling recipe {pooling_file}: {exc}"
+        ) from exc
+    if not isinstance(pooling, dict):
+        raise EmbedderUnavailable(
+            f"verified checkpoint pooling recipe {pooling_file} must contain a JSON object"
         )
-    pooling = json.loads(pooling_file.read_text(encoding="utf-8"))
     # One parser for that file, two policies, and the difference is deliberate. The reranker
     # raises on a missing instruction because it writes it into `<Instruct>:` — the model is
     # answering a different question without it. The embedder falls back to the literal, because
@@ -255,13 +313,20 @@ def read_pooling_recipe(model_dir: Path) -> PoolingRecipe:
     # model receives it either way and refusing would break a usable checkpoint over nothing.
     try:
         prompt = read_pooling_prompt(model_dir)
-    except EmbedderUnavailable:
+    except _PoolingPromptAbsent:
         prompt = "Represent the user's input."
-    return PoolingRecipe(
-        pooling_mode=str(pooling["pooling_mode"]),
-        dimension=int(pooling["embedding_dimension"]),
-        prompt=prompt,
-    )
+    try:
+        pooling_mode = pooling["pooling_mode"]
+        dimension = pooling["embedding_dimension"]
+        if not isinstance(pooling_mode, str) or not pooling_mode:
+            raise TypeError("pooling_mode must be a non-empty string")
+        if isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0:
+            raise TypeError("embedding_dimension must be a positive integer")
+    except (KeyError, TypeError) as exc:
+        raise EmbedderUnavailable(
+            f"verified checkpoint pooling recipe {pooling_file} is invalid: {exc}"
+        ) from exc
+    return PoolingRecipe(pooling_mode=pooling_mode, dimension=dimension, prompt=prompt)
 
 
 class QwenVisualEmbedder:
@@ -289,15 +354,35 @@ class QwenVisualEmbedder:
         self.model_dir = model_dir
         self.device = device
         self.model_id = model_id
-        self.recipe = read_pooling_recipe(model_dir)
-        self.recipe.assert_supported()
+        self._recipe: PoolingRecipe | None = None
         self._loaded: tuple[Any, Any] | None = None
+
+    @property
+    def recipe(self) -> PoolingRecipe:
+        if self._recipe is None:
+            raise EmbedderUnavailable(
+                f"{self.model_id} pooling recipe is unavailable before verified model load"
+            )
+        return self._recipe
+
+    def _cache_verified_recipe(self, verified_dir: Path) -> None:
+        recipe = read_pooling_recipe(verified_dir)
+        recipe.assert_supported()
+        self._recipe = recipe
 
     def _load(self) -> tuple[Any, Any]:
         if self._loaded is None:
-            self._loaded = load_processor_and_model(
-                self.model_dir, self.device, model_id=self.model_id
+            loaded = load_processor_and_model(
+                self.model_dir,
+                self.device,
+                model_id=self.model_id,
+                _after_verify=self._cache_verified_recipe,
             )
+            if self._recipe is None:
+                raise EmbedderUnavailable(
+                    f"{self.model_id} loader returned without reading its verified recipe"
+                )
+            self._loaded = loaded
         return self._loaded
 
     def _conversation(self, content: dict[str, Any]) -> list[dict[str, Any]]:
@@ -428,15 +513,38 @@ class BinaryScoreTokens:
 def read_score_tokens(model_dir: Path) -> BinaryScoreTokens:
     """The reranker's `true`/`false` token ids, from the checkpoint's own config."""
     config_file = model_dir / "1_LogitScore" / "config.json"
-    if not config_file.exists():
+    try:
+        config = json.loads(config_file.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
         raise EmbedderUnavailable(
             f"{config_file} is missing, so this checkpoint does not say which tokens its score "
             f"is the logits of. Every candidate would still get a number in [0, 1]."
+        ) from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise EmbedderUnavailable(
+            f"cannot read verified checkpoint score recipe {config_file}: {exc}"
+        ) from exc
+    if not isinstance(config, dict):
+        raise EmbedderUnavailable(
+            f"verified checkpoint score recipe {config_file} must contain a JSON object"
         )
-    config = json.loads(config_file.read_text(encoding="utf-8"))
-    return BinaryScoreTokens(
-        true_id=int(config["true_token_id"]), false_id=int(config["false_token_id"])
-    )
+    try:
+        true_id = config["true_token_id"]
+        false_id = config["false_token_id"]
+        if (
+            isinstance(true_id, bool)
+            or not isinstance(true_id, int)
+            or true_id < 0
+            or isinstance(false_id, bool)
+            or not isinstance(false_id, int)
+            or false_id < 0
+        ):
+            raise TypeError("score token ids must be non-negative integers")
+    except (KeyError, TypeError) as exc:
+        raise EmbedderUnavailable(
+            f"verified checkpoint score recipe {config_file} is invalid: {exc}"
+        ) from exc
+    return BinaryScoreTokens(true_id=true_id, false_id=false_id)
 
 
 class QwenVisualReranker:
@@ -487,17 +595,48 @@ class QwenVisualReranker:
         self.read_frames = read_frames
         self.device = device
         self.model_id = model_id
-        self.tokens = read_score_tokens(model_dir)
-        # `prompts.query` in the checkpoint's own config — its default instruction.
-        self.instruct = instruct or read_pooling_prompt(model_dir, "query")
+        self._instruct_override = instruct
+        self._tokens: BinaryScoreTokens | None = None
+        self._instruct: str | None = None
         self._loaded: tuple[Any, Any] | None = None
         self._direction: Any | None = None
 
+    @property
+    def tokens(self) -> BinaryScoreTokens:
+        if self._tokens is None:
+            raise EmbedderUnavailable(
+                f"{self.model_id} score tokens are unavailable before verified model load"
+            )
+        return self._tokens
+
+    @property
+    def instruct(self) -> str:
+        if self._instruct is None:
+            raise EmbedderUnavailable(
+                f"{self.model_id} instruction is unavailable before verified model load"
+            )
+        return self._instruct
+
+    def _cache_verified_recipe(self, verified_dir: Path) -> None:
+        tokens = read_score_tokens(verified_dir)
+        # `prompts.query` in the checkpoint's own config — its default instruction.
+        instruct = self._instruct_override or read_pooling_prompt(verified_dir, "query")
+        self._tokens = tokens
+        self._instruct = instruct
+
     def _load(self) -> tuple[Any, Any]:
         if self._loaded is None:
-            self._loaded = load_processor_and_model(
-                self.model_dir, self.device, model_id=self.model_id
+            loaded = load_processor_and_model(
+                self.model_dir,
+                self.device,
+                model_id=self.model_id,
+                _after_verify=self._cache_verified_recipe,
             )
+            if self._tokens is None or self._instruct is None:
+                raise EmbedderUnavailable(
+                    f"{self.model_id} loader returned without reading its verified score recipe"
+                )
+            self._loaded = loaded
         return self._loaded
 
     def score(self, query: str, frames: WindowFrames) -> float:

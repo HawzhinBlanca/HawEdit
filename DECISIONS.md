@@ -4301,3 +4301,99 @@ the platform permits, requires one regular link, binds the pathname identity to 
 before and after waiting, and initializes only after validation. Windows uses explicit bounded
 `LK_NBLCK` retry. Replacement, timeout, open and release failures are domain errors, never an
 unhandled platform exception.
+
+## D-113 · Build code cannot hold the authority that attests its own output
+
+The reproducible release directory had an exact successful gate, immutable Git-object inputs,
+deterministic metadata and `SHA256SUMS`. It still had no external trust root: anyone replacing the
+wheel could rewrite every self-asserted JSON file and the checksum manifest. The first attestation
+workflow draft then put `id-token: write` and `attestations: write` in the build job itself. That
+would let the repository code being judged request its own OIDC identity, and a background process
+could change output between hashing, attestation and upload. Its one-level attestation glob also
+differed from the upload action's recursive directory input, so a nested un-attested payload could
+ship in a nominally attested bundle.
+
+**Decision:** promotion is two jobs with a hosted artifact boundary. The build job has only
+`contents: read` and `actions: read`, checks out the exact successful official `gate` push SHA,
+invokes the existing independent gate verifier and uploads four explicit paths as a short-lived transport. A dependent
+job starts on a fresh runner, checks out no repository code, validates the transport digest and
+refuses anything except one regular wheel, its SPDX JSON, schema-4 provenance and `SHA256SUMS`.
+Trusted workflow shell rechecks the manifest and binds repository, workflow, event, branch, gate
+run, revision, wheel and SBOM fields to the event and actual bytes. Only then does that job receive
+GitHub OIDC/attestation authority. `actions/attest` and the final upload receive the same explicit
+four paths. Both jobs also require the release run's default-branch `github.sha` to equal the
+triggering gate's `workflow_run.head_sha`. `actions/attest` derives standard provenance from the
+OIDC SHA; if `main` has already advanced, stale promotion is refused rather than signing bytes from
+`S` with a predicate naming `T`. Every remote action is an official release resolved to a full
+commit and Node 24.
+
+**Rejected:** attesting in the build job. A signed claim made with authority available to the code
+under test is not meaningful isolation. Also rejected: attesting `dir/*` then uploading `dir/`;
+different path semantics make the signed and shipped sets diverge.
+
+**Measured locally:** the release/security tests pass, PyYAML parses both jobs, and a
+release-checksum-verified `actionlint` 1.7.12 reports zero findings. This does not invent hosted
+evidence. GitHub reads a `workflow_run` consumer from the default branch, so authenticity remains
+an explicit live acceptance item until one protected-`main` gate triggers this workflow and every
+downloaded payload passes `gh attestation verify` with the exact release-workflow, `main`, source
+SHA, signer SHA and hosted-runner policy recorded in `evidence/release-attestation.md`. Repository
+scope alone is not enough because another workflow in the same repository is a different signer.
+`evidence/release-attestation.md`.
+
+## D-114 · A checkpoint exists only after exact verified atomic publication
+
+The old fetcher wrote directly into final model directories. Any interrupted first download left
+an empty or partial directory that `missing_weights()` treated as installed, so every retry skipped
+the broken checkpoint. The command then printed `MISS` and exited zero. A second root variable made
+custom downloads invisible to the app, and a custom truthy revision such as `main` re-enabled
+mutable Hub resolution.
+
+**Decision:** plan from exact verified readiness, not path existence; accept only lowercase 40-hex
+revisions at the runtime API; and use `HAWEDIT_MODELS_DIR` end to end for mutable checkpoint bytes
+only. Source, revision and integrity identities always come from the separate trusted
+checkout/installed metadata root. A pinned download resumes in a revision-specific private sibling,
+verifies the exact packaged manifest under a writer lock and publishes only through a native
+no-replace rename. Existing or concurrently appearing finals are evidence/operator data: preserve
+and refuse them rather than guessing permission to delete. Attempt all planned targets, print
+complete status, and exit nonzero if any target failed.
+
+The verifier also rejects root/member reparse points, hardlinks, non-regular members, identity
+changes during no-follow hashing and file-set changes. The lock coordinates HawEdit readers and
+writers; it is not a claim against privileged out-of-band mutation. No live multi-gigabyte Hub
+download was run for this unit. `evidence/checkpoint-provisioning.md`.
+
+## D-115 · The values a model consumes must remain bound to the bytes verified
+
+Qwen visual constructors read and cached checkpoint-controlled prompts, pooling and reranker token
+ids before integrity ran. Restoring the pinned files before first model load made the later hash
+green while the object retained attacker-controlled recipe values. Every local loader also closed
+its pathname verification before Transformers/Qwen-ASR reopened the directory; a concurrent
+hardlink or atomic replacement could change model/config/code bytes after they were approved.
+
+**Decision:** `verified_checkpoint_access` takes the checkpoint's shared lock, exact-verifies, and
+yields the verified directory without releasing the lock. Visual/VideoChat/TimeLens loading keeps
+that context across safe config, checkpoint recipe parsing, imports, CUDA checks, processor/config
+construction and every `from_pretrained` call. Qwen-ASR does the same. Constructors read no recipe;
+access before verified load is a domain refusal. Tests prove integrity-first ordering, active
+binding through all constructor reads, restored trusted recipe values and fail-closed malformed
+JSON. Because Windows and WSL advisory locks do not interoperate on DrvFS, the Windows producer
+also holds its host shared lease across the entire WSL validator subprocess and output parse; a
+real child writer regression proves the host publisher remains blocked. Historical real GPU runs
+identify the checkpoints but predate this held-lock path, so one
+fresh full-size load remains an explicit evidence task. `evidence/checkpoint-load-binding.md`.
+
+## D-116 · Support only resolvable Python, and execute a wheel before attesting it
+
+The project declared Python `>=3.11`, but the pinned base graph cannot resolve on 3.13:
+`klpt==0.1.7` requires `chunspell==2.0.4`, whose distributions stop at CPython 3.12. The ASR stack
+also caps its official package at 3.12. Separately, release promotion ZIP-validated and attested a
+wheel without ever installing or executing it; broken metadata, package-data lookup or console
+entry points could therefore receive valid provenance.
+
+**Decision:** support exactly Python 3.11 and 3.12 (`>=3.11,<3.13`) until the complete pinned graph
+resolves above it. Setup checks both the base interpreter and any existing venv. The required
+`gate` waits for a separate full Python 3.12 zero-skip gate while retaining one canonical job named
+`gate`. Before any OIDC authority is available, a fresh no-checkout 3.11/3.12 release matrix must
+install the exact transferred wheel, pass `pip check`, resolve installed data and start all six
+CLIs. Attestation depends on every matrix leg. Local clean venvs on 3.11.15 and 3.12.13 passed the
+same smoke; hosted execution remains required after merge. `evidence/python-support.md`.

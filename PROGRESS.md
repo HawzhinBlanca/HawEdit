@@ -113,8 +113,25 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > verification in 31.946 seconds. Pyannote's ten-file inventory is pinned, but its gated API
 > redacts five LFS digests, so the manifest explicitly blocks rather than invents them.
 > `evidence/model-byte-integrity.md`.
+
+> **M1.6 transactional-provisioning amendment (D-114).** A partial final directory no longer makes
+> a checkpoint look installed or become an unrecoverable retry dead-end. Planning uses verified
+> status; revisions are runtime-enforced as lowercase 40-hex commits; one
+> `HAWEDIT_MODELS_DIR` flows through shell and runtime; downloads resume in revision-specific
+> private siblings, exact-verify under a writer lock, and publish with native no-replace rename.
+> The custom root stores bytes only; immutable identities come exclusively from packaged/checkout
+> metadata. Invalid or concurrently appearing finals are preserved/refused and any targeted failure exits nonzero after the full report. No live Hub
+> download was performed in this unit. `evidence/checkpoint-provisioning.md`.
 | M1.7 | §4.1 conjunctive `و` separation (the collision KLPT does not cover) | DONE | `normalize.separate_conjunctive_waw` + `tests/test_waw.py` (18 tests). Rule: split `و`+R only if R is a valid Sorani word **and** `و`+R is not — a refusal, not a prediction. Measured over all 24,894 dictionary entries (`evidence/waw-separation.md`, D-026): **0 words damaged**, 98.91% of joined forms recovered, 19 `و`-initial words permanently unsplittable because they are words themselves. The 1.09% shortfall has one cause — bare medial `ه` U+0647 — which is D-013's finding seen through a second instrument. **Amended 2026-08-09 (D-099), found by the second and third adversarial passes:** `evidence/waw-separation.md` recorded `waw_initial_words: 491`; the lexicon has **504**, and the file's own constructible count proved it (24 894 − 504 = 24 390, versus 24 403 for 491). It survived two passes because the guard **recomputed nothing** — it bounded three of seven numbers and measured none. Both passes also got the true value wrong, one reporting "504 with duplicates, 492 distinct" where there are 504 with zero duplicates. The test now recomputes every figure from KLPT's lexicon and asserts the arithmetic closes; `constructible_joined_forms` was promoted from prose into the recorded JSON, since the number that disproved 491 lived only in a sentence. Two further copies of Hunspell's stale header count (24,888) were corrected to the measured 24,894 in `tests/test_waw.py` and `normalize.py`. `lexicon_entries: 24894` was right throughout. |
 | M1.4 | Stage 1 speech: LLM-7B + CTC-3B in parallel, validator escalation | DONE | `src/hawedit/asr.py`, `src/hawedit/asr_worker.py`, `src/hawedit/wsl_setup.py` and focused regression tests. The same CTC forward now emits both posteriors and the official greedy hypothesis; the existing quartile/disagreement policy has a production caller; routed rzgar corrections are re-aligned against CTC before entering the immutable raw transcript. The isolated WSL runtime pins the compatible Torch/torchaudio 2.8 pair plus OmniASR 0.2.0/Qwen-ASR 0.0.6 and imports both on two visible GPUs. Real evidence: the validator exactly reproduced its shipped Sorani demo reference (4,250,408,448 peak allocated bytes), and the full CLI ran LLM+CTC+validator over the committed real-media fixture in 212.9 s warm-start. The fixture is synthetic Kurmanji, so this closes execution/composition—not M0's labelled Sorani accuracy benchmark. D-085; `evidence/m1-4-stage1-validator.md`. |
+> **M1.4/M5.2 checkpoint-binding amendment (D-115).** Qwen-ASR and every local visual loader now
+> hold `verified_checkpoint_access` across safe config, checkpoint-owned recipes, imports, CUDA
+> checks and all `from_pretrained` reads. Embedder/reranker constructors cannot cache a hostile
+> prompt or score-token recipe before integrity runs. The Windows producer keeps a host shared
+> lease around the complete WSL validator boundary because DrvFS does not bridge `msvcrt` and
+> `flock`. Restore-after-construction, ordering and active-lock regressions pass; the new path still needs one fresh real 37.269 GB/GPU load before
+> it has production execution evidence. `evidence/checkpoint-load-binding.md`.
+
 | M1.5 | Escalation rule: bottom log-prob quartile + LLM/CTC disagreement (§3 Stage 1) | DONE | `src/hawedit/escalation.py` + `tests/test_escalation.py` (16 tests). §3's "never escalate on duration or word-count" prohibition asserted directly. Threshold: D-015. |
 
 ## M2 — task ledger
@@ -189,10 +206,11 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M3.5 | Captions timed to the clip, and a burn that refuses an ASS with nothing to draw | DONE | `captions.py` (`clip_in_ms`, `parse_dialogue_times`, `assert_captions_within_clip`) + `tests/test_caption_timing.py` (13 tests). **The most serious defect found so far.** `build_ass` wrote source-absolute timestamps and `render_clip` burns into a stream already cut at `clip.in_ms`. Measured on a 1.6 s clip taken from source 2000 ms: **0 bytes** differ between a captioned and an uncaptioned render — libass drew nothing, ffmpeg exited 0, and the output is a valid, playable, caption-free MP4. Kurdish invariant #4 was absent from every clip not starting near zero. The existing pixel test is the right test; its fixture cuts at 300 ms with words at 0–1600, the one input where the bug is invisible. `evidence/m3-5-caption-timeline.md`, D-041. |
 
 | M3.6 | §2's delivery set complete: SRT and EDL alongside the MP4, ASS and §5 JSON | DONE | `src/hawedit/delivery.py`, `src/hawedit/artifact_bundle.py` and real-media pipeline tests. SRT uses the clip timeline; EDL source fields use the source timeline while record fields start at zero. NTSC 30000/1001 writes SMPTE drop-frame labels, including `00:00:59;29 → 00:01:00;02`, tenth-minute/hour boundaries, `FCM: DROP FRAME`, and equal quantized source/record durations; other unsupported fractional rates refuse. **Amended 2026-08-09 (D-083):** the five files are staged privately, flushed, validated as one exact non-empty set, and published by a single directory rename. The public render result is withheld until that succeeds. Write failures leave no public partial set; a two-worker race yields one complete unmixed winner. `evidence/m3-6-delivery-set.md`, `evidence/m3-6-drop-frame-edl.md`, `evidence/atomic-delivery-bundle.md`, D-042/D-082/D-083. |
-| M3.7 | Reproducible, provenance-bound wheel publication | PARTIAL | `src/hawedit/release.py` + `tests/test_release.py`. `hawedit-release` requires clean Git `HEAD`, derives `SOURCE_DATE_EPOCH` from the commit, builds twice, refuses unequal wheel bytes, validates runtime data, and atomically publishes a write-once release directory. **Amended 2026-08-09 (D-084):** that directory includes deterministic SPDX 2.3 JSON covering the exact wheel checksum, bundled Noto font checksum/OFL relationship, and every declared base/optional dependency from wheel METADATA. It does not pretend unbundled requirements are resolved. `SHA256SUMS` covers the wheel, SBOM and provenance; the independent `spdx-tools 0.8.5` parser/validator accepts the result. **Amended 2026-08-09 (D-090):** the two builds no longer inherit an ambient backend. The command creates a private builder from exact, official-wheel-hashed Pip 26.2.1 and Setuptools 84.0.0 requirements, refuses drift against `[build-system]`, and records the measured Python/frontend/backend plus lock digest in provenance. Measured on one clean revision, two formerly allowed Setuptools versions emitted different wheel hashes and 68.2.2 could not build at all (`evidence/release-builder-lock.md`). Remote CI actions are full-commit pinned (`evidence/ci-actions.md`, `evidence/release-sbom.md`). **Shortfall:** the release is not signed and transitive deployment dependencies are not hash-locked. Deterministic source-to-wheel output, component disclosure, production-gate binding, project-managed checkpoint bytes and package-managed OmniASR bytes are closed—not artifact authenticity or the entire external supply chain. |
+| M3.7 | Reproducible, provenance-bound wheel publication | PARTIAL | `src/hawedit/release.py` + `tests/test_release.py`. `hawedit-release` requires clean Git `HEAD`, derives `SOURCE_DATE_EPOCH` from the commit, builds twice, refuses unequal wheel bytes, validates runtime data, and atomically publishes a write-once release directory. **Amended 2026-08-09 (D-084):** that directory includes deterministic SPDX 2.3 JSON covering the exact wheel checksum, bundled Noto font checksum/OFL relationship, and every declared base/optional dependency from wheel METADATA. It does not pretend unbundled requirements are resolved. `SHA256SUMS` covers the wheel, SBOM and provenance; the independent `spdx-tools 0.8.5` parser/validator accepts the result. **Amended 2026-08-09 (D-090):** the two builds no longer inherit an ambient backend. The command creates a private builder from exact, official-wheel-hashed Pip 26.2.1 and Setuptools 84.0.0 requirements, refuses drift against `[build-system]`, and records the measured Python/frontend/backend plus lock digest in provenance. Measured on one clean revision, two formerly allowed Setuptools versions emitted different wheel hashes and 68.2.2 could not build at all (`evidence/release-builder-lock.md`). Remote CI actions are full-commit pinned (`evidence/ci-actions.md`, `evidence/release-sbom.md`). **Shortfall:** D-113 defines an isolated GitHub-OIDC attestation path for the exact release set, but a post-merge protected-`main` run has not yet produced and verified its first live attestation. There is no version/tag policy or durable GitHub Release, and transitive deployment dependencies are not hash-locked. Deterministic source-to-wheel output, component disclosure, production-gate binding, project-managed checkpoint bytes and package-managed OmniASR bytes are closed—not the entire external supply chain. |
 
 > **M3.7 dependency amendment (D-094).** Every direct GPU/cloud dependency is exact and the
-> vulnerable Pytest 8.3.4 development pin is now 9.1.1. One clean all-extras Python 3.12
+> vulnerable Pytest 8.3.4 development pin is now 9.1.1. One clean host-extras
+> (`dev,media,cloud,gpu`) Python 3.12
 > environment passes 1,237/1,237 with zero skips. This closes direct-version drift, **not**
 > transitive hash locking; that remains part of M3.7's supply-chain shortfall.
 
@@ -219,6 +237,22 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > both real fairseq2 model loaders; stale readiness is invalidated before setup mutation. Unlimited-3B
 > remains absent rather than being claimed from a card name alone.
 > `evidence/omniasr-asset-integrity.md`.
+
+> **M3.7 authenticity amendment (D-113).** A successful official `gate` push on `main` now feeds a
+> permission-separated release workflow. Repository code builds with a read-only token; fresh
+> no-checkout 3.11/3.12 jobs install and execute the exact wheel; a final fresh job independently
+> validates the exact four-file transport, binds schema-4 provenance to the event, and alone
+> receives GitHub OIDC/attestation authority. Attestation and final upload receive the same
+> explicit allowlist. The workflow and actions are locally linted and contract-tested, but the
+> live hosted acceptance gate remains open until this workflow is on default `main` and all four
+> downloaded files pass `gh attestation verify`. `evidence/release-attestation.md`.
+
+> **M3.7 Python/install amendment (D-116).** The supported host range is honestly capped at Python
+> 3.11–3.12 because the pinned base graph and official ASR stack do not resolve on 3.13. The
+> required `gate` cannot pass until a full 3.12 zero-skip prerequisite passes, and release
+> attestation cannot start until fresh no-checkout 3.11/3.12 venvs install the exact wheel, pass
+> `pip check`, resolve package data and start all six CLIs. Local current-wheel smokes pass; hosted
+> execution awaits default `main`. `evidence/python-support.md`.
 
 | M3.8 | Package-managed OmniASR model/tokenizer byte and card-policy integrity | DONE | `src/hawedit/omni_assets.py` + `tests/test_omni_assets.py`, integrated by `asr.py` and `wsl_setup.py`. Exact identities, atomic verified first download, no-follow full rehash, descriptor-bound real model loading, private empty card sources, effective metadata equality and atomic ready-worker identity are enforced. `evidence/omniasr-asset-integrity.md`, D-101. |
 

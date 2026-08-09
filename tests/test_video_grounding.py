@@ -135,7 +135,7 @@ def test_timelens_proves_checkpoint_integrity_before_loading(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "hawedit.qwen_visual.assert_checkpoint_integrity",
+        "hawedit.qwen_visual.verified_checkpoint_access",
         lambda *_args: (_ for _ in ()).throw(RuntimeError("integrity sentinel")),
     )
     grounder = TimeLens2Grounder(tmp_path, read_frames=lambda w: None)

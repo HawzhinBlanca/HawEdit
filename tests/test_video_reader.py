@@ -22,6 +22,7 @@ requires be rejected.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -214,8 +215,14 @@ def test_missing_weights_are_refused_naming_the_fetch_script(tmp_path: Path) -> 
         )
 
 
-def test_videochat_loader_uses_its_exact_model_type_allowlist(tmp_path: Path) -> None:
+def test_videochat_loader_uses_its_exact_model_type_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "config.json").write_text('{"model_type":"lightglue"}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
     reader = VideoChat3Reader(
         tmp_path,
         read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),
@@ -232,10 +239,11 @@ def test_videochat_proves_checkpoint_integrity_before_loading(
         '{"model_type":"videochat3","text_config":{"model_type":"qwen3"}}',
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "hawedit.qwen_visual.assert_checkpoint_integrity",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("integrity sentinel")),
-    )
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("integrity sentinel")
+
+    monkeypatch.setattr("hawedit.qwen_visual.verified_checkpoint_access", refuse)
     reader = VideoChat3Reader(
         tmp_path,
         read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),

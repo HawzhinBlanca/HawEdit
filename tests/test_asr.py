@@ -21,6 +21,8 @@ import subprocess
 import sys
 import threading
 import wave
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -505,14 +507,26 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     worker_calls: list[list[str]] = []
+    binding_active = False
     stage1 = tmp_path / "stage1"
     validator_dir = tmp_path / "validator"
     validator_dir.mkdir()
+
+    @contextmanager
+    def verified(_model_id: str, selected: Path) -> Iterator[Path]:
+        nonlocal binding_active
+        assert selected == validator_dir
+        binding_active = True
+        try:
+            yield selected.resolve()
+        finally:
+            binding_active = False
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         if "wslpath" in args:
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
         if "hawedit.asr_worker" in args:
+            assert binding_active, "the host lease must span the entire WSL worker"
             worker_calls.append(args)
             transcript = run_request(
                 stage1 / "omni-asr-request.json",
@@ -525,6 +539,7 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
     transcript = WslOmniAsrProducer(
         interpreter="/opt/hawedit/python", validator_model_dir=validator_dir
     ).transcribe(
@@ -538,6 +553,77 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
     assert len(worker_calls) == 1
     assert worker_calls[0][0] == "wsl.exe"
     assert "/opt/hawedit/python" in worker_calls[0]
+    assert not binding_active
+
+
+def test_wsl_worker_boundary_holds_a_real_host_lease_against_checkpoint_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stage1 = tmp_path / "stage1"
+    validator_dir = tmp_path / "validator"
+    validator_dir.mkdir()
+    marker = tmp_path / "writer-acquired.txt"
+    writer: subprocess.Popen[bytes] | None = None
+    writer_code = """
+from pathlib import Path
+import sys
+from hawedit.models import checkpoint_publish_lock
+
+with checkpoint_publish_lock(Path(sys.argv[1])):
+    Path(sys.argv[2]).write_text("acquired", encoding="utf-8")
+"""
+
+    monkeypatch.setattr(
+        "hawedit.models.ModelStore.verify_checkpoint",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        nonlocal writer
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
+        if "hawedit.asr_worker" in args:
+            writer = subprocess.Popen(
+                [sys.executable, "-c", writer_code, str(validator_dir), str(marker)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            threading.Event().wait(0.35)
+            if writer.poll() is not None:
+                stdout, stderr = writer.communicate()
+                pytest.fail(
+                    "checkpoint writer entered while the WSL boundary was active: "
+                    f"stdout={stdout!r}, stderr={stderr!r}"
+                )
+            assert not marker.exists()
+            run_request(
+                stage1 / "omni-asr-request.json",
+                stage1 / "omni-asr-worker-output.json",
+                FakeOmniBackend(),
+            )
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+        _write_requested_pcm(args)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    try:
+        transcript = WslOmniAsrProducer(
+            interpreter="/opt/hawedit/python", validator_model_dir=validator_dir
+        ).transcribe(
+            "episode",
+            tmp_path / "audio.wav",
+            (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
+            stage1,
+            ffmpeg=tmp_path / "ffmpeg",
+        )
+        assert transcript.media_id == "episode"
+        assert writer is not None
+        assert writer.wait(timeout=10) == 0
+        assert marker.read_text(encoding="utf-8") == "acquired"
+    finally:
+        if writer is not None and writer.poll() is None:
+            writer.terminate()
+            writer.wait(timeout=5)
 
 
 class FakeValidator:
@@ -670,38 +756,64 @@ def test_stage1_does_not_load_validator_weights_when_no_segment_is_selected(
 def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    import hawedit.asr as asr_module
+
     model_dir = tmp_path / "validator"
     model_dir.mkdir()
-    (model_dir / "config.json").write_text(
-        json.dumps({"model_type": "qwen3_asr"}), encoding="utf-8"
-    )
+    verified_dir = tmp_path / "held-validator"
+    verified_dir.mkdir()
+    config = json.dumps({"model_type": "qwen3_asr"})
+    (model_dir / "config.json").write_text(config, encoding="utf-8")
+    (verified_dir / "config.json").write_text(config, encoding="utf-8")
     audio = tmp_path / "segment.wav"
     _write_pcm(audio)
     loaded: dict[str, object] = {}
 
     class Model:
         def transcribe(self, **kwargs: object) -> list[SimpleNamespace]:
+            assert not lock_active
             loaded["transcribe"] = kwargs
             return [SimpleNamespace(text="سۆرانی.")]
 
     class Loader:
         @staticmethod
         def from_pretrained(path: str, **kwargs: object) -> Model:
+            assert lock_active
             loaded["path"] = path
             loaded["kwargs"] = kwargs
             return Model()
 
-    torch = SimpleNamespace(bfloat16="bf16", cuda=SimpleNamespace(is_available=lambda: True))
+    lock_active = False
+    integrity_calls: list[tuple[str, Path]] = []
+
+    @contextmanager
+    def verified(model_id: str, path: Path) -> Iterator[Path]:
+        nonlocal lock_active
+        integrity_calls.append((model_id, path))
+        lock_active = True
+        try:
+            yield verified_dir.resolve()
+        finally:
+            lock_active = False
+
+    from hawedit.models import assert_transformers_config_safe as real_safe_config
+
+    def safe_config(path: Path, allowed: object) -> None:
+        assert lock_active
+        real_safe_config(path, allowed)  # type: ignore[arg-type]
+
+    def cuda_available() -> bool:
+        assert lock_active
+        return True
+
+    torch = SimpleNamespace(bfloat16="bf16", cuda=SimpleNamespace(is_available=cuda_available))
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "qwen_asr", SimpleNamespace(Qwen3ASRModel=Loader))
-    integrity_calls: list[tuple[str, Path]] = []
-    monkeypatch.setattr(
-        "hawedit.asr.assert_checkpoint_integrity",
-        lambda model_id, path: integrity_calls.append((model_id, path)),
-    )
+    monkeypatch.setattr(asr_module, "verified_checkpoint_access", verified)
+    monkeypatch.setattr(asr_module, "assert_transformers_config_safe", safe_config)
     validator = QwenSoraniValidator(model_dir)
     assert validator.transcribe_segment(audio, 1.0) == "سۆرانی."
-    assert loaded["path"] == str(model_dir)
+    assert loaded["path"] == str(verified_dir.resolve())
     assert loaded["kwargs"] == {
         "dtype": "bf16",
         "device_map": "cuda:1",
@@ -709,9 +821,30 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     }
     assert loaded["transcribe"] == {"audio": str(audio)}
     assert integrity_calls == [(validator.model_id, model_dir)]
+    assert not lock_active
 
 
-def test_qwen_validator_refuses_a_code_loading_config_before_imports(tmp_path: Path) -> None:
+def test_qwen_validator_integrity_failure_precedes_config_parse_and_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("integrity sentinel")
+
+    monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", refuse)
+    monkeypatch.setattr(
+        "hawedit.asr.assert_transformers_config_safe",
+        lambda *_args: pytest.fail("config parsed before checkpoint integrity"),
+    )
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        QwenSoraniValidator(model_dir)._load()
+
+
+def test_qwen_validator_refuses_a_code_loading_config_before_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from hawedit.models import UnsafeModelConfig
 
     model_dir = tmp_path / "validator"
@@ -725,14 +858,24 @@ def test_qwen_validator_refuses_a_code_loading_config_before_imports(tmp_path: P
         ),
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        "hawedit.asr.verified_checkpoint_access",
+        lambda _model_id, path: nullcontext(path.resolve()),
+    )
     with pytest.raises(UnsafeModelConfig, match="CVE-2026-4372"):
         QwenSoraniValidator(model_dir)._load()
 
 
-def test_qwen_validator_uses_the_asr_model_type_allowlist(tmp_path: Path) -> None:
+def test_qwen_validator_uses_the_asr_model_type_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     model_dir = tmp_path / "validator"
     model_dir.mkdir()
     (model_dir / "config.json").write_text(json.dumps({"model_type": "xclip"}), encoding="utf-8")
+    monkeypatch.setattr(
+        "hawedit.asr.verified_checkpoint_access",
+        lambda _model_id, path: nullcontext(path.resolve()),
+    )
     with pytest.raises(RuntimeError, match="unapproved"):
         QwenSoraniValidator(model_dir)._load()
 

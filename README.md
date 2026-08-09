@@ -77,6 +77,10 @@ Stage 0 on CPU by design), verifies or fetches an ffmpeg whose libass has HarfBu
 model readiness, and finishes by running the gate. If it exits 0 the checkout is genuinely
 ready, and the last thing it prints is the interpreter path for *this* machine.
 
+HawEdit supports Python 3.11 and 3.12. Python 3.13 is refused rather than advertised: the pinned
+base dependency graph has no complete 3.13 distribution set, and the official OmniASR stack also
+caps at 3.12. Setup validates both the selected base interpreter and an existing `.venv`.
+
 > **Windows.** hawapc01 is a Windows box, so every `.venv/bin/python` below is
 > `.venv/Scripts/python.exe` there. `setup.sh` and `verify.sh` detect the layout themselves;
 > only the commands quoted in this file are written one way. An ffmpeg on `PATH` with libass,
@@ -153,10 +157,42 @@ Provenance records the measured Python, build frontend/backend and build-lock di
 gate mismatch, builder drift, hash mismatch, non-reproducible build, missing runtime file, corrupt
 wheel, or existing release directory is refused.
 
-This proves repeatable source-to-wheel bytes and a standards-validated component manifest. It is
-not a signature or a resolved transitive deployment lock. Separately, OmniASR's package-managed
-assets and the project-managed Hugging Face snapshots have application-owned byte identities and
-pre-load verification; those runtime proofs are not implied by a green wheel.
+On the default branch, `.github/workflows/release.yml` consumes only a successful official
+`gate` **push** run on `main`, checks out that run's exact SHA, invokes the same fail-closed release
+verifier in a read-only job, then requires fresh no-checkout Python 3.11 and 3.12 runners to install
+the exact wheel, run `pip check`, resolve installed package data and start all six CLIs. Only after
+both pass does it transfer the four explicit payloads to a fresh runner. Only that isolated job has
+OIDC/attestation authority; it refuses any extra, nested,
+linked, malformed or digest-mismatched entry and binds schema-4 provenance to the triggering run
+before attesting and uploading the same explicit four-file set. The workflow actions are
+full-commit pinned and neither job has repository-content write permission. Verify a downloaded
+run artifact rather than trusting its filename. If `main` advances before an older gate is
+promoted, the workflow refuses that stale run so GitHub's OIDC/SLSA commit claim cannot name newer
+source than the bytes being attested:
+
+```bash
+cd PATH/TO/DOWNLOADED/hawedit-release-SHA
+sha256sum --check SHA256SUMS
+EXPECTED_SHA=THE_EXACT_40_HEX_SHA_IN_THE_ARTIFACT_NAME
+for file in *; do
+  gh attestation verify "$file" \
+    --repo HawzhinBlanca/HawEdit \
+    --signer-workflow HawzhinBlanca/HawEdit/.github/workflows/release.yml \
+    --source-ref refs/heads/main \
+    --source-digest "$EXPECTED_SHA" \
+    --signer-digest "$EXPECTED_SHA" \
+    --deny-self-hosted-runners
+done
+```
+
+This proves repeatable source-to-wheel bytes and defines a keyless publisher-identity check. The
+hosted workflow still needs one post-merge protected-`main` run before the Python 3.12 prerequisite,
+installed-wheel matrix and attestation path have live evidence; a feature branch cannot supply it.
+It also does not create a version/tag policy, a
+durable GitHub Release, or a resolved transitive deployment lock. Separately, OmniASR's
+package-managed assets and the project-managed Hugging Face snapshots have application-owned byte
+identities and pre-load verification; those runtime proofs are not implied by a green wheel. See
+`evidence/release-attestation.md`.
 
 ## Models and weights
 
@@ -176,6 +212,15 @@ bash scripts/fetch-models.sh --status    # same as the readiness report
 The fetcher is driven by the §7 registry, so it cannot download a model the blueprint
 excludes and refuses a NonCommercial licence before any bytes move. Needs
 `huggingface.co` reachable, `HF_TOKEN` for the gated Community-1 repo, and ~50 GB free.
+It plans from verified status rather than directory existence, resumes each pinned revision in a
+private sibling, exact-verifies it, and atomically publishes under a writer lock. An empty, partial
+or corrupt final directory is preserved and refused—move/quarantine it explicitly before retrying.
+Any target failure makes the command exit nonzero after the full status report. Use only the same
+override the runtime reads:
+
+```bash
+HAWEDIT_MODELS_DIR=/absolute/model/root bash scripts/fetch-models.sh
+```
 
 The two Qwen checkpoint names are resolved in tracked `models/sources.json`; the fetcher never
 guesses a repository id. OmniASR is deliberately absent from that file: the pinned official
@@ -184,6 +229,14 @@ HawEdit's packaged `omni_assets.py` owns exact URL/cache-key/size/SHA-256 identi
 overrides, verifies the effective cards and holds the verified descriptors through both real model
 loads. Empty cache paths and altered bytes are refused before any load. Downloading
 similarly named Hub repositories into `models/` would provision weights the runtime never reads.
+Project-managed Qwen/VideoChat/TimeLens and Qwen-ASR loads hold a shared checkpoint binding from
+exact verification through config/recipe parsing and every `from_pretrained` reopen; constructors
+cannot cache unverified prompts, pooling rules or score-token ids. A custom model root stores only
+checkpoint bytes—trusted source/revision/integrity metadata remains checkout/installed—and final
+publication uses native no-replace rename. The Windows producer also keeps a host lease across the
+complete WSL validator call because DrvFS does not make Windows and Linux advisory locks
+interoperate. See
+`evidence/checkpoint-provisioning.md` and `evidence/checkpoint-load-binding.md`.
 
 Weights themselves never enter the repository: `models/*` and `.ffmpeg/` are git-ignored.
 

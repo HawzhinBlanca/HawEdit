@@ -27,14 +27,19 @@ should be told so before it spends an hour finding out.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import importlib
 import importlib.metadata
 import json
 import os
 import re
+import stat
 import sys
-from collections.abc import Collection, Iterable, Mapping, Sequence
+import time
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final, cast
@@ -57,7 +62,9 @@ __all__ = [
     "assert_checkpoint_integrity",
     "assert_fully_loaded",
     "assert_transformers_config_safe",
+    "checkpoint_publish_lock",
     "readiness_report",
+    "verified_checkpoint_access",
 ]
 
 
@@ -374,9 +381,17 @@ def _probe_canonical_omni_runtime() -> tuple[str, Path, int]:
 class ModelStore:
     """The on-disk home of §7's downloadable checkpoints."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, metadata_root: Path | None = None) -> None:
         self.root = root if root is not None else DEFAULT_MODELS_ROOT
-        self._use_installed_sources = root is None
+        if metadata_root is not None:
+            self.metadata_root = metadata_root
+        else:
+            checkout_metadata = Path(__file__).resolve().parents[2] / "models"
+            self.metadata_root = (
+                checkout_metadata
+                if (checkout_metadata / "sources.json").is_file()
+                else INSTALLED_SOURCES.parent
+            )
         self._omni_runtime_probe: tuple[bool, str, Path | None, int | None] | None = None
 
     def _omni_runtime_status(self) -> tuple[bool, str, Path | None, int | None]:
@@ -403,9 +418,7 @@ class ModelStore:
         nothing that §7 already fixes; they supply what §7 leaves as a checkpoint name.
         """
         configured: dict[str, str] = {}
-        source_file = self.root / "sources.json"
-        if not source_file.exists() and self._use_installed_sources and INSTALLED_SOURCES.exists():
-            source_file = INSTALLED_SOURCES
+        source_file = self.metadata_root / "sources.json"
         if source_file.exists():
             # JSON has no comments and this file needs one — it is the file most likely to be
             # "helpfully" completed by guessing the two entries that are deliberately absent.
@@ -430,7 +443,7 @@ class ModelStore:
             raise SourceNotConfigured(
                 f"no download source for {entry.model_id!r}. §7 names it as a checkpoint, "
                 f"not a repository id, and this is not something to guess. Add it to "
-                f"{self.root / 'sources.json'}:\n"
+                f"{self.metadata_root / 'sources.json'}:\n"
                 f'  {{"{entry.model_id}": "<org>/<repo>"}}'
             )
         return source
@@ -442,13 +455,7 @@ class ModelStore:
         could legitimately resolve to one repository.
         """
         configured: dict[str, str] = {}
-        revision_file = self.root / "revisions.json"
-        if (
-            not revision_file.exists()
-            and self._use_installed_sources
-            and INSTALLED_REVISIONS.exists()
-        ):
-            revision_file = INSTALLED_REVISIONS
+        revision_file = self.metadata_root / "revisions.json"
         if revision_file.exists():
             raw = json.loads(revision_file.read_text(encoding="utf-8"))
             configured = {k: v for k, v in raw.items() if not k.startswith("_")}
@@ -463,13 +470,7 @@ class ModelStore:
         blocked instead of carrying a made-up digest. Installed wheels carry the same manifest
         beside ``sources.json`` and ``revisions.json``.
         """
-        integrity_file = self.root / "integrity.json"
-        if (
-            not integrity_file.exists()
-            and self._use_installed_sources
-            and INSTALLED_INTEGRITY.exists()
-        ):
-            integrity_file = INSTALLED_INTEGRITY
+        integrity_file = self.metadata_root / "integrity.json"
         if not integrity_file.is_file():
             raise CheckpointIntegrityError(
                 f"no checkpoint byte manifest at {integrity_file}. A repository revision names "
@@ -526,7 +527,12 @@ class ModelStore:
 
         files = _object_mapping(model_manifest.get("files"), f"{model_id}: files")
         expected_paths = set(files)
-        root = (checkpoint if checkpoint is not None else self.path_for(entry)).resolve()
+        selected_root = checkpoint if checkpoint is not None else self.path_for(entry)
+        if _path_is_reparse(selected_root):
+            raise CheckpointIntegrityError(
+                f"checkpoint root must not be a symlink or reparse point: {selected_root}"
+            )
+        root = selected_root.resolve()
         if not root.is_dir():
             raise CheckpointIntegrityError(f"checkpoint directory is missing: {root}")
 
@@ -535,13 +541,24 @@ class ModelStore:
             relative = candidate.relative_to(root)
             if relative.parts and relative.parts[0] == ".cache":
                 continue
-            if candidate.is_symlink():
+            if _path_is_reparse(candidate):
                 raise CheckpointIntegrityError(
-                    f"{model_id} contains symbolic link {relative.as_posix()}; the manifest "
+                    f"{model_id} contains a link or reparse point "
+                    f"{relative.as_posix()}; the manifest "
                     "covers bytes inside the checkpoint, not an external target"
                 )
             if candidate.is_file():
+                metadata = os.lstat(candidate)
+                if metadata.st_nlink != 1:
+                    raise CheckpointIntegrityError(
+                        f"{model_id}:{relative.as_posix()} must have exactly one hard link; "
+                        f"got {metadata.st_nlink}"
+                    )
                 actual_paths.add(relative.as_posix())
+            elif not candidate.is_dir():
+                raise CheckpointIntegrityError(
+                    f"{model_id} contains a non-regular filesystem member: {relative.as_posix()}"
+                )
 
         missing = sorted(expected_paths - actual_paths)
         extra = sorted(actual_paths - expected_paths)
@@ -572,6 +589,34 @@ class ModelStore:
                     f"requires {digest}. Same-size weight corruption is not safe to load."
                 )
             total += size
+        final_paths: set[str] = set()
+        for candidate in root.rglob("*"):
+            relative = candidate.relative_to(root)
+            if relative.parts and relative.parts[0] == ".cache":
+                continue
+            if _path_is_reparse(candidate):
+                raise CheckpointIntegrityError(
+                    f"{model_id} gained a link or reparse point while verifying: "
+                    f"{relative.as_posix()}"
+                )
+            if candidate.is_file():
+                metadata = os.lstat(candidate)
+                if metadata.st_nlink != 1:
+                    raise CheckpointIntegrityError(
+                        f"{model_id}:{relative.as_posix()} gained another hard link while verifying"
+                    )
+                final_paths.add(relative.as_posix())
+            elif not candidate.is_dir():
+                raise CheckpointIntegrityError(
+                    f"{model_id} gained a non-regular filesystem member while verifying: "
+                    f"{relative.as_posix()}"
+                )
+        if final_paths != expected_paths:
+            raise CheckpointIntegrityError(
+                f"{model_id} file set changed while verifying: "
+                f"missing={sorted(expected_paths - final_paths)[:8]}, "
+                f"extra={sorted(final_paths - expected_paths)[:8]}"
+            )
         return CheckpointIntegrityReport(
             model_id=model_id,
             repository=repository,
@@ -605,6 +650,11 @@ class ModelStore:
                 f'  {{"{repo_id}": "<40-hex commit sha>"}}\n'
                 f'  python -c "from huggingface_hub import HfApi; '
                 f"print(HfApi().model_info('{repo_id}').sha)\""
+            )
+        if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+            raise RevisionNotPinned(
+                f"invalid pinned revision for {repo_id!r}: {revision!r}. Expected one full "
+                f"lowercase 40-hex commit SHA in {self.root / 'revisions.json'}"
             )
         return revision
 
@@ -675,10 +725,12 @@ class ModelStore:
             source = self.source_for(entry)
         except SourceNotConfigured:
             source = "<source not configured>"
-        size_bytes = _directory_size(path) if present else None
+        size_bytes = None
         if present:
             try:
-                integrity = self.verify_checkpoint(entry.model_id, path)
+                with _checkpoint_lock_stream(path, exclusive=False):
+                    size_bytes = _directory_size(path)
+                    integrity = self.verify_checkpoint(entry.model_id, path)
             except (CheckpointIntegrityError, RevisionNotPinned, SourceNotConfigured) as exc:
                 return ModelStatus(
                     model_id=entry.model_id,
@@ -706,11 +758,11 @@ class ModelStore:
         )
 
     def missing_weights(self) -> tuple[ModelEntry, ...]:
-        """§7 checkpoints that are not on this machine."""
+        """§7 checkpoints that do not pass exact byte-manifest verification."""
         return tuple(
             entry
             for entry in REGISTRY.values()
-            if entry.provisioning is Provisioning.WEIGHTS and not self.path_for(entry).is_dir()
+            if entry.provisioning is Provisioning.WEIGHTS and not self._status_for(entry).available
         )
 
     def unconfigured_sources(self) -> tuple[ModelEntry, ...]:
@@ -789,6 +841,56 @@ def _safe_manifest_path(relative: str, model_id: str) -> PurePosixPath:
     return path
 
 
+def _path_is_reparse(path: Path) -> bool:
+    try:
+        metadata = os.lstat(path)
+    except OSError:
+        return False
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & reparse_flag
+    )
+
+
+def _publish_checkpoint_directory(source: Path, destination: Path) -> None:
+    """Atomically rename one verified directory without replacing any existing final path."""
+    if os.name == "nt":
+        # Windows MoveFile already has no-replace semantics for os.rename().
+        os.rename(source, destination)
+        return
+
+    encoded_source = os.fsencode(source)
+    encoded_destination = os.fsencode(destination)
+    library = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(library, "renameat2", None)
+    if renameat2 is not None:
+        renameat2.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        renameat2.restype = ctypes.c_int
+        # Linux: RENAME_NOREPLACE, relative to the current directory when paths are relative.
+        result = renameat2(-100, encoded_source, -100, encoded_destination, 1)
+    else:
+        renamex_np = getattr(library, "renamex_np", None)
+        if renamex_np is None:
+            raise CheckpointIntegrityError(
+                "this platform has no atomic no-replace directory publication primitive"
+            )
+        renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        renamex_np.restype = ctypes.c_int
+        # Darwin: RENAME_EXCL.
+        result = renamex_np(encoded_source, encoded_destination, 0x00000004)
+    if result != 0:
+        error = ctypes.get_errno()
+        if error in {errno.EEXIST, errno.ENOTEMPTY}:
+            raise FileExistsError(error, os.strerror(error), destination)
+        raise OSError(error, os.strerror(error), destination)
+
+
 def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
     if algorithm == "sha256":
         digest = hashlib.sha256()
@@ -801,10 +903,173 @@ def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
         raise CheckpointIntegrityError(
             f"unsupported checkpoint digest algorithm {algorithm!r} for {path}"
         )
-    with path.open("rb") as stream:
-        while chunk := stream.read(8 * 1024 * 1024):
-            digest.update(chunk)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise CheckpointIntegrityError(f"cannot safely open checkpoint file {path}: {exc}") from exc
+    try:
+        before = os.fstat(descriptor)
+        named = os.lstat(path)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or before.st_nlink != 1
+            or named.st_nlink != 1
+            or _path_is_reparse(path)
+            or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise CheckpointIntegrityError(
+                f"checkpoint file must be one unlinked regular file: {path}"
+            )
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            while chunk := stream.read(8 * 1024 * 1024):
+                digest.update(chunk)
+            after = os.fstat(stream.fileno())
+        current = os.lstat(path)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            before.st_nlink,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_nlink,
+        )
+        current_identity = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_ctime_ns,
+            current.st_nlink,
+        )
+        if before_identity != after_identity or after_identity != current_identity:
+            raise CheckpointIntegrityError(f"checkpoint file changed while hashing: {path}")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     return digest.hexdigest()
+
+
+@contextmanager
+def _checkpoint_lock_stream(model_dir: Path, *, exclusive: bool) -> Iterator[None]:
+    lock_path = model_dir.parent / f".{model_dir.name}.hawedit.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOINHERIT", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise CheckpointIntegrityError(
+            f"cannot safely open checkpoint lock {lock_path}: {exc}"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(lock_path)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or opened.st_nlink != 1
+            or named.st_nlink != 1
+            or _path_is_reparse(lock_path)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise CheckpointIntegrityError(
+                f"checkpoint lock must be one unlinked regular file: {lock_path}"
+            )
+        with os.fdopen(descriptor, "r+b") as stream:
+            descriptor = -1
+            if stream.seek(0, os.SEEK_END) == 0:
+                stream.write(b"\0")
+                stream.flush()
+                os.fsync(stream.fileno())
+            stream.seek(0)
+            if os.name == "nt":
+                msvcrt = importlib.import_module("msvcrt")
+                mode = (
+                    msvcrt.LK_NBLCK if exclusive else getattr(msvcrt, "LK_NBRLCK", msvcrt.LK_NBLCK)
+                )
+                deadline = time.monotonic() + 6 * 60 * 60
+                while True:
+                    stream.seek(0)
+                    try:
+                        msvcrt.locking(stream.fileno(), mode, 1)
+                        break
+                    except OSError as exc:
+                        if time.monotonic() >= deadline:
+                            raise CheckpointIntegrityError(
+                                f"timed out waiting for checkpoint lock {lock_path}"
+                            ) from exc
+                        time.sleep(0.25)
+                try:
+                    yield
+                except BaseException:
+                    with suppress(OSError):
+                        stream.seek(0)
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                    raise
+                else:
+                    try:
+                        stream.seek(0)
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                    except OSError as exc:
+                        raise CheckpointIntegrityError(
+                            f"cannot release checkpoint lock {lock_path}: {exc}"
+                        ) from exc
+            else:
+                fcntl = importlib.import_module("fcntl")
+                operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                try:
+                    fcntl.flock(stream.fileno(), operation)
+                except OSError as exc:
+                    raise CheckpointIntegrityError(
+                        f"cannot acquire checkpoint lock {lock_path}: {exc}"
+                    ) from exc
+                try:
+                    yield
+                except BaseException:
+                    with suppress(OSError):
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                    raise
+                else:
+                    try:
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                    except OSError as exc:
+                        raise CheckpointIntegrityError(
+                            f"cannot release checkpoint lock {lock_path}: {exc}"
+                        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+@contextmanager
+def checkpoint_publish_lock(model_dir: Path) -> Iterator[None]:
+    """Hold the exclusive writer lock used for staged checkpoint publication."""
+    with _checkpoint_lock_stream(model_dir, exclusive=True):
+        yield
+
+
+@contextmanager
+def verified_checkpoint_access(model_id: str, model_dir: Path | None = None) -> Iterator[Path]:
+    """Verify and hold a shared lock while a consumer opens every checkpoint file."""
+    store = ModelStore()
+    entry = REGISTRY.get(model_id)
+    selected = model_dir if model_dir is not None else (store.path_for(entry) if entry else None)
+    if selected is None:
+        raise CheckpointIntegrityError(f"{model_id!r} is not a downloadable checkpoint")
+    with _checkpoint_lock_stream(selected, exclusive=False):
+        store.verify_checkpoint(model_id, selected)
+        yield selected.resolve()
 
 
 def assert_checkpoint_integrity(model_id: str, model_dir: Path) -> CheckpointIntegrityReport:

@@ -25,7 +25,7 @@ larger lock remains separate from the hash-locked release builder recorded in D-
 
 ## Transformers 4.57.6: scanner result and VEX
 
-A clean all-extras environment still makes `pip-audit==2.9.0` report four Transformers
+A clean host-extras (`dev,media,cloud,gpu`) environment still makes `pip-audit==2.9.0` report four Transformers
 advisories. This is not rewritten as “no vulnerabilities found.” Transformers 5.x cannot replace
 the pin blindly: D-055 measured three VideoChat3 incompatibilities, including a silently random
 `lm_head`, and changed reranker scores and order. Each advisory was therefore checked against
@@ -64,7 +64,7 @@ Regressions cover nested private fields, both public remote-kernel fields, neste
 `trust_remote_code`, X-CLIP/LightGlue model-family substitution, malformed/missing configs, the
 visual loader's pre-runtime ordering, and the Stage 1 validator path.
 
-## Clean all-extras proof
+## Clean host-extras proof
 
 An isolated Python 3.12.13 environment was created at `.gate/dependency-audit-d094` and installed
 from this checkout with `.[dev,media,cloud,gpu]`. It resolved the exact direct versions above plus

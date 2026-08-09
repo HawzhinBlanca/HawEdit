@@ -47,7 +47,7 @@ Python 3.11.0+ range rather than silently requiring 3.11.4's tar filter.
   independent evidence mutations, incomplete pagination, API failure, cross-host redirect token
   isolation, pre-builder refusal, live-worktree TOCTOU, independent source roots and write-once
   behavior, plus hostile archive traversal/link refusal.
-- Canonical all-extras gate: `1282 passed, 0 skipped`; Ruff, format and mypy clean across 100
+- Canonical host-extras (`dev,media,cloud,gpu`) gate: `1282 passed, 0 skipped`; Ruff, format and mypy clean across 100
   source files; `VERIFY OK`.
 - Live positive control: official `main` push run `31295014063` was accepted for exact SHA
   `b34d88dc734f8aefd6c7c7d10ff6953cc5e24e92`.

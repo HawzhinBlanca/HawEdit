@@ -13,6 +13,7 @@ The recipe fixtures below are written by hand rather than read from `models/`, s
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +26,7 @@ from hawedit.qwen_visual import (
     QwenVisualEmbedder,
     QwenVisualReranker,
     load_processor_and_model,
+    read_pooling_prompt,
     read_pooling_recipe,
     read_score_tokens,
 )
@@ -76,8 +78,9 @@ def test_a_pooling_mode_this_module_does_not_implement_is_refused(tmp_path: Path
     check `VisualEmbedding` makes — so nothing downstream could tell. Without this test the
     recipe would be read and then ignored, which is the same as not reading it.
     """
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, pooling_mode="mean"))
     with pytest.raises(EmbedderUnavailable, match="pools by 'mean'"):
-        QwenVisualEmbedder(a_checkpoint(tmp_path, pooling_mode="mean"))
+        embedder._cache_verified_recipe(embedder.model_dir)
 
 
 def test_the_declared_prompt_is_carried_even_without_the_sentence_transformers_file(
@@ -87,6 +90,62 @@ def test_the_declared_prompt_is_carried_even_without_the_sentence_transformers_f
     has to be that string and not something reasonable-looking."""
     recipe = read_pooling_recipe(a_checkpoint(tmp_path, prompt=None))
     assert recipe.prompt == "Represent the user's input."
+
+
+def test_malformed_pooling_recipe_is_a_domain_refusal(tmp_path: Path) -> None:
+    checkpoint = a_checkpoint(tmp_path)
+    (checkpoint / "1_Pooling" / "config.json").write_text("{", encoding="utf-8")
+    with pytest.raises(EmbedderUnavailable, match="cannot read verified checkpoint pooling"):
+        read_pooling_recipe(checkpoint)
+
+
+def test_malformed_prompt_recipe_is_not_hidden_by_the_embedder_fallback(tmp_path: Path) -> None:
+    checkpoint = a_checkpoint(tmp_path)
+    (checkpoint / "config_sentence_transformers.json").write_text("{", encoding="utf-8")
+    with pytest.raises(EmbedderUnavailable, match="cannot read verified checkpoint prompt"):
+        read_pooling_recipe(checkpoint)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"prompts": []},
+        {"prompts": False},
+        {"prompts": "not-an-object"},
+        {"prompts": {}, "default_prompt_name": 0},
+        {"prompts": {}, "default_prompt_name": False},
+    ],
+)
+def test_false_valued_prompt_schema_violations_are_not_treated_as_absence(
+    tmp_path: Path, payload: object
+) -> None:
+    checkpoint = a_checkpoint(tmp_path)
+    (checkpoint / "config_sentence_transformers.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    with pytest.raises(EmbedderUnavailable, match="non-object 'prompts'|non-string prompt name"):
+        read_pooling_prompt(checkpoint)
+
+
+def test_embedder_does_not_cache_a_recipe_before_verified_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = a_checkpoint(tmp_path, prompt="attacker-controlled instruction")
+    embedder = QwenVisualEmbedder(checkpoint, device="cpu")
+    with pytest.raises(EmbedderUnavailable, match="before verified model load"):
+        _ = embedder.recipe
+
+    a_checkpoint(tmp_path, prompt="Represent the user's input.")
+
+    def verified_stub(_model_dir: Path, _device: str, **kwargs: Any) -> tuple[object, object]:
+        callback = kwargs["_after_verify"]
+        assert callable(callback)
+        callback(checkpoint)
+        return object(), object()
+
+    monkeypatch.setattr("hawedit.qwen_visual.load_processor_and_model", verified_stub)
+    embedder._load()
+    assert embedder.recipe.prompt == "Represent the user's input."
 
 
 # --- §7 before any weights move -------------------------------------------------------------
@@ -121,7 +180,9 @@ def test_the_default_model_id_is_the_registry_id_for_the_embedder() -> None:
     assert REGISTRY[EMBEDDING_MODEL_ID].role == "visual_embedding"
 
 
-def test_model_config_is_refused_before_any_gpu_or_transformers_loader(tmp_path: Path) -> None:
+def test_model_config_is_refused_before_any_gpu_or_transformers_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The CVE guard has to precede even runtime discovery, not merely AutoModel."""
     (tmp_path / "config.json").write_text(
         json.dumps(
@@ -134,13 +195,23 @@ def test_model_config_is_refused_before_any_gpu_or_transformers_loader(tmp_path:
     )
     # test_models intentionally reloads hawedit.models to exercise installed-path discovery;
     # RuntimeError avoids binding this cross-file assertion to the pre-reload class identity.
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
     with pytest.raises(RuntimeError, match="CVE-2026-4372"):
         load_processor_and_model(tmp_path, "cuda:0")
 
 
 @pytest.mark.parametrize("model_type", ["xclip", "lightglue"])
-def test_visual_loader_uses_the_qwen_model_type_allowlist(tmp_path: Path, model_type: str) -> None:
+def test_visual_loader_uses_the_qwen_model_type_allowlist(
+    tmp_path: Path, model_type: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "config.json").write_text(json.dumps({"model_type": model_type}), encoding="utf-8")
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
     with pytest.raises(RuntimeError, match="unapproved"):
         load_processor_and_model(tmp_path, "cuda:0")
 
@@ -159,7 +230,10 @@ def test_asking_for_cuda_without_cuda_is_refused_rather_than_run_on_cpu(
     what the machine happens to have would make the test vanish exactly where it matters.
     """
     torch = pytest.importorskip("torch", reason="the gpu extra is not installed")
-    monkeypatch.setattr("hawedit.qwen_visual.assert_checkpoint_integrity", lambda *_args: None)
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     embedder = QwenVisualEmbedder(a_checkpoint(tmp_path), device="cuda:0")
     with pytest.raises(EmbedderUnavailable, match="reports no CUDA"):
@@ -174,9 +248,75 @@ def test_checkpoint_integrity_is_proven_before_torch_or_transformers(
     def refuse(*_args: object) -> None:
         raise RuntimeError("integrity sentinel")
 
-    monkeypatch.setattr("hawedit.qwen_visual.assert_checkpoint_integrity", refuse)
+    monkeypatch.setattr("hawedit.qwen_visual.verified_checkpoint_access", refuse)
     with pytest.raises(RuntimeError, match="integrity sentinel"):
         load_processor_and_model(tmp_path, "cuda:0")
+
+
+def test_integrity_then_safe_config_precede_verified_recipe_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    @contextmanager
+    def integrity(*_args: object) -> Any:
+        events.append("integrity")
+        yield tmp_path
+
+    def safe_config(*_args: object) -> None:
+        assert events == ["integrity"]
+        events.append("safe-config")
+
+    def recipe(_verified_dir: Path) -> None:
+        assert events == ["integrity", "safe-config"]
+        events.append("recipe")
+        raise RuntimeError("recipe sentinel")
+
+    monkeypatch.setattr("hawedit.qwen_visual.verified_checkpoint_access", integrity)
+    monkeypatch.setattr("hawedit.qwen_visual.assert_transformers_config_safe", safe_config)
+    with pytest.raises(RuntimeError, match="recipe sentinel"):
+        load_processor_and_model(tmp_path, "cuda:0", _after_verify=recipe)
+    assert events == ["integrity", "safe-config", "recipe"]
+
+
+def test_verified_checkpoint_binding_is_held_through_every_constructor_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.qwen_visual as qwen_module
+
+    active = False
+    events: list[str] = []
+
+    @contextmanager
+    def access(_model_id: str, model_dir: Path) -> Any:
+        nonlocal active
+        active = True
+        events.append("verified")
+        try:
+            yield model_dir
+        finally:
+            active = False
+
+    def safe_config(model_dir: Path, _allowed: object) -> None:
+        assert active and model_dir == tmp_path
+        events.append("safe-config")
+
+    def recipe(model_dir: Path) -> None:
+        assert active and model_dir == tmp_path
+        events.append("recipe")
+
+    def backend(model_dir: Path, _device: str, **_kwargs: object) -> tuple[object, object]:
+        assert active and model_dir == tmp_path
+        events.append("from-pretrained")
+        return object(), object()
+
+    monkeypatch.setattr(qwen_module, "verified_checkpoint_access", access)
+    monkeypatch.setattr(qwen_module, "assert_transformers_config_safe", safe_config)
+    monkeypatch.setattr(qwen_module, "_load_verified_processor_and_model", backend)
+
+    load_processor_and_model(tmp_path, "cpu", _after_verify=recipe)
+    assert not active
+    assert events == ["verified", "safe-config", "recipe", "from-pretrained"]
 
 
 def test_embedder_backend_failures_become_domain_refusals(
@@ -255,6 +395,42 @@ def test_a_checkpoint_that_does_not_name_its_score_tokens_is_refused(tmp_path: P
     with every score still landing in [0, 1]."""
     with pytest.raises(EmbedderUnavailable, match="which tokens its score"):
         read_score_tokens(tmp_path)
+
+
+def test_malformed_score_recipe_is_a_domain_refusal(tmp_path: Path) -> None:
+    checkpoint = a_reranker_checkpoint(tmp_path)
+    (checkpoint / "1_LogitScore" / "config.json").write_text("{", encoding="utf-8")
+    with pytest.raises(EmbedderUnavailable, match="cannot read verified checkpoint score"):
+        read_score_tokens(checkpoint)
+
+
+def test_reranker_does_not_cache_tokens_or_prompt_before_verified_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = a_reranker_checkpoint(tmp_path, true_id=777, false_id=666)
+    prompt_file = checkpoint / "config_sentence_transformers.json"
+    prompt_file.write_text(
+        json.dumps({"default_prompt_name": "query", "prompts": {"query": "attacker prompt"}}),
+        encoding="utf-8",
+    )
+    reranker = QwenVisualReranker(checkpoint, read_frames=lambda _window: two_frames())
+    with pytest.raises(EmbedderUnavailable, match="before verified model load"):
+        _ = reranker.tokens
+    with pytest.raises(EmbedderUnavailable, match="before verified model load"):
+        _ = reranker.instruct
+
+    a_reranker_checkpoint(tmp_path, true_id=1, false_id=2)
+
+    def verified_stub(_model_dir: Path, _device: str, **kwargs: Any) -> tuple[object, object]:
+        callback = kwargs["_after_verify"]
+        assert callable(callback)
+        callback(checkpoint)
+        return object(), object()
+
+    monkeypatch.setattr("hawedit.qwen_visual.load_processor_and_model", verified_stub)
+    reranker._load()
+    assert (reranker.tokens.true_id, reranker.tokens.false_id) == (1, 2)
+    assert reranker.instruct == "Retrieve text relevant to the user's query."
 
 
 def test_reranker_backend_failures_become_domain_refusals(
@@ -422,6 +598,7 @@ def stubbed(
     obj: Any, monkeypatch: pytest.MonkeyPatch, hidden: Any, weight: Any
 ) -> tuple[StubProcessor, StubModel]:
     """Point `obj._load` at stubs, and make frame loading independent of Pillow."""
+    obj._cache_verified_recipe(obj.model_dir)
     processor, model = StubProcessor(), StubModel(hidden, weight)
     monkeypatch.setattr(type(obj), "_load", lambda _self: (processor, model))
     monkeypatch.setattr(

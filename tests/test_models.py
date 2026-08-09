@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
@@ -32,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def store(tmp_path: Path) -> ModelStore:
-    return ModelStore(root=tmp_path)
+    return ModelStore(root=tmp_path, metadata_root=tmp_path)
 
 
 def _stub_local_omni_runtime(
@@ -164,6 +165,39 @@ def test_the_installed_source_manifest_location_is_stable() -> None:
     from hawedit.models import INSTALLED_SOURCES
 
     assert INSTALLED_SOURCES.parts[-4:] == ("share", "hawedit", "models", "sources.json")
+
+
+def test_fresh_custom_checkpoint_root_uses_tracked_metadata_only_for_identity(
+    tmp_path: Path,
+) -> None:
+    model_store = ModelStore(root=tmp_path)
+    entry = REGISTRY["Qwen3-VL-Embedding-2B"]
+    repository = model_store.source_for(entry)
+    assert repository == "Qwen/Qwen3-VL-Embedding-2B"
+    assert re.fullmatch(r"[0-9a-f]{40}", model_store.revision_for(repository))
+    assert "Qwen3-VL-Embedding-2B" in model_store.integrity()
+    assert model_store.path_for(entry).parent == tmp_path
+    assert not tuple(tmp_path.iterdir()), (
+        "immutable metadata must not be copied into the model root"
+    )
+
+
+def test_mutable_checkpoint_root_cannot_override_trusted_metadata(tmp_path: Path) -> None:
+    trusted = ModelStore()
+    (tmp_path / "sources.json").write_text(
+        json.dumps({"Qwen3-VL-Embedding-2B": "attacker/substitute"}), encoding="utf-8"
+    )
+    (tmp_path / "revisions.json").write_text(
+        json.dumps({"attacker/substitute": "0" * 40}), encoding="utf-8"
+    )
+    (tmp_path / "integrity.json").write_text(
+        json.dumps({"schema": 1, "models": {}}), encoding="utf-8"
+    )
+
+    custom = ModelStore(root=tmp_path)
+    assert dict(custom.sources()) == dict(trusted.sources())
+    assert dict(custom.revisions()) == dict(trusted.revisions())
+    assert custom.integrity() == trusted.integrity()
 
 
 def test_unconfigured_sources_are_listed_so_an_operator_knows_what_to_supply(
@@ -444,7 +478,7 @@ def _integrity_checkpoint(tmp_path: Path) -> tuple[ModelStore, Path]:
     # Downloader state is not repository content and must not become an unexplained extra.
     (checkpoint / ".cache" / "huggingface").mkdir(parents=True)
     (checkpoint / ".cache" / "huggingface" / "metadata").write_text("ignored")
-    return ModelStore(root=tmp_path), checkpoint
+    return ModelStore(root=tmp_path, metadata_root=tmp_path), checkpoint
 
 
 def test_checkpoint_bytes_are_verified_against_git_and_lfs_identities(tmp_path: Path) -> None:
@@ -467,6 +501,62 @@ def test_verified_checkpoint_is_reported_ready_and_can_start(tmp_path: Path) -> 
     assert model_store.assert_available("Qwen3-VL-Embedding-2B") == checkpoint
 
 
+def test_fetch_plan_uses_verified_status_and_includes_invalid_existing_final(
+    tmp_path: Path,
+) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    model_id = "Qwen3-VL-Embedding-2B"
+    assert model_id not in {entry.model_id for entry in model_store.missing_weights()}
+
+    (checkpoint / "model.safetensors").write_bytes(b"same directory, invalid bytes")
+
+    assert model_id in {entry.model_id for entry in model_store.missing_weights()}
+    assert checkpoint.is_dir(), "planning must never remove or quarantine user data"
+
+
+def test_verified_checkpoint_access_verifies_before_yield_and_holds_sibling_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.models import ModelStore, verified_checkpoint_access
+
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    events: list[str] = []
+
+    def verify(_store: ModelStore, model_id: str, selected: Path | None = None) -> SimpleNamespace:
+        assert model_id == "Qwen3-VL-Embedding-2B"
+        assert selected == checkpoint
+        events.append("verified")
+        return SimpleNamespace()
+
+    monkeypatch.setattr(ModelStore, "verify_checkpoint", verify)
+    with verified_checkpoint_access("Qwen3-VL-Embedding-2B", checkpoint) as selected:
+        events.append("consumer")
+        assert selected == checkpoint.resolve()
+        assert (tmp_path / ".checkpoint.hawedit.lock").is_file()
+    assert events == ["verified", "consumer"]
+
+
+def test_checkpoint_publication_never_replaces_a_concurrently_appearing_final(
+    tmp_path: Path,
+) -> None:
+    from hawedit.models import _publish_checkpoint_directory
+
+    staging = tmp_path / ".checkpoint.download-revision"
+    staging.mkdir()
+    (staging / "verified.bin").write_bytes(b"verified")
+    destination = tmp_path / "checkpoint"
+    destination.mkdir()
+    destination_inode = destination.stat().st_ino
+
+    with pytest.raises(FileExistsError):
+        _publish_checkpoint_directory(staging, destination)
+
+    assert destination.stat().st_ino == destination_inode
+    assert not tuple(destination.iterdir())
+    assert (staging / "verified.bin").read_bytes() == b"verified"
+
+
 def test_same_size_weight_tampering_is_refused_before_load(tmp_path: Path) -> None:
     """Size/mtime checks miss this; a numeric weight can change without changing file shape."""
     model_store, checkpoint = _integrity_checkpoint(tmp_path)
@@ -475,6 +565,54 @@ def test_same_size_weight_tampering_is_refused_before_load(tmp_path: Path) -> No
     weights.write_bytes(bytes([original[0] ^ 1]) + original[1:])
     assert weights.stat().st_size == len(original)
     with pytest.raises(CheckpointIntegrityError, match="Same-size weight corruption"):
+        model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", checkpoint)
+
+
+def test_checkpoint_hardlinked_member_is_refused(tmp_path: Path) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    weights = checkpoint / "model.safetensors"
+    os.link(weights, tmp_path / "weights-alias.safetensors")
+    with pytest.raises(CheckpointIntegrityError, match="exactly one hard link"):
+        model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", checkpoint)
+
+
+def test_checkpoint_root_reparse_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    linked = tmp_path / "linked-checkpoint"
+    try:
+        linked.symlink_to(checkpoint, target_is_directory=True)
+        selected = linked
+    except OSError:
+        selected = checkpoint
+        original = __import__("hawedit.models", fromlist=["_path_is_reparse"])._path_is_reparse
+        monkeypatch.setattr(
+            "hawedit.models._path_is_reparse",
+            lambda path: Path(path) == checkpoint or original(path),
+        )
+    with pytest.raises(CheckpointIntegrityError, match="root must not be.*reparse"):
+        model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", selected)
+
+
+def test_checkpoint_member_reparse_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    config = checkpoint / "config.json"
+    external = tmp_path / "external-config.json"
+    external.write_bytes(config.read_bytes())
+    config.unlink()
+    try:
+        config.symlink_to(external)
+    except OSError:
+        config.write_bytes(external.read_bytes())
+        original = __import__("hawedit.models", fromlist=["_path_is_reparse"])._path_is_reparse
+        monkeypatch.setattr(
+            "hawedit.models._path_is_reparse",
+            lambda path: Path(path) == config or original(path),
+        )
+    with pytest.raises(CheckpointIntegrityError, match="link or reparse point"):
         model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", checkpoint)
 
 
@@ -686,6 +824,17 @@ def test_a_pinned_revision_is_returned_for_download(tmp_path: Path) -> None:
     assert store(tmp_path).revision_for("Qwen/repo") == "0" * 40
 
 
+@pytest.mark.parametrize("revision", ["A" * 40, "a" * 39, "main", 7])
+def test_revision_for_rejects_every_noncanonical_commit_pin(
+    tmp_path: Path, revision: object
+) -> None:
+    from hawedit.models import RevisionNotPinned
+
+    (tmp_path / "revisions.json").write_text(json.dumps({"Qwen/repo": revision}), encoding="utf-8")
+    with pytest.raises(RevisionNotPinned, match="full lowercase 40-hex"):
+        store(tmp_path).revision_for("Qwen/repo")
+
+
 def test_comment_keys_are_not_mistaken_for_repositories(tmp_path: Path) -> None:
     """`revisions.json` carries its provenance in `_`-prefixed keys, as `sources.json` does."""
     (tmp_path / "revisions.json").write_text(
@@ -752,23 +901,50 @@ def test_the_fetcher_passes_the_pinned_revision_to_snapshot_download(
 
     calls: list[dict[str, object]] = []
     stub = types.ModuleType("huggingface_hub")
-    stub.snapshot_download = lambda **kwargs: calls.append(kwargs)  # type: ignore[attr-defined]
+
+    def snapshot_download(**kwargs: object) -> None:
+        calls.append(kwargs)
+        Path(str(kwargs["local_dir"]), "downloaded.bin").write_bytes(b"verified")
+
+    stub.snapshot_download = snapshot_download  # type: ignore[attr-defined]
     monkeypatch.setitem(_sys.modules, "huggingface_hub", stub)
 
-    (tmp_path / "revisions.json").write_text(json.dumps({"Qwen/repo": "b" * 40}), encoding="utf-8")
     monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
-    monkeypatch.setattr(_sys, "argv", ["fetch", "Qwen/repo", str(tmp_path / "dest")])
+    destination = tmp_path / "dest"
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        ["fetch", "Qwen3-VL-Embedding-2B", "Qwen/repo", str(destination)],
+    )
 
     import importlib
 
     import hawedit.models
 
     importlib.reload(hawedit.models)  # pick up HAWEDIT_MODELS_DIR
+    monkeypatch.setattr(
+        hawedit.models.ModelStore,
+        "revision_for",
+        lambda _store, repository: "b" * 40 if repository == "Qwen/repo" else None,
+    )
+    verified: list[Path] = []
+
+    def verify(_store: object, _model_id: str, checkpoint: Path | None = None) -> SimpleNamespace:
+        assert checkpoint is not None
+        verified.append(checkpoint)
+        return SimpleNamespace(files_verified=1, size_bytes=8)
+
+    monkeypatch.setattr(hawedit.models.ModelStore, "verify_checkpoint", verify)
     try:
         exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
-        assert calls == [
-            {"repo_id": "Qwen/repo", "revision": "b" * 40, "local_dir": str(tmp_path / "dest")}
-        ], calls
+        assert len(calls) == 1
+        assert calls[0]["repo_id"] == "Qwen/repo"
+        assert calls[0]["revision"] == "b" * 40
+        staging = Path(str(calls[0]["local_dir"]))
+        assert staging.parent == tmp_path
+        assert staging.name.startswith(".dest.download-")
+        assert verified == [staging]
+        assert (destination / "downloaded.bin").read_bytes() == b"verified"
     finally:
         monkeypatch.undo()
         importlib.reload(hawedit.models)
@@ -790,7 +966,11 @@ def test_the_fetcher_refuses_a_repository_that_is_not_pinned(
 
     (tmp_path / "revisions.json").write_text(json.dumps({}), encoding="utf-8")
     monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
-    monkeypatch.setattr(_sys, "argv", ["fetch", "Qwen/unpinned", str(tmp_path / "dest")])
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        ["fetch", "Qwen3-VL-Embedding-2B", "Qwen/unpinned", str(tmp_path / "dest")],
+    )
 
     import importlib
 
@@ -802,6 +982,101 @@ def test_the_fetcher_refuses_a_repository_that_is_not_pinned(
             exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
         assert exited.value.code == 1
         assert calls == [], f"downloaded despite no pin: {calls}"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(hawedit.models)
+
+
+def test_fetcher_preserves_and_refuses_invalid_existing_final(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+    import sys as _sys
+    import types
+
+    import hawedit.models
+
+    source_code = _fetcher_download_block()
+    calls: list[dict[str, object]] = []
+    stub = types.ModuleType("huggingface_hub")
+    stub.snapshot_download = lambda **kwargs: calls.append(kwargs)  # type: ignore[attr-defined]
+    monkeypatch.setitem(_sys.modules, "huggingface_hub", stub)
+    destination = tmp_path / "dest"
+    destination.mkdir()
+    sentinel = destination / "user-data.bin"
+    sentinel.write_bytes(b"preserve-me")
+    monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        ["fetch", "Qwen3-VL-Embedding-2B", "Qwen/repo", str(destination)],
+    )
+    importlib.reload(hawedit.models)
+    monkeypatch.setattr(
+        hawedit.models.ModelStore,
+        "revision_for",
+        lambda _store, repository: "c" * 40 if repository == "Qwen/repo" else None,
+    )
+
+    def invalid(*_args: object, **_kwargs: object) -> None:
+        raise hawedit.models.CheckpointIntegrityError("invalid existing bytes")
+
+    monkeypatch.setattr(hawedit.models.ModelStore, "verify_checkpoint", invalid)
+    try:
+        with pytest.raises(SystemExit) as exited:
+            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        assert exited.value.code == 1
+        assert calls == []
+        assert sentinel.read_bytes() == b"preserve-me"
+        assert not tuple(tmp_path.glob(".dest.download-*"))
+    finally:
+        monkeypatch.undo()
+        importlib.reload(hawedit.models)
+
+
+def test_fetcher_preserves_private_stage_when_manifest_verification_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+    import sys as _sys
+    import types
+
+    import hawedit.models
+
+    source_code = _fetcher_download_block()
+    stub = types.ModuleType("huggingface_hub")
+
+    def snapshot_download(**kwargs: object) -> None:
+        Path(str(kwargs["local_dir"]), "partial.bin").write_bytes(b"diagnose-me")
+
+    stub.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    monkeypatch.setitem(_sys.modules, "huggingface_hub", stub)
+    destination = tmp_path / "dest"
+    monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        ["fetch", "Qwen3-VL-Embedding-2B", "Qwen/repo", str(destination)],
+    )
+    importlib.reload(hawedit.models)
+    monkeypatch.setattr(
+        hawedit.models.ModelStore,
+        "revision_for",
+        lambda _store, repository: "d" * 40 if repository == "Qwen/repo" else None,
+    )
+
+    def invalid(*_args: object, **_kwargs: object) -> None:
+        raise hawedit.models.CheckpointIntegrityError("downloaded bytes do not match manifest")
+
+    monkeypatch.setattr(hawedit.models.ModelStore, "verify_checkpoint", invalid)
+    try:
+        with pytest.raises(SystemExit) as exited:
+            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        assert exited.value.code == 1
+        assert not destination.exists()
+        staging = tuple(tmp_path.glob(".dest.download-*"))
+        assert len(staging) == 1
+        assert (staging[0] / "partial.bin").read_bytes() == b"diagnose-me"
     finally:
         monkeypatch.undo()
         importlib.reload(hawedit.models)

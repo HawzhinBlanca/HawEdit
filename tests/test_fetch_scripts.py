@@ -22,8 +22,29 @@ def test_ffmpeg_fetch_uses_an_immutable_commit_and_lfs_digest_before_unpacking()
 
 def test_model_fetch_passes_a_full_revision_and_pins_its_download_client() -> None:
     script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
-    assert "snapshot_download(repo_id=source, revision=revision" in script
+    assert "snapshot_download(" in script
+    assert "repo_id=source" in script and "revision=revision" in script
     assert '"huggingface_hub==0.36.2"' in script
+
+
+def test_model_fetch_uses_one_models_root_and_failures_survive_the_status_report() -> None:
+    script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
+    assert 'models_root="${HAWEDIT_MODELS_DIR:-$here/models}"' in script
+    assert 'export HAWEDIT_MODELS_DIR="$models_root"' in script
+    assert "HAWEDIT_MODELS:-" not in script
+    assert 'exit "$failures"' in script
+    assert '"$PY" -m hawedit.models\nexit "$failures"' in script
+
+
+def test_model_fetch_stages_verifies_locks_and_atomically_publishes() -> None:
+    script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
+    assert "checkpoint_publish_lock(destination)" in script
+    assert ".download-{revision}" in script
+    assert "resume_download=True" in script
+    assert script.index("store.verify_checkpoint(model_id, staging)") < script.index(
+        "_publish_checkpoint_directory(staging, destination)"
+    )
+    assert "existing final checkpoint is invalid and was preserved" in script
 
 
 def test_every_remote_github_action_is_pinned_to_a_full_commit() -> None:

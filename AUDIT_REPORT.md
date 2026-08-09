@@ -96,6 +96,15 @@ These cannot be truthfully solved from the checkout alone:
   metadata, and `fetch-models.sh` refuses any repository with no pin. Four local visual
   checkpoints were cross-checked against their commits; pyannote's revision is public metadata,
   while its gated file downloads remain blocked by `BLOCKED.md` #4.
+- Project-managed checkpoint provisioning is transactional and automation-visible: verified-status
+  planning, a byte-only root override with separate trusted metadata, full-SHA runtime validation,
+  private resumable staging, exact manifest verification, locked native no-replace publication,
+  preserved invalid/concurrent finals and aggregate nonzero
+  failure (`evidence/checkpoint-provisioning.md`). Consumers hold the matching shared lock from
+  byte verification through config/recipe parsing and model construction, preventing a verified
+  path from being reopened after cooperative replacement; the Windows host lease spans the WSL
+  validator boundary (`evidence/checkpoint-load-binding.md`).
+  The code/test boundary is closed; a fresh full-size real-model load under it is not yet measured.
 - The project-fetched Linux ffmpeg archive is addressed by an immutable upstream commit and its
   Git-LFS SHA-256 is verified before unpacking.
 - `hawedit-release` makes source-to-wheel bytes reproducible and emits checksummed Git
@@ -105,8 +114,12 @@ These cannot be truthfully solved from the checkout alone:
   toolchain and provenance records that builder identity; an ambient backend cannot silently
   change the wheel. Publication also requires an explicit successful official `main` push gate
   for the exact release SHA and records its run/job in provenance; a clean but untested commit is
-  no longer publishable. Releases are still unsigned and transitive deployment dependencies are
-  not yet hash-locked; OmniASR package-asset byte identity is now closed separately at runtime.
+  no longer publishable. A permission-separated workflow now requires clean 3.11/3.12 installed-
+  wheel smokes before defining GitHub-OIDC attestations for the exact four-file release set without
+  exposing attestation authority to repository build code; its
+  first post-merge protected-`main` run is still required before authenticity has live evidence.
+  Versioned durable publication and transitive deployment hash locks remain open; OmniASR
+  package-asset byte identity is closed separately at runtime.
 
 ## Honest release call
 
@@ -116,12 +129,13 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,417 collected, 1,417 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,457 collected, 1,457 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
+- Clean Python 3.11.15 and 3.12.13 current-wheel installs: `pip check` clean, installed font/model
+  metadata present; `hawedit`, `hawedit-asr-bench`,
   `hawedit-editorial-bench`, `hawedit-asr-setup`, `hawedit-credentials` and `hawedit-release`
   all start from the installed wheel.
 - Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker/setup module and
@@ -150,9 +164,13 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   package data, and atomically emits
   the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision/gate/builder provenance. The
   independent `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally
-  live beside the artifacts instead of in this changing source file. Signing and transitive
-  environment hash locking remain open supply-chain work (`evidence/release-builder-lock.md`,
-  `evidence/release-exact-gate.md`, `evidence/omniasr-asset-integrity.md`).
+  live beside the artifacts instead of in this changing source file. The OIDC workflow is
+  permission-separated, installed-wheel gated on 3.11/3.12, exact-set tested and action-linted,
+  but not yet live-proven from default
+  `main`; transitive environment hash locking also remains open supply-chain work
+  (`evidence/release-builder-lock.md`, `evidence/release-exact-gate.md`,
+  `evidence/release-attestation.md`, `evidence/python-support.md`,
+  `evidence/omniasr-asset-integrity.md`).
 - Cross-Python release proof: Python 3.11.15 and 3.12.10 each emitted the same 329,973-byte wheel
   from revision `8d4810d28fd1`, SHA-256 `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9`.
   Provenance differs deliberately because it records the measured interpreter.

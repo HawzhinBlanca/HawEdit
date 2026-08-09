@@ -18,7 +18,8 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
-models_root="${HAWEDIT_MODELS:-$here/models}"
+models_root="${HAWEDIT_MODELS_DIR:-$here/models}"
+export HAWEDIT_MODELS_DIR="$models_root"
 
 # `bin/` on POSIX, `Scripts/` on Windows — and hawapc01, the box that will actually hold 50 GB
 # of §7 weights, is Windows. Deliberately spelled out here rather than sourced from a shared
@@ -39,16 +40,22 @@ if [[ "${1:-}" == "--status" ]]; then
 fi
 
 mkdir -p "$models_root"
+failures=0
 
 # --- what does §7 actually require, and is any of it unfetchable? ---------------------------
-plan="$("$PY" - "$models_root" "${1:-}" <<'PYEOF'
+if ! plan="$("$PY" - "$models_root" "${1:-}" <<'PYEOF'
 import sys
 from pathlib import Path
 from hawedit.models import ModelStore, SourceNotConfigured
-from hawedit.registry import Provisioning, assert_commercially_usable
+from hawedit.registry import REGISTRY, Provisioning, assert_commercially_usable
 
-root, only = Path(sys.argv[1]), (sys.argv[2] if len(sys.argv) > 2 else "")
+root, only = Path(sys.argv[1]).resolve(), (sys.argv[2] if len(sys.argv) > 2 else "")
 store = ModelStore(root=root)
+if only:
+    requested = REGISTRY.get(only)
+    if requested is None or requested.provisioning is not Provisioning.WEIGHTS:
+        print(f"REFUSED: {only!r} is not a downloadable checkpoint", file=sys.stderr)
+        raise SystemExit(1)
 
 unconfigured, lines = [], []
 for entry in store.missing_weights():
@@ -67,9 +74,14 @@ if unconfigured:
     print("UNCONFIGURED\t" + ",".join(unconfigured))
 print("\n".join(lines))
 PYEOF
-)"
+)"; then
+  echo "✗ could not build a verified model provisioning plan" >&2
+  "$PY" -m hawedit.models
+  exit 1
+fi
 
 if grep -q '^UNCONFIGURED' <<<"$plan"; then
+  failures=1
   names="$(grep '^UNCONFIGURED' <<<"$plan" | cut -f2)"
   echo "⚠ no download source configured for: ${names}" >&2
   echo "  §7 names these as checkpoints, not repository ids, and this script will not guess." >&2
@@ -80,8 +92,9 @@ if grep -q '^UNCONFIGURED' <<<"$plan"; then
 fi
 
 if [[ -z "${plan//[[:space:]]/}" ]]; then
-  echo "nothing to fetch — every configured §7 checkpoint is already present."
-  exec "$PY" -m hawedit.models
+  echo "nothing to fetch — every targeted configured checkpoint is verified."
+  "$PY" -m hawedit.models
+  exit "$failures"
 fi
 
 # --- capacity, before an hour is spent finding out ------------------------------------------
@@ -93,7 +106,11 @@ fi
 
 "$PY" -c 'from importlib.metadata import version; raise SystemExit(version("huggingface_hub") != "0.36.2")' 2>/dev/null || {
   echo "==> installing huggingface_hub 0.36.2 (Apache-2.0)"
-  "$PY" -m pip install -q "huggingface_hub==0.36.2"
+  if ! "$PY" -m pip install -q "huggingface_hub==0.36.2"; then
+    echo "✗ failed to install the pinned Hugging Face download client" >&2
+    "$PY" -m hawedit.models
+    exit 1
+  fi
 }
 
 while IFS=$'\t' read -r model_id source gated dest; do
@@ -104,42 +121,100 @@ while IFS=$'\t' read -r model_id source gated dest; do
   if [[ "$gated" == "1" && -z "${HF_TOKEN:-}" ]]; then
     echo "    SKIPPED: ${source} is a gated repo (§3 Stage 0) and HF_TOKEN is not set." >&2
     echo "    Accept the licence on Hugging Face, then export HF_TOKEN." >&2
+    failures=1
     continue
   fi
-  if ! "$PY" - "$source" "$dest" <<'PYEOF'
+  if ! "$PY" - "$model_id" "$source" "$dest" <<'PYEOF'
+import os
 import sys
+from pathlib import Path
 from huggingface_hub import snapshot_download
 
-from hawedit.models import ModelStore, RevisionNotPinned
+from hawedit.models import (
+    ModelStore,
+    RevisionNotPinned,
+    _path_is_reparse,
+    _publish_checkpoint_directory,
+    checkpoint_publish_lock,
+)
 
-source, dest = sys.argv[1], sys.argv[2]
+model_id, source, destination = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+store = ModelStore()
 # Without `revision=` this resolves whatever the branch head points at today, so two machines
 # hold different weights under one name and every number measured against them is about
 # weights nobody can identify. Refused rather than resolved silently, exactly as an
 # unconfigured repo id is (D-022, D-073).
 try:
-    revision = ModelStore().revision_for(source)
+    revision = store.revision_for(source)
 except RevisionNotPinned as exc:
     print(f"    REFUSED: {exc}", file=sys.stderr)
     raise SystemExit(1) from None
 print(f"    revision {revision}")
-try:
-    snapshot_download(repo_id=source, revision=revision, local_dir=dest)
-except Exception as exc:  # network, auth, or a repo that moved
-    print(f"    FAILED: {type(exc).__name__}: {exc}"[:400], file=sys.stderr)
+with checkpoint_publish_lock(destination):
+    if os.path.lexists(destination):
+        if _path_is_reparse(destination) or not destination.is_dir():
+            print(
+                f"    REFUSED: existing final path is not a regular checkpoint directory: "
+                f"{destination}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        try:
+            store.verify_checkpoint(model_id, destination)
+        except Exception as exc:
+            print(
+                f"    REFUSED: existing final checkpoint is invalid and was preserved: "
+                f"{type(exc).__name__}: {exc}"[:800],
+                file=sys.stderr,
+            )
+            print(
+                "    Move or quarantine that directory explicitly before retrying; HawEdit "
+                "will not overwrite user data.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from None
+        print(f"    already verified: {destination}")
+        raise SystemExit(0)
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = destination.with_name(f".{destination.name}.download-{revision}")
+    if os.path.lexists(staging):
+        if _path_is_reparse(staging) or not staging.is_dir():
+            print(f"    REFUSED: unsafe private staging path: {staging}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"    resuming private staging: {staging}")
+    else:
+        staging.mkdir(mode=0o700)
+    print(f"    private staging: {staging}")
+    try:
+        snapshot_download(
+            repo_id=source,
+            revision=revision,
+            local_dir=str(staging),
+            resume_download=True,
+        )
+        report = store.verify_checkpoint(model_id, staging)
+        _publish_checkpoint_directory(staging, destination)
+    except Exception as exc:  # network, auth, verification, publication, or a repo that moved
+        print(f"    FAILED: {type(exc).__name__}: {exc}"[:400], file=sys.stderr)
+        print(
+            "    Check network access to huggingface.co, HF_TOKEN for gated repos, that "
+            "the repo id in models/sources.json is right, and that the pinned revision in "
+            "models/revisions.json still exists in that repo.",
+            file=sys.stderr,
+        )
+        print(f"    Preserved private staging for diagnosis/resume: {staging}", file=sys.stderr)
+        raise SystemExit(1) from None
     print(
-        "    Check network access to huggingface.co, HF_TOKEN for gated repos, that "
-        "the repo id in models/sources.json is right, and that the pinned revision in "
-        "models/revisions.json still exists in that repo.",
-        file=sys.stderr,
+        f"    done: {destination} ({report.files_verified} files, {report.size_bytes} bytes)"
     )
-    raise SystemExit(1) from None
-print(f"    done: {dest}")
 PYEOF
   then
     echo "    (continuing with the remaining components)" >&2
+    failures=1
   fi
 done <<<"$plan"
 
 echo
-exec "$PY" -m hawedit.models
+"$PY" -m hawedit.models
+exit "$failures"
