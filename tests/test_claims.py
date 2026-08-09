@@ -308,7 +308,12 @@ def test_the_docs_name_workflows_that_exist() -> None:
     """
     on_disk = {p.name for p in (ROOT / ".github" / "workflows").glob("*.y*ml")}
     for doc in ("README.md", "BLOCKED.md", "PROGRESS.md"):
-        named = set(re.findall(r"\.github/workflows/([\w.-]+\.ya?ml)", (ROOT / doc).read_text()))
+        named = set(
+            re.findall(
+                r"\.github/workflows/([\w.-]+\.ya?ml)",
+                (ROOT / doc).read_text(encoding="utf-8"),
+            )
+        )
         assert named <= on_disk, (
             f"{doc} names workflows that do not exist: {sorted(named - on_disk)}"
         )

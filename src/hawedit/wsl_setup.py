@@ -18,6 +18,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import BinaryIO, Final, cast
 
 __all__ = [
+    "WSL_MODEL_METADATA_DIRECTORY",
     "WslRuntimeError",
     "WslRuntimeProbe",
     "WslRuntimeReceipt",
@@ -57,6 +59,8 @@ _LOCKS_GUARD = threading.Lock()
 _PROCESS_LOCKS: dict[Path, threading.Lock] = {}
 _WINDOWS_LOCK_TIMEOUT_SECONDS: Final = 6 * 60 * 60
 _WINDOWS_HOST: Final = os.name == "nt"
+WSL_MODEL_METADATA_DIRECTORY: Final = ".hawedit-model-metadata"
+_MODEL_METADATA_FILES: Final = ("sources.json", "revisions.json", "integrity.json")
 
 
 class WslRuntimeError(RuntimeError):
@@ -135,29 +139,6 @@ def _runtime_root_path(path: Path, *, create: bool) -> Path:
     return unresolved.resolve()
 
 
-def _regular_file_identity(path: Path, label: str) -> tuple[int, int]:
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise WslRuntimeError(f"cannot safely open {label} {path}: {exc}") from exc
-    try:
-        opened = os.fstat(descriptor)
-        named = os.lstat(path)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or not stat.S_ISREG(named.st_mode)
-            or opened.st_nlink != 1
-            or named.st_nlink != 1
-            or _is_reparse_or_symlink(path)
-            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
-        ):
-            raise WslRuntimeError(f"{label} must be one unlinked regular file: {path}")
-        return opened.st_dev, opened.st_ino
-    finally:
-        os.close(descriptor)
-
-
 def _package_files(package_dir: Path, *, reject_bytecode_cache: bool) -> list[Path]:
     if not package_dir.is_dir() or _is_reparse_or_symlink(package_dir):
         raise RuntimeError(f"HawEdit worker source is not a regular directory: {package_dir}")
@@ -182,14 +163,155 @@ def _package_files(package_dir: Path, *, reject_bytecode_cache: bool) -> list[Pa
     return sorted(files, key=lambda path: path.relative_to(package_dir).as_posix())
 
 
+def _read_bound_regular_file(path: Path, label: str, *, require_single_link: bool) -> bytes:
+    """Read one immutable input without following a link or accepting a raced pathname."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(f"cannot safely open {label} {path}: {exc}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or (require_single_link and opened.st_nlink != 1)
+            or (require_single_link and named.st_nlink != 1)
+            or _is_reparse_or_symlink(path)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise RuntimeError(f"{label} must be one unlinked regular file: {path}")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            payload = stream.read()
+            after = os.fstat(stream.fileno())
+        current = os.lstat(path)
+        descriptor_before = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+            opened.st_nlink,
+        )
+        descriptor_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_nlink,
+        )
+        path_before = (
+            named.st_dev,
+            named.st_ino,
+            named.st_size,
+            named.st_mtime_ns,
+            named.st_ctime_ns,
+            named.st_nlink,
+        )
+        path_after = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_ctime_ns,
+            current.st_nlink,
+        )
+        # Windows' CRT descriptor stat reports ``ctime`` as mtime while pathname stat reports
+        # the filesystem creation/change time. Compare ctime only within the same API; the
+        # cross-API binding deliberately uses fields whose meaning is consistent on Windows.
+        descriptor_binding = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_nlink,
+        )
+        path_binding = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_nlink,
+        )
+        if (
+            descriptor_before != descriptor_after
+            or path_before != path_after
+            or descriptor_binding != path_binding
+        ):
+            raise RuntimeError(f"{label} changed while it was read: {path}")
+        return payload
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _trusted_model_metadata_root(package_dir: Path) -> tuple[Path, bool]:
+    """Locate code-owned checkpoint identity metadata, never the mutable weights root."""
+    source = package_dir.resolve()
+    adjacent = source.parent / WSL_MODEL_METADATA_DIRECTORY
+    if os.path.lexists(adjacent):
+        return adjacent, True
+
+    candidates: list[Path] = []
+    if len(source.parents) > 1:
+        candidates.append(source.parents[1] / "models")
+    current_checkout = Path(__file__).resolve().parents[2] / "models"
+    if current_checkout not in candidates:
+        candidates.append(current_checkout)
+    candidates.append(Path(sys.prefix) / "share" / "hawedit" / "models")
+    for candidate in candidates:
+        if all((candidate / filename).is_file() for filename in _MODEL_METADATA_FILES):
+            return candidate, False
+    raise RuntimeError(
+        "HawEdit's trusted checkpoint metadata is incomplete; expected "
+        f"{', '.join(_MODEL_METADATA_FILES)} beside the checkout or installed wheel"
+    )
+
+
+def _model_metadata_bytes(package_dir: Path) -> dict[str, bytes]:
+    root, require_exact = _trusted_model_metadata_root(package_dir)
+    if not root.is_dir() or _is_reparse_or_symlink(root):
+        raise RuntimeError(f"trusted checkpoint metadata is not a regular directory: {root}")
+    if require_exact:
+        try:
+            members = tuple(root.iterdir())
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot inspect checkpoint metadata snapshot {root}: {exc}"
+            ) from exc
+        actual = {member.name for member in members}
+        expected = set(_MODEL_METADATA_FILES)
+        if actual != expected:
+            raise RuntimeError(
+                f"checkpoint metadata snapshot must contain exactly {_MODEL_METADATA_FILES!r}: "
+                f"{root}: missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+            )
+    return {
+        filename: _read_bound_regular_file(
+            root / filename,
+            f"HawEdit checkpoint metadata {filename}",
+            require_single_link=require_exact,
+        )
+        for filename in _MODEL_METADATA_FILES
+    }
+
+
 def package_digest(package_dir: Path | None = None, *, reject_bytecode_cache: bool = False) -> str:
-    """Full SHA-256 identity of the exact pure-Python worker snapshot."""
+    """Full SHA-256 identity of worker code and its checkpoint identity metadata."""
     source = package_dir or Path(__file__).resolve().parent
     digest = hashlib.sha256()
     for path in _package_files(source, reject_bytecode_cache=reject_bytecode_cache):
         digest.update(path.relative_to(source).as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())
+        digest.update(b"\0")
+    for filename, payload in _model_metadata_bytes(source).items():
+        digest.update(f"{WSL_MODEL_METADATA_DIRECTORY}/{filename}".encode())
+        digest.update(b"\0")
+        digest.update(payload)
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -216,6 +338,19 @@ def _validate_source_snapshot(source: Path, snapshot: Path) -> None:
     if actual_files != expected_files:
         missing = sorted((expected_files - actual_files), key=lambda path: path.as_posix())
         raise RuntimeError(f"HawEdit worker snapshot is missing source files: {missing!r}")
+    snapshot_root = snapshot.parent
+    expected_top_level = {snapshot.name, WSL_MODEL_METADATA_DIRECTORY}
+    actual_top_level = {path.name for path in snapshot_root.iterdir()}
+    if actual_top_level != expected_top_level:
+        raise RuntimeError(
+            f"HawEdit worker snapshot must contain only code and checkpoint metadata: "
+            f"missing={sorted(expected_top_level - actual_top_level)}, "
+            f"extra={sorted(actual_top_level - expected_top_level)}"
+        )
+    expected_metadata = _model_metadata_bytes(source)
+    copied_metadata = _model_metadata_bytes(snapshot)
+    if copied_metadata != expected_metadata:
+        raise RuntimeError("copied HawEdit checkpoint metadata does not match the host package")
 
 
 def _publish_source_snapshot(source: Path, source_root: Path) -> Path:
@@ -232,6 +367,10 @@ def _publish_source_snapshot(source: Path, source_root: Path) -> Path:
             destination = package / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_file, destination)
+        metadata = staged_path / WSL_MODEL_METADATA_DIRECTORY
+        metadata.mkdir()
+        for filename, payload in _model_metadata_bytes(source).items():
+            (metadata / filename).write_bytes(payload)
         _validate_source_snapshot(source, package)
         digest = package_digest(source)
         if package_digest(package, reject_bytecode_cache=True) != digest:
@@ -329,6 +468,116 @@ def _atomic_json(path: Path, document: Mapping[str, object]) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def _create_runtime_candidate(source_root: Path) -> tuple[Path, tuple[int, int]]:
+    """Create the unguessable, empty file that the WSL validator may populate once."""
+    candidate: Path | None = None
+    identity: tuple[int, int] | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=".runtime-candidate-",
+            suffix=".json",
+            dir=source_root,
+            delete=False,
+        ) as stream:
+            candidate = Path(stream.name)
+            opened = os.fstat(stream.fileno())
+            identity = (opened.st_dev, opened.st_ino)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        if candidate is not None and identity is not None:
+            _unlink_owned_runtime_candidate(candidate, identity)
+        raise WslRuntimeError(
+            f"cannot create private WSL runtime validation result in {source_root}: {exc}"
+        ) from exc
+    if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+        _unlink_owned_runtime_candidate(candidate, identity)
+        raise WslRuntimeError(f"private WSL runtime validation result is unsafe: {candidate}")
+    return candidate, identity
+
+
+def _publish_runtime_candidate(path: Path, document: Mapping[str, object]) -> None:
+    """Populate the pre-created candidate through a no-follow, single-link descriptor."""
+    payload = (json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    flags = os.O_WRONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise WslRuntimeError(
+            f"cannot safely open WSL runtime validation result {path}: {exc}"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or opened.st_nlink != 1
+            or named.st_nlink != 1
+            or _is_reparse_or_symlink(path)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise WslRuntimeError(
+                f"WSL runtime validation result must be one unlinked regular file: {path}"
+            )
+        os.ftruncate(descriptor, 0)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+            after = os.fstat(stream.fileno())
+        current = os.lstat(path)
+        if (
+            not stat.S_ISREG(after.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or after.st_nlink != 1
+            or current.st_nlink != 1
+            or _is_reparse_or_symlink(path)
+            or (after.st_dev, after.st_ino) != (current.st_dev, current.st_ino)
+            or after.st_size != len(payload)
+            or current.st_size != len(payload)
+        ):
+            raise WslRuntimeError(f"WSL runtime validation result changed while writing: {path}")
+    except OSError as exc:
+        raise WslRuntimeError(
+            f"cannot publish WSL runtime validation result {path}: {exc}"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _read_bound_json(path: Path, label: str) -> dict[str, object]:
+    try:
+        payload = _read_bound_regular_file(path, label, require_single_link=True)
+        raw: object = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, RuntimeError) as exc:
+        raise WslRuntimeError(f"cannot read {label} {path}: {exc}") from exc
+    return _object(raw, str(path))
+
+
+def _unlink_owned_runtime_candidate(path: Path, identity: tuple[int, int]) -> None:
+    """Best-effort cleanup that refuses to unlink a path substituted by another process."""
+    try:
+        current = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    if (
+        stat.S_ISREG(current.st_mode)
+        and current.st_nlink == 1
+        and not _is_reparse_or_symlink(path)
+        and (current.st_dev, current.st_ino) == identity
+    ):
+        with suppress(OSError):
+            path.unlink()
 
 
 def _validate_lock_file(stream: BinaryIO, lock_path: Path) -> None:
@@ -476,34 +725,6 @@ def _generation_name(distro: str | None) -> str:
     return f"{label}-{_environment_digest()[:24]}"
 
 
-def _invalidate_runtime_receipts(runtime: Path) -> None:
-    sources = runtime / "sources"
-    try:
-        os.lstat(sources)
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise WslRuntimeError(f"cannot inspect OmniASR sources directory {sources}: {exc}") from exc
-    _validate_plain_directory(sources, "OmniASR sources directory")
-    for source in sources.iterdir():
-        _validate_plain_directory(source, "OmniASR source generation")
-        marker = source / ".ready"
-        try:
-            os.lstat(marker)
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            raise WslRuntimeError(
-                f"cannot inspect OmniASR readiness marker {marker}: {exc}"
-            ) from exc
-        identity = _regular_file_identity(marker, "OmniASR readiness marker")
-        _validate_plain_directory(source, "OmniASR source generation")
-        current = os.lstat(marker)
-        if (current.st_dev, current.st_ino) != identity:
-            raise WslRuntimeError(f"OmniASR readiness marker changed during validation: {marker}")
-        os.unlink(marker)
-
-
 def _parse_runtime_payload(value: object, label: str) -> dict[str, object]:
     from hawedit.omni_assets import OMNI_ASSETS
 
@@ -595,6 +816,7 @@ from hawedit.omni_assets import (
     freeze_fairseq2_asset_overrides,
     provision_omni_assets,
 )
+from hawedit.wsl_setup import _publish_runtime_candidate
 
 # Download into fairseq2's exact cache layout, but publish nothing until HawEdit's
 # application-owned size and SHA-256 identities match. The worker hashes them again
@@ -656,10 +878,7 @@ receipt = {
         for report in assets
     ],
 }
-Path(os.environ["HAWEDIT_WSL_RECEIPT_CANDIDATE"]).write_text(
-    json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-    encoding="utf-8",
-)
+_publish_runtime_candidate(Path(os.environ["HAWEDIT_WSL_RECEIPT_CANDIDATE"]), receipt)
 print(f"OmniASR import OK; CUDA GPUs visible: {torch.cuda.device_count()}")
 PY
 """.replace("__FONTOOLS_VERSION__", _FONTOOLS_VERSION).strip()
@@ -955,14 +1174,13 @@ def provision_wsl_runtime(
     source = (package_source or Path(__file__).resolve().parent).resolve()
     runtime = _runtime_root_path(runtime_root or default_wsl_runtime(source), create=True)
     with _runtime_transaction_lock(runtime):
-        _invalidate_runtime_receipts(runtime)
         sources_root = runtime / "sources"
         _ensure_plain_directory(sources_root, "OmniASR sources directory")
         source_root = default_wsl_source(source, runtime)
         _ensure_plain_directory(source_root, "OmniASR source generation")
         ready = source_root / ".ready"
-        candidate = source_root / ".runtime-candidate.json"
-        candidate.unlink(missing_ok=True)
+        candidate: Path | None = None
+        candidate_identity: tuple[int, int] | None = None
         source_snapshot: Path | None = None
         receipt_published = False
         try:
@@ -984,6 +1202,7 @@ def provision_wsl_runtime(
             translated = wsl_path(runtime, distro)
             translated_source = wsl_path(source_snapshot, distro)
             translated_generation = wsl_path(generation_root, distro)
+            candidate, candidate_identity = _create_runtime_candidate(source_root)
             translated_candidate = wsl_path(candidate, distro)
             result = subprocess.run(
                 [
@@ -1006,7 +1225,7 @@ def provision_wsl_runtime(
                 if not complete and generation_root.exists():
                     shutil.rmtree(generation_root)
                 raise RuntimeError(f"OmniASR WSL2 setup failed with exit code {result.returncode}")
-            payload = _read_json(candidate, "WSL runtime validation result")
+            payload = _read_bound_json(candidate, "WSL runtime validation result")
             receipt = _build_receipt(
                 source_root=source_root,
                 source_snapshot=source_snapshot,
@@ -1036,7 +1255,8 @@ def provision_wsl_runtime(
             receipt_published = True
             return runtime
         finally:
-            candidate.unlink(missing_ok=True)
+            if candidate is not None and candidate_identity is not None:
+                _unlink_owned_runtime_candidate(candidate, candidate_identity)
             if source_snapshot is not None and not receipt_published:
                 shutil.rmtree(source_snapshot, ignore_errors=True)
 

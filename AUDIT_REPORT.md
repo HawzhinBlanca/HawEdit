@@ -121,6 +121,24 @@ These cannot be truthfully solved from the checkout alone:
   Versioned durable publication and transitive deployment hash locks remain open; OmniASR
   package-asset byte identity is closed separately at runtime.
 
+## Current hardening delta - 2026-08-09
+
+- Local `VERIFY OK` is now checkout/environment evidence, not merely command success: only the
+  canonical `.venv` interpreter is accepted and its editable-root/distribution/dependency identity
+  is checked before the gate (`evidence/environment-identity.md`).
+- WSL snapshots carry their trusted checkpoint manifests, preserve prior valid receipts across
+  failed reprovision and publish results through a random descriptor-bound file. Resume checkpoint
+  trees are recursively validated before any downloader write (`evidence/wsl-runtime-receipt.md`,
+  `evidence/checkpoint-provisioning.md`).
+- Expected model/transport failures now terminate only their stage, with zero forbidden downstream
+  work. Candidate traversal is refused, empty selection is no-bill, and all exception-derived JSON
+  is printable and bounded. Credential/ADC I/O is lazy and zero-transport; programmer/schema
+  failures remain visible (`evidence/pipeline-failures.md`).
+
+This improves robustness; it does not create the absent real Sorani corpus, human editorial set,
+authorized Vertex acceptance, real 5-or-more-scene visual run, pyannote access, speaker reframing evidence
+or transitive dependency hash locks.
+
 ## Honest release call
 
 Call this a hardened, composed candidate pipeline. Do not call it production-ready until a real
@@ -129,7 +147,8 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,457 collected, 1,457 passed** on 2026-08-09.
+- Clean Git-clone Windows/Python 3.12.13 gate, Ruff/formatting/mypy clean:
+  **1,525 collected, 1,525 passed, 0 skipped** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;

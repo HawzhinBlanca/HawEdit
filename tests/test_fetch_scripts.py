@@ -40,7 +40,13 @@ def test_model_fetch_stages_verifies_locks_and_atomically_publishes() -> None:
     script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
     assert "checkpoint_publish_lock(destination)" in script
     assert ".download-{revision}" in script
+    assert ".resume-{revision}" in script
+    assert "tempfile.mkdtemp(" in script
     assert "resume_download=True" in script
+    assert "metadata.st_nlink != 1" in script
+    assert "stat.S_IMODE(root_before.st_mode) & 0o077" in script
+    assert script.index("validate_private_stage(resume)") < script.index("snapshot_download(")
+    assert script.index("validate_private_stage(staging)") < script.index("snapshot_download(")
     assert script.index("store.verify_checkpoint(model_id, staging)") < script.index(
         "_publish_checkpoint_directory(staging, destination)"
     )

@@ -122,9 +122,13 @@ def test_a_model_outside_stage_5s_role_is_refused(tmp_path: Path) -> None:
         TimeLens2Grounder(tmp_path, read_frames=lambda w: None, model_id="Qwen3-VL-Embedding-2B")
 
 
-def test_missing_weights_are_refused_naming_the_fetch_script(tmp_path: Path) -> None:
+def test_missing_weights_are_lazy_at_construction_and_refused_at_runtime(tmp_path: Path) -> None:
+    absent = tmp_path / "absent"
+    grounder = TimeLens2Grounder(absent, read_frames=lambda w: None)
+
+    assert grounder.model_dir == absent
     with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
-        TimeLens2Grounder(tmp_path / "absent", read_frames=lambda w: None)
+        grounder.ground(a_window(), "a speaker gestures")
 
 
 def test_timelens_proves_checkpoint_integrity_before_loading(
@@ -275,6 +279,47 @@ def test_the_grounding_is_deterministic_by_construction(tmp_path: Path) -> None:
     grounder.ground(a_window(), "a speaker gestures")
     assert model.generate_kwargs["do_sample"] is False
     assert model.generate_kwargs["max_new_tokens"] == MAX_NEW_TOKENS
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ImportError("torch is unavailable"),
+        OSError("checkpoint read failed"),
+        RuntimeError("CUDA allocation failed"),
+    ],
+    ids=["import-error", "os-error", "runtime-error"],
+)
+def test_model_operational_failures_are_normalized_at_the_grounder_boundary(
+    tmp_path: Path, failure: Exception
+) -> None:
+    grounder, _, model = a_grounder(tmp_path)
+
+    def fail_generate(**kwargs: Any) -> list[list[int]]:
+        raise failure
+
+    model.generate = fail_generate
+    with pytest.raises(GroundingError, match=rf"{type(failure).__name__}: {failure}") as caught:
+        grounder.ground(a_window(), "a speaker gestures")
+
+    assert caught.value.__cause__ is failure
+
+
+def test_programmer_exception_from_grounding_model_is_not_normalized(tmp_path: Path) -> None:
+    grounder, _, model = a_grounder(tmp_path)
+
+    def fail_generate(**kwargs: Any) -> list[list[int]]:
+        raise AssertionError("model adapter invariant broke")
+
+    model.generate = fail_generate
+    with pytest.raises(AssertionError, match="model adapter invariant broke"):
+        grounder.ground(a_window(), "a speaker gestures")
+
+
+def test_out_of_window_model_span_remains_a_schema_value_error(tmp_path: Path) -> None:
+    grounder, _, _ = a_grounder(tmp_path, answer="[[0.0, 9.0]]")
+    with pytest.raises(ValueError, match="span outside the window"):
+        grounder.ground(a_window(), "a speaker gestures")
 
 
 def test_ground_all_flattens_every_windows_evidence(tmp_path: Path) -> None:

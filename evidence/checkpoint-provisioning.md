@@ -23,6 +23,9 @@ final directory despite the stated no-overwrite rule.
   the weights are ignored.
 - Every repository revision is runtime-validated as one lowercase 40-hex commit.
 - The pinned Hugging Face client resumes into a revision-specific private sibling directory.
+- Before any downloader call, an existing resume tree is recursively checked for owner, private
+  mode, regular/single-link members and absence of reparse/symlink objects. A safe tree is moved to
+  a random private active stage and revalidated at the bound name; fresh stages use mode 0700.
 - A writer lock serializes HawEdit publication. The complete staged file set is checked against
   `models/integrity.json`; roots/members that are links, reparse points, hardlinks or non-regular
   objects are refused, and fd/path identity is checked around hashing.
@@ -43,11 +46,14 @@ The combined focused run covered models, fetch-script contracts, ASR and Qwen co
 formatting, targeted Mypy, Bash syntax and diff checks passed. Tests exercise invalid existing
 finals, exact revision parsing, hardlink/reparse/file-set mutation, hostile mutable-root manifests,
 verified-status planning, writer/shared-lock behavior, nonzero aggregate failure and an empty-final
-no-replace race. The final canonical gate passed 1,457/1,457 with zero skips and fresh accepted
-JUnit evidence. A real WSL probe independently reproduced Linux's no-replace refusal.
+no-replace race. A planted resume hardlink is refused before the fake Hub client can touch its
+external victim; an over-permissive POSIX resume root is also refused. The final canonical count is
+1,525/1,525 with zero skips from a clean Git clone on Python 3.12.13. A real WSL probe independently
+reproduced Linux's no-replace refusal.
 
-No live multi-gigabyte Hub download was performed in this change. The resume directory is
-predictable and intended for one operator account; exact manifests prevent byte substitution, but
-the lock coordinates HawEdit processes rather than privileged or out-of-band filesystem writers.
+No live multi-gigabyte Hub download was performed in this change. The deterministic inactive
+resume name supports retries, but no unvalidated member is handed to the downloader; active writes
+use a random private stage. Exact manifests prevent byte substitution, while the lock coordinates
+HawEdit processes rather than privileged or out-of-band filesystem writers.
 An invalid final or preserved stage requires explicit operator cleanup. Those are stated operating
 constraints, not hidden success claims.

@@ -346,11 +346,6 @@ class QwenVisualEmbedder:
         # §7 first: a model outside the registry, or one that is in it for a different job,
         # never gets as far as loading 4 GB of weights.
         resolve_role(model_id, _EMBEDDING_ROLE, "the visual embedding model")
-        if not model_dir.is_dir():
-            raise EmbedderUnavailable(
-                f"no weights at {model_dir}. Run `bash scripts/fetch-models.sh "
-                f"{model_id}` — §7's registry drives it, so it cannot fetch the wrong model."
-            )
         self.model_dir = model_dir
         self.device = device
         self.model_id = model_id
@@ -372,6 +367,12 @@ class QwenVisualEmbedder:
 
     def _load(self) -> tuple[Any, Any]:
         if self._loaded is None:
+            if not self.model_dir.is_dir():
+                raise EmbedderUnavailable(
+                    f"no weights at {self.model_dir}. Run `bash scripts/fetch-models.sh "
+                    f"{self.model_id}` — §7's registry drives it, so it cannot fetch the "
+                    "wrong model."
+                )
             loaded = load_processor_and_model(
                 self.model_dir,
                 self.device,

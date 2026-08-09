@@ -126,7 +126,10 @@ while IFS=$'\t' read -r model_id source gated dest; do
   fi
   if ! "$PY" - "$model_id" "$source" "$dest" <<'PYEOF'
 import os
+import secrets
+import stat
 import sys
+import tempfile
 from pathlib import Path
 from huggingface_hub import snapshot_download
 
@@ -140,6 +143,49 @@ from hawedit.models import (
 
 model_id, source, destination = sys.argv[1], sys.argv[2], Path(sys.argv[3])
 store = ModelStore()
+
+
+def validate_private_stage(path: Path) -> None:
+    """Refuse any member that a downloader could follow outside its private tree."""
+    if _path_is_reparse(path):
+        raise RuntimeError(f"private staging root must not be a link or reparse point: {path}")
+    root_before = os.lstat(path)
+    if not stat.S_ISDIR(root_before.st_mode):
+        raise RuntimeError(f"private staging root is not a directory: {path}")
+    expected_uid = os.getuid() if hasattr(os, "getuid") else None
+    if expected_uid is not None and root_before.st_uid != expected_uid:
+        raise RuntimeError(f"private staging root belongs to another user: {path}")
+    if expected_uid is not None and stat.S_IMODE(root_before.st_mode) & 0o077:
+        raise RuntimeError(f"private staging root permits group/other access: {path}")
+    for member in path.rglob("*"):
+        metadata = os.lstat(member)
+        if _path_is_reparse(member):
+            raise RuntimeError(f"private staging contains a link or reparse point: {member}")
+        if expected_uid is not None and metadata.st_uid != expected_uid:
+            raise RuntimeError(f"private staging member belongs to another user: {member}")
+        if stat.S_ISREG(metadata.st_mode):
+            if metadata.st_nlink != 1:
+                raise RuntimeError(
+                    f"private staging file must have exactly one hard link: {member}: "
+                    f"got {metadata.st_nlink}"
+                )
+        elif not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError(f"private staging contains a non-regular member: {member}")
+    root_after = os.lstat(path)
+    if (root_before.st_dev, root_before.st_ino) != (root_after.st_dev, root_after.st_ino):
+        raise RuntimeError(f"private staging root changed during validation: {path}")
+
+
+def unique_stage_path() -> Path:
+    for _attempt in range(100):
+        candidate = destination.with_name(
+            f".{destination.name}.download-{revision}-{secrets.token_hex(16)}"
+        )
+        if not os.path.lexists(candidate):
+            return candidate
+    raise RuntimeError("could not allocate a unique private checkpoint staging path")
+
+
 # Without `revision=` this resolves whatever the branch head points at today, so two machines
 # hold different weights under one name and every number measured against them is about
 # weights nobody can identify. Refused rather than resolved silently, exactly as an
@@ -177,16 +223,26 @@ with checkpoint_publish_lock(destination):
         raise SystemExit(0)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = destination.with_name(f".{destination.name}.download-{revision}")
-    if os.path.lexists(staging):
-        if _path_is_reparse(staging) or not staging.is_dir():
-            print(f"    REFUSED: unsafe private staging path: {staging}", file=sys.stderr)
-            raise SystemExit(1)
-        print(f"    resuming private staging: {staging}")
-    else:
-        staging.mkdir(mode=0o700)
-    print(f"    private staging: {staging}")
+    resume = destination.with_name(f".{destination.name}.resume-{revision}")
+    staging: Path | None = None
     try:
+        if os.path.lexists(resume):
+            validate_private_stage(resume)
+            staging = unique_stage_path()
+            _publish_checkpoint_directory(resume, staging)
+            # Bind validation to the renamed, unpredictable path too. A non-cooperating process
+            # cannot replace the predictable resume name between validation and download.
+            validate_private_stage(staging)
+            print(f"    resuming verified private cache: {resume}")
+        else:
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{destination.name}.download-{revision}-",
+                    dir=destination.parent,
+                )
+            )
+            validate_private_stage(staging)
+        print(f"    private staging: {staging}")
         snapshot_download(
             repo_id=source,
             revision=revision,
@@ -203,7 +259,20 @@ with checkpoint_publish_lock(destination):
             "models/revisions.json still exists in that repo.",
             file=sys.stderr,
         )
-        print(f"    Preserved private staging for diagnosis/resume: {staging}", file=sys.stderr)
+        preserved = staging or resume
+        if staging is not None and staging != resume and os.path.lexists(staging):
+            try:
+                validate_private_stage(staging)
+                if not os.path.lexists(resume):
+                    _publish_checkpoint_directory(staging, resume)
+                    preserved = resume
+            except Exception as preserve_exc:
+                print(
+                    f"    REFUSED unsafe resume publication: {type(preserve_exc).__name__}: "
+                    f"{preserve_exc}"[:400],
+                    file=sys.stderr,
+                )
+        print(f"    Preserved private staging for diagnosis/resume: {preserved}", file=sys.stderr)
         raise SystemExit(1) from None
     print(
         f"    done: {destination} ({report.files_verified} files, {report.size_bytes} bytes)"

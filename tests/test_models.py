@@ -13,8 +13,10 @@ import hashlib
 import json
 import os
 import re
+import stat
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -24,6 +26,7 @@ from hawedit.models import (
     ModelStore,
     SourceNotConfigured,
     UnsafeModelConfig,
+    _checkpoint_digest,
     assert_transformers_config_safe,
     readiness_report,
 )
@@ -490,6 +493,97 @@ def test_checkpoint_bytes_are_verified_against_git_and_lfs_identities(tmp_path: 
         for path in (checkpoint / "config.json", checkpoint / "model.safetensors")
     )
     assert report.revision == "a" * 40
+
+
+def test_checkpoint_hash_accepts_windows_fd_and_path_ctime_semantics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    checkpoint_file = tmp_path / "model.safetensors"
+    payload = b"verified model bytes"
+    checkpoint_file.write_bytes(payload)
+    actual = os.lstat(checkpoint_file)
+
+    def metadata(*, ctime_ns: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            st_mode=actual.st_mode,
+            st_dev=actual.st_dev,
+            st_ino=actual.st_ino,
+            st_size=actual.st_size,
+            st_mtime_ns=actual.st_mtime_ns,
+            st_ctime_ns=ctime_ns,
+            st_nlink=actual.st_nlink,
+        )
+
+    descriptor_metadata = metadata(ctime_ns=100)
+    pathname_metadata = metadata(ctime_ns=200)
+    monkeypatch.setattr("hawedit.models.os.fstat", lambda _descriptor: descriptor_metadata)
+    monkeypatch.setattr("hawedit.models.os.lstat", lambda _path: pathname_metadata)
+    monkeypatch.setattr("hawedit.models._path_is_reparse", lambda _path: False)
+
+    assert (
+        _checkpoint_digest(checkpoint_file, "sha256", len(payload))
+        == hashlib.sha256(payload).hexdigest()
+    )
+
+
+def test_wsl_snapshot_model_store_uses_adjacent_validator_identity_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.models as models_module
+    from hawedit.wsl_setup import WSL_MODEL_METADATA_DIRECTORY
+
+    model_id = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
+    repository = model_id
+    revision = "b" * 40
+    config = b'{"model_type":"qwen3_asr"}'
+    weights = b"fixture validator tensor bytes"
+
+    snapshot = tmp_path / "snapshots" / "digest-random"
+    package = snapshot / "hawedit"
+    package.mkdir(parents=True)
+    metadata = snapshot / WSL_MODEL_METADATA_DIRECTORY
+    metadata.mkdir()
+    (metadata / "sources.json").write_text("{}", encoding="utf-8")
+    (metadata / "revisions.json").write_text(json.dumps({repository: revision}), encoding="utf-8")
+    (metadata / "integrity.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "models": {
+                    model_id: {
+                        "status": "verified",
+                        "repository": repository,
+                        "revision": revision,
+                        "files": {
+                            "config.json": {
+                                "algorithm": "git-sha1",
+                                "digest": _git_blob_id(config),
+                                "size_bytes": len(config),
+                            },
+                            "model.safetensors": {
+                                "algorithm": "sha256",
+                                "digest": hashlib.sha256(weights).hexdigest(),
+                                "size_bytes": len(weights),
+                            },
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = tmp_path / "weights" / "validator"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "config.json").write_bytes(config)
+    (checkpoint / "model.safetensors").write_bytes(weights)
+
+    monkeypatch.setattr(models_module, "__file__", str(package / "models.py"))
+    model_store = ModelStore(root=tmp_path / "weights")
+    assert model_store.metadata_root == metadata
+    report = model_store.verify_checkpoint(model_id, checkpoint)
+    assert report.repository == repository
+    assert report.revision == revision
+    assert report.files_verified == 2
 
 
 def test_verified_checkpoint_is_reported_ready_and_can_start(tmp_path: Path) -> None:
@@ -1074,9 +1168,122 @@ def test_fetcher_preserves_private_stage_when_manifest_verification_fails(
             exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
         assert exited.value.code == 1
         assert not destination.exists()
-        staging = tuple(tmp_path.glob(".dest.download-*"))
+        staging = tuple(tmp_path.glob(".dest.resume-*"))
         assert len(staging) == 1
         assert (staging[0] / "partial.bin").read_bytes() == b"diagnose-me"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(hawedit.models)
+
+
+def test_fetcher_refuses_preplanted_staging_hardlink_before_downloader_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+    import sys as _sys
+    import types
+
+    import hawedit.models
+
+    source_code = _fetcher_download_block()
+    calls: list[dict[str, object]] = []
+    stub = types.ModuleType("huggingface_hub")
+
+    def snapshot_download(**kwargs: object) -> None:
+        calls.append(kwargs)
+        Path(str(kwargs["local_dir"]), "config.json").write_bytes(b"CLOBBERED")
+
+    stub.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    monkeypatch.setitem(_sys.modules, "huggingface_hub", stub)
+    destination = tmp_path / "dest"
+    monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        ["fetch", "Qwen3-VL-Embedding-2B", "Qwen/repo", str(destination)],
+    )
+    importlib.reload(hawedit.models)
+    revision = "e" * 40
+    monkeypatch.setattr(
+        hawedit.models.ModelStore,
+        "revision_for",
+        lambda _store, repository: revision if repository == "Qwen/repo" else None,
+    )
+    resume = tmp_path / f".dest.resume-{revision}"
+    resume.mkdir(mode=0o700)
+    victim = tmp_path / "external-victim.bin"
+    victim.write_bytes(b"ORIGINAL")
+    os.link(victim, resume / "config.json")
+
+    try:
+        with pytest.raises(SystemExit) as exited:
+            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        assert exited.value.code == 1
+        assert calls == []
+        assert victim.read_bytes() == b"ORIGINAL"
+        assert (resume / "config.json").stat().st_nlink == 2
+        assert not destination.exists()
+    finally:
+        monkeypatch.undo()
+        importlib.reload(hawedit.models)
+
+
+def test_fetcher_refuses_nonprivate_posix_resume_mode_before_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+    import sys as _sys
+    import types
+
+    import hawedit.models
+
+    source_code = _fetcher_download_block()
+    calls: list[dict[str, object]] = []
+    stub = types.ModuleType("huggingface_hub")
+    stub.snapshot_download = lambda **kwargs: calls.append(kwargs)  # type: ignore[attr-defined]
+    monkeypatch.setitem(_sys.modules, "huggingface_hub", stub)
+    destination = tmp_path / "dest"
+    monkeypatch.setenv("HAWEDIT_MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        ["fetch", "Qwen3-VL-Embedding-2B", "Qwen/repo", str(destination)],
+    )
+    importlib.reload(hawedit.models)
+    revision = "f" * 40
+    monkeypatch.setattr(
+        hawedit.models.ModelStore,
+        "revision_for",
+        lambda _store, repository: revision if repository == "Qwen/repo" else None,
+    )
+    resume = tmp_path / f".dest.resume-{revision}"
+    resume.mkdir(mode=0o700)
+    real_lstat = os.lstat
+
+    class PublicRootStat:
+        def __init__(self, original: os.stat_result) -> None:
+            self._original = original
+            self.st_mode = (original.st_mode & ~0o777) | stat.S_IFDIR | 0o777
+            self.st_uid = 1000
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._original, name)
+
+    def public_resume_lstat(path: Any, *args: Any, **kwargs: Any) -> Any:
+        result = real_lstat(path, *args, **kwargs)
+        if not isinstance(path, int) and Path(os.fsdecode(path)) == resume:
+            return PublicRootStat(result)
+        return result
+
+    monkeypatch.setattr(os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(os, "lstat", public_resume_lstat)
+    try:
+        with pytest.raises(SystemExit) as exited:
+            exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        assert exited.value.code == 1
+        assert calls == []
+        assert resume.is_dir()
+        assert not destination.exists()
     finally:
         monkeypatch.undo()
         importlib.reload(hawedit.models)

@@ -4,7 +4,9 @@ import json
 import multiprocessing
 import os
 import subprocess
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,9 +14,11 @@ import pytest
 from hawedit.omni_assets import OMNI_ASSETS
 from hawedit.wsl_setup import (
     _IDENTITY_PROBE_SCRIPT,
+    WSL_MODEL_METADATA_DIRECTORY,
     WslRuntimeError,
-    _invalidate_runtime_receipts,
+    _publish_runtime_candidate,
     _publish_source_snapshot,
+    _read_bound_regular_file,
     _runtime_transaction_lock,
     default_wsl_source,
     load_wsl_runtime_receipt,
@@ -56,11 +60,13 @@ def _candidate_payload() -> dict[str, object]:
     }
 
 
-def _write_candidate(runtime: Path, package: Path) -> None:
+def _write_candidate(
+    runtime: Path, package: Path, payload: dict[str, object] | None = None
+) -> None:
     source = default_wsl_source(package, runtime)
-    (source / ".runtime-candidate.json").write_text(
-        json.dumps(_candidate_payload()), encoding="utf-8"
-    )
+    candidates = tuple(source.glob(".runtime-candidate-*.json"))
+    assert len(candidates) == 1
+    _publish_runtime_candidate(candidates[0], payload or _candidate_payload())
 
 
 def _identity_payload() -> dict[str, object]:
@@ -215,6 +221,75 @@ def test_wheel_safe_setup_copies_only_the_package_and_marks_success(
     assert setup_script.index("provision_omni_assets()") < setup_script.index("import torch")
 
 
+def test_installed_hardlinked_metadata_is_copied_into_single_link_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.wsl_setup as setup_module
+
+    prefix = tmp_path / "prefix"
+    package = prefix / "Lib" / "site-packages" / "hawedit"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    installed = prefix / "share" / "hawedit" / "models"
+    installed.mkdir(parents=True)
+    originals = tmp_path / "wheel-data"
+    originals.mkdir()
+    payloads = {
+        "sources.json": b"{}",
+        "revisions.json": b"{}",
+        "integrity.json": b'{"schema": 1, "models": {}}',
+    }
+    for filename, payload in payloads.items():
+        original = originals / filename
+        original.write_bytes(payload)
+        os.link(original, installed / filename)
+        assert (installed / filename).stat().st_nlink == 2
+
+    monkeypatch.setattr(setup_module, "__file__", str(package / "wsl_setup.py"))
+    monkeypatch.setattr("hawedit.wsl_setup.sys.prefix", str(prefix))
+    source_root = tmp_path / "runtime" / "sources" / "identity"
+    source_root.mkdir(parents=True)
+    snapshot = _publish_source_snapshot(package, source_root)
+    copied_metadata = snapshot / WSL_MODEL_METADATA_DIRECTORY
+    assert {
+        path.name: (path.read_bytes(), path.stat().st_nlink) for path in copied_metadata.iterdir()
+    } == {filename: (payload, 1) for filename, payload in payloads.items()}
+    assert package_digest(package) == package_digest(
+        snapshot / "hawedit", reject_bytecode_cache=True
+    )
+
+
+def test_bound_file_read_accepts_windows_fd_and_path_ctime_semantics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "sources.json"
+    payload = b'{"schema": 1}'
+    manifest.write_bytes(payload)
+    actual = os.lstat(manifest)
+
+    def metadata(*, ctime_ns: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            st_mode=actual.st_mode,
+            st_dev=actual.st_dev,
+            st_ino=actual.st_ino,
+            st_size=actual.st_size,
+            st_mtime_ns=actual.st_mtime_ns,
+            st_ctime_ns=ctime_ns,
+            st_nlink=actual.st_nlink,
+        )
+
+    descriptor_metadata = metadata(ctime_ns=100)
+    pathname_metadata = metadata(ctime_ns=200)
+    monkeypatch.setattr("hawedit.wsl_setup.os.fstat", lambda _descriptor: descriptor_metadata)
+    monkeypatch.setattr("hawedit.wsl_setup.os.lstat", lambda _path: pathname_metadata)
+    monkeypatch.setattr("hawedit.wsl_setup._is_reparse_or_symlink", lambda _path: False)
+
+    assert (
+        _read_bound_regular_file(manifest, "trusted installed manifest", require_single_link=False)
+        == payload
+    )
+
+
 def test_a_ready_runtime_revalidates_assets_and_dependencies(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -265,47 +340,133 @@ def test_setup_refuses_unexpected_importable_source_members(
     assert not list((runtime / "sources").glob("*/.ready"))
 
 
-def test_failed_revalidation_invalidates_an_existing_ready_marker(
+@pytest.mark.parametrize("link_kind", ["hardlink", "symlink"])
+def test_runtime_candidate_writer_refuses_links_without_mutating_victim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, link_kind: str
+) -> None:
+    candidate = tmp_path / ".runtime-candidate-test.json"
+    victim = tmp_path / "user-data.json"
+    original = b'{"must":"survive"}'
+    victim.write_bytes(original)
+    if link_kind == "hardlink":
+        os.link(victim, candidate)
+    else:
+        try:
+            candidate.symlink_to(victim)
+        except OSError:
+            candidate.write_bytes(b"")
+            real_predicate = __import__(
+                "hawedit.wsl_setup", fromlist=["_is_reparse_or_symlink"]
+            )._is_reparse_or_symlink
+            monkeypatch.setattr(
+                "hawedit.wsl_setup._is_reparse_or_symlink",
+                lambda path: Path(path) == candidate or real_predicate(path),
+            )
+
+    with pytest.raises(WslRuntimeError, match="safely open|unlinked regular file"):
+        _publish_runtime_candidate(candidate, _candidate_payload())
+    assert victim.read_bytes() == original
+
+
+def test_candidate_substitution_during_setup_never_clobbers_or_unlinks_victim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     package = tmp_path / "hawedit"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
     runtime = tmp_path / "runtime"
-    source = default_wsl_source(package, runtime)
-    source.mkdir(parents=True)
-    ready = source / ".ready"
-    ready.write_text("ready\n", encoding="ascii")
+    victim = tmp_path / "external-user-data.json"
+    original = b'{"owner":"user"}'
+    victim.write_bytes(original)
 
-    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+    def raced_setup(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         if "wslpath" in args:
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
-        _write_candidate(runtime, package)
-        return subprocess.CompletedProcess(args, 17, b"", b"failed")
+        if "bash" in args:
+            source = default_wsl_source(package, runtime)
+            candidates = tuple(source.glob(".runtime-candidate-*.json"))
+            assert len(candidates) == 1
+            candidate = candidates[0]
+            candidate.unlink()
+            os.link(victim, candidate)
+            with pytest.raises(WslRuntimeError, match="unlinked regular file"):
+                _publish_runtime_candidate(candidate, _candidate_payload())
+            return subprocess.CompletedProcess(args, 17, b"", b"unsafe candidate")
+        return subprocess.CompletedProcess(args, 0, b"", b"")
 
-    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_run)
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", raced_setup)
     with pytest.raises(RuntimeError, match="exit code 17"):
         provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
 
-    assert not ready.exists()
-    assert not (source / ".runtime-candidate.json").exists()
+    source = default_wsl_source(package, runtime)
+    candidates = tuple(source.glob(".runtime-candidate-*.json"))
+    assert len(candidates) == 1
+    assert os.path.samefile(candidates[0], victim), "cleanup unlinked a path it no longer owned"
+    assert victim.read_bytes() == original
+    assert not (source / ".ready").exists()
 
 
-def test_receipt_invalidation_refuses_linked_source_without_touching_external_ready(
+def test_failed_concurrent_revalidation_preserves_the_last_valid_receipt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    package = tmp_path / "hawedit"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
     runtime = tmp_path / "runtime"
-    sources = runtime / "sources"
-    sources.mkdir(parents=True)
-    external = tmp_path / "external-source"
-    external.mkdir()
-    victim = external / ".ready"
-    victim.write_bytes(b"external-ready-must-survive")
-    _directory_link_or_reparse_stub(monkeypatch, sources / "linked", external)
 
-    with pytest.raises(WslRuntimeError, match="source generation.*unlinked regular directory"):
-        _invalidate_runtime_receipts(runtime)
-    assert victim.read_bytes() == b"external-ready-must-survive"
+    def successful_setup(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        if "bash" in args:
+            _write_candidate(runtime, package)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", successful_setup)
+    provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
+    source = default_wsl_source(package, runtime)
+    ready = source / ".ready"
+    original_marker = ready.read_bytes()
+    original_snapshot = _receipt_snapshot(source)
+    setup_entered = threading.Event()
+    release_setup = threading.Event()
+    failure: list[BaseException] = []
+
+    def failed_setup(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        if "bash" in args:
+            setup_entered.set()
+            assert release_setup.wait(5)
+            return subprocess.CompletedProcess(args, 17, b"", b"failed")
+        return subprocess.CompletedProcess(args, 0, json.dumps(_identity_payload()).encode(), b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", failed_setup)
+
+    def provision_in_background() -> None:
+        try:
+            provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
+        except BaseException as exc:
+            failure.append(exc)
+
+    worker = threading.Thread(target=provision_in_background)
+    worker.start()
+    try:
+        assert setup_entered.wait(5)
+        concurrent = load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
+        assert concurrent.source_root == original_snapshot
+        assert ready.read_bytes() == original_marker
+    finally:
+        release_setup.set()
+        worker.join(5)
+
+    assert not worker.is_alive()
+    assert len(failure) == 1
+    assert isinstance(failure[0], RuntimeError)
+    assert "exit code 17" in str(failure[0])
+    after_failure = load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
+    assert after_failure.source_root == original_snapshot
+    assert ready.read_bytes() == original_marker
+    assert not tuple(source.glob(".runtime-candidate-*.json"))
 
 
 def test_snapshot_publication_refuses_linked_root_without_touching_external_files(
@@ -368,19 +529,22 @@ def test_reuse_drift_never_publishes_an_immediately_invalid_receipt(
             payload = _candidate_payload()
             if setup_count == 2:
                 payload["cuda_device_count"] = 3
-            source = default_wsl_source(package, runtime)
-            (source / ".runtime-candidate.json").write_text(json.dumps(payload), encoding="utf-8")
-        return subprocess.CompletedProcess(args, 0, b"", b"")
+            _write_candidate(runtime, package, payload)
+        return subprocess.CompletedProcess(args, 0, json.dumps(_identity_payload()).encode(), b"")
 
     monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_run)
     provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
     source = default_wsl_source(package, runtime)
     assert (source / ".ready").is_file()
+    original_marker = (source / ".ready").read_bytes()
+    original_snapshot = _receipt_snapshot(source)
 
     with pytest.raises(WslRuntimeError, match="generation validation changed"):
         provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
-    assert not (source / ".ready").exists()
-    assert not (source / ".runtime-candidate.json").exists()
+    assert (source / ".ready").read_bytes() == original_marker
+    receipt = load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
+    assert receipt.source_root == original_snapshot
+    assert not tuple(source.glob(".runtime-candidate-*.json"))
 
 
 def test_setup_transaction_lock_serializes_separate_processes(tmp_path: Path) -> None:
@@ -638,6 +802,40 @@ def test_receipt_refuses_tampered_copied_worker_source(
     )
 
     with pytest.raises(WslRuntimeError, match="copied.*source does not match"):
+        load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
+
+
+@pytest.mark.parametrize("tamper", ["alter", "omit"])
+def test_receipt_binds_exact_checkpoint_metadata_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tamper: str
+) -> None:
+    package = tmp_path / "hawedit"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    runtime = tmp_path / "runtime"
+
+    def fake_setup(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        if "bash" in args:
+            _write_candidate(runtime, package)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_setup)
+    provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
+    snapshot = _receipt_snapshot(default_wsl_source(package, runtime))
+    metadata = snapshot / WSL_MODEL_METADATA_DIRECTORY
+    assert {path.name for path in metadata.iterdir()} == {
+        "sources.json",
+        "revisions.json",
+        "integrity.json",
+    }
+    if tamper == "alter":
+        (metadata / "integrity.json").write_text('{"schema": 1, "models": {}}', encoding="utf-8")
+    else:
+        (metadata / "revisions.json").unlink()
+
+    with pytest.raises(WslRuntimeError, match="cannot verify.*worker source"):
         load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
 
 

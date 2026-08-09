@@ -106,6 +106,12 @@ transcript. An installed wheel exposes the same operation as `hawedit-asr-setup`
 distribution with `-Distribution Ubuntu`; advanced deployments can set
 `HAWEDIT_WSL_RUNTIME`, `HAWEDIT_WSL_PYTHON` and `HAWEDIT_WSL_SOURCE` explicitly.
 
+The WSL receipt also owns the exact checkpoint source/revision/integrity manifests used by the
+validator; it does not resolve trust metadata from mutable weight storage. Reprovisioning stages a
+new generation without invalidating a prior valid receipt, and the WSL result crosses through a
+random no-follow, single-link, descriptor-bound host file. See
+`evidence/wsl-runtime-receipt.md`.
+
 The media extra is not optional here even though `pyproject.toml` marks it optional: without
 it the Stage 0 tests *skip*, and a skipped test is the quiet green this project is written
 against. That is also why setup ends with the gate rather than with an install.
@@ -213,7 +219,11 @@ The fetcher is driven by the §7 registry, so it cannot download a model the blu
 excludes and refuses a NonCommercial licence before any bytes move. Needs
 `huggingface.co` reachable, `HF_TOKEN` for the gated Community-1 repo, and ~50 GB free.
 It plans from verified status rather than directory existence, resumes each pinned revision in a
-private sibling, exact-verifies it, and atomically publishes under a writer lock. An empty, partial
+private sibling, exact-verifies it, and atomically publishes under a writer lock. Existing resume
+trees are recursively checked for owner, private mode, regular single-link members and
+reparse/symlink objects **before** the Hub client can write through them, then activated under a
+random private name. A planted link cannot turn a failed download into an external-file write.
+An empty, partial
 or corrupt final directory is preserved and refused—move/quarantine it explicitly before retrying.
 Any target failure makes the command exit nonzero after the full status report. Use only the same
 override the runtime reads:
@@ -340,6 +350,11 @@ rejected by the test suite (`evidence/ci-actions.md`).
 
 The gate is deliberately hard to fool, because it is the only thing that decides DONE:
 
+- **The interpreter is part of the evidence.** Only the path-identical Python inside this
+  checkout's `.venv` is accepted; an arbitrary `PY` executable is refused before it runs. An
+  isolated preflight binds the editable distribution to this checkout and checks the supported
+  Python/project versions plus exact active requirements. A printed token is diagnostic, never an
+  authentication mechanism (`evidence/environment-identity.md`).
 - **Its steps are not configurable.** Setting `TEST_CMD`, `LINT_CMD` or either of the others
   is refused outright (exit 5) before anything runs. A blacklist of ways to run nothing can
   never be complete — `TEST_CMD="echo skipped"` walked past the old one — so the rule is
@@ -403,6 +418,7 @@ disabled (`BLOCKED.md` #7 records the live setting).
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) and CMX 3600 EDL (source timeline), including SMPTE drop-frame for NTSC 30000/1001. Unsupported fractional rates are refused rather than rounded. |
 | `artifact_bundle.py` | §2 | Private staging and atomic, write-once publication of the exact ASS/MP4/SRT/EDL/JSON delivery directory. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
+| `environment.py` | — | Binds the canonical `.venv`, editable distribution root, supported Python/project versions and active exact requirements to this checkout before the gate runs. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `release.py` | — | Exact-SHA official main-gate proof, clean-HEAD double-build wheel reproducibility, runtime-data validation and atomic checksummed provenance. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |

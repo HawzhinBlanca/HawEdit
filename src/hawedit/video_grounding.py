@@ -34,6 +34,7 @@ from hawedit.qwen_visual import DEFAULT_DEVICE, EmbedderUnavailable, load_proces
 from hawedit.registry import resolve_role
 from hawedit.timelens import TIMELENS_MODEL, VisualEvidenceInterval
 from hawedit.video_input import (
+    VideoInputError,
     WindowFrames,
     load_window_images,
     video_content,
@@ -146,11 +147,6 @@ class TimeLens2Grounder:
         # §7 first: a model outside the registry, or one in it for a different job, never gets as
         # far as loading 9 GB of weights.
         resolve_role(model_id, _EVIDENCE_ROLE, "the visual temporal evidence model")
-        if not model_dir.is_dir():
-            raise EmbedderUnavailable(
-                f"no weights at {model_dir}. Run `bash scripts/fetch-models.sh {model_id}` — "
-                f"§7's registry drives it, so it cannot fetch the wrong model."
-            )
         self.model_dir = model_dir
         self.read_frames = read_frames
         self.device = device
@@ -159,6 +155,12 @@ class TimeLens2Grounder:
 
     def _load(self) -> tuple[Any, Any]:
         if self._loaded is None:
+            if not self.model_dir.is_dir():
+                raise EmbedderUnavailable(
+                    f"no weights at {self.model_dir}. Run `bash scripts/fetch-models.sh "
+                    f"{self.model_id}` — §7's registry drives it, so it cannot fetch the "
+                    "wrong model."
+                )
             # No keyword arguments: TimeLens2 is a plain `Qwen3VLForConditionalGeneration` with
             # `tie_word_embeddings: true` at both config levels, so it needs none of VideoChat3's
             # three workarounds and reports `missing_keys: NONE` on the pinned transformers.
@@ -174,9 +176,21 @@ class TimeLens2Grounder:
         already distinguishes from an out-point of zero.
 
         Raises:
-            GroundingError: the query is empty, or the answer is not the array the card specifies.
+            GroundingError: the query is empty, the answer is not the array the card specifies,
+                or the model runtime cannot produce an answer.
             ValueError: a returned span falls outside the window the model was shown.
         """
+        try:
+            return self._ground(window, query)
+        except (GroundingError, EmbedderUnavailable, VideoInputError):
+            raise
+        except (ImportError, OSError, RuntimeError) as exc:
+            raise GroundingError(
+                f"{self.model_id} failed while grounding {window.window_id}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+    def _ground(self, window: SceneWindow, query: str) -> tuple[VisualEvidenceInterval, ...]:
         import torch
 
         if not query.strip():

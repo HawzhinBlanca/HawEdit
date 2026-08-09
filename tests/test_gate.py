@@ -115,12 +115,18 @@ def _run_gate(*args: str, **env_overrides: str) -> subprocess.CompletedProcess[s
 
     `GATE_ARGUMENT`, not `str(GATE)`: native Bash needs a forward-slash Windows path while WSL
     needs `/mnt/<drive>/...`. The successful readability probe selects the matching spelling.
+
+    `PY` defaults to the interpreter running this test. That interpreter has already passed
+    the outer gate's environment preflight; letting the subprocess rediscover ``.venv`` would
+    couple these contract tests to an unrelated or stale checkout-level environment. Explicit
+    ``PY`` overrides remain authoritative for the refusal tests below. This is not a bypass:
+    the gate itself rejects that default unless pytest is running from the canonical ``.venv``.
     """
     assert BASH is not None and GATE_ARGUMENT is not None, (
         "no Bash interpreter can access the checkout; install Git for Windows or set "
         f"HAWEDIT_BASH. Probes: {BASH_FAILURE}"
     )
-    env = {**os.environ, **env_overrides}
+    env = {**os.environ, "PY": Path(sys.executable).as_posix(), **env_overrides}
     return subprocess.run(
         [BASH, GATE_ARGUMENT, *args],
         capture_output=True,
@@ -199,8 +205,8 @@ def test_fast_mode_never_claims_the_full_gate_passed() -> None:
 
 def test_gate_fails_when_the_interpreter_is_missing() -> None:
     result = _run_gate(PY="/nonexistent/python")
-    assert result.returncode == 2
-    assert "no interpreter" in result.stderr
+    assert result.returncode == 3
+    assert "canonical .venv interpreter" in result.stderr
 
 
 # --- audit #5: the gate was not authoritative -------------------------------------------
@@ -284,6 +290,29 @@ def _noop_interpreter(tmp_path: Path) -> str:
     return fake.as_posix()
 
 
+def _token_forging_interpreter(tmp_path: Path) -> tuple[str, Path]:
+    """An executable that can forge the old probe and every later command's success."""
+    executed = tmp_path / "forger-executed"
+    fake = tmp_path / "forging-python"
+    fake.write_text(
+        f"#!/bin/sh\ntouch '{executed.as_posix()}'\nprintf '%s\\n' "
+        "'hawedit-environment-ok'\nexit 0\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    fake.chmod(0o755)
+    return fake.as_posix(), executed
+
+
+def test_probe_token_forging_executable_is_refused_before_execution(tmp_path: Path) -> None:
+    fake, executed = _token_forging_interpreter(tmp_path)
+    result = _run_gate(PY=fake)
+    assert result.returncode == 3
+    assert "canonical .venv interpreter" in result.stderr
+    assert not executed.exists(), "the untrusted executable ran before its path was refused"
+    assert FULL_GATE_SUCCESS_LINE not in result.stdout
+
+
 def test_an_interpreter_that_cannot_run_the_project_cannot_grade_it(tmp_path: Path) -> None:
     """`PY` replaced every step at once, so the override refusal was a whitelist with a hole.
 
@@ -303,7 +332,7 @@ def test_an_interpreter_that_cannot_run_the_project_cannot_grade_it(tmp_path: Pa
         "something that cannot run the code"
     )
     assert result.returncode == 3, f"expected interpreter refusal exit 3, got {result.returncode}"
-    assert "cannot import hawedit" in result.stderr
+    assert "canonical .venv interpreter" in result.stderr
     assert "==>" not in result.stdout, "steps ran before the interpreter was checked"
 
 
@@ -314,23 +343,8 @@ def test_a_no_op_interpreter_is_refused_in_fast_mode_too(tmp_path: Path) -> None
     assert "fast checks OK" not in result.stdout
 
 
-def test_a_real_python_without_this_project_installed_is_refused_by_name(tmp_path: Path) -> None:
-    """The likelier mistake than `true.exe`: some other venv's python, which really is Python.
-
-    Measured against `C:/Users/.../hermes-agent/venv/Scripts/python` — a real interpreter on
-    this box — which the gate refused with `ModuleNotFoundError: No module named 'hawedit'`
-    quoted back. Reproduced here without depending on a second Python existing: `-S` skips
-    `site`, so the editable install's `.pth` is never processed and `hawedit` is genuinely
-    unimportable, while the interpreter is genuinely CPython.
-
-    `PYTHONPATH` was the first attempt and it is not a substitute: it cannot hide an editable
-    install, so that version of this test never reached the probe at all and failed downstream
-    with exit 1.
-
-    The refusal has to quote what the interpreter answered — `ModuleNotFoundError` is the whole
-    diagnosis, and swallowing it leaves a reader of exit 3 guessing whether the path was wrong
-    or the install was.
-    """
+def test_an_external_real_python_is_not_canonical_gate_evidence(tmp_path: Path) -> None:
+    """Capability is secondary: even a real CPython outside ``.venv`` cannot grade the gate."""
     wrapper = tmp_path / "python-without-the-project"
     wrapper.write_text(
         f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" -I -S "$@"\n',
@@ -340,9 +354,7 @@ def test_a_real_python_without_this_project_installed_is_refused_by_name(tmp_pat
     wrapper.chmod(0o755)
     result = _run_gate(PY=wrapper.as_posix())
     assert result.returncode == 3, f"expected exit 3, got {result.returncode}: {result.stderr}"
-    assert "ModuleNotFoundError" in result.stderr, (
-        f"the refusal did not quote the interpreter's own answer: {result.stderr}"
-    )
+    assert "canonical .venv interpreter" in result.stderr
     assert FULL_GATE_SUCCESS_LINE not in result.stdout
 
 

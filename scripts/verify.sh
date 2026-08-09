@@ -10,33 +10,61 @@ FAST="${1:-}"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
-# A venv puts the interpreter in `bin/` on POSIX and `Scripts/` on Windows. hawapc01 — the
-# box §6 names and §8.1 requires the benchmark to run on — is Windows, so hardcoding `bin/`
-# made "one command from a fresh clone to a green gate" false on the one machine that has to
-# run it. Both layouts, first match wins; PY still overrides for a deliberate interpreter.
-if [[ -z "${PY:-}" ]]; then
-  for candidate in "$here/.venv/bin/python" "$here/.venv/Scripts/python.exe"; do
-    if [[ -x "$candidate" ]]; then PY="$candidate"; break; fi
-  done
-fi
-if [[ -z "${PY:-}" || ! -x "$PY" ]]; then
+# A venv puts the interpreter in `bin/` on POSIX and `Scripts/` on Windows. The canonical gate
+# has one trust root: this checkout's `.venv`. A caller-supplied executable used to be able to
+# print the fixed probe token and then return success for every `-m` invocation, including the
+# evidence grader. Normalize paths without executing PY, require an exact canonical path, then
+# use the checkout spelling for every command. An external development venv can run individual
+# tools, but it cannot produce canonical gate evidence.
+canonical_interpreters=()
+for candidate in "$here/.venv/bin/python" "$here/.venv/Scripts/python.exe"; do
+  if [[ -x "$candidate" ]]; then canonical_interpreters+=("$candidate"); fi
+done
+if [[ ${#canonical_interpreters[@]} -eq 0 ]]; then
   echo "✗ no interpreter in .venv — run: bash scripts/setup.sh" >&2
   exit 2
 fi
 
-# The override refusal below is a whitelist of one, and `PY` was the hole in it: PY replaces
-# every step at once, including the evidence step that exists so the exit code stops being the
-# evidence. Measured 2026-08-09: `PY=/usr/bin/true.exe bash scripts/verify.sh` printed
-# VERIFY OK in 1 second, exit 0, with no report written — five steps, all of them `true.exe`,
-# one of them grading the other four. So an interpreter proves it can run *this* project
-# before it is trusted to say whether this project works, and the shell checks the value
-# rather than the exit code, because an exit code is what `true.exe` is good at. D-104.
-_probe="$("$PY" -c 'import hawedit; print("hawedit-interpreter-ok")' 2>&1 || true)"
-if [[ "$_probe" != *hawedit-interpreter-ok* ]]; then
-  echo "REFUSED: $PY cannot import hawedit, so it is not an interpreter that runs this" >&2
-  echo "project — and a gate graded by something that cannot run the code proves nothing." >&2
+_normalized_interpreter() {
+  local directory name
+  directory="$(cd -P "$(dirname "$1")" 2>/dev/null && pwd -P)" || return 1
+  name="$(basename "$1")"
+  printf '%s/%s\n' "$directory" "$name"
+}
+
+selected="${PY:-${canonical_interpreters[0]}}"
+selected_normalized="$(_normalized_interpreter "$selected" || true)"
+matched=""
+for candidate in "${canonical_interpreters[@]}"; do
+  if [[ -n "$selected_normalized" &&
+    "$selected_normalized" == "$(_normalized_interpreter "$candidate")" ]]; then
+    matched="$candidate"
+    break
+  fi
+done
+if [[ -z "$matched" ]]; then
+  echo "REFUSED: PY must be this checkout's canonical .venv interpreter." >&2
+  echo "Got: ${PY:-<unset>}" >&2
+  echo "Expected one of: ${canonical_interpreters[*]}" >&2
+  echo "External interpreters cannot produce canonical gate evidence." >&2
+  exit 3
+fi
+PY="$matched"
+
+# Path identity closes the executable-forgery hole; this second check closes environment drift.
+# Importing *some* hawedit is insufficient: this checkout's shared venv was measured importing
+# an editable install from another checkout, with duplicate HawEdit metadata and stale direct
+# dependencies. Execute the current source check by absolute path under isolated startup. The
+# token is now a response from the path-bound interpreter, not an authentication mechanism.
+# Installed code therefore cannot grade the checkout whose source is about to run. D-104.
+_probe="$("$PY" -I "$here/src/hawedit/environment.py" \
+  --project-root "$here" --extra dev --extra media 2>&1 || true)"
+if [[ "$_probe" != hawedit-environment-ok ]]; then
+  echo "REFUSED: $PY cannot verify the exact HawEdit environment for this checkout." >&2
+  echo "A gate graded by another checkout, stale dependencies, or a non-Python executable" >&2
+  echo "proves nothing." >&2
   echo "It answered: ${_probe:-<nothing at all>}" >&2
-  echo "Install the project into it (bash scripts/setup.sh), or unset PY." >&2
+  echo "Rebuild this checkout's environment (bash scripts/setup.sh), or unset PY." >&2
   exit 3
 fi
 

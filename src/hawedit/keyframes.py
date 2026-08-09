@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -15,6 +16,32 @@ __all__ = ["KeyframeError", "extract_judge_frames"]
 
 class KeyframeError(RuntimeError):
     """The candidate could not be represented by real image bytes."""
+
+
+def _read_keyframe(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise KeyframeError(f"could not read extracted Stage 4 keyframe {path}: {exc}") from exc
+
+
+def _remove_private_keyframes(extraction_dir: Path) -> None:
+    """Remove owned source pixels, without replacing an exception already in flight."""
+    active_error = sys.exception()
+    try:
+        shutil.rmtree(extraction_dir)
+    except FileNotFoundError:
+        # Absence is the desired privacy state. This also makes cleanup idempotent if an
+        # external quarantine tool already removed the uniquely owned directory.
+        return
+    except OSError as cleanup_error:
+        message = f"private Stage 4 keyframe cleanup failed for {extraction_dir}: {cleanup_error}"
+        if active_error is not None:
+            # Keep the original type, traceback and cause (including programmer/schema errors),
+            # but make the retained-pixels privacy failure visible in the same traceback.
+            active_error.add_note(message)
+            return
+        raise KeyframeError(message) from cleanup_error
 
 
 def extract_judge_frames(
@@ -34,8 +61,13 @@ def extract_judge_frames(
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
         raise KeyframeError("Stage 4 keyframes need ffmpeg")
-    work_dir.mkdir(parents=True, exist_ok=True)
-    extraction_dir = Path(tempfile.mkdtemp(prefix=".judge-", dir=work_dir))
+    try:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        extraction_dir = Path(tempfile.mkdtemp(prefix=".judge-", dir=work_dir))
+    except OSError as exc:
+        raise KeyframeError(
+            f"could not create a private Stage 4 keyframe directory under {work_dir}: {exc}"
+        ) from exc
     try:
         duration_s = (out_ms - in_ms) / 1000
         pattern = extraction_dir / "judge-%03d.jpg"
@@ -66,7 +98,12 @@ def extract_judge_frames(
             )
         except OSError as exc:
             raise KeyframeError(f"cannot launch ffmpeg for Stage 4 keyframes: {exc}") from exc
-        paths = tuple(sorted(extraction_dir.glob("judge-*.jpg")))
+        try:
+            paths = tuple(sorted(extraction_dir.glob("judge-*.jpg")))
+        except OSError as exc:
+            raise KeyframeError(
+                f"could not enumerate extracted Stage 4 keyframes in {extraction_dir}: {exc}"
+            ) from exc
         if result.returncode != 0 or not paths:
             raise KeyframeError(
                 f"ffmpeg failed to extract judge keyframes ({result.returncode}): "
@@ -79,7 +116,7 @@ def extract_judge_frames(
             JudgeFrame(
                 timestamp_ms=min(out_ms, round(in_ms + (index + 0.5) * step_ms)),
                 mime_type="image/jpeg",
-                data=path.read_bytes(),
+                data=_read_keyframe(path),
             )
             for index, path in enumerate(paths)
         )
@@ -88,4 +125,4 @@ def extract_judge_frames(
         # The directory was atomically created by this call, and JudgeFrame owns the bytes in
         # memory. Delete only that owned directory; never touch caller files whose names merely
         # resemble an earlier extraction.
-        shutil.rmtree(extraction_dir, ignore_errors=True)
+        _remove_private_keyframes(extraction_dir)

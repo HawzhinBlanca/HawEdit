@@ -449,6 +449,36 @@ def test_the_cli_reports_and_exits_nonzero_when_the_run_is_incomplete(tmp_path: 
     assert code != 0
 
 
+@needs_ffmpeg
+def test_missing_gemini_key_is_a_json_stage_skip_not_a_pre_run_cli_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from hawedit.pipeline import main
+
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(a_transcript("kurdish-speech-3cuts").to_json(), encoding="utf-8")
+    monkeypatch.setattr("hawedit.gemini.read_credential", lambda _name=None: None)
+
+    code = main(
+        [
+            str(FIXTURE),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--transcript",
+            str(transcript_path),
+            "--gemini",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert code == 1
+    assert captured.err == ""
+    assert report["discovery"]["skipped"] is True
+    assert "no Gemini API key" in report["discovery"]["reason"]
+
+
 def test_the_cli_reports_a_missing_source_without_a_traceback(tmp_path: Path) -> None:
     from hawedit.pipeline import main
 
@@ -636,6 +666,28 @@ def test_visual_composer_refusal_is_reported_as_a_skipped_stage(tmp_path: Path) 
     assert isinstance(run.visual_index, StageSkipped)
     assert "too short" in run.visual_index.reason
     assert run.candidates == ()
+
+
+@needs_ffmpeg
+def test_visual_composer_failure_reason_is_single_line_and_bounded(tmp_path: Path) -> None:
+    from hawedit.visual_pipeline import VisualPipelineError
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            raise VisualPipelineError("visual backend\x00\n" + ("v" * 1_000_000))
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="bounded-visual-error",
+        transcript=a_transcript("bounded-visual-error"),
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert isinstance(run.visual_index, StageSkipped)
+    assert len(run.visual_index.reason) == 1_024
+    assert run.visual_index.reason.endswith("…")
+    assert not any(character in run.visual_index.reason for character in ("\n", "\t", "\x00"))
 
 
 @needs_ffmpeg
@@ -929,6 +981,20 @@ def test_runner_invokes_canonical_asr_when_no_transcript_is_supplied(tmp_path: P
 
 
 @needs_ffmpeg
+def test_canonical_asr_runtime_failure_is_a_json_capable_stage_skip(tmp_path: Path) -> None:
+    class BrokenAsr:
+        def transcribe(self, *args: Any, **kwargs: Any) -> RawTranscript:
+            raise RuntimeError("checkpoint could not load")
+
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="asr-failed", asr=BrokenAsr())
+
+    assert isinstance(run.transcript, StageSkipped)
+    assert "RuntimeError: checkpoint could not load" in run.transcript.reason
+    assert run.clip is None
+    assert json.loads(json.dumps(run.to_dict()))["transcript"]["skipped"] is True
+
+
+@needs_ffmpeg
 def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
     tmp_path: Path,
 ) -> None:
@@ -964,6 +1030,58 @@ def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
 
 
 @needs_ffmpeg
+def test_automatic_selection_with_no_complete_sentence_never_extracts_frames_or_calls_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    calls = {"frames": 0, "judge": 0}
+
+    def extract_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        calls["frames"] += 1
+        return ()
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            calls["judge"] += 1
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", extract_frames)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="automatic-gap",
+        transcript=a_transcript("automatic-gap"),
+        discover=lambda _n: [
+            Candidate(
+                "gap",
+                "automatic-gap",
+                1_750,
+                1_950,
+                DiscoveryPath.VERBAL,
+                1,
+                0.99,
+            )
+        ],
+        judge=Judge(),
+        auto_select=True,
+    )
+
+    assert calls == {"frames": 0, "judge": 0}
+    assert run.clip is None
+    assert isinstance(run.editorial, StageSkipped)
+    assert "no complete contiguous sentence" in run.editorial.reason
+
+
+@needs_ffmpeg
 def test_multimodal_judge_receives_real_source_keyframes_from_runner(tmp_path: Path) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
@@ -993,6 +1111,271 @@ def test_multimodal_judge_receives_real_source_keyframes_from_runner(tmp_path: P
     assert len(seen) == 1
     assert 1 <= len(seen[0].keyframes) <= 20
     assert all(frame.data.startswith(b"\xff\xd8") for frame in seen[0].keyframes)
+
+
+@needs_ffmpeg
+def test_keyframe_operational_failure_is_an_editorial_skip_before_judging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+    from hawedit.keyframes import KeyframeError
+
+    judge_calls = 0
+
+    def broken_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        raise KeyframeError("ffmpeg decoder refused the slice")
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            nonlocal judge_calls
+            judge_calls += 1
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", broken_frames)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="bad-frames",
+        transcript=a_transcript("bad-frames"),
+        discover=lambda _n: [
+            Candidate("best", "bad-frames", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.99)
+        ],
+        judge=Judge(),
+    )
+
+    assert judge_calls == 0
+    assert isinstance(run.editorial, StageSkipped)
+    assert "KeyframeError: ffmpeg decoder refused the slice" in run.editorial.reason
+
+
+def test_operational_failure_sanitizes_and_bounds_notes_without_changing_plain_reason() -> None:
+    from hawedit.pipeline import _operational_failure
+
+    plain = _operational_failure("editorial", "Stage 4", RuntimeError("plain failure"))
+    assert plain.reason == "Stage 4 failed with RuntimeError: plain failure"
+
+    noted = RuntimeError("body failure")
+    noted.add_note(" first\n\tprivacy warning\x00 ")
+    noted.add_note("x" * 2_000)
+    failure = _operational_failure("editorial", "Stage 4", noted)
+    note_summary = failure.reason.split("; exception notes: ", 1)[1]
+
+    assert note_summary.startswith("first privacy warning | ")
+    assert len(note_summary) <= 512
+    assert note_summary.endswith("…")
+    assert not any(character in note_summary for character in ("\n", "\t", "\x00"))
+
+
+def test_operational_failure_sanitizes_and_hard_caps_base_message_in_json() -> None:
+    from hawedit.pipeline import _operational_failure
+
+    provider_secret = "AIza" + ("S" * 64)
+    error = RuntimeError("private-prefix\x00\n" + ("x" * 1_000_000) + provider_secret)
+    error.add_note("bounded note")
+
+    failure = _operational_failure("editorial", "Stage 4", error)
+    report = json.loads(json.dumps(failure.to_dict()))
+    reason = report["reason"]
+    detail = reason.split("RuntimeError: ", 1)[1].split("; exception notes: ", 1)[0]
+
+    assert detail.startswith("private-prefix ")
+    assert len(detail) == 1_024
+    assert detail.endswith("…")
+    assert provider_secret not in reason
+    assert reason.endswith("; exception notes: bounded note")
+    assert not any(character in reason for character in ("\n", "\t", "\x00"))
+
+
+@needs_ffmpeg
+def test_atomic_bundle_failure_reasons_are_single_line_and_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.artifact_bundle import ArtifactBundle, BundleError
+
+    def refuse_bundle(cls: type[ArtifactBundle], /, *args: object, **kwargs: object) -> None:
+        raise BundleError("bundle creation\x00\n" + ("b" * 1_000_000))
+
+    monkeypatch.setattr(ArtifactBundle, "create", classmethod(refuse_bundle))
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="bounded-bundle-error",
+        transcript=a_transcript("bounded-bundle-error"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+
+    assert isinstance(run.render, StageSkipped)
+    assert isinstance(run.delivery, StageSkipped)
+    for failure in (run.render, run.delivery):
+        assert len(failure.reason) == 1_024
+        assert failure.reason.endswith("…")
+        assert not any(character in failure.reason for character in ("\n", "\t", "\x00"))
+
+
+@needs_ffmpeg
+def test_keyframe_cleanup_privacy_note_survives_into_json_stage_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+    from hawedit.keyframes import KeyframeError
+
+    error = KeyframeError("ffmpeg produced no usable keyframe")
+    error.add_note(
+        "private Stage 4 keyframe cleanup failed for C:/private\nframes: directory locked"
+    )
+    judge_calls = 0
+
+    def broken_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        raise error
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            nonlocal judge_calls
+            judge_calls += 1
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", broken_frames)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="cleanup-note",
+        transcript=a_transcript("cleanup-note"),
+        discover=lambda _n: [
+            Candidate("best", "cleanup-note", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.99)
+        ],
+        judge=Judge(),
+    )
+    report = json.loads(json.dumps(run.to_dict()))
+    reason = report["editorial"]["reason"]
+
+    assert judge_calls == 0
+    assert "KeyframeError: ffmpeg produced no usable keyframe" in reason
+    assert (
+        "private Stage 4 keyframe cleanup failed for C:/private frames: directory locked" in reason
+    )
+    assert "\n" not in reason
+
+
+@needs_ffmpeg
+def test_unsafe_candidate_id_is_rejected_before_stage4_touches_its_work_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    frame_calls = 0
+
+    def extract_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        nonlocal frame_calls
+        frame_calls += 1
+        return ()
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", extract_frames)
+    work = tmp_path / "work"
+    with pytest.raises(ValueError, match=r"candidate_id .*safe Stage 4 work component"):
+        run_pipeline(
+            FIXTURE,
+            work,
+            media_id="unsafe-candidate",
+            transcript=a_transcript("unsafe-candidate"),
+            discover=lambda _n: [
+                Candidate(
+                    "../../outside",
+                    "unsafe-candidate",
+                    0,
+                    1_700,
+                    DiscoveryPath.VERBAL,
+                    1,
+                    0.99,
+                )
+            ],
+            judge=Judge(),
+        )
+
+    assert frame_calls == 0
+    assert not (tmp_path / "outside").exists()
+
+
+def test_colon_delimited_candidate_id_has_a_portable_single_work_component() -> None:
+    from hawedit.pipeline import _candidate_work_component
+
+    assert _candidate_work_component("episode:s0:w1") == "episode_s0_w1"
+
+
+@pytest.mark.parametrize("failure_kind", ["gemini", "unusable", "not-routable", "too-large"])
+@needs_ffmpeg
+def test_known_judge_operational_failures_are_editorial_skips(
+    tmp_path: Path, failure_kind: str
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.gemini import GeminiUnavailable, JudgeUnusable
+    from hawedit.judge import JudgeRequest, NotRoutable, RequestTooLarge
+
+    failure = {
+        "gemini": GeminiUnavailable("cloud refused"),
+        "unusable": JudgeUnusable("malformed model output"),
+        "not-routable": NotRoutable("shadow model"),
+        "too-large": RequestTooLarge("token ceiling"),
+    }[failure_kind]
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            raise failure
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / f"work-{failure_kind}",
+        media_id=f"judge-{failure_kind}",
+        transcript=a_transcript(f"judge-{failure_kind}"),
+        discover=lambda _n: [
+            Candidate(
+                "best",
+                f"judge-{failure_kind}",
+                0,
+                1_700,
+                DiscoveryPath.VERBAL,
+                1,
+                0.99,
+            )
+        ],
+        judge=Judge(),
+    )
+
+    assert isinstance(run.editorial, StageSkipped)
+    assert type(failure).__name__ in run.editorial.reason
+    assert run.clip is None
 
 
 @needs_ffmpeg
@@ -1040,6 +1423,70 @@ def test_composed_visual_path_uses_measured_fps_and_best_verbal_slice_as_query(
 
 
 @needs_ffmpeg
+def test_path_a_operational_failure_stays_visible_while_independent_visual_path_runs(
+    tmp_path: Path,
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.gemini import GeminiUnavailable
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            candidate = Candidate(
+                "visual",
+                media_id,
+                0,
+                1_700,
+                DiscoveryPath.VISUAL,
+                1,
+                0.9,
+            )
+            return VisualDiscoveryResult(media_id, query, len(windows), 1, (), (candidate,))
+
+    def broken_path_a(_transcript: Any) -> Sequence[Candidate]:
+        raise GeminiUnavailable("temporary cloud refusal")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="one-path",
+        transcript=a_transcript("one-path"),
+        discover=broken_path_a,
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert isinstance(run.discovery, StageSkipped)
+    assert "GeminiUnavailable: temporary cloud refusal" in run.discovery.reason
+    assert tuple(candidate.candidate_id for candidate in run.candidates) == ("visual",)
+    assert not isinstance(run.visual_index, StageSkipped)
+
+
+@needs_ffmpeg
+def test_programmer_exception_from_discovery_is_not_normalized(tmp_path: Path) -> None:
+    def broken_discovery(_transcript: Any) -> Sequence[Any]:
+        raise AssertionError("producer invariant broke")
+
+    with pytest.raises(AssertionError, match="producer invariant broke"):
+        run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="programmer-error",
+            transcript=a_transcript("programmer-error"),
+            discover=broken_discovery,
+        )
+
+
+@needs_ffmpeg
 def test_timelens_grounding_is_composed_into_boundary_fusion(tmp_path: Path) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
@@ -1071,6 +1518,44 @@ def test_timelens_grounding_is_composed_into_boundary_fusion(tmp_path: Path) -> 
     assert run.clip.boundary.out_extended_by == "timelens_interval_end"
 
 
+@pytest.mark.parametrize("failure_kind", ["grounding", "weights", "frames"])
+@needs_ffmpeg
+def test_known_timelens_failures_skip_boundary_and_never_render(
+    tmp_path: Path, failure_kind: str
+) -> None:
+    from hawedit.qwen_visual import EmbedderUnavailable
+    from hawedit.video_grounding import GroundingError
+    from hawedit.video_input import VideoInputError
+
+    failure = {
+        "grounding": GroundingError("model response was not spans"),
+        "weights": EmbedderUnavailable("checkpoint absent"),
+        "frames": VideoInputError("window extraction failed"),
+    }[failure_kind]
+
+    class Grounder:
+        def ground_all(self, windows: Sequence[Any], query: str) -> tuple[Any, ...]:
+            raise failure
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / f"work-{failure_kind}",
+        media_id=f"timelens-{failure_kind}",
+        transcript=a_transcript(f"timelens-{failure_kind}"),
+        select_sentences=(0,),
+        verdict=replace(
+            a_verdict(100, 1_700),
+            candidate_id=f"timelens-{failure_kind}-0",
+        ),
+        temporal_grounder=Grounder(),
+    )
+
+    assert isinstance(run.boundary, StageSkipped)
+    assert type(failure).__name__ in run.boundary.reason
+    assert isinstance(run.render, StageSkipped)
+    assert run.clip is None
+
+
 @needs_ffmpeg
 def test_subject_tracking_marks_output_for_dynamic_reframing(tmp_path: Path) -> None:
     from hawedit.reframe import FocusPoint
@@ -1091,6 +1576,30 @@ def test_subject_tracking_marks_output_for_dynamic_reframing(tmp_path: Path) -> 
     )
     assert run.clip is not None and run.clip.output is not None
     assert run.clip.output.crop_target == "face_tracked"
+
+
+@needs_ffmpeg
+def test_requested_tracker_runtime_failure_skips_render_without_static_fallback(
+    tmp_path: Path,
+) -> None:
+    class BrokenTracker:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[Any, ...]:
+            raise RuntimeError("OpenCV could not decode a frame")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="tracking-failed",
+        transcript=a_transcript("tracking-failed"),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="tracking-failed-0"),
+        subject_tracker=BrokenTracker(),
+    )
+
+    assert run.clip is None
+    assert isinstance(run.render, StageSkipped)
+    assert "RuntimeError: OpenCV could not decode a frame" in run.render.reason
+    assert "requested subject tracking" in run.render.reason
 
 
 # =========================================================================================

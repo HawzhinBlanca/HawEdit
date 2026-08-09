@@ -4397,3 +4397,54 @@ resolves above it. Setup checks both the base interpreter and any existing venv.
 install the exact transferred wheel, pass `pip check`, resolve installed data and start all six
 CLIs. Attestation depends on every matrix leg. Local clean venvs on 3.11.15 and 3.12.13 passed the
 same smoke; hosted execution remains required after merge. `evidence/python-support.md`.
+
+## D-117 - A gate interpreter is an identity, not an executable-shaped string
+
+The former `PY` override let an arbitrary program print the expected probe token and return zero
+for every gate command. A success token was therefore a self-assertion by the thing being
+authenticated.
+
+**Decision:** `verify.sh` accepts only the path-identical interpreter inside this checkout's
+canonical `.venv`. Before grading, an isolated environment preflight requires the supported Python
+range, current project version, exact active dependency pins, and exactly one authoritative
+editable installation rooted at this checkout (plus only its expected same-version egg-info).
+PEP 508 markers are evaluated for the audited interpreter. An external or token-forging `PY` is
+refused before execution. `evidence/environment-identity.md`.
+
+## D-118 - Operational model failures stop at their stage boundary
+
+Model or transport absence is expected deployment state; an assertion or invalid persisted verdict
+is a programming/data error. Treating both alike either crashes routine partial runs or hides
+defects.
+
+**Decision:** only named adapter-domain failures become `StageSkipped`; programmer and schema
+exceptions remain visible. Auto-selection with no complete sentence does not extract pixels or
+call Stage 4. Candidate IDs are validated as one path component before filesystem use. Every
+exception-derived report string is printable, whitespace-normalized and hard-bounded, including
+cleanup notes. Credentials and local model availability are acquired lazily inside these stage
+boundaries, while routing and governance remain eager. Billed `generateContent` is never replayed
+after an ambiguous reset/5xx without provider idempotency. `evidence/pipeline-failures.md`.
+
+## D-119 - A WSL receipt carries the code and metadata it will actually use
+
+The worker snapshot originally copied Python only. Qwen-ASR then resolved model manifests beside a
+venv where no HawEdit package data was installed, so hard-segment validation could not verify its
+checkpoint. Eagerly invalidating the old receipt also made a failed long reprovision destroy a
+still-valid runtime generation.
+
+**Decision:** every source snapshot contains an exact receipt-bound copy of the three trusted model
+manifests, and its digest/allowlist covers their paths and bytes. Mutable model roots never provide
+identity. A prior valid receipt remains readable while a new generation is staged and after a
+failed attempt. Runtime-result publication uses a random host-owned, no-follow, single-link,
+fd-bound file. `evidence/wsl-runtime-receipt.md`.
+
+## D-120 - Resume data is untrusted before a downloader writes through it
+
+A deterministic Hugging Face resume tree was verified only after `snapshot_download`. A planted
+hardlink inside it let the third-party writer overwrite an external file before post-download
+verification refused the stage.
+
+**Decision:** recursively validate ownership, privacy mode, type, link count and reparse status
+before giving an existing resume tree to the downloader. Atomically move a safe resume tree to a
+random private stage and revalidate its bound name; fresh stages are private and unpredictable.
+Safe failures move back for retry. `evidence/checkpoint-provisioning.md`.

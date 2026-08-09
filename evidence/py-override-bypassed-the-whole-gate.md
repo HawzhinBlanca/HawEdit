@@ -107,4 +107,12 @@ accepts; the probe cannot see that, because the interpreter really is this proje
 next item rather than folded in — it needs its own measurement, and it was reported by an agent, not
 yet reproduced by me.
 
+## Superseded by path-bound environment identity
+
+D-117 closes the later token-forging variant left open above. The gate no longer authenticates an
+interpreter by running it and trusting its output: only the path-identical checkout `.venv`
+interpreter is permitted, then `hawedit.environment` verifies installation root, distribution
+records, Python/project versions and active exact requirements. See
+`evidence/environment-identity.md`.
+
 Gate: `VERIFY OK — 1155 passed, 0 skipped`.

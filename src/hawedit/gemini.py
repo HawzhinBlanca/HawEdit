@@ -23,8 +23,9 @@ the tokens for free, so there is no reason to guess and then be wrong about the 
 clip check and the score ranges all apply to model output exactly as they apply to a hand-
 written verdict. A model is not a trusted source; it is the least trusted one in the system.
 
-**Retries are bounded and only for transient failures.** A 429 or a 5xx is worth retrying; a
-400 means the request is wrong and retrying it just bills twice for the same mistake.
+**Billed generation is never automatically retried.** A reset or 5xx after upload is ambiguous:
+Google may already have processed and billed it. Without a provider-supported idempotency key,
+replaying `generateContent` can create two charges and two verdicts for one logical request.
 
 Governance, unchanged by any of this: §3 Stage 3's warning box says full-transcript discovery
 sends 100% of every transcript to Google, and that for COMMS and KAAE material paid-tier Vertex
@@ -76,6 +77,8 @@ API_ROOT: Final = "https://generativelanguage.googleapis.com/v1beta"
 # request" on the first attempt, sending someone to look at their prompt when the problem
 # was the network. A 400 still does not retry: that request is wrong and will stay wrong.
 _RETRYABLE: Final = frozenset({0, 429, 500, 502, 503, 504})
+_MAX_RESPONSE_BYTES: Final = 1 << 20
+_MAX_ERROR_CHARS: Final = 512
 
 
 class GeminiUnavailable(RuntimeError):
@@ -260,6 +263,15 @@ against those pixels; do not treat the textual SV6D description as a substitute 
 Transport = Callable[[str, bytes | None, Mapping[str, str]], tuple[int, str]]
 
 
+def _bounded_response_text(stream: Any) -> str:
+    body: bytes = stream.read(_MAX_RESPONSE_BYTES + 1)
+    if len(body) > _MAX_RESPONSE_BYTES:
+        raise GeminiUnavailable(
+            f"Gemini response exceeded {_MAX_RESPONSE_BYTES} bytes; refusing oversized content"
+        )
+    return body.decode("utf-8", "replace")
+
+
 def _https(
     url: str, body: bytes | None = None, headers: Mapping[str, str] | None = None
 ) -> tuple[int, str]:
@@ -274,9 +286,9 @@ def _https(
     )
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
-            return response.status, response.read().decode("utf-8", "replace")
+            return response.status, _bounded_response_text(response)
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", "replace")
+        return exc.code, _bounded_response_text(exc)
     except OSError as exc:
         return 0, str(exc)
 
@@ -284,9 +296,16 @@ def _https(
 def _api_error(status: int, body: str) -> str:
     """Return the API's own bounded error message without request metadata."""
     try:
-        return f"HTTP {status}: {json.loads(body)['error']['message']}"
+        message: object = json.loads(body)["error"]["message"]
     except (ValueError, KeyError, TypeError):
-        return f"HTTP {status}: {body[:200]}"
+        message = body
+    if not isinstance(message, str):
+        message = type(message).__name__
+    printable = "".join(char if char.isprintable() else " " for char in message)
+    bounded = " ".join(printable.split())
+    if len(bounded) > _MAX_ERROR_CHARS:
+        bounded = f"{bounded[: _MAX_ERROR_CHARS - 3]}..."
+    return f"HTTP {status}: {bounded}"
 
 
 def count_tokens(
@@ -354,13 +373,10 @@ class GeminiJudge:
         # after a billed call.
         route(self)
 
-        key = api_key or read_credential(GEMINI_API_KEY)
-        if not key:
-            raise GeminiUnavailable(
-                "no Gemini API key. Run `python -m hawedit.credentials` to store one, or set "
-                f"{GEMINI_API_KEY} in the environment."
-            )
-        self._key = key
+        # Credential acquisition is operational, not static configuration. Keep construction
+        # pure so the runner exists before a missing key is reported and can serialize the
+        # affected stage as skipped. Routing above remains eager and cannot be bypassed.
+        self._key = api_key
 
     def count_request_tokens(self, request: JudgeRequest) -> int:
         """The real token count for what this request would send.
@@ -384,7 +400,19 @@ class GeminiJudge:
         self.governance.assert_permits_upload()
 
     def _headers(self) -> Mapping[str, str]:
-        return {"x-goog-api-key": self._key}
+        try:
+            key = self._key or read_credential(GEMINI_API_KEY)
+        except (OSError, UnicodeError) as exc:
+            raise GeminiUnavailable(
+                "Gemini credential storage could not be read; no request was sent"
+            ) from exc
+        if not key:
+            raise GeminiUnavailable(
+                "no Gemini API key. Run `python -m hawedit.credentials` to store one, or set "
+                f"{GEMINI_API_KEY} in the environment."
+            )
+        self._key = key
+        return {"x-goog-api-key": key}
 
     def _url(self, method: str) -> str:
         return f"{API_ROOT}/models/{self.model_id}:{method}"
@@ -494,19 +522,16 @@ class GeminiJudge:
         return self._to_verdict(body, request)
 
     def _post(self, url: str, payload: bytes) -> str:
-        last = ""
-        for attempt in range(1, self._max_attempts + 1):
-            status, body = self._transport(url, payload, self._headers())
-            if status == 200:
-                return body
-            last = _api_error(status, body)
-            if status not in _RETRYABLE:
-                raise GeminiUnavailable(f"the judge refused this request — {last}")
-            if attempt < self._max_attempts:
-                self._sleep(2.0**attempt)
-        raise GeminiUnavailable(
-            f"the judge was unreachable after {self._max_attempts} attempts — {last}"
-        )
+        status, body = self._transport(url, payload, self._headers())
+        if status == 200:
+            return body
+        detail = _api_error(status, body)
+        if status in _RETRYABLE:
+            raise GeminiUnavailable(
+                "the billed generateContent result is ambiguous and was not retried without "
+                f"provider idempotency — {detail}"
+            )
+        raise GeminiUnavailable(f"the judge refused this request — {detail}")
 
     def _to_verdict(self, body: str, request: JudgeRequest) -> JudgeVerdict:
         try:
@@ -559,13 +584,22 @@ def adc_access_token() -> str:
     """Refresh and return a short-lived Google Application Default Credentials token."""
     try:
         import google.auth
+        from google.auth.exceptions import GoogleAuthError
         from google.auth.transport.requests import Request
     except ImportError as exc:
         raise GeminiUnavailable(
             "Vertex requires the cloud extra: pip install -e '.[cloud]'"
         ) from exc
-    credentials, _ = google.auth.default(scopes=("https://www.googleapis.com/auth/cloud-platform",))
-    credentials.refresh(Request())
+    try:
+        credentials, _ = google.auth.default(
+            scopes=("https://www.googleapis.com/auth/cloud-platform",)
+        )
+        credentials.refresh(Request())
+    except (GoogleAuthError, OSError, UnicodeError) as exc:
+        raise GeminiUnavailable(
+            "Vertex Application Default Credentials could not be acquired or refreshed; "
+            "no request was sent"
+        ) from exc
     token = getattr(credentials, "token", None)
     if not token:
         raise GeminiUnavailable("Application Default Credentials returned no access token")
@@ -606,7 +640,14 @@ class VertexGeminiJudge(GeminiJudge):
         self.governance.assert_permits_vertex()
 
     def _headers(self) -> Mapping[str, str]:
-        token = self._token_provider()
+        try:
+            token = self._token_provider()
+        except GeminiUnavailable:
+            raise
+        except (OSError, UnicodeError) as exc:
+            raise GeminiUnavailable(
+                "Vertex credential provider failed; no request was sent"
+            ) from exc
         if not token:
             raise GeminiUnavailable("Vertex token provider returned an empty access token")
         return {"Authorization": f"Bearer {token}"}

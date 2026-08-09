@@ -56,13 +56,20 @@ from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
-from hawedit.gemini import GeminiUnavailable
+from hawedit.gemini import GeminiUnavailable, JudgeUnusable
 from hawedit.index import Bm25Index
 from hawedit.ingest import IngestError, IngestResult, ingest, probe_stream
-from hawedit.judge import EditorialJudge, JudgeRequest, JudgeVerdict
-from hawedit.keyframes import extract_judge_frames
+from hawedit.judge import (
+    EditorialJudge,
+    JudgeRequest,
+    JudgeVerdict,
+    NotRoutable,
+    RequestTooLarge,
+)
+from hawedit.keyframes import KeyframeError, extract_judge_frames
 from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
+from hawedit.qwen_visual import EmbedderUnavailable
 from hawedit.reframe import SubjectTracker
 from hawedit.render import RenderError, RenderResult, frame_rate, render_clip
 from hawedit.sentences import Sentence, anchors_for, segment_sentences
@@ -76,6 +83,8 @@ from hawedit.transcripts import (
     normalize_transcript,
     validate_media_id,
 )
+from hawedit.video_grounding import GroundingError
+from hawedit.video_input import VideoInputError
 from hawedit.visual_index import (
     DECLARED_SAMPLING_FPS,
     REFERENCE_FPS,
@@ -341,6 +350,67 @@ def _not_reached(stage: str, dependency: str) -> StageSkipped:
     )
 
 
+def _operational_failure(stage: str, component: str, exc: Exception) -> StageSkipped:
+    """A known runtime/domain refusal, retaining its concrete cause in the run report."""
+    detail = _safe_exception_text(str(exc), budget=1_024)
+    reason = f"{component} failed with {type(exc).__name__}: {detail}"
+    notes = _safe_exception_notes(exc)
+    if notes:
+        reason = f"{reason}; exception notes: {notes}"
+    return StageSkipped(
+        stage=stage,
+        reason=reason,
+        blocked_by=(component,),
+    )
+
+
+def _safe_exception_text(value: str, budget: int) -> str:
+    """A printable, single-line exception detail within a deterministic hard limit."""
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    pending_space = False
+    for character in value:
+        if not character.isprintable() or character.isspace():
+            pending_space = bool(kept)
+            continue
+        if pending_space:
+            if len(kept) >= budget:
+                kept[-1] = "…"
+                return "".join(kept)
+            kept.append(" ")
+            pending_space = False
+        if len(kept) >= budget:
+            kept[-1] = "…"
+            return "".join(kept)
+        kept.append(character)
+    return "".join(kept)
+
+
+def _safe_exception_notes(exc: Exception, budget: int = 512, maximum: int = 4) -> str:
+    """Printable, single-line exception notes within one deterministic total budget."""
+    raw_notes = getattr(exc, "__notes__", ())
+    if not isinstance(raw_notes, list | tuple) or budget <= 0 or maximum <= 0:
+        return ""
+    kept: list[str] = []
+    remaining = budget
+    for raw_note in raw_notes[:maximum]:
+        if not isinstance(raw_note, str):
+            continue
+        separator = 3 if kept else 0
+        available = remaining - separator
+        if available <= 0:
+            break
+        normalized = _safe_exception_text(raw_note, available)
+        if not normalized:
+            continue
+        kept.append(normalized)
+        remaining -= separator + len(normalized)
+        if remaining <= 0:
+            break
+    return " | ".join(kept)
+
+
 def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
     """Refuse a selection whose span covers a sentence it does not include.
 
@@ -528,6 +598,25 @@ def _candidate_slice_text(transcript: NormalizedTranscript, in_ms: int, out_ms: 
     return normalize_sorani(" ".join(words))
 
 
+def _candidate_work_component(candidate_id: str) -> str:
+    """Stage 4 directory name derived from one safe candidate-id component.
+
+    Scene-window IDs use colons as logical separators. They are valid candidate IDs but not
+    portable filename characters, so only those separators are translated; every path-forming
+    character and parent reference remains visible to the shared strict validator and is
+    refused before keyframe extraction can touch the filesystem.
+    """
+    if not isinstance(candidate_id, str):
+        raise ValueError(f"candidate_id must be a string, got {type(candidate_id).__name__}")
+    component = candidate_id.replace(":", "_")
+    try:
+        return validate_media_id(component)
+    except ValueError as exc:
+        raise ValueError(
+            f"candidate_id {candidate_id!r} is not a safe Stage 4 work component: {exc}"
+        ) from exc
+
+
 def _assert_verdict_matches_request(verdict: JudgeVerdict, request: JudgeRequest) -> None:
     """Refuse a judge adapter that returns a verdict for different footage."""
     if verdict.candidate_id != request.candidate_id:
@@ -710,15 +799,19 @@ def run_pipeline(
     # --- §3 Stage 0 ----------------------------------------------------------------------
     ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
 
+    asr_failure: StageSkipped | None = None
     if transcript is None and asr is not None:
-        transcript = asr.transcribe(
-            identifier,
-            Path(ingested.audio_path),
-            ingested.speech,
-            work_dir / "stage1",
-            ffmpeg,
-        )
-        if transcript.media_id != identifier:
+        try:
+            transcript = asr.transcribe(
+                identifier,
+                Path(ingested.audio_path),
+                ingested.speech,
+                work_dir / "stage1",
+                ffmpeg,
+            )
+        except RuntimeError as exc:
+            asr_failure = _operational_failure("transcript", "canonical ASR runtime", exc)
+        if transcript is not None and transcript.media_id != identifier:
             raise ValueError(
                 f"canonical ASR returned media_id {transcript.media_id!r} for {identifier!r}"
             )
@@ -751,6 +844,8 @@ def run_pipeline(
         render=_not_reached("render", "a judged boundary and QC pass"),
         delivery=_not_reached("delivery", "a successful render"),
     )
+    if asr_failure is not None:
+        return replace(run, transcript=asr_failure)
     if transcript is None:
         return run
 
@@ -794,8 +889,16 @@ def run_pipeline(
     merged: tuple[MergedCandidate, ...] = ()
     visual_result: VisualDiscoveryResult | None = None
     visual_skipped: StageSkipped | None = None
+    discovery_skipped: StageSkipped | None = None
     if discover is not None or visual_composer is not None:
-        verbal = tuple(discover(normalized)) if discover is not None else ()
+        verbal: tuple[Candidate, ...] = ()
+        if discover is not None:
+            try:
+                verbal = tuple(discover(normalized))
+            except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
+                discovery_skipped = _operational_failure(
+                    "discovery", "Path A discovery runtime", exc
+                )
         # Path B usually has no composed producer here, and §3 is explicit that
         # a one-sided union is correct rather than degraded: candidates from *either* path
         # proceed, and a verbal-only moment is the case the dual path exists to protect. When
@@ -820,7 +923,7 @@ def run_pipeline(
             except VisualPipelineError as exc:
                 visual_skipped = StageSkipped(
                     stage="visual_index",
-                    reason=str(exc),
+                    reason=_safe_exception_text(str(exc), budget=1_024),
                     blocked_by=("visual retrieval refused this media",),
                 )
             else:
@@ -828,7 +931,7 @@ def run_pipeline(
         merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
-            discovery=None if merged else _STAGE_3_NOTHING_FOUND,
+            discovery=discovery_skipped or (None if merged else _STAGE_3_NOTHING_FOUND),
             candidates=merged,
             visual_index=visual_result or visual_skipped or _STAGE_2_VISUAL,
         )
@@ -838,6 +941,29 @@ def run_pipeline(
         select_sentences, selected, selected_anchors = _prepare_selection(
             transcript, sentences, automatic
         )
+        if not select_sentences:
+            # The survivor exists, but none of it can become a sentence-complete clip. Stop
+            # before extracting source pixels or making the billed Stage 4 call: a verdict for
+            # footage the automatic path already knows it cannot cut has no downstream use.
+            return replace(
+                run,
+                editorial=StageSkipped(
+                    stage="editorial",
+                    reason=(
+                        "automatic selection found no complete contiguous sentence inside any "
+                        "Stage 3 survivor, so Stage 4 was not called"
+                    ),
+                    blocked_by=("complete sentence anchors",),
+                ),
+                boundary=StageSkipped(
+                    stage="boundary",
+                    reason=(
+                        "automatic selection found no complete contiguous sentence inside any "
+                        "Stage 3 survivor"
+                    ),
+                    blocked_by=("complete sentence anchors",),
+                ),
+            )
         # `--auto-select` only knows which sentences it wants once Stage 3 has ranked
         # candidates, so this is the first moment the artifact names exist in that mode. Still
         # ahead of the billed Stage 4 call below.
@@ -855,17 +981,24 @@ def run_pipeline(
             if selected_anchors is not None
             else survivor
         )
-        judge_frames = (
-            extract_judge_frames(
-                source,
-                request_candidate.in_ms,
-                request_candidate.out_ms,
-                work_dir / "stage4" / request_candidate.candidate_id.replace(":", "_"),
-                ffmpeg=ffmpeg,
+        candidate_work_component = _candidate_work_component(request_candidate.candidate_id)
+        try:
+            judge_frames = (
+                extract_judge_frames(
+                    source,
+                    request_candidate.in_ms,
+                    request_candidate.out_ms,
+                    work_dir / "stage4" / candidate_work_component,
+                    ffmpeg=ffmpeg,
+                )
+                if getattr(judge, "requires_keyframes", False)
+                else ()
             )
-            if getattr(judge, "requires_keyframes", False)
-            else ()
-        )
+        except KeyframeError as exc:
+            return replace(
+                run,
+                editorial=_operational_failure("editorial", "Stage 4 keyframe extraction", exc),
+            )
         request = JudgeRequest.for_survivor(
             request_candidate,
             text_ckb=_candidate_slice_text(
@@ -873,7 +1006,13 @@ def run_pipeline(
             ),
             keyframes=judge_frames,
         )
-        judged = judge.judge(request)
+        try:
+            judged = judge.judge(request)
+        except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
+            return replace(
+                run,
+                editorial=_operational_failure("editorial", "Stage 4 judge runtime", exc),
+            )
         _assert_verdict_matches_request(judged, request)
         if judged.sv6d is None and survivor.sv6d is not None:
             judged = replace(judged, sv6d=survivor.sv6d)
@@ -882,6 +1021,14 @@ def run_pipeline(
 
     if not select_sentences:
         return run
+
+    try:
+        editorial = verdict.to_editorial() if verdict is not None else None
+    except NotRoutable as exc:
+        return replace(
+            run,
+            editorial=_operational_failure("editorial", "Stage 4 verdict routing", exc),
+        )
 
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------
     anchors = selected_anchors
@@ -926,10 +1073,16 @@ def run_pipeline(
                 f"no visual window overlaps the Stage 5 span {temporal_span[0]}.."
                 f"{temporal_span[1]} ms"
             )
-        timelens_intervals = temporal_grounder.ground_all(
-            grounding_windows,
-            _candidate_slice_text(normalized, anchor_in, anchor_out),
-        )
+        try:
+            timelens_intervals = temporal_grounder.ground_all(
+                grounding_windows,
+                _candidate_slice_text(normalized, anchor_in, anchor_out),
+            )
+        except (GroundingError, EmbedderUnavailable, VideoInputError) as exc:
+            return replace(
+                run,
+                boundary=_operational_failure("boundary", "TimeLens temporal grounding", exc),
+            )
         timelens_interval = interval_for_fusion(
             timelens_intervals, anchor_in, anchor_out, identifier
         )
@@ -992,11 +1145,18 @@ def run_pipeline(
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
-    focus_points = (
-        subject_tracker.track(source, boundary.final_in_ms, boundary.final_out_ms)
-        if subject_tracker is not None
-        else ()
-    )
+    try:
+        focus_points = (
+            subject_tracker.track(source, boundary.final_in_ms, boundary.final_out_ms)
+            if subject_tracker is not None
+            else ()
+        )
+    except RuntimeError as exc:
+        return replace(
+            run,
+            boundary=boundary,
+            render=_operational_failure("render", "requested subject tracking", exc),
+        )
     clip = Clip(
         clip_id=_clip_id(identifier, select_sentences),
         media_id=identifier,
@@ -1017,7 +1177,7 @@ def run_pipeline(
             words=clip_words,
             asr=transcript.asr,
         ),
-        editorial=verdict.to_editorial() if verdict is not None else None,
+        editorial=editorial,
         output=(
             verdict.to_output(
                 crop_target="face_tracked" if focus_points else "static_centre",
@@ -1060,7 +1220,9 @@ def run_pipeline(
         return replace(
             run,
             render=StageSkipped(
-                stage="render", reason=str(exc), blocked_by=("§2 QC/editorial gate",)
+                stage="render",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("§2 QC/editorial gate",),
             ),
         )
 
@@ -1070,10 +1232,14 @@ def run_pipeline(
         return replace(
             run,
             render=StageSkipped(
-                stage="render", reason=str(exc), blocked_by=("§2 atomic delivery bundle",)
+                stage="render",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("§2 atomic delivery bundle",),
             ),
             delivery=StageSkipped(
-                stage="delivery", reason=str(exc), blocked_by=("§2 atomic delivery bundle",)
+                stage="delivery",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("§2 atomic delivery bundle",),
             ),
         )
     ass_path = bundle.staged_path("ass")
@@ -1108,11 +1274,17 @@ def run_pipeline(
         try:
             bundle.discard()
         except BundleError as cleanup_error:
-            exc = RenderError(f"{exc}; private bundle cleanup also failed: {cleanup_error}")
+            exc = RenderError(
+                "private bundle cleanup also failed: "
+                f"{_safe_exception_text(str(cleanup_error), budget=512)}; original failure: "
+                f"{_safe_exception_text(str(exc), budget=512)}"
+            )
         return replace(
             run,
             render=StageSkipped(
-                stage="render", reason=str(exc), blocked_by=("Stage 6 render runtime",)
+                stage="render",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("Stage 6 render runtime",),
             ),
         )
 
@@ -1143,17 +1315,24 @@ def run_pipeline(
         try:
             bundle.discard()
         except BundleError as cleanup_error:
-            exc = DeliveryError(f"{exc}; private bundle cleanup also failed: {cleanup_error}")
+            exc = DeliveryError(
+                "private bundle cleanup also failed: "
+                f"{_safe_exception_text(str(cleanup_error), budget=512)}; original failure: "
+                f"{_safe_exception_text(str(exc), budget=512)}"
+            )
         return replace(
             run,
             render=StageSkipped(
                 stage="render",
-                reason=f"render completed privately but was not published: {exc}",
+                reason=(
+                    "render completed privately but was not published: "
+                    f"{_safe_exception_text(str(exc), budget=1_024)}"
+                ),
                 blocked_by=("§2 atomic delivery bundle",),
             ),
             delivery=StageSkipped(
                 stage="delivery",
-                reason=str(exc),
+                reason=_safe_exception_text(str(exc), budget=1_024),
                 blocked_by=("§2 delivery set",),
             ),
         )

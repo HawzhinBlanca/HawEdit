@@ -166,10 +166,13 @@ def test_a_section_7_model_with_the_wrong_job_is_refused(tmp_path: Path) -> None
         QwenVisualEmbedder(a_checkpoint(tmp_path), model_id="PySceneDetect")
 
 
-def test_missing_weights_name_the_command_that_fetches_them(tmp_path: Path) -> None:
+def test_missing_weights_are_lazy_at_construction_and_refused_at_runtime(tmp_path: Path) -> None:
     absent = tmp_path / "not-downloaded"
+    embedder = QwenVisualEmbedder(absent)
+
+    assert embedder.model_dir == absent
     with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
-        QwenVisualEmbedder(absent)
+        embedder.embed_text("کوردی")
 
 
 def test_the_default_model_id_is_the_registry_id_for_the_embedder() -> None:

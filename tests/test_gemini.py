@@ -10,7 +10,7 @@ integration fails while looking like it worked:
 * the model answers in English, and every type downstream accepts a `str`;
 * the model puts the payoff outside the clip, and the punchline ships past the out point;
 * the model omits a field, and a default fills in a judgement nobody made;
-* a 400 is retried three times, billing three times for one malformed request;
+* an ambiguous network failure replays a billed non-idempotent generation;
 * a confidential transcript is uploaded before §3's governance box is answered.
 
 Each of those is a test below. The last one is the only one with legal consequences.
@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
+import urllib.request
 from collections.abc import Mapping
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -32,6 +35,7 @@ from hawedit.gemini import (
     Governance,
     JudgeUnusable,
     VertexGeminiJudge,
+    adc_access_token,
     count_tokens,
 )
 from hawedit.judge import InputMode, JudgeFrame, JudgeRequest, RequestTooLarge
@@ -330,7 +334,7 @@ def test_a_malformed_request_is_not_retried() -> None:
     assert sum(1 for c in calls if "generateContent" in c) == 1
 
 
-def test_a_rate_limit_is_retried_and_then_given_up_on() -> None:
+def test_a_rate_limit_is_not_retried_without_provider_idempotency() -> None:
     calls: list[str] = []
 
     def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
@@ -339,12 +343,12 @@ def test_a_rate_limit_is_retried_and_then_given_up_on() -> None:
             return 200, json.dumps({"totalTokens": 10})
         return 429, json.dumps({"error": {"message": "Resource exhausted"}})
 
-    with pytest.raises(GeminiUnavailable, match="3 attempts"):
+    with pytest.raises(GeminiUnavailable, match="was not retried"):
         a_judge(transport).judge(a_request())
-    assert sum(1 for c in calls if "generateContent" in c) == 3
+    assert sum(1 for c in calls if "generateContent" in c) == 1
 
 
-def test_a_transient_failure_that_clears_produces_a_verdict() -> None:
+def test_a_transient_generation_failure_is_not_replayed_even_if_next_call_would_pass() -> None:
     state = {"n": 0}
 
     def transport(url: str, body: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
@@ -355,7 +359,9 @@ def test_a_transient_failure_that_clears_produces_a_verdict() -> None:
             return 503, json.dumps({"error": {"message": "unavailable"}})
         return Api()(url, body, headers)
 
-    assert a_judge(transport).judge(a_request()).candidate_id == "c1"
+    with pytest.raises(GeminiUnavailable, match="was not retried"):
+        a_judge(transport).judge(a_request())
+    assert state["n"] == 1
 
 
 def test_an_api_error_message_never_contains_the_key() -> None:
@@ -369,6 +375,44 @@ def test_an_api_error_message_never_contains_the_key() -> None:
     with pytest.raises(GeminiUnavailable) as caught:
         a_judge(transport).judge(a_request())
     assert KEY not in str(caught.value)
+
+
+def test_structured_provider_error_is_printable_and_bounded() -> None:
+    def transport(_url: str, _body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
+        return 400, json.dumps({"error": {"message": "bad\x00\n" + "E" * 1_000_000}})
+
+    with pytest.raises(GeminiUnavailable) as caught:
+        GeminiJudge(api_key=KEY, transport=transport).count_parts([{"text": "hello"}])
+    detail = str(caught.value)
+    assert len(detail) < 600
+    assert "\x00" not in detail and "\n" not in detail
+    assert "E" * 512 not in detail
+    assert detail.endswith("...")
+
+
+def test_https_refuses_oversized_response_before_json_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OversizedResponse:
+        status = 200
+
+        def __enter__(self) -> OversizedResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            assert size == (1 << 20) + 1
+            return b"x" * size
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: OversizedResponse(),
+    )
+    with pytest.raises(GeminiUnavailable, match="exceeded 1048576 bytes"):
+        GeminiJudge(api_key=KEY).count_parts([{"text": "hello"}])
 
 
 # --- §3's governance box, as a check rather than a paragraph -------------------------------
@@ -431,6 +475,62 @@ def test_confidential_vertex_route_uses_adc_bearer_and_multimodal_payload() -> N
     assert all("key=" not in url for url in api.urls)
 
 
+@pytest.mark.parametrize("failure", [PermissionError("denied"), UnicodeError("bad token")])
+def test_vertex_token_provider_io_failures_are_normalized_before_transport(
+    failure: Exception,
+) -> None:
+    api = Api()
+
+    def fail() -> str:
+        raise failure
+
+    judge = VertexGeminiJudge("news-project", token_provider=fail, transport=api)
+    with pytest.raises(GeminiUnavailable, match="no request was sent"):
+        judge.count_parts([{"text": "hello"}])
+    assert api.calls == []
+
+
+def test_vertex_token_provider_does_not_hide_programmer_failures() -> None:
+    def fail() -> str:
+        raise AssertionError("control")
+
+    with pytest.raises(AssertionError, match="control"):
+        VertexGeminiJudge("news-project", token_provider=fail, transport=Api()).count_parts(
+            [{"text": "hello"}]
+        )
+
+
+def test_adc_auth_operational_failure_is_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeGoogleAuthError(Exception):
+        pass
+
+    google = ModuleType("google")
+    auth = ModuleType("google.auth")
+    exceptions = ModuleType("google.auth.exceptions")
+    transport = ModuleType("google.auth.transport")
+    requests = ModuleType("google.auth.transport.requests")
+
+    def fail_default(*, scopes: tuple[str, ...]) -> tuple[object, None]:
+        assert scopes == ("https://www.googleapis.com/auth/cloud-platform",)
+        raise FakeGoogleAuthError("provider detail must not escape")
+
+    class Request:
+        pass
+
+    auth.default = fail_default  # type: ignore[attr-defined]
+    exceptions.GoogleAuthError = FakeGoogleAuthError  # type: ignore[attr-defined]
+    requests.Request = Request  # type: ignore[attr-defined]
+    google.auth = auth  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.auth", auth)
+    monkeypatch.setitem(sys.modules, "google.auth.exceptions", exceptions)
+    monkeypatch.setitem(sys.modules, "google.auth.transport", transport)
+    monkeypatch.setitem(sys.modules, "google.auth.transport.requests", requests)
+
+    with pytest.raises(GeminiUnavailable, match="no request was sent"):
+        adc_access_token()
+
+
 def test_regional_vertex_route_uses_the_regional_endpoint() -> None:
     judge = VertexGeminiJudge(
         "news-project",
@@ -459,16 +559,83 @@ def test_the_shadow_cannot_be_constructed_as_the_judge() -> None:
         a_judge(Api(), model_id="gemini-3.1-pro")
 
 
+def test_model_routing_remains_eager_while_credentials_are_deferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hawedit.judge import NotRoutable
+
+    def credential_must_not_be_read(_name: str | None = None) -> str:
+        raise AssertionError("credential acquisition ran before static routing")
+
+    monkeypatch.setattr("hawedit.gemini.read_credential", credential_must_not_be_read)
+    with pytest.raises(NotRoutable):
+        GeminiJudge(api_key=None, model_id="gemini-3.1-pro", transport=Api())
+
+
 def test_a_model_outside_section_7_cannot_be_constructed() -> None:
     with pytest.raises((WrongRole, LookupError, ValueError)):
         a_judge(Api(), model_id="gpt-4o")
 
 
-def test_a_missing_key_names_the_panel_that_fixes_it(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_key_acquisition_is_lazy_and_missing_key_names_the_panel_on_first_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr("hawedit.gemini.read_credential", lambda _n=None: None)
+    api = Api()
+    judge = GeminiJudge(api_key=None, transport=api)
+
     with pytest.raises(GeminiUnavailable, match="hawedit.credentials"):
-        GeminiJudge(api_key=None, transport=Api())
+        judge.count_parts([{"text": "hello"}])
+    assert api.calls == []
+
+
+@pytest.mark.parametrize("failure", [PermissionError("denied"), UnicodeError("bad utf-8")])
+def test_deferred_key_storage_failures_are_normalized_before_transport(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    def fail(_name: str | None = None) -> str:
+        raise failure
+
+    api = Api()
+    monkeypatch.setattr("hawedit.gemini.read_credential", fail)
+    judge = GeminiJudge(api_key=None, transport=api)
+
+    with pytest.raises(GeminiUnavailable, match="no request was sent"):
+        judge.count_parts([{"text": "hello"}])
+    assert api.calls == []
+
+
+def test_deferred_key_does_not_hide_programmer_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(_name: str | None = None) -> str:
+        raise AssertionError("control")
+
+    monkeypatch.setattr("hawedit.gemini.read_credential", fail)
+    with pytest.raises(AssertionError, match="control"):
+        GeminiJudge(api_key=None, transport=Api()).count_parts([{"text": "hello"}])
+
+
+def test_deferred_key_is_read_once_and_still_sent_only_in_the_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads = 0
+
+    def credential(_name: str | None = None) -> str:
+        nonlocal reads
+        reads += 1
+        return KEY
+
+    api = Api()
+    monkeypatch.setattr("hawedit.gemini.read_credential", credential)
+    judge = GeminiJudge(api_key=None, transport=api)
+    assert reads == 0
+
+    judge.count_parts([{"text": "first"}])
+    judge.count_parts([{"text": "second"}])
+
+    assert reads == 1
+    assert all(KEY not in url for url in api.urls)
+    assert all(headers == {"x-goog-api-key": KEY} for headers in api.headers)
 
 
 # --- countTokens ----------------------------------------------------------------------------

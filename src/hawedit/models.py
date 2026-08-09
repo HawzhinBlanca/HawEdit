@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Final, cast
 
 from hawedit.registry import REGISTRY, ModelEntry, Provisioning
-from hawedit.wsl_setup import probe_wsl_runtime
+from hawedit.wsl_setup import WSL_MODEL_METADATA_DIRECTORY, probe_wsl_runtime
 
 __all__ = [
     "DEFAULT_MODELS_ROOT",
@@ -386,12 +386,20 @@ class ModelStore:
         if metadata_root is not None:
             self.metadata_root = metadata_root
         else:
-            checkout_metadata = Path(__file__).resolve().parents[2] / "models"
-            self.metadata_root = (
-                checkout_metadata
-                if (checkout_metadata / "sources.json").is_file()
-                else INSTALLED_SOURCES.parent
+            snapshot_metadata = (
+                Path(__file__).resolve().parent.parent / WSL_MODEL_METADATA_DIRECTORY
             )
+            checkout_metadata = Path(__file__).resolve().parents[2] / "models"
+            # A WSL worker snapshot carries a receipt-bound exact copy of all three identity
+            # manifests beside the package. If that uniquely named directory exists at all,
+            # never fall through to mutable checkpoint roots or unrelated installed metadata:
+            # an incomplete/tampered snapshot must fail closed in ``integrity()``.
+            if os.path.lexists(snapshot_metadata):
+                self.metadata_root = snapshot_metadata
+            elif (checkout_metadata / "sources.json").is_file():
+                self.metadata_root = checkout_metadata
+            else:
+                self.metadata_root = INSTALLED_SOURCES.parent
         self._omni_runtime_probe: tuple[bool, str, Path | None, int | None] | None = None
 
     def _omni_runtime_status(self) -> tuple[bool, str, Path | None, int | None]:
@@ -928,7 +936,7 @@ def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
                 digest.update(chunk)
             after = os.fstat(stream.fileno())
         current = os.lstat(path)
-        before_identity = (
+        descriptor_before = (
             before.st_dev,
             before.st_ino,
             before.st_size,
@@ -936,7 +944,7 @@ def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
             before.st_ctime_ns,
             before.st_nlink,
         )
-        after_identity = (
+        descriptor_after = (
             after.st_dev,
             after.st_ino,
             after.st_size,
@@ -944,7 +952,15 @@ def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
             after.st_ctime_ns,
             after.st_nlink,
         )
-        current_identity = (
+        path_before = (
+            named.st_dev,
+            named.st_ino,
+            named.st_size,
+            named.st_mtime_ns,
+            named.st_ctime_ns,
+            named.st_nlink,
+        )
+        path_after = (
             current.st_dev,
             current.st_ino,
             current.st_size,
@@ -952,7 +968,28 @@ def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
             current.st_ctime_ns,
             current.st_nlink,
         )
-        if before_identity != after_identity or after_identity != current_identity:
+        # Windows gives descriptor ``ctime`` the meaning/value of mtime while pathname stat
+        # reports the filesystem creation/change time. Preserve ctime race detection within
+        # each API, and bind the descriptor to the pathname using cross-platform fields.
+        descriptor_binding = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_nlink,
+        )
+        path_binding = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_nlink,
+        )
+        if (
+            descriptor_before != descriptor_after
+            or path_before != path_after
+            or descriptor_binding != path_binding
+        ):
             raise CheckpointIntegrityError(f"checkpoint file changed while hashing: {path}")
     finally:
         if descriptor >= 0:
