@@ -3970,3 +3970,58 @@ standing count reintroduced CAUGHT, because correctness today is not the propert
 control confirms the quoted historical form is still legal, so the check does not simply ban the
 digits. The cheapest way to satisfy it is to not write a rotting number.
 `evidence/adversarial-pass-5-2026-08-09.md`.
+
+## D-097
+
+**A stub with no model produced a §8.1 report identical to the real adapter's.** M0.7 recorded
+`type(adapter).__name__`, which satisfies "every measurement names its adapter class" and not the hard
+rule behind it — *a number carries the hardware and adapter that produced it*. A class name asserts an
+adapter; it does not carry one. `validate_adapter` resolves `adapter.model_id` against §7, so a stub
+must claim a real §7 id, and claiming one is free. Measured with a stub named exactly like the
+canonical adapter, no weights, no GPU, no backend:
+
+```
+adapter_impls  : ['OmniAsrAdapter']          <- the real adapter emits exactly this
+normalized_cer : 0.0
+mean_rtf       : 0.1
+hardware       : {'host': 'hawapc01', 'accelerator': '2x RTX 3090 Ti'}
+distinguishable from the real adapter in the artifact: False
+```
+
+A perfect CER and a 0.1 RTF attributed to a named GPU host, from a class that loaded nothing. Never
+computed, not computed-and-discarded: the module was never read.
+
+**Decision: record the module-qualified implementation.** One site — `asr.py` builds every
+`Measurement` and is the only place in `src/` deriving an adapter identity (the other six
+`type(...).__name__` uses are error messages). `test_bench.OmniAsrAdapter` carries where the code came
+from; `OmniAsrAdapter` only asserts it.
+
+**Rejected: resolving the model revision by id** from `models/revisions.json`. It would have made the
+stub look *more* real — it claims a genuine §7 id, so the pinned SHA would be returned for it. The
+module is a fact about the object in hand rather than a lookup keyed on a claim.
+
+**Rejected: blocking promotion in `decide_canonical` on a foreign adapter.** It sits beside the interim
+and coverage blocks and looks symmetric, but the harness's own tests promote challengers measured by
+`test_bench.ScriptedAdapter` — legitimately, since that is how the decision rule is tested. The guard
+would either break them or need a bypass, and a bypass is worse than disclosure. The report says what
+produced the numbers; that is the property that was missing.
+
+**Rejected: recording the backend.** `backend` is not part of the `ASRAdapter` protocol, so reading it
+would be a special case keyed on one class's internals, and `Measurement` sees only the adapter.
+
+**Measured rather than guessed:** under pytest the module reads `test_bench`, not `tests.test_bench`,
+because there is no `tests/__init__.py`. The tests assert the literal string that actually appears.
+
+**Mutation audit 4/4**, and the two new tests are complementary rather than redundant — the audit
+shows which catches what. The **constant-prefix** wrong fix (`f"hawedit.asr.{name}"`, which looks
+qualified and identifies nothing) is caught by the stub test and **not** by the control, because for
+the real class that constant produces exactly the right answer. **Module-without-class** is caught by
+the control, which pins the real adapter's own qualified name. The control is a real measurement of
+`hawedit.asr.OmniAsrAdapter` with a backend that raises — no weights needed, because M0.7's "failures
+are recorded not raised" keeps the measurement and its adapter. That property is now load-bearing for
+a second reason.
+
+**Not closed, named:** substituting the backend *inside* the real adapter. `OmniAsrAdapter(backend=…)`
+is public, and a fake backend behind the genuine class still reports `hawedit.asr.OmniAsrAdapter`.
+Closing that means the protocol exposing what it loaded — a design step, not a side effect of this one.
+`evidence/stub-indistinguishable-from-real-weights.md`.

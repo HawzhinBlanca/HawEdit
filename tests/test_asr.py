@@ -116,7 +116,9 @@ def test_a_measurement_records_wall_clock_and_real_time_factor() -> None:
 def test_a_measurement_names_the_adapter_that_produced_it() -> None:
     """A run driven by a test double must be self-evident in the report."""
     session = MeasurementSession(hardware=HAWAPC01, clock=FakeClock(step=1.0))
-    assert session.measure(StubAdapter(), an_item()).adapter_impl == "StubAdapter"
+    assert session.measure(StubAdapter(), an_item()).adapter_impl == "test_asr.StubAdapter", (
+        "the adapter must be identified by module too — a bare class name is forgeable"
+    )
 
 
 def test_a_failing_adapter_is_recorded_not_raised() -> None:

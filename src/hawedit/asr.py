@@ -649,7 +649,14 @@ class MeasurementSession:
         return Measurement(
             item_id=item.item_id,
             model_id=adapter.model_id,
-            adapter_impl=type(adapter).__name__,
+            # Module-qualified, not the bare class name. A bare name identifies nothing a
+            # reader can act on: a scripted stub called `OmniAsrAdapter` — no weights, no GPU,
+            # no model — produced a §8.1 report reading `normalized_cer: 0.0`, `mean_rtf: 0.1`
+            # on `hawapc01` / `2x RTX 3090 Ti` with `adapter_impls: ["OmniAsrAdapter"]`, byte
+            # for byte what the real adapter emits. Measured 2026-08-09. The hard rule is that
+            # a number carries the adapter that produced it, and `test_bench.OmniAsrAdapter`
+            # carries it while `OmniAsrAdapter` only asserts it. D-097.
+            adapter_impl=f"{type(adapter).__module__}.{type(adapter).__name__}",
             hardware=self.hardware,
             duration_s=item.duration_s,
             wall_clock_s=elapsed,

@@ -16,7 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from hawedit.asr import ASRResult, Hardware, MeasurementSession
+from hawedit.asr import (
+    ASRResult,
+    Hardware,
+    MeasurementSession,
+    SegmentTranscript,
+)
+from hawedit.asr import OmniAsrAdapter as OmniAsrAdapterReal
 from hawedit.bench import (
     MATERIAL_GAIN_RATIO,
     BenchmarkReport,
@@ -112,7 +118,7 @@ def test_the_report_records_the_hardware_and_the_adapter_implementations() -> No
     """Without these two facts the numbers are not reproducible or trustworthy."""
     report = a_run({"hew-1": PERFECT, "muk-1": PERFECT})
     assert report.hardware.host == "hawapc01"
-    assert report.models[INCUMBENT].adapter_impls == ("ScriptedAdapter",)
+    assert report.models[INCUMBENT].adapter_impls == ("test_bench.ScriptedAdapter",)
 
 
 def test_the_report_records_real_time_factor() -> None:
@@ -444,3 +450,60 @@ def test_the_emitted_report_schema_is_recorded_field_by_field() -> None:
             f"{model_id}: emitted fields drifted from the recorded schema — "
             f"missing {_MODEL_REPORT_KEYS - set(model)}, extra {set(model) - _MODEL_REPORT_KEYS}"
         )
+
+
+# --- D-097: the report named a class, which a stub can wear ----------------------------------
+
+
+class OmniAsrAdapter:
+    """A stub wearing the real canonical adapter's class name. No weights, no GPU, no model.
+
+    Deliberately named to collide with `hawedit.asr.OmniAsrAdapter`. `validate_adapter` checks
+    the *model id* against §7, which this claims honestly, so the class name was the only signal
+    left and it was identical.
+    """
+
+    model_id = INCUMBENT
+
+    def transcribe(self, audio_path: Path, duration_s: float) -> ASRResult:
+        return ASRResult(text_raw=PERFECT)
+
+
+def test_a_stub_wearing_the_real_adapters_class_name_is_visible_in_the_report() -> None:
+    """Measured before the fix: `adapter_impls: ["OmniAsrAdapter"]`, `normalized_cer: 0.0`,
+    `mean_rtf: 0.1`, on `hawapc01` / `2x RTX 3090 Ti` — byte for byte what a real run emits,
+    from a class with no model behind it.
+
+    Asserted on the emitted JSON, because the report is what a reader receives.
+    """
+    report = run_benchmark(TWO_DIALECT_CORPUS, [OmniAsrAdapter()], a_session())
+    impls = json.loads(report.to_json())["models"][INCUMBENT]["adapter_impls"]
+
+    assert impls == ["test_bench.OmniAsrAdapter"]
+    assert impls != ["OmniAsrAdapter"], "a bare class name is what made the stub invisible"
+    assert impls != ["hawedit.asr.OmniAsrAdapter"], (
+        "the stub is reported as the real canonical adapter — the §8.1 number claims weights "
+        "that never loaded"
+    )
+
+
+def test_the_real_canonical_adapter_reports_its_own_module() -> None:
+    """The control, and it is the half that can fail for the plausible wrong reason.
+
+    Qualifying with `__module__` is only worth anything if the real adapter's own qualified name
+    is what lands in the report — prefixing everything with a constant would satisfy the test
+    above and identify just as little. This measures the genuine `hawedit.asr.OmniAsrAdapter`,
+    with a backend that raises, so no weights are needed: "failures are recorded not raised"
+    (M0.7) means the measurement is still produced and still carries its adapter.
+    """
+
+    class RefusingBackend:
+        def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+            raise RuntimeError("no weights on this host")
+
+    measurement = a_session().measure(
+        OmniAsrAdapterReal(backend=RefusingBackend()), an_item("hew-1", Dialect.HEWLER)
+    )
+    assert measurement.adapter_impl == "hawedit.asr.OmniAsrAdapter"
+    assert measurement.error is not None, "the failure must still be recorded, not raised"
+    assert measurement.result is None
