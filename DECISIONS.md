@@ -5566,3 +5566,72 @@ Measured after: removing the shift now fails
 `test_the_composed_path_burns_captions_into_a_clip_from_mid_media` in `test_render.py`. 8/8 held
 before and after.
 `evidence/adversarial-pass-12-2026-08-09.md`.
+
+## D-126
+
+**Adversarial pass #13 took M2.9 — Stage 4's request carrying real source pixels — and four of ten
+mechanisms held. The worst result of any pass so far, on the one row whose artifact is a *billed*
+request.**
+
+The cell's measurements all reproduce exactly, to the millisecond:
+
+```
+extract_judge_frames(fixture, 0, 4162, count=6)
+  frames             6
+  timestamps (ms)    347 / 1040 / 1734 / 2428 / 3122 / 3815     (cell: identical)
+  spacing (ms)       693 694 694 694 693
+  sizes (bytes)      2624 … 3424                                 (cell: 2,624–3,424)
+  every one FFD8     True        mime image/jpeg      distinct payloads 3
+```
+
+What did not reproduce is the protection. `tests/test_keyframes.py` is **27 lines and two tests** for
+a module the cell credits with four refusals.
+
+```
+MISSED  frames are sampled from the start of the media, not the candidate
+CAUGHT  every frame is stamped at the same moment
+MISSED  a span with no duration is accepted
+CAUGHT  a count outside 1..20 is accepted
+MISSED  a missing ffmpeg returns no frames instead of refusing
+MISSED  an ffmpeg failure returns no frames instead of refusing
+MISSED  more frames than asked for are accepted
+CAUGHT  JPEG bytes are declared as PNG
+MISSED  a text-only judge is charged for keyframes anyway
+CAUGHT  a multimodal judge is sent no frames at all
+
+4/10
+```
+
+**The serious one: the timestamps are the request echoed back.** The existing test asserts
+`[500, 1300, 2100, 2900, 3700]` for a span of `100..4100`, and those numbers are arithmetic over
+`in_ms` and `out_ms` — `min(out_ms, round(in_ms + (index + 0.5) * step_ms))`. Replacing `-ss in_ms`
+with `-ss 0` leaves every one of them unchanged. So the *bytes* a billed multimodal judge receives
+could come from anywhere in the media while the request describes the candidate, and nothing noticed.
+This is M3.4's lesson — `RenderResult.duration_ms` was the request echoed back and the file was never
+opened — in the keyframe module, and the third pass in a row to find the proof one call away from the
+product.
+
+**The fix asserts on the pixels.** The fixture is three static shots, so each span has its own
+picture — measured: `0..1400` → `46f2c52ce626999c` at 3,332 bytes, `1400..2800` → `51f35b218c7a4534`
+at 2,624, `2800..4162` → `d700e83a931dfb52` at 3,424. Three spans must return three different images,
+plus a control naming the substitution directly: the last shot's frame must differ from the first
+shot's.
+
+**The three unheld refusals are the three the cell states as verified.** "A span with `out_ms <=
+in_ms`, a count outside 1..20, and a missing ffmpeg are each refused rather than returning an empty
+tuple that would read as 'no frames here'" — only the count ceiling was tested, and not its floor.
+`count=0` divides the span by nothing; a missing or failing ffmpeg returning `()` is indistinguishable
+from a text-only request.
+
+**`len(paths) > count` guards a reachable state, not a hypothetical.** The work directory is named
+after the candidate, so a re-run asking for fewer frames than a previous one finds the previous run's
+extra JPEGs in the glob and would send them. The test creates exactly that: 8 frames, then a request
+for 2.
+
+**The gate's other direction was free.** `getattr(judge, "requires_keyframes", False)` had a test for
+`True` and none for absent — so making it unconditional passed, and a text-only model would be billed
+for up to twenty inline images. §3 Stage 4's cost model counts them.
+
+**Mutation audit 10/10 after.** No production code changed: every mechanism was already right, and
+six of them were unheld.
+`evidence/adversarial-pass-13-2026-08-09.md`.

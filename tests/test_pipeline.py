@@ -2039,3 +2039,51 @@ def test_a_verbal_anchor_still_supplies_the_query_it_always_did(tmp_path: Path) 
     assert a_transcript("anchored").text_ckb not in seen, (
         "the whole transcript must never be the query again"
     )
+
+
+# --- D-126: a text-only judge must not be charged for frames -----------------------------------
+
+
+@needs_ffmpeg
+def test_a_judge_that_does_not_want_keyframes_is_sent_none(tmp_path: Path) -> None:
+    """The other half of `requires_keyframes`, which nothing held.
+
+    M2.9's cell says the extraction is wired behind the judge's own flag "so a text-only judge is
+    not charged for frames". Only the positive direction was tested, so making the gate
+    unconditional — extracting and attaching frames for every judge — left the suite green. A
+    text-only model billed for twenty inline images is the quiet half of the same defect.
+    """
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    seen: list[JudgeRequest] = []
+
+    class TextOnlyJudge:
+        model_id = "gemini-2.5-pro"
+        # No `requires_keyframes` at all — the attribute is read with a `False` default, and a
+        # judge that never heard of it is the case that default exists for.
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            seen.append(request)
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="textonly",
+        transcript=a_transcript("textonly"),
+        discover=lambda _n: [
+            Candidate("best", "textonly", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.99)
+        ],
+        judge=TextOnlyJudge(),
+    )
+    assert len(seen) == 1
+    assert seen[0].keyframes == (), (
+        "a judge that did not ask for keyframes was sent them anyway — inline image bytes are "
+        "billed, and §3 Stage 4's cost model counts them"
+    )
+    assert seen[0].text_ckb, "the text half of the request must still be there"
