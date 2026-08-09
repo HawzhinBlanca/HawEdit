@@ -20,7 +20,10 @@ measured, so it is measured.
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
+import threading
 import wave
 from pathlib import Path
 
@@ -101,6 +104,7 @@ def _spy_commands(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
         seen.append(command)
+        Path(command[-1]).write_bytes(b"fake ffmpeg output")
         return subprocess.CompletedProcess(command, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.ingest._run", fake_run)
@@ -408,3 +412,189 @@ def test_opencv_is_a_declared_dependency_not_an_accident() -> None:
     assert any("opencv" in dep for dep in media), (
         f"scenedetect's backend is not declared; a clean install cannot detect shots: {media}"
     )
+
+
+# --- §1: Stage 0 is verified, resumable, and atomic (D-162) -------------------------------
+
+
+def _fake_proxy_extractor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+        calls.append(command)
+        source = Path(command[command.index("-i") + 1])
+        Path(command[-1]).write_bytes(b"proxy:" + source.read_bytes())
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.ingest._run", fake_run)
+    return calls
+
+
+def _sidecar(dest: Path) -> Path:
+    return dest.with_suffix(dest.suffix + ".provenance.json")
+
+
+def test_same_source_and_command_reuse_the_verified_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"one")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+
+    extract_proxy(source, dest, Path("ffmpeg"))
+    stamp = dest.stat().st_mtime_ns
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert len(calls) == 1
+    assert dest.stat().st_mtime_ns == stamp
+    assert json.loads(_sidecar(dest).read_text(encoding="utf-8"))["output_bytes"] > 0
+
+
+def test_changed_bytes_at_the_same_source_path_are_extracted_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"one")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    source.write_bytes(b"two")
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert len(calls) == 2
+    assert dest.read_bytes() == b"proxy:two"
+
+
+def test_changed_settings_and_truncated_outputs_are_never_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    monkeypatch.setattr("hawedit.ingest.PROXY_CRF", 29)
+    extract_proxy(source, dest, Path("ffmpeg"))
+    dest.write_bytes(b"cut")
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert len(calls) == 3
+    assert dest.read_bytes() == b"proxy:source"
+
+
+def test_failed_rerun_preserves_the_last_good_artifact_and_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"good")
+    dest = tmp_path / "proxy.mp4"
+    _fake_proxy_extractor(monkeypatch)
+    extract_proxy(source, dest, Path("ffmpeg"))
+    before = dest.read_bytes(), _sidecar(dest).read_bytes()
+    source.write_bytes(b"replacement")
+
+    def fail(_command: list[str]) -> subprocess.CompletedProcess[bytes]:
+        raise IngestError("encode interrupted")
+
+    monkeypatch.setattr("hawedit.ingest._run", fail)
+    with pytest.raises(IngestError, match="interrupted"):
+        extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert (dest.read_bytes(), _sidecar(dest).read_bytes()) == before
+    assert not tuple(tmp_path.glob(".proxy.*.mp4"))
+
+
+def test_source_change_during_encode_refuses_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"before")
+    dest = tmp_path / "proxy.mp4"
+
+    def mutate(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1]).write_bytes(b"mixed output")
+        source.write_bytes(b"after")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.ingest._run", mutate)
+    with pytest.raises(IngestError, match="source changed"):
+        extract_proxy(source, dest, Path("ffmpeg"))
+    assert not dest.exists()
+    assert not _sidecar(dest).exists()
+
+
+def test_success_without_output_is_a_domain_error_not_a_published_empty_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(
+        "hawedit.ingest._run",
+        lambda command: subprocess.CompletedProcess(command, 0, b"", b""),
+    )
+    with pytest.raises(IngestError, match="produced no proxy.mp4"):
+        extract_proxy(source, tmp_path / "proxy.mp4", Path("ffmpeg"))
+
+
+@needs_ffmpeg
+def test_reused_audio_is_still_checked_against_stage_1s_format(tmp_path: Path) -> None:
+    dest = tmp_path / "audio.wav"
+    extract_audio(FIXTURE, dest)
+    with wave.open(str(dest), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(44_100)
+        handle.writeframes(b"\0\0" * 4_000)
+    provenance = json.loads(_sidecar(dest).read_text(encoding="utf-8"))
+    provenance["output_bytes"] = dest.stat().st_size
+    _sidecar(dest).write_text(json.dumps(provenance), encoding="utf-8")
+
+    with pytest.raises(IngestError, match="16000 Hz mono"):
+        extract_audio(FIXTURE, dest)
+
+
+def test_a_hardlinked_lock_is_refused_without_touching_its_victim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"KEEP")
+    os.link(victim, tmp_path / "proxy.mp4.lock")
+    calls = _fake_proxy_extractor(monkeypatch)
+
+    with pytest.raises(IngestError, match="one regular private link"):
+        extract_proxy(source, tmp_path / "proxy.mp4", Path("ffmpeg"))
+    assert victim.read_bytes() == b"KEEP"
+    assert calls == []
+
+
+def test_concurrent_reruns_publish_once_then_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            extract_proxy(source, dest, Path("ffmpeg"))
+        except BaseException as exc:  # asserted below; a thread must not hide its failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(calls) == 1
+    assert dest.read_bytes() == b"proxy:source"

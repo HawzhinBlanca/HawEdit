@@ -29,12 +29,21 @@ zero-speaker result would read as "one speaker throughout", which is a claim abo
 
 from __future__ import annotations
 
+import hashlib
+import importlib
 import json
+import os
+import stat
 import subprocess
+import tempfile
+import threading
+import time
 import wave
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, BinaryIO, Final
 
 from hawedit.captions import ffprobe_for, find_ffmpeg
 from hawedit.diarization import Segment
@@ -72,6 +81,10 @@ MAX_SPEECH_DURATION_S: Final = 38.0
 
 # §3 Stage 1's interface limit. VAD's 38 s leaves the margin §3 Stage 0 describes.
 OMNIASR_CEILING_S: Final = 40.0
+_EXTRACT_LOCK_TIMEOUT_S: Final = 60.0
+_EXTRACT_LOCK_RETRY_S: Final = 0.05
+_EXTRACT_LOCKS_GUARD = threading.Lock()
+_EXTRACT_LOCKS: dict[Path, threading.Lock] = {}
 
 
 class IngestError(RuntimeError):
@@ -145,6 +158,222 @@ def probe_duration_ms(source: Path, ffmpeg: Path | None = None) -> int:
     return round(float(probe_stream(source, "format=duration", ffmpeg)) * 1000)
 
 
+def _invalid_lock(metadata: os.stat_result) -> bool:
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or bool(getattr(metadata, "st_file_attributes", 0) & reparse)
+    )
+
+
+def _open_extract_lock(path: Path) -> BinaryIO:
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        before = None
+    except OSError as exc:
+        raise IngestError(f"cannot inspect Stage 0 extraction lock {path}: {exc}") from exc
+    if before is not None and _invalid_lock(before):
+        raise IngestError(f"Stage 0 extraction lock is not one regular private link: {path}")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        opened = os.fstat(descriptor)
+        current = os.lstat(path)
+        if _invalid_lock(opened) or _invalid_lock(current):
+            raise IngestError(f"Stage 0 extraction lock is not one regular private link: {path}")
+        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise IngestError(f"Stage 0 extraction lock changed while opening: {path}")
+        if before is not None and (before.st_dev, before.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise IngestError(f"Stage 0 extraction lock was replaced before opening: {path}")
+        return os.fdopen(descriptor, "r+b")
+    except BaseException:
+        with suppress(UnboundLocalError, OSError):
+            os.close(descriptor)
+        raise
+
+
+def _assert_extract_lock(path: Path, stream: BinaryIO) -> None:
+    try:
+        opened = os.fstat(stream.fileno())
+        current = os.lstat(path)
+    except OSError as exc:
+        raise IngestError(f"cannot revalidate Stage 0 extraction lock {path}: {exc}") from exc
+    if (
+        _invalid_lock(opened)
+        or _invalid_lock(current)
+        or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+    ):
+        raise IngestError(f"Stage 0 extraction lock changed while waiting: {path}")
+
+
+@contextmanager
+def _exclusive_extract_lock(path: Path) -> Iterator[None]:
+    """Serialize one artifact across threads and processes without trusting a linked lock."""
+    resolved = path.parent.resolve() / path.name
+    with _EXTRACT_LOCKS_GUARD:
+        local = _EXTRACT_LOCKS.setdefault(resolved, threading.Lock())
+    with local, _open_extract_lock(resolved) as stream:
+        try:
+            if stream.seek(0, os.SEEK_END) == 0:
+                stream.write(b"\0")
+                stream.flush()
+                os.fsync(stream.fileno())
+            stream.seek(0)
+        except OSError as exc:
+            raise IngestError(
+                f"cannot initialize Stage 0 extraction lock {resolved}: {exc}"
+            ) from exc
+        if os.name == "nt":
+            msvcrt = importlib.import_module("msvcrt")
+            deadline = time.monotonic() + _EXTRACT_LOCK_TIMEOUT_S
+            while True:
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise IngestError(
+                            f"timed out waiting for Stage 0 extraction lock {resolved}"
+                        ) from exc
+                    time.sleep(_EXTRACT_LOCK_RETRY_S)
+            try:
+                _assert_extract_lock(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                raise
+            else:
+                try:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    raise IngestError(
+                        f"cannot release Stage 0 extraction lock {resolved}: {exc}"
+                    ) from exc
+        else:
+            fcntl = importlib.import_module("fcntl")
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            except OSError as exc:
+                raise IngestError(
+                    f"cannot acquire Stage 0 extraction lock {resolved}: {exc}"
+                ) from exc
+            try:
+                _assert_extract_lock(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                raise
+            else:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                except OSError as exc:
+                    raise IngestError(
+                        f"cannot release Stage 0 extraction lock {resolved}: {exc}"
+                    ) from exc
+
+
+def _source_digest(source: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with source.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise IngestError(f"cannot hash Stage 0 source {source}: {exc}") from exc
+    return digest.hexdigest()
+
+
+def _atomic_json(path: Path, document: dict[str, object]) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(document, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    except OSError as exc:
+        raise IngestError(f"cannot publish Stage 0 provenance {path}: {exc}") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
+    """Reuse exact verified output, otherwise encode privately and publish atomically (D-162)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = dest.with_suffix(dest.suffix + ".provenance.json")
+    lock = dest.with_suffix(dest.suffix + ".lock")
+    with _exclusive_extract_lock(lock):
+        digest = _source_digest(source)
+        command_key = [part for part in command if part != str(dest)]
+        if dest.is_file() and sidecar.is_file():
+            try:
+                previous = json.loads(sidecar.read_text(encoding="utf-8"))
+                output_bytes = previous.get("output_bytes")
+                intact = (
+                    isinstance(output_bytes, int)
+                    and not isinstance(output_bytes, bool)
+                    and output_bytes > 0
+                    and output_bytes == dest.stat().st_size
+                )
+            except (AttributeError, OSError, json.JSONDecodeError):
+                previous, intact = None, False
+            if (
+                isinstance(previous, dict)
+                and set(previous) == {"schema", "source_sha256", "command", "output_bytes"}
+                and previous.get("schema") == 1
+                and previous.get("source_sha256") == digest
+                and previous.get("command") == command_key
+                and intact
+            ):
+                return dest
+
+        staging: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=dest.parent, prefix=f".{dest.stem}.", suffix=dest.suffix, delete=False
+            ) as handle:
+                staging = Path(handle.name)
+            staged_command = [str(staging) if part == str(dest) else part for part in command]
+            _run(staged_command)
+            if not staging.is_file() or staging.stat().st_size == 0:
+                raise IngestError(f"{command[0]} reported success and produced no {dest.name}")
+            if _source_digest(source) != digest:
+                raise IngestError(f"Stage 0 source changed while extracting {dest.name}")
+            output_bytes = staging.stat().st_size
+            os.replace(staging, dest)
+            staging = None
+            _atomic_json(
+                sidecar,
+                {
+                    "schema": 1,
+                    "source_sha256": digest,
+                    "command": command_key,
+                    "output_bytes": output_bytes,
+                },
+            )
+        except OSError as exc:
+            raise IngestError(f"cannot publish Stage 0 artifact {dest}: {exc}") from exc
+        finally:
+            if staging is not None:
+                staging.unlink(missing_ok=True)
+        return dest
+
+
 def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
     """§3 Stage 0's audio pass: 16 kHz mono PCM, loudness-normalised.
 
@@ -152,8 +381,9 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
     inside one ffmpeg on a Zen 2 chip with modest single-thread speed.
     """
     binary = _ffmpeg(ffmpeg)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _run(
+    _extract_once(
+        source,
+        dest,
         [
             str(binary),
             "-hide_banner",
@@ -174,7 +404,7 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "pcm_s16le",
             "-y",
             str(dest),
-        ]
+        ],
     )
     _assert_audio_format(dest)
     return dest
@@ -198,8 +428,9 @@ def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
     detection** — see `detect_shots`.
     """
     binary = _ffmpeg(ffmpeg)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _run(
+    _extract_once(
+        source,
+        dest,
         [
             str(binary),
             "-hide_banner",
@@ -218,7 +449,7 @@ def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-an",
             "-y",
             str(dest),
-        ]
+        ],
     )
     return dest
 

@@ -5773,3 +5773,26 @@ updated deliberately. Upstream recorded this as D-131; the readiness branch alre
 identifier, so the integration is D-161.
 
 `evidence/section-8-1s-last-metric-never-reached-the-report.md`.
+
+## D-162 - Stage 0 reuse is content-bound and atomically published
+
+Adversarial pass #19 measured a repeated real 38-minute Stage 0 run spending 100.2 seconds
+recreating `audio.wav` and `proxy.mp4` that were already present: 66% of the first run's work.
+Reuse is now permitted only when the current source SHA-256, destination-independent ffmpeg
+command, and recorded output size all match.
+
+The upstream implementation wrote a rerun directly onto the final artifact. This branch tightens
+the publication boundary: each destination has a safe cross-thread/process lock; ffmpeg writes a
+suffix-preserving private sibling; a zero-byte result or source mutation is refused; the completed
+artifact and fsync'd provenance JSON are individually atomically replaced. A failed encode or
+source validation therefore preserves the last good artifact and provenance, concurrent identical reruns encode once, and a hardlinked
+lock is refused without modifying its victim. Audio format validation still runs after cache reuse.
+
+Eight new controls distinguish reuse from an implementation that never reruns or always trusts the
+destination: same-input reuse, same-path source replacement, settings drift plus truncation,
+failed-run preservation, mid-encode source mutation, missing output, unsafe lock, concurrent
+serialization, and post-reuse audio-format validation.
+Upstream recorded the performance finding as D-132; that identifier already exists on this branch,
+so the semantic integration is D-162.
+
+`evidence/two-thirds-of-stage-0-redone-on-every-run.md`.
