@@ -3821,3 +3821,58 @@ was restored by hand before committing.
 own code. No check written in this module can outrank that. Stated rather than implied, because the
 cheapest version of this fix is one that quietly claims to be complete.
 `evidence/forged-test-report-accepted.md`.
+
+## D-094
+
+**§4.4 was enforced on the property and never on the report a reader receives.** M0.9's row says
+"per-dialect always reported alongside the aggregate"; `normalized_cer_by_dialect`'s docstring says
+"§4.4: never report the aggregate without these"; `bench.py:466` writes `report.to_json()` to a file
+that a human reads when deciding which model becomes canonical. Deleting the field from
+`ModelReport.to_dict()` left **1,161 tests green** and produced this artifact:
+
+```
+HONEST                                   FIELD DROPPED
+  normalized_cer            : 0.15         normalized_cer            : 0.15
+  normalized_cer_by_dialect : {            normalized_cer_by_dialect : (absent)
+      "hewler": 0.04, "mukriyan": 0.26 }
+```
+
+`0.15` across "Sorani" from dialects measuring 0.04 and 0.26 — a 6.5× spread the aggregate hides.
+Computed and discarded, not never-computed: the property is right, and nothing checked that it
+reaches the file.
+
+**Why the existing tests were blind.** `test_the_report_serialises_to_json` asserted
+`"hewler" in payload`, which looks like the right check; with the field deleted the string still
+occurred **seven** times — once in `coverage.hours_by_dialect` and six times in
+`coverage.missing_cells`. A substring assertion against a whole document is satisfied by any block
+that mentions the word, so the coverage section was carrying a test about per-model accuracy. The
+sibling test asserted on the property, which was never at risk. Together they read as full coverage of
+§4.4 — the same shape as D-086 and D-088: correct, and blind.
+
+**Decision: assert parsed key paths, and record the whole emitted schema rather than the one field.**
+`to_dict` is a hand-written key list, so any field can vanish from a written §8.1 report the same way;
+fixing only `normalized_cer_by_dialect` would fix the case and leave the class. The recorded key sets
+for `ModelReport.to_dict()` and `BenchmarkReport.to_dict()` make adding a field a visible line in a
+diff — the same trade `scripts/test-count.floor` already makes, and the reason this is not a check
+whose cheapest fix is deleting it.
+
+**Rejected: raising inside `to_dict` when the aggregate has no breakdown.** An empty breakdown is a
+legitimate state, not a defect — an interim corpus has no §4.4 dialect labels (D-012, and
+`corpus_import.py` refuses to invent them), so a guard would refuse the one corpus that exists.
+
+**Rejected: emitting the key only when it has values.** This is the plausible wrong fix and it is
+worse than the defect for the interim case: on an artifact an absent key reads as *not applicable*
+while `{}` reads as *we looked and the data carries no labels*. It would satisfy every other new test
+here. It is caught only by the unlabelled-corpus control.
+
+**The fixture carries the teeth.** The two dialects are deliberately far apart, so the aggregate
+genuinely misleads and the breakdown genuinely informs. A run where both score the same passes whether
+or not the field survives — which is how this got here, since the previous fixture was
+`{"hew-1": PERFECT, "muk-1": PERFECT}`.
+
+**Mutation audit 5/5.** Dropping the breakdown CAUGHT (4, including the strengthened serialisation
+test that previously survived it), emitting the key only when non-empty CAUGHT (1, the control alone),
+an *unrelated* field vanishing CAUGHT (1, the recorded schema alone — the difference between fixing
+the field and fixing the class), scoring an unmeasured dialect `0.0` CAUGHT (6 — the hard rule
+"unmeasured is None, never 0.0"), and every dialect reporting the aggregate CAUGHT (7).
+`evidence/aggregate-cer-without-its-dialects.md`.

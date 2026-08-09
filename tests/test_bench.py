@@ -11,6 +11,7 @@ The rule is deliberately hard to satisfy. §1: "No model changes without measure
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -120,11 +121,22 @@ def test_the_report_records_real_time_factor() -> None:
 
 
 def test_the_report_serialises_to_json() -> None:
+    """Asserted on parsed key paths, not on substrings of the document.
+
+    `assert "hewler" in payload` was the previous mechanism and it measured nothing about the
+    per-dialect numbers: with `normalized_cer_by_dialect` deleted from `ModelReport.to_dict()`
+    the string still occurred **seven** times — once in `coverage.hours_by_dialect` and six
+    times in `coverage.missing_cells` — so the assertion was satisfied by a block of the report
+    that has nothing to do with per-model accuracy. D-094.
+    """
     report = a_run({"hew-1": PERFECT, "muk-1": PERFECT})
-    payload = report.to_json()
-    assert "hawapc01" in payload
-    assert "hewler" in payload
-    assert INCUMBENT in payload
+    document = json.loads(report.to_json())
+    assert document["hardware"]["host"] == "hawapc01"
+    assert INCUMBENT in document["models"]
+    assert set(document["models"][INCUMBENT]["normalized_cer_by_dialect"]) == {
+        "hewler",
+        "mukriyan",
+    }
 
 
 def test_the_report_carries_the_corpus_coverage_it_was_run_on() -> None:
@@ -341,3 +353,94 @@ def test_an_interim_report_carries_no_per_dialect_numbers() -> None:
     exactly what §4.4 warns the aggregate hides."""
     report = an_interim_run({"cv-0": PERFECT, "cv-1": PERFECT}, {"cv-0": PERFECT, "cv-1": PERFECT})
     assert report.models[INCUMBENT].normalized_cer_by_dialect == {}
+
+
+# --- D-094: §4.4 was enforced on the property, never on the artifact a reader receives ------
+
+
+_MODEL_REPORT_KEYS = {
+    "model_id",
+    "adapter_impls",
+    "scored_items",
+    "failed_items",
+    "normalized_cer",
+    "spacing_free_cer",
+    "normalized_cer_by_dialect",
+    "named_entity_error",
+    "code_switch_error",
+    "mean_rtf",
+    "worst_rtf",
+    "long_audio_failure_rate",
+    "peak_vram_bytes",
+}
+
+
+def test_the_written_report_never_carries_an_aggregate_without_its_dialect_breakdown() -> None:
+    """`normalized_cer_by_dialect`'s docstring says "§4.4: never report the aggregate without
+    these", and nothing held it to that. Deleting the field from `ModelReport.to_dict()` left
+    all 1,161 tests green, and the emitted report carried `normalized_cer: 0.15` alone while
+    the two dialects it came from measured 0.04 and 0.26 — a 6.5x spread the aggregate hides,
+    on the number that decides which model becomes canonical.
+
+    The teeth are in the fixture: the two dialects are deliberately far apart, so the aggregate
+    genuinely misleads and the breakdown genuinely informs. A run where both dialects score the
+    same would pass whether or not the field survived.
+    """
+    report = a_run({"hew-1": PERFECT, "muk-1": "ئەمە زۆر خراپە"})
+    model = json.loads(report.to_json())["models"][INCUMBENT]
+
+    breakdown = model["normalized_cer_by_dialect"]
+    assert set(breakdown) == {"hewler", "mukriyan"}
+    assert model["normalized_cer"] is not None
+    # The aggregate sits between the two, which is exactly why it cannot stand alone.
+    assert breakdown["hewler"] < model["normalized_cer"] < breakdown["mukriyan"], (
+        f"the fixture no longer spreads the dialects, so this test has stopped measuring "
+        f"anything: {breakdown} against {model['normalized_cer']}"
+    )
+
+
+def test_an_unlabelled_run_emits_an_empty_breakdown_rather_than_omitting_the_key() -> None:
+    """The control, and the reason the fix is not "emit the key only when it has values".
+
+    An interim corpus has no §4.4 labels, so the breakdown is legitimately empty — that is
+    already tested on the property. On the artifact the distinction matters more: an absent key
+    reads as *not applicable*, an empty object reads as *we looked and the data carries no
+    labels*. Omitting it would satisfy the test above and reintroduce the unqualified aggregate
+    for exactly the corpus most likely to be quoted early.
+    """
+    report = an_interim_run({"cv-0": PERFECT, "cv-1": PERFECT}, {"cv-0": PERFECT, "cv-1": PERFECT})
+    model = json.loads(report.to_json())["models"][INCUMBENT]
+    assert "normalized_cer_by_dialect" in model, (
+        "the key vanished for an unlabelled corpus — absent reads as not-applicable, which is "
+        "the unqualified aggregate again"
+    )
+    assert model["normalized_cer_by_dialect"] == {}
+    assert model["normalized_cer"] is not None
+
+
+def test_the_emitted_report_schema_is_recorded_field_by_field() -> None:
+    """A field can vanish from a written §8.1 artifact without a single test noticing.
+
+    That is the class of defect, not one field: `to_dict` is a hand-written key list, and the
+    only tests reading it did so through substrings or through the properties behind it. The
+    recorded set is a visible line in a diff — adding a field means editing this test, the same
+    trade `scripts/test-count.floor` already makes.
+    """
+    document = json.loads(a_run({"hew-1": PERFECT, "muk-1": PERFECT}).to_json())
+
+    assert set(document) == {"provenance", "hardware", "coverage", "models"}
+    assert set(document["provenance"]) == {"name", "licence", "interim", "note"}
+    assert set(document["hardware"]) == {"host", "accelerator", "notes"}
+    assert set(document["coverage"]) == {
+        "total_hours",
+        "labelled_hours",
+        "unlabelled_hours",
+        "hours_by_dialect",
+        "missing_cells",
+        "meets_minimum_hours",
+    }
+    for model_id, model in document["models"].items():
+        assert set(model) == _MODEL_REPORT_KEYS, (
+            f"{model_id}: emitted fields drifted from the recorded schema — "
+            f"missing {_MODEL_REPORT_KEYS - set(model)}, extra {set(model) - _MODEL_REPORT_KEYS}"
+        )
