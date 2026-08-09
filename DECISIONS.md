@@ -5017,3 +5017,60 @@ is no verbal candidate, so `pipeline.py`'s retrieval query falls back to `normal
 A separate defect with its own iteration; named here so the gap in this entry's numbers is not
 mistaken for a measurement.
 `evidence/the-rejection-set-had-no-producer.md`.
+
+## D-117
+
+**§3 Stage 2's retrieval query was the corpus.** With no `--visual-query` and no Path A candidate
+to anchor one, `pipeline.py` passed `normalized.text_ckb` — the whole normalized transcript — to
+`VisualComposer.discover`, which embeds it and hands it to the reranker for every hit. Found by
+running the real 38-minute file; reproduced at the model boundary rather than inferred from the
+crash:
+
+```
+Qwen3-VL-Embedding-2B on cuda:1, weights resident 3.96 GiB, card 23.99 GiB
+
+   chars   tokens  embed_text
+     200      167  fits, peak  4.04 GiB
+   1,000      755  fits, peak  4.27 GiB
+   2,000    1,481  fits, peak  4.56 GiB
+   4,000    2,997  fits, peak  5.69 GiB
+   8,000    5,988  fits, peak  9.86 GiB
+  16,000   11,908  OOM
+  35,185   26,191  OOM — tried to allocate 40.89 GiB
+```
+
+35,185 chars is this media's real transcript, and 40.89 GiB is the exact figure the composed run
+died on. The demand is quadratic in tokens: 5,988 tokens costs 5.9 GiB of activations, twice that
+needs four times as much and there is no card here that holds it.
+
+**It breaks in both directions at once.** Where it does *not* fit, the run dies in Stage 2 after
+Stage 0 has demuxed 38 minutes. Where it *does* fit — a short media — every window is ranked
+against the entire episode, which orders nothing in particular and puts a number in §8.2's
+Recall@K column that means less than it looks. The second failure is the quiet one, and it is the
+reason the fix is not a size limit.
+
+**Decision: Stage 2 refuses when it has no query, and names what would give it one.**
+`StageSkipped(stage="visual_index", blocked_by=("a retrieval query",))`, raised before any frame is
+extracted, so a refusal costs no GPU time. §3 Stage 2 retrieves *against a query*; a run with none
+has nothing to retrieve against, and this is the same shape as `rerank_and_keep` refusing a media
+too short for the survivor slice rather than shortening it.
+
+**Rejected: truncating the transcript to some length.** It is a guessed threshold — the never-guess
+rule covers exactly this — and it would fix only the crash. A 4,000-character prefix of an episode
+is no more a query than the whole of it.
+
+**Rejected: a maximum query length in `qwen_visual.py`.** The measured ceiling is *this* card's, and
+D-108 established the principle for the sibling case: "the default is §3's ceiling, so no machine
+inherits another's limit". A ceiling written into the model boundary would be one machine's number
+in a shared file, and it would still let a caller send the corpus on a bigger card.
+
+**Rejected: making it an error rather than a skip.** Every other unavailable stage in this runner is
+a named `StageSkipped`, the CLI exits non-zero on an incomplete run, and Path A alone is a legitimate
+one-sided union — §3 is explicit that a verbal-only moment is what the dual path exists to protect.
+
+**Mutation audit 5/5** against a baseline verified green first: the transcript back as the query
+CAUGHT, `--visual-query` ignored so Stage 2 always refuses CAUGHT (the control — refusing everything
+satisfies the positive test and deletes the one invocation that works), a verbal anchor no longer
+supplying a query CAUGHT (the second control), the skip recorded while the composer runs anyway
+CAUGHT, and the refusal naming no blocker CAUGHT.
+`evidence/adversarial-pass-9-2026-08-09.md`.

@@ -949,28 +949,49 @@ def run_pipeline(
         visual_candidates_tuple: tuple[Candidate, ...] = ()
         if visual_composer is not None:
             best_verbal = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
+            # The whole transcript used to stand in here when neither was available. It is not a
+            # query — it is the corpus — and it broke in both directions at once. Measured on
+            # hawapc01 against this media's real 35,185-character transcript: `embed_text` asks
+            # for **40.89 GiB** on a 23.99 GiB card and the run dies mid-Stage-2; 8,000 chars
+            # (5,988 tokens) is the largest that fits, at a 9.86 GiB peak, and the demand is
+            # quadratic in tokens. Where it *does* fit — a short media — retrieval ranks every
+            # window against the entire episode, which orders nothing in particular and puts a
+            # number in §8.2's Recall@K column that means less than it looks. Truncating to some
+            # length would fix neither and would be a guessed threshold besides. D-117.
             query = visual_query or (
                 _candidate_slice_text(normalized, best_verbal.in_ms, best_verbal.out_ms)
                 if best_verbal is not None
-                else normalized.text_ckb
+                else None
             )
-            try:
-                visual_result = visual_composer.discover(
-                    source,
-                    run.visual_windows,
-                    query,
-                    work_dir / "visual",
-                    media_id=identifier,
-                    ffmpeg=ffmpeg,
-                )
-            except VisualPipelineError as exc:
+            if query is None:
                 visual_skipped = StageSkipped(
                     stage="visual_index",
-                    reason=str(exc),
-                    blocked_by=("visual retrieval refused this media",),
+                    reason=(
+                        "§3 Stage 2 retrieves against a query and this run has none: Path A "
+                        "found no candidate to anchor one and --visual-query was not supplied. "
+                        "The normalized transcript is the corpus, not a query. Supply "
+                        "--visual-query, or --gemini so Path A can anchor one."
+                    ),
+                    blocked_by=("a retrieval query",),
                 )
             else:
-                visual_candidates_tuple = visual_result.candidates
+                try:
+                    visual_result = visual_composer.discover(
+                        source,
+                        run.visual_windows,
+                        query,
+                        work_dir / "visual",
+                        media_id=identifier,
+                        ffmpeg=ffmpeg,
+                    )
+                except VisualPipelineError as exc:
+                    visual_skipped = StageSkipped(
+                        stage="visual_index",
+                        reason=str(exc),
+                        blocked_by=("visual retrieval refused this media",),
+                    )
+                else:
+                    visual_candidates_tuple = visual_result.candidates
         merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
