@@ -3550,3 +3550,45 @@ in `evidence/dependency-security.md`.
 **Mutation audit 3/3.** Reverting the base dependency to 4.55.3 fails the fixed-version floor;
 changing it to `>=4.60.2` fails exact-pin parsing; changing only the WSL runtime to 4.55.3 fails
 cross-environment equality. Every mutation was restored before the final gate.
+---
+
+## D-089
+
+**A blank named-entity annotation scored 0.0 — the same value as a name transcribed perfectly.**
+`""` is a substring of every string, so a blank entity satisfied `entity in normalized_hypothesis`
+and counted as a name that **survived**. Measured against a green 1,125 baseline:
+`named_entity_error_rate("سەرۆک لە شار", ("",))` → `0.0`, and
+`CorpusItem(..., conditions={NAMED_ENTITIES}, named_entities=("",))` constructs without complaint,
+so a labelled item with one blank label silently inflated §8.1's accuracy
+(`evidence/blank-annotation-scored-as-found.md`). Third occurrence of "unmeasured is None, never
+0.0" being broken in a metric, after D-077 and D-080.
+
+**The sibling already had the rule.** `code_switch_error_rate` raised `ValueError` on the identical
+input, calling it "a corpus defect". Two metrics in one module, one refusing and one reporting
+perfection. So nothing needed inventing: `_normalized_annotation(value, kind)` extracts the
+sibling's check, keeps its message shape verbatim, and both metrics call it.
+
+**The distinction preserved deliberately:** an *empty tuple* is "nothing was annotated" and still
+returns `None`; a blank entry *inside* the tuple is malformed data and now raises. Those are
+different facts and a mutation collapsing the first into a refusal is CAUGHT.
+
+**Rejected:** putting the check in `CorpusItem.__post_init__`. The metric is the last common point
+every scoring path passes through and a caller can build the tuple from anywhere, so the guard
+belongs at the funnel rather than at one producer.
+
+**D-008's fourth choice was claimed as tested and was not.** That entry closes with "All four are
+testable choices … see `tests/test_metrics.py`". Three were. *"Matching is exact after §4.1
+normalization … a name 90% right is still the wrong name"* had no test — the behaviour was already
+correct and merely revertible, and a mutation swapping exact matching for a 0.34 fuzzy threshold
+would have scored a wrong name 0.0. Pinned in both directions, since either alone admits a wrong
+implementation: a near-miss and a truncation score 1.0, and an Arabic-keyboard `كوردي` against
+Kurdish `کوردی` still scores 0.0 — so "strict" cannot be implemented as byte equality.
+
+**Mutation audit 6/6, and it was 5/6 first.** The survivor found a second unprotected guard:
+removing the *code-switch* refusal — the one implemented correctly all along — left the suite green,
+because nothing had ever tested it. The metric that got this right was exactly as revertible as the
+one that got it wrong; only the behaviour differed, not the protection. One test closed it. Two of
+the six are caught only by controls, which is what keeps a refusal from being implemented as
+"reject everything".
+
+Gate: `VERIFY OK — 1130 passed, 0 skipped`.

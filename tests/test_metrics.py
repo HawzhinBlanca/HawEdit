@@ -184,3 +184,71 @@ def test_code_switch_error_is_none_when_nothing_was_annotated() -> None:
 def test_arabic_code_switch_spans_are_supported() -> None:
     """§8.1 asks for Kurdish–Arabic as well as Kurdish–English code-switching."""
     assert code_switch_error_rate("ئەمە جمهورية العراق ـە", ("جمهورية العراق",)) == 0.0
+
+
+# --- a blank annotation is a corpus defect, not a perfect score ---------------------------
+#
+# `"" in anything` is True, so an empty entity counted as a name that SURVIVED and scored 0.0 —
+# the same value as a name transcribed perfectly. `code_switch_error_rate` already refused the
+# same input; `named_entity_error_rate` did not. Measured: `CorpusItem(named_entities=("",))`
+# constructs without complaint and scores 0.0, so a blank label silently inflated §8.1's
+# accuracy. Found by the second adversarial pass. D-089.
+
+
+def test_a_blank_named_entity_is_refused_not_scored_as_found() -> None:
+    for blank in ("", "   ", "\u200c"):
+        with pytest.raises(ValueError, match="empty named entity"):
+            named_entity_error_rate("سەرۆک بارزانی لە شار", (blank,))
+    # And when it is one entry among several, so the refusal is not order-dependent.
+    with pytest.raises(ValueError, match="empty named entity"):
+        named_entity_error_rate("سەرۆک بارزانی لە شار", ("بارزانی", ""))
+
+
+def test_nothing_annotated_is_still_none_rather_than_a_refusal() -> None:
+    """The distinction the fix must preserve: an empty tuple is unmeasured, not malformed."""
+    assert named_entity_error_rate("anything", ()) is None
+    assert code_switch_error_rate("anything", ()) is None
+
+
+def test_real_entities_are_still_scored(  # the control for the refusal above
+) -> None:
+    """A guard that refused every annotation would pass the refusal test and break scoring."""
+    assert named_entity_error_rate("سەرۆک بارزانی لە هەولێر", ("بارزانی", "هەولێر")) == 0.0
+    assert named_entity_error_rate("سەرۆک لە شار بوو", ("بارزانی",)) == 1.0
+
+
+# D-008's fourth recorded choice: "Matching is exact after §4.1 normalization … a name 90% right
+# is still the wrong name in a burned-in caption … Strictness here is deliberate." D-008 closes
+# by claiming all four choices are tested. Three were. This one was not, so a fuzzy match could
+# be introduced with the suite green.
+
+
+def test_a_near_miss_name_is_scored_as_an_error_not_a_match() -> None:
+    """One letter wrong is the wrong name — §8.2 calls misleading output the error that matters."""
+    # بارزانا vs the annotated بارزانی: same length, final letter differs.
+    assert named_entity_error_rate("سەرۆک بارزانا لە شار", ("بارزانی",)) == 1.0
+    # A truncation is also a miss, not a partial credit.
+    assert named_entity_error_rate("سەرۆک بارزان لە شار", ("بارزانی",)) == 1.0
+
+
+def test_strictness_does_not_reject_a_mere_keyboard_difference(  # the control for strictness
+) -> None:
+    """The other half of D-008's choice: normalization-insensitive, so Arabic ي/ك still match.
+
+    Without this, "strict" could be implemented as byte equality and both tests would pass.
+    """
+    assert named_entity_error_rate("ئەمە کوردی یە", ("كوردي",)) == 0.0
+
+
+def test_a_blank_code_switch_span_is_refused() -> None:
+    """The sibling guard was implemented correctly and never tested.
+
+    Found while auditing the fix above: removing `code_switch_error_rate`'s empty-span refusal
+    left the suite green, so the one metric that got this right was as revertible as the one that
+    got it wrong. Both call sites of `_normalized_annotation` are pinned now.
+    """
+    for blank in ("", "   "):
+        with pytest.raises(ValueError, match="empty code-switch span"):
+            code_switch_error_rate("this is machine learning", (blank,))
+    with pytest.raises(ValueError, match="empty code-switch span"):
+        code_switch_error_rate("this is machine learning", ("machine learning", ""))
