@@ -45,6 +45,7 @@ get slightly-wrong scores and no error.
 
 from __future__ import annotations
 
+import gc
 import json
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
@@ -80,6 +81,7 @@ __all__ = [
     "read_pooling_prompt",
     "read_pooling_recipe",
     "read_score_tokens",
+    "release_cuda_model_memory",
 ]
 
 EMBEDDING_MODEL_ID: Final = "Qwen3-VL-Embedding-2B"
@@ -99,6 +101,28 @@ class EmbedderUnavailable(RuntimeError):
 
 class _PoolingPromptAbsent(EmbedderUnavailable):
     """The optional embedding prompt is absent, rather than malformed or unreadable."""
+
+
+def release_cuda_model_memory(device: str) -> None:
+    """Release tensors whose owning adapter has already dropped every model reference.
+
+    The adapter clears its `_loaded` slot before calling this helper. That ordering matters:
+    `empty_cache()` can release only unused allocator blocks, and calling it while the tuple still
+    owns the model would produce a reassuring no-op. CPU adapters still run collection, but never
+    import or probe CUDA merely to close an object.
+    """
+    gc.collect()
+    if not device.startswith("cuda"):
+        return
+    try:
+        import torch
+    except ImportError as exc:
+        raise EmbedderUnavailable(
+            f"cannot release the model on {device!r}: torch is no longer importable"
+        ) from exc
+    with torch.cuda.device(device):
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
 
 
 def load_processor_and_model(
@@ -386,6 +410,14 @@ class QwenVisualEmbedder:
             self._loaded = loaded
         return self._loaded
 
+    def close(self) -> None:
+        """Drop the loaded embedding model; the next use performs a fresh verified load."""
+        was_loaded = self._loaded is not None
+        self._loaded = None
+        self._recipe = None
+        if was_loaded:
+            release_cuda_model_memory(self.device)
+
     def _conversation(self, content: dict[str, Any]) -> list[dict[str, Any]]:
         return [
             {"role": "system", "content": [{"type": "text", "text": self.recipe.prompt}]},
@@ -639,6 +671,16 @@ class QwenVisualReranker:
                 )
             self._loaded = loaded
         return self._loaded
+
+    def close(self) -> None:
+        """Drop the reranker and its GPU score vector; the adapter remains reusable."""
+        was_loaded = self._loaded is not None or self._direction is not None
+        self._loaded = None
+        self._direction = None
+        self._tokens = None
+        self._instruct = None
+        if was_loaded:
+            release_cuda_model_memory(self.device)
 
     def score(self, query: str, frames: WindowFrames) -> float:
         try:

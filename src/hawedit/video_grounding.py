@@ -30,7 +30,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.qwen_visual import DEFAULT_DEVICE, EmbedderUnavailable, load_processor_and_model
+from hawedit.qwen_visual import (
+    DEFAULT_DEVICE,
+    EmbedderUnavailable,
+    load_processor_and_model,
+    release_cuda_model_memory,
+)
 from hawedit.registry import resolve_role
 from hawedit.timelens import TIMELENS_MODEL, VisualEvidenceInterval
 from hawedit.video_input import (
@@ -168,6 +173,13 @@ class TimeLens2Grounder:
                 self.model_dir, self.device, model_id=self.model_id
             )
         return self._loaded
+
+    def close(self) -> None:
+        """Drop TimeLens2 weights after grounding; the next request reloads safely."""
+        was_loaded = self._loaded is not None
+        self._loaded = None
+        if was_loaded:
+            release_cuda_model_memory(self.device)
 
     def ground(self, window: SceneWindow, query: str) -> tuple[VisualEvidenceInterval, ...]:
         """Where in `window` the model says `query`'s visual evidence is, on the media's clock.

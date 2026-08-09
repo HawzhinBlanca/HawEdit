@@ -42,6 +42,29 @@ def a_window(in_ms: int = 2_800, out_ms: int = 4_162, fps: float = 2.0) -> Scene
     )
 
 
+def test_grounder_close_is_idempotent_and_next_use_reloads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    released: list[str] = []
+    loaded = (object(), object())
+
+    def unused_frames(_window: SceneWindow) -> WindowFrames:
+        raise AssertionError("close must not read frames")
+
+    grounder = TimeLens2Grounder(tmp_path, unused_frames, device="cuda:1")
+    grounder._loaded = (object(), object())
+    monkeypatch.setattr("hawedit.video_grounding.release_cuda_model_memory", released.append)
+    monkeypatch.setattr(
+        "hawedit.video_grounding.load_processor_and_model", lambda *_args, **_kwargs: loaded
+    )
+
+    grounder.close()
+    grounder.close()
+    assert released == ["cuda:1"]
+    assert grounder._loaded is None
+    assert grounder._load() is loaded
+
+
 # --- the parser, on real answers -----------------------------------------------------------
 
 

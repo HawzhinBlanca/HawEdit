@@ -22,7 +22,9 @@ import pytest
 
 from hawedit.qwen_visual import (
     EMBEDDING_MODEL_ID,
+    BinaryScoreTokens,
     EmbedderUnavailable,
+    PoolingRecipe,
     QwenVisualEmbedder,
     QwenVisualReranker,
     load_processor_and_model,
@@ -54,6 +56,39 @@ def a_checkpoint(
             encoding="utf-8",
         )
     return tmp_path
+
+
+def test_qwen_adapters_release_loaded_gpu_state_idempotently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    released: list[str] = []
+    monkeypatch.setattr("hawedit.qwen_visual.release_cuda_model_memory", released.append)
+    checkpoint = a_checkpoint(tmp_path)
+    embedder = QwenVisualEmbedder(checkpoint, device="cuda:1")
+    embedder._loaded = (object(), object())
+    embedder._recipe = PoolingRecipe("lasttoken", 2048, "prompt")
+
+    def unused_reader(_window: SceneWindow) -> WindowFrames:
+        raise AssertionError("close must not read frames")
+
+    reranker = QwenVisualReranker(checkpoint, unused_reader, device="cuda:1")
+    reranker._loaded = (object(), object())
+    reranker._direction = object()
+    reranker._tokens = BinaryScoreTokens(1, 2)
+    reranker._instruct = "instruction"
+
+    embedder.close()
+    embedder.close()
+    reranker.close()
+    reranker.close()
+
+    assert released == ["cuda:1", "cuda:1"]
+    assert embedder._loaded is None
+    assert embedder._recipe is None
+    assert reranker._loaded is None
+    assert reranker._direction is None
+    assert reranker._tokens is None
+    assert reranker._instruct is None
 
 
 # --- the recipe comes from the checkpoint ---------------------------------------------------

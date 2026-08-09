@@ -43,7 +43,12 @@ from typing import Any, Final
 
 from hawedit.clip import Sv6d, parse_timestamps_ms
 from hawedit.path_b import PATH_B_MODEL, PathBError, SceneReading
-from hawedit.qwen_visual import DEFAULT_DEVICE, EmbedderUnavailable, load_processor_and_model
+from hawedit.qwen_visual import (
+    DEFAULT_DEVICE,
+    EmbedderUnavailable,
+    load_processor_and_model,
+    release_cuda_model_memory,
+)
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
     VideoInputError,
@@ -223,6 +228,13 @@ class VideoChat3Reader:
                 configure=_use_sdpa_vision,
             )
         return self._loaded
+
+    def close(self) -> None:
+        """Drop VideoChat3 weights after the survivor-reading phase; reload on next use."""
+        was_loaded = self._loaded is not None
+        self._loaded = None
+        if was_loaded:
+            release_cuda_model_memory(self.device)
 
     def read_window(self, window: SceneWindow) -> SceneReading:
         try:

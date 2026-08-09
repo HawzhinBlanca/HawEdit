@@ -10,7 +10,8 @@ accepted only when it is the exact reranker score for that same window.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -42,6 +43,39 @@ __all__ = [
 
 class VisualPipelineError(RuntimeError):
     """The composed visual path lost identity or score provenance."""
+
+
+def _cleanup_note(label: str, exc: BaseException) -> str:
+    detail = " ".join(str(exc).split())
+    if len(detail) > 384:
+        detail = f"{detail[:383]}…"
+    return f"{label} cleanup failed ({type(exc).__name__}): {detail or 'no detail'}"
+
+
+@contextmanager
+def _release_after(component: object, label: str) -> Iterator[None]:
+    """Close one GPU phase without ever replacing its primary failure.
+
+    Adapters remain reusable: their `close()` methods unload weights and the next call reloads
+    through the same verified checkpoint boundary. Injected protocol implementations need not
+    implement `close`, which preserves the small test/integration seam.
+    """
+    closer = getattr(component, "close", None)
+    try:
+        yield
+    except BaseException as primary:
+        if callable(closer):
+            try:
+                closer()
+            except BaseException as cleanup:
+                primary.add_note(_cleanup_note(label, cleanup))
+        raise
+    else:
+        if callable(closer):
+            try:
+                closer()
+            except Exception as exc:
+                raise VisualPipelineError(_cleanup_note(label, exc)) from exc
 
 
 class VisualEmbedder(Protocol):
@@ -184,20 +218,22 @@ class VisualComposer:
 
         read_frames = _FrameCache(source, work_dir / "frames", ffmpeg)
         index = VisualIndex(media_id)
-        index.add_all(self.embedder.embed_frames(read_frames(window)) for window in windows)
-        query_vector = self.embedder.embed_text(query)
+        with _release_after(self.embedder, "visual embedder"):
+            index.add_all(self.embedder.embed_frames(read_frames(window)) for window in windows)
+            query_vector = self.embedder.embed_text(query)
         reranker = self.reranker_factory(read_frames)
-        try:
-            survivors = rerank_and_keep(
-                index,
-                query_vector,
-                query,
-                reranker,
-                keep=self.keep,
-                k=self.retrieve_k,
-            )
-        except VisualIndexError as exc:
-            raise VisualPipelineError(f"visual retrieval refused this media: {exc}") from exc
+        with _release_after(reranker, "visual reranker"):
+            try:
+                survivors = rerank_and_keep(
+                    index,
+                    query_vector,
+                    query,
+                    reranker,
+                    keep=self.keep,
+                    k=self.retrieve_k,
+                )
+            except VisualIndexError as exc:
+                raise VisualPipelineError(f"visual retrieval refused this media: {exc}") from exc
 
         scores = {hit.window.window_id: hit.rerank_score for hit in survivors}
 
@@ -210,9 +246,10 @@ class VisualComposer:
                 ) from exc
 
         reader = self.reader_factory(read_frames, score_window)
-        candidates = discover_visual(
-            tuple(hit.window for hit in survivors), reader, media_id=media_id
-        )
+        with _release_after(reader, "VideoChat3 reader"):
+            candidates = discover_visual(
+                tuple(hit.window for hit in survivors), reader, media_id=media_id
+            )
         if {candidate.candidate_id for candidate in candidates} != set(scores):
             raise VisualPipelineError(
                 "Path B candidates do not exactly match the reranked survivors"

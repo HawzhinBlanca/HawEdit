@@ -61,6 +61,29 @@ def a_window(in_ms: int = 1_400, duration_ms: int = 1_400, fps: float = 2.0) -> 
     )
 
 
+def test_reader_close_is_idempotent_and_next_use_reloads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    released: list[str] = []
+    loaded = (object(), object())
+
+    def unused_frames(_window: SceneWindow) -> WindowFrames:
+        raise AssertionError("close must not read frames")
+
+    reader = VideoChat3Reader(tmp_path, unused_frames, lambda _window: 0.5, device="cuda:0")
+    reader._loaded = (object(), object())
+    monkeypatch.setattr("hawedit.video_reader.release_cuda_model_memory", released.append)
+    monkeypatch.setattr(
+        "hawedit.video_reader.load_processor_and_model", lambda *_args, **_kwargs: loaded
+    )
+
+    reader.close()
+    reader.close()
+    assert released == ["cuda:0"]
+    assert reader._loaded is None
+    assert reader._load() is loaded
+
+
 def lines(at: float = 0.0, text: str = "an observation") -> dict[str, tuple[float, str]]:
     return {dimension: (at, text) for dimension in Sv6d.DIMENSIONS}
 

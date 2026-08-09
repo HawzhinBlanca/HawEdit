@@ -187,3 +187,137 @@ def test_component_failures_are_normalized_at_the_composer_boundary(
     with pytest.raises(VisualPipelineError, match=type(failure).__name__) as caught:
         composer.discover(tmp_path / "m.mp4", windows(5), "گرنگ", tmp_path / "work", media_id="m")
     assert caught.value.__cause__ is failure
+
+
+def test_gpu_phases_are_closed_before_the_next_model_is_constructed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(
+        "hawedit.visual_pipeline.extract_window_frames",
+        lambda source, window, dest, ffmpeg: WindowFrames(window, (dest / "a.jpg", dest / "b.jpg")),
+    )
+
+    class LifecycleEmbedder(FakeEmbedder):
+        def embed_frames(self, frames: WindowFrames) -> VisualEmbedding:
+            events.append("embed")
+            return super().embed_frames(frames)
+
+        def embed_text(self, query: str) -> tuple[float, ...]:
+            events.append("query")
+            return super().embed_text(query)
+
+        def close(self) -> None:
+            events.append("close-embedder")
+
+    class LifecycleReranker(FakeReranker):
+        def rerank(self, query: str, hits: Sequence[VisualHit]) -> tuple[RerankedHit, ...]:
+            events.append("rerank")
+            return super().rerank(query, hits)
+
+        def close(self) -> None:
+            events.append("close-reranker")
+
+    class LifecycleReader(FakeReader):
+        def read_scenes(self, items: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
+            events.append("read")
+            return super().read_scenes(items)
+
+        def close(self) -> None:
+            events.append("close-reader")
+
+    def make_reranker(read: FrameReader) -> LifecycleReranker:
+        assert events[-1] == "close-embedder"
+        events.append("make-reranker")
+        return LifecycleReranker(read)
+
+    def make_reader(read: FrameReader, score: Callable[[SceneWindow], float]) -> LifecycleReader:
+        assert events[-1] == "close-reranker"
+        events.append("make-reader")
+        return LifecycleReader(read, score, [])
+
+    result = VisualComposer(LifecycleEmbedder(), make_reranker, make_reader, keep=5).discover(
+        tmp_path / "m.mp4",
+        windows(5),
+        "\u06af\u0631\u0646\u06af",
+        tmp_path / "work",
+        media_id="m",
+    )
+
+    assert len(result.candidates) == 5
+    assert events[-8:] == [
+        "query",
+        "close-embedder",
+        "make-reranker",
+        "rerank",
+        "close-reranker",
+        "make-reader",
+        "read",
+        "close-reader",
+    ]
+    assert events[-1] == "close-reader"
+
+
+def test_cleanup_failure_does_not_replace_the_primary_model_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "hawedit.visual_pipeline.extract_window_frames",
+        lambda source, window, dest, ffmpeg: WindowFrames(window, (dest / "a.jpg", dest / "b.jpg")),
+    )
+    primary = AssertionError("model invariant")
+
+    class FailingEmbedder(FakeEmbedder):
+        def embed_frames(self, frames: WindowFrames) -> VisualEmbedding:
+            raise primary
+
+        def close(self) -> None:
+            raise OSError("CUDA cleanup failed")
+
+    composer = VisualComposer(
+        FailingEmbedder(),
+        FakeReranker,
+        lambda read, score: FakeReader(read, score, []),
+        keep=5,
+    )
+    with pytest.raises(AssertionError) as caught:
+        composer.discover(
+            tmp_path / "m.mp4",
+            windows(5),
+            "\u06af\u0631\u0646\u06af",
+            tmp_path / "work",
+            media_id="m",
+        )
+    assert caught.value is primary
+    assert caught.value.__notes__ == [
+        "visual embedder cleanup failed (OSError): CUDA cleanup failed"
+    ]
+
+
+def test_cleanup_failure_after_success_is_a_composed_pipeline_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "hawedit.visual_pipeline.extract_window_frames",
+        lambda source, window, dest, ffmpeg: WindowFrames(window, (dest / "a.jpg", dest / "b.jpg")),
+    )
+
+    class UnloadFailingEmbedder(FakeEmbedder):
+        def close(self) -> None:
+            raise OSError("driver refused release")
+
+    composer = VisualComposer(
+        UnloadFailingEmbedder(),
+        FakeReranker,
+        lambda read, score: FakeReader(read, score, []),
+        keep=5,
+    )
+    with pytest.raises(VisualPipelineError, match="visual embedder cleanup failed") as caught:
+        composer.discover(
+            tmp_path / "m.mp4",
+            windows(5),
+            "\u06af\u0631\u0646\u06af",
+            tmp_path / "work",
+            media_id="m",
+        )
+    assert isinstance(caught.value.__cause__, OSError)
