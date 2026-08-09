@@ -24,6 +24,22 @@ if [[ -z "${PY:-}" || ! -x "$PY" ]]; then
   exit 2
 fi
 
+# The override refusal below is a whitelist of one, and `PY` was the hole in it: PY replaces
+# every step at once, including the evidence step that exists so the exit code stops being the
+# evidence. Measured 2026-08-09: `PY=/usr/bin/true.exe bash scripts/verify.sh` printed
+# VERIFY OK in 1 second, exit 0, with no report written — five steps, all of them `true.exe`,
+# one of them grading the other four. So an interpreter proves it can run *this* project
+# before it is trusted to say whether this project works, and the shell checks the value
+# rather than the exit code, because an exit code is what `true.exe` is good at. D-092.
+_probe="$("$PY" -c 'import hawedit; print("hawedit-interpreter-ok")' 2>&1 || true)"
+if [[ "$_probe" != *hawedit-interpreter-ok* ]]; then
+  echo "REFUSED: $PY cannot import hawedit, so it is not an interpreter that runs this" >&2
+  echo "project — and a gate graded by something that cannot run the code proves nothing." >&2
+  echo "It answered: ${_probe:-<nothing at all>}" >&2
+  echo "Install the project into it (bash scripts/setup.sh), or unset PY." >&2
+  exit 3
+fi
+
 # `${VAR-default}` (no colon) substitutes only when VAR is UNSET. An explicitly empty
 # override therefore stays empty and is caught by _noop_check below. With `${VAR:-default}`
 # an empty value would be silently replaced by the default, so `LINT_CMD=` would look like a
