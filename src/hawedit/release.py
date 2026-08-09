@@ -35,7 +35,14 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from hawedit.cli import machine_readable_stdout, use_utf8_streams
 
-__all__ = ["ReleaseArtifact", "ReleaseError", "build_reproducible_wheel", "main"]
+__all__ = [
+    "LocalWheelArtifact",
+    "ReleaseArtifact",
+    "ReleaseError",
+    "build_local_reproducible_wheel",
+    "build_reproducible_wheel",
+    "main",
+]
 
 _REQUIRED_WHEEL_MEMBERS: Final = (
     "hawedit/release.py",
@@ -94,6 +101,40 @@ _GITHUB_OPENER: Final = build_opener(_RejectRedirects())
 
 class ReleaseError(RuntimeError):
     """The source or artifact is not strong enough to publish as a release."""
+
+
+@dataclass(frozen=True, slots=True)
+class LocalWheelArtifact:
+    """One write-once wheel candidate built twice from an exact local Git revision."""
+
+    output_dir: Path
+    wheel: Path
+    revision: str
+    source_date_epoch: int
+    sha256: str
+    size_bytes: int
+    build_python: str
+    build_frontend: str
+    build_backend: str
+    build_lock_sha256: str
+    distribution: str
+    version: str
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "output_dir": str(self.output_dir),
+            "wheel": str(self.wheel),
+            "revision": self.revision,
+            "source_date_epoch": self.source_date_epoch,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "build_python": self.build_python,
+            "build_frontend": self.build_frontend,
+            "build_backend": self.build_backend,
+            "build_lock_sha256": self.build_lock_sha256,
+            "distribution": self.distribution,
+            "version": self.version,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +201,15 @@ class _BuildIdentity:
             "lock": self.lock_path,
             "lock_sha256": self.lock_sha256,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class _ReproducibleCandidate:
+    wheel: Path
+    sha256: str
+    builder: _BuildIdentity
+    distribution: str
+    version: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -744,6 +794,42 @@ def _assert_release_identity(project_root: Path, wheel: Path) -> tuple[str, str]
     return metadata_name, metadata_version
 
 
+def _build_reproducible_candidate(
+    project_root: Path,
+    *,
+    revision: str,
+    epoch: int,
+    temporary_root: Path,
+    bootstrap_python: Path,
+) -> _ReproducibleCandidate:
+    """Build one Git object twice with one measured, hash-locked private builder."""
+    first_source = temporary_root / "source-first"
+    second_source = temporary_root / "source-second"
+    _snapshot_source(project_root, revision, first_source)
+    _snapshot_source(project_root, revision, second_source)
+    builder_python, builder = _create_locked_builder(
+        first_source, temporary_root / "builder", bootstrap_python.resolve()
+    )
+    first = _build_once(first_source, temporary_root / "first", builder_python, epoch)
+    second = _build_once(second_source, temporary_root / "second", builder_python, epoch)
+    first_digest = _sha256(first)
+    second_digest = _sha256(second)
+    if first.name != second.name or first_digest != second_digest:
+        raise ReleaseError(
+            "wheel build is not reproducible: "
+            f"{first.name} {first_digest} != {second.name} {second_digest}"
+        )
+    _validate_hawedit_wheel(first)
+    distribution, version = _assert_release_identity(first_source, first)
+    return _ReproducibleCandidate(
+        wheel=first,
+        sha256=first_digest,
+        builder=builder,
+        distribution=distribution,
+        version=version,
+    )
+
+
 def _wheel_member_bytes(wheel: Path, suffix: str) -> bytes:
     try:
         with zipfile.ZipFile(wheel) as archive:
@@ -946,6 +1032,68 @@ def _publish_directory(staging: Path, output: Path) -> None:
         ) from exc
 
 
+def build_local_reproducible_wheel(
+    project_root: Path,
+    output_dir: Path | None = None,
+    *,
+    python: Path = Path(sys.executable),
+) -> LocalWheelArtifact:
+    """Build a clean Git revision twice and atomically publish the matching wheel only.
+
+    This produces a local candidate, not a releasable artifact: unlike
+    :func:`build_reproducible_wheel`, it does not verify exact-SHA CI or create signed-release
+    inputs. Both paths deliberately share the immutable snapshots and locked private builder.
+    """
+    root = project_root.resolve()
+    revision, epoch = _source_identity(root)
+    output = (
+        output_dir.resolve()
+        if output_dir is not None
+        else root / "dist" / f"local-hawedit-{revision[:12]}"
+    )
+    if output == root or output.is_relative_to(root / ".git"):
+        raise ReleaseError(f"unsafe local wheel output directory {output}")
+    if os.path.lexists(output):
+        raise ReleaseError(f"refusing to overwrite release directory {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="hawedit-local-wheel-build-") as temporary:
+        candidate = _build_reproducible_candidate(
+            root,
+            revision=revision,
+            epoch=epoch,
+            temporary_root=Path(temporary),
+            bootstrap_python=python,
+        )
+        if _source_identity(root) != (revision, epoch):
+            raise ReleaseError("source revision changed during the local wheel build")
+
+        staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+        try:
+            staged_wheel = staging / candidate.wheel.name
+            _copy_synced(candidate.wheel, staged_wheel)
+            size = staged_wheel.stat().st_size
+            _publish_directory(staging, output)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+
+    return LocalWheelArtifact(
+        output_dir=output,
+        wheel=output / candidate.wheel.name,
+        revision=revision,
+        source_date_epoch=epoch,
+        sha256=candidate.sha256,
+        size_bytes=size,
+        build_python=candidate.builder.python,
+        build_frontend=candidate.builder.frontend,
+        build_backend=candidate.builder.backend,
+        build_lock_sha256=candidate.builder.lock_sha256,
+        distribution=candidate.distribution,
+        version=candidate.version,
+    )
+
+
 def build_reproducible_wheel(
     project_root: Path,
     output_dir: Path | None = None,
@@ -970,24 +1118,18 @@ def build_reproducible_wheel(
 
     with tempfile.TemporaryDirectory(prefix="hawedit-wheel-build-") as temporary:
         temporary_root = Path(temporary)
-        first_source = temporary_root / "source-first"
-        second_source = temporary_root / "source-second"
-        _snapshot_source(root, revision, first_source)
-        _snapshot_source(root, revision, second_source)
-        builder_python, builder = _create_locked_builder(
-            first_source, temporary_root / "builder", python.resolve()
+        candidate = _build_reproducible_candidate(
+            root,
+            revision=revision,
+            epoch=epoch,
+            temporary_root=temporary_root,
+            bootstrap_python=python,
         )
-        first = _build_once(first_source, temporary_root / "first", builder_python, epoch)
-        second = _build_once(second_source, temporary_root / "second", builder_python, epoch)
-        first_digest = _sha256(first)
-        second_digest = _sha256(second)
-        if first.name != second.name or first_digest != second_digest:
-            raise ReleaseError(
-                "wheel build is not reproducible: "
-                f"{first.name} {first_digest} != {second.name} {second_digest}"
-            )
-        _validate_hawedit_wheel(first)
-        distribution, version = _assert_release_identity(first_source, first)
+        wheel = candidate.wheel
+        wheel_digest = candidate.sha256
+        builder = candidate.builder
+        distribution = candidate.distribution
+        version = candidate.version
 
         # Refuse if HEAD or the worktree changed while the two builds were running.
         if _source_identity(root) != (revision, epoch):
@@ -995,17 +1137,17 @@ def build_reproducible_wheel(
 
         staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
         try:
-            staged_wheel = staging / first.name
-            _copy_synced(first, staged_wheel)
+            staged_wheel = staging / wheel.name
+            _copy_synced(wheel, staged_wheel)
             size = staged_wheel.stat().st_size
             checksum_name = "SHA256SUMS"
             provenance_name = "release-provenance.json"
-            sbom_name = f"{first.name}.spdx.json"
+            sbom_name = f"{wheel.name}.spdx.json"
             sbom_payload = _spdx_sbom(
                 staged_wheel,
                 revision=revision,
                 epoch=epoch,
-                wheel_sha256=first_digest,
+                wheel_sha256=wheel_digest,
             )
             sbom_digest = hashlib.sha256(sbom_payload).hexdigest()
             provenance = {
@@ -1016,8 +1158,8 @@ def build_reproducible_wheel(
                 "version": version,
                 "gate": gate.to_dict(),
                 "builder": builder.to_dict(),
-                "wheel": first.name,
-                "sha256": first_digest,
+                "wheel": wheel.name,
+                "sha256": wheel_digest,
                 "size_bytes": size,
                 "sbom": sbom_name,
                 "sbom_format": "SPDX-2.3-json",
@@ -1029,7 +1171,7 @@ def build_reproducible_wheel(
             _write_synced(provenance_payload, staging / provenance_name)
             _write_synced(
                 (
-                    f"{first_digest}  {first.name}\n"
+                    f"{wheel_digest}  {wheel.name}\n"
                     f"{sbom_digest}  {sbom_name}\n"
                     f"{provenance_digest}  {provenance_name}\n"
                 ).encode(),
@@ -1042,13 +1184,13 @@ def build_reproducible_wheel(
 
     return ReleaseArtifact(
         output_dir=output,
-        wheel=output / first.name,
+        wheel=output / wheel.name,
         checksum_file=output / "SHA256SUMS",
         provenance_file=output / "release-provenance.json",
         sbom_file=output / sbom_name,
         revision=revision,
         source_date_epoch=epoch,
-        sha256=first_digest,
+        sha256=wheel_digest,
         sbom_sha256=sbom_digest,
         provenance_sha256=provenance_digest,
         gate_run_id=gate.run_id,

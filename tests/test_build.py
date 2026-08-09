@@ -1,21 +1,15 @@
-"""The wheel is reproducible, so a digest can identify this code rather than one build.
+"""The local wheel candidate is reproducible under one measured builder identity.
 
-`AUDIT_REPORT.md` quotes the wheel's byte count and deliberately no SHA-256, because two
-`pip wheel` runs at one unchanged commit produced the same size and different hashes — nothing set
-`SOURCE_DATE_EPOCH`, so every ZIP entry carried the mtime of the moment it was written. Measured
-2026-08-09 before the fix: `a7c3b2f1c280aff4` and `38d1d2475c46e120` for the same tree.
-
-`scripts/build-wheel.sh` takes the epoch from the commit's own author date — derived, never
-invented — and refuses outside a git checkout rather than substituting `now`, which would restore
-the behaviour silently. That refusal is not exercised here: the script resolves the repository from
-its own location, so reaching the no-commit branch would mean copying the tree out of git, which
-costs more than the branch is worth. It is three lines and it fails closed.
+The script snapshots one clean Git object twice, provisions the exact hash-locked build frontend
+and backend into a private venv, and refuses to publish unless both independent wheels match. The
+production release path adds exact-SHA CI evidence, provenance, SBOM and attestation.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -52,13 +46,11 @@ needs_build = pytest.mark.skipif(
 )
 
 
-def build(out: Path) -> Path:
+def build(out: Path) -> tuple[Path, dict[str, object]]:
     assert BASH is not None
     done = subprocess.run(
-        # The resolved path, not the name: on Windows `subprocess` searches the system PATH
-        # and finds WSL's `bash.exe`, which cannot open a `C:/…` path at all — measured, it
-        # reports the script as "No such file or directory" while Git Bash runs it fine. And
-        # POSIX form for the arguments, because bash eats the backslashes in `C:\Users\…`.
+        # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+        # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
         [BASH, SCRIPT.as_posix(), out.as_posix()],
         capture_output=True,
         text=True,
@@ -68,7 +60,9 @@ def build(out: Path) -> Path:
     assert done.returncode == 0, done.stdout + done.stderr
     wheels = sorted(out.glob("hawedit-*.whl"))
     assert len(wheels) == 1, wheels
-    return wheels[0]
+    report = json.loads(done.stdout)
+    assert report["wheel"] == str(wheels[0].resolve())
+    return wheels[0], report
 
 
 def commit_epoch() -> int:
@@ -83,32 +77,49 @@ def commit_epoch() -> int:
     )
 
 
+@pytest.fixture(scope="module")
+def committed_builds(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]]:
+    if BASH is None or shutil.which("git") is None:
+        pytest.skip("needs bash and git")
+    root = tmp_path_factory.mktemp("locked-wheel-builds")
+    return build(root / "a"), build(root / "b")
+
+
 @needs_build
-def test_two_builds_of_one_commit_are_byte_identical(tmp_path: Path) -> None:
-    """The promise a quoted digest would rest on, checked on the two artifacts."""
-    first = hashlib.sha256(build(tmp_path / "a").read_bytes()).hexdigest()
-    second = hashlib.sha256(build(tmp_path / "b").read_bytes()).hexdigest()
+def test_two_builds_of_one_commit_are_byte_identical(
+    committed_builds: tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]],
+) -> None:
+    """Both independent invocations identify exactly the same wheel bytes."""
+    first = hashlib.sha256(committed_builds[0][0].read_bytes()).hexdigest()
+    second = hashlib.sha256(committed_builds[1][0].read_bytes()).hexdigest()
     assert first == second, f"{first} != {second}"
 
 
 @needs_build
-def test_every_entry_carries_the_commits_timestamp_not_the_clock(tmp_path: Path) -> None:
-    """The control, and the reason the test above passes.
-
-    Two builds being equal is also what a build system that happened to be deterministic today
-    would produce, so equality alone would let the epoch be deleted unnoticed — and a test whose
-    control is "setuptools is non-deterministic" would break the day that stops being true. This
-    asserts the mechanism instead: every ZIP entry is stamped with the commit, in UTC, which is
-    false the moment the epoch stops being set.
-    """
-    # ZIP stores the second as `sec // 2`, so every stamp it can hold is an even second. The
-    # first version of this compared against the raw epoch and passed here only because HEAD
-    # happened to carry an even timestamp; CI's commit was odd and it failed by exactly one
-    # second. Rounding down is not a tolerance — it is the value the format can represent, and
-    # a clock-based mtime is wrong by far more than a second in every entry.
+def test_every_entry_carries_the_commits_timestamp_not_the_clock(
+    committed_builds: tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]],
+) -> None:
+    """The archive timestamp is derived from the Git object, not the wall clock."""
+    # ZIP stores the second as `sec // 2`, so the exact representable value is even.
     epoch = commit_epoch()
     epoch -= epoch % 2
     expected = dt.datetime.fromtimestamp(epoch, tz=dt.UTC).timetuple()[:6]
-    with zipfile.ZipFile(build(tmp_path / "c")) as archive:
+    with zipfile.ZipFile(committed_builds[0][0]) as archive:
         stamps = {info.date_time for info in archive.infolist()}
     assert stamps == {expected}, f"{sorted(stamps)} != {expected}"
+
+
+@needs_build
+def test_build_script_reports_the_hash_locked_private_builder(
+    committed_builds: tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]],
+) -> None:
+    first = committed_builds[0][1]
+    second = committed_builds[1][1]
+    assert first["build_frontend"] == second["build_frontend"] == "pip==26.2.1"
+    assert first["build_backend"] == second["build_backend"] == "setuptools==84.0.0"
+    assert first["build_lock_sha256"] == second["build_lock_sha256"]
+    assert first["revision"] == second["revision"]
+    assert first["source_date_epoch"] == second["source_date_epoch"] == commit_epoch()
+    assert first["sha256"] == second["sha256"]

@@ -19,6 +19,7 @@ import pytest
 
 import hawedit.release as release_module
 from hawedit.release import (
+    LocalWheelArtifact,
     ReleaseError,
     _assert_release_identity,
     _extract_git_archive,
@@ -27,6 +28,7 @@ from hawedit.release import (
     _publish_directory,
     _spdx_sbom,
     _verify_gate_run,
+    build_local_reproducible_wheel,
     build_reproducible_wheel,
 )
 
@@ -742,6 +744,91 @@ def test_release_builds_from_the_gated_git_object_not_live_worktree(
     assert all(payload == committed for _source_root, payload in observed)
     assert artifact.wheel.read_bytes() == b"identical committed wheel"
     assert not _git(project, "status", "--porcelain")
+
+
+def test_local_wheel_uses_locked_builder_and_independent_git_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _release_source(tmp_path)
+    committed = (project / "src" / "hawedit" / "release.py").read_bytes()
+    sources: list[Path] = []
+    builder_sources: list[Path] = []
+    builder = release_module._BuildIdentity(
+        python="3.12.10",
+        frontend="pip==26.2.1",
+        backend="setuptools==84.0.0",
+        requirements=(("pip", "26.2.1"), ("setuptools", "84.0.0")),
+        lock_path="requirements/release-build.txt",
+        lock_sha256="a" * 64,
+    )
+
+    def fake_builder(
+        source_root: Path, _destination: Path, python: Path
+    ) -> tuple[Path, release_module._BuildIdentity]:
+        builder_sources.append(source_root)
+        return python, builder
+
+    def fake_build(source_root: Path, destination: Path, _python: Path, _epoch: int) -> Path:
+        assert (source_root / "src" / "hawedit" / "release.py").read_bytes() == committed
+        if not sources:
+            (source_root / "first-build-state").write_text("must not leak", encoding="utf-8")
+        else:
+            assert not (source_root / "first-build-state").exists()
+        sources.append(source_root)
+        destination.mkdir()
+        wheel = destination / "hawedit_release_fixture-1.0.0-py3-none-any.whl"
+        wheel.write_bytes(b"same committed candidate")
+        return wheel
+
+    monkeypatch.setattr(release_module, "_create_locked_builder", fake_builder)
+    monkeypatch.setattr(release_module, "_build_once", fake_build)
+    monkeypatch.setattr(release_module, "_validate_hawedit_wheel", lambda _wheel: None)
+    monkeypatch.setattr(
+        release_module,
+        "_assert_release_identity",
+        lambda _source, _wheel: ("hawedit-release-fixture", "1.0.0"),
+    )
+    monkeypatch.setattr(
+        release_module,
+        "_verify_gate_run",
+        lambda *_args, **_kwargs: pytest.fail("a local candidate must not claim CI evidence"),
+    )
+
+    destination = tmp_path / "local-candidate"
+    artifact = build_local_reproducible_wheel(project, destination, python=Path(sys.executable))
+
+    assert isinstance(artifact, LocalWheelArtifact)
+    assert builder_sources == [sources[0]]
+    assert len(sources) == 2
+    assert sources[0] != sources[1]
+    assert all(source != project for source in sources)
+    assert artifact.wheel.read_bytes() == b"same committed candidate"
+    assert artifact.build_frontend == "pip==26.2.1"
+    assert artifact.build_backend == "setuptools==84.0.0"
+    assert artifact.build_lock_sha256 == "a" * 64
+    assert tuple(destination.iterdir()) == (artifact.wheel,)
+
+    with pytest.raises(ReleaseError, match="refusing to overwrite"):
+        build_local_reproducible_wheel(project, destination, python=Path(sys.executable))
+
+
+def test_local_wheel_refuses_dirty_source_before_builder_or_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _release_source(tmp_path)
+    (project / "untracked-secret.txt").write_text("not committed", encoding="utf-8")
+    destination = tmp_path / "must-not-exist" / "local"
+
+    monkeypatch.setattr(
+        release_module,
+        "_build_reproducible_candidate",
+        lambda *_args, **_kwargs: pytest.fail("dirty source reached the builder"),
+    )
+
+    with pytest.raises(ReleaseError, match="dirty checkout.*untracked-secret"):
+        build_local_reproducible_wheel(project, destination, python=Path(sys.executable))
+
+    assert not destination.parent.exists()
 
 
 @pytest.mark.parametrize("member_kind", ("traversal", "symlink"))
