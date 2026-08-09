@@ -424,6 +424,8 @@ disabled (`BLOCKED.md` #7 records the live setting).
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
 | `wsl_asr_locks.py` | §3 Stage 1, §6 | Hash-locked PyPI inputs and exact installed name/version identity for the isolated Linux/Python 3.12 ASR generation; KenLM/Sox remain explicitly disclosed native source builds, not binary reproducibility proof. |
+| `wsl_audit_locks.py` | §6, §7 | Complete wheel hashes and installed identity for the isolated pip-audit 2.10.1 scanner used by the WSL ASR security gate. |
+| `wsl_vex_gate.py` | §6, §7 | Live, source-bound WSL receipt and asset verification, hash-locked OSV scan, VEX evaluation, and write-once evidence publication. |
 | `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
@@ -458,6 +460,7 @@ disabled (`BLOCKED.md` #7 records the live setting).
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `environment.py` | — | Binds the canonical `.venv`, editable distribution root, supported Python/project versions and active exact requirements to this checkout before the gate runs. |
 | `host_lock_hashes.py` | — | Generated source-bound SHA-256 identities for every supported host dependency lock. |
+| `gpu_runtime.py` | §6 | Exact dual-3090-Ti CUDA/Torch identity plus real bfloat16 compute on both cards; refuses version, visibility, topology, capability or memory drift. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `release.py` | — | Exact-SHA official main-gate proof, clean-HEAD double-build wheel reproducibility, runtime-data validation and atomic checksummed provenance. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
