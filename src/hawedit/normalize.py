@@ -118,7 +118,7 @@ def separate_conjunctive_waw(text: str) -> str:
     The bias is deliberate and one-directional: **under-split, never mis-split.** A joined `و`
     left alone costs recall in the §2 index, and character 3-grams absorb part of that. A real
     word torn in half costs correctness, and nothing absorbs it. The residual is bounded and
-    measured — see `evidence/waw-separation.md`: on KLPT's 24,888-entry dictionary, zero words
+    measured — see `evidence/waw-separation.md`: on KLPT's 24,894-entry dictionary, zero words
     are damaged and 10 `و`-initial words can never be separated because they are words in
     their own right.
 

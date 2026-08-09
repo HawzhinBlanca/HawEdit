@@ -3588,3 +3588,38 @@ same reason D-086's were: they used a fixture where the rule happened to work. T
 checkout. `evidence/sv6d-duration-smuggling.md`.
 
 Gate: `VERIFY OK — 1142 passed, 0 skipped`.
+
+## D-089
+
+**A number in the evidence was wrong, and the same file's other numbers proved it.**
+`evidence/waw-separation.md` recorded `waw_initial_words: 491`. KLPT's lexicon has **504**, and the
+file's own constructible count settles it: 24 894 − 504 = 24 390, whereas 24 894 − 491 = 24 403.
+Every other figure in the file was already consistent with 504.
+
+**Why it survived two adversarial passes.** The guard recomputed nothing. It asserted
+`lexicon_entries > 20_000`, `dictionary_words_damaged == 0`, and that the unsplittable list matched
+its own length — three of seven numbers bounded, none measured. A number nobody recomputes is a
+transcription, not a measurement, which is the same failure D-069 found in `AUDIT_REPORT.md` and
+D-084 found in `MINIMUM_HOURS`.
+
+**And both passes got the true value wrong.** One reported "504 with duplicates (وسمە appears
+twice) and 492 distinct"; measured, there are 504 with **zero** duplicates. `lexicon_entries: 24894`
+was right all along — KLPT's `.dic` is Hunspell format whose first line is an entry count, and the
+suite's `lexicon` fixture already skips it.
+
+**Decision: recompute every recorded number, and make the arithmetic itself an assertion.** The test
+now derives `waw_initial_words` and `constructible_joined_forms` from the lexicon, checks
+`lexicon_entries - waw_initial_words == constructible_joined_forms`, checks
+`recovered + not_recovered == constructible`, and recomputes `recall_pct`. It was red on the wrong
+figure before the correction — the only version of this test that could have caught it.
+
+**`constructible_joined_forms` was promoted from prose into the recorded JSON.** The 24 390 figure
+existed only in a sentence, which is exactly how it escaped checking while being the number that
+disproves 491. A figure that carries an argument belongs where the guard can read it.
+
+**Two more stale copies of Hunspell's own header, corrected.** `tests/test_waw.py`'s module
+docstring and `normalize.py:121` both cited "24,888" — the count in the `.dic`'s first line, which
+is stale in KLPT's data — where the measured entry count is 24 894. Same defect as the main finding:
+a number copied from a source rather than measured from it. `evidence/waw-separation.md`.
+
+Gate: `VERIFY OK — 1142 passed, 0 skipped`.
