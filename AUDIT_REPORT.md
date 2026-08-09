@@ -132,7 +132,8 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   Provenance differs deliberately because it records the measured interpreter.
 - CI action runtime audit: exact-SHA run 31291508018 exposed deprecated Node-20 action runtimes.
   Checkout 7.0.1 and Setup Python 7.0.0 are now pinned to audited full commits whose official
-  `action.yml` declares Node 24; a focused regression refuses rollback (`evidence/ci-actions.md`).
+  `action.yml` declares Node 24; a focused regression refuses rollback. Exact-SHA run 31291847181
+  completed successfully with zero check-run annotations (`evidence/ci-actions.md`).
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

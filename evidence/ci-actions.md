@@ -29,3 +29,8 @@ The new regression requires these two audited commit/tag pairs in addition to th
 rule, so rolling back to a pinned Node-20 action is red. The first workflow-dispatch run after this
 change remains the runtime evidence that GitHub can fetch and execute the commits; a local YAML
 assertion alone cannot prove that.
+
+Runtime result: workflow-dispatch run
+<https://github.com/HawzhinBlanca/HawEdit/actions/runs/31291847181> executed exact source SHA
+`32ba77bfdd95376b5404fa85257d6a5d9f841595`, completed every gate and real-media post-check, and
+returned **zero check-run annotations**. The former Node-20 deprecation annotation is absent.
