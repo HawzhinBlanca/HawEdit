@@ -111,11 +111,21 @@ def import_common_voice(
                 break
 
             row_locale = (row.get("locale") or "").strip()
-            if row_locale and row_locale != locale:
+            # The leading `row_locale and` used to skip this entirely for any row whose locale
+            # was absent or blank — so a Kurmanji `validated.tsv` with no `locale` column, or
+            # with the cell empty, imported clean and the manifest still declared
+            # "Mozilla Common Voice ckb", because the provenance name is built from the
+            # *parameter* and never from the data. Measured: two Kurmanji rows imported with
+            # `reference_ckb='Ev pir bas e'` under a `ckb` provenance. An unreadable locale is
+            # not "no objection" — it is the file failing to confirm the language this importer
+            # is about to assert on its behalf. D-091.
+            if row_locale != locale:
                 raise WrongLocale(
                     f"row for clip {row.get('path')!r} has locale {row_locale!r}, expected "
                     f"{locale!r}. Kurmanji and Farsi sit one directory away in any Common "
-                    f"Voice download; importing either would poison every ckb number."
+                    f"Voice download; importing either would poison every ckb number. A blank "
+                    f"or missing locale is refused for the same reason: the manifest asserts "
+                    f"{locale!r}, so every row has to say so."
                 )
 
             sentence = (row.get("sentence") or "").strip()

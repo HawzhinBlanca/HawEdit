@@ -3661,3 +3661,44 @@ the written proof — D-037 clause 4's guarantee was weaker than its own wording
 adversarial pass. `evidence/survivor-floor-bypassed-by-k.md`.
 
 Gate: `VERIFY OK — 1148 passed, 0 skipped`.
+
+## D-091
+
+**A Common Voice split that declined to name its language was imported as `ckb`.** The locale check
+read `if row_locale and row_locale != locale:`. The leading truthiness clause skipped it for every
+row whose `locale` was absent or blank, and the provenance name is built from the **parameter**
+(`f"Mozilla Common Voice {locale} ({tsv_path.name})"`), never from the data — so the manifest
+asserted the language precisely where the file had failed to state it. Measured on Kurmanji rows:
+
+```
+  A locale present, value kmr    REFUSED
+  B locale column ABSENT         ACCEPTED 2 items | 'Ev pir bas e' | 'Mozilla Common Voice ckb (…)'
+  C locale cell BLANK            ACCEPTED 2 items
+```
+
+`'Ev pir bas e'` is Kurmanji, stored as `reference_ckb`. This is the poisoning the module docstring
+names as its fourth promise, reached without touching the locale value at all — only by omitting it.
+
+**Decision: an unreadable locale is refused, not treated as absence of objection.** A blank or
+missing cell is the file declining to confirm the language this importer is about to assert on its
+behalf, and the module's own governing rule is to be pessimistic about everything the source does not
+actually state. This is the same treatment duration already gets — required, never defaulted —
+because both defaults would convert an interim stand-in into a number somebody quotes later.
+
+**Rejected: inferring the locale from the path** (`cv-corpus-…/ckb/validated.tsv`). It is derivable
+in the common case, which is what makes it dangerous: it would restore the accept-by-default
+behaviour under a new justification, and a directory name is a claim by whoever unzipped the file,
+not by the corpus. Refusing costs one column in a hand-made TSV and nothing in a real download, where
+Common Voice always writes `locale`.
+
+**The control is the point.** Refusing every row satisfies both refusal tests and imports nothing,
+ever. Mutation audit **3/3**: restoring the truthiness bypass is CAUGHT, the guard never firing is
+CAUGHT, and `row_locale == locale` — the over-strict direction — is CAUGHT only by the honest-`ckb`
+control, which also asserts the provenance, since the defect was the two disagreeing. Fourth
+consecutive iteration where over-strictness was visible only to a control (D-087, D-088, D-090).
+
+**Scope, stated plainly:** M0.16 is BLOCKED and no corpus exists on this machine, so nothing shipped
+wrong output to a client. What shipped was a false guarantee — the docstring's fourth promise and
+M0.14's row both claimed a check a missing column walked around. Found by the fourth adversarial
+pass; premise re-verified here rather than taken from the agent's report.
+`evidence/common-voice-locale-bypass.md`.
