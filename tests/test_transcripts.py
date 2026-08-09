@@ -373,3 +373,59 @@ def test_a_real_reason_and_span_are_accepted() -> None:
     )
     assert gap.end_ms - gap.start_ms == 316
     assert "15 tokens" in gap.reason
+
+
+# --- D-107: the raw file's own write-once layer was never reached by a test ------------------
+
+
+def test_deleting_the_digest_does_not_open_the_raw_file_to_a_second_write(tmp_path: Path) -> None:
+    """`write_raw` refuses twice over, and only the first refusal was tested.
+
+    Found by adversarial pass #7: neutralising `os.link(staging, path)` — the raw file's own
+    write-once link — left the whole suite green, because the sidecar's link refuses first in every
+    path a test exercised. The second layer is not dead code; it is the layer that matters when the
+    sidecar is **gone**, which is the state an attacker hiding a modification would create, since
+    `verify_raw_integrity` needs that digest to detect anything.
+
+    Measured: with the sidecar deleted and the raw present, the second write is refused by the
+    raw-file layer, the raw bytes are unchanged, no sidecar is resurrected carrying the second
+    write's digest, and no staging file is left behind. D-107.
+    """
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw())
+    raw_path = tmp_path / "media-001.transcript.raw.json"
+    sidecar = tmp_path / "media-001.transcript.raw.sha256"
+    original = raw_path.read_bytes()
+
+    sidecar.chmod(stat.S_IWRITE)
+    sidecar.unlink()
+
+    with pytest.raises(RawTranscriptImmutable, match="already exists"):
+        store.write_raw(a_raw("a second, different ASR output"))
+
+    assert raw_path.read_bytes() == original, (
+        "the canonical transcript was replaced once its digest was removed — invariant #1"
+    )
+    assert not sidecar.exists(), (
+        "a refused write published a digest for content it did not write, which would "
+        "authenticate the wrong bytes"
+    )
+    assert sorted(path.name for path in tmp_path.iterdir()) == [raw_path.name], (
+        "the refused write left staging files behind"
+    )
+
+
+def test_the_first_layer_still_refuses_while_the_digest_is_present(tmp_path: Path) -> None:
+    """The control. The test above must not be satisfiable by breaking the sidecar's own link.
+
+    With both artifacts present the refusal has to come from the *first* layer — its message says
+    "already exists or is being written", the raw-file layer's says "already exists." — so the two
+    are distinguishable and each is now pinned to its own state.
+    """
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw())
+
+    with pytest.raises(RawTranscriptImmutable, match="already exists or is being written"):
+        store.write_raw(a_raw("a second, different ASR output"))
+
+    store.verify_raw_integrity("media-001")
