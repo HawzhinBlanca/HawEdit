@@ -448,7 +448,7 @@ def build_ass(
 
 
 def find_ffmpeg() -> Path | None:
-    """Locate an ffmpeg binary: `HAWEDIT_FFMPEG`, then `.ffmpeg/`, then `PATH`.
+    """Locate ffmpeg: explicit path, source generation, installed-user generation, then PATH.
 
     Returns `None` rather than raising — the caller decides whether a missing ffmpeg is a
     skipped render test or a failed deploy check.
@@ -457,14 +457,22 @@ def find_ffmpeg() -> Path | None:
     from shutil import which
 
     configured = environ.get("HAWEDIT_FFMPEG")
-    if configured and Path(configured).exists():
+    if configured and Path(configured).is_file():
         return Path(configured)
     # Where scripts/fetch-ffmpeg.sh puts it, so the readiness report and the gate agree
     # without anyone having to remember an environment variable.
     vendored = Path(__file__).resolve().parents[2] / ".ffmpeg"
     for name in ("ffmpeg", "ffmpeg.exe"):
-        if (vendored / name).exists():
+        if (vendored / name).is_file():
             return vendored / name
+    # A wheel has no checkout-local scripts directory. hawedit-ffmpeg-setup installs into a
+    # per-user cache and this shared resolver makes the next process discover it automatically.
+    from hawedit.ffmpeg_setup import default_ffmpeg_dir
+
+    installed = default_ffmpeg_dir()
+    for name in ("ffmpeg", "ffmpeg.exe"):
+        if (installed / name).is_file():
+            return installed / name
     located = which("ffmpeg")
     return Path(located) if located else None
 

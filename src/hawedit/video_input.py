@@ -174,7 +174,7 @@ def extract_window_frames(
     """
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
-        raise VideoInputError("no ffmpeg available — run scripts/fetch-ffmpeg.sh")
+        raise VideoInputError("no ffmpeg available — run hawedit-ffmpeg-setup")
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     extraction_dir = Path(tempfile.mkdtemp(prefix=f".{window.window_index:03d}-", dir=dest_dir))

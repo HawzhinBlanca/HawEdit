@@ -15,7 +15,7 @@ set -euo pipefail
 umask 077
 
 here="$(cd "$(dirname "$0")/.." && pwd -P)"
-dest="${here}/.ffmpeg"
+dest="${HAWEDIT_FFMPEG_DIR:-${here}/.ffmpeg}"
 
 # Immutable source and content identity. The digest is the Git-LFS object's SHA-256 at the exact
 # commit. The commit prevents branch movement; the digest independently authenticates the bytes.
@@ -27,6 +27,11 @@ refuse() {
   exit 1
 }
 
+case "$dest" in
+  /* | [A-Za-z]:/*) ;;
+  *) refuse "HAWEDIT_FFMPEG_DIR must be an absolute path when it is set." ;;
+esac
+
 prepare_install_root() {
   if [[ -L "$dest" ]]; then
     refuse "${dest} is a symbolic link; ffmpeg installation requires an owned directory."
@@ -35,7 +40,7 @@ prepare_install_root() {
     refuse "${dest} exists and is not a directory."
   fi
   if [[ ! -e "$dest" ]]; then
-    mkdir -m 700 -- "$dest"
+    mkdir -m 700 -p -- "$dest"
   fi
   if [[ -L "$dest" || ! -d "$dest" ]]; then
     refuse "${dest} changed while the install root was being prepared."

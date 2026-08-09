@@ -103,9 +103,7 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
 def _ffmpeg(ffmpeg: Path | None) -> Path:
     resolved = ffmpeg or find_ffmpeg()
     if resolved is None:
-        raise IngestError(
-            "no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT_FFMPEG."
-        )
+        raise IngestError("no ffmpeg available — run hawedit-ffmpeg-setup or set HAWEDIT_FFMPEG.")
     return resolved
 
 

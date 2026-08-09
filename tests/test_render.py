@@ -476,7 +476,7 @@ def test_a_missing_subtitle_file_is_refused(tmp_path: Path) -> None:
 def test_no_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("hawedit.render.find_ffmpeg", lambda: None)
     (tmp_path / "captions.ass").write_text("", encoding="utf-8")
-    with pytest.raises(RenderError, match="fetch-ffmpeg.sh"):
+    with pytest.raises(RenderError, match="hawedit-ffmpeg-setup"):
         render_clip(
             _clip(),
             FIXTURE,

@@ -113,6 +113,7 @@ jobs:
           cd "$RUNNER_TEMP"
           "$SMOKE_ROOT/bin/python" - <<'PY'
           from hawedit.models import INSTALLED_INTEGRITY, INSTALLED_REVISIONS, INSTALLED_SOURCES
+          from hawedit.environment import resolve_installed_hawedit_data
           from hawedit.pipeline import FONTS_DIR
 
           required = (
@@ -121,6 +122,7 @@ jobs:
               INSTALLED_SOURCES,
               INSTALLED_REVISIONS,
               INSTALLED_INTEGRITY,
+              resolve_installed_hawedit_data("share/hawedit/scripts/fetch-ffmpeg.sh"),
           )
           missing = [str(path) for path in required if not path.is_file()]
           if missing:
@@ -133,6 +135,7 @@ jobs:
             hawedit-asr-setup \
             hawedit-credentials \
             hawedit-fetch-models \
+            hawedit-ffmpeg-setup \
             hawedit-release \
             hawedit-wsl-vex
           do

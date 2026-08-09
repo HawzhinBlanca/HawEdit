@@ -110,6 +110,7 @@ where = ["src"]
     "requirements/host-gpu-windows-py311.txt",
 ]
 "share/hawedit/security" = ["security/wsl-asr-vex.json"]
+"share/hawedit/scripts" = ["scripts/fetch-ffmpeg.sh"]
 
 [project.scripts]
 hawedit = "hawedit.pipeline:main"
@@ -118,6 +119,7 @@ hawedit-asr-setup = "hawedit.wsl_setup:main"
 hawedit-credentials = "hawedit.credentials:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
 hawedit-fetch-models = "hawedit.model_fetch:main"
+hawedit-ffmpeg-setup = "hawedit.ffmpeg_setup:main"
 hawedit-release = "hawedit.release:main"
 hawedit-wsl-vex = "hawedit.wsl_vex_gate:main"
 

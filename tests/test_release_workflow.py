@@ -150,6 +150,7 @@ def test_release_attestation_waits_for_clean_installed_wheel_smoke() -> None:
         "INSTALLED_SOURCES",
         "INSTALLED_REVISIONS",
         "INSTALLED_INTEGRITY",
+        "share/hawedit/scripts/fetch-ffmpeg.sh",
     ):
         assert installed_data in smoke
     for command in (
@@ -159,6 +160,7 @@ def test_release_attestation_waits_for_clean_installed_wheel_smoke() -> None:
         "hawedit-asr-setup",
         "hawedit-credentials",
         "hawedit-fetch-models",
+        "hawedit-ffmpeg-setup",
         "hawedit-release",
         "hawedit-wsl-vex",
     ):

@@ -4969,3 +4969,28 @@ Executable tests drive the real shell transaction with controlled curl/unzip pro
 repair of a corrupt executable, refusal before publication, re-download after a byte mutation that
 preserves behavior, hardlink-victim preservation, linked/non-directory root refusal, private curl
 output, cleanup, and lock exclusion. `evidence/ffmpeg-provisioning-transaction.md`.
+
+## D-150 - FFmpeg remediation must survive installation of the wheel
+
+The runtime could locate an operator-installed FFmpeg, and the checkout could provision the pinned
+Linux build, but an installed wheel exposed neither the provisioner nor an executable setup command.
+Its error messages told an installed operator to run `scripts/fetch-ffmpeg.sh`, a path the wheel did
+not contain. A released application therefore knew that FFmpeg was missing but could not perform the
+remediation it prescribed.
+
+**Decision:** the wheel ships `scripts/fetch-ffmpeg.sh` as an authenticated data-file member and
+exposes `hawedit-ffmpeg-setup`. Installed data is located through the authoritative HawEdit
+distribution RECORD, not `sys.prefix` guessing. The command first validates an existing
+FFmpeg/FFprobe pair and the required libass/HarfBuzz/FriBidi stack. On Linux, absence invokes the
+same pinned, transactional provisioner into an absolute per-user cache, then rechecks the result.
+On Windows and macOS it does not download an incompatible Linux artifact; it returns bounded
+`winget`/Homebrew remediation and `--check` remains non-mutating everywhere. Source checkouts keep
+their local `.ffmpeg` generation, while runtime discovery also recognizes the installed per-user
+generation before falling back to `PATH`.
+
+The release validator now requires the provisioner member and the no-checkout installed-wheel smoke
+authenticates it, runs `hawedit-ffmpeg-setup --help`, and exercises `--check`. A fresh Windows wheel
+environment passed its packaged hash lock, `pip check`, RECORD-authenticated script lookup, and the
+real RTL probe. Linux automatic download remains exercised by the required gate and executable shell
+transaction tests. This packages remediation; it does not redistribute FFmpeg or claim its GPL
+review complete. `evidence/installed-ffmpeg-provisioning.md`.

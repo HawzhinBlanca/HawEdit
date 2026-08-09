@@ -858,7 +858,7 @@ class ModelStore:
                 provisioning=entry.provisioning,
                 available=ffmpeg is not None,
                 detail=(
-                    f"ffmpeg at {ffmpeg}" if ffmpeg else "no ffmpeg — run scripts/fetch-ffmpeg.sh"
+                    f"ffmpeg at {ffmpeg}" if ffmpeg else "no ffmpeg — run hawedit-ffmpeg-setup"
                 ),
                 path=ffmpeg,
             )
@@ -941,7 +941,7 @@ class ModelStore:
             if status.provisioning is Provisioning.WEIGHTS:
                 remedy = "Run hawedit-fetch-models (install `hawedit[models]` first)."
             elif status.provisioning is Provisioning.SYSTEM:
-                remedy = "Run scripts/fetch-ffmpeg.sh."
+                remedy = "Run hawedit-ffmpeg-setup."
             elif status.provisioning is Provisioning.CLOUD:
                 remedy = "Configure the required cloud credentials."
             elif status.model_id.startswith("omniASR_") and os.name == "nt":

@@ -52,6 +52,7 @@ _REQUIRED_WHEEL_MEMBERS: Final = (
     "share/hawedit/requirements/host-models-windows-py312.txt",
     "share/hawedit/requirements/host-gpu-windows-py311.txt",
     "share/hawedit/security/wsl-asr-vex.json",
+    "share/hawedit/scripts/fetch-ffmpeg.sh",
 )
 _REQUIREMENT_NAME: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _EXACT_REQUIREMENT_VERSION: Final = re.compile(

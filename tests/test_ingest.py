@@ -361,7 +361,7 @@ def test_a_round_trip_does_not_turn_absent_diarization_into_an_empty_result() ->
 
 def test_missing_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("hawedit.ingest.find_ffmpeg", lambda: None)
-    with pytest.raises(IngestError, match="fetch-ffmpeg.sh"):
+    with pytest.raises(IngestError, match="hawedit-ffmpeg-setup"):
         ingest(FIXTURE, tmp_path / "work")
 
 

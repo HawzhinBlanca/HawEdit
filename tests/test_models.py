@@ -450,6 +450,14 @@ def test_a_stage_refuses_to_start_without_its_weights(tmp_path: Path) -> None:
         store(tmp_path).assert_available("Qwen3-VL-Embedding-2B")
 
 
+def test_missing_system_binary_names_the_installed_wheel_remedy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("hawedit.captions.find_ffmpeg", lambda: None)
+    with pytest.raises(ModelNotProvisioned, match="hawedit-ffmpeg-setup"):
+        store(tmp_path).assert_available("ASS + libass/HarfBuzz/FriBidi")
+
+
 def test_missing_omniasr_is_not_misreported_as_a_fetch_models_problem(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

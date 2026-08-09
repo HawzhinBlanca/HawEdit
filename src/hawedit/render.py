@@ -388,7 +388,7 @@ def render_clip(
 
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
-        raise RenderError("no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT_FFMPEG")
+        raise RenderError("no ffmpeg available — run hawedit-ffmpeg-setup or set HAWEDIT_FFMPEG")
 
     version = subprocess.run(
         [str(binary), "-hide_banner", "-version"], capture_output=True, text=True, check=False

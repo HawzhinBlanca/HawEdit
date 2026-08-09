@@ -60,6 +60,7 @@ def _release_source(root: Path) -> Path:
     (project / "assets" / "fonts").mkdir(parents=True)
     (project / "models").mkdir()
     (project / "requirements").mkdir()
+    (project / "scripts").mkdir()
     (project / "src" / "hawedit" / "__init__.py").write_text("", encoding="utf-8")
     (project / "src" / "hawedit" / "release.py").write_text(
         '"""release fixture"""\n', encoding="utf-8"
@@ -88,6 +89,9 @@ def _release_source(root: Path) -> Path:
         (project / "requirements" / target).write_text("# fixture lock\n", encoding="utf-8")
     (project / "security").mkdir()
     (project / "security" / "wsl-asr-vex.json").write_text("{}\n", encoding="utf-8")
+    (project / "scripts" / "fetch-ffmpeg.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
     (project / ".gitignore").write_text("/build/\n/dist/\n*.egg-info/\n", encoding="utf-8")
     (project / "pyproject.toml").write_text(
         """[build-system]
@@ -127,6 +131,7 @@ where = ["src"]
     "requirements/host-gpu-windows-py311.txt",
 ]
 "share/hawedit/security" = ["security/wsl-asr-vex.json"]
+"share/hawedit/scripts" = ["scripts/fetch-ffmpeg.sh"]
 """,
         encoding="utf-8",
     )
@@ -344,6 +349,9 @@ def test_release_builds_twice_and_publishes_verified_provenance(
             )
         assert any(
             name.endswith("share/hawedit/security/wsl-asr-vex.json") for name in wheel.namelist()
+        )
+        assert any(
+            name.endswith("share/hawedit/scripts/fetch-ffmpeg.sh") for name in wheel.namelist()
         )
 
     with pytest.raises(ReleaseError, match="refusing to overwrite"):
