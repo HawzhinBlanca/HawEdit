@@ -29,9 +29,11 @@ zero-speaker result would read as "one speaker throughout", which is a claim abo
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import wave
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -147,6 +149,79 @@ def probe_duration_ms(source: Path, ffmpeg: Path | None = None) -> int:
     return round(float(probe_stream(source, "format=duration", ffmpeg)) * 1000)
 
 
+def _source_digest(source: Path) -> str:
+    """SHA-256 of the whole source file.
+
+    A content digest rather than size-and-mtime, because it needed no guessing and cost
+    nothing worth saving: measured on `ZAR38MinTest.mp4` (82,446,418 bytes) it takes **0.1 s**
+    against the **100.2 s** of re-extraction it lets us skip. It also catches a source replaced
+    by a different file of the same length, which a timestamp does not.
+    """
+    digest = hashlib.sha256()
+    with source.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
+    """Run `command` unless `dest` is already the output of exactly this command on this source.
+
+    §1: "Every stage emits and consumes JSON — stages are independently testable, replaceable,
+    **re-runnable**." Measured on the real 38-minute file, Stage 0 took 151.4 s and a second run
+    into the same work directory spent 100.2 s of it re-extracting audio and proxy that were
+    already on disk: `extract_audio` 69.9 s then 69.5 s, `extract_proxy` 30.3 s then 30.3 s,
+    both files rewritten byte-for-byte. Two thirds of the stage, redone.
+
+    Reuse is verified rather than assumed, in the shape D-121 uses for the ffmpeg archive and
+    invariant #1 uses for `transcript.raw.json`:
+
+    * the recorded source digest must match the source **now**, so editing or replacing the
+      input re-extracts;
+    * the recorded command must match, so changing the sample rate, the filter or the CRF
+      re-extracts rather than silently keeping output from the old settings;
+    * the recorded output size must match the file on disk, so a run killed mid-write is not
+      trusted.
+
+    The sidecar is written **after** the output, so a truncated output has no matching record
+    and cannot be reused. Every failure mode falls through to extracting again — the expensive
+    answer, never the wrong one. D-132.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = dest.with_suffix(dest.suffix + ".provenance.json")
+    digest = _source_digest(source)
+    recorded = {
+        "source": str(source),
+        "source_sha256": digest,
+        "command": [part for part in command if part != str(dest)],
+    }
+    if dest.exists() and sidecar.exists():
+        try:
+            previous = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous = None
+        if isinstance(previous, dict):
+            same_input = previous.get("source_sha256") == digest
+            same_command = previous.get("command") == recorded["command"]
+            intact = previous.get("output_bytes") == dest.stat().st_size
+            if same_input and same_command and intact:
+                return dest
+    sidecar.unlink(missing_ok=True)  # a run that dies now must leave no record to reuse
+    _run(list(command))
+    # ffmpeg can exit 0 and write nothing, the shape `--fail` exists for in D-121. Named here
+    # because the alternative is the bare FileNotFoundError the sidecar's own stat() raised.
+    if not dest.exists() or dest.stat().st_size == 0:
+        raise IngestError(
+            f"{command[0]} reported success and produced no {dest.name}. A pass that writes "
+            f"nothing has to say so here, not leave the next stage opening an absent file."
+        )
+    sidecar.write_text(
+        json.dumps({**recorded, "output_bytes": dest.stat().st_size}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return dest
+
+
 def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
     """§3 Stage 0's audio pass: 16 kHz mono PCM, loudness-normalised.
 
@@ -154,8 +229,9 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
     inside one ffmpeg on a Zen 2 chip with modest single-thread speed.
     """
     binary = _ffmpeg(ffmpeg)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _run(
+    _extract_once(
+        source,
+        dest,
         [
             str(binary),
             "-hide_banner",
@@ -176,8 +252,10 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "pcm_s16le",
             "-y",
             str(dest),
-        ]
+        ],
     )
+    # Checked on every call, reused or not: the format Stage 1 and the VAD both assume is a
+    # property of the file that arrives, not of the run that happened to write it.
     _assert_audio_format(dest)
     return dest
 
@@ -200,8 +278,9 @@ def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
     detection** — see `detect_shots`.
     """
     binary = _ffmpeg(ffmpeg)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _run(
+    _extract_once(
+        source,
+        dest,
         [
             str(binary),
             "-hide_banner",
@@ -220,7 +299,7 @@ def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-an",
             "-y",
             str(dest),
-        ]
+        ],
     )
     return dest
 

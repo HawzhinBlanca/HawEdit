@@ -20,6 +20,7 @@ measured, so it is measured.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import wave
 from pathlib import Path
@@ -96,11 +97,17 @@ def test_the_vad_ceiling_leaves_a_margin_under_the_asr_limit() -> None:
 
 
 def _spy_commands(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
-    """Capture ffmpeg argv without running it."""
+    """Capture ffmpeg argv without running it — but still leave the output file behind.
+
+    A real ffmpeg writes its destination, and `_extract_once` now refuses an extraction that
+    produced nothing (D-132). A fake that writes nothing is not standing in for ffmpeg, it is
+    standing in for the failure that refusal exists to name.
+    """
     seen: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
         seen.append(command)
+        Path(command[-1]).write_bytes(b"\x00" * 64)
         return subprocess.CompletedProcess(command, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.ingest._run", fake_run)
@@ -377,3 +384,240 @@ def test_opencv_is_a_declared_dependency_not_an_accident() -> None:
     assert any("opencv" in dep for dep in media), (
         f"scenedetect's backend is not declared; a clean install cannot detect shots: {media}"
     )
+
+
+# --- §1: Stage 0 is re-runnable (D-132) ---------------------------------------------------
+
+
+def _provenance(dest: Path) -> Path:
+    return dest.with_suffix(dest.suffix + ".provenance.json")
+
+
+@needs_ffmpeg
+def test_a_second_extraction_of_the_same_source_reuses_the_file_it_already_wrote(
+    tmp_path: Path,
+) -> None:
+    """§1 calls the stages re-runnable. Measured on `ZAR38MinTest.mp4`, Stage 0 took 151.4 s
+    and a second run into the same work directory spent **100.2 s of it** re-extracting audio
+    and proxy already on disk — two thirds of the stage, redone.
+
+    Asserted on the artifact: the file must be the same bytes AND the same inode-level mtime,
+    because "identical output" is what a wasteful re-extraction also produces.
+    """
+    dest = tmp_path / "audio.wav"
+    first = extract_audio(FIXTURE, dest).read_bytes()
+    stamp = dest.stat().st_mtime_ns
+
+    reused = extract_audio(FIXTURE, dest)
+
+    assert reused.read_bytes() == first
+    assert dest.stat().st_mtime_ns == stamp, "the file was rewritten, so nothing was reused"
+
+
+@needs_ffmpeg
+def test_a_changed_source_is_extracted_again_rather_than_served_from_the_old_output(
+    tmp_path: Path,
+) -> None:
+    """The control. "Reuse whenever the destination exists" passes the test above and ships
+    one video's audio for another's — the wrong output, which is worse than the slow one.
+
+    **The source path is held constant and only the content changes**, which is the only way
+    to bind the digest: `-i <source>` is part of the recorded command, so handing over a
+    *differently named* file is caught by the command comparison and says nothing about
+    whether the content was ever hashed. The first version of this test made that mistake and
+    the mutation audit found it — the digest check survived being replaced by `True`.
+
+    Same path, different bytes is also the case that actually happens: a re-export, a fixed
+    audio track, a file swapped in place under a work directory that was not cleaned.
+    """
+    source = tmp_path / "source.mp4"
+    source.write_bytes(FIXTURE.read_bytes())
+    dest = tmp_path / "audio.wav"
+    from_fixture = extract_audio(source, dest).read_bytes()
+    recorded_first = json.loads(_provenance(dest).read_text(encoding="utf-8"))["source_sha256"]
+
+    subprocess.run(  # a different recording, written over the same path
+        [
+            str(find_ffmpeg()),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=320x240:d=4",
+            "-shortest",
+            "-y",
+            str(source),
+        ],
+        check=True,
+    )
+    from_replacement = extract_audio(source, dest).read_bytes()
+
+    assert from_replacement != from_fixture, (
+        "the replaced source's audio is byte-identical to the original's, so output extracted "
+        "from a file that no longer exists was served for the one that does"
+    )
+    recorded_second = json.loads(_provenance(dest).read_text(encoding="utf-8"))["source_sha256"]
+    assert recorded_second != recorded_first, "the digest did not follow the content"
+
+
+@needs_ffmpeg
+def test_changing_the_extraction_settings_re_extracts_instead_of_keeping_the_old_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache keyed on the input alone answers a *different question* with the old answer.
+
+    §6's `-ar 16000` is the setting Stage 1 depends on, so it is the one moved here: extract
+    at 8 kHz first, then at the real rate, and require the header on disk to follow.
+    """
+    dest = tmp_path / "audio.wav"
+    monkeypatch.setattr("hawedit.ingest.TARGET_SAMPLE_RATE", 8_000)
+    monkeypatch.setattr("hawedit.ingest._assert_audio_format", lambda _p: None)
+    extract_audio(FIXTURE, dest)
+    with wave.open(str(dest), "rb") as handle:
+        assert handle.getframerate() == 8_000
+
+    monkeypatch.undo()
+    extract_audio(FIXTURE, dest)
+
+    with wave.open(str(dest), "rb") as handle:
+        assert handle.getframerate() == TARGET_SAMPLE_RATE, (
+            "the sample rate changed and the 8 kHz output was reused; Stage 1 would decode "
+            "audio the VAD's frame maths cannot describe"
+        )
+
+
+@needs_ffmpeg
+def test_an_output_truncated_by_a_killed_run_is_not_reused(tmp_path: Path) -> None:
+    """A run interrupted mid-write leaves a plausible-looking file. §1's re-runnability is
+    worth nothing if resuming trusts it — the recorded size is what catches it.
+    """
+    dest = tmp_path / "audio.wav"
+    whole = extract_audio(FIXTURE, dest).read_bytes()
+    dest.write_bytes(whole[: len(whole) // 3])
+
+    assert extract_audio(FIXTURE, dest).read_bytes() == whole, (
+        "a third of a wav file was accepted as the extracted audio"
+    )
+
+
+@needs_ffmpeg
+def test_an_output_with_no_provenance_beside_it_is_extracted_again(tmp_path: Path) -> None:
+    """Every work directory written before D-132 is in exactly this state, as is one whose
+    sidecar was cleaned up. Absent evidence is not evidence of a match.
+    """
+    dest = tmp_path / "audio.wav"
+    extract_audio(FIXTURE, dest)
+    _provenance(dest).unlink()
+    stamp = dest.stat().st_mtime_ns
+
+    extract_audio(FIXTURE, dest)
+
+    assert dest.stat().st_mtime_ns != stamp, "an unexplained file was taken on trust"
+
+
+@needs_ffmpeg
+def test_unreadable_provenance_falls_back_to_extracting(tmp_path: Path) -> None:
+    """The failure mode of every sidecar: half-written JSON. Falling back costs 70 s; trusting
+    a `.get()` on a partially parsed dict costs correctness.
+    """
+    dest = tmp_path / "audio.wav"
+    extract_audio(FIXTURE, dest)
+    _provenance(dest).write_text('{"source_sha256": "ab', encoding="utf-8")
+    stamp = dest.stat().st_mtime_ns
+
+    extract_audio(FIXTURE, dest)
+
+    assert dest.stat().st_mtime_ns != stamp
+    assert json.loads(_provenance(dest).read_text(encoding="utf-8"))["output_bytes"] > 0
+
+
+@needs_ffmpeg
+def test_reused_audio_is_still_checked_against_the_format_stage_1_assumes(
+    tmp_path: Path,
+) -> None:
+    """`_assert_audio_format` runs on every call, reused or not: the format is a property of
+    the file that arrives at Stage 1, not of the run that happened to write it. Without this
+    the guard is skipped exactly when the file has been sitting on disk long enough to change.
+    """
+    dest = tmp_path / "audio.wav"
+    extract_audio(FIXTURE, dest)
+    with wave.open(str(dest), "wb") as handle:  # same path, wrong format, provenance intact
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(44_100)
+        handle.writeframes(b"\x00\x00" * 4_000)
+    size = dest.stat().st_size
+    recorded = json.loads(_provenance(dest).read_text(encoding="utf-8"))
+    recorded["output_bytes"] = size
+    _provenance(dest).write_text(json.dumps(recorded), encoding="utf-8")
+
+    with pytest.raises(IngestError, match="16000 Hz mono"):
+        extract_audio(FIXTURE, dest)
+
+
+def test_an_extraction_that_produced_no_file_is_named_not_reported_as_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ffmpeg exiting 0 without writing is the shape `curl --fail` exists for (D-121). It used
+    to surface as a bare FileNotFoundError from the sidecar's own stat(), pointing at
+    provenance bookkeeping instead of at the pass that wrote nothing.
+    """
+    monkeypatch.setattr(
+        "hawedit.ingest._run",
+        lambda command: subprocess.CompletedProcess(command, 0, b"", b""),
+    )
+    with pytest.raises(IngestError, match="produced no audio.wav"):
+        extract_audio(FIXTURE, tmp_path / "audio.wav", ffmpeg=Path("/bin/ffmpeg"))
+    assert not _provenance(tmp_path / "audio.wav").exists(), (
+        "a failed extraction left a provenance record a later run could match"
+    )
+
+
+@needs_ffmpeg
+def test_a_crashed_run_leaves_no_record_an_earlier_settings_run_could_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one case the size check alone cannot see: two settings alternating, one crashing.
+
+    Extract at 16 kHz, then let an 8 kHz run die after leaving *exactly* the recorded byte
+    count behind. The 16 kHz record still names the right command, the right source and the
+    right size — and the file under it is now another run's wreckage. Removing the record
+    before running is what stops the next 16 kHz call reusing it.
+    """
+    dest = tmp_path / "audio.wav"
+    real = extract_audio(FIXTURE, dest).read_bytes()
+
+    def dies_after_writing(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1]).write_bytes(b"\x7f" * len(real))  # same size, wrong content
+        raise IngestError("killed mid-encode")
+
+    monkeypatch.setattr("hawedit.ingest.TARGET_SAMPLE_RATE", 8_000)
+    monkeypatch.setattr("hawedit.ingest._run", dies_after_writing)
+    monkeypatch.setattr("hawedit.ingest._assert_audio_format", lambda _p: None)
+    with pytest.raises(IngestError, match="killed mid-encode"):
+        extract_audio(FIXTURE, dest)
+    assert dest.stat().st_size == len(real), "the collision this test exists for did not happen"
+    monkeypatch.undo()
+
+    assert extract_audio(FIXTURE, dest).read_bytes() == real, (
+        "the crashed run's bytes were served under the earlier run's provenance"
+    )
+
+
+@needs_ffmpeg
+def test_the_proxy_is_reused_on_the_same_terms_as_the_audio(tmp_path: Path) -> None:
+    """One guard in `_extract_once`, not one per extractor — so the proxy's 30.3 s is covered
+    by the same mechanism and cannot drift away from it.
+    """
+    dest = tmp_path / "proxy.mp4"
+    first = extract_proxy(FIXTURE, dest).read_bytes()
+    stamp = dest.stat().st_mtime_ns
+
+    assert extract_proxy(FIXTURE, dest).read_bytes() == first
+    assert dest.stat().st_mtime_ns == stamp, "the proxy was re-encoded"

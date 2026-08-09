@@ -5941,3 +5941,71 @@ perfect zero CAUGHT, coverage omitted CAUGHT, two tolerances averaged CAUGHT, an
 within-tolerance rate ignoring the timings CAUGHT — the last by the control, which shifts the
 hypothesis past the 50 ms bar and requires the rate to move from 1.0 to 0.0.
 `evidence/section-8-1s-last-metric-never-reached-the-report.md`.
+
+## D-132
+
+**Stage 0 was not re-runnable, and §1 says it is.** BLUEPRINT §1: *"Every stage emits and consumes
+JSON | Stages are independently testable, replaceable, **re-runnable**"*, and the 10/10 definition
+asks for atomic/resumable delivery. Measured on `ZAR38MinTest.mp4` before changing anything:
+
+```
+Stage 0, first run                    second run, same work directory
+  extract_audio      69.9 s             extract_audio (again)  69.5 s   rewritten: True
+  extract_proxy      30.3 s             extract_proxy (again)  30.3 s   rewritten: True
+  detect_speech      18.2 s
+  probe_duration_ms   0.1 s
+  detect_shots       32.9 s
+  TOTAL             151.4 s           -> 100.2 s of 151.4 s redone (66%)
+```
+
+Both files were rewritten byte-for-byte. Two thirds of the stage, spent re-deriving what was
+already on disk — and every iteration of this loop that touched the real file paid it.
+
+**Decision: a content digest as the cache key, not size-and-mtime.** SHA-256 of the 82,446,418-byte
+source takes **0.1 s** against the 100.2 s it avoids, so the cheap key bought nothing worth having;
+and it needs no threshold guessed, which size-and-mtime does the moment two runs land in the same
+second. It also catches a source replaced by a different file of the same length, which is the case
+`test_a_changed_source_is_extracted_again…` now pins.
+
+**Reuse is verified, never assumed** — the shape D-121 uses for the ffmpeg archive and invariant #1
+uses for `transcript.raw.json`. A `.provenance.json` sidecar beside each artifact records the source
+digest, the command with the destination removed, and the output size; all three must match or the
+extraction runs again. Every failure mode falls through to extracting: the expensive answer, never
+the wrong one.
+
+**The sidecar is written after the output and removed before a run.** Written after, so a truncated
+output has no matching record. Removed before, so a run that dies leaves no record at all — which
+matters in one case the size check alone cannot see: two settings alternating, one crashing, leaving
+*exactly* the recorded byte count under a record that still names the right command and source.
+Contrived deliberately in `test_a_crashed_run_leaves_no_record…`, because a guard this project keeps
+has to be one a test can distinguish.
+
+**An extraction that wrote nothing is now named.** Found by the existing command-capturing tests:
+their fake `_run` recorded argv without producing a file, and the sidecar's own `stat()` raised a
+bare `FileNotFoundError` pointing at provenance bookkeeping instead of at the pass that wrote
+nothing. ffmpeg exiting 0 without writing is the shape `curl --fail` exists for (D-121), so it is an
+`IngestError` naming the destination. Their fake now writes its output too — a fake that writes
+nothing is not standing in for ffmpeg, it is standing in for this failure.
+
+**`_assert_audio_format` runs on every call, reused or not.** The format Stage 1 and the VAD assume
+is a property of the file that arrives, not of the run that happened to write it — otherwise the
+guard is skipped exactly when the file has sat on disk long enough to change.
+
+**One guard in `_extract_once`, not one per extractor,** so the proxy's 30.3 s is covered by the same
+mechanism and cannot drift from the audio's.
+
+**Rejected: reusing `detect_speech`, `detect_shots` and `probe_duration_ms` too.** They are 51.2 s of
+the 151.4, and their outputs are already JSON the runner writes — caching them means a second
+provenance mechanism over data the pipeline report already carries. Not worth a second mechanism
+until someone measures a resume that hurts.
+
+**Rejected: a `--force` flag.** Deleting the sidecar re-extracts, and there is no operation the flag
+would enable that `rm` does not.
+
+**Mutation audit 8/8.** After the first pass reported **7/8** with the digest comparison SURVIVING:
+`test_a_changed_source_…` handed over a *differently named* file, and `-i <source>` is part of the
+recorded command, so `same_command` answered first and the digest was never consulted — the eighth
+consecutive instance of a test that cannot distinguish the rule it names (D-124, D-125, D-126,
+D-128, D-129, D-130, D-131). Rewritten to hold the path constant and change only the content, which
+is both what binds the digest and what actually happens in practice.
+`evidence/two-thirds-of-stage-0-redone-on-every-run.md`.
