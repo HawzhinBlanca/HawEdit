@@ -430,6 +430,25 @@ def test_release_identity_accepts_pep503_name_spelling_only(tmp_path: Path) -> N
     assert _assert_release_identity(project, wheel) == ("hawedit-release-fixture", "1.2.3")
 
 
+def test_release_main_reserves_stdout_for_its_json_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class FakeArtifact:
+        def to_dict(self) -> dict[str, str]:
+            return {"distribution": "hawedit", "version": "1.2.3"}
+
+    def noisy_build(*_args: object, **_kwargs: object) -> FakeArtifact:
+        print("dependency noise")
+        return FakeArtifact()
+
+    monkeypatch.setattr(release_module, "build_reproducible_wheel", noisy_build)
+
+    assert release_module.main(["--project-root", str(tmp_path), "--gate-run-id", "1"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"distribution": "hawedit", "version": "1.2.3"}
+    assert captured.err == "dependency noise\n"
+
+
 def test_release_refuses_to_build_without_an_explicit_gate_run(tmp_path: Path) -> None:
     project = _release_source(tmp_path)
     destination = tmp_path / "uncreated" / "untested-release"

@@ -1253,7 +1253,7 @@ for distribution in importlib.metadata.distributions():
     if name in packages:
         raise SystemExit(f"duplicate installed distribution identity: {name}")
     packages[name] = distribution.version
-print(json.dumps({
+payload = {
     "uid": os.getuid(),
     "home": str(Path.home().resolve()),
     "python": sys.executable,
@@ -1267,22 +1267,25 @@ print(json.dumps({
             Path(os.environ["HAWEDIT_WSL_RUNTIME_LOCK"]).read_bytes()
         ).hexdigest(),
     },
-}, sort_keys=True))
+}
+print(json.dumps(payload, sort_keys=True), file=sys.stdout)
 """.strip()
 
 
 _PROBE_SCRIPT: Final = r"""
 import json
+import sys
 import torch
 from hawedit.omni_assets import assert_omni_asset_integrity, assert_omni_card_integrity
 
 assert_omni_card_integrity()
 reports = assert_omni_asset_integrity()
-print(json.dumps({
+payload = {
     "files_verified": len(reports),
     "size_bytes": sum(report.size for report in reports),
     "cuda_device_count": torch.cuda.device_count(),
-}, sort_keys=True))
+}
+print(json.dumps(payload, sort_keys=True), file=sys.stdout)
 """.strip()
 
 

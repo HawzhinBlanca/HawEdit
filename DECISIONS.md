@@ -5153,3 +5153,26 @@ human report redirected too CAUGHT (the control — the readable mode is what an
 holding stdout swallowing the exit code CAUGHT (the second control), and `editorial_bench` printing to
 the shared stream CAUGHT.
 `evidence/the-report-shared-stdout-with-a-library.md`.
+
+## D-157 - Reproducible bytes must still identify HawEdit
+
+The release command proved that two builds emitted the same bytes, but it never proved which
+distribution those bytes claimed to be. A real HawEdit wheel reconstructed with METADATA
+`Name: hawedit-impostor`, `Version: 9.9.9` and a matching wrong filename still passed
+`_validate_hawedit_wheel`. It could therefore receive HawEdit gate provenance and a GitHub OIDC
+attestation even though the attested artifact identity was not the project identity authorized by
+the gated source.
+
+**Decision:** publication requires one identity across three independent representations. The
+archived `pyproject.toml` supplies the authorized project name/version, the wheel must contain
+exactly one METADATA record, and the PEP 427 filename must encode the same normalized distribution
+name and exact version. The check runs on the immutable first source export before any release
+directory is created. Schema-5 provenance records the measured distribution and version.
+
+The privileged attestation job does not trust that repository-code check. On its fresh no-checkout
+runner it opens the transported wheel with the standard library, requires exactly one METADATA,
+requires normalized distribution `hawedit`, checks filename/METADATA identity, and requires the
+same fields in schema-5 provenance before granting OIDC attestation authority. Tests mutate source,
+METADATA and filename name/version independently and pin the workflow-side verifier. This closes
+artifact-identity substitution; it does not invent the still-missing version/tag policy or durable
+GitHub Release. `evidence/release-identity-binding.md`.

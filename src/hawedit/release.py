@@ -33,7 +33,7 @@ from typing import Final, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from hawedit.cli import use_utf8_streams
+from hawedit.cli import machine_readable_stdout, use_utf8_streams
 
 __all__ = ["ReleaseArtifact", "ReleaseError", "build_reproducible_wheel", "main"]
 
@@ -1080,13 +1080,14 @@ def main(argv: list[str] | None = None) -> int:
         help="GitHub Actions run id for this exact main-branch revision",
     )
     args = parser.parse_args(argv)
-    try:
-        artifact = build_reproducible_wheel(
-            args.project_root, args.output_dir, gate_run_id=args.gate_run_id
-        )
-    except ReleaseError as exc:
-        parser.exit(1, f"REFUSED: {exc}\n")
-    print(json.dumps(artifact.to_dict(), indent=2, sort_keys=True))
+    with machine_readable_stdout() as report_stream:
+        try:
+            artifact = build_reproducible_wheel(
+                args.project_root, args.output_dir, gate_run_id=args.gate_run_id
+            )
+        except ReleaseError as exc:
+            parser.exit(1, f"REFUSED: {exc}\n")
+        print(json.dumps(artifact.to_dict(), indent=2, sort_keys=True), file=report_stream)
     return 0
 
 

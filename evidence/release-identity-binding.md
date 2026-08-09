@@ -36,7 +36,7 @@ same explicit four-file set.
 - `tests/test_release_workflow.py` pins the no-checkout METADATA reader, `hawedit` name policy,
   filename equality and schema-5 distribution/version bindings.
 - Focused release/workflow result before the canonical gate: **49 passed**, Ruff and mypy clean.
-- Canonical gate after the change: **1,818/1,818 passed**, zero skipped; Ruff, formatting, mypy over
+- Canonical gate after the change and upstream reconciliation: **1,823/1,823 passed**, zero skipped; Ruff, formatting, mypy over
   125 files and fresh JUnit evidence passed. Checksum-verified actionlint 1.7.12 reported zero
   findings for the edited release workflow.
 
