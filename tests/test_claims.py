@@ -522,3 +522,33 @@ def test_every_data_file_the_wheel_ships_is_tracked_by_git() -> None:
         f"the wheel ships {untracked}, which git does not track — so it exists on this machine "
         "and on no other. Add a `!` exception in .gitignore and commit the file."
     )
+
+
+def test_the_ledger_states_no_test_count_it_cannot_keep_true() -> None:
+    """A per-file test count in a ledger row is a standing claim about the present, and it rots.
+
+    Measured 2026-08-09 across all 30 such counts in `PROGRESS.md`: **21 were false**, drifting
+    from -1 to +41 (`tests/test_pipeline.py` claimed 18 against 59). One was stale *downward* —
+    M6.3 claimed 20 where the file has had 19 since the commit that wrote the claim, so it was
+    miscounted on the day. And the worst pair was written by this loop one iteration earlier:
+    "29 tests, plus 17 in test_gate_evidence.py" against an actual 25 and 14.
+
+    D-083 and D-084 already chose the treatment — "the stale count is dropped rather than
+    restated" — so this generalises a decision rather than inventing one. The alternative,
+    enforcing each count against `--collect-only`, makes every new test require a ledger edit in
+    the same commit and turns the row into a generated artifact; the number is also the one part
+    of the row a reader cannot act on. The file reference stays, so "this is tested" is still
+    visible, and the ratchet in `scripts/test-count.floor` remains the instrument that notices
+    tests disappearing.
+
+    The cheapest way to satisfy this test is to not write a rotting number, which is the point.
+    Dated measurements in correction prose are untouched: a count with a date is a measurement
+    at an instant, which is exactly what `test_every_test_count_in_the_audit_is_dated` requires.
+    D-096.
+    """
+    progress = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
+    standing = re.findall(r"`((?:src|tests)/[\w/]+\.py)`\s*\((\d+) tests", progress)
+    assert not standing, (
+        "these ledger rows state a test count that has to be maintained by hand and was wrong "
+        f"21 times out of 30 when last measured: {standing}. Name the file, not the count."
+    )

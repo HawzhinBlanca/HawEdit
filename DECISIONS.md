@@ -3921,3 +3921,52 @@ the over-lax direction, which would leave room for a test to vanish between two 
 (4). Unlike D-087/088/090/091 the new control is not the only witness: the existing ratchet tests
 already covered downward drift. What they could not see was *which of two equal numbers* was written.
 `evidence/floor-ratchet-unprotected.md`.
+
+## D-096
+
+**The ledger carried 30 standing test counts and 21 of them were false.** Found by adversarial pass
+#5, whose behavioural half found nothing: eight reverted claims across M0.7, M0.8, M1.5 and M2.5 all
+went red, 8/8. The docs were where the rot was.
+
+```
+M2.7 test_pipeline      18 -> 59      M2.6 test_judge        40 -> 47
+M5.2 test_video_input   16 -> 35      M5.2 test_qwen_visual  16 -> 20
+M0.4 test_transcripts   17 -> 34      M1.3 test_ingest       20 -> 23
+M1.6 test_models        21 -> 34      M5.3 test_path_b       26 -> 28
+M2.4 test_render        21 -> 31      M5.4 test_video_reader 22 -> 23
+M5.1 test_visual_index  51 -> 61      M3.6 test_delivery     25 -> 26
+M0.7 test_asr           14 -> 22      M6.3 test_video_grounding 20 -> 19
+M3.1 test_captions      33 -> 41      M2.2 boundary/clip     31/20 -> 38/27
+M0.1 gate + evidence 29/17 -> 25/14   M2.8 credentials/gemini 20/26 -> 21/33
+```
+
+**M6.3 drifted downward**, which is the direction that means a test disappeared. It did not: the file
+has had 19 since `674b43b`, the commit that wrote "20", so it was miscounted on the day. Checked
+before recording, because a deleted test would have been a far larger finding.
+
+**M0.1's pair is mine**, written one iteration earlier — "29 tests, plus 17 in test_gate_evidence.py"
+against an actual 25 and 14. A hand-maintained count was false within a day, written by the same loop
+now auditing it. That is the argument, in one line.
+
+**Decision: drop all 30; keep the file references.** This generalises a decision already recorded
+twice — D-083 and D-084 each say "the stale count is dropped rather than restated" — rather than
+inventing one, and `tests/test_claims.py` now refuses their return.
+
+**Rejected: enforcing each count against `--collect-only`.** It would make the numbers true, and make
+every new test require a ledger edit in the same commit — turning a hand-written row into a generated
+artifact, and going red on the other agent's commits as readily as on mine. The count is also the one
+part of a row a reader cannot act on, and `scripts/test-count.floor` is already the instrument that
+notices tests disappearing. A per-file ratchet would be a different and larger design decision, not a
+side effect of tidying prose.
+
+**Kept: the four quoted historical counts** in the "the stale `(15 tests)` count is dropped rather
+than restated" sentences. Those record a past edit rather than asserting a present fact — the same
+distinction `test_every_test_count_in_the_audit_is_dated` (D-069) already draws between a dated
+measurement and a standing claim.
+
+**Mutation audit 3/3 on the new check**, mutating the *document*: a standing count reintroduced on a
+`tests/` reference CAUGHT, on a `src/` reference CAUGHT, and — the one that matters — an **accurate**
+standing count reintroduced CAUGHT, because correctness today is not the property at issue. The
+control confirms the quoted historical form is still legal, so the check does not simply ban the
+digits. The cheapest way to satisfy it is to not write a rotting number.
+`evidence/adversarial-pass-5-2026-08-09.md`.
