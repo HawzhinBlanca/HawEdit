@@ -351,3 +351,58 @@ def test_the_original_headline_defect_is_still_refused() -> None:
     """`9999s` with no in-window time at all — the case M5.3's row was written about."""
     with pytest.raises(ValueError, match="all outside the scene"):
         assert_sv6d_within_window(_sv6d_all("speaker gestures at 9999s"), 300_000, 312_000)
+
+
+# --- D-101: the artifact could mislabel which path found the clip ---------------------------
+
+
+@pytest.mark.parametrize("path", list(DiscoveryPath))
+def test_the_emitted_clip_names_the_path_that_actually_found_it(path: DiscoveryPath) -> None:
+    """Measured by adversarial pass #6: hardcoding `DiscoveryPath.VERBAL.value` in
+    `Clip.to_dict` left `tests/test_clip.py`, `test_pipeline.py`, `test_path_a.py`,
+    `test_delivery.py` and `test_boundary.py` entirely green.
+
+    The reason is the shared fixture: `a_clip()` builds a **verbal** clip, so the shape test and
+    the round-trip test both compared "verbal" against "verbal" and could not see the field stop
+    reading the object. Correct tests, blind because the fixture happened to satisfy the rule —
+    the shape of D-086 and D-088.
+
+    It matters beyond the label. §8.2's `recall_at_k_by_path` and `path_unique_wins` partition on
+    `discovery_path in (path, DiscoveryPath.BOTH)`, and `Clip.from_dict` rebuilds the enum from
+    this field, so a run resumed from a mislabelled artifact carries the wrong attribution into
+    the numbers M2.5's row says still mean something. Parametrized over every member, because a
+    single fixture is how this got here. D-101.
+    """
+    emitted = json.loads(json.dumps(a_clip(discovery_path=path).to_dict()))
+    assert emitted["discovery_path"] == path.value
+    assert Clip.from_dict(emitted).discovery_path is path
+
+
+@pytest.mark.parametrize("path", list(DiscoveryPath))
+def test_a_rejected_candidate_names_its_own_path_too(path: DiscoveryPath) -> None:
+    """The sibling site. `RejectedCandidate.to_dict` emits the same field, and §8.2's
+    unique-wins figures are exactly about which path found what — a rejection filed under the
+    wrong path is a win credited to the wrong producer.
+    """
+    rejected = RejectedCandidate(
+        media_id="m-1",
+        in_ms=1_000,
+        out_ms=5_000,
+        discovery_path=path,
+        reject_reason="below the editorial floor",
+    )
+    emitted = json.loads(json.dumps(rejected.to_dict()))
+    assert emitted["discovery_path"] == path.value
+
+
+def test_every_discovery_path_member_is_distinguishable_in_the_artifact() -> None:
+    """The control. Both tests above pass if `to_dict` emits a constant *per call site* that
+    happens to match — what they cannot see alone is two members rendering identically.
+
+    Three members must produce three distinct strings, or the artifact cannot express the
+    distinction §8.2 partitions on however faithfully it copies the field.
+    """
+    rendered = {a_clip(discovery_path=p).to_dict()["discovery_path"] for p in DiscoveryPath}
+    assert len(rendered) == len(list(DiscoveryPath)) == 3, (
+        f"{len(list(DiscoveryPath))} paths collapsed to {sorted(rendered)} in the artifact"
+    )

@@ -4203,3 +4203,42 @@ mutation exists because that control was otherwise unexercised by the set**, whi
 assertion nothing had ever put pressure on — the same reasoning that made D-098's `>= 7` floor worth
 having.
 `evidence/readiness-report-could-print-the-opposite.md`.
+
+## D-101
+
+**The shipped `editing.json` could mislabel which path found the clip.** Adversarial pass #6 mutated
+`Clip.to_dict` to hardcode `DiscoveryPath.VERBAL.value` and `tests/test_clip.py`,
+`test_pipeline.py`, `test_path_a.py`, `test_delivery.py` and `test_boundary.py` all stayed green.
+
+The reason is the shared fixture: `a_clip()` builds a **verbal** clip, so the shape test and the
+round-trip test compared "verbal" against "verbal" and could not see the field stop reading the
+object. Correct tests, blind because the fixture happened to satisfy the rule — the shape of D-086
+and D-088, now found in a third place.
+
+It matters past the label. §8.2's `recall_at_k_by_path` and `path_unique_wins` partition on
+`discovery_path in (path, DiscoveryPath.BOTH)`, and `Clip.from_dict` rebuilds the enum from this
+field, so a run resumed from a mislabelled artifact carries the wrong attribution into the numbers
+M2.5's row says still mean something. §5's own words for `RejectedCandidate` are blunter: "that set
+is your only measure of recall".
+
+**Decision: parametrize over every enum member, on both sites.** `Clip.to_dict` and
+`RejectedCandidate.to_dict` each emit this field; both are asserted for all three members, and the
+`Clip` case also asserts the value round-trips back to the same member. A single fixture is how this
+got here, so no new test uses one.
+
+**The control is that three members render as three distinct strings.** Both parametrized tests pass
+if `to_dict` faithfully copies a field whose members collide — the artifact would then be unable to
+express the distinction §8.2 partitions on, however honest the copy. Mutation audit **3/3**:
+hardcoding `verbal` CAUGHT (3), hardcoding `both` CAUGHT (6), and two members rendering identically
+CAUGHT (2) by the control alone.
+
+**Also from pass #6, and left alone deliberately:** nine of ten mutations to the delivery renderers
+went red — SRT times not rebased to the clip, cue start/end swapped, one-based numbering, timecode
+frames/seconds swapped, hours/minutes swapped, EDL source range in clip time, the audio event
+dropped, a drop-frame declaration over non-drop timecode, and an unsanitised title. The one survivor
+was dropping the blank line between SRT cues, and **I could not demonstrate harm**: ffmpeg 8.1.1 read
+3 of 3 cues from both forms and re-emitted the missing blank lines, and it still read 2 of 2 when a
+cue's own text was the numeral "2" — the ambiguity that would make the separator load-bearing. No
+test was added for a property whose consequence I cannot measure with the parser on this machine;
+recorded here so the next reader knows it was examined rather than missed.
+`evidence/adversarial-pass-6-2026-08-09.md`.
