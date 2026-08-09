@@ -83,7 +83,7 @@ These cannot be truthfully solved from the checkout alone:
   upstream's:** the project still publishes none, so it attests which bytes this machine and CI have
   been running rather than which bytes the publisher intended. `README.md` and the CI step called
   this "pinned" while it was not; this bullet was the only accurate one of the three.
-  `evidence/an-archive-fetched-from-a-branch-and-never-checked.md`.
+  `evidence/an-archive-fetched-from-a-branch-and-never-checked.md`. The fetch also retries a transient transfer error (D-123): a run failed with `curl: (92) … PROTOCOL_ERROR` 100 seconds into the same transfer that had completed in 2 seconds one run earlier, and retrying is safe only because the digest is compared before anything is unzipped.
 
 ## Honest release call
 

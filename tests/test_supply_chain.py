@@ -134,3 +134,23 @@ def test_a_missing_file_is_refused_rather_than_reported_verified(tmp_path: Path)
     done = run_verify(tmp_path / "absent.bin", "0" * 64)
     assert done.returncode == 2
     assert "does not exist" in done.stderr
+
+
+def test_the_download_retries_a_transient_transfer_error() -> None:
+    """The gate of record should not turn on one attempt at a 142 MB transfer.
+
+    CI went red with `curl: (92) HTTP/2 stream 1 was not closed cleanly: PROTOCOL_ERROR` after
+    100 seconds, on the same URL that had completed in 2 seconds one run earlier. Exit 92 is a
+    transport error, which plain `--retry` treats as final — it covers timeouts and 5xx only —
+    so `--retry-all-errors` is the flag that matters. Retrying is safe here only because the
+    digest is compared afterwards: a truncated file is refused, not executed (D-123).
+    """
+    curls = [
+        line
+        for line in FETCH.read_text(encoding="utf-8").splitlines()
+        if "curl " in line and not line.strip().startswith("#")
+    ]
+    assert curls, "no curl invocation found in fetch-ffmpeg.sh"
+    for line in curls:
+        assert "--retry " in line, line.strip()
+        assert "--retry-all-errors" in line, line.strip()

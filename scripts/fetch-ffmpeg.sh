@@ -79,7 +79,14 @@ else
   echo "==> downloading ffmpeg (~140 MB) from ${url}"
   # `--fail`: without it an HTTP error page is written to linux.zip and the failure surfaces as
   # a confusing unzip error about a file that was never an archive.
-  curl -sSL --fail -o "${dest}/linux.zip" "$url"
+  #
+  # `--retry-all-errors`, not just `--retry`: CI went red on a 142 MB transfer with
+  # `curl: (92) HTTP/2 stream 1 was not closed cleanly: PROTOCOL_ERROR` after 100 seconds, on the
+  # same URL that had completed in 2 seconds one run earlier. Exit 92 is a transport error, which
+  # plain `--retry` treats as final — it retries timeouts and 5xx only. The gate of record should
+  # not turn on one attempt at 142 MB. Retrying is safe here precisely because the digest is
+  # checked below: a truncated or resumed-wrong file is refused rather than executed. D-123.
+  curl -sSL --fail --retry 3 --retry-delay 2 --retry-all-errors -o "${dest}/linux.zip" "$url"
   # Before unzip, before chmod +x, before anything executes.
   bash "$(dirname "$0")/verify-sha256.sh" "${dest}/linux.zip" "$sha256"
   unzip -oq "${dest}/linux.zip" -d "${dest}/extract"
