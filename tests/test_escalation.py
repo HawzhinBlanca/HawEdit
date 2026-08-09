@@ -20,6 +20,7 @@ from hawedit.escalation import (
     materially_disagree,
     select_for_validation,
 )
+from hawedit.metrics import normalized_cer
 
 CLEAN = "ئەمە زۆر باشە"
 
@@ -156,3 +157,67 @@ def test_a_segment_with_no_ctc_confidence_is_refused() -> None:
             ctc_text=CLEAN,
             duration_s=10.0,
         )
+
+
+# --- what adversarial pass #10 found revertible (D-122) ---------------------------------
+
+# Measured, not chosen: normalized CER divides by the *reference* length, so it is asymmetric,
+# and these two hypotheses straddle the 0.15 threshold in one direction only.
+#   cer(llm, ctc) = 0.1333  -> agreement
+#   cer(ctc, llm) = 0.1538  -> disagreement
+# §3 Stage 1 makes LLM-7B canonical, so the LLM is the reference. Truncated words rather than
+# sentences on purpose: what this fixture is about is the length relationship that makes the
+# asymmetry visible, and 15 against 13 normalized characters is what produces it.
+ASYMMETRIC_LLM = "ڕۆژنامەوانی کور"
+ASYMMETRIC_CTC = "ڕۆژنامەوانی ک"
+
+# cer(llm, ctc) is exactly 0.15 here — 20 normalized characters, three edits.
+AT_THRESHOLD_LLM = "ڕۆژنامەوانی کوردی لە"
+AT_THRESHOLD_CTC = "ڕۆژنامەوانی کوردی "
+
+
+def test_the_canonical_model_is_the_reference_not_the_hypothesis() -> None:
+    """Swapping the two arguments changes which segments escalate, and the gate said nothing.
+
+    CER's denominator is the reference length. §3 Stage 1: LLM-7B is the *canonical* transcript
+    and CTC-3B supplies posteriors, so the LLM is what a hypothesis is measured against. With
+    the arguments swapped this pair escalates; as written it does not.
+    """
+    assert normalized_cer(ASYMMETRIC_LLM, ASYMMETRIC_CTC) < DEFAULT_DISAGREEMENT_CER
+    assert normalized_cer(ASYMMETRIC_CTC, ASYMMETRIC_LLM) >= DEFAULT_DISAGREEMENT_CER
+    assert materially_disagree(ASYMMETRIC_LLM, ASYMMETRIC_CTC) is False
+
+
+def test_a_pair_exactly_on_the_threshold_escalates() -> None:
+    """The comparison is `>=`, and nothing pinned that.
+
+    Every other test here passes `DEFAULT_DISAGREEMENT_CER` or a value far from it, so the
+    boundary followed the operator wherever it went — D-098's shape, where every pause test
+    took the constant and 500 -> 800 left the whole suite green. D-015 records 0.15 as the
+    value; this pins that a segment *at* it is routed to the validator.
+    """
+    assert normalized_cer(AT_THRESHOLD_LLM, AT_THRESHOLD_CTC) == DEFAULT_DISAGREEMENT_CER
+    assert materially_disagree(AT_THRESHOLD_LLM, AT_THRESHOLD_CTC) is True
+
+
+def test_one_model_producing_nothing_is_the_strongest_disagreement() -> None:
+    """The module calls this "the strongest disagreement available" and nothing checked it.
+
+    A CTC pass that returns empty text for a segment the LLM transcribed is the case the
+    validator exists for, and making it read as agreement was silently revertible.
+    """
+    assert materially_disagree(CLEAN, "") is True
+    assert materially_disagree("", CLEAN) is True
+    # The control: both silent is agreement, not an escalation. Returning True unconditionally
+    # for an empty side would satisfy the assertions above and route every silent segment.
+    assert materially_disagree("", "") is False
+    assert materially_disagree("   ", "\t") is False
+
+
+def test_a_silent_ctc_segment_reaches_the_validator_through_the_decision() -> None:
+    """The wiring, not just the predicate: `select_for_validation` must act on it."""
+    scores = [score(f"s{i}", mean_logprob=-0.01) for i in range(8)]
+    scores[0] = score("s0", mean_logprob=-0.01, ctc_text="")
+    decisions = {d.segment_id: d for d in select_for_validation(scores)}
+    assert decisions["s0"].escalate
+    assert "disagree" in decisions["s0"].reason

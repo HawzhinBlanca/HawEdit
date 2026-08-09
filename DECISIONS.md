@@ -5340,3 +5340,74 @@ test asserted `"--fail" in fetch-ffmpeg.sh`, and the script *explains* `--fail` 
 error as the ordering test one function above it, which had already been caught the same way minutes
 earlier. Both read code lines now.
 `evidence/an-archive-fetched-from-a-branch-and-never-checked.md`.
+
+## D-122
+
+**Adversarial pass #10 took M1.5 — §3 Stage 1's escalation rule, DONE and never attacked — and
+eight of eleven mechanisms held. All three survivors were in `materially_disagree`.**
+
+Chosen because it was the shortest DONE cell in the ledger (252 characters) on one of the rule
+§3 states most precisely, and because fifteen DONE rows have never been attacked at all.
+
+What held: the bottom quartile is `len(scores) // 4` and not half; it is the *lowest* log-probs
+and not the highest; either signal escalates rather than both; **both of §3's prohibitions** —
+duration and word count — are refused; disagreement is measured after §4.1 normalization; a
+positive `mean_logprob` is refused at construction; and the disagreement signal is actually
+consulted. The row's claims are accurate: `duration_s` really is read by no code path in that
+module, and D-015 really does record 0.15.
+
+```
+CAUGHT  half the batch escalated instead of the bottom quartile
+CAUGHT  the TOP quartile by confidence escalated
+CAUGHT  escalation needing BOTH signals instead of either
+CAUGHT  duration escalates a segment (§3's prohibition)
+CAUGHT  word count escalates a segment (§3's prohibition)
+CAUGHT  disagreement measured on raw text, not normalized
+MISSED  the CER reference and hypothesis swapped
+MISSED  the threshold becomes exclusive at the boundary
+MISSED  one model producing nothing reads as agreement
+CAUGHT  a positive mean_logprob accepted
+CAUGHT  the disagreement signal never consulted
+
+8/11
+```
+
+**Survivor 1 — the reference and the hypothesis are interchangeable.** Normalized CER divides by
+the *reference* length, so it is asymmetric, and §3 Stage 1 makes LLM-7B the canonical transcript
+with CTC-3B supplying posteriors. Measured on a pair that straddles the threshold in one direction
+only:
+
+```
+llm "ڕۆژنامەوانی کور"  (15 normalized chars)
+ctc "ڕۆژنامەوانی ک"    (13)
+  cer(llm, ctc) = 0.1333  -> agreement      (as written)
+  cer(ctc, llm) = 0.1538  -> disagreement   (arguments swapped)
+```
+
+Two earlier pairs I tried escalated either way — 0.5926/1.4545 and 4.0/0.8 — which is why the
+fixture is a length relationship rather than a sentence: without a straddling pair the test would
+have passed for both orders and measured nothing.
+
+**Survivor 2 — the boundary.** The comparison is `>=` and nothing pinned it. Every other test here
+passes `DEFAULT_DISAGREEMENT_CER` itself or a value far from it, so the operator was free to move —
+D-098's shape exactly, where every pause test took the constant and 500→800 left 1,170 tests green.
+Pinned at a measured pair sitting on it: 20 normalized characters, three edits, **cer == 0.15**.
+
+**Survivor 3 — a silent model reads as agreement.** The module calls one model producing nothing
+"the strongest disagreement available", and making it return `False` was free. This is the case the
+validator exists for: a CTC pass that yields empty text where the LLM transcribed speech. Now
+pinned in both directions, with a control that *both* silent is agreement — returning `True`
+whenever either side is empty would satisfy the positive assertions and route every silent segment
+to a 4 GiB model. And a fourth test drives it through `select_for_validation`, because the predicate
+being right is not the same as the decision acting on it (D-105/D-108/D-112/D-118).
+
+**Mutation audit 11/11 after the fix.**
+
+**What the pass did not change, deliberately: M1.5 stays DONE.** Its Definition of Done is the rule,
+and the rule is complete, faithful to §3's wording, and now fully pinned. That nothing calls it is
+real — `select_for_validation` still has no caller in `src/`, because `ctc_text` is never computed
+(the CTC pass yields emissions for alignment and nothing decodes them) — but that is M1.4's named
+shortfall and it is recorded there, not a false DONE here. Moving it would put the same fact in two
+cells and make the tally disagree with itself. The M1.5 cell now says so explicitly instead of
+leaving a reader to find it under another row.
+`evidence/adversarial-pass-10-2026-08-09.md`.
