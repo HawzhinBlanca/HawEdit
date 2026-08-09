@@ -129,7 +129,7 @@ def test_windows_provision_lock_retries_beyond_the_crt_short_window(
 
     fake = ContendedMsvcrt()
     real_import = importlib.import_module
-    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr("hawedit.omni_assets._WINDOWS_HOST", True)
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         importlib,
@@ -158,7 +158,7 @@ def test_provision_unlock_failure_is_normalized_without_masking_the_body(
 
     fake = FailingUnlock()
     real_import = importlib.import_module
-    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr("hawedit.omni_assets._WINDOWS_HOST", True)
     monkeypatch.setattr(
         importlib,
         "import_module",
@@ -318,7 +318,7 @@ def test_provision_lock_refuses_name_to_descriptor_replacement_after_wait(
             return real_lstat(replacement)
         return real_lstat(path)
 
-    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr("hawedit.omni_assets._WINDOWS_HOST", True)
     monkeypatch.setattr(os, "lstat", replaced_lstat)
     monkeypatch.setattr(
         importlib,

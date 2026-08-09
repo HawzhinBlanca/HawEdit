@@ -53,6 +53,7 @@ _CARD_SHA256: Final = "af4d63febb0569831210e470b256ec70dc3a55065756c21c1f514d000
 _CARD_POLICY_TEMP: tempfile.TemporaryDirectory[str] | None = None
 _PROVISION_LOCK_TIMEOUT_S: Final = 6 * 60 * 60
 _PROVISION_LOCK_RETRY_S: Final = 0.25
+_WINDOWS_HOST: Final = os.name == "nt"
 
 
 class OmniAssetError(RuntimeError):
@@ -445,7 +446,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
     except OSError as exc:
         raise OmniAssetError(f"cannot prepare OmniASR provision lock {path}: {exc}") from exc
     with _open_provision_lock(resolved) as stream:
-        if os.name == "nt":
+        if _WINDOWS_HOST:
             # The Linux typeshed intentionally has no ``msvcrt.locking`` members even
             # though mypy still checks this runtime-only Windows branch in CI.
             msvcrt = importlib.import_module("msvcrt")

@@ -209,7 +209,7 @@ def test_windows_lock_retries_contention_instead_of_using_crt_short_timeout(
 
     fake = FakeMsvcrt()
     real_import = importlib.import_module
-    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr("hawedit.transcripts._WINDOWS_HOST", True)
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         importlib,
@@ -238,7 +238,7 @@ def test_transcript_unlock_failure_is_normalized_without_masking_the_body(
 
     fake = FailingUnlock()
     real_import = importlib.import_module
-    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr("hawedit.transcripts._WINDOWS_HOST", True)
     monkeypatch.setattr(
         importlib,
         "import_module",

@@ -43,7 +43,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Final
 
 from hawedit.alignment import CTC_VITERBI, assert_ctc_viterbi
 from hawedit.normalize import normalize_sorani
@@ -80,6 +80,7 @@ _RAW_LOCKS_GUARD = threading.Lock()
 _RAW_LOCKS: dict[Path, threading.Lock] = {}
 _RAW_LOCK_TIMEOUT_S = 60.0
 _RAW_LOCK_RETRY_S = 0.05
+_WINDOWS_HOST: Final = os.name == "nt"
 
 
 def _invalid_lock_metadata(metadata: os.stat_result) -> bool:
@@ -111,7 +112,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
             raise RuntimeError(
                 f"cannot initialize transcript publication lock {resolved}: {exc}"
             ) from exc
-        if os.name == "nt":
+        if _WINDOWS_HOST:
             msvcrt = importlib.import_module("msvcrt")
             deadline = time.monotonic() + _RAW_LOCK_TIMEOUT_S
             while True:
