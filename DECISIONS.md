@@ -5713,3 +5713,25 @@ changing production behavior. The upstream pass called this D-128; the readiness
 used that identifier, so the semantic integration is recorded here as D-158.
 
 `evidence/adversarial-pass-15-2026-08-09.md`.
+
+## D-159 - Pipeline completeness needs a real complete-run control
+
+Adversarial pass #16 attacked the original M2.7 end-to-end runner claims. Three of seven mutations
+were already caught. Four survived because no test in the suite had ever made
+`PipelineRun.complete` true: removing the `not skipped`, non-empty visual-window, or non-empty
+candidate requirements was indistinguishable from a no-op. Stage 5 also had no product-path
+assertion that the cuts it consumed were the cuts Stage 0 measured from the same video.
+
+The suite now constructs a fully complete result through `run_pipeline` with real ingest, indexing,
+boundary fusion, render and delivery plus injected discovery, visual and judge adapters. It proves
+`complete is True` and `skipped() == ()`, then independently removes each of the three requirements
+and requires incompleteness. A separate real-media run records the `BoundaryInputs` passed to Stage
+5 and compares its cuts to the `IngestResult` from Stage 0. The existing fixture's natural-silence
+signal extends to the file end, so asserting the input—not the winning boundary label—is the only
+discriminating integration proof on this media.
+
+The pass also corrected the stale statement that a bare run names four blocked stages; the current
+pipeline names eight. The upstream pass called this D-129; the readiness branch already used that
+identifier, so this semantic integration is D-159.
+
+`evidence/adversarial-pass-16-2026-08-09.md`.

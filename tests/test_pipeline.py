@@ -2905,3 +2905,110 @@ def test_a_judge_that_does_not_want_keyframes_is_sent_none(tmp_path: Path) -> No
         "billed, and §3 Stage 4's cost model counts them"
     )
     assert seen[0].text_ckb, "the text half of the request must still be there"
+
+
+# --- what adversarial pass #16 found revertible (D-159) ---------------------------------
+
+
+@pytest.fixture(scope="module")
+def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
+    """A real runner result where every stage produced the evidence `complete` requires."""
+    if find_ffmpeg() is None:
+        pytest.skip("no ffmpeg - set HAWEDIT_FFMPEG")
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            return VisualDiscoveryResult(media_id, query, len(windows), len(windows), (), ())
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    return run_pipeline(
+        FIXTURE,
+        tmp_path_factory.mktemp("whole"),
+        media_id="whole",
+        transcript=a_transcript("whole"),
+        select_sentences=(0, 1),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        discover=lambda _n: [Candidate("best", "whole", 100, 4_100, DiscoveryPath.VERBAL, 1, 0.9)],
+        visual_composer=Composer(),  # type: ignore[arg-type]
+        judge=Judge(),
+        visual_query="گرنگ",
+    )
+
+
+@needs_ffmpeg
+def test_a_run_where_every_stage_produced_something_is_complete(whole_run: PipelineRun) -> None:
+    """The control: each requirement below is measured from a run that starts complete."""
+    assert whole_run.skipped() == ()
+    assert whole_run.complete is True
+
+
+@needs_ffmpeg
+def test_a_run_with_a_skipped_stage_is_never_complete(whole_run: PipelineRun) -> None:
+    named = replace(
+        whole_run,
+        editorial=StageSkipped(
+            stage="editorial", reason="no judge was supplied", blocked_by=("a judge",)
+        ),
+    )
+    assert named.complete is False
+
+
+@needs_ffmpeg
+def test_a_run_with_no_visual_windows_is_never_complete(whole_run: PipelineRun) -> None:
+    assert replace(whole_run, visual_windows=()).complete is False
+
+
+@needs_ffmpeg
+def test_a_run_with_no_candidates_is_never_complete(whole_run: PipelineRun) -> None:
+    assert replace(whole_run, candidates=()).complete is False
+
+
+@needs_ffmpeg
+def test_stage_5_fuses_against_the_cuts_stage_0_found_on_this_video(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Stage 5 must receive the cuts Stage 0 measured from this exact source file."""
+    from hawedit.boundary import BoundaryInputs, fuse_boundary
+
+    seen: list[BoundaryInputs] = []
+    real = fuse_boundary
+
+    def recording(inputs: BoundaryInputs) -> object:
+        seen.append(inputs)
+        return real(inputs)
+
+    monkeypatch.setattr("hawedit.pipeline.fuse_boundary", recording)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="cuts",
+        transcript=a_transcript("cuts"),
+        select_sentences=(0, 1),
+    )
+    assert seen, "Stage 5 never ran"
+    assert not isinstance(run.ingest, StageSkipped) and run.ingest is not None
+    assert run.ingest.shot_cuts_ms == (1_400, 2_800), run.ingest.shot_cuts_ms
+    assert seen[-1].shot_cuts_ms == run.ingest.shot_cuts_ms, (
+        f"Stage 5 was fused against {seen[-1].shot_cuts_ms} while Stage 0 found "
+        f"{run.ingest.shot_cuts_ms} on this video"
+    )

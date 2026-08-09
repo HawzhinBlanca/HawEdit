@@ -320,6 +320,11 @@ pyannote access, or real-speaker reframing.
 
 ## Upstream adversarial-pass amendments - 2026-08-09
 
+- **M2.7 / D-159:** the suite now contains a real `run_pipeline` result for which every completeness
+  requirement is satisfied, then proves that a named skip, no visual windows, or no candidates each
+  makes it incomplete. Stage 5's `BoundaryInputs` are also bound to the cuts Stage 0 measured from
+  the same source. The stale “four blocked stages” claim is retired; a bare run currently names
+  eight. `evidence/adversarial-pass-16-2026-08-09.md`.
 - **M2.6 / D-158:** Stage 4's managed-migration and billing boundaries are now pinned at the exact
   edges: a 20-item tie cannot promote, an 11-to-10 win can, 200,000 tokens is refused while 199,999
   passes, and 21 keyframes are refused while exactly 20 in-span frames pass. The production contract
