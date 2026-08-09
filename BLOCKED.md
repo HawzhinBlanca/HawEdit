@@ -825,3 +825,24 @@ hidden — 73 windows become 579, each seeing an eighth of the context, so §8.2
 a different retrieval unit than §3 describes. This entry stays open for the part that is **not** mine:
 whether HawEdit should ship with §3's window on different hardware, or accept the smaller unit as the
 product's real behaviour. That is Hawa's call, and the numbers to make it are above.
+
+### Refreshed 2026-08-09 — what the 8-frame unit costs, measured end to end
+
+The first composed run to finish on the real 38-minute file (D-119's evidence) puts a number on the
+consequence this entry is about:
+
+| Fact | Value |
+|---|---|
+| Windows planned and indexed at `--visual-max-frames 8` | **641** |
+| Survivors kept | 7 (§3's 5–10) |
+| Candidate window length | **3.38 – 3.88 s** |
+| §3's own unit at 64 frames | ~32 s |
+| Complete sentences in the media | 185, median **6.56 s**, range 0.41–102.52 s |
+| Complete sentences lying wholly inside any of the 5 candidates | **0** |
+| Sentences short enough for a 3.38 s window at all | 54 of 185 |
+
+So `--auto-select` had nothing to anchor and produced no selection. It is not arithmetically
+impossible — a third of the sentences would fit inside a window that length — but at this unit the
+visual path routinely proposes footage no complete Kurdish sentence sits inside, and §5's anchors are
+sentence-hard. Choosing the retrieval unit is still yours: §3 fixes 64 frames, this card reads 8
+(D-106), and the two cannot both hold.

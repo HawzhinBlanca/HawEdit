@@ -15,6 +15,7 @@ locale is UTF-8 already and every one of them would otherwise pass without the f
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -110,3 +111,96 @@ def test_the_helper_leaves_a_substituted_stream_alone() -> None:
         use_utf8_streams()
     finally:
         sys.stdout, sys.stderr = original_out, original_err
+
+
+# =========================================================================================
+# D-119 — a document on stdout, and a library that prints to it
+# =========================================================================================
+
+# `transformers/utils/auto_docstring.py:1602` is a bare `print`, not a logger, so no verbosity
+# setting reaches it. Loading VideoChat3's remote code fires it twice, and on the real 38-minute
+# run that put 580 bytes of `🚨 …` ahead of the report: `json.loads` on the captured file raised
+# at character 0. The driver below stands in for that with one line, because what is being
+# checked is who owns the stream, not which dependency was noisy.
+NOISY_DRIVER = (
+    "import sys\n"
+    "from hawedit import pipeline\n"
+    "real = pipeline.run_pipeline\n"
+    "def noisy(*args, **kwargs):\n"
+    "    print('\\U0001f6a8 a dependency wrote to stdout')\n"
+    "    return real(*args, **kwargs)\n"
+    "pipeline.run_pipeline = noisy\n"
+    "raise SystemExit(pipeline.main(sys.argv[1:]))\n"
+)
+
+FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+
+
+def run_cli(tmp_path: Path, *flags: str) -> subprocess.CompletedProcess[bytes]:
+    """The real `main`, in a subprocess, with a dependency printing to stdout mid-run."""
+    return subprocess.run(
+        [sys.executable, "-c", NOISY_DRIVER, str(FIXTURE), "--work-dir", str(tmp_path), *flags],
+        capture_output=True,
+        cwd=ROOT,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+
+
+needs_fixture = pytest.mark.skipif(not FIXTURE.exists(), reason="no media fixture")
+
+
+@needs_fixture
+def test_the_json_report_is_the_only_thing_on_stdout(tmp_path: Path) -> None:
+    """The artifact is what a caller redirects to a file, and it must parse.
+
+    Asserting the report *contains* the right keys would pass with 580 bytes of foreign text in
+    front of it, which is exactly what shipped.
+    """
+    done = run_cli(tmp_path / "work", "--json")
+    payload = json.loads(done.stdout.decode("utf-8"))
+    assert payload["media_id"]
+    assert "\U0001f6a8" not in done.stdout.decode("utf-8")
+    # The noise is not lost — it goes where a human reads it and no parser looks.
+    assert "\U0001f6a8" in done.stderr.decode("utf-8")
+
+
+@needs_fixture
+def test_the_human_report_still_goes_to_stdout(tmp_path: Path) -> None:
+    """The control. Redirecting stdout unconditionally would silence the readable report, which
+    is the mode anyone runs by hand."""
+    done = run_cli(tmp_path / "work")
+    assert "media   kurdish-speech-3cuts" in done.stdout.decode("utf-8")
+
+
+@needs_fixture
+def test_the_exit_code_still_reports_an_incomplete_run(tmp_path: Path) -> None:
+    """The second control: holding stdout must not swallow the return value. A bare run is
+    incomplete — Stage 1 has no producer — and automation reads that as 1, not 0."""
+    assert run_cli(tmp_path / "work", "--json").returncode == 1
+
+
+def test_no_document_is_printed_to_a_shared_stdout() -> None:
+    """Every machine-readable document in `src/hawedit` names the stream it goes to.
+
+    The pipeline's own channel is checked on the artifact above. `editorial_bench`'s cannot be:
+    reaching its document needs a valid manifest of real reviewed comparisons against real media
+    (`BLOCKED.md` #1, M7.2), so a source-level invariant stands in — and it covers the site added
+    next year as well as the two that exist, which an artifact test for one command would not.
+    """
+    offenders: list[str] = []
+    for module in sorted((ROOT / "src" / "hawedit").glob("*.py")):
+        for number, line in enumerate(module.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped.startswith("print("):
+                continue
+            if "json.dumps" not in stripped and "payload" not in stripped:
+                continue
+            if "file=" in stripped:
+                continue
+            offenders.append(f"{module.name}:{number}: {stripped}")
+    assert not offenders, (
+        "a JSON document printed to the shared stdout: "
+        + "; ".join(offenders)
+        + ". Hold the stream with `machine_readable_stdout()` and pass `file=`, or a library "
+        "that prints — `transformers/utils/auto_docstring.py` does — corrupts the document."
+    )

@@ -47,13 +47,13 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TextIO
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import CaptionStyle, build_ass
-from hawedit.cli import use_utf8_streams
+from hawedit.cli import machine_readable_stdout, use_utf8_streams
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
@@ -1819,7 +1819,18 @@ def main(argv: list[str] | None = None) -> int:
     use_utf8_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not args.json:
+        return _run_from_args(args, sys.stdout)
+    # `--json` promises one JSON document on stdout, and stdout is shared with every library
+    # this run loads. Measured on the real 38-minute run: two bare `print`s from
+    # `transformers/utils/auto_docstring.py` put 580 bytes ahead of the report and `json.loads`
+    # raised at character 0. The report owns the stream; everything else goes to stderr. D-119.
+    with machine_readable_stdout() as report_stream:
+        return _run_from_args(args, report_stream)
 
+
+def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
+    """Everything after argument parsing. `report_stream` is where the one document goes."""
     try:
         if args.transcript and args.omni_asr:
             raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
@@ -1968,7 +1979,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.json:
-        print(json.dumps(run.to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(run.to_dict(), ensure_ascii=False, indent=2), file=report_stream)
     else:
         _print_report(run)
     return 0 if run.complete else 1
