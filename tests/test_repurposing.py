@@ -126,6 +126,40 @@ def test_the_default_match_threshold_is_recorded() -> None:
     assert 0.0 < DEFAULT_IOU_MATCH < 1.0
 
 
+def test_exact_overlap_and_top_one_are_valid_boundary_values() -> None:
+    winners = [gold("g1", 10_000, 20_000)]
+    assert recall_at_k([found(10_000, 20_000)], winners, k=1, iou_match=1.0) == 1.0
+
+
+@pytest.mark.parametrize(
+    "iou_match",
+    [0.0, -0.1, 1.000001, float("nan"), float("inf"), float("-inf"), True, "0.5"],
+)
+def test_every_recall_metric_refuses_an_invalid_iou_threshold(iou_match: object) -> None:
+    """Invalid configuration is refused even when an empty set would return unmeasured."""
+    metric_calls = (
+        lambda: recall_at_k((), (), iou_match=iou_match),  # type: ignore[arg-type]
+        lambda: recall_at_k_by_path((), (), iou_match=iou_match),  # type: ignore[arg-type]
+        lambda: path_unique_wins((), (), iou_match=iou_match),  # type: ignore[arg-type]
+    )
+    for call in metric_calls:
+        with pytest.raises(ValueError, match="iou_match"):
+            call()
+
+
+@pytest.mark.parametrize("k", [0, -1, True, 1.5])
+def test_every_recall_metric_refuses_an_invalid_k(k: object) -> None:
+    """A non-positive or fractional top-K cannot become a plausible zero-recall result."""
+    metric_calls = (
+        lambda: recall_at_k((), (), k=k),  # type: ignore[arg-type]
+        lambda: recall_at_k_by_path((), (), k=k),  # type: ignore[arg-type]
+        lambda: path_unique_wins((), (), k=k),  # type: ignore[arg-type]
+    )
+    for call in metric_calls:
+        with pytest.raises(ValueError, match="positive integer"):
+            call()
+
+
 # --- per-path recall: the number the dual-path cost rests on -----------------------------
 
 
@@ -319,18 +353,18 @@ _METRICS = (recall_at_k, recall_at_k_by_path, path_unique_wins)
 
 
 def _one_perfect_match() -> tuple[tuple[RetrievedCandidate, ...], tuple[GoldCandidate, ...]]:
-    """One winner, retrieved exactly. Any honest threshold in [0, 1] must find it."""
+    """One winner, retrieved exactly. Any honest threshold in (0, 1] must find it."""
     gold = (GoldCandidate("g1", "m", 0, 1_000, DiscoveryPath.VERBAL, is_winner=True),)
     retrieved = (RetrievedCandidate("m", 0, 1_000, DiscoveryPath.VERBAL, 1),)
     return retrieved, gold
 
 
-@pytest.mark.parametrize("bad", [1.5, 2.0, -1.0, -0.001, float("nan")])
+@pytest.mark.parametrize("bad", [0.0, 1.5, 2.0, -1.0, -0.001, float("nan")])
 def test_an_iou_threshold_outside_zero_to_one_is_refused(bad: float) -> None:
     """Every entry point, because each was independently reachable with a bad threshold."""
     retrieved, gold = _one_perfect_match()
     for metric in _METRICS:
-        with pytest.raises(ValueError, match="iou_match must be within"):
+        with pytest.raises(ValueError, match="iou_match must be a finite number"):
             metric(retrieved, gold, iou_match=bad)
 
 
@@ -338,7 +372,7 @@ def test_an_iou_threshold_outside_zero_to_one_is_refused(bad: float) -> None:
 def test_a_cutoff_below_one_is_refused(bad: int) -> None:
     retrieved, gold = _one_perfect_match()
     for metric in _METRICS:
-        with pytest.raises(ValueError, match="k must be at least 1"):
+        with pytest.raises(ValueError, match="k must be a positive integer"):
             metric(retrieved, gold, k=bad)
 
 
@@ -351,16 +385,16 @@ def test_the_refusal_happens_even_when_there_is_nothing_to_measure() -> None:
     gold = (GoldCandidate("g1", "m", 0, 1_000, DiscoveryPath.VERBAL, is_winner=False),)
     retrieved = (RetrievedCandidate("m", 0, 1_000, DiscoveryPath.VERBAL, 1),)
     for metric in _METRICS:
-        with pytest.raises(ValueError, match="k must be at least 1"):
+        with pytest.raises(ValueError, match="k must be a positive integer"):
             metric(retrieved, gold, k=-5)
 
 
-@pytest.mark.parametrize("legal", [0.0, 0.5, DEFAULT_IOU_MATCH, 1.0])
+@pytest.mark.parametrize("legal", [0.5, DEFAULT_IOU_MATCH, 1.0])
 def test_the_legal_threshold_boundaries_are_still_accepted(legal: float) -> None:
-    """The control. A guard rejecting 0.0 or 1.0 would break honest callers.
+    """The control. A guard rejecting 1.0 would break honest callers.
 
-    0.0 means "any overlap counts" and 1.0 means "exact span only"; both are defensible
-    choices §8.2 does not forbid, and the perfect match must be found at every one of them.
+    A threshold of 1.0 means "exact span only" and is a defensible choice §8.2 does not
+    forbid; zero is not, because disjoint spans have IoU zero and would also match.
     """
     retrieved, gold = _one_perfect_match()
     assert recall_at_k(retrieved, gold, iou_match=legal) == 1.0

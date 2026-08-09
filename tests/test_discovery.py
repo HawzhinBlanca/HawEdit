@@ -311,6 +311,24 @@ def test_the_threshold_is_a_parameter_not_a_constant() -> None:
     assert len(strict) == 2
 
 
+def test_exact_overlap_is_allowed_at_the_strictest_valid_threshold() -> None:
+    exact = merge_candidates([verbal("v1", 0, 10_000)], [visual("x1", 0, 10_000)], iou_match=1.0)
+    assert len(exact) == 1
+    assert exact[0].discovery_path is DiscoveryPath.BOTH
+
+
+@pytest.mark.parametrize(
+    "iou_match",
+    [0.0, -0.1, 1.000001, float("nan"), float("inf"), float("-inf"), True, "0.5"],
+)
+def test_the_merge_refuses_an_invalid_iou_threshold_even_when_both_paths_are_empty(
+    iou_match: object,
+) -> None:
+    """An empty episode cannot hide a broken threshold that corrupts the next episode."""
+    with pytest.raises(ValueError, match="iou_match"):
+        merge_candidates([], [], iou_match=iou_match)  # type: ignore[arg-type]
+
+
 def test_the_order_of_the_output_does_not_depend_on_the_order_of_the_input() -> None:
     """Re-running discovery must not reshuffle a candidate list a human is reviewing."""
     verbals = [verbal(f"v{i}", i * 9_000, i * 9_000 + 4_000, rank=i + 1) for i in range(5)]

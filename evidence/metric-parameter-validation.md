@@ -57,35 +57,19 @@ recall_at_k_by_path  iou_match=1.5 / nan / -1.0 / k=0 / k=-5    all refused
 path_unique_wins     iou_match=1.5 / nan / -1.0 / k=0 / k=-5    all refused
 ```
 
-## The legal boundaries are controls, not oversights
+## Reconciliation correction: zero is not a legal boundary
 
-`0.0` and `1.0` are both accepted. `0.0` means "any overlap counts" and `1.0` means "the exact
-span only"; §8.2 forbids neither, and a guard that rejected them would break honest callers while
-still passing every refusal test above. `test_the_legal_threshold_boundaries_are_still_accepted`
-requires the perfect match to be found at `0.0`, `0.5`, `DEFAULT_IOU_MATCH` and `1.0`, and
-`test_a_cutoff_of_one_is_still_accepted` pins that Recall@1 is a real question.
+The first version of this evidence called `0.0` legal and described it as "any overlap counts".
+That was wrong for the implemented `temporal_iou >= iou_match` comparison: disjoint spans have IoU
+exactly zero, so a zero threshold also counts **no overlap**. Branch reconciliation exposed and
+corrected that contradiction. The legal interval is `(0, 1]`; `1.0` remains the exact-span control.
 
-## Mutation audit, against a baseline verified green first
+The reconciled validation also refuses boolean/string thresholds and boolean/fractional K values,
+and applies the shared threshold rule to Stage 3 merge before an empty-input return. The stricter
+mutation audit is recorded in `evidence/iou-threshold-validation.md`: bypassing merge validation,
+admitting zero, and bypassing one metric's K validation were each caught (3/3). The earlier 7/7
+figure must not be quoted as evidence for the corrected contract because one of its expectations
+was precisely the invalid zero boundary.
 
-```
-baseline: GREEN
-CAUGHT   the iou_match range check is removed
-CAUGHT   the k cutoff check is removed
-CAUGHT   the upper bound on iou_match is dropped (1.5 accepted)
-CAUGHT   the lower bound on iou_match is dropped (-1 accepted)
-CAUGHT   k < 1 becomes k < 0, so k=0 slips through
-CAUGHT   the legal boundary 1.0 is wrongly rejected
-CAUGHT   recall_at_k stops validating
-
-7/7
-```
-
-The last two are the ones worth having. *"the legal boundary 1.0 is wrongly rejected"* is caught by
-the control rather than by a refusal test — it is the mutation that a suite of refusal tests alone
-would wave through. And *"recall_at_k stops validating"* confirms the entry-point placement is
-load-bearing: dropping the call from one metric while leaving it in the others is caught.
-
-Run over `tests/test_discovery.py` as well as `tests/test_repurposing.py`, since the former also
-calls these metrics.
-
-Gate: `VERIFY OK — 1118 passed, 0 skipped`.
+The complete gate is rerun after reconciliation; its settled count belongs in the current audit
+report rather than this historical measurement file.

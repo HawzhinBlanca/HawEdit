@@ -3115,9 +3115,9 @@ Done listed six §8.2 metrics and the ledger cell listed the same six back. All 
 row was not lying about coverage — the defect was that one of them answered a question nobody
 asked it, which a cell restating its own DoD can never surface.
 
-**Still open on this row, deliberately not bundled:** `iou_match` is accepted unvalidated, so
-`1.5` or `-1` yields silent nonsense rather than a refusal. A different defect in a different
-function; folding it in would have made neither individually auditable.
+**Closed later by D-082, deliberately not bundled here:** `iou_match` was accepted unvalidated,
+so `1.5` or `-1` yielded silent nonsense rather than a refusal. It was a different defect in a
+different function; keeping it separate made both fixes individually auditable.
 
 Gate: `VERIFY OK — 1099 passed, 0 skipped`.
 
@@ -3221,25 +3221,23 @@ set, this one a measured-looking zero from a bad argument.
 grepping the callers and fails identically. Fixing one and leaving the other would have left half
 the defect, so a single guard covers both.
 
-**Decision: validate at the three public entry points, not in the shared funnel.**
+**Decision: validate at the three metric entry points and Stage 3 merge, not in the shared
+funnel.**
 `_found_winners` is the funnel all three metrics route through and is the obvious site — but it is
 skipped when the gold set has no winners, because each metric short-circuits to `None`/`{}` first.
 A caller passing `k=-5` against an unlabelled set would have been handed "unmeasured" and never
-told the cutoff was nonsense. `_assert_metric_parameters` therefore runs ahead of that
-short-circuit: one rule, three places where the arguments enter, the same shape as D-071's
-overwrite guard rather than three copies of a rule.
+told the cutoff was nonsense. The validators therefore run ahead of that short-circuit and before
+an empty Stage 3 merge: one threshold rule shared by every surface that uses it.
 
-**`0.0` and `1.0` are deliberately legal and are pinned by controls.** `0.0` means "any overlap
-counts", `1.0` means "the exact span only"; §8.2 forbids neither. A guard that rejected them would
-break honest callers while passing every refusal test — which is exactly what the mutation *"the
-legal boundary 1.0 is wrongly rejected"* demonstrates, and it is CAUGHT by the control rather than
-by any refusal test.
+**Correction made during branch reconciliation: `0.0` is not legal with a `>=` comparison.**
+Disjoint spans have temporal IoU exactly zero, so accepting zero merged and credited footage with
+no overlap at all. The threshold is a finite, non-boolean number in `(0, 1]`; `1.0` remains the
+legal exact-span boundary. Recall's `k` is a positive, non-boolean integer, so `True` and `1.5`
+cannot become plausible measurements.
 
-**Mutation audit 7/7** (`evidence/metric-parameter-validation.md`), run over
-`tests/test_discovery.py` as well since it also calls these metrics. *"recall_at_k stops
-validating"* is CAUGHT, which is what confirms the entry-point placement is load-bearing rather
-than decorative: dropping the call from one metric while leaving it in the others does not slip
-through.
+The original narrower mutation audit and the stricter integration audit are preserved in
+`evidence/metric-parameter-validation.md` and `evidence/iou-threshold-validation.md`. The latter
+catches bypassing the merge guard, admitting zero, and bypassing one metric's K guard.
 
 M7.1's cell recorded this as an open gap when D-077 landed; that note is now closed rather than
 deleted, so the row records both that the gap existed and when it was shut.
