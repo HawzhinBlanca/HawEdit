@@ -4025,3 +4025,73 @@ a second reason.
 is public, and a fake backend behind the genuine class still reports `hawedit.asr.OmniAsrAdapter`.
 Closing that means the protocol exposing what it loaded — a design step, not a side effect of this one.
 `evidence/stub-indistinguishable-from-real-weights.md`.
+
+## D-098
+
+**A threshold recorded in a decision could drift from the code with the suite green.** D-084 pinned
+one — `MINIMUM_HOURS` against D-009 — after measuring that 3.0 could become 1.0 unnoticed. The same
+question, asked of every constant, found the failure is a class. Measured 2026-08-09 against a green
+1,170 baseline, changing the constant alone:
+
+```
+DEFAULT_PAUSE_MS         500 -> 800          GREEN, nothing noticed
+NVENC_MIN_FRAME  (145,49) -> (64,64)         GREEN, nothing noticed
+DEFAULT_DISAGREEMENT_CER 0.15 -> 0.25        RED, behaviour tests only
+MINIMUM_HOURS            3.0 -> 1.0          RED, the record test D-084 added
+```
+
+`(64, 64)` is exactly the value D-045 records as the historical defect — the probe size that made
+`encoder_available` call a working NVENC unavailable. Restoring the bug's own number changed nothing
+the suite could see, because `test_render.py` asserts the *relation*
+`ENCODER_PROBE_SIZE >= NVENC_MIN_FRAME`, which holds at 1080×1920 against any small pair. The
+relation is the right assertion and it cannot pin the recorded measurement.
+
+`DEFAULT_PAUSE_MS` was invisible for a more instructive reason: `tests/test_sentences.py` passes
+`pause_ms=DEFAULT_PAUSE_MS`, so the tests follow the constant wherever it goes and never assert what
+it is. Symbolic use reads as coverage and measures nothing — the same shape as D-094's substring
+assertion and D-095's `skipped=0` reports.
+
+**Decision: the `<constant> = <value>` form in a decision is now enforced against the code**, for
+every constant, by one test rather than one pin per constant. (Written with angle brackets on purpose:
+spelling the placeholder in the real form made this very entry parse as a statement about a constant
+named `NAME`, and the check caught its own documentation.) The convention already existed organically;
+making it load-bearing costs nothing to maintain, and it means changing a threshold requires amending
+the decision that justifies it — which is D-009's own wording: "Changing the floor means amending the
+decision, not only the constant." Later statements supersede earlier ones, so a decision may revise a
+value a previous one set.
+
+**Restated here in canonical form, quoting the entries that state them in prose only.** These are
+transcriptions, not new choices — each value is what the code already holds and what the cited entry
+already justifies:
+
+* `MATERIAL_GAIN_RATIO = 0.10` — D-010: "**Material = ≥10% relative reduction in normalized CER**
+  (`MATERIAL_GAIN_RATIO`)".
+* `DEFAULT_IOU_MATCH = 0.5` — D-020: "A retrieved candidate 'found' a gold winner at temporal
+  IoU ≥ 0.5 (`DEFAULT_IOU_MATCH`)".
+* `RETRIEVE_K = 50` — D-090: "the shipped CLI always ran at §3's depth of 50".
+* `DEFAULT_TOLERANCE_MS = 50` — recorded in **no** decision until now, justified only in
+  `alignment.py`'s own comment: "50 ms is roughly one frame of 24 fps video and below the threshold at
+  which a cut reads as early or late — but it is a reporting parameter, not a quality gate, and it is
+  recorded alongside every result so a rate is never quoted without the tolerance that produced it."
+  A chosen number with no entry is what the hard rule "refuse and record instead" exists to prevent,
+  so it is recorded rather than left in a comment.
+
+**Rejected: enforcing every constant in `src/`.** Most are not judgment calls — `TARGET_SAMPLE_RATE`,
+`PROXY_HEIGHT`, a licence table — and requiring a decision for each would fill the log with entries
+nobody made. What earns enforcement is a value a decision *claims*, which is exactly what the
+convention already marks.
+
+**Rejected: parsing the numeral out of prose** (D-084's approach, generalised). "≥10% relative
+reduction" and "IoU ≥ 0.5" are not machine-readable in any stable way, and a regex loose enough to
+catch both would match sentence numbering. Restating the value canonically once is honest and does not
+touch the original reasoning.
+
+**Still prose-only, named rather than implied:** `REFERENCE_FPS` and `DECLARED_SAMPLING_FPS` (D-065
+names both constants but its numerals appear only in the surrounding argument, and transcribing them
+from the code rather than the record would invert the direction this check depends on).
+
+**Mutation audit 4/4.** `DEFAULT_PAUSE_MS` drifting from D-014 CAUGHT, `NVENC_MIN_FRAME` back to the
+historical `(64, 64)` CAUGHT, `MATERIAL_GAIN_RATIO` drifting from the value just recorded CAUGHT, and
+the discovery regex matching nothing — a check that silently examines zero statements — CAUGHT by the
+`>= 7` floor, which fired for real while this was being written and is the reason it exists.
+`evidence/recorded-thresholds-unpinned.md`.

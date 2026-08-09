@@ -552,3 +552,63 @@ def test_the_ledger_states_no_test_count_it_cannot_keep_true() -> None:
         "these ledger rows state a test count that has to be maintained by hand and was wrong "
         f"21 times out of 30 when last measured: {standing}. Name the file, not the count."
     )
+
+
+def test_every_value_the_decision_log_states_is_the_value_the_code_holds() -> None:
+    """A threshold recorded in a decision must be the threshold the code uses.
+
+    D-084 pinned one constant this way — `MINIMUM_HOURS` against D-009, after measuring that
+    3.0 could become 1.0 with the whole suite green. This generalises that pin to the log
+    instead of repeating it per constant, because the failure is a class:
+
+    Measured 2026-08-09 against a green 1,170 baseline, changing the constant alone —
+      `DEFAULT_PAUSE_MS`  500 -> 800        : GREEN, nothing noticed
+      `NVENC_MIN_FRAME`   (145,49) -> (64,64): GREEN, nothing noticed — and (64,64) is exactly
+                                               the value D-045 records as the historical defect
+      `DEFAULT_DISAGREEMENT_CER` 0.15 -> 0.25: RED, but only in behaviour tests, so the record
+                                               still drifts if those are updated alongside
+      `MINIMUM_HOURS`     3.0 -> 1.0        : RED in the record test D-084 added
+
+    `DEFAULT_PAUSE_MS` was invisible for an instructive reason: `tests/test_sentences.py` passes
+    `pause_ms=DEFAULT_PAUSE_MS`, so the tests follow the constant wherever it goes and never
+    assert what it is. Symbolic use reads as coverage and measures nothing.
+
+    The convention this enforces already existed organically — decisions write the constant and
+    its value inline in a code span. Making it load-bearing costs nothing to maintain, and means
+    changing a threshold requires amending the decision that justifies it — D-009's own wording:
+    "Changing the floor means amending the decision, not only the constant." D-098.
+    """
+    import ast
+    import importlib
+
+    decisions = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+
+    # Later statements supersede earlier ones: a decision may revise a value a previous one set.
+    recorded: dict[str, tuple[str, str]] = {}
+    for entry in re.finditer(r"## (D-\d+)((?:(?!\n## )[\s\S])*)", decisions):
+        for name, raw in re.findall(r"`([A-Z][A-Z0-9_]{2,}) = ([^`]+)`", entry.group(2)):
+            recorded[name] = (entry.group(1), raw.strip())
+
+    assert len(recorded) >= 7, (
+        f"only {len(recorded)} recorded values were found, so this test is checking almost "
+        f"nothing — the `NAME = value` convention or this pattern has drifted apart"
+    )
+
+    modules = [
+        importlib.import_module(f"hawedit.{path.stem}")
+        for path in sorted((ROOT / "src" / "hawedit").glob("*.py"))
+        if path.stem != "__init__"
+    ]
+
+    unresolved: list[str] = []
+    for name, (decision, raw) in sorted(recorded.items()):
+        holders = [module for module in modules if hasattr(module, name)]
+        if not holders:
+            unresolved.append(f"{decision} states `{name} = {raw}` and no module defines {name}")
+            continue
+        live = getattr(holders[0], name)
+        assert ast.literal_eval(raw) == live, (
+            f"{decision} records `{name} = {raw}` and the code holds {live!r}. Changing a "
+            f"threshold means amending the decision that justifies it, not only the constant."
+        )
+    assert not unresolved, "; ".join(unresolved)
