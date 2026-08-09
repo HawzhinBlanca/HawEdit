@@ -219,3 +219,74 @@ def test_aligned_words_satisfy_invariant_5_when_stored() -> None:
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
     )
     assert len(transcript.words) == 2
+
+
+# --- refusals that nothing was checking -------------------------------------------------
+#
+# M1.1's row claims "infeasible input refused rather than guessed". Audited 2026-08-09: the
+# whole infeasibility chain inside `viterbi_align` — the unreachable-end-state check, the
+# backtracking dead-end check and the every-token-framed check — could be deleted together and
+# all 1,099 tests stayed green, while the function degraded from raising `AlignmentInfeasible`
+# to raising a bare `KeyError: 0`. `frame_duration_ms <= 0` and the no-tokens word refusal were
+# likewise untested. D-079.
+#
+# The three checks inside the chain are mutually redundant on purpose: remove any one and
+# another catches the same condition, so a single-guard mutation is expected to survive. What
+# had to be pinned is the refusal itself, and that it is the *documented* exception rather than
+# whatever falls out of a broken path.
+
+
+def test_emissions_that_cannot_emit_the_tokens_are_refused_not_guessed() -> None:
+    """A token with -inf in every frame has no path. Refusal is the contract; KeyError is not.
+
+    Deleting the three infeasibility checks turns this into `KeyError: 0` from the span
+    assembly, which no caller could interpret and no downstream stage could detect.
+    """
+    impossible = [[0.0, -math.inf, -math.inf] for _ in range(10)]
+    with pytest.raises(AlignmentInfeasible) as raised:
+        viterbi_align(impossible, [1], blank_id=0)
+    assert "cannot emit" in str(raised.value)
+
+    # No path anywhere, not merely for the token.
+    with pytest.raises(AlignmentInfeasible):
+        viterbi_align([[-math.inf] * 3 for _ in range(10)], [1], blank_id=0)
+    # Two tokens, neither reachable.
+    with pytest.raises(AlignmentInfeasible):
+        viterbi_align(impossible, [1, 2], blank_id=0)
+
+
+def test_a_feasible_alignment_is_still_produced() -> None:
+    """The control. A `viterbi_align` that raised unconditionally passes the test above.
+
+    Same shape of input as the impossible case, with the token reachable instead of -inf.
+    """
+    possible = [[0.0, -1.0, -1.0] for _ in range(10)]
+    spans = viterbi_align(possible, [1], blank_id=0)
+    assert len(spans) == 1
+    assert spans[0].start_frame <= spans[0].end_frame
+
+
+def test_a_non_positive_frame_duration_is_refused() -> None:
+    """Frames per millisecond is the scale on every word time; zero silently collapses them."""
+    emissions = [[0.0, -1.0, -1.0] for _ in range(10)]
+    for duration in (0, -5, -0.001):
+        with pytest.raises(ValueError, match="frame_duration_ms must be positive"):
+            align_words(emissions, [("ڕۆژ", [1])], frame_duration_ms=duration)
+
+
+def test_a_word_carrying_no_tokens_is_refused() -> None:
+    """A word with no acoustic evidence cannot be timed, and a zero-length span captions air."""
+    emissions = [[0.0, -1.0, -1.0] for _ in range(10)]
+    with pytest.raises(ValueError, match="has no tokens"):
+        align_words(emissions, [("ڕۆژ", [])], frame_duration_ms=20)
+    # And when it is one word among several, so the refusal is not order-dependent.
+    with pytest.raises(ValueError, match="has no tokens"):
+        align_words(emissions, [("ڕۆژ", [1]), ("باش", [])], frame_duration_ms=20)
+
+
+def test_a_positive_frame_duration_still_times_words() -> None:
+    """The control for the two refusals above: neither may be a function rejecting everything."""
+    emissions = [[0.0, -1.0, -1.0] for _ in range(10)]
+    words = align_words(emissions, [("ڕۆژ", [1]), ("باش", [2])], frame_duration_ms=20)
+    assert len(words) == 2
+    assert words[0].end_ms <= words[1].start_ms

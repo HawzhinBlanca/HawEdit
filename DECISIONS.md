@@ -3162,3 +3162,46 @@ and the `<= 0` refusal stay with their dedicated unit tests; sweeping duration i
 multiply the space for behaviour already pinned. `evidence/exhaustive-sweep.md`.
 
 Gate: `VERIFY OK — 1099 passed, 0 skipped`.
+
+## D-079
+
+**`viterbi_align`'s infeasibility refusal could be deleted whole and 1,099 tests stayed green.**
+M1.1's row claims *"infeasible input refused rather than guessed"*. Removing the three checks that
+implement it — unreachable end state, backtracking dead end, every-token-framed — left the suite at
+`exit=0, 0 FAILED`, while the function degraded from a documented `AlignmentInfeasible` to a bare
+`KeyError: 0` out of the span-assembly loop. §4.2's spans feed §5's sentence anchors and every
+caption time, so an uninterpretable exception there is not a cosmetic difference.
+
+**The adversarial pass's "five unprotected guards in this module" was exactly right in count and
+threefold overstated in substance, and I repeated the headline figure for three iterations before
+measuring it.** Removing any single member of the trio leaves the refusal intact because the next
+one catches the same condition — traced, the unmutated path raises at the end-state check and with
+that gone the backtracking check picks it up. That is redundancy, not exposure. A single-guard
+mutation surviving is the *expected* result, and only removing the whole set distinguishes the two.
+This is why the audit runs in two phases: targeted files first (anything caught there is protected),
+then the full suite for survivors only (the sole way to separate "unprotected" from "caught
+somewhere the row does not cite").
+
+**Decision: pin the contract, not the implementation.** One test asserts that impossible emissions
+raise `AlignmentInfeasible` with its documented message — type and message, because the whole point
+is that it is *that* refusal and not whatever falls out of a broken path. Two further tests cover
+the genuinely separate untested refusals, `frame_duration_ms <= 0` and a word carrying no tokens.
+No test was contrived to make an individual link of the trio observable: that would assert the
+implementation's shape rather than its behaviour, and the links exist to cover each other.
+
+**Reachability was verified before any test was written**, because a contrived test for an
+unreachable defensive check is theatre. All three refusals fire through the public API on ordinary
+arguments.
+
+**Two controls**, since a refusal test also passes for a function that rejects everything handed to
+it: a feasible alignment of the same input shape must still produce spans, and two words with a
+positive frame duration must come back with non-overlapping times.
+
+**Measured before and after** (`evidence/alignment-refusals-untested.md`): guards caught by the
+files M1.1 cites went 5/11 → 7/11, and the chain-removal test flipped from `exit=0, 0 FAILED` to
+`exit=1, 1 FAILED` naming the new test.
+
+**Carried forward:** the same two-phase treatment is owed to the other 21 guards the pass flagged
+across other modules. The headline count should not be quoted again without it.
+
+Gate: `VERIFY OK — 1104 passed, 0 skipped`.
