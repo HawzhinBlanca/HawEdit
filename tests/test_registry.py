@@ -9,6 +9,7 @@ adding a model without amending the blueprint fails the gate.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -188,3 +189,72 @@ def test_benchmark_controls_are_not_routable() -> None:
 
     for entry in BENCHMARK_CONTROLS.values():
         assert not entry.routable
+
+
+# --- §7 must not both register and exclude a model ---------------------------------------
+#
+# `resolve` reads REGISTRY before EXCLUDED, so a model in both resolves *in favour of the
+# excluded one*. Measured 2026-08-09: adding `Whisper` (§7 excludes it — "OmniASR is stronger
+# for ckb") to `_ENTRIES` with a blueprint cell §7 already contains, no role, and a licence
+# requiring no attribution made `resolve("Whisper")` return the entry with no `ModelExcluded`
+# raised, and the full suite stayed at `exit=0, 0 FAILED`. The set-equality tests compare the
+# cells each table self-declares, so a duplicate cell is invisible and nothing related the two
+# tables to each other. Two of §7's nine exclusions are CC-BY-NC-4.0 hard rejects. D-087.
+
+
+def test_the_real_tables_do_not_both_register_and_exclude_anything() -> None:
+    """Asserted on the shipped data, not a fixture — importing already enforces it."""
+    assert set(REGISTRY) & set(EXCLUDED) == set()
+
+
+def test_a_model_in_both_tables_is_refused() -> None:
+    from hawedit.registry import (
+        RegistryContradiction,
+        assert_registry_excludes_nothing_it_registers,
+    )
+
+    entry = REGISTRY["KLPT"]
+    excluded = EXCLUDED["Whisper"]
+    with pytest.raises(RegistryContradiction, match="both registers and excludes"):
+        assert_registry_excludes_nothing_it_registers({"Whisper": entry}, {"Whisper": excluded})
+
+
+def test_disjoint_tables_are_accepted() -> None:
+    """The control. A guard that raised unconditionally passes the test above."""
+    from hawedit.registry import assert_registry_excludes_nothing_it_registers
+
+    assert_registry_excludes_nothing_it_registers(
+        {"KLPT": REGISTRY["KLPT"]}, {"Whisper": EXCLUDED["Whisper"]}
+    )
+
+
+def test_an_excluded_model_is_still_refused_by_resolve() -> None:
+    """The behaviour the contradiction would have silently reversed."""
+    with pytest.raises(ModelExcluded, match="excluded by BLUEPRINT"):
+        resolve("Whisper")
+    with pytest.raises(ModelExcluded):
+        resolve("mms-300m-1130-forced-aligner")
+
+
+def test_two_entries_cannot_claim_one_blueprint_cell() -> None:
+    """The other half of the same hole: set-equality cannot see a duplicated cell.
+
+    `test_registry_matches_section_7_exactly` compares the *set* of cells the registry declares
+    against §7's. A second entry claiming a cell §7 already has leaves that set unchanged, so it
+    is invisible — which is how the rogue `Whisper` entry hid. §7 names one model per cell.
+    """
+    from hawedit.registry import (
+        RegistryContradiction,
+        assert_registry_excludes_nothing_it_registers,
+    )
+
+    klpt = REGISTRY["KLPT"]
+    impostor = replace(klpt, model_id="NotKLPT")
+    with pytest.raises(RegistryContradiction, match="claimed by more than one"):
+        assert_registry_excludes_nothing_it_registers({"KLPT": klpt, "NotKLPT": impostor}, {})
+
+
+def test_every_real_registry_entry_claims_its_own_cell() -> None:
+    """Asserted on the shipped data: 15 entries, 15 distinct §7 cells."""
+    cells = [entry.blueprint_model_cell for entry in REGISTRY.values()]
+    assert len(cells) == len(set(cells)), "two entries claim one §7 cell"

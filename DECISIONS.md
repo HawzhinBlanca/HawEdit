@@ -3459,3 +3459,58 @@ integration test captures the exact segments received by the canonical ASR produ
 their latest end equals Stage 0's duration. Mutation audit 3/3 catches bypassing the intersection,
 removing the end clamp, and silently dropping an invalid region. See
 `evidence/stage0-media-clock.md`.
+
+---
+
+## D-087
+
+**§7 could both register and exclude a model, and `resolve` settled the contradiction in favour of
+the excluded one.** `resolve` reads `REGISTRY` before `EXCLUDED`, nothing asserted the tables were
+disjoint, and `test_exclusions_match_section_7_exactly` compares the *cells* each table
+self-declares — which stays correct when an excluded id is also registered. Measured against a green
+1,119 baseline: `Whisper` added to `_ENTRIES` with a cell §7 already contains, no role and an
+attribution-free licence made `resolve("Whisper")` return the entry with no `ModelExcluded`, and the
+full suite stayed at `exit=0, 0 FAILED`. Two of §7's nine exclusions are CC-BY-NC-4.0 hard rejects,
+so the same hole routes work to a NonCommercial model
+(`evidence/registry-excluded-model-resolvable.md`).
+
+**Decision: enforce disjointness at import, not by reordering `resolve`.** Two tables naming one
+model is a contradiction in the *data*; making it impossible to construct is stronger than deciding
+which table wins, and it fails for every consumer of the library rather than only inside the suite.
+`assert_registry_excludes_nothing_it_registers` is a pure function over both mappings, so the
+refusal is testable with synthetic tables while the real ones are checked on every import.
+
+**The same guard closes the other half.** A duplicated `blueprint_model_cell` is invisible to
+set-equality — the declared set is unchanged — which is exactly how the rogue entry hid. §7 names one
+model per cell and the shipped data agrees (15 entries, 15 distinct cells), so uniqueness is
+enforceable. The realistic trigger is not malice: copy a `ModelEntry` as a template, edit `model_id`
+and `component`, forget the cell.
+
+**Three attempts were needed to measure this, and the two failures are the point.** My first
+mutation appended a `REGISTRY` redefinition and produced 4 failures — a mypy error and three
+`test_gate.py` subprocess tests, i.e. malformed code caught by the typechecker. My second used a
+licence requiring attribution and produced 2 failures — README attribution bookkeeping. Both read as
+CAUGHT and neither touched exclusions. **A mutation caught for the wrong reason reads as protection
+that is not there**, the mirror of D-079 where a mutation surviving for the wrong reason (a redundant
+sibling) read as exposure that was not there. Only a minimal mutation isolates the behaviour.
+
+**Mutation audit 5/6.** The survivor is the import-time call itself: removing it leaves two tests
+that catch the rogue entry anyway, verified by removing the call *and* adding the entry. Classified
+as redundancy rather than patched, and kept for what tests cannot give — refusal at import. Two
+mutations earn their keep by being caught only by controls: *"the check raises unconditionally"* and
+*"the duplicate-cell check fires on a single claimant too"* would both pass every refusal test while
+breaking honest tables.
+
+**M0.2's claim is now true, and I nearly recorded the opposite.** The row and the module docstring
+say "Adding a model without amending the blueprint fails the gate." I drafted an evidence paragraph
+asserting that remained false in general, then checked: the set-equality *is* bidirectional, so an
+invented cell was already caught. With duplicated cells and excluded ids now caught too, the four
+routes are covered. The drafted-then-corrected paragraph is left in the evidence file, because
+writing a plausible statement before measuring it is the same error the whole finding is about.
+
+**This also settles a disagreement with the second adversarial pass**, which reported it from a red
+worktree baseline. Its conclusion was right and its method could not have distinguished the three
+mutations above, since comparing failure counts against a red baseline hides which tests failed and
+why.
+
+Gate: `VERIFY OK — 1125 passed, 0 skipped`.
