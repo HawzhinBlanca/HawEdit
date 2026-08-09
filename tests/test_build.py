@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import os
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -26,7 +28,24 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "build-wheel.sh"
 
-BASH = shutil.which("bash")
+
+def _bash() -> str | None:
+    """Prefer Git Bash on Windows; command lookup commonly returns the WSL launcher."""
+    candidates: list[Path] = []
+    if configured := os.environ.get("HAWEDIT_BASH"):
+        candidates.append(Path(configured))
+    if git := shutil.which("git"):
+        candidates.append(Path(git).resolve().parent.parent / "bin" / "bash.exe")
+    if program_files := os.environ.get("PROGRAMFILES"):
+        candidates.append(Path(program_files) / "Git" / "bin" / "bash.exe")
+    if local_app_data := os.environ.get("LOCALAPPDATA"):
+        candidates.append(Path(local_app_data) / "Programs" / "Git" / "bin" / "bash.exe")
+    if sys.platform != "win32" and (found := shutil.which("bash")):
+        candidates.append(Path(found))
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+
+
+BASH = _bash()
 
 needs_build = pytest.mark.skipif(
     BASH is None or shutil.which("git") is None, reason="needs bash and git"
