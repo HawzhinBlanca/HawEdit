@@ -470,6 +470,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) shares §4.3.5's word-aligned RTL breaks with ASS; the CMX 3600 EDL (source timeline) writes SMPTE drop-frame for NTSC 30000/1001 and refuses other unsupported fractional rates. |
 | `artifact_bundle.py` | §2 | Private staging and atomic, write-once publication of the exact ASS/MP4/SRT/EDL/JSON delivery directory. |
+| `atomic_fs.py` | §2, §7 | Native cross-platform no-replace directory publication shared by delivery bundles and checkpoint provisioning; unsupported POSIX platforms fail closed. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `environment.py` | — | Binds the canonical `.venv`, editable distribution root, supported Python/project versions and active exact requirements to this checkout before the gate runs. |
 | `host_lock_hashes.py` | — | Generated source-bound SHA-256 identities for every supported host dependency lock. |
