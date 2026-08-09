@@ -9,12 +9,15 @@ explain from the code.
 
 from __future__ import annotations
 
+import hashlib
 import json
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 
 import pytest
 
 from hawedit.models import (
+    CheckpointIntegrityError,
     ModelNotProvisioned,
     ModelStore,
     SourceNotConfigured,
@@ -132,13 +135,16 @@ def test_an_absent_checkpoint_reports_as_missing(
     assert statuses["omniASR_LLM_7B_v2"].available is False
 
 
-def test_a_present_checkpoint_reports_as_available_with_its_size(tmp_path: Path) -> None:
+def test_a_nonempty_checkpoint_without_a_byte_manifest_is_not_reported_ready(
+    tmp_path: Path,
+) -> None:
     entry = REGISTRY["MCG-NJU/VideoChat3-4B"]
     weights = store(tmp_path).path_for(entry)
     weights.mkdir(parents=True)
     (weights / "model.safetensors").write_bytes(b"x" * 2048)
     status = next(s for s in store(tmp_path).status() if s.model_id == entry.model_id)
-    assert status.available is True
+    assert status.available is False
+    assert "integrity failed" in status.detail
     assert status.size_bytes == 2048
 
 
@@ -240,6 +246,181 @@ def test_the_refusal_names_every_invented_weight() -> None:
     with pytest.raises(WeightsIncomplete) as raised:
         assert_fully_loaded("m", ["b.weight", "a.weight"])
     assert "a.weight" in str(raised.value) and "b.weight" in str(raised.value)
+
+
+# --- a pinned revision is not proof that the local bytes still match it -------------------
+
+
+def _git_blob_id(payload: bytes) -> str:
+    digest = hashlib.sha1(usedforsecurity=False)
+    digest.update(f"blob {len(payload)}\0".encode())
+    digest.update(payload)
+    return digest.hexdigest()
+
+
+def _integrity_checkpoint(tmp_path: Path) -> tuple[ModelStore, Path]:
+    model_id = "Qwen3-VL-Embedding-2B"
+    repository = "Qwen/test-embedding"
+    revision = "a" * 40
+    config = b'{"model_type":"qwen3_vl"}'
+    weights = b"safe tensor bytes"
+    (tmp_path / "sources.json").write_text(json.dumps({model_id: repository}), encoding="utf-8")
+    (tmp_path / "revisions.json").write_text(json.dumps({repository: revision}), encoding="utf-8")
+    (tmp_path / "integrity.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "models": {
+                    model_id: {
+                        "status": "verified",
+                        "repository": repository,
+                        "revision": revision,
+                        "files": {
+                            "config.json": {
+                                "algorithm": "git-sha1",
+                                "digest": _git_blob_id(config),
+                                "size_bytes": len(config),
+                            },
+                            "model.safetensors": {
+                                "algorithm": "sha256",
+                                "digest": hashlib.sha256(weights).hexdigest(),
+                                "size_bytes": len(weights),
+                            },
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = tmp_path / model_id
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_bytes(config)
+    (checkpoint / "model.safetensors").write_bytes(weights)
+    # Downloader state is not repository content and must not become an unexplained extra.
+    (checkpoint / ".cache" / "huggingface").mkdir(parents=True)
+    (checkpoint / ".cache" / "huggingface" / "metadata").write_text("ignored")
+    return ModelStore(root=tmp_path), checkpoint
+
+
+def test_checkpoint_bytes_are_verified_against_git_and_lfs_identities(tmp_path: Path) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    report = model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", checkpoint)
+    assert report.files_verified == 2
+    assert report.size_bytes == sum(
+        path.stat().st_size
+        for path in (checkpoint / "config.json", checkpoint / "model.safetensors")
+    )
+    assert report.revision == "a" * 40
+
+
+def test_verified_checkpoint_is_reported_ready_and_can_start(tmp_path: Path) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    status = next(item for item in model_store.status() if item.model_id == "Qwen3-VL-Embedding-2B")
+    assert status.available is True
+    assert status.path == checkpoint
+    assert "verified 2 files" in status.detail
+    assert model_store.assert_available("Qwen3-VL-Embedding-2B") == checkpoint
+
+
+def test_same_size_weight_tampering_is_refused_before_load(tmp_path: Path) -> None:
+    """Size/mtime checks miss this; a numeric weight can change without changing file shape."""
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    weights = checkpoint / "model.safetensors"
+    original = weights.read_bytes()
+    weights.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+    assert weights.stat().st_size == len(original)
+    with pytest.raises(CheckpointIntegrityError, match="Same-size weight corruption"):
+        model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", checkpoint)
+
+
+@pytest.mark.parametrize("change", ["missing", "extra"])
+def test_checkpoint_file_set_must_exactly_match_the_snapshot(tmp_path: Path, change: str) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    if change == "missing":
+        (checkpoint / "config.json").unlink()
+    else:
+        (checkpoint / "modeling_attacker.py").write_text("raise SystemExit")
+    with pytest.raises(CheckpointIntegrityError, match=rf"{change}="):
+        model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", checkpoint)
+
+
+def test_integrity_manifest_cannot_drift_from_the_provisioning_revision(tmp_path: Path) -> None:
+    model_store, checkpoint = _integrity_checkpoint(tmp_path)
+    (tmp_path / "revisions.json").write_text(
+        json.dumps({"Qwen/test-embedding": "b" * 40}), encoding="utf-8"
+    )
+    with pytest.raises(CheckpointIntegrityError, match="different weights"):
+        model_store.verify_checkpoint("Qwen3-VL-Embedding-2B", checkpoint)
+
+
+def test_tracked_integrity_manifest_covers_every_weight_repository() -> None:
+    model_store = ModelStore()
+    manifest = model_store.integrity()
+    expected = {
+        model_id
+        for model_id, entry in REGISTRY.items()
+        if entry.provisioning is Provisioning.WEIGHTS
+    }
+    assert set(manifest) == expected
+    for model_id in expected:
+        entry = REGISTRY[model_id]
+        model = manifest[model_id]
+        assert isinstance(model, dict)
+        repository = model_store.source_for(entry)
+        assert model["repository"] == repository
+        assert model["revision"] == model_store.revision_for(repository)
+        files = model["files"]
+        assert isinstance(files, dict) and files
+        status = model["status"]
+        if status == "blocked":
+            assert model_id == "pyannote/speaker-diarization-community-1"
+            assert isinstance(model.get("reason"), str) and model["reason"]
+            redacted = 0
+            for relative, expectation in files.items():
+                assert isinstance(relative, str) and isinstance(expectation, dict)
+                assert isinstance(expectation.get("size_bytes"), int)
+                if expectation.get("hub_digest_redacted") is True:
+                    assert set(expectation) == {"hub_digest_redacted", "size_bytes"}
+                    redacted += 1
+                else:
+                    assert expectation.get("algorithm") == "git-sha1"
+                    assert re.fullmatch(r"[0-9a-f]{40}", expectation.get("digest", ""))
+            assert redacted == 5
+            continue
+        assert status == "verified"
+        for relative, expectation in files.items():
+            assert isinstance(relative, str)
+            path = PurePosixPath(relative)
+            assert relative and "\\" not in relative and not path.is_absolute()
+            assert ".." not in path.parts
+            assert isinstance(expectation, dict)
+            assert set(expectation) == {"algorithm", "digest", "size_bytes"}
+            algorithm = expectation["algorithm"]
+            digest = expectation["digest"]
+            assert algorithm in {"git-sha1", "sha256"}
+            assert isinstance(digest, str)
+            expected_length = 40 if algorithm == "git-sha1" else 64
+            assert re.fullmatch(rf"[0-9a-f]{{{expected_length}}}", digest)
+            size = expectation["size_bytes"]
+            assert isinstance(size, int) and not isinstance(size, bool) and size >= 0
+
+
+def test_gated_checkpoint_with_redacted_digests_is_refused_not_approximated(
+    tmp_path: Path,
+) -> None:
+    entry = REGISTRY["pyannote/speaker-diarization-community-1"]
+    checkpoint = tmp_path / entry.model_id.replace("/", "__")
+    checkpoint.mkdir()
+    (checkpoint / "placeholder").write_text("not trusted", encoding="utf-8")
+    with pytest.raises(CheckpointIntegrityError, match="verification is blocked.*redacts"):
+        ModelStore().verify_checkpoint(entry.model_id, checkpoint)
+
+
+def test_installed_integrity_manifest_location_is_stable() -> None:
+    from hawedit.models import INSTALLED_INTEGRITY
+
+    assert INSTALLED_INTEGRITY.parts[-4:] == ("share", "hawedit", "models", "integrity.json")
 
 
 # --- checkpoint configuration is data, not an implicit code-loading instruction -----------

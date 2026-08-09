@@ -50,7 +50,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.models import assert_fully_loaded, assert_transformers_config_safe
+from hawedit.models import (
+    assert_checkpoint_integrity,
+    assert_fully_loaded,
+    assert_transformers_config_safe,
+)
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
@@ -95,6 +99,7 @@ def load_processor_and_model(
     model_dir: Path,
     device: str,
     *,
+    model_id: str = EMBEDDING_MODEL_ID,
     allowed_model_types: Collection[str] = QWEN3_VL_MODEL_TYPES,
     trust_remote_code: bool = False,
     causal_lm: bool = False,
@@ -121,6 +126,7 @@ def load_processor_and_model(
     # Hub kernel named by a private field even with trust_remote_code=False (CVE-2026-4372), so
     # validate before importing or calling any model-stack code. D-094.
     assert_transformers_config_safe(model_dir, allowed_model_types)
+    assert_checkpoint_integrity(model_id, model_dir)
 
     # torch first and alone, then the CUDA check, then transformers. The order is the point:
     # torch ships in the `media` extra and is therefore present anywhere Stage 0 runs, while
@@ -288,7 +294,9 @@ class QwenVisualEmbedder:
 
     def _load(self) -> tuple[Any, Any]:
         if self._loaded is None:
-            self._loaded = load_processor_and_model(self.model_dir, self.device)
+            self._loaded = load_processor_and_model(
+                self.model_dir, self.device, model_id=self.model_id
+            )
         return self._loaded
 
     def _conversation(self, content: dict[str, Any]) -> list[dict[str, Any]]:
@@ -466,7 +474,9 @@ class QwenVisualReranker:
 
     def _load(self) -> tuple[Any, Any]:
         if self._loaded is None:
-            self._loaded = load_processor_and_model(self.model_dir, self.device)
+            self._loaded = load_processor_and_model(
+                self.model_dir, self.device, model_id=self.model_id
+            )
         return self._loaded
 
     def score(self, query: str, frames: WindowFrames) -> float:

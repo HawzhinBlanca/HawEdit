@@ -39,7 +39,7 @@ from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
 from hawedit.escalation import SegmentScore, select_for_validation
 from hawedit.forced_alignment import align_words
-from hawedit.models import ModelStore, assert_transformers_config_safe
+from hawedit.models import ModelStore, assert_checkpoint_integrity, assert_transformers_config_safe
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, wsl_path
@@ -217,6 +217,7 @@ class QwenSoraniValidator:
                     }
                 ),
             )
+            assert_checkpoint_integrity(self.model_id, self.model_dir)
             try:
                 import torch
                 from qwen_asr import Qwen3ASRModel

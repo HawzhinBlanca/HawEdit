@@ -569,6 +569,11 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     torch = SimpleNamespace(bfloat16="bf16", cuda=SimpleNamespace(is_available=lambda: True))
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "qwen_asr", SimpleNamespace(Qwen3ASRModel=Loader))
+    integrity_calls: list[tuple[str, Path]] = []
+    monkeypatch.setattr(
+        "hawedit.asr.assert_checkpoint_integrity",
+        lambda model_id, path: integrity_calls.append((model_id, path)),
+    )
     validator = QwenSoraniValidator(model_dir)
     assert validator.transcribe_segment(audio, 1.0) == "سۆرانی."
     assert loaded["path"] == str(model_dir)
@@ -578,6 +583,7 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
         "max_inference_batch_size": 1,
     }
     assert loaded["transcribe"] == {"audio": str(audio)}
+    assert integrity_calls == [(validator.model_id, model_dir)]
 
 
 def test_qwen_validator_refuses_a_code_loading_config_before_imports(tmp_path: Path) -> None:

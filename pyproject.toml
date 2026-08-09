@@ -86,7 +86,11 @@ where = ["src"]
     "assets/fonts/NotoNaskhArabic-Regular.ttf",
     "assets/fonts/OFL.txt",
 ]
-"share/hawedit/models" = ["models/sources.json", "models/revisions.json"]
+"share/hawedit/models" = [
+    "models/sources.json",
+    "models/revisions.json",
+    "models/integrity.json",
+]
 
 [project.scripts]
 hawedit = "hawedit.pipeline:main"

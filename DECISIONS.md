@@ -3816,3 +3816,38 @@ forward. This is the third pass in which an agent's framing needed correcting be
 actionable — and the first in which the correction was that the alarming half was simply wrong.
 
 Gate at the measured source revision: `VERIFY OK — 1136 passed, 0 skipped`.
+
+---
+
+## D-096 · Verify every accessible project-managed checkpoint byte before model loading
+
+**A pinned repository commit did not prove the directory a loader actually opened.** Before this
+decision, any nonempty checkpoint directory counted as available. The fetcher selected an exact
+remote revision, but a partial copy, a locally changed same-size tensor, or an added modelling file
+could sit at that path without any comparison to the remote snapshot. Configuration allowlisting
+from D-094 reduced what Transformers could dispatch; it did not prove the weights or tokenizer
+files were the ones reviewed.
+
+**Decision: bind every accessible local file set to content identities from the exact Hub commit.**
+A tracked schema-1 manifest accounts for every registry entry provisioned as explicit weights.
+Accessible LFS objects carry their published content SHA-256; ordinary Git files carry their
+canonical Git blob id. Pyannote's gated API redacts five LFS digests, so that entry is explicitly
+`blocked` and can never pass verification; asterisks are not accepted as hashes. For the other five,
+the runtime requires the manifest repository/revision to equal `sources.json`/`revisions.json`,
+refuses missing, extra, unsafe or symlinked paths, checks every size, and hashes every byte. A
+same-size tensor mutation is a named regression, not a hypothetical assertion.
+
+**Enforce at both truth surfaces.** The Qwen embedding/reranking loader shared by VideoChat3 and
+TimeLens2, plus the Sorani Qwen-ASR validator, prove integrity before importing or invoking their
+model stacks. The readiness command uses the same proof, so a corrupt nonempty directory reports
+unavailable. A stage asking for one model checks only that model; the full readiness report checks
+all installed checkpoints. The manifest ships in the wheel beside source and revision pins.
+
+**Measured cost and boundary.** The production verifier accepted all 105 files / 37,268,980,562
+bytes across the five locally installed checkpoints in 31.946 seconds. Pyannote's ten-file public
+inventory is pinned, but its five LFS identities and gated bytes remain blocked. This establishes
+local-byte integrity from a trusted checkout/wheel for the snapshots whose upstream identities are
+available; it does not authenticate the unsigned release and does not cover package-managed
+OmniASR downloads. `evidence/model-byte-integrity.md`.
+
+Gate: `VERIFY OK — 1249 passed, 0 skipped`.

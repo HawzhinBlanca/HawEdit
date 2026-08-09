@@ -118,6 +118,22 @@ def test_missing_weights_are_refused_naming_the_fetch_script(tmp_path: Path) -> 
         TimeLens2Grounder(tmp_path / "absent", read_frames=lambda w: None)
 
 
+def test_timelens_proves_checkpoint_integrity_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text(
+        '{"model_type":"qwen3_vl","text_config":{"model_type":"qwen3_vl_text"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.assert_checkpoint_integrity",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("integrity sentinel")),
+    )
+    grounder = TimeLens2Grounder(tmp_path, read_frames=lambda w: None)
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        grounder._load()
+
+
 # --- the wiring -----------------------------------------------------------------------------
 
 

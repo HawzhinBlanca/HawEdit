@@ -159,10 +159,24 @@ def test_asking_for_cuda_without_cuda_is_refused_rather_than_run_on_cpu(
     what the machine happens to have would make the test vanish exactly where it matters.
     """
     torch = pytest.importorskip("torch", reason="the gpu extra is not installed")
+    monkeypatch.setattr("hawedit.qwen_visual.assert_checkpoint_integrity", lambda *_args: None)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     embedder = QwenVisualEmbedder(a_checkpoint(tmp_path), device="cuda:0")
     with pytest.raises(EmbedderUnavailable, match="reports no CUDA"):
         embedder._load()
+
+
+def test_checkpoint_integrity_is_proven_before_torch_or_transformers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}), encoding="utf-8")
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("integrity sentinel")
+
+    monkeypatch.setattr("hawedit.qwen_visual.assert_checkpoint_integrity", refuse)
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        load_processor_and_model(tmp_path, "cuda:0")
 
 
 # =========================================================================================

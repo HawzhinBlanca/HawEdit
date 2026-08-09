@@ -31,6 +31,8 @@ models/*
 # first shipped: `git add -A` skipped it in silence, the local gate passed against a file CI
 # never received, and the runner failed on `no pinned revisions found`.
 !models/revisions.json
+# Content-addressed identities for those exact revisions (D-096), not weight bytes.
+!models/integrity.json
 /.gate/
 /build/
 /dist/

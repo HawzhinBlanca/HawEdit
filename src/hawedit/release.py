@@ -37,6 +37,7 @@ _REQUIRED_WHEEL_MEMBERS: Final = (
     "share/hawedit/assets/fonts/OFL.txt",
     "share/hawedit/models/sources.json",
     "share/hawedit/models/revisions.json",
+    "share/hawedit/models/integrity.json",
 )
 _REQUIREMENT_NAME: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _EXACT_REQUIREMENT_VERSION: Final = re.compile(

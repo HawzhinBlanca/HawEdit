@@ -215,6 +215,7 @@ class VideoChat3Reader:
             self._loaded = load_processor_and_model(
                 self.model_dir,
                 self.device,
+                model_id=self.model_id,
                 allowed_model_types=frozenset({"videochat3", "qwen3"}),
                 trust_remote_code=True,
                 causal_lm=True,

@@ -46,6 +46,9 @@ def _release_source(root: Path) -> Path:
     (project / "assets" / "fonts" / "OFL.txt").write_text("OFL", encoding="utf-8")
     (project / "models" / "sources.json").write_text("{}\n", encoding="utf-8")
     (project / "models" / "revisions.json").write_text("{}\n", encoding="utf-8")
+    (project / "models" / "integrity.json").write_text(
+        '{"schema":1,"models":{}}\n', encoding="utf-8"
+    )
     (project / "requirements" / "release-build.txt").write_text(
         RELEASE_BUILD_LOCK, encoding="utf-8"
     )
@@ -71,7 +74,11 @@ where = ["src"]
     "assets/fonts/NotoNaskhArabic-Regular.ttf",
     "assets/fonts/OFL.txt",
 ]
-"share/hawedit/models" = ["models/sources.json", "models/revisions.json"]
+"share/hawedit/models" = [
+    "models/sources.json",
+    "models/revisions.json",
+    "models/integrity.json",
+]
 """,
         encoding="utf-8",
     )
@@ -186,6 +193,9 @@ def test_release_builds_twice_and_publishes_verified_provenance(tmp_path: Path) 
         assert any(name.endswith("share/hawedit/models/sources.json") for name in wheel.namelist())
         assert any(
             name.endswith("share/hawedit/models/revisions.json") for name in wheel.namelist()
+        )
+        assert any(
+            name.endswith("share/hawedit/models/integrity.json") for name in wheel.namelist()
         )
 
     with pytest.raises(ReleaseError, match="refusing to overwrite"):

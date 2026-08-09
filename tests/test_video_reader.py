@@ -225,6 +225,26 @@ def test_videochat_loader_uses_its_exact_model_type_allowlist(tmp_path: Path) ->
         reader._load()
 
 
+def test_videochat_proves_checkpoint_integrity_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text(
+        '{"model_type":"videochat3","text_config":{"model_type":"qwen3"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.assert_checkpoint_integrity",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("integrity sentinel")),
+    )
+    reader = VideoChat3Reader(
+        tmp_path,
+        read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),
+        score_window=lambda w: 0.5,
+    )
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        reader._load()
+
+
 # --- the wiring, driven through a stub processor and model ----------------------------------
 
 

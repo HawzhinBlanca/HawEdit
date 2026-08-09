@@ -27,19 +27,23 @@ should be told so before it spends an hour finding out.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import sys
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Final
+from pathlib import Path, PurePosixPath
+from typing import Final, cast
 
 from hawedit.registry import REGISTRY, ModelEntry, Provisioning
 
 __all__ = [
     "DEFAULT_MODELS_ROOT",
+    "INSTALLED_INTEGRITY",
+    "CheckpointIntegrityError",
+    "CheckpointIntegrityReport",
     "ModelNotProvisioned",
     "ModelStatus",
     "ModelStore",
@@ -47,6 +51,7 @@ __all__ = [
     "SourceNotConfigured",
     "UnsafeModelConfig",
     "WeightsIncomplete",
+    "assert_checkpoint_integrity",
     "assert_fully_loaded",
     "assert_transformers_config_safe",
     "readiness_report",
@@ -70,6 +75,7 @@ def _default_models_root() -> Path:
 DEFAULT_MODELS_ROOT: Final = _default_models_root()
 INSTALLED_SOURCES: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "sources.json"
 INSTALLED_REVISIONS: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "revisions.json"
+INSTALLED_INTEGRITY: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "integrity.json"
 
 # Which pip package supplies each PIP-provisioned component. Kept here rather than in the
 # registry because it describes this implementation's packaging, not §7's content.
@@ -92,6 +98,21 @@ class WeightsIncomplete(RuntimeError):
 
 class UnsafeModelConfig(RuntimeError):
     """Raised before Transformers can execute code named by checkpoint configuration."""
+
+
+class CheckpointIntegrityError(RuntimeError):
+    """Raised when local checkpoint bytes differ from the pinned Hub snapshot."""
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointIntegrityReport:
+    """The exact local snapshot proven against ``models/integrity.json``."""
+
+    model_id: str
+    repository: str
+    revision: str
+    files_verified: int
+    size_bytes: int
 
 
 _INTERNAL_IMPLEMENTATION_FIELDS: Final = frozenset(
@@ -320,6 +341,132 @@ class ModelStore:
             configured = {k: v for k, v in raw.items() if not k.startswith("_")}
         return configured
 
+    def integrity(self) -> Mapping[str, object]:
+        """The tracked byte manifest for every explicitly downloaded checkpoint.
+
+        A pinned revision identifies intended bytes but does not prove the files currently on
+        disk are those bytes.  The manifest records each accessible Hub file's content-addressed
+        Git blob id or LFS SHA-256 at that revision; a gated/redacted repository is explicitly
+        blocked instead of carrying a made-up digest. Installed wheels carry the same manifest
+        beside ``sources.json`` and ``revisions.json``.
+        """
+        integrity_file = self.root / "integrity.json"
+        if (
+            not integrity_file.exists()
+            and self._use_installed_sources
+            and INSTALLED_INTEGRITY.exists()
+        ):
+            integrity_file = INSTALLED_INTEGRITY
+        if not integrity_file.is_file():
+            raise CheckpointIntegrityError(
+                f"no checkpoint byte manifest at {integrity_file}. A repository revision names "
+                "intended weights but cannot detect a locally changed shard."
+            )
+        try:
+            raw: object = json.loads(integrity_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise CheckpointIntegrityError(
+                f"cannot read checkpoint byte manifest {integrity_file}: {exc}"
+            ) from exc
+        document = _object_mapping(raw, str(integrity_file))
+        if document.get("schema") != 1:
+            raise CheckpointIntegrityError(
+                f"{integrity_file} has unsupported schema {document.get('schema')!r}; expected 1"
+            )
+        return _object_mapping(document.get("models"), f"{integrity_file}: models")
+
+    def verify_checkpoint(
+        self, model_id: str, checkpoint: Path | None = None
+    ) -> CheckpointIntegrityReport:
+        """Hash every snapshot file before any HawEdit-owned model loader interprets it.
+
+        Git-managed files use the Git blob id (SHA-1 over the canonical ``blob <size>\\0``
+        prefix plus bytes); LFS files use their content SHA-256.  The file set is exact and
+        symlinks are refused, so adding executable modelling code is as visible as changing a
+        safetensors byte.  ``.cache/huggingface`` download metadata is excluded because it is
+        downloader state, not part of the repository snapshot.
+        """
+        entry = REGISTRY.get(model_id)
+        if entry is None or entry.provisioning is not Provisioning.WEIGHTS:
+            raise CheckpointIntegrityError(
+                f"{model_id!r} is not an explicitly downloaded §7 checkpoint"
+            )
+        model_manifest = _object_mapping(
+            self.integrity().get(model_id), f"integrity manifest for {model_id}"
+        )
+        repository = _required_string(model_manifest, "repository", model_id)
+        revision = _required_string(model_manifest, "revision", model_id)
+        configured_repository = self.source_for(entry)
+        configured_revision = self.revision_for(configured_repository)
+        if (repository, revision) != (configured_repository, configured_revision):
+            raise CheckpointIntegrityError(
+                f"{model_id} integrity manifest names {repository}@{revision}, but provisioning "
+                f"selects {configured_repository}@{configured_revision}. Refusing a manifest "
+                "for different weights."
+            )
+        integrity_status = _required_string(model_manifest, "status", model_id)
+        if integrity_status != "verified":
+            reason = _required_string(model_manifest, "reason", model_id)
+            raise CheckpointIntegrityError(
+                f"{model_id} checkpoint verification is {integrity_status}: {reason}"
+            )
+
+        files = _object_mapping(model_manifest.get("files"), f"{model_id}: files")
+        expected_paths = set(files)
+        root = (checkpoint if checkpoint is not None else self.path_for(entry)).resolve()
+        if not root.is_dir():
+            raise CheckpointIntegrityError(f"checkpoint directory is missing: {root}")
+
+        actual_paths: set[str] = set()
+        for candidate in root.rglob("*"):
+            relative = candidate.relative_to(root)
+            if relative.parts and relative.parts[0] == ".cache":
+                continue
+            if candidate.is_symlink():
+                raise CheckpointIntegrityError(
+                    f"{model_id} contains symbolic link {relative.as_posix()}; the manifest "
+                    "covers bytes inside the checkpoint, not an external target"
+                )
+            if candidate.is_file():
+                actual_paths.add(relative.as_posix())
+
+        missing = sorted(expected_paths - actual_paths)
+        extra = sorted(actual_paths - expected_paths)
+        if missing or extra:
+            raise CheckpointIntegrityError(
+                f"{model_id} file set differs from {repository}@{revision}: "
+                f"missing={missing[:8]}, extra={extra[:8]}"
+            )
+
+        total = 0
+        for manifest_path in sorted(expected_paths):
+            safe_relative = _safe_manifest_path(manifest_path, model_id)
+            expectation = _object_mapping(files[manifest_path], f"{model_id}:{manifest_path}")
+            algorithm = _required_string(expectation, "algorithm", f"{model_id}:{manifest_path}")
+            digest = _required_string(expectation, "digest", f"{model_id}:{manifest_path}")
+            size = _required_int(expectation, "size_bytes", f"{model_id}:{manifest_path}")
+            target = root.joinpath(*safe_relative.parts)
+            actual_size = target.stat().st_size
+            if actual_size != size:
+                raise CheckpointIntegrityError(
+                    f"{model_id}:{manifest_path} is {actual_size} bytes; pinned snapshot requires "
+                    f"{size}. The checkpoint is incomplete or changed."
+                )
+            actual_digest = _checkpoint_digest(target, algorithm, size)
+            if actual_digest != digest:
+                raise CheckpointIntegrityError(
+                    f"{model_id}:{manifest_path} {algorithm} is {actual_digest}; pinned snapshot "
+                    f"requires {digest}. Same-size weight corruption is not safe to load."
+                )
+            total += size
+        return CheckpointIntegrityReport(
+            model_id=model_id,
+            repository=repository,
+            revision=revision,
+            files_verified=len(expected_paths),
+            size_bytes=total,
+        )
+
     def revision_for(self, repo_id: str) -> str:
         """The commit to download `repo_id` at.
 
@@ -410,14 +557,34 @@ class ModelStore:
             source = self.source_for(entry)
         except SourceNotConfigured:
             source = "<source not configured>"
+        size_bytes = _directory_size(path) if present else None
+        if present:
+            try:
+                integrity = self.verify_checkpoint(entry.model_id, path)
+            except (CheckpointIntegrityError, RevisionNotPinned, SourceNotConfigured) as exc:
+                return ModelStatus(
+                    model_id=entry.model_id,
+                    component=entry.component,
+                    provisioning=entry.provisioning,
+                    available=False,
+                    detail=f"checkpoint integrity failed: {exc}",
+                    path=path,
+                    size_bytes=size_bytes,
+                )
+            detail = (
+                f"verified {integrity.files_verified} files from "
+                f"{integrity.repository}@{integrity.revision}"
+            )
+        else:
+            detail = f"not downloaded ({source})"
         return ModelStatus(
             model_id=entry.model_id,
             component=entry.component,
             provisioning=entry.provisioning,
             available=present,
-            detail=f"weights from {source}" if present else f"not downloaded ({source})",
+            detail=detail,
             path=path if present else None,
-            size_bytes=_directory_size(path) if present else None,
+            size_bytes=size_bytes,
         )
 
     def missing_weights(self) -> tuple[ModelEntry, ...]:
@@ -443,9 +610,12 @@ class ModelStore:
         Raises:
             ModelNotProvisioned: the component is unavailable, with what to do about it.
         """
-        status = next((s for s in self.status() if s.model_id == model_id), None)
-        if status is None:
+        entry = REGISTRY.get(model_id)
+        if entry is None:
             raise ModelNotProvisioned(f"{model_id!r} is not in §7")
+        # Do not build the whole readiness report here. That would hash every 37 GB checkpoint
+        # before a stage asking for one of them could start.
+        status = self._status_for(entry)
         if not status.available:
             if status.provisioning is Provisioning.WEIGHTS:
                 remedy = "Run scripts/fetch-models.sh."
@@ -470,6 +640,58 @@ def _is_importable(module: str) -> bool:
         return find_spec(module) is not None
     except (ImportError, ValueError):
         return False
+
+
+def _object_mapping(value: object, label: str) -> Mapping[str, object]:
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise CheckpointIntegrityError(f"{label} must be a JSON object with string keys")
+    return cast(dict[str, object], value)
+
+
+def _required_string(document: Mapping[str, object], key: str, label: str) -> str:
+    value = document.get(key)
+    if not isinstance(value, str) or not value:
+        raise CheckpointIntegrityError(f"{label}.{key} must be a non-empty string")
+    return value
+
+
+def _required_int(document: Mapping[str, object], key: str, label: str) -> int:
+    value = document.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise CheckpointIntegrityError(f"{label}.{key} must be a non-negative integer")
+    return value
+
+
+def _safe_manifest_path(relative: str, model_id: str) -> PurePosixPath:
+    path = PurePosixPath(relative)
+    if not relative or "\\" in relative or path.is_absolute() or ".." in path.parts:
+        raise CheckpointIntegrityError(
+            f"{model_id} integrity manifest contains unsafe path {relative!r}"
+        )
+    return path
+
+
+def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
+    if algorithm == "sha256":
+        digest = hashlib.sha256()
+    elif algorithm == "git-sha1":
+        # This reproduces Git's upstream object identity; it is not a new password/signature
+        # primitive. The already-fixed blob would require a second preimage to substitute.
+        digest = hashlib.sha1(usedforsecurity=False)
+        digest.update(f"blob {size}\0".encode())
+    else:
+        raise CheckpointIntegrityError(
+            f"unsupported checkpoint digest algorithm {algorithm!r} for {path}"
+        )
+    with path.open("rb") as stream:
+        while chunk := stream.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def assert_checkpoint_integrity(model_id: str, model_dir: Path) -> CheckpointIntegrityReport:
+    """Verify an explicitly supplied model directory against the tracked snapshot manifest."""
+    return ModelStore().verify_checkpoint(model_id, model_dir)
 
 
 def readiness_report(statuses: Sequence[ModelStatus]) -> str:

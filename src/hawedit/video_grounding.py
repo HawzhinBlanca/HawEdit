@@ -153,7 +153,9 @@ class TimeLens2Grounder:
             # No keyword arguments: TimeLens2 is a plain `Qwen3VLForConditionalGeneration` with
             # `tie_word_embeddings: true` at both config levels, so it needs none of VideoChat3's
             # three workarounds and reports `missing_keys: NONE` on the pinned transformers.
-            self._loaded = load_processor_and_model(self.model_dir, self.device)
+            self._loaded = load_processor_and_model(
+                self.model_dir, self.device, model_id=self.model_id
+            )
         return self._loaded
 
     def ground(self, window: SceneWindow, query: str) -> tuple[VisualEvidenceInterval, ...]:
