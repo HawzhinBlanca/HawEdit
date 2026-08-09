@@ -403,3 +403,71 @@ def test_the_serialized_form_names_the_path_for_a_human_reading_it() -> None:
     merged = merge_candidates([verbal("v1", 1_000, 5_000)], [visual("x1", 1_100, 5_100)])[0]
     assert merged.to_dict()["discovery_path"] == "both"
     assert merged.to_dict()["sources"] == ["v1", "x1"]
+
+
+# --- what adversarial pass #11 found revertible (D-124) ---------------------------------
+
+
+def test_rank_and_not_the_id_decides_who_claims_a_contested_candidate() -> None:
+    """The existing test could not tell rank from id, because its fixture agreed with both.
+
+    `v1` at rank 1 and `v2` at rank 2 sort the same way alphabetically, so dropping `rank` from
+    the anchor ordering left the suite green. Here the two orders **disagree**: `v2` is rank 1,
+    so `v2` must claim the contested visual candidate even though `v1` sorts first. §8.2's
+    `path_unique_wins` credits whichever moment gets the corroboration.
+    """
+    merged = merge_candidates(
+        [verbal("v1", 1_100, 5_100, rank=2), verbal("v2", 1_000, 5_000, rank=1)],
+        [visual("x1", 1_050, 5_050)],
+    )
+    claimed = [c for c in merged if "x1" in c.sources]
+    assert len(claimed) == 1
+    assert claimed[0].sources[0] == "v2", "rank 1 claims it, not the alphabetically first id"
+
+
+def test_the_output_is_ordered_by_media_then_start_then_id() -> None:
+    """The promised order, on a case where the merge's natural order is a different one.
+
+    Anchors are processed in rank order and Path B's leftovers are appended after them, so a
+    visual-only candidate that *starts first* comes out last without the final sort — and the
+    existing determinism test could not see it, because with every visual claimed there are no
+    leftovers and the internal order already happens to be stable.
+    """
+    merged = merge_candidates(
+        [verbal("v1", 10_000, 14_000, rank=1)],
+        [visual("x1", 0, 4_000, rank=1)],
+    )
+    assert [c.candidate_id for c in merged] == ["x1", "v1"], (
+        "a candidate that starts earlier must be listed earlier, whichever path found it"
+    )
+    assert [c.in_ms for c in merged] == sorted(c.in_ms for c in merged)
+
+
+def test_section_8_2s_rank_is_the_better_of_the_two_paths() -> None:
+    """`to_retrieved` takes `min`, and nothing pinned it.
+
+    §8.2's Recall@K asks whether a winner appeared in the top K of what was *proposed*: a moment
+    Path B ranked 2nd was available at position 2 whatever Path A thought of it. Taking the
+    worse rank would move a corroborated moment down the list it is being scored against, and
+    the existing test scores at k=20 where the two are indistinguishable.
+    """
+    merged = merge_candidates(
+        [verbal("v1", 1_000, 5_000, rank=9)],
+        [visual("x1", 1_050, 5_050, rank=2)],
+    )
+    (only,) = merged
+    assert only.discovery_path is DiscoveryPath.BOTH
+    assert only.verbal_rank == 9 and only.visual_rank == 2
+    (retrieved,) = to_retrieved(merged)
+    assert retrieved.rank == 2, "the earliest position at which either path surfaced it"
+
+
+def test_the_better_rank_is_not_simply_the_verbal_one() -> None:
+    """The control. Returning `verbal_rank` whenever it exists satisfies the test above only by
+    accident of which number is smaller; here the verbal path is the better one."""
+    merged = merge_candidates(
+        [verbal("v1", 1_000, 5_000, rank=2)],
+        [visual("x1", 1_050, 5_050, rank=7)],
+    )
+    (retrieved,) = to_retrieved(merged)
+    assert retrieved.rank == 2
