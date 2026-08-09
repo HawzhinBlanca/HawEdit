@@ -4603,3 +4603,57 @@ not — so both new tests assert the **windows the run reports**, not the argume
 test asserted a difference that could not exist. At 2 fps those scenes plan 3, which a ceiling of 2
 genuinely splits.
 `evidence/planning-windows-the-reader-can-read.md`.
+
+## D-109
+
+**§3 Stage 1's escalation rule ranks segments, and Stage 1 averaged them away.**
+`escalation.select_for_validation` — the bottom-quartile-plus-disagreement rule, implemented and
+tested — has **no reference anywhere in `src/` outside its own module**. The reason is not that nobody
+wired it: its input does not survive Stage 1.
+
+`asr.py` collects every region's `mean_logprob` into a list and then stores `sum / len` as one
+`AsrProvenance.mean_logprob`. Measured on the real 38-minute run: **547 regions produced 547 values,
+and the artifact kept `-6.523425833753913`**. A quartile of an average is nothing. This is
+**computed and discarded**, which the hard rules distinguish from never computed because they need
+different fixes, and this is the fix for the first.
+
+**Decision: each region's own confidence is kept, on the media clock, in the artifact.**
+`RawTranscript.segment_confidence` carries `(start_ms, end_ms, mean_logprob)` per transcribed region.
+The aggregate is untouched, so nothing that read it changes. `from_json` reads pre-D-109 transcripts
+with `.get`, as D-103 established.
+
+**Proven on the real run's own geometry.** Re-running 38 minutes of OmniASR costs about half an hour of
+GPU, so the run's 547 regions were replayed through the fixed assembly:
+
+```
+the real run: 547 regions, one recorded aggregate -6.523425833753913
+per-segment values in the artifact: 0
+assembled: 547 per-segment values retained
+§3's rule over those values: 136 of 547 escalate   (547 // 4 = 136, the bottom quartile)
+before the change, over one aggregate: 0 escalate
+```
+
+**What that does and does not show.** It shows the quartile is computable at all — the count is exactly
+`n // 4`, and the pre-change case is inert. The confidence *values* in the replay are spread around the
+run's own aggregate rather than being the models' per-segment measurements, so **it is not a finding
+about which real segments are weak**. That needs the run repeated, and it is not what this change
+claims.
+
+**Still not wired, and this is why.** `select_for_validation` needs `ctc_text` as well, and that is
+**never computed**: the CTC pass produces frame-level emissions for alignment
+(`OmniAsrBackend._ctc_emissions`) and nothing decodes them to text, so `SegmentTranscript` carries only
+the LLM's `text_raw`. Half of §3's rule now has its input and half does not. Inventing a `ctc_text` to
+make the call typecheck would fabricate the disagreement the rule is supposed to detect.
+
+**Rejected: ranking on word confidences instead.** `Word.conf` exists per word, and §3 says segments.
+Substituting a different unit to make a rule runnable is the kind of quiet redefinition this repo
+refuses elsewhere.
+
+**Mutation audit 5/5**, after a first run with two survivors — **both of them validation I had just
+written on `SegmentConfidence` with no test reaching it**. That is the third iteration running where the
+audit's real catch was my own new guard (D-103's blank reason, D-104's unreachable parity check). The
+five: dropping the collected values CAUGHT (3), recording the running average once per segment — the
+plausible wrong fix, which would leave every segment tied and the quartile empty — CAUGHT (2), losing
+the segment's own bounds CAUGHT (2), accepting a positive log-probability CAUGHT (1), and accepting a
+zero-length span CAUGHT (1).
+`evidence/per-segment-confidence-was-averaged-away.md`.

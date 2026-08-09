@@ -49,6 +49,7 @@ __all__ = [
     "RawTranscript",
     "RawTranscriptImmutable",
     "RawTranscriptTampered",
+    "SegmentConfidence",
     "StaleNormalizedTranscript",
     "TranscriptStore",
     "UnalignedSpeech",
@@ -133,6 +134,38 @@ class UnalignedSpeech:
 
 
 @dataclass(frozen=True, slots=True)
+class SegmentConfidence:
+    """One Stage 0 speech region's own mean log-probability, on the media clock.
+
+    §3 Stage 1 routes to the validator "any segment where LLM-7B and CTC-3B disagree materially"
+    **and** any segment in the bottom log-probability quartile. `escalation.select_for_validation`
+    implements that rule and had no caller, because its input did not survive Stage 1: every
+    segment's `mean_logprob` was computed and then averaged into one number.
+
+    Measured on the real 38-minute run: 547 segments produced 547 values, and the artifact kept
+    `-6.523425833753913`. A quartile cannot be taken of an average. Computed and discarded is a
+    different defect from never computed, and this is the fix for the first. D-109.
+    """
+
+    start_ms: int
+    end_ms: int
+    mean_logprob: float
+
+    def __post_init__(self) -> None:
+        if self.end_ms <= self.start_ms:
+            raise ValueError(
+                f"segment confidence spans {self.start_ms}..{self.end_ms} ms, which has no length"
+            )
+        if self.mean_logprob > 0.0:
+            # The same refusal `SegmentScore` makes, for the same reason: escalation ranks on log
+            # probabilities, and a wrong scale here silently inverts the quartile.
+            raise ValueError(
+                f"segment at {self.start_ms} ms reports mean_logprob {self.mean_logprob}, which is "
+                f"not a log-probability (<= 0). A wrong scale inverts the bottom quartile."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AsrProvenance:
     """Which models produced this transcript. Every name must be in §7."""
 
@@ -172,6 +205,10 @@ class RawTranscript:
     # says what it does not contain. §5's `RejectedCandidate` states the same principle for
     # candidates — "that set is your only measure of recall". D-103.
     unaligned: tuple[UnalignedSpeech, ...] = ()
+    # Each transcribed region's own confidence, kept because §3 Stage 1's escalation rule ranks
+    # segments and `asr.mean_logprob` is their average. 547 values became one on the real run.
+    # D-109.
+    segment_confidence: tuple[SegmentConfidence, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.media_id, str) or not self.media_id.strip():
@@ -197,6 +234,12 @@ class RawTranscript:
         for position, gap in enumerate(self.unaligned):
             if not isinstance(gap, UnalignedSpeech):
                 raise ValueError(f"raw transcript unaligned[{position}] is not an UnalignedSpeech")
+
+        for position, scored in enumerate(self.segment_confidence):
+            if not isinstance(scored, SegmentConfidence):
+                raise ValueError(
+                    f"raw transcript segment_confidence[{position}] is not a SegmentConfidence"
+                )
 
         previous: Word | None = None
         text_cursor = 0
@@ -244,6 +287,9 @@ class RawTranscript:
             # `.get`: transcripts written before D-103 have no such key, and refusing to read
             # them would make an old canonical artifact unreadable to satisfy a new field.
             unaligned=tuple(UnalignedSpeech(**u) for u in data.get("unaligned", ())),
+            segment_confidence=tuple(
+                SegmentConfidence(**c) for c in data.get("segment_confidence", ())
+            ),
         )
 
 
