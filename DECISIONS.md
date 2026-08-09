@@ -3967,3 +3967,60 @@ is stale in KLPT's data — where the measured entry count is 24 894. Same defec
 a number copied from a source rather than measured from it. `evidence/waw-separation.md`.
 
 Gate: `VERIFY OK — 1142 passed, 0 skipped`.
+
+---
+
+## D-100 · A clean commit is not evidence that its release passed the gate
+
+**The release command published untested revisions by design.** `_source_identity` proved only
+that `HEAD` was clean and stable. It then created the private builder, built twice and emitted
+schema-3 provenance without consulting the gate, JUnit or CI. The release test made the defect
+executable: it initializes a new repository with no remote, workflow or gate evidence and expects
+publication to succeed. A syntax-correct wheel from a commit with failing tests was therefore a
+valid HawEdit release.
+
+**Decision: require one explicit official production gate, not "the latest" and not a local
+leftover.** `.gate/last-test-run.xml` is ignored, mutable and has no source SHA; binding it after the
+fact would turn a timestamp into identity. Selecting the latest Actions run races concurrent
+pushes. The caller must provide `--gate-run-id`, and both the CLI and exported build function query
+that exact record before creating a builder or output directory.
+
+The accepted record must name `HawzhinBlanca/HawEdit` as both repository and head repository, use
+`.github/workflows/gate.yml`, be a `push` on `main`, and match the clean release SHA. The run and
+its single `gate` job must be completed successfully on the same attempt. The returned job list
+must be complete, and all eight mandatory install, full-gate, real-media and evidence steps must
+be present, completed and successful. Fork, PR, manual, feature, queued, failed, wrong-SHA,
+paginated, malformed and network-error paths fail closed. `GITHUB_TOKEN`, when needed for rate
+limits, is sent only as an authorization header.
+
+**The first fix still built the wrong thing under a race.** Both builds read the live worktree and
+only checked cleanliness before and after. A concurrent writer could change a tracked source,
+leave it changed through both builds so their bytes matched, then restore it before the final
+check. Schema-4 provenance would name gated SHA A while the wheel contained other bytes. Both
+builds now consume separate `git --no-replace-objects archive <revision>` exports. Git objects,
+not mutable paths, define the source; separate extractions also prevent build 1's generated
+egg-info/build files from making build 2 falsely agree. The extractor is implemented in HawEdit
+rather than relying on tar's Python-3.11.4-added `filter=` API: it path-confines every member and
+refuses links/special files, preserving the declared Python 3.11.0+ support range.
+
+**Authorization cannot follow a redirect.** urllib's default redirect handler can copy headers to
+the redirected request before a post-response URL check runs. The release client installs a
+redirect-rejecting handler, so a 30x is an HTTP refusal and `GITHUB_TOKEN` never reaches the target.
+The provenance URLs are constructed locally from already-verified official run/job ids rather
+than treating GitHub's display-link formatting as a security boundary.
+
+**Provenance schema 4 records the proof.** Repository, workflow, run id/attempt, event, branch,
+revision, result, completion, job id and official URLs are now part of the checksummed provenance.
+An explicit id makes the result stable and reviewable; it also prevents a newer unrelated success
+from blessing an older source tree.
+
+**Live controls, not only mocked JSON.** The verifier accepted official `main` push run
+`31295014063` for exact SHA `b34d88dc734f8aefd6c7c7d10ff6953cc5e24e92`. It refused successful
+run `31294726370` for `c983673...` because that was a manual feature-branch run. Focused release
+tests mutate every identity/status boundary and prove failure precedes output creation.
+`evidence/release-exact-gate.md`.
+
+This closes promotion without claiming authenticity: GitHub's record is still not a project
+signature, and M3.7 remains partial for release signing and external asset supply-chain coverage.
+
+Gate: `VERIFY OK — 1282 passed, 0 skipped`.

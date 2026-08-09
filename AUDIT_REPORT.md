@@ -86,7 +86,9 @@ These cannot be truthfully solved from the checkout alone:
   font, and every base/optional `Requires-Dist` relationship without inventing unresolved
   dependency versions. Its two builds now run under a private, hash-locked Pip/Setuptools
   toolchain and provenance records that builder identity; an ambient backend cannot silently
-  change the wheel. Releases are still unsigned, and package-managed OmniASR assets lack a
+  change the wheel. Publication also requires an explicit successful official `main` push gate
+  for the exact release SHA and records its run/job in provenance; a clean but untested commit is
+  no longer publishable. Releases are still unsigned, and package-managed OmniASR assets lack a
   project-owned byte manifest.
 
 ## Honest release call
@@ -97,7 +99,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,219 collected, 1,219 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,282 collected, 1,282 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -120,13 +122,17 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   25 fps remains non-drop and unsupported 24000/1001 refuses before any sidecar write.
 - Real pipeline delivery publishes one exact ASS/MP4/SRT/EDL/JSON directory. Tests inject ASS
   and sidecar write failures and a two-worker publication race; failures expose no partial set.
-- `hawedit-release` derives `SOURCE_DATE_EPOCH` from clean Git `HEAD`, builds independently
-  twice under a private builder populated only from hash-locked Pip 26.2.1 and Setuptools 84.0.0
-  wheels, refuses unequal bytes, validates release-critical package data, and atomically emits
-  the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision/builder provenance. The
+- `hawedit-release` first verifies an explicit official `main` push run whose workflow, exact SHA,
+  successful `gate` job and mandatory steps all match the clean Git `HEAD`, then derives
+  `SOURCE_DATE_EPOCH` and exports that Git object twice with replacement refs disabled. Each wheel
+  builds from its own pristine source tree under a private builder populated only from hash-locked
+  Pip 26.2.1 and Setuptools 84.0.0 wheels. It refuses unequal bytes, validates release-critical
+  package data, and atomically emits
+  the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision/gate/builder provenance. The
   independent `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally
   live beside the artifacts instead of in this changing source file. Signing and a project-owned
-  OmniASR byte manifest remain open supply-chain work (`evidence/release-builder-lock.md`).
+  OmniASR byte manifest remain open supply-chain work (`evidence/release-builder-lock.md`,
+  `evidence/release-exact-gate.md`).
 - Cross-Python release proof: Python 3.11.15 and 3.12.10 each emitted the same 329,973-byte wheel
   from revision `8d4810d28fd1`, SHA-256 `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9`.
   Provenance differs deliberately because it records the measured interpreter.

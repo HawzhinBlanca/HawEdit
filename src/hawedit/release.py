@@ -1,10 +1,11 @@
 """Build and publish a reproducible HawEdit wheel from one clean Git revision.
 
-A successful ``pip wheel`` exit is not release evidence. This command derives
-``SOURCE_DATE_EPOCH`` from the source commit, builds twice in independent directories, requires
-the wheel bytes to have the same SHA-256, inspects the archive for HawEdit's runtime data, and
-only then atomically publishes a directory containing the wheel, an SPDX 2.3 SBOM,
-``SHA256SUMS`` and stable provenance JSON.
+A successful ``pip wheel`` exit is not release evidence. This command requires an explicit,
+successful canonical GitHub gate run for the exact clean ``main`` revision, derives
+``SOURCE_DATE_EPOCH`` from that commit, builds twice in independent directories, requires the
+wheel bytes to have the same SHA-256, inspects the archive for HawEdit's runtime data, and only
+then atomically publishes a directory containing the wheel, an SPDX 2.3 SBOM, ``SHA256SUMS`` and
+stable provenance JSON.
 
 The output directory is write-once. Re-running against an existing release refuses instead of
 replacing an artifact that may already have been distributed.
@@ -20,14 +21,17 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.parser import BytesParser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Final, cast
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 __all__ = ["ReleaseArtifact", "ReleaseError", "build_reproducible_wheel", "main"]
 
@@ -47,6 +51,32 @@ _LOCKED_REQUIREMENT: Final = re.compile(
     r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s]+)\s+--hash=sha256:([0-9a-f]{64})$"
 )
 _BUILD_LOCK: Final = Path("requirements/release-build.txt")
+_GITHUB_REPOSITORY: Final = "HawzhinBlanca/HawEdit"
+_GATE_WORKFLOW: Final = ".github/workflows/gate.yml"
+_GATE_JOB: Final = "gate"
+_GATE_BRANCH: Final = "main"
+_GITHUB_API: Final = f"https://api.github.com/repos/{_GITHUB_REPOSITORY}"
+_MAX_GITHUB_RESPONSE_BYTES: Final = 2_000_000
+_REQUIRED_GATE_STEPS: Final = (
+    "install",
+    "fetch the pinned ffmpeg (libass + HarfBuzz + FriBidi)",
+    "gate",
+    "the golden render must have run, not skipped",
+    "Stage 0 must have run against real media, not skipped",
+    "the pipeline must run over real media and refuse to claim completeness",
+    "the gate must have left fresh test evidence",
+    "the test-count floor must not have been ratcheted by this run",
+)
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    """Never forward a release credential to a redirect target."""
+
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+
+_GITHUB_OPENER: Final = build_opener(_RejectRedirects())
 
 
 class ReleaseError(RuntimeError):
@@ -65,6 +95,8 @@ class ReleaseArtifact:
     sha256: str
     sbom_sha256: str
     provenance_sha256: str
+    gate_run_id: int
+    gate_run_url: str
     size_bytes: int
     build_python: str
     build_frontend: str
@@ -83,6 +115,8 @@ class ReleaseArtifact:
             "sha256": self.sha256,
             "sbom_sha256": self.sbom_sha256,
             "provenance_sha256": self.provenance_sha256,
+            "gate_run_id": self.gate_run_id,
+            "gate_run_url": self.gate_run_url,
             "size_bytes": self.size_bytes,
             "build_python": self.build_python,
             "build_frontend": self.build_frontend,
@@ -111,6 +145,39 @@ class _BuildIdentity:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _GateIdentity:
+    repository: str
+    workflow: str
+    run_id: int
+    run_attempt: int
+    event: str
+    branch: str
+    revision: str
+    url: str
+    completed_at: str
+    job_id: int
+    job_url: str
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "repository": self.repository,
+            "workflow": self.workflow,
+            "run_id": self.run_id,
+            "run_attempt": self.run_attempt,
+            "event": self.event,
+            "branch": self.branch,
+            "revision": self.revision,
+            "status": "completed",
+            "conclusion": "success",
+            "url": self.url,
+            "completed_at": self.completed_at,
+            "job": _GATE_JOB,
+            "job_id": self.job_id,
+            "job_url": self.job_url,
+        }
+
+
 def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
     try:
         result = subprocess.run(
@@ -129,6 +196,228 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) ->
             f"command failed with exit {result.returncode}: {' '.join(command)}\n{detail}"
         )
     return result.stdout.strip()
+
+
+def _github_json(url: str) -> dict[str, object]:
+    """Read one bounded GitHub API object without making ``gh`` a runtime dependency."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "hawedit-release",
+    }
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, headers=headers)
+    try:
+        with _GITHUB_OPENER.open(request, timeout=30) as response:
+            payload = response.read(_MAX_GITHUB_RESPONSE_BYTES + 1)
+    except HTTPError as exc:
+        raise ReleaseError(
+            f"GitHub rejected gate evidence lookup with HTTP {exc.code}; "
+            "check --gate-run-id and GITHUB_TOKEN"
+        ) from exc
+    except (OSError, URLError) as exc:
+        raise ReleaseError(f"could not read gate evidence from GitHub: {exc}") from exc
+    if len(payload) > _MAX_GITHUB_RESPONSE_BYTES:
+        raise ReleaseError("GitHub gate evidence exceeded the 2 MB response limit")
+    try:
+        parsed: object = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReleaseError("GitHub returned malformed JSON for the gate evidence") from exc
+    if not isinstance(parsed, dict):
+        raise ReleaseError("GitHub gate evidence is not a JSON object")
+    return cast(dict[str, object], parsed)
+
+
+def _object_field(value: object, *, context: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ReleaseError(f"GitHub gate evidence has invalid {context}")
+    return cast(dict[str, object], value)
+
+
+def _text_field(source: dict[str, object], key: str, *, context: str) -> str:
+    value = source.get(key)
+    if not isinstance(value, str) or not value:
+        raise ReleaseError(f"GitHub gate evidence has invalid {context}.{key}")
+    return value
+
+
+def _int_field(source: dict[str, object], key: str, *, context: str) -> int:
+    value = source.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ReleaseError(f"GitHub gate evidence has invalid {context}.{key}")
+    return value
+
+
+def _verify_gate_run(revision: str, gate_run_id: int | None) -> _GateIdentity:
+    """Require one official, completed canonical gate for this exact main-branch revision."""
+    if isinstance(gate_run_id, bool) or not isinstance(gate_run_id, int) or gate_run_id <= 0:
+        raise ReleaseError(
+            "an explicit positive --gate-run-id is required; a clean commit is not proof it passed"
+        )
+
+    run_url = f"{_GITHUB_API}/actions/runs/{gate_run_id}"
+    run = _github_json(run_url)
+    if _int_field(run, "id", context="run") != gate_run_id:
+        raise ReleaseError("GitHub returned a different gate run id than requested")
+    repository = _object_field(run.get("repository"), context="run.repository")
+    head_repository = _object_field(run.get("head_repository"), context="run.head_repository")
+    if _text_field(repository, "full_name", context="run.repository") != _GITHUB_REPOSITORY:
+        raise ReleaseError("gate run is not owned by the official HawEdit repository")
+    if (
+        _text_field(head_repository, "full_name", context="run.head_repository")
+        != _GITHUB_REPOSITORY
+    ):
+        raise ReleaseError("gate run tested a fork rather than the official HawEdit repository")
+    if _text_field(run, "path", context="run") != _GATE_WORKFLOW:
+        raise ReleaseError(f"gate run did not use {_GATE_WORKFLOW}")
+    if _text_field(run, "event", context="run") != "push":
+        raise ReleaseError("release gate must be the push run, not a manual or pull-request run")
+    branch = _text_field(run, "head_branch", context="run")
+    if branch != _GATE_BRANCH:
+        raise ReleaseError(f"release gate ran on {branch!r}, not {_GATE_BRANCH!r}")
+    head_sha = _text_field(run, "head_sha", context="run")
+    if head_sha != revision:
+        raise ReleaseError(f"gate run tested {head_sha}, but the release source is {revision}")
+    if _text_field(run, "status", context="run") != "completed":
+        raise ReleaseError("gate run has not completed")
+    if _text_field(run, "conclusion", context="run") != "success":
+        raise ReleaseError("gate run did not conclude successfully")
+    attempt = _int_field(run, "run_attempt", context="run")
+    run_page = f"https://github.com/{_GITHUB_REPOSITORY}/actions/runs/{gate_run_id}"
+
+    jobs = _github_json(f"{run_url}/jobs?per_page=100")
+    raw_jobs = jobs.get("jobs")
+    if isinstance(raw_jobs, str | bytes) or not isinstance(raw_jobs, list):
+        raise ReleaseError("GitHub gate evidence has invalid jobs")
+    total_jobs = _int_field(jobs, "total_count", context="jobs")
+    if total_jobs != len(raw_jobs):
+        raise ReleaseError(
+            f"gate run reports {total_jobs} jobs but returned {len(raw_jobs)}; "
+            "refusing incomplete paginated evidence"
+        )
+    job_objects = [
+        _object_field(job, context=f"jobs[{index}]") for index, job in enumerate(raw_jobs)
+    ]
+    gate_jobs = [job for job in job_objects if _text_field(job, "name", context="job") == _GATE_JOB]
+    if len(gate_jobs) != 1:
+        raise ReleaseError(f"gate run contains {len(gate_jobs)} {_GATE_JOB!r} jobs; expected one")
+    job = gate_jobs[0]
+    if _text_field(job, "head_sha", context="job") != revision:
+        raise ReleaseError("gate job revision does not match the release source")
+    if _int_field(job, "run_attempt", context="job") != attempt:
+        raise ReleaseError("gate job belongs to a different run attempt")
+    if _text_field(job, "status", context="job") != "completed":
+        raise ReleaseError("gate job has not completed")
+    if _text_field(job, "conclusion", context="job") != "success":
+        raise ReleaseError("gate job did not conclude successfully")
+
+    raw_steps = job.get("steps")
+    if isinstance(raw_steps, str | bytes) or not isinstance(raw_steps, list):
+        raise ReleaseError("GitHub gate evidence has invalid job steps")
+    steps: dict[str, list[dict[str, object]]] = {}
+    for index, raw_step in enumerate(raw_steps):
+        step = _object_field(raw_step, context=f"job.steps[{index}]")
+        name = _text_field(step, "name", context=f"job.steps[{index}]")
+        steps.setdefault(name, []).append(step)
+    missing = [name for name in _REQUIRED_GATE_STEPS if name not in steps]
+    if missing:
+        raise ReleaseError("gate job omitted required step(s): " + ", ".join(missing))
+    for name in _REQUIRED_GATE_STEPS:
+        matches = steps[name]
+        if len(matches) != 1:
+            raise ReleaseError(f"gate job contains duplicate required step {name!r}")
+        step = matches[0]
+        if _text_field(step, "status", context=f"step {name!r}") != "completed":
+            raise ReleaseError(f"required gate step {name!r} did not complete")
+        if _text_field(step, "conclusion", context=f"step {name!r}") != "success":
+            raise ReleaseError(f"required gate step {name!r} did not succeed")
+
+    job_id = _int_field(job, "id", context="job")
+    job_page = f"{run_page}/job/{job_id}"
+    return _GateIdentity(
+        repository=_GITHUB_REPOSITORY,
+        workflow=_GATE_WORKFLOW,
+        run_id=gate_run_id,
+        run_attempt=attempt,
+        event="push",
+        branch=branch,
+        revision=revision,
+        url=run_page,
+        completed_at=_text_field(job, "completed_at", context="job"),
+        job_id=job_id,
+        job_url=job_page,
+    )
+
+
+def _extract_git_archive(archive: Path, destination: Path, revision: str) -> None:
+    """Extract only contained regular files/directories on every supported Python 3.11+."""
+    root = destination.resolve()
+    try:
+        with tarfile.open(archive, mode="r:") as source:
+            for member in source:
+                relative = PurePosixPath(member.name)
+                if (
+                    not relative.parts
+                    or relative.is_absolute()
+                    or ".." in relative.parts
+                    or "\\" in member.name
+                ):
+                    raise ReleaseError(
+                        f"Git archive for {revision} contains unsafe path {member.name!r}"
+                    )
+                target = destination.joinpath(*relative.parts).resolve()
+                if not target.is_relative_to(root):
+                    raise ReleaseError(
+                        f"Git archive for {revision} escapes its source root: {member.name!r}"
+                    )
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if not member.isreg():
+                    raise ReleaseError(
+                        f"Git archive for {revision} contains unsupported link/special member "
+                        f"{member.name!r}"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                incoming = source.extractfile(member)
+                if incoming is None:
+                    raise ReleaseError(f"Git archive for {revision} could not read {member.name!r}")
+                with incoming, target.open("xb") as output:
+                    shutil.copyfileobj(incoming, output, length=1024 * 1024)
+                os.chmod(target, member.mode & 0o777)
+                os.utime(target, (member.mtime, member.mtime))
+    except ReleaseError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
+        raise ReleaseError(
+            f"could not extract immutable source revision {revision}: {exc}"
+        ) from exc
+
+
+def _snapshot_source(project_root: Path, revision: str, destination: Path) -> None:
+    """Export one immutable Git commit; never let live worktree bytes enter a wheel."""
+    destination.mkdir(parents=True)
+    archive = destination.parent / f".{destination.name}.tar"
+    _run(
+        [
+            "git",
+            "--no-replace-objects",
+            "archive",
+            "--format=tar",
+            "--output",
+            str(archive),
+            revision,
+        ],
+        cwd=project_root,
+    )
+    try:
+        _extract_git_archive(archive, destination, revision)
+    finally:
+        archive.unlink(missing_ok=True)
+    if not (destination / "pyproject.toml").is_file():
+        raise ReleaseError(f"Git archive for {revision} did not contain pyproject.toml")
 
 
 def _source_identity(project_root: Path) -> tuple[str, int]:
@@ -585,8 +874,9 @@ def build_reproducible_wheel(
     output_dir: Path | None = None,
     *,
     python: Path = Path(sys.executable),
+    gate_run_id: int | None = None,
 ) -> ReleaseArtifact:
-    """Build twice with one hash-locked private builder and publish byte-identical wheels."""
+    """Verify exact-SHA CI, then build twice and publish byte-identical wheels."""
     root = project_root.resolve()
     revision, epoch = _source_identity(root)
     output = (
@@ -596,17 +886,22 @@ def build_reproducible_wheel(
     )
     if output == root or output.is_relative_to(root / ".git"):
         raise ReleaseError(f"unsafe release output directory {output}")
-    output.parent.mkdir(parents=True, exist_ok=True)
     if os.path.lexists(output):
         raise ReleaseError(f"refusing to overwrite release directory {output}")
+    gate = _verify_gate_run(revision, gate_run_id)
+    output.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="hawedit-wheel-build-") as temporary:
         temporary_root = Path(temporary)
+        first_source = temporary_root / "source-first"
+        second_source = temporary_root / "source-second"
+        _snapshot_source(root, revision, first_source)
+        _snapshot_source(root, revision, second_source)
         builder_python, builder = _create_locked_builder(
-            root, temporary_root / "builder", python.resolve()
+            first_source, temporary_root / "builder", python.resolve()
         )
-        first = _build_once(root, temporary_root / "first", builder_python, epoch)
-        second = _build_once(root, temporary_root / "second", builder_python, epoch)
+        first = _build_once(first_source, temporary_root / "first", builder_python, epoch)
+        second = _build_once(second_source, temporary_root / "second", builder_python, epoch)
         first_digest = _sha256(first)
         second_digest = _sha256(second)
         if first.name != second.name or first_digest != second_digest:
@@ -636,9 +931,10 @@ def build_reproducible_wheel(
             )
             sbom_digest = hashlib.sha256(sbom_payload).hexdigest()
             provenance = {
-                "schema": 3,
+                "schema": 4,
                 "revision": revision,
                 "source_date_epoch": epoch,
+                "gate": gate.to_dict(),
                 "builder": builder.to_dict(),
                 "wheel": first.name,
                 "sha256": first_digest,
@@ -675,6 +971,8 @@ def build_reproducible_wheel(
         sha256=first_digest,
         sbom_sha256=sbom_digest,
         provenance_sha256=provenance_digest,
+        gate_run_id=gate.run_id,
+        gate_run_url=gate.url,
         size_bytes=size,
         build_python=builder.python,
         build_frontend=builder.frontend,
@@ -685,13 +983,24 @@ def build_reproducible_wheel(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="build HawEdit twice and publish only a byte-reproducible wheel"
+        description=(
+            "verify an exact successful main-branch gate run, then build HawEdit twice and "
+            "publish only a byte-reproducible wheel"
+        )
     )
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--gate-run-id",
+        type=int,
+        required=True,
+        help="GitHub Actions run id for this exact main-branch revision",
+    )
     args = parser.parse_args(argv)
     try:
-        artifact = build_reproducible_wheel(args.project_root, args.output_dir)
+        artifact = build_reproducible_wheel(
+            args.project_root, args.output_dir, gate_run_id=args.gate_run_id
+        )
     except ReleaseError as exc:
         parser.exit(1, f"REFUSED: {exc}\n")
     print(json.dumps(artifact.to_dict(), indent=2, sort_keys=True))

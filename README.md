@@ -123,22 +123,31 @@ real safeguard on Kurdish invariant #4 — skips.
 Release from a clean, committed checkout with one command:
 
 ```bash
-hawedit-release --project-root .
+hawedit-release --project-root . --gate-run-id GITHUB_ACTIONS_RUN_ID
 ```
 
-The command derives `SOURCE_DATE_EPOCH` from `HEAD`, creates a private temporary builder from
-the exact Pip and Setuptools wheels hash-locked in `requirements/release-build.txt`, builds the
-wheel twice in independent temporary directories, requires identical filenames and SHA-256
-digests, checks the archive for the Kurdish font/licence and model source/revision manifests,
-then atomically publishes a
+The run id is explicit: the command queries GitHub and requires the official repository's
+`.github/workflows/gate.yml` **push** run on `main` for the exact clean `HEAD`. The run, its single
+`gate` job and every mandatory install/gate/real-media/evidence step must be completed and
+successful. A feature-branch, pull-request, manual, fork, queued, failed, wrong-SHA or incomplete
+run is refused; network/API failure is also a refusal. Set `GITHUB_TOKEN` when unauthenticated API
+limits are insufficient. Redirects are rejected before following so that token is never forwarded
+to another host. The accepted run and job are written into schema-4 provenance.
+
+Only then does the command derive `SOURCE_DATE_EPOCH` from `HEAD`, create a private temporary
+builder from the exact Pip and Setuptools wheels hash-locked in
+`requirements/release-build.txt`, export the verified Git object twice with replacement refs
+disabled, and build each wheel from its own pristine source directory. It requires identical
+filenames and SHA-256 digests, checks the archive for the Kurdish font/licence and model
+source/revision manifests, then atomically publishes a
 write-once directory under `dist/`. That directory contains the wheel, `SHA256SUMS`,
 `release-provenance.json`, and deterministic SPDX 2.3 JSON. The SBOM binds the exact wheel and
 bundled Noto font hashes and records every base/optional dependency declared by the wheel; it
 marks unbundled requirements unresolved instead of borrowing versions from the build machine.
 Provenance records the measured Python, build frontend/backend and build-lock digest.
 `SHA256SUMS` covers all three metadata/artifact payloads. A dirty checkout, unpinned or drifting
-builder, hash mismatch, non-reproducible build, missing runtime file, corrupt wheel, or existing
-release directory is refused.
+gate mismatch, builder drift, hash mismatch, non-reproducible build, missing runtime file, corrupt
+wheel, or existing release directory is refused.
 
 This proves repeatable source-to-wheel bytes and a standards-validated component manifest. It is
 not a signature, an OmniASR byte manifest, a resolved deployment lock, or proof that a machine's
@@ -287,7 +296,8 @@ The gate is deliberately hard to fool, because it is the only thing that decides
 
 CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the
 pinned ffmpeg, and fails if the §4.3 golden render or the §3 Stage 0 tests *skip* rather than
-run. Making that job a required status check is a repository setting, and is not done.
+run. `gate` is a strict required status check on protected `main`; force-pushes and deletions are
+disabled (`BLOCKED.md` #7 records the live setting).
 
 ## Module map
 
@@ -334,7 +344,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `artifact_bundle.py` | §2 | Private staging and atomic, write-once publication of the exact ASS/MP4/SRT/EDL/JSON delivery directory. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
-| `release.py` | — | Clean-HEAD, double-build wheel reproducibility; validates runtime data and atomically publishes checksum plus Git provenance. |
+| `release.py` | — | Exact-SHA official main-gate proof, clean-HEAD double-build wheel reproducibility, runtime-data validation and atomic checksummed provenance. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |
 | `models.py` | §7 | Which §7 components this machine actually has, and the registry-driven fetcher. |

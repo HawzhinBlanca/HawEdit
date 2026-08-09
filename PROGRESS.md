@@ -194,6 +194,15 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > external-model supply chain; it does not close gated pyannote identities, release signing,
 > transitive environment locking, or package-managed OmniASR assets.
 
+> **M3.7 promotion amendment (D-100).** Publication now requires an explicit successful official
+> `main` push run of `.github/workflows/gate.yml` for the exact clean release SHA. The API, exported
+> Python function and CLI all fail closed before creating a builder or output directory when the
+> run, repository, workflow, branch, event, SHA, attempt, job or any mandatory step is wrong. The
+> exact run/job is recorded in schema-4 provenance. Redirects are refused before authorization can
+> cross hosts. Both wheel builds consume separate pristine `git --no-replace-objects archive`
+> exports of the verified SHA, so live-worktree races and build-1 residue cannot enter or stabilize
+> the artifact. `evidence/release-exact-gate.md`.
+
 ## M7 — task ledger
 
 | Task | Definition of Done | Status | Evidence |
