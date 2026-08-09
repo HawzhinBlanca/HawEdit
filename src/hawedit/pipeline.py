@@ -1115,12 +1115,15 @@ def run_pipeline(
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
 
-    # --- §3 Stage 2 (text half) -----------------------------------------------------------
-    index = Bm25Index.from_transcript(normalized)
-
     # --- §4.2 sentence segmentation, against this run's own VAD ---------------------------
     vad_pauses = _pauses_between(ingested)
     sentences = segment_sentences(transcript.words, vad_pauses=vad_pauses)
+
+    # --- §3 Stage 2 (text half) -----------------------------------------------------------
+    # BM25 ranks passages, not a one-document episode. On the measured 38-minute transcript,
+    # the old shape returned one 38.6-minute hit for every query; sentence documents produce
+    # bounded windows and term rarity across 186 documents (D-164).
+    index = Bm25Index.from_sentences(sentences, normalized)
 
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 

@@ -11,12 +11,9 @@ Query the stem against a word-only index and it returns nothing, for a match any
 speaker considers obvious. The two fields are scored separately and combined, so the
 contribution of each is visible on every hit and the balance is tunable — see D-016.
 
-**Kurdish invariant #3 lives here.** An index reads `transcript.norm.json`, never raw.
-`from_transcript` is typed to accept only a `NormalizedTranscript`, so mypy rejects raw at
-the call site, and `assert_model_input` catches the dynamic paths. Queries are normalized on
-the way in for the same reason §4.1 exists: a query typed on an Arabic keyboard and a
-transcript typed on a Kurdish one are the same Kurdish, and an index that scores them as
-different documents fails silently.
+**Kurdish invariant #3 lives here.** Both factories accept a `NormalizedTranscript`, never
+raw. The runner uses one document per sentence: a one-document episode index has no passages
+to rank and its only hit spans the whole media (D-164).
 
 Everything here is exact and in-memory — §6 notes the 256 GB is load-bearing and expects the
 transcript index to live in RAM. No approximate structures, and no dependency: BM25 over an
@@ -208,7 +205,10 @@ class Bm25Index:
         k1: float = DEFAULT_K1,
         b: float = DEFAULT_B,
     ) -> Bm25Index:
-        """Index a normalized transcript as a single document.
+        """Index one normalized transcript only for episode-level mention checks.
+
+        This shape cannot retrieve a passage: every query can return only the same document,
+        whose window is the whole episode. Use `from_sentences` for ranked retrieval.
 
         Raises:
             TypeError: a raw transcript was passed (Kurdish invariant #3).
@@ -233,7 +233,7 @@ class Bm25Index:
     @staticmethod
     def from_sentences(
         sentences: Sequence[Sentence],
-        media_id: str,
+        transcript: NormalizedTranscript,
         *,
         k1: float = DEFAULT_K1,
         b: float = DEFAULT_B,
@@ -243,8 +243,14 @@ class Bm25Index:
         `Sentence.text` holds raw surface forms — invariant #1 keeps them that way — so the
         normalization happens here, explicitly, rather than being assumed upstream. One
         document per sentence is what lets a hit hand Stage 5 a real time window instead of
-        a whole episode.
+        a whole episode. The normalized transcript—not a bare media id—keeps invariant #3 on
+        the factory the runner actually uses.
+
+        Raises:
+            TypeError: a raw transcript was passed (Kurdish invariant #3).
         """
+        assert_model_input(transcript)
+        media_id = transcript.media_id
         return Bm25Index(
             [
                 Document(
@@ -270,8 +276,13 @@ class Bm25Index:
         Ties break on document id, so re-running a query never reshuffles a candidate list.
 
         Raises:
-            ValueError: the query has no indexable terms.
+            ValueError: the query has no indexable terms, or `limit` cannot return a hit.
         """
+        if limit < 1:
+            raise ValueError(
+                f"limit={limit} cannot return a document; negative slicing silently drops "
+                "tail hits instead of selecting a best-prefix"
+            )
         query_tokens = index_tokens(query)
         if not query_tokens:
             raise ValueError(

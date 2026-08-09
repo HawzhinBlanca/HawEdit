@@ -846,3 +846,35 @@ impossible — a third of the sentences would fit inside a window that length �
 visual path routinely proposes footage no complete Kurdish sentence sits inside, and §5's anchors are
 sentence-hard. Choosing the retrieval unit is still yours: §3 fixes 64 frames, this card reads 8
 (D-106), and the two cannot both hold.
+
+## #18 · What is the §2 BM25 index for in Path A?
+
+**Needs:** Hawa's product decision plus labelled §8.2 Path A recall evidence. No new credentials or
+hardware are required for the decision; the labelled corpus is `BLOCKED.md` #1.
+
+D-164 corrected the runner's index shape from one whole-episode document to one document per
+sentence. The remaining contradiction is explicit:
+
+- BLUEPRINT §3 Path A says Gemini receives the **full normalized Sorani transcript in one pass**,
+  not a filtered subset.
+- The M2 vertical slice says **transcript → BM25 → Gemini**, and §2 requires BM25 plus character
+  n-grams.
+- Current production constructs and reports the sentence index but never calls `search`.
+
+There is no honest default query to invent. A user brief, a Path A model-generated query, one query
+per sentence, and candidate-driven expansion are different retrieval systems with different recall,
+cost, and context-loss behavior.
+
+Acceptance criteria for closing this entry:
+
+1. Record which component supplies the query and whether Gemini still receives the full transcript.
+2. Wire `Bm25Index.search` into that production path, or explicitly remove BM25 from the Path A
+   milestone and document its actual consumer.
+3. On the labelled Sorani set, compare the current full-transcript Path A against the proposed BM25
+   route using Recall@20 and misleading-edit rate; do not accept a cost reduction that lowers either
+   protected metric beyond its recorded tolerance.
+4. Add an end-to-end regression proving the selected sentence windows—not a fixture or whole-media
+   fallback—are the context actually delivered to the consumer.
+
+Until those facts exist, M2.1 is PARTIAL: the index implementation and runner document shape are
+correct, but claiming it participates in discovery would be false.

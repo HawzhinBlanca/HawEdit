@@ -5817,3 +5817,26 @@ real render path to refuse before publishing an MP4. Upstream recorded this as D
 already used on this branch, so the semantic integration is D-163.
 
 `evidence/adversarial-pass-18-2026-08-10.md`.
+
+## D-164 - BM25 retrieval documents are sentence windows, not the episode
+
+The runner built `Bm25Index.from_transcript(normalized)`: exactly one document. On the measured
+38-minute transcript that meant 6,104 words and 2,784 terms in one 322..2,313,729 ms window.
+BM25 had no passages to rank; every query could return only the entire episode. The already-written
+`from_sentences` factory was unused.
+
+Sentence segmentation now precedes index construction and the runner indexes one document per
+sentence. `from_sentences` accepts the `NormalizedTranscript` rather than a bare media id so Kurdish
+invariant #3 remains at the factory the runner actually uses. Tests require different queries to
+select different bounded windows and the emitted run report to contain the exact sentence count.
+The sibling negative-slice defect is also closed: `limit <= 0` is refused rather than silently
+dropping tail hits.
+
+The index is now structurally capable of retrieval, but `Bm25Index.search` still has no production
+caller. BLUEPRINT's Path A sends the full normalized transcript while the milestone describes
+`transcript → BM25 → Gemini`; choosing the index's product role changes the meaning of Path A and
+§8.2 recall. `BLOCKED.md` #18 records the decision and executable acceptance criteria rather than
+inventing a query/filter contract. Upstream recorded this as D-134; the readiness branch already
+uses that number, so this integration is D-164.
+
+`evidence/adversarial-pass-19-2026-08-10.md`.
