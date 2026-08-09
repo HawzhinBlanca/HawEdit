@@ -165,6 +165,29 @@ def assert_sv6d_within_window(sv6d: Sv6d, in_ms: int, out_ms: int) -> None:
                 f"a claim has no timeline evidence' — a timestamp pointing somewhere the model "
                 f"was never shown is a well-formed string, not evidence."
             )
+        # "Some cited time is in the window" alone let the original defect back in. Pair
+        # `9999s` with a duration the window happens to contain and the claim rides through:
+        # measured on the three windows Stage 0 actually plans for the fixture,
+        # 'speaker gestures at 9999s, held over 1s' was ACCEPTED on 0..1400 ms, and the same
+        # trick works on 1400..2800 ("over 2s") and 2800..4162 ("over 3s"). The cited tests
+        # used only a 300000..312000 window, the one distance from zero where 1000 ms falls
+        # outside — so the rule bit there and nowhere this pipeline runs.
+        #
+        # The discriminator needs no invented constant. In the legitimate case this guard was
+        # written to permit — "slow push-in over 3s, starting 5:04" — the out-of-window number
+        # is a small *duration* (3 000 ms) and the in-window one is the *moment* (304 000 ms).
+        # In the defect it is reversed: the out-of-window number is vastly larger than the
+        # scene. So a cited time outside the window is admissible only if it is shorter than
+        # the window itself, which is the longest duration anything inside it can have. D-088.
+        window_ms = out_ms - in_ms
+        implausible = [t for t in cited if not (in_ms <= t <= out_ms) and t >= window_ms]
+        if implausible:
+            raise ValueError(
+                f"SV6D {dimension} label {label!r} cites {implausible} ms, outside the scene "
+                f"({in_ms}..{out_ms} ms) and too large to be a duration of anything within it "
+                f"({window_ms} ms long). A label may name a length as well as a moment, but a "
+                f"time this far outside is a claim about footage the model was never shown."
+            )
 
 
 @dataclass(frozen=True, slots=True)
