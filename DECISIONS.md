@@ -5840,3 +5840,23 @@ inventing a query/filter contract. Upstream recorded this as D-134; the readines
 uses that number, so this integration is D-164.
 
 `evidence/adversarial-pass-19-2026-08-10.md`.
+
+## D-165 - A scene-window identity is a filesystem identity at its type boundary
+
+`SceneWindow.window_id` is not only retrieval provenance. Qwen visual embedding, the composed
+Path B extractor and the TimeLens CLI all derive an extraction directory from it by replacing its
+logical colons with underscores. The normal runner validates its media id, but the public frozen
+type accepted direct and injected construction. Measured, `media_id="../../outside"` produced
+`../../outside:s0:w0`, and the derived directory resolved outside the declared work root.
+
+The safe contract now lives once in `SceneWindow.__post_init__`: `media_id` must satisfy the same
+cross-platform `validate_media_id` rule used by transcripts and artifact publication. This rejects
+POSIX and Windows separators, parent references, control characters, hidden names, reserved device
+names and non-portable endings before any adapter can form a path, while preserving portable
+Sorani identifiers. Tests exercise both traversal forms and Windows-only filename hazards so a
+fix that checks only the current host cannot pass.
+
+The adjacent M6.3 audit also corrects stale progress prose: TimeLens is composed in the runner and
+released after use; its remaining shortfall is labelled real-footage accuracy, not missing wiring.
+
+`evidence/adversarial-pass-20-2026-08-10.md`.

@@ -37,6 +37,7 @@ from itertools import pairwise
 from typing import Final, Protocol
 
 from hawedit.registry import resolve_role
+from hawedit.transcripts import validate_media_id
 
 __all__ = [
     "DECLARED_SAMPLING_FPS",
@@ -125,6 +126,11 @@ class SceneWindow:
     fps: float = REFERENCE_FPS
 
     def __post_init__(self) -> None:
+        # ``window_id`` is used as an extraction-directory component by Qwen, TimeLens and the
+        # composed visual pipeline after translating its logical ``:`` separators.  Enforce the
+        # shared portable identifier contract at the type boundary so a directly constructed or
+        # injected window cannot escape any of those work roots.
+        validate_media_id(self.media_id)
         if self.fps < REFERENCE_FPS:
             raise ValueError(
                 f"window {self.window_id} samples at {self.fps} fps, below §3 Stage 2's "

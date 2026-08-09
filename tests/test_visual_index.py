@@ -89,6 +89,28 @@ def test_a_window_of_exactly_sixty_four_seconds_holds_exactly_sixty_four_frames(
     assert window.duration_ms == MAX_WINDOW_MS
 
 
+@pytest.mark.parametrize(
+    "media_id",
+    (
+        "../../outside",
+        r"..\outside",
+        "episode:one",
+        ".hidden",
+        "CON",
+        "trailing.",
+    ),
+)
+def test_scene_window_refuses_media_ids_that_could_escape_extraction_roots(
+    media_id: str,
+) -> None:
+    with pytest.raises(ValueError, match="media_id"):
+        a_window(0, 1_000, media_id=media_id)
+
+
+def test_scene_window_accepts_a_portable_kurdish_media_id() -> None:
+    assert a_window(0, 1_000, media_id="هەوا episode-12").window_id == "هەوا episode-12:s0:w0"
+
+
 def test_one_millisecond_past_the_ceiling_is_refused() -> None:
     """The reference settings are '~1 fps with a maximum of 64 frames'. Both at once.
 

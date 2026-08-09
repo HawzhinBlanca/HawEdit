@@ -167,6 +167,16 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > selected candidate, using the selected canonical transcript slice as the non-empty query. It
 > fuses only intervals relevant to the sentence anchors. The remaining shortfall is real-footage
 > accuracy, not pipeline wiring (`BLOCKED.md` #1).
+>
+> **Corrected 2026-08-10 (D-165).** The earlier “Not wired into `run_pipeline`” sentence in the
+> historical row above is superseded by this amendment and by the current runner: it calls
+> `ground_all` only for overlapping windows, fuses the returned media-time intervals, and closes
+> the grounder after the phase. The row remains PARTIAL solely because accuracy lacks the labelled
+> real-footage acceptance set. The same audit found that a directly constructed `SceneWindow`
+> accepted `../../outside`; Qwen, the composed visual pipeline and TimeLens each translated only
+> the ID's colons before using it as an extraction directory. `SceneWindow` now enforces the shared
+> portable media-ID contract at construction, so every consumer receives a path-safe logical ID.
+> `evidence/adversarial-pass-20-2026-08-10.md`.
 
 > **Adversarial production-hardening amendment (D-105–D-110).** Human review can no longer be
 > replaced by an automatic QC flag; hosted-model numeric fields are exact-type and finite; every
