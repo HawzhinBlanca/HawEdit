@@ -5767,3 +5767,64 @@ in the test — that is why the 21-frame refusal is the count and not the span.
 **Mutation audit 9/9 after.** No production code changed: all nine mechanisms were already right, and
 three were unheld.
 `evidence/adversarial-pass-15-2026-08-09.md`.
+
+## D-129
+
+**Adversarial pass #16 took M2.7 — the end-to-end runner, DONE, 9,594 characters of claims and the
+largest unaudited surface left. Three of seven mechanisms held, and the reason the other four were
+free is that `PipelineRun.complete` was never once True in the whole suite.**
+
+```
+CAUGHT  an incomplete run exits 0
+CAUGHT  an incomplete run exits 2, the code a refusal uses
+MISSED  a run with skipped stages calls itself complete
+MISSED  a run with no visual windows calls itself complete
+MISSED  a run with no candidates calls itself complete
+MISSED  Stage 5 fuses against cuts from nowhere on this video
+CAUGHT  the window plan ignores the cuts Stage 0 found
+
+3/7
+```
+
+**`complete` decides the CLI's exit code — `return 0 if run.complete else 1` — and it has eleven
+conjuncts. Three of them could each be replaced by `True` with 1,302 tests green.** Measured, the
+cause is that no test ever reached the True branch:
+
+```
+full_run.complete            False
+  skipped                    ['visual_index', 'discovery']
+  candidates                 NO      every other conjunct  OK
+```
+
+Even the six-stage `full_run` is incomplete, so a conjunct and a no-op were indistinguishable. The
+suite now has a run where **every** stage produced something — `complete is True`, `skipped() == ()`
+— built through the real `run_pipeline` with a discovery producer, a visual composer and a judge
+rather than by fabricating dataclasses, so it cannot drift from the product. Each of the three
+conjuncts is then removed from *that* run with `replace()`, which is the only construction under
+which removing one proves anything.
+
+**A stale claim: the cell says a bare run exits 1 "naming the four blocked stages". It names eight.**
+Measured: `['transcript', 'index', 'visual_index', 'discovery', 'editorial', 'boundary', 'render',
+'delivery']`. True when D-032 wrote it; Stage 2's visual half, boundary, render and delivery have all
+been added since. Same class as M1.6's "five repositories" (D-127) — a count nobody re-derived.
+
+**Stage 5's cuts are asserted on the input, and the reason is measured.** §3 Stage 5 takes the
+**latest** of its out-point signals, and on the only media in this checkout natural silence is the
+end of the VAD speech region — 4162 ms, the whole file. Driven through the real runner with an anchor
+300 ms before the 2800 ms cut: `out_extended_by='natural_silence'`, `final_out=4162`. So **no anchor
+makes the shot cut decide the outcome here**, and the test asserts that what Stage 5 was handed is
+what Stage 0 measured off the file. The two sides come from different places, so it is not the request
+echoed back.
+
+**My own first attempt at both was wrong, and the controls are what caught it.**
+
+* The mutation "Stage 5 fuses against a constant" first used `(1_400, 2_800)` — *the fixture's own
+  cuts*. It cannot change behaviour, so its SURVIVED meant nothing. Re-run with `(9_000, 9_500)` it
+  is a real survivor, and now CAUGHT.
+* The first three `complete` tests were built on a synthetic run that was **already** incomplete for
+  other reasons, so removing a conjunct proved nothing. The control —
+  `test_a_run_where_every_stage_produced_something_is_complete` — failed, which is the only reason I
+  found out. A control that cannot fail is not a control.
+
+**Mutation audit 7/7 after.** No production code changed.
+`evidence/adversarial-pass-16-2026-08-09.md`.

@@ -2087,3 +2087,140 @@ def test_a_judge_that_does_not_want_keyframes_is_sent_none(tmp_path: Path) -> No
         "billed, and §3 Stage 4's cost model counts them"
     )
     assert seen[0].text_ckb, "the text half of the request must still be there"
+
+
+# --- what adversarial pass #16 found revertible (D-129) ---------------------------------
+
+
+@pytest.fixture(scope="module")
+def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
+    """A run where **every** §3 stage produced something — the first in this suite.
+
+    `complete` is what the CLI's exit code derives from (`return 0 if run.complete else 1`), and
+    three of its eleven conjuncts were revertible: `not self.skipped()`,
+    `bool(self.visual_windows)` and `bool(self.candidates)` could each become `True` with the
+    whole suite green. Measured, the reason is that **nothing ever reached the True branch** —
+    even `full_run` is incomplete, missing `candidates` and carrying `visual_index` and
+    `discovery` skips, so no test could tell a conjunct from a no-op.
+
+    Built through the real `run_pipeline` rather than by fabricating dataclasses, so it cannot
+    drift from the product it describes.
+    """
+    if find_ffmpeg() is None:
+        pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            return VisualDiscoveryResult(media_id, query, len(windows), len(windows), (), ())
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    return run_pipeline(
+        FIXTURE,
+        tmp_path_factory.mktemp("whole"),
+        media_id="whole",
+        transcript=a_transcript("whole"),
+        select_sentences=(0, 1),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        discover=lambda _n: [Candidate("best", "whole", 100, 4_100, DiscoveryPath.VERBAL, 1, 0.9)],
+        visual_composer=Composer(),  # type: ignore[arg-type]
+        judge=Judge(),
+        visual_query="گرنگ",
+    )
+
+
+@needs_ffmpeg
+def test_a_run_where_every_stage_produced_something_is_complete(whole_run: PipelineRun) -> None:
+    """The control every test below rests on. Without a run that *is* complete, removing a
+    requirement proves nothing — which is exactly why three conjuncts were revertible."""
+    assert whole_run.skipped() == ()
+    assert whole_run.complete is True
+
+
+@needs_ffmpeg
+def test_a_run_with_a_skipped_stage_is_never_complete(whole_run: PipelineRun) -> None:
+    """`not self.skipped()` was revertible. The exit code follows `complete`, so a run that
+    named a blocker and still exited 0 is the silent success this module's §1 forbids."""
+    named = replace(
+        whole_run,
+        editorial=StageSkipped(
+            stage="editorial", reason="no judge was supplied", blocked_by=("a judge",)
+        ),
+    )
+    assert named.complete is False
+
+
+@needs_ffmpeg
+def test_a_run_with_no_visual_windows_is_never_complete(whole_run: PipelineRun) -> None:
+    """Stage 2's visual half is arithmetic over Stage 0's cuts and runs on any real media, so an
+    empty plan means the stage did not run — not that the media had nothing in it."""
+    assert replace(whole_run, visual_windows=()).complete is False
+
+
+@needs_ffmpeg
+def test_a_run_with_no_candidates_is_never_complete(whole_run: PipelineRun) -> None:
+    """§3 Stage 3 is the most important structural decision in the system; a run that produced
+    no candidate did not perform it, whatever the other stages managed."""
+    assert replace(whole_run, candidates=()).complete is False
+
+
+@needs_ffmpeg
+def test_stage_5_fuses_against_the_cuts_stage_0_found_on_this_video(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Asserted on the input, and the reason is measured rather than assumed.
+
+    §3 Stage 5 takes the **latest** of its out-point signals, and on the only media in this
+    checkout natural silence is the end of the VAD speech region — **4162 ms**, the whole file.
+    Measured through the real runner with an anchor 300 ms before the 2800 ms cut:
+    `out_extended_by='natural_silence'`, `final_out=4162`. So no anchor makes the shot cut decide
+    the result here, and replacing the cuts with `(9000, 9500)` — cuts from nowhere on this video
+    — left the whole suite green.
+
+    The two sides of this assertion come from different places, so it is not the request echoed
+    back: one is what Stage 0 measured off the file, the other is what Stage 5 was handed.
+    """
+    from hawedit.boundary import BoundaryInputs, fuse_boundary
+
+    seen: list[BoundaryInputs] = []
+    real = fuse_boundary
+
+    def recording(inputs: BoundaryInputs) -> object:
+        seen.append(inputs)
+        return real(inputs)
+
+    monkeypatch.setattr("hawedit.pipeline.fuse_boundary", recording)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="cuts",
+        transcript=a_transcript("cuts"),
+        select_sentences=(0, 1),
+    )
+    assert seen, "Stage 5 never ran"
+    assert not isinstance(run.ingest, StageSkipped) and run.ingest is not None
+    assert run.ingest.shot_cuts_ms == (1_400, 2_800), run.ingest.shot_cuts_ms
+    assert seen[-1].shot_cuts_ms == run.ingest.shot_cuts_ms, (
+        f"Stage 5 was fused against {seen[-1].shot_cuts_ms} while Stage 0 found "
+        f"{run.ingest.shot_cuts_ms} on this video"
+    )
