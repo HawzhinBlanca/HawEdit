@@ -158,7 +158,9 @@ def test_release_attestation_waits_for_clean_installed_wheel_smoke() -> None:
         "hawedit-editorial-bench",
         "hawedit-asr-setup",
         "hawedit-credentials",
+        "hawedit-fetch-models",
         "hawedit-release",
+        "hawedit-wsl-vex",
     ):
         assert command in smoke
     assert "needs: [build-release, smoke-release]" in attest

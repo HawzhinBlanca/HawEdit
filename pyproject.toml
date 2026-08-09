@@ -119,6 +119,7 @@ hawedit-credentials = "hawedit.credentials:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
 hawedit-fetch-models = "hawedit.model_fetch:main"
 hawedit-release = "hawedit.release:main"
+hawedit-wsl-vex = "hawedit.wsl_vex_gate:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

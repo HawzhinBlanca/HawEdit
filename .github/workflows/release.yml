@@ -133,7 +133,8 @@ jobs:
             hawedit-asr-setup \
             hawedit-credentials \
             hawedit-fetch-models \
-            hawedit-release
+            hawedit-release \
+            hawedit-wsl-vex
           do
             "$SMOKE_ROOT/bin/$command" --help >/dev/null
           done

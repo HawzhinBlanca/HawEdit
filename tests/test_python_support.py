@@ -28,5 +28,6 @@ def test_required_gate_cannot_pass_until_the_full_python_312_gate_passes() -> No
     assert 'python-version: "3.12"' in compatibility
     assert "bash scripts/fetch-ffmpeg.sh" in compatibility
     assert "bash scripts/verify.sh" in compatibility
-    assert "needs: python-312-compat" in gate
+    assert "needs: [python-312-compat, wsl-asr-security]" in gate
+    assert "needs.python-312-compat.result == 'success'" in gate
     assert workflow.count("\n  gate:\n") == 1
