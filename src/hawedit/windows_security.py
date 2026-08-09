@@ -14,7 +14,7 @@ import os
 from ctypes import wintypes
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar, Final
+from typing import Any, ClassVar, Final
 
 __all__ = ["WindowsSecurityError", "assert_private_windows_path", "create_private_directory"]
 
@@ -84,11 +84,14 @@ class _AccessAllowedAce(ctypes.Structure):
 
 
 @lru_cache(maxsize=1)
-def _windows_libraries() -> tuple[ctypes.WinDLL, ctypes.WinDLL]:
+def _windows_libraries() -> tuple[Any, Any]:
     if os.name != "nt":
         raise WindowsSecurityError("Windows private ACL operations require Windows")
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    loader = getattr(ctypes, "WinDLL", None)
+    if not callable(loader):
+        raise WindowsSecurityError("this Python runtime exposes no Win32 library loader")
+    advapi32 = loader("advapi32", use_last_error=True)
+    kernel32 = loader("kernel32", use_last_error=True)
     kernel32.GetCurrentProcess.argtypes = []
     kernel32.GetCurrentProcess.restype = wintypes.HANDLE
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -160,8 +163,15 @@ def _windows_libraries() -> tuple[ctypes.WinDLL, ctypes.WinDLL]:
     return advapi32, kernel32
 
 
+def _last_error() -> int:
+    reader = getattr(ctypes, "get_last_error", None)
+    if not callable(reader):
+        raise WindowsSecurityError("this Python runtime exposes no Win32 last-error reader")
+    return int(reader())
+
+
 def _win_error(operation: str, code: int | None = None) -> WindowsSecurityError:
-    selected = ctypes.get_last_error() if code is None else code
+    selected = _last_error() if code is None else code
     return WindowsSecurityError(f"{operation} failed with Win32 error {selected}")
 
 
@@ -188,7 +198,7 @@ def _current_user_sid() -> str:
     try:
         needed = wintypes.DWORD()
         advapi32.GetTokenInformation(token, _TOKEN_USER, None, 0, ctypes.byref(needed))
-        if ctypes.get_last_error() != _ERROR_INSUFFICIENT_BUFFER or needed.value == 0:
+        if _last_error() != _ERROR_INSUFFICIENT_BUFFER or needed.value == 0:
             raise _win_error("GetTokenInformation(size)")
         buffer = ctypes.create_string_buffer(needed.value)
         if not advapi32.GetTokenInformation(
