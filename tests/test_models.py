@@ -17,6 +17,7 @@ import pytest
 from hawedit import models
 from hawedit.models import (
     ModelNotProvisioned,
+    ModelStatus,
     ModelStore,
     SourceNotConfigured,
     readiness_report,
@@ -450,3 +451,92 @@ def test_the_validators_readiness_tracks_whether_its_loader_is_installed(tmp_pat
     assert status.available is models._is_importable("qwen_asr")
     if not status.available:
         assert "qwen_asr" in status.detail
+
+
+# --- D-100: the report a human reads could print the opposite of the truth -------------------
+
+
+def _status(model_id: str, *, available: bool, size_bytes: int | None = None) -> ModelStatus:
+    return ModelStatus(
+        model_id=model_id,
+        component=model_id,
+        provisioning=Provisioning.WEIGHTS,
+        available=available,
+        detail="present" if available else "not downloaded",
+        size_bytes=size_bytes,
+    )
+
+
+def _mark_for(report: str, model_id: str) -> str:
+    """The verdict on this component's own line, not somewhere in the document."""
+    line = next(row for row in report.splitlines() if model_id in row)
+    return line.split()[0]
+
+
+_MIXED = (
+    _status("present-and-loadable", available=True, size_bytes=2_000_000_000),
+    _status("absent-entirely", available=False),
+    _status("also-present", available=True),
+)
+
+
+def test_the_report_marks_each_component_on_its_own_line() -> None:
+    """Measured 2026-08-09 against a green 1,175 baseline: `readiness_report` could print
+    **every** component as OK, or invert every verdict, or claim 15/15 while six were missing,
+    and nothing in the suite noticed. The two tests that existed asserted
+    `"omniASR_LLM_7B_v2" in report` and `"available" in report` — substring presence over the
+    whole document, satisfied by the summary line no matter what the marks said. The same shape
+    as D-094's `"hewler" in payload`.
+
+    This is the artifact an operator reads to answer "can this machine run the pipeline", and it
+    is the artifact whose `OK` led M1.4's row to conclude the wrong thing in prose (D-099). D-100.
+    """
+    report = readiness_report(_MIXED)
+    assert _mark_for(report, "present-and-loadable") == "OK"
+    assert _mark_for(report, "also-present") == "OK"
+    assert _mark_for(report, "absent-entirely") == "MISS"
+
+
+def test_the_summary_counts_what_is_available_and_names_what_is_not() -> None:
+    report = readiness_report(_MIXED)
+    assert "2/3 available" in report
+    assert "missing: absent-entirely" in report
+    assert "present-and-loadable" not in report.splitlines()[-1]
+
+
+def test_a_report_with_nothing_missing_says_so_without_an_empty_list() -> None:
+    """The control for the summary: an all-available run must not print a dangling "missing:"."""
+    report = readiness_report((_status("only-one", available=True),))
+    assert "1/1 available" in report
+    assert "missing:" not in report
+
+
+def test_a_report_with_nothing_available_does_not_read_as_ready() -> None:
+    """The other control. A renderer that always prints OK passes every all-available test.
+
+    Both directions have to be pinned on the same function, because the defect measured was
+    exactly an inversion — every OK became MISS and every MISS became OK, with the suite green.
+    """
+    report = readiness_report((_status("nothing-here", available=False),))
+    assert _mark_for(report, "nothing-here") == "MISS"
+    assert "0/1 available" in report
+    assert "missing: nothing-here" in report
+
+
+def test_the_size_of_a_downloaded_checkpoint_reaches_the_line() -> None:
+    report = readiness_report(_MIXED)
+    line = next(row for row in report.splitlines() if "present-and-loadable" in row)
+    assert "(2.0 GB)" in line
+
+
+def test_a_measured_size_of_zero_is_reported_rather_than_omitted() -> None:
+    """`if status.size_bytes` treated a measured zero as unmeasured.
+
+    A checkpoint directory holding only empty files is non-empty, so it reports as present with a
+    size of 0 — and a falsy check rendered no size at all, which reads as "this component has no
+    weights to measure", the same line a pip component gets. Measured zero and unmeasured are
+    different facts; this repo's rule is that the second is `None`.
+    """
+    report = readiness_report((_status("empty-files-only", available=True, size_bytes=0),))
+    line = next(row for row in report.splitlines() if "empty-files-only" in row)
+    assert "(0.0 GB)" in line, f"a measured zero was omitted: {line!r}"

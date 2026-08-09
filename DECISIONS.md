@@ -4152,3 +4152,54 @@ where the loader is also absent and keeps holding the day someone installs it �
 runtime marking a component unavailable CAUGHT (1) by the control alone**. Without that control,
 "every mapped entry reports MISS" passes everything else here and retires three working components.
 `evidence/downloaded-is-not-runnable.md`.
+
+## D-100
+
+**The report an operator reads could print the opposite of the truth.** D-099 fixed the *statuses*; the
+renderer went untouched, and `readiness_report` is what a human actually reads — it is the artifact
+whose `OK` led M1.4's row to conclude the wrong thing in prose. Mutating the renderer alone against the
+whole suite:
+
+```
+GREEN — nothing notices   every component prints OK regardless of availability
+GREEN — nothing notices   the verdict is inverted
+GREEN — nothing notices   the summary count claims everything is available
+GREEN — nothing notices   the size disappears from every line
+RED (5)                   the missing list is emptied, so nothing is named
+```
+
+Fifteen components could print `OK` with six missing. The one RED is the more instructive result: its
+failures were `test_the_gpu_modules_typecheck_with_the_gpu_extra_absent` and two nested-gate tests —
+mypy objecting to `missing = []`, not anything checking the report. A mutation caught for an unrelated
+reason reads as protection that is not there (D-082), and here it was the only signal in five.
+
+**Why the existing tests were blind.** Both asserted substring presence over the whole document:
+`"omniASR_LLM_7B_v2" in report` and `"available" in report`. The word "available" occurs in the summary
+line whatever the marks say, and every model id occurs on its own line whether that line reads `OK` or
+`MISS`. The same shape as D-094's `"hewler" in payload`.
+
+**Decision: assert the verdict on the component's own line**, by finding the row containing the model id
+and reading its first token, and assert the summary against the counts it summarises. Both directions
+are pinned on the same function, because the measured defect was an *inversion*: a renderer that always
+prints `OK` passes every all-available test, and one that always prints `MISS` passes every
+all-missing test. Neither alone is a control.
+
+**A second defect, in the source, surfaced from writing the size test:** `if status.size_bytes` treated
+a **measured zero** as unmeasured. A checkpoint directory holding only empty files is non-empty, so it
+reports present with size 0, and the falsy check printed no size — the same line a pip component gets,
+which reads as "no weights here to measure". Now `is not None`. Measured zero and unmeasured are
+different facts, and the hard rule is that the second is `None`; this is that rule pointing the other
+way, which is why it was easy to miss.
+
+**Rejected: deriving the marks from a single source to make inversion unexpressible.** The summary
+already derives from the same `available` predicate as the marks; there is no second spelling to
+unify. The gap was that nothing read the output, which is a test, not a refactor — and D-095 is the
+precedent for backing out a rename that only moves the single point.
+
+**Mutation audit 7/7**, each caught by a test that names the property — including "the missing list is
+emptied", which previously produced only mypy failures in unrelated tests. The last two are caught by
+exactly one test each: the measured-zero case, and the dangling-`missing:` control. **The seventh
+mutation exists because that control was otherwise unexercised by the set**, which would have left an
+assertion nothing had ever put pressure on — the same reasoning that made D-098's `>= 7` floor worth
+having.
+`evidence/readiness-report-could-print-the-opposite.md`.

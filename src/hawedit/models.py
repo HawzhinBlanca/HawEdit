@@ -395,7 +395,11 @@ def readiness_report(statuses: Sequence[ModelStatus]) -> str:
     lines = ["§7 component readiness", "=" * 72]
     for status in statuses:
         mark = "OK  " if status.available else "MISS"
-        size = f"  ({status.size_bytes / 1e9:.1f} GB)" if status.size_bytes else ""
+        # `is not None`, not truthiness: a checkpoint directory holding only empty files is
+        # non-empty, so it reports present with a measured size of **0**, and a falsy check
+        # printed no size at all — the same line a pip component gets, which reads as "nothing
+        # here to measure". Measured zero and unmeasured are different facts. D-100.
+        size = f"  ({status.size_bytes / 1e9:.1f} GB)" if status.size_bytes is not None else ""
         lines.append(
             f"{mark} {status.model_id:44} {status.provisioning.value:8} {status.detail}{size}"
         )
