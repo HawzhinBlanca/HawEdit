@@ -4455,3 +4455,55 @@ appetite are in tension on a 3090 Ti. Lowering the frame cap would be picking a 
 hard rules forbid — the next step is to **measure** the largest window this GPU can actually read and
 record that number with the hardware that produced it.
 `evidence/section-6-put-the-video-phase-on-one-gpu.md`.
+
+## D-106
+
+**The largest scene window a 3090 Ti can read through VideoChat3-4B is 8 frames; §3 plans 64.**
+Measured on hawapc01 (23.99 GiB, weights resident 8.68 GiB) through the real `VideoChat3Reader`, one
+model load reused, on the frames the 38-minute run extracted:
+
+```
+ frames  window_ms  peak GiB   result
+      4       2000     12.00   OK
+      6       3000     16.00   OK
+      7       3500     18.58   OK
+      8       4000     21.57   OK        <- 90 % of the card
+      9       4500     16.33   OOM, wanted a further 6.91 GiB
+     12       6000     22.09   OOM, wanted a further 12.28 GiB
+     16       8000        -    OOM, wanted 21.83 GiB
+     24      12000        -    OOM, wanted 49.11 GiB
+     32      16000        -    OOM, wanted 87.31 GiB
+     48      24000        -    OOM, wanted 196.44 GiB
+```
+
+**The demand is quadratic**, and the requested allocations fit `n squared` to two decimal places:
+196.44/87.31 = 2.25 against (48/32)^2 = 2.25; 87.31/49.11 = 1.78 against (32/24)^2 = 1.78; and so on
+down. Attention over vision tokens. Halving a window buys a quarter of the memory, so 8 against 64 is
+not a tuning margin — it is a factor of 64 in demand, and extrapolating the fit puts a 64-frame window
+near 350 GiB.
+
+**One reading that looks anomalous is not.** The 64-frame attempt reported "wanted 10.91 GiB", less
+than the 48-frame attempt's 196.44. That is the first allocation to *fail*, not the total need — peak
+was already 15.42 GiB. Recorded because reading the headline instead of the raw numbers would have
+inverted the conclusion.
+
+**Decision: `MAX_FRAMES_PER_WINDOW = 64` stays, and is now recorded canonically.** It is §3's number
+and BLUEPRINT is frozen. Quietly lowering it to make a run pass is the "weaken the check to make
+something pass" move the hard rules forbid, so the constant is stated here and D-098's check now holds
+the code to it: a future fix that edits it has to amend this record first.
+
+**Rejected: truncating a planned window to what the reader can hold.** D-104's guard exists because
+"an embedding of whatever frames existed would describe less footage than the window claims", and
+reading 8 frames of a 64-frame window is that failure with the numbers changed.
+
+**Rejected: sub-segmenting a window inside the reader.** §6's "(segmented)" already means one call per
+window, and splitting a window further would need a rule for combining SV6D readings across chunks —
+inventing a description of the scene from pieces, which is the kind of thing §5's schema exists to
+prevent. It would also silently change what a window *means* to retrieval.
+
+**What the resolution has to be, and why it is not in this commit:** windows must be *planned* small
+enough for the reader, which moves the cap into `plan_scene_windows` and changes what a window is — on
+hawapc01, 4-second windows rather than up to 32-second ones, and several times as many. That reshapes
+Stage 2's retrieval unit and its cost, so it gets its own iteration and its own audit rather than being
+bolted onto a measurement. `BLOCKED.md` #17.
+`evidence/largest-window-a-3090ti-can-read.md`.

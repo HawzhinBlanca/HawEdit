@@ -786,3 +786,37 @@ finished measuring the cost of. M0.11's rzgar adapter waits on the same package.
 **What it does not block.** Nothing else. The escalation *policy* (`select_for_validation`, D-015) is
 implemented and tested; it simply has no consumer yet, and `python -m hawedit.models` now says so
 honestly — 9/15 rather than 10/15, with the reason in the detail line (D-099).
+
+## #17 · §3's 64-frame window does not fit the reader on the machine §6 names
+
+**Measured 2026-08-09 on hawapc01** (RTX 3090 Ti, 23.99 GiB; `MCG-NJU/VideoChat3-4B` weights 8.68 GiB).
+The largest window the reader can process is **8 frames** at a 21.57 GiB peak — 90 % of the card. Nine
+frames OOMs. §3 Stage 2 plans up to `MAX_FRAMES_PER_WINDOW = 64`.
+
+The demand is quadratic in frames (48 -> 196.44 GiB requested, 32 -> 87.31, 24 -> 49.11, 16 -> 21.83,
+12 -> 12.28), so this is a factor-of-64 gap, not a margin. Full table and method in
+`evidence/largest-window-a-3090ti-can-read.md`; reasoning in D-106.
+
+**Why this is a decision and not a patch.** The three obvious moves are all refused:
+
+1. Lower `MAX_FRAMES_PER_WINDOW`. It is §3's number and BLUEPRINT is frozen; lowering a ceiling to
+   make a run pass is what the hard rules forbid.
+2. Truncate a 64-frame window to 8 at read time. D-104's guard exists to stop exactly this: an
+   embedding of some of the frames describes less footage than the window claims.
+3. Sub-segment inside the reader. Combining SV6D readings across chunks means inventing a description
+   of a scene from pieces, and it silently changes what a window means to retrieval.
+
+**What is needed from Hawa.** One of:
+
+* **Plan smaller windows** — pass the reader's capacity into `plan_scene_windows`, so hawapc01 uses
+  4-second windows instead of up to 32-second ones. This is implementable today and is the route the
+  next iteration will take unless told otherwise. It changes Stage 2's retrieval unit: several times
+  as many windows, each seeing less context, and §8.2's Recall@K numbers are then measured on a
+  different unit than the one §3 describes.
+* **Different hardware** for the video phase. The gap closes at roughly 40 GiB for 16 frames and would
+  need on the order of 350 GiB for §3's full 64.
+* **A different Path B checkpoint** whose attention cost is not quadratic in the window — which is a
+  §7 change, and §7 is frozen.
+
+Stage 2's frame extraction, indexing, retrieval and reranking all run: the 38-minute file produced
+**164** windows and reached the reader. Only the read step is blocked.
