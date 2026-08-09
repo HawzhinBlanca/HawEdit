@@ -90,11 +90,18 @@ These cannot be truthfully solved from the checkout alone:
   and public for *metadata*, so its revision was always a verifiable fact here — and
   `tests/test_models.py` now asserts `unpinned == []` with no exemptions. Measured: 6 pinned, 6
   registry entries with a download source, 0 unpinned.
-- **`fetch-ffmpeg.sh` is still unpinned.** It downloads
-  `media.githubusercontent.com/…/ffmpeg_bins/main/v8.0/linux.zip` — a branch path, so the bytes
-  behind it can change — then unzips and executes it with no SHA-256 comparison. The versioned
-  path segment is not a substitute for a fixed ref, and no published digest for that archive has
-  been found to compare against.
+- **`fetch-ffmpeg.sh` is pinned and checksummed as of 2026-08-09** (D-121). It was neither: the
+  URL ended `/main/v8.0/linux.zip` — a branch path, so the bytes behind it could change — and the
+  archive was unzipped, marked executable and run with no SHA-256 comparison. It is now fetched at
+  commit `df95abcb0ce6efff710dda5ef28a2f6f1dc21493` and compared against
+  `ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad` **before** the unzip and the
+  `chmod +x`, with `curl --fail` so an HTTP error page is not mistaken for an archive. Measured: the
+  Git-LFS media endpoint serves a commit ref, and at this one it returned byte-identical content to
+  what `main` returned that day — 142,008,975 bytes, both hashed in full. **The digest is ours, not
+  upstream's:** the project still publishes none, so it attests which bytes this machine and CI have
+  been running rather than which bytes the publisher intended. `README.md` and the CI step called
+  this "pinned" while it was not; this bullet was the only accurate one of the three.
+  `evidence/an-archive-fetched-from-a-branch-and-never-checked.md`.
 
 ## Honest release call
 

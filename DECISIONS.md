@@ -5246,3 +5246,83 @@ same fields in schema-5 provenance before granting OIDC attestation authority. T
 METADATA and filename name/version independently and pin the workflow-side verifier. This closes
 artifact-identity substitution; it does not invent the still-missing version/tag policy or durable
 GitHub Release. `evidence/release-identity-binding.md`.
+
+## D-121
+
+**The one archive this project downloads, marks executable and runs was fetched from a branch and
+never verified — and two of the three places that describe it called it "pinned".** `AUDIT_REPORT.md`
+was the only one that said otherwise, and the audit was right.
+
+```
+scripts/fetch-ffmpeg.sh, before
+  url=…/zackees/ffmpeg_bins/main/v8.0/linux.zip     <- a branch: mutable bytes, fixed-looking name
+  curl -sSL -o linux.zip "$url"                     <- no --fail: an error page becomes the archive
+  unzip … && chmod +x … && "${dest}/ffmpeg" -version <- executed, never compared to anything
+
+README.md:255                "fetches the pinned ffmpeg"          false
+.github/workflows/gate.yml   "fetch the pinned ffmpeg", and
+                             "fetch-ffmpeg.sh pins the URL."      false
+AUDIT_REPORT.md              "`fetch-ffmpeg.sh` is still unpinned" true
+```
+
+Measured, 2026-08-09, before changing anything:
+
+```
+zackees/ffmpeg_bins main            df95abcb0ce6efff710dda5ef28a2f6f1dc21493 (2026-01-16)
+…/main/v8.0/linux.zip               HTTP 200, Content-Length 142,008,975
+…/df95abcb…/v8.0/linux.zip          HTTP 200, Content-Length 142,008,975
+```
+
+So the Git-LFS media endpoint **does** serve a commit ref, which is what makes the fix possible.
+Both were downloaded in full and hashed:
+
+```
+linux-pinned.zip  142,008,975 bytes  ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad
+linux-main.zip    142,008,975 bytes  ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad
+byte-identical today: True
+```
+
+**Decision: pin the URL to that commit, record that digest, and compare before anything is
+unpacked.** The pin removes the mutability at the source; the digest catches the case a pin cannot —
+the same ref serving different bytes. `curl --fail` so an HTTP error page is not mistaken for an
+archive. The order is the point: verify, *then* unzip, *then* `chmod +x`.
+
+**The digest is ours, and that is stated rather than hidden.** `AUDIT_REPORT.md` said no published
+digest for the archive had been found to compare against, which was true and still is. This one was
+measured here, twice, from two URLs. It attests "these are the bytes hawapc01 and CI have been
+running", not "upstream says these are the bytes" — a weaker claim than a publisher's signature and a
+much stronger one than none.
+
+**`scripts/verify-sha256.sh` is its own script for one reason:** the branch it exists for must never
+be reached in normal operation, so it has to be reachable from a test. The archive is 142 MB and no
+test will download it to prove a mismatch is refused; three bytes give both answers.
+
+**Rejected: `curl … | sha256sum -c -`.** Piping the download through a check still writes the bytes
+before the verdict, and the exit status of a pipeline is easy to lose. The file lands, is compared,
+and only then is opened.
+
+**Rejected: leaving the digest out and pinning only the ref.** A commit ref is a promise by the
+host; the digest is a fact about the bytes. §7's weights get both (`models/revisions.json` plus the
+Hub's own content addressing) and the artifact invariant #1 protects gets a SHA-256 sidecar — the
+thing that gets *executed* should not get less.
+
+**Rejected: refusing when `sha256sum` is missing is not a fallback.** It exits 2 rather than
+proceeding: computing no digest and continuing is the exact state this replaces.
+
+**The download path cannot be exercised on this machine.** The archive is Linux-only and hawapc01 has
+a conforming ffmpeg on `PATH`, so `fetch-ffmpeg.sh` short-circuits before the download — measured, it
+reports the Gyan 8.1.1 build and exits. CI is the end-to-end proof and runs it on every push, which
+is the gate of record doing its job rather than a gap. What was checked here: the recorded digest
+against both real 142 MB archives, through the real script.
+
+The readiness branch already had a stronger transactional installer when this decision arrived.
+Integration retained that design: one owner-controlled root and kernel lock, a private attempt
+directory, verification before unzip, staged RTL probes, an immutable content-addressed generation,
+and final launcher/receipt revalidation. The standalone digest helper is now the check used on that
+private staged archive, so its three-byte mismatch tests exercise the same boundary as provisioning.
+
+**Mutation audit 7/7** — and the first run was **6/7**. The survivor was `curl --fail` removed: the
+test asserted `"--fail" in fetch-ffmpeg.sh`, and the script *explains* `--fail` in a comment. Same
+error as the ordering test one function above it, which had already been caught the same way minutes
+earlier. Both read code lines now.
+`evidence/an-archive-fetched-from-a-branch-and-never-checked.md`.

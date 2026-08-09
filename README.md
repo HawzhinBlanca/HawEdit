@@ -416,10 +416,11 @@ The gate is deliberately hard to fool, because it is the only thing that decides
 - **A nested invocation refuses its own test step** — it would otherwise recurse, and once
   did (D-005).
 
-CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the
-pinned ffmpeg, and fails if the §4.3 golden render or the §3 Stage 0 tests *skip* rather than
-run. `gate` is a strict required status check on protected `main`; force-pushes and deletions are
-disabled (`BLOCKED.md` #7 records the live setting).
+CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the FFmpeg
+archive **at a pinned commit and verifies its SHA-256 before unzipping it** (D-121 — this line once
+said "pinned" while the URL was a branch path), and fails if the §4.3 golden render or §3 Stage 0
+tests *skip* rather than run. `gate` is a strict required status check on protected `main`;
+force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live setting).
 
 ## Module map
 

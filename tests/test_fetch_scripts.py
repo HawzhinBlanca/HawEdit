@@ -57,6 +57,7 @@ def _ffmpeg_fixture(
     scripts = project / "scripts"
     scripts.mkdir(parents=True)
     shutil.copy2(ROOT / "scripts" / "fetch-ffmpeg.sh", scripts / "fetch-ffmpeg.sh")
+    shutil.copy2(ROOT / "scripts" / "verify-sha256.sh", scripts / "verify-sha256.sh")
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
 
@@ -83,6 +84,10 @@ printf '%s\n' "$output" >"$FFMPEG_TEST_CURL_OUTPUT"
         """
 if [[ "${1:-}" == "--check" && $# -eq 2 ]]; then
   exit "${FFMPEG_TEST_HASH_STATUS:-0}"
+fi
+if [[ $# -eq 1 && "$1" == */linux.zip ]]; then
+  printf '%s  %s\n' 'ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad' "$1"
+  exit 0
 fi
 exec /usr/bin/sha256sum "$@"
 """,
@@ -158,7 +163,7 @@ def test_ffmpeg_fetch_uses_an_immutable_commit_and_lfs_digest_before_unpacking()
     assert digest is not None
     assert "ffmpeg_bins/main/" not in script
     assert "${ffmpeg_bins_commit}/v8.0/linux.zip" in script
-    assert script.index("sha256sum --check") < script.index("unzip -q")
+    assert script.index("verify-sha256.sh") < script.index("unzip -q")
     assert "curl --fail" in script and "--proto '=https'" in script
 
 

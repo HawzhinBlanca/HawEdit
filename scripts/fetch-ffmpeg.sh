@@ -216,10 +216,8 @@ url="https://media.githubusercontent.com/media/zackees/ffmpeg_bins/${ffmpeg_bins
 echo "==> downloading ffmpeg (~140 MB) from ${url}"
 curl --fail --silent --show-error --location --retry 3 \
   --proto '=https' --tlsv1.2 -o "$archive" "$url"
-if ! echo "${linux_zip_sha256}  ${archive}" | sha256sum --check --status; then
-  actual="$(sha256sum "$archive" | cut -d' ' -f1)"
-  refuse "ffmpeg archive SHA-256 ${actual} did not match ${linux_zip_sha256}; nothing was published."
-fi
+bash "$(dirname "$0")/verify-sha256.sh" "$archive" "$linux_zip_sha256" || \
+  refuse "ffmpeg archive SHA-256 did not match; nothing was unpacked or published."
 
 mkdir -m 700 -- "$extract" "$payload"
 unzip -q "$archive" -d "$extract"
