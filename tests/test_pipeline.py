@@ -45,7 +45,7 @@ from hawedit.pipeline import (
     main,
     run_pipeline,
 )
-from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.transcripts import AsrProvenance, RawTranscript, UnalignedSpeech, Word
 from hawedit.visual_index import MAX_FRAMES_PER_WINDOW
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1648,3 +1648,64 @@ def test_the_default_run_still_plans_at_section_3s_ceiling(tmp_path: Path) -> No
         "the fixture's scenes plan 3 frames at 2 fps; a default ceiling below §3's would cut this"
     )
     assert build_parser().parse_args(["x.mp4"]).visual_max_frames == MAX_FRAMES_PER_WINDOW
+
+
+# --- D-110: the report was silent about speech the transcript does not contain ----------------
+
+
+@needs_ffmpeg
+def test_the_report_says_which_speech_has_no_transcription(tmp_path: Path) -> None:
+    """D-103 put the gaps in `transcript.raw.json`; the report shows the *normalized* transcript,
+    which by design has no such field, so a run that dropped speech said nothing about it.
+
+    Measured on the real 38-minute run: 2 of 547 regions, **664 ms** of Kurdish with no
+    transcription, and the emitted report mentioned neither `unaligned` nor
+    `segment_confidence`. This module's own §1 is "fail visible, not silent". D-110.
+    """
+    with_gaps = RawTranscript(
+        media_id="fixture",
+        text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
+        words=WORDS,
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        unaligned=(
+            UnalignedSpeech(
+                start_ms=226_754,
+                end_ms=227_070,
+                reason="AlignmentInfeasible: 15 frames cannot emit 15 tokens",
+            ),
+            UnalignedSpeech(
+                start_ms=1_985_346,
+                end_ms=1_985_694,
+                reason="AlignmentInfeasible: 17 frames cannot emit 16 tokens",
+            ),
+        ),
+    )
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="fixture", transcript=with_gaps)
+
+    payload = run.to_dict()
+    assert payload["speech_without_transcription_ms"] == 664, (
+        "the report has to total the speech it does not contain, or 664 ms of Kurdish vanishes "
+        "into a run that looks finished"
+    )
+    assert [gap["duration_ms"] for gap in payload["transcript_gaps"]] == [316, 348]
+    assert [gap["start_ms"] for gap in payload["transcript_gaps"]] == [226_754, 1_985_346]
+    assert "AlignmentInfeasible" in payload["transcript_gaps"][0]["reason"], (
+        "a gap with no reason is indistinguishable from silence that was never there"
+    )
+
+
+@needs_ffmpeg
+def test_a_run_with_nothing_missing_reports_zero_rather_than_omitting_the_key(
+    tmp_path: Path,
+) -> None:
+    """The control. A report that only mentions gaps when there are some makes their absence
+    unreadable — the operator cannot tell "nothing was dropped" from "this build does not check".
+
+    It is also what would let the test above pass while the field stayed empty on every real run.
+    """
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="fixture", transcript=a_transcript())
+
+    payload = run.to_dict()
+    assert payload["transcript_gaps"] == []
+    assert payload["speech_without_transcription_ms"] == 0
+    assert run.transcript_gaps == ()

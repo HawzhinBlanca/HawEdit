@@ -70,6 +70,7 @@ from hawedit.transcripts import (
     RawTranscript,
     RawTranscriptImmutable,
     TranscriptStore,
+    UnalignedSpeech,
     Word,
     normalize_transcript,
 )
@@ -163,6 +164,13 @@ class PipelineRun:
     work_dir: str
     ingest: IngestResult | StageSkipped | None = None
     transcript: NormalizedTranscript | StageSkipped | None = None
+    # Speech the canonical transcript does not contain, carried up from the raw artifact.
+    #
+    # D-103 put this in `transcript.raw.json`, and the report a human reads is the normalized
+    # transcript, which by design has no such field — so a run that dropped speech said nothing
+    # about it here. Measured on the real 38-minute run: 2 of 547 regions, 664 ms of Kurdish, and
+    # the emitted report mentioned neither. §1 of this module: fail visible, not silent. D-110.
+    transcript_gaps: tuple[UnalignedSpeech, ...] = ()
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
     # §3 Stage 2's visual half splits into a part that needs weights and a part that does not.
@@ -234,6 +242,18 @@ class PipelineRun:
             "complete": self.complete,
             "skipped": [name for name, _ in self.skipped()],
             "ingest": encode(self.ingest),
+            "transcript_gaps": [
+                {
+                    "start_ms": gap.start_ms,
+                    "end_ms": gap.end_ms,
+                    "duration_ms": gap.end_ms - gap.start_ms,
+                    "reason": gap.reason,
+                }
+                for gap in self.transcript_gaps
+            ],
+            "speech_without_transcription_ms": sum(
+                gap.end_ms - gap.start_ms for gap in self.transcript_gaps
+            ),
             "transcript": (
                 self.transcript.to_dict()
                 if isinstance(self.transcript, StageSkipped)
@@ -772,6 +792,7 @@ def run_pipeline(
             ) from None
         transcript = stored
     store.verify_raw_integrity(identifier)
+    run = replace(run, transcript_gaps=transcript.unaligned)
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
 

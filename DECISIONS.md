@@ -4657,3 +4657,44 @@ plausible wrong fix, which would leave every segment tied and the quartile empty
 the segment's own bounds CAUGHT (2), accepting a positive log-probability CAUGHT (1), and accepting a
 zero-length span CAUGHT (1).
 `evidence/per-segment-confidence-was-averaged-away.md`.
+
+## D-110
+
+**The run report was silent about speech the transcript does not contain.** D-103 put every
+unalignable region into `transcript.raw.json`, and `PipelineRun.to_dict` reports the **normalized**
+transcript, which by design carries no such field. So the fact reached the canonical artifact and not
+the document an operator reads.
+
+Measured on the real 38-minute run:
+
+```
+raw artifact:  226754..227070 ms (316 ms)  AlignmentInfeasible: 15 frames cannot emit 15 tokens
+               1985346..1985694 ms (348 ms) AlignmentInfeasible: 17 frames cannot emit 16 tokens
+               total speech with no transcription: 664 ms
+emitted report: mentions "unaligned"        -> False
+                mentions segment_confidence -> False
+```
+
+664 ms of Kurdish absent from a report whose module docstring opens with "§1: fail visible, not
+silent" — the same shape as D-100, where the statuses were right and the thing a human reads was not.
+
+**Decision: the run carries what the transcript omits, and the report totals it.**
+`PipelineRun.transcript_gaps` is populated where the raw is in hand, and `to_dict` emits each gap
+with its bounds, its duration and its reason, plus `speech_without_transcription_ms`. The total is
+there because two entries are readable and five hundred are not.
+
+**The empty case is reported, not omitted.** A report that mentions gaps only when there are some
+makes their absence unreadable — an operator cannot tell "nothing was dropped" from "this build does
+not check". It is also what would let the new test pass while every real run reported nothing.
+
+**Rejected: making `complete` false when speech was dropped.** `complete` means every stage ran, and
+the CLI's exit code follows it, so redefining it would change what automation reads from a stage-level
+fact to a content-level one — and it would conflate "a stage did not run" with "some speech could not
+be aligned". Whether a run that drops speech should also *fail* is a product decision about exit-code
+semantics, not a reporting fix, so it is named here rather than taken. The number is now in the report
+either way.
+
+**Mutation audit 5/5**, with a no-op control that stayed green: the gaps never reaching the run
+CAUGHT, the total hardcoded to zero CAUGHT, the reason emitted empty CAUGHT, and the duration negated
+CAUGHT.
+`evidence/the-report-did-not-say-what-the-transcript-omits.md`.
