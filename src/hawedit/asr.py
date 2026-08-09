@@ -39,7 +39,7 @@ from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
 from hawedit.escalation import SegmentScore, select_for_validation
 from hawedit.forced_alignment import align_words
-from hawedit.models import ModelStore
+from hawedit.models import ModelStore, assert_transformers_config_safe
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, wsl_path
@@ -202,6 +202,21 @@ class QwenSoraniValidator:
 
     def _load(self) -> Any:
         if self._model is None:
+            # Qwen-ASR delegates checkpoint construction to Transformers. Apply the same
+            # pre-deserialisation guard as the visual loaders before qwen_asr imports or reads
+            # config.json; otherwise the canonical Stage 1 route would retain CVE-2026-4372
+            # while Stage 2 refused it. D-094.
+            assert_transformers_config_safe(
+                self.model_dir,
+                frozenset(
+                    {
+                        "qwen3_asr",
+                        "qwen3_asr_audio_encoder",
+                        "qwen3_asr_text",
+                        "qwen3_asr_thinker",
+                    }
+                ),
+            )
             try:
                 import torch
                 from qwen_asr import Qwen3ASRModel

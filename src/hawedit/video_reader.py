@@ -215,6 +215,7 @@ class VideoChat3Reader:
             self._loaded = load_processor_and_model(
                 self.model_dir,
                 self.device,
+                allowed_model_types=frozenset({"videochat3", "qwen3"}),
                 trust_remote_code=True,
                 causal_lm=True,
                 configure=_use_sdpa_vision,

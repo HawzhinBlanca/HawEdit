@@ -3742,3 +3742,38 @@ requires a new evidence update rather than silently accepting another 40-hex val
 **Boundary.** Static inspection proves the declared runtime and source identity, not that GitHub can
 execute them. Exact-SHA workflow dispatch is the required runtime proof. Sources and the resulting
 run are recorded in `evidence/ci-actions.md`.
+
+---
+
+## D-094 · Keep the measured Transformers line, but make checkpoint config non-executable
+
+**The optional runtime was open, and the version we must retain has published advisories.** The
+real GPU measurements used Transformers 4.57.6, Accelerate 1.14.0, Pillow 12.3.0 and Torchvision
+0.28.0, while three of those four declarations were floors. The cloud declaration admitted every
+Google Auth 2.x release. A fresh install could therefore produce a different runtime under the
+same HawEdit revision. The development pin was Pytest 8.3.4, reported as vulnerable by
+PYSEC-2026-1845. All direct optional dependencies are exact now, with Pytest 9.1.1 and Google Auth
+2.56.3 measured in a clean environment.
+
+**Upgrading Transformers is not a safe security edit.** D-055 already measured that 5.x breaks
+VideoChat3 three ways (one silently randomises `lm_head`) and changes reranker scores and order.
+`pip-audit` nevertheless reports four records against 4.57.6. Two are unused model-specific paths:
+HawEdit has no X-CLIP conversion or `Trainer`, and the latter advisory additionally requires Torch
+below 2.6 while the pin is 2.13.0. Two affect config-driven loading and required controls here:
+CVE-2026-4372's private implementation-field bypass and CVE-2026-5241's nested
+`trust_remote_code` propagation.
+
+**Decision: validate checkpoint configuration before the model stack sees it.** Every visual and
+Sorani-validator loader now recursively refuses the two private implementation fields, a
+repository-shaped public attention/expert implementation, and any config-supplied
+`trust_remote_code`. Each adapter also supplies the exact model-type allowlist measured in its
+pinned checkpoint, so an altered Qwen config cannot dispatch into X-CLIP, LightGlue, or any other
+Transformers family. The guard runs before even CUDA discovery; a refusal cannot arrive after a
+processor or model already interpreted the config.
+
+**Evidence, without laundering the scanner.** All five real local configs pass their production
+allowlists. A clean Python 3.12.13 environment containing dev, media, cloud and GPU extras passes
+`pip check` and the canonical gate at 1,237/1,237 with zero skips. `pip-audit` still prints four
+Transformers advisories; `evidence/optional-runtime-security.md` records each as mitigated or
+unreachable with the exact independent fact, rather than claiming a clean scan. Direct pins are
+reproducible; their transitive graph is not yet a hash lock, and this decision does not say it is.

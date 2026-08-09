@@ -45,12 +45,12 @@ get slightly-wrong scores and no error.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.models import assert_fully_loaded
+from hawedit.models import assert_fully_loaded, assert_transformers_config_safe
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
@@ -84,6 +84,7 @@ _EMBEDDING_ROLE: Final = frozenset({"visual_embedding"})
 # throughput regime, and §3 Stage 1's warning about turning published figures into wall-clock
 # promises applies to anything that then gets timed.
 DEFAULT_DEVICE: Final = "cuda:0"
+QWEN3_VL_MODEL_TYPES: Final = frozenset({"qwen3_vl", "qwen3_vl_text"})
 
 
 class EmbedderUnavailable(RuntimeError):
@@ -94,6 +95,7 @@ def load_processor_and_model(
     model_dir: Path,
     device: str,
     *,
+    allowed_model_types: Collection[str] = QWEN3_VL_MODEL_TYPES,
     trust_remote_code: bool = False,
     causal_lm: bool = False,
     configure: Callable[[Any], None] | None = None,
@@ -115,6 +117,11 @@ def load_processor_and_model(
       defaults to `flash_attention_2`, which resolves to `None` without flash-attn, and
       flash-attn publishes no Windows wheels.
     """
+    # A config is data only until the loader interprets it. Transformers 4.57.6 can execute a
+    # Hub kernel named by a private field even with trust_remote_code=False (CVE-2026-4372), so
+    # validate before importing or calling any model-stack code. D-094.
+    assert_transformers_config_safe(model_dir, allowed_model_types)
+
     # torch first and alone, then the CUDA check, then transformers. The order is the point:
     # torch ships in the `media` extra and is therefore present anywhere Stage 0 runs, while
     # transformers is in `gpu` and is absent on the CI runner. Importing them together made

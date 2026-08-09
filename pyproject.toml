@@ -11,7 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.3.4", # MIT
+    "pytest==9.1.1", # MIT; PYSEC-2026-1845 fixed in 9.0.3
     "ruff==0.9.6",   # MIT
     "mypy==1.15.0",  # MIT
 ]
@@ -57,9 +57,9 @@ gpu = [
     # final order differs. §8.1's rule that a number carries the hardware it was measured on
     # extends to the library that produced it. See D-055.
     "transformers==4.57.6",         # Apache-2.0
-    "accelerate>=1.0",              # Apache-2.0 — device placement for the 4B models
-    "pillow>=10",                   # MIT-CMU (HPND) — frames between ffmpeg and the processor
-    "torchvision>=0.28",            # BSD-3-Clause — required by Qwen3VLVideoProcessor
+    "accelerate==1.14.0",           # Apache-2.0 — measured GPU device placement
+    "pillow==12.3.0",               # MIT-CMU (HPND) — measured frame transport
+    "torchvision==0.28.0",          # BSD-3-Clause — measured Qwen3VLVideoProcessor runtime
 ]
 asr = [
     # fairseq2n has no Windows wheel. The Windows runner invokes this extra inside WSL2.
@@ -71,7 +71,7 @@ asr = [
     "qwen-asr==0.0.6; platform_system != 'Windows'",        # Apache-2.0
 ]
 cloud = [
-    "google-auth>=2.40,<3", # Apache-2.0 — Vertex ADC bearer authentication
+    "google-auth==2.56.3", # Apache-2.0 — measured Vertex ADC bearer authentication
 ]
 
 [build-system]
@@ -119,6 +119,10 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 python_version = "3.11"
 strict = true
 files = ["src", "tests"]
+# google-auth 2.56.3 ships Credentials.refresh without a typed signature.  The call is checked
+# by HawEdit's own credential contract tests; exclude exactly that external API rather than
+# weakening disallow_untyped_calls for gemini.py or the optional-dependency environment.
+untyped_calls_exclude = ["google.auth.credentials.Credentials.refresh"]
 
 [[tool.mypy.overrides]]
 module = [

@@ -12,9 +12,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _base_dependency_version(project: dict[str, object], package: str) -> tuple[int, ...]:
-    dependencies = project["project"]
-    assert isinstance(dependencies, dict)
-    raw_dependencies = dependencies["dependencies"]
+    return _dependency_version(project, None, package)
+
+
+def _dependency_version(
+    document: dict[str, object], group: str | None, package: str
+) -> tuple[int, ...]:
+    project = document["project"]
+    assert isinstance(project, dict)
+    if group is None:
+        raw_dependencies = project["dependencies"]
+    else:
+        optional = project["optional-dependencies"]
+        assert isinstance(optional, dict)
+        raw_dependencies = optional[group]
     assert isinstance(raw_dependencies, list)
     matches = [
         dependency
@@ -38,3 +49,30 @@ def test_fonttools_pin_contains_the_cve_2025_66034_fix() -> None:
     assert {tuple(int(part) for part in version.split(".")) for version in setup_versions} == {
         base_version
     }
+
+
+def test_pytest_pin_contains_the_pysec_2026_1845_fix() -> None:
+    document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert _dependency_version(document, "dev", "pytest") >= (9, 0, 3)
+
+
+def test_gpu_and_cloud_runtime_dependencies_are_exactly_reproducible() -> None:
+    """Open floors silently changed the model runtime underneath recorded measurements."""
+    document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    expected = {
+        ("gpu", "transformers"): (4, 57, 6),
+        ("gpu", "accelerate"): (1, 14, 0),
+        ("gpu", "pillow"): (12, 3, 0),
+        ("gpu", "torchvision"): (0, 28, 0),
+        ("cloud", "google-auth"): (2, 56, 3),
+    }
+    assert {
+        (group, package): _dependency_version(document, group, package)
+        for group, package in expected
+    } == expected
+
+    tool = document["tool"]
+    assert isinstance(tool, dict)
+    mypy = tool["mypy"]
+    assert isinstance(mypy, dict)
+    assert mypy["untyped_calls_exclude"] == ["google.auth.credentials.Credentials.refresh"]

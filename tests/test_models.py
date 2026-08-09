@@ -18,6 +18,8 @@ from hawedit.models import (
     ModelNotProvisioned,
     ModelStore,
     SourceNotConfigured,
+    UnsafeModelConfig,
+    assert_transformers_config_safe,
     readiness_report,
 )
 from hawedit.registry import REGISTRY, Provisioning
@@ -238,6 +240,103 @@ def test_the_refusal_names_every_invented_weight() -> None:
     with pytest.raises(WeightsIncomplete) as raised:
         assert_fully_loaded("m", ["b.weight", "a.weight"])
     assert "a.weight" in str(raised.value) and "b.weight" in str(raised.value)
+
+
+# --- checkpoint configuration is data, not an implicit code-loading instruction -----------
+
+
+def _write_transformers_config(root: Path, value: object) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "config.json").write_text(json.dumps(value), encoding="utf-8")
+
+
+def test_builtin_transformers_implementations_are_accepted(tmp_path: Path) -> None:
+    _write_transformers_config(
+        tmp_path,
+        {
+            "model_type": "qwen3_vl",
+            "text_config": {"attn_implementation": "sdpa"},
+            "vision_config": {"attn_implementation": "flash_attention_2"},
+        },
+    )
+    assert_transformers_config_safe(tmp_path, {"qwen3_vl"})
+
+
+@pytest.mark.parametrize(
+    "field", ["_attn_implementation_internal", "_experts_implementation_internal"]
+)
+def test_private_implementation_fields_are_refused_recursively(tmp_path: Path, field: str) -> None:
+    """CVE-2026-4372 bypasses trust_remote_code through deserialised private fields."""
+    _write_transformers_config(
+        tmp_path,
+        {
+            "model_type": "qwen3_vl",
+            "vision_config": {"layers": [{field: "attacker/remote-kernel"}]},
+        },
+    )
+    with pytest.raises(UnsafeModelConfig, match=rf"{field}.*CVE-2026-4372"):
+        assert_transformers_config_safe(tmp_path, {"qwen3_vl"})
+
+
+@pytest.mark.parametrize("field", ["attn_implementation", "experts_implementation"])
+def test_public_implementation_fields_cannot_name_a_remote_kernel(
+    tmp_path: Path, field: str
+) -> None:
+    _write_transformers_config(
+        tmp_path,
+        {"model_type": "qwen3_vl", field: "attacker/remote-kernel@main:entry"},
+    )
+    with pytest.raises(UnsafeModelConfig, match="remote kernel"):
+        assert_transformers_config_safe(tmp_path, {"qwen3_vl"})
+
+
+def test_public_implementation_mapping_cannot_hide_a_remote_kernel(tmp_path: Path) -> None:
+    _write_transformers_config(
+        tmp_path,
+        {
+            "model_type": "qwen3_vl",
+            "attn_implementation": {
+                "encoder": "sdpa",
+                "decoder": {"fallback": "attacker/remote-kernel"},
+            },
+        },
+    )
+    with pytest.raises(UnsafeModelConfig, match="config.attn_implementation.decoder.fallback"):
+        assert_transformers_config_safe(tmp_path, {"qwen3_vl"})
+
+
+def test_config_cannot_override_trust_remote_code_in_a_nested_model(tmp_path: Path) -> None:
+    _write_transformers_config(
+        tmp_path,
+        {
+            "model_type": "qwen3_vl",
+            "keypoint_detector_config": {
+                "model_type": "qwen3_vl",
+                "trust_remote_code": True,
+            },
+        },
+    )
+    with pytest.raises(UnsafeModelConfig, match="CVE-2026-5241"):
+        assert_transformers_config_safe(tmp_path, {"qwen3_vl"})
+
+
+@pytest.mark.parametrize("model_type", ["xclip", "lightglue"])
+def test_checkpoint_cannot_dispatch_into_an_unapproved_model_family(
+    tmp_path: Path, model_type: str
+) -> None:
+    _write_transformers_config(tmp_path, {"model_type": model_type})
+    with pytest.raises(UnsafeModelConfig, match="unapproved"):
+        assert_transformers_config_safe(tmp_path, {"qwen3_vl", "qwen3_vl_text"})
+
+
+def test_a_missing_or_malformed_transformers_config_is_refused_before_loading(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(UnsafeModelConfig, match="is missing"):
+        assert_transformers_config_safe(tmp_path, {"qwen3_vl"})
+    (tmp_path / "config.json").write_text("{", encoding="utf-8")
+    with pytest.raises(UnsafeModelConfig, match="cannot safely read"):
+        assert_transformers_config_safe(tmp_path, {"qwen3_vl"})
 
 
 # --- revisions are pinned, never resolved at download time -------------------------------

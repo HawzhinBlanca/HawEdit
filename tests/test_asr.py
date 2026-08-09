@@ -547,6 +547,9 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
 ) -> None:
     model_dir = tmp_path / "validator"
     model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        json.dumps({"model_type": "qwen3_asr"}), encoding="utf-8"
+    )
     audio = tmp_path / "segment.wav"
     _write_pcm(audio)
     loaded: dict[str, object] = {}
@@ -575,6 +578,32 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
         "max_inference_batch_size": 1,
     }
     assert loaded["transcribe"] == {"audio": str(audio)}
+
+
+def test_qwen_validator_refuses_a_code_loading_config_before_imports(tmp_path: Path) -> None:
+    from hawedit.models import UnsafeModelConfig
+
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_asr",
+                "_attn_implementation_internal": "attacker/kernel",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(UnsafeModelConfig, match="CVE-2026-4372"):
+        QwenSoraniValidator(model_dir)._load()
+
+
+def test_qwen_validator_uses_the_asr_model_type_allowlist(tmp_path: Path) -> None:
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(json.dumps({"model_type": "xclip"}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unapproved"):
+        QwenSoraniValidator(model_dir)._load()
 
 
 def test_omni_runtime_selection_is_explicit() -> None:

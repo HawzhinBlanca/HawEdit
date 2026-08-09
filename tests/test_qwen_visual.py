@@ -24,6 +24,7 @@ from hawedit.qwen_visual import (
     EmbedderUnavailable,
     QwenVisualEmbedder,
     QwenVisualReranker,
+    load_processor_and_model,
     read_pooling_recipe,
     read_score_tokens,
 )
@@ -39,6 +40,7 @@ def a_checkpoint(
     prompt: str | None = "Represent the user's input.",
 ) -> Path:
     """A directory shaped like the checkpoint, carrying only what the recipe is read from."""
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}), encoding="utf-8")
     (tmp_path / "1_Pooling").mkdir(parents=True, exist_ok=True)
     (tmp_path / "1_Pooling" / "config.json").write_text(
         json.dumps({"pooling_mode": pooling_mode, "embedding_dimension": dimension}),
@@ -117,6 +119,30 @@ def test_the_default_model_id_is_the_registry_id_for_the_embedder() -> None:
     from hawedit.registry import REGISTRY
 
     assert REGISTRY[EMBEDDING_MODEL_ID].role == "visual_embedding"
+
+
+def test_model_config_is_refused_before_any_gpu_or_transformers_loader(tmp_path: Path) -> None:
+    """The CVE guard has to precede even runtime discovery, not merely AutoModel."""
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_vl",
+                "_attn_implementation_internal": "attacker/kernel",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # test_models intentionally reloads hawedit.models to exercise installed-path discovery;
+    # RuntimeError avoids binding this cross-file assertion to the pre-reload class identity.
+    with pytest.raises(RuntimeError, match="CVE-2026-4372"):
+        load_processor_and_model(tmp_path, "cuda:0")
+
+
+@pytest.mark.parametrize("model_type", ["xclip", "lightglue"])
+def test_visual_loader_uses_the_qwen_model_type_allowlist(tmp_path: Path, model_type: str) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": model_type}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unapproved"):
+        load_processor_and_model(tmp_path, "cuda:0")
 
 
 # --- the GPU is not optional ----------------------------------------------------------------

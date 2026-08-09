@@ -214,6 +214,17 @@ def test_missing_weights_are_refused_naming_the_fetch_script(tmp_path: Path) -> 
         )
 
 
+def test_videochat_loader_uses_its_exact_model_type_allowlist(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text('{"model_type":"lightglue"}', encoding="utf-8")
+    reader = VideoChat3Reader(
+        tmp_path,
+        read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),
+        score_window=lambda w: 0.5,
+    )
+    with pytest.raises(RuntimeError, match="unapproved"):
+        reader._load()
+
+
 # --- the wiring, driven through a stub processor and model ----------------------------------
 
 

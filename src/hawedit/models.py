@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -44,8 +45,10 @@ __all__ = [
     "ModelStore",
     "RevisionNotPinned",
     "SourceNotConfigured",
+    "UnsafeModelConfig",
     "WeightsIncomplete",
     "assert_fully_loaded",
+    "assert_transformers_config_safe",
     "readiness_report",
 ]
 
@@ -85,6 +88,108 @@ class ModelNotProvisioned(RuntimeError):
 
 class WeightsIncomplete(RuntimeError):
     """Raised when a checkpoint loaded but some of its weights were invented."""
+
+
+class UnsafeModelConfig(RuntimeError):
+    """Raised before Transformers can execute code named by checkpoint configuration."""
+
+
+_INTERNAL_IMPLEMENTATION_FIELDS: Final = frozenset(
+    {"_attn_implementation_internal", "_experts_implementation_internal"}
+)
+_PUBLIC_IMPLEMENTATION_FIELDS: Final = frozenset({"attn_implementation", "experts_implementation"})
+_HUB_KERNEL: Final = re.compile(r"^(?:paged\|)?[^/:]+/[^/:]+(?:@[^/:]+)?(?::[^/:]+)?$")
+
+
+def assert_transformers_config_safe(model_dir: Path, allowed_model_types: Collection[str]) -> None:
+    """Refuse checkpoint fields that can make Transformers download and execute code.
+
+    Transformers before 5.3.0 deserialises the private implementation fields below from a
+    model's ``config.json``.  A malicious value can name a Hub kernel repository and execute
+    its Python even when the caller passed ``trust_remote_code=False`` (CVE-2026-4372).  HawEdit
+    is pinned to 4.57.6 because 5.x changes the verified visual checkpoints' behaviour, so this
+    is a deliberately stricter backport of the upstream fix: private fields are never accepted,
+    and neither are repository-shaped values in their public counterparts.  CVE-2026-5241's
+    nested ``trust_remote_code`` override is also refused.  Finally, every nested ``model_type``
+    must belong to the checkpoint-specific allowlist supplied by its adapter, which prevents an
+    altered Qwen config from dispatching into the vulnerable X-CLIP or LightGlue loaders.
+    HawEdit's measured checkpoints use built-in implementations such as ``sdpa`` and need no
+    remote kernel.
+
+    The walk is recursive because nested text/vision configs become ``PretrainedConfig`` objects
+    too.  It runs before any processor, config, or model loader in every HawEdit-owned
+    Transformers path.
+    """
+    allowed = frozenset(allowed_model_types)
+    if not allowed:
+        raise ValueError("allowed_model_types must name at least one measured model type")
+    config_path = model_dir / "config.json"
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise UnsafeModelConfig(
+            f"{config_path} is missing; a Transformers checkpoint without its declared config "
+            "cannot be loaded safely"
+        ) from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise UnsafeModelConfig(f"cannot safely read {config_path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise UnsafeModelConfig(
+            f"{config_path} must contain a JSON object, got {type(raw).__name__}"
+        )
+
+    seen_model_types: set[str] = set()
+
+    def refuse_remote_implementation(value: object, location: str) -> None:
+        if isinstance(value, str) and _HUB_KERNEL.fullmatch(value) is not None:
+            raise UnsafeModelConfig(
+                f"{config_path} asks {location} to load remote kernel {value!r}. "
+                "HawEdit's pinned checkpoints require no remote kernel, so executing one "
+                "is refused."
+            )
+        if isinstance(value, dict):
+            for key, child in value.items():
+                refuse_remote_implementation(child, f"{location}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                refuse_remote_implementation(child, f"{location}[{index}]")
+
+    def walk(value: object, location: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_location = f"{location}.{key}"
+                if key in _INTERNAL_IMPLEMENTATION_FIELDS:
+                    raise UnsafeModelConfig(
+                        f"{config_path} contains forbidden field {child_location}. "
+                        "Transformers <5.3.0 can execute a Hub kernel named there while "
+                        "bypassing trust_remote_code (CVE-2026-4372)."
+                    )
+                if key == "trust_remote_code":
+                    raise UnsafeModelConfig(
+                        f"{config_path} contains forbidden field {child_location}. "
+                        "A nested model config can override the caller's refusal and execute "
+                        "remote code (CVE-2026-5241)."
+                    )
+                if key == "model_type":
+                    if not isinstance(child, str) or child not in allowed:
+                        raise UnsafeModelConfig(
+                            f"{config_path} declares unapproved {child_location}={child!r}; "
+                            f"this adapter accepts only {sorted(allowed)}. Dispatching a pinned "
+                            "checkpoint through another Transformers model family is refused."
+                        )
+                    seen_model_types.add(child)
+                if key in _PUBLIC_IMPLEMENTATION_FIELDS:
+                    refuse_remote_implementation(child, child_location)
+                walk(child, child_location)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, f"{location}[{index}]")
+
+    walk(raw, "config")
+    if not seen_model_types:
+        raise UnsafeModelConfig(
+            f"{config_path} declares no model_type; this adapter accepts only {sorted(allowed)}"
+        )
 
 
 def assert_fully_loaded(model_id: str, missing_keys: Iterable[str]) -> None:
