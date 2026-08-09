@@ -886,3 +886,56 @@ convenience: the whole transcript became the query and Stage 2 asked for 40.89 G
 **What is done in the meantime:** the index is built in the only shape that can retrieve
 (`from_sentences`, D-134), so whichever way this is answered, the structure is ready and the report
 says how many documents it holds.
+
+## #19 · CTC-3B's greedy decode is unconditioned, and §3's disagreement trigger compares it to a Kurdish-conditioned decode
+
+**Raised 2026-08-10 (D-135). Needs Hawa.**
+
+§3 Stage 1 routes "any segment where LLM-7B and CTC-3B disagree materially" to the validator.
+D-135 gave that trigger its missing input — CTC-3B's own greedy decode of the posteriors Stage 1
+already computes. Measured on the real 38-minute file (`ZAR38MinTest.mp4`, 545 segments, 1,547 s on
+two 3090 Ti), 542 segments produced a hypothesis, and:
+
+```
+first script of each CTC hypothesis, over 542
+  ARABIC        428  ( 79.0%)
+  LATIN          96  ( 17.7%)
+  CJK            11  (  2.0%)
+  MALAYALAM 2 · HEBREW 2 · CYRILLIC 1 · DEVANAGARI 1 · BENGALI 1
+
+LLM: کاکە بیلال                       CTC: കക بില                     CER 0.800
+LLM: باسی گیم وڵکنیوزم بۆ بکەی        CTC: paseki molknusen bopka     CER 0.960
+```
+
+The LLM pass runs with `lang=["ckb_Arab"]`. A greedy argmax over the acoustic model's full
+multilingual vocabulary is conditioned on nothing. So `normalized_cer(llm, ctc)` partly measures
+**script mismatch** rather than transcription disagreement — and it does so at the decisive margin:
+
+```
+normalized CER over all 542 hypotheses            median 0.167   ABOVE  D-015's 0.15 bar
+restricted to Arabic-script hypotheses (428)      median 0.125   BELOW  it
+escalated on the real run                         312 / 545 = 57%
+  disagreement only 176 · both 116 · quartile only 20
+```
+
+The quartile alone is 25% by construction. 57% of an episode going to a 4 GiB validator is a
+capacity decision, and 176 of those escalations rest on a comparison whose meaning is unestablished.
+
+**Three options, none of them this loop's to take.**
+
+1. **Condition the CTC decode** the way the LLM pass is conditioned. Closest to §3's intent — "two
+   models reading the same audio" — but it changes what CTC-3B contributes and its effect on §8.1's
+   CER and RTF columns is unmeasured.
+2. **Restrict the decode to a Kurdish token subset.** Requires naming which of ~32,000 vocabulary
+   entries are Kurdish, which is a guess, and it re-creates the compaction problem D-135 rejected:
+   a decode confined to a chosen subset cannot disagree in the way the trigger is for.
+3. **Raise the disagreement threshold** until the confound stops firing. A number chosen to make an
+   output look right, which D-015 explicitly did not do.
+
+**What is done in the meantime:** the hypotheses are computed and carried in
+`transcript.raw.json`'s `segment_confidence` (real data, honestly labelled), §3's rule is applied as
+written with D-015's threshold, and the report carries `escalation.by_trigger` so the total can never
+be read as validated routing. Nothing is routed anywhere — the rzgar validator's loader is #16.
+
+**The measurement to repeat once this is answered:** the same run, and the fraction of 545 segments
+escalating on disagreement alone. It is **176** today.

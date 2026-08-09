@@ -55,6 +55,12 @@ from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandid
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
+from hawedit.escalation import (
+    DEFAULT_DISAGREEMENT_CER,
+    EscalationDecision,
+    scores_from_transcript,
+    select_for_validation,
+)
 from hawedit.gemini import GeminiUnavailable
 from hawedit.index import Bm25Index
 from hawedit.ingest import IngestError, IngestResult, ingest, probe_stream
@@ -172,6 +178,10 @@ class PipelineRun:
     # about it here. Measured on the real 38-minute run: 2 of 547 regions, 664 ms of Kurdish, and
     # the emitted report mentioned neither. §1 of this module: fail visible, not silent. D-110.
     transcript_gaps: tuple[UnalignedSpeech, ...] = ()
+    # §3 Stage 1's routing decision per segment. The validator itself is BLOCKED #16, so
+    # this reports which segments the rule selects rather than sending them anywhere —
+    # which is the half that can be checked on this machine. D-135.
+    escalation: tuple[EscalationDecision, ...] = ()
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
     # §3 Stage 2's visual half splits into a part that needs weights and a part that does not.
@@ -301,6 +311,39 @@ class PipelineRun:
             "speech_without_transcription_ms": sum(
                 gap.end_ms - gap.start_ms for gap in self.transcript_gaps
             ),
+            # Always present, empty included, so "no segment needs the validator" is readable
+            # rather than indistinguishable from "the rule never ran" (D-110's rule).
+            "escalation": {
+                "scored_segments": len(self.escalation),
+                "escalated": sum(1 for d in self.escalation if d.escalate),
+                "disagreement_threshold_cer": DEFAULT_DISAGREEMENT_CER,
+                # Which trigger fired, because the two are not equally well founded. Measured on
+                # the real 38-minute run: 312 of 545 escalated, and **176 on disagreement alone**
+                # — driven partly by CTC-3B's greedy decode being unconditioned, which lands
+                # 17.7% of hypotheses in Latin script and 4% in CJK/Malayalam/Hebrew/Cyrillic
+                # against an LLM pass conditioned on ckb_Arab. A bare count would read as §3's
+                # intended routing; this makes it answerable. BLOCKED #19. D-135.
+                "by_trigger": {
+                    "quartile_only": sum(
+                        1 for d in self.escalation if d.escalate and "disagree" not in d.reason
+                    ),
+                    "disagreement_only": sum(
+                        1
+                        for d in self.escalation
+                        if d.escalate and "disagree" in d.reason and "quartile" not in d.reason
+                    ),
+                    "both": sum(
+                        1
+                        for d in self.escalation
+                        if d.escalate and "disagree" in d.reason and "quartile" in d.reason
+                    ),
+                },
+                "segments": [
+                    {"segment_id": d.segment_id, "escalate": d.escalate, "reason": d.reason}
+                    for d in self.escalation
+                    if d.escalate
+                ],
+            },
             "transcript": (
                 self.transcript.to_dict()
                 if isinstance(self.transcript, StageSkipped)
@@ -915,7 +958,14 @@ def run_pipeline(
             ) from None
         transcript = stored
     store.verify_raw_integrity(identifier)
-    run = replace(run, transcript_gaps=transcript.unaligned)
+    run = replace(
+        run,
+        transcript_gaps=transcript.unaligned,
+        # §3 Stage 1: "Route the bottom quartile, and any segment where LLM-7B and CTC-3B
+        # disagree materially, to the validator." The policy had no caller in `src/` because
+        # `ctc_text` was never computed (D-135); it is computed now, so the rule runs here.
+        escalation=select_for_validation(scores_from_transcript(transcript)),
+    )
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
 

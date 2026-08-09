@@ -6201,3 +6201,117 @@ judge reads "the **full normalized Sorani transcript** in one pass. Not a filter
 the text index is for, and choosing between them decides what §8.2's per-path Recall@K measures.
 `BLOCKED.md` #18 records it for Hawa rather than inventing a query here.
 `evidence/adversarial-pass-19-2026-08-10.md`.
+
+## D-135
+
+**§3 Stage 1's second escalation trigger had no input, so half the rule could not run.** §3: *"Route
+the bottom quartile, and any segment where LLM-7B and CTC-3B disagree materially, to the validator."*
+D-109 gave the quartile its input and named the remaining shortfall exactly: *"`select_for_validation`
+still cannot be called, because `ctc_text` is never computed — the CTC pass yields emissions for
+alignment and nothing decodes them."* Reproduced:
+
+```
+$ grep -rn "ctc_text" src/
+src/hawedit/escalation.py:57 · 81 · 88 · 91 · 92 · 117      (the type, the predicate, nothing else)
+```
+
+**Never computed, not computed and discarded** — the distinction the loop asks for. The emissions
+existed in `transcribe_segment`; `_align_emissions` spent them on timing the LLM's words and no
+second hypothesis was ever produced.
+
+**Decision: greedy-decode the posteriors Stage 1 already holds.** An argmax per frame, repeats
+collapsed, blanks dropped. No model, no download, no threshold — `DEFAULT_DISAGREEMENT_CER` was
+already chosen and recorded in D-015. The only new judgement is *which matrix* to decode.
+
+**The decode must span the full vocabulary, and that is the load-bearing part.**
+`_align_emissions` projects the posteriors onto only the columns the LLM's own tokens occupy,
+because Viterbi never needs the rest. Decoding from *that* matrix would confine CTC to the LLM's
+vocabulary, so the two hypotheses could differ only in order — a substituted word, which is the
+case the disagreement trigger exists for, would be structurally unreachable. A test builds a matrix
+whose acoustic peak is a symbol the reference text does not contain and requires it to survive.
+
+**`SegmentConfidence` carries both hypotheses, not just the CTC one.** The comparison needs a pair,
+and reading them off the artifact rather than from live model objects means §8.2 can re-tune the
+threshold against a transcript on disk without paying for inference again.
+
+**Empty means empty, and is not agreement by accident.** A segment whose acoustic model emitted only
+blanks gets `""`, and `materially_disagree` already treats one empty side as the strongest
+disagreement available. Two empty sides — every transcript written before this change — read as
+agreement, so an old artifact escalates on confidence alone rather than escalating everything.
+Measured on the real 38-minute transcript: **545 segments scored, 136 escalated = 545 // 4**, every
+reason naming the quartile.
+
+**The argmax runs in torch, and that was a defect in this change's own first version.** Measured on a
+200-frame segment against a 32,000-token vocabulary:
+
+```
+                                   per segment      across 547 segments
+  .tolist() on the full matrix        182.9 ms            100.0 s
+  Python argmax over the vocabulary   210.3 ms            115.0 s
+  tensor.argmax(dim=-1).tolist()        2.03 ms              1.1 s
+```
+
+~215 s of pure CPU overhead against 1.1 s. `collapse_ctc_path` is the O(frames) half and stays
+pure and model-agnostic; `greedy_ctc_tokens` keeps the emissions-level API the tests drive. A test
+hands `_ctc_hypothesis` a matrix wrapper that **raises** if `.tolist()` is called on the full
+matrix, so the fast path is pinned behaviourally rather than by comment.
+
+**Rejected: decoding on the compacted matrix.** One line shorter, reuses the projection
+`_align_emissions` already computes, and makes the trigger unable to fire on the substitution it is
+for. Rejected on that ground, and the reason is now a test.
+
+**Rejected: routing the escalated segments anywhere.** §3 routes them to the rzgar validator, whose
+loader is `BLOCKED.md` #16 and needs a licence decision under D-002. The rule now *runs* and its
+decision is in the report; sending them is still Hawa's call.
+
+**Mutation audit 12/12,** after a first pass of **6/9** on the nine mutations that existed then. The three survivors were all the same class:
+the decode, the scores and the wiring were tested and the *carrying* was not — blanking either
+hypothesis at the `SegmentConfidence` construction site, or skipping the CTC decode entirely, left
+five suites green. One of them needed a fake one layer lower than any existing test: every backend
+double replaces `transcribe_segment` itself, so the method that calls the decode was never driven —
+D-118's `read_scenes` finding, repeated exactly.
+`evidence/the-second-escalation-trigger-had-no-input.md`.
+
+### The real-weights run, and what it changed
+
+The full `--omni-asr` run finished after this was first written: **1,547 s** on hawapc01's two
+3090 Ti, 545 segments, a 1,070,637-byte report. **542 of 545 segments carry a real CTC hypothesis**,
+so the decode works on real weights. What it produced is the finding:
+
+```
+first script of each CTC hypothesis, over 542 segments
+  ARABIC        428  ( 79.0%)      CJK            11  (  2.0%)
+  LATIN          96  ( 17.7%)      MALAYALAM/HEBREW/CYRILLIC/DEVANAGARI/BENGALI  7  (1.3%)
+
+LLM: کاکە بیلال                              CTC: കക بില                       CER 0.800
+LLM: کەشوو مشتەز و بەخێوی زارکلاس …          CTC: ت زور خب انجاي اكثر حظ كم    CER 0.640
+LLM: باسی گیم وڵکنیوزم بۆ بکەی               CTC: paseki molknusen bopka       CER 0.960
+```
+
+**CTC-3B's greedy decode is unconditioned.** The LLM pass is called with `lang=["ckb_Arab"]`; a
+greedy argmax over the acoustic model's full multilingual vocabulary is conditioned on nothing, so a
+sixth of the hypotheses are not even in Arabic script. The confound lands exactly on D-015's bar:
+
+```
+normalized CER, LLM vs CTC, all 542 hypotheses        median 0.167   (above the 0.15 bar)
+                             Arabic-script only (428) median 0.125   (below it), 175/428 over
+escalated on the real run    312 / 545 = 57%
+  disagreement only   176      both   116      quartile only   20
+```
+
+**So the input exists and the comparison is not yet meaningful.** §3's rule is implemented as
+written, with D-015's recorded threshold, and it escalates 57% of the file — where the quartile
+alone is 25% by construction. 176 segments escalate on disagreement alone, and the median CER moves
+from *above* the bar to *below* it once script-mismatched hypotheses are excluded, which is what
+shows the confound is deciding rather than colouring the outcome.
+
+**Not fixed here, and deliberately not guessed.** Restricting the decode to a "Kurdish subset" of the
+vocabulary means naming which of ~32,000 tokens are Kurdish; conditioning the CTC pass the way the
+LLM pass is conditioned is a modelling change whose effect on §8.1 is unmeasured; and lifting the
+threshold to swallow the confound would be a guessed number chosen to make an output look right.
+Each is a decision about which segments get validator time. `BLOCKED.md` #19.
+
+**What the code does in the meantime:** computes and carries the hypotheses (real data, honestly
+labelled), applies §3's rule as written, and reports **which trigger fired** —
+`by_trigger: {quartile_only, disagreement_only, both}` — so the 312 can never be read as §3's
+validated routing. A bare total would have been exactly that.

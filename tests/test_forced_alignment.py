@@ -24,6 +24,7 @@ import pytest
 from hawedit.forced_alignment import (
     AlignmentInfeasible,
     align_words,
+    greedy_ctc_tokens,
     minimum_frames,
     viterbi_align,
 )
@@ -290,3 +291,83 @@ def test_a_positive_frame_duration_still_times_words() -> None:
     words = align_words(emissions, [("ڕۆژ", [1]), ("باش", [2])], frame_duration_ms=20)
     assert len(words) == 2
     assert words[0].end_ms <= words[1].start_ms
+
+
+# --- D-135: CTC's own hypothesis, from the same posteriors ---------------------------------
+
+
+def _row(vocabulary: int, best: int, weight: float = 0.9) -> list[float]:
+    """One frame's log-probabilities, peaked on `best`."""
+    rest = math.log((1.0 - weight) / (vocabulary - 1))
+    return [math.log(weight) if index == best else rest for index in range(vocabulary)]
+
+
+def test_the_greedy_decode_collapses_repeats_and_drops_blanks() -> None:
+    """Standard CTC greedy decoding, which is what "CTC-3B's hypothesis" means.
+
+    Frames: 1 1 blank 1 2 2 blank 3 — the two runs of 1 are separated by a blank, so both
+    survive; the run of 2 collapses to one; blanks never appear in the output.
+    """
+    blank = 0
+    frames = [1, 1, blank, 1, 2, 2, blank, 3]
+    emissions = [_row(4, best) for best in frames]
+    assert greedy_ctc_tokens(emissions, blank_id=blank) == (1, 1, 2, 3)
+
+
+def test_a_repeat_with_no_blank_between_collapses_to_one() -> None:
+    """The control for the test above: without the separating blank, CTC reads one token.
+
+    A decode that kept both would emit doubled letters throughout, which looks like a plausible
+    transcription and would make every segment disagree with the LLM.
+    """
+    emissions = [_row(4, best) for best in [1, 1, 1, 1]]
+    assert greedy_ctc_tokens(emissions, blank_id=0) == (1,)
+
+
+def test_an_all_blank_segment_decodes_to_nothing() -> None:
+    """Silence is a real answer. `escalation.materially_disagree` treats one empty side as the
+    strongest disagreement, so this must be empty rather than invented."""
+    assert greedy_ctc_tokens([_row(4, 0) for _ in range(6)], blank_id=0) == ()
+
+
+def test_the_decode_follows_the_posteriors_and_not_the_frame_order() -> None:
+    """The discriminating control: a decode that returned frame indices, or the argmin, or a
+    constant would satisfy the assertions above on some input. Here the peak moves.
+    """
+    emissions = [_row(5, best) for best in [3, 3, 0, 4, 0, 1]]
+    assert greedy_ctc_tokens(emissions, blank_id=0) == (3, 4, 1)
+    # Same frames, peaks inverted within the vocabulary: the answer must move with them.
+    inverted = [[row[-1 - i] for i in range(len(row))] for row in emissions]
+    assert greedy_ctc_tokens(inverted, blank_id=4) == (1, 0, 3)
+
+
+def test_a_ragged_or_empty_matrix_is_refused() -> None:
+    with pytest.raises(ValueError, match="empty posterior matrix"):
+        greedy_ctc_tokens([], blank_id=0)
+    with pytest.raises(ValueError, match="ragged"):
+        greedy_ctc_tokens([[0.0, -1.0], [0.0]], blank_id=0)
+    with pytest.raises(ValueError, match="outside the vocabulary"):
+        greedy_ctc_tokens([[0.0, -1.0]], blank_id=7)
+
+
+def test_the_decode_can_produce_a_token_the_reference_text_never_used() -> None:
+    """Why the decode runs on the **full** vocabulary, before `_align_emissions` compacts it.
+
+    `asr._align_emissions` projects the posteriors onto only the columns the LLM's own tokens
+    occupy. Decoding from that matrix would confine CTC to the LLM's vocabulary, so the two
+    hypotheses could differ only in order — a substituted word, the case §3's disagreement
+    trigger exists for, would be unreachable.
+
+    Here the acoustic peak is on token 4, which the reference text's tokens (1, 2) do not
+    include: the full decode finds it, and a compacted decode cannot.
+    """
+    full = [_row(5, best) for best in [1, 0, 4, 0, 2]]
+    assert greedy_ctc_tokens(full, blank_id=0) == (1, 4, 2)
+
+    reference_tokens = [0, 1, 2]  # blank plus what the LLM said
+    compacted = [[row[column] for column in reference_tokens] for row in full]
+    compacted_ids = greedy_ctc_tokens(compacted, blank_id=0)
+    assert 4 not in {reference_tokens[i] for i in compacted_ids}, (
+        "the compacted decode reached a token outside the reference, so this test is not "
+        "measuring the restriction it names"
+    )

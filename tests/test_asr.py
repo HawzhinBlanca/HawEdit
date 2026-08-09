@@ -21,6 +21,7 @@ import subprocess
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -197,12 +198,17 @@ def test_long_audio_failure_rate_of_an_empty_run_is_none() -> None:
 
 
 class FakeOmniBackend:
+    """A stand-in for LLM-7B + CTC-3B. `ctc_text` differs from `text_raw` on purpose: the two
+    models are independent, and a fake that returns the same string for both cannot show whether
+    the artifact carries two hypotheses or one string twice (D-135)."""
+
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
         assert audio_path.exists()
         return SegmentTranscript(
             text_raw="کوردی.",
             words=(Word(w="کوردی.", start_ms=50, end_ms=500, conf=0.9),),
             mean_logprob=-0.1,
+            ctc_text="كوردي",
         )
 
 
@@ -243,8 +249,104 @@ def test_llm_and_ctc_forwards_start_in_parallel() -> None:
         ) -> tuple[Word, ...]:
             return (Word(text, 0, round(duration_s * 1_000), 0.9),)
 
+        @staticmethod
+        def _ctc_hypothesis(pipeline: object, log_probs: object) -> str:
+            # Stubbed for the same reason `_align_emissions` is: this test measures only that the
+            # two forwards overlap, and the fake CTC pipeline is a bare object with no tokenizer.
+            return "کوردی."
+
     result = Backend().transcribe_segment(Path("segment.wav"), 1.0)
     assert result.text_raw == "کوردی."
+
+
+def test_transcribe_segment_decodes_ctcs_own_hypothesis_from_the_emissions() -> None:
+    """The real `OmniAsrBackend.transcribe_segment`, faked one layer lower than usual.
+
+    `FakeOmniBackend` and the parallelism test both replace `transcribe_segment` outright, so the
+    call to `_ctc_hypothesis` was never driven — D-135's audit reported "transcribe_segment stops
+    decoding CTC at all" as SURVIVED, the same shape as D-118's `read_scenes`. Here only `_load`
+    and `_ctc_emissions` are faked; the vocabulary projection, the Viterbi alignment and the
+    greedy decode all run for real against a hand-built posterior matrix.
+
+    The acoustic peak spells token 3 — which the LLM's text does **not** contain — so the CTC
+    hypothesis must differ from `text_raw`. A decode confined to the LLM's own token columns
+    (the compaction `_align_emissions` performs) could not produce it.
+    """
+    import torch
+
+    vocabulary = 5  # 0 = blank/pad, 1..4 real symbols
+    surfaces = {"ب": (1,), "ج": (2,)}  # what the LLM said, and how the tokenizer splits it
+    symbols = {1: "ب", 2: "ج", 3: "د", 4: "ن"}
+
+    class Tokenizer:
+        vocab_info = SimpleNamespace(pad_idx=0, bos_idx=None, eos_idx=None)
+
+    class CtcPipeline:
+        tokenizer = Tokenizer()
+
+        @staticmethod
+        def token_encoder(surface: str) -> list[int]:
+            return list(surfaces[surface])
+
+        @staticmethod
+        def token_decoder(tokens: Any) -> str:
+            return "".join(symbols[int(t)] for t in tokens)
+
+    class Llm:
+        @staticmethod
+        def transcribe(*_args: object, **_kwargs: object) -> list[str]:
+            return ["ب ج"]
+
+    def peaked(best: int) -> list[float]:
+        return [0.0 if index == best else -12.0 for index in range(vocabulary)]
+
+    # frames: ب · blank · د(!) · blank · ج  — six frames, enough for the two aligned tokens
+    frames = [1, 0, 3, 0, 2, 2]
+
+    class NoFullMaterialisation:
+        """The posteriors, refusing to be turned into Python floats wholesale.
+
+        Measured on a 200-frame segment against a 32,000-token vocabulary, `.tolist()` on the
+        full matrix costs 183 ms and a Python argmax another 210 ms — about 215 s across this
+        file's 547 segments — against 2.03 ms for `argmax(dim=-1)` in torch. The first version of
+        `_ctc_hypothesis` took the slow route, so the property is pinned here rather than trusted
+        to a comment. `_align_emissions` still calls `.tolist()` on the *compacted* matrix, which
+        is a handful of columns and is allowed.
+        """
+
+        def __init__(self, tensor: Any) -> None:
+            self._tensor = tensor
+
+        def tolist(self) -> list[list[float]]:
+            raise AssertionError(
+                "the full posterior matrix was materialised as Python floats; take the argmax "
+                "in torch instead"
+            )
+
+        def argmax(self, dim: int) -> Any:
+            return self._tensor.argmax(dim=dim)
+
+        def index_select(self, dim: int, index: Any) -> Any:
+            return self._tensor.index_select(dim, index)
+
+    class Backend(OmniAsrBackend):
+        def _load(self) -> tuple[object, object]:
+            return Llm(), CtcPipeline()
+
+        def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int]:
+            return NoFullMaterialisation(torch.tensor([peaked(f) for f in frames])), len(frames)
+
+    result = Backend().transcribe_segment(Path("segment.wav"), 1.2)
+
+    assert result.text_raw == "ب ج"
+    assert result.ctc_text == "بدج", result.ctc_text
+    assert result.ctc_text != result.text_raw.replace(" ", ""), (
+        "CTC returned exactly the LLM's own symbols, so this cannot show the decode ran on the "
+        "full vocabulary"
+    )
+    assert "د" in result.ctc_text, "the symbol only the acoustic model saw did not survive"
+    # The alignment still happened on the LLM's words, from the same emissions.
+    assert [word.w for word in result.words] == ["ب", "ج"]
 
 
 def test_canonical_producer_runs_vad_segments_and_shifts_ctc_words(
@@ -273,6 +375,39 @@ def test_canonical_producer_runs_vad_segments_and_shifts_ctc_words(
     ]
     assert transcript.asr.canonical == "omniASR_LLM_7B_v2"
     assert transcript.asr.aligner == "ctc_viterbi"
+
+
+def test_the_artifact_carries_both_hypotheses_per_segment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """§3 Stage 1's disagreement trigger reads them off the transcript, so they have to survive
+    assembly. Found SURVIVED by D-135's own mutation audit: blanking either hypothesis at the
+    `SegmentConfidence` construction site, or skipping the CTC decode entirely, left every suite
+    green — the decode, the scores and the wiring were all tested and the *carrying* was not.
+    """
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        Path(args[-1]).write_bytes(b"wav")
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    transcript = OmniAsrProducer(FakeOmniBackend()).transcribe(
+        "media",
+        tmp_path / "audio.wav",
+        (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    (scored,) = transcript.segment_confidence
+    assert scored.llm_text == "کوردی."
+    assert scored.ctc_text == "كوردي"
+    assert scored.llm_text != scored.ctc_text, (
+        "both fields hold the same string, so this cannot tell two hypotheses from one"
+    )
+    # And they survive the artifact's own JSON round-trip, which is what §8.2 would re-read.
+    reloaded = RawTranscript.from_json(transcript.to_json())
+    assert reloaded.segment_confidence[0].ctc_text == "كوردي"
+    assert reloaded.segment_confidence[0].llm_text == "کوردی."
 
 
 def test_canonical_producer_refuses_an_empty_vad_result(tmp_path: Path) -> None:

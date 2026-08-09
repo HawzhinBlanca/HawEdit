@@ -36,7 +36,7 @@ from typing import Any, Final, Protocol, runtime_checkable
 
 from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
-from hawedit.forced_alignment import align_words
+from hawedit.forced_alignment import align_words, collapse_ctc_path
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import (
     AsrProvenance,
@@ -129,6 +129,9 @@ class SegmentTranscript:
     text_raw: str
     words: tuple[Word, ...]
     mean_logprob: float | None = None
+    # CTC-3B's independent greedy decode of the same segment. Empty when the acoustic model
+    # emitted only blanks, which is a real answer and not a missing measurement (D-135).
+    ctc_text: str = ""
 
     def __post_init__(self) -> None:
         if not self.text_raw.strip():
@@ -217,6 +220,33 @@ class OmniAsrBackend:
         }
         return tuple(int(value) for value in values if int(value) not in special)
 
+    @staticmethod
+    def _ctc_hypothesis(pipeline: Any, log_probs: Any) -> str:
+        """CTC-3B's own transcription of this segment, from the full-vocabulary posteriors.
+
+        §3 Stage 1 escalates "any segment where LLM-7B and CTC-3B disagree materially", and that
+        comparison needs a second hypothesis. It was never computed: the CTC pass produced
+        emissions, `_align_emissions` spent them on timing the LLM's words, and
+        `escalation.select_for_validation` had no input for its other half. D-135.
+
+        Decoded from `log_probs` **before** `_align_emissions` compacts the vocabulary — a decode
+        restricted to the LLM's own token columns could not produce a different word, so the
+        trigger could never fire on the substitution it is for.
+
+        The argmax runs in torch, not through `greedy_ctc_tokens`. Measured on a 200-frame
+        segment against a 32,000-token vocabulary, the Python route costs 210 ms for the argmax
+        plus 183 ms to materialise the matrix — roughly 215 s across this file's 547 segments —
+        against 2.03 ms in torch. `collapse_ctc_path` is the O(frames) half and is shared.
+        """
+        import torch
+
+        blank = int(getattr(pipeline.tokenizer.vocab_info, "pad_idx", 0) or 0)
+        tokens = collapse_ctc_path(log_probs.argmax(dim=-1).tolist(), blank_id=blank)
+        if not tokens:
+            return ""
+        decoded = pipeline.token_decoder(torch.tensor(tokens, dtype=torch.int64))
+        return str(decoded).strip()
+
     def _ctc_emissions(self, pipeline: Any, audio_path: Path) -> tuple[Any, int]:
         try:
             import torch
@@ -290,6 +320,9 @@ class OmniAsrBackend:
             raise RuntimeError("OmniASR LLM returned no transcription for one speech segment")
         text = str(texts[0])
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
+        # CTC's own hypothesis, from the same posteriors and the full vocabulary. §3 Stage 1's
+        # second escalation trigger needs it and nothing computed it (D-135).
+        ctc_text = self._ctc_hypothesis(ctc, log_probs)
         total_ms = sum(word.end_ms - word.start_ms for word in words)
         mean_logprob = (
             sum(math.log(max(word.conf, 1e-12)) * (word.end_ms - word.start_ms) for word in words)
@@ -297,7 +330,7 @@ class OmniAsrBackend:
             if total_ms
             else None
         )
-        return SegmentTranscript(text, words, mean_logprob)
+        return SegmentTranscript(text, words, mean_logprob, ctc_text)
 
 
 class OmniAsrAdapter:
@@ -487,6 +520,8 @@ def _assemble_canonical_transcript(
                     start_ms=segment.start_ms,
                     end_ms=segment.end_ms,
                     mean_logprob=item.mean_logprob,
+                    llm_text=item.text_raw,
+                    ctc_text=item.ctc_text,
                 )
             )
     return RawTranscript(

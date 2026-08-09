@@ -36,6 +36,7 @@ import pytest
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import DiscoveryPath, Qc
 from hawedit.discovery import MergedCandidate
+from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
 from hawedit.judge import JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
@@ -283,6 +284,19 @@ def test_the_run_report_serializes_to_json(full_run: PipelineRun) -> None:
     # cannot order anything.
     assert payload["index"]["document_count"] == len(full_run.sentences)
     assert payload["index"]["document_count"] > 1
+    # §3 Stage 1's routing decision is in the artifact, always — an empty `segments` list means
+    # nothing needs the validator, which must be distinguishable from the rule never running
+    # (D-135; the policy had no caller in `src/` at all before it).
+    escalation = payload["escalation"]
+    assert escalation["scored_segments"] == len(full_run.escalation)
+    assert escalation["escalated"] == len(escalation["segments"])
+    assert escalation["disagreement_threshold_cer"] == DEFAULT_DISAGREEMENT_CER
+    # Which trigger fired has to be readable: measured on the real 38-minute run, 176 of the 312
+    # escalations came from disagreement alone, and that half rests on an unconditioned CTC decode
+    # (BLOCKED #19). A bare total would read as §3's intended routing.
+    by_trigger = escalation["by_trigger"]
+    assert set(by_trigger) == {"quartile_only", "disagreement_only", "both"}
+    assert sum(by_trigger.values()) == escalation["escalated"]
     assert payload["boundary"]["sentence_complete"] is True
     assert payload["clip"]["boundary"]["sentence_complete"] is True
     assert payload["render"]["reframe"] == "static_centre"

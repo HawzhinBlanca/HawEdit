@@ -308,7 +308,12 @@ def test_the_docs_name_workflows_that_exist() -> None:
     """
     on_disk = {p.name for p in (ROOT / ".github" / "workflows").glob("*.y*ml")}
     for doc in ("README.md", "BLOCKED.md", "PROGRESS.md"):
-        named = set(re.findall(r"\.github/workflows/([\w.-]+\.ya?ml)", (ROOT / doc).read_text()))
+        # `encoding="utf-8"` explicitly: this was the one `read_text()` in the repo without it, so
+        # on Windows it decoded these docs through cp1252 and had been matching against mojibake.
+        # It only *failed* when a UTF-8 continuation byte landed on one of cp1252's five undefined
+        # slots (0x81, 0x8D, 0x8F, 0x90, 0x9D) — D-115's failure class, one layer up. D-135.
+        text = (ROOT / doc).read_text(encoding="utf-8")
+        named = set(re.findall(r"\.github/workflows/([\w.-]+\.ya?ml)", text))
         assert named <= on_disk, (
             f"{doc} names workflows that do not exist: {sorted(named - on_disk)}"
         )

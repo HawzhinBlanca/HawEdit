@@ -150,6 +150,12 @@ class SegmentConfidence:
     start_ms: int
     end_ms: int
     mean_logprob: float
+    # The two hypotheses §3's *other* trigger compares. `select_for_validation` needs both, and
+    # `ctc_text` was never computed anywhere — the CTC pass produced emissions, spent them on
+    # timing the LLM's words, and decoded nothing. D-135. Empty strings mean a producer that does
+    # not run CTC separately, which is readable rather than silently agreeing.
+    llm_text: str = ""
+    ctc_text: str = ""
 
     def __post_init__(self) -> None:
         if self.end_ms <= self.start_ms:

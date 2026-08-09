@@ -32,12 +32,14 @@ from dataclasses import dataclass
 from typing import Final
 
 from hawedit.metrics import normalized_cer
+from hawedit.transcripts import RawTranscript
 
 __all__ = [
     "DEFAULT_DISAGREEMENT_CER",
     "EscalationDecision",
     "SegmentScore",
     "materially_disagree",
+    "scores_from_transcript",
     "select_for_validation",
 ]
 
@@ -90,6 +92,34 @@ def materially_disagree(
         # disagreement available, and CER would raise on the empty reference.
         return llm_text.strip() != ctc_text.strip()
     return normalized_cer(llm_text, ctc_text) >= threshold_cer
+
+
+def scores_from_transcript(transcript: RawTranscript) -> tuple[SegmentScore, ...]:
+    """The §3 Stage 1 evidence a finished transcript carries, as escalation input.
+
+    This is the missing link that left `select_for_validation` with no caller in `src/`: D-109
+    put each segment's `mean_logprob` in the artifact, D-135 put both hypotheses beside it, and
+    this turns them into scores. Reading from the artifact rather than from live model objects is
+    deliberate — the rule can then be re-run against a transcript from disk, which is how a
+    threshold gets tuned (§8.2) without paying for inference again.
+
+    Segments carrying no CTC hypothesis are still scored: their confidence quartile is real, and
+    `materially_disagree` treats one empty side as a disagreement, which is the honest reading of
+    "one model produced nothing here".
+
+    `segment_id` is the segment's own span on the media clock, so a decision points at audio
+    rather than at a list position that changes when a region fails to align (D-103).
+    """
+    return tuple(
+        SegmentScore(
+            segment_id=f"{scored.start_ms}-{scored.end_ms}",
+            mean_logprob=scored.mean_logprob,
+            llm_text=scored.llm_text,
+            ctc_text=scored.ctc_text,
+            duration_s=(scored.end_ms - scored.start_ms) / 1000.0,
+        )
+        for scored in transcript.segment_confidence
+    )
 
 
 def select_for_validation(
