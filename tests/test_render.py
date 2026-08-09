@@ -740,3 +740,58 @@ def test_real_render_accepts_a_time_varying_face_track(tmp_path: Path) -> None:
     )
     assert result.reframe is Reframe.FACE_TRACKED
     assert output.exists() and output.stat().st_size > 1_000
+
+
+def test_the_burn_refuses_an_ass_whose_stamps_fall_outside_the_clip(tmp_path: Path) -> None:
+    """`assert_captions_within_clip`'s LOGIC was tested; its wiring into `render_clip` was not.
+
+    Measured 2026-08-09: feeding the guard a synthetic always-valid ASS instead of the file on
+    disk — the import still used, so ruff stays clean — left the full suite at 0 failures.
+    Deleting the call outright is "caught" only because ruff reports an unused import and the
+    nested-gate tests then fail on a red lint, which is a linter noticing, not a test. Under the
+    import-preserving mutation an ASS carrying source-absolute stamps ships a valid, playable,
+    caption-free MP4 with `captions_burned_in=True` — Kurdish invariant #4. D-097.
+
+    This asserts the wiring: a file the guard should reject must be rejected *through the render
+    path*, on whatever file arrives.
+    """
+    from hawedit.captions import CaptionsOutsideClip
+
+    clip = _clip()
+    duration_ms = clip.out_ms - clip.in_ms
+    # Source-absolute stamps: a minute into the episode, entirely outside the cut stream where
+    # t=0 is the start of the clip. libass would draw nothing.
+    absolute = tmp_path / "source-absolute.ass"
+    absolute.write_text(
+        "[Script Info]\nWrapStyle: 2\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:01:00.00,0:01:01.60,Default,,0,0,0,,ڕۆژنامەوانی\n",
+        encoding="utf-8",
+    )
+    assert duration_ms < 60_000, "the fixture clip must end before the planted stamp begins"
+
+    with pytest.raises(CaptionsOutsideClip):
+        render_clip(
+            clip,
+            FIXTURE,
+            absolute,
+            FONTS,
+            tmp_path / "out.mp4",
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+        )
+    assert not (tmp_path / "out.mp4").exists(), "refused, but an MP4 was written anyway"
+
+    # The control: the ordinary ASS this suite builds must still render, or this test would pass
+    # for a `render_clip` that refused every caption file it was handed.
+    rendered = render_clip(
+        clip,
+        FIXTURE,
+        _write_ass(tmp_path),
+        FONTS,
+        tmp_path / "ok.mp4",
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+    )
+    assert Path(rendered.path).exists()
+    assert rendered.captions_burned_in

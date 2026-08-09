@@ -3851,3 +3851,38 @@ available; it does not authenticate the unsigned release and does not cover pack
 OmniASR downloads. `evidence/model-byte-integrity.md`.
 
 Gate: `VERIFY OK — 1249 passed, 0 skipped`.
+
+---
+
+## D-097 · Caption guard wiring needs a render-path regression
+
+**The caption guard's wiring was protected only by an import-usage lint rule.**
+`assert_captions_within_clip` refuses an ASS with nothing to draw inside `[0, clip_duration_ms]` —
+Kurdish invariant #4, since subtitles burn into an already-cut stream where `t=0` is the clip start.
+The function is well covered in `tests/test_caption_timing.py`. Its call in `render_clip` was not.
+
+**Two mutations, and only one is an honest catch.** Deleting the call leaves the import unused, so
+`ruff` reports it and three `test_gate.py` nested-gate tests fail *because `verify.sh` runs a red
+lint* — a linter noticing a dangling name, not a test noticing captions stopped being checked. The
+import-preserving mutation — hand the guard a synthetic always-valid ASS instead of the file on disk —
+leaves ruff clean and the **full suite at 0 failures**, and under it an ASS with source-absolute
+stamps ships a valid, playable, caption-free MP4 reporting `captions_burned_in=True`.
+
+**Decision: assert the wiring through the render path, not the function again.** The new test writes
+an ASS stamped a minute into the episode and requires `render_clip` to raise `CaptionsOutsideClip`,
+plus that no MP4 was written — "refused" and "refused after writing the file" are different facts. It
+asserts the fixture clip ends before the planted stamp, so the fixture cannot drift into overlapping
+and quietly blind the test, which is D-095's failure mode one week later.
+
+**The control matters as much as the assertion:** the ordinary ASS this suite builds must still render
+and still report `captions_burned_in`, or the test would pass for a `render_clip` that rejected every
+caption file. After the fix, the import-preserving mutation fails exactly one test with ruff clean —
+a behaviour catch.
+
+**My own instrument made the same mistake first.** The initial mutation was written inline through
+shell escaping and produced `Found 15 errors` from ruff, so it would have "been caught" for reasons
+unrelated to captions. D-082's lesson recurring inside the tool rather than the subject; rewritten as
+a file-based script with the ASS as a short constant so the only variable is the guard.
+`evidence/caption-guard-wiring-unprotected.md`.
+
+Gate: `VERIFY OK — 1137 passed, 0 skipped`.
