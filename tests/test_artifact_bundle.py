@@ -87,11 +87,9 @@ def test_a_staging_directory_creation_failure_is_a_domain_error(
 def test_delivery_root_must_not_be_a_symlink_or_reparse_point(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import hawedit.artifact_bundle as artifact_bundle
-
     root = tmp_path / "delivery"
     root.mkdir()
-    real_lstat = artifact_bundle.os.lstat
+    real_lstat = os.lstat
 
     def linked_lstat(path: os.PathLike[str] | str) -> os.stat_result | SimpleNamespace:
         result = real_lstat(path)
@@ -104,7 +102,7 @@ def test_delivery_root_must_not_be_a_symlink_or_reparse_point(
             )
         return result
 
-    monkeypatch.setattr(artifact_bundle.os, "lstat", linked_lstat)
+    monkeypatch.setattr(os, "lstat", linked_lstat)
 
     with pytest.raises(BundleError, match="link or reparse"):
         ArtifactBundle.create(root, "linked")
@@ -174,12 +172,10 @@ def test_hardlinked_delivery_artifact_is_refused_without_touching_victim(
 def test_artifact_replacement_between_lstat_and_open_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import hawedit.artifact_bundle as artifact_bundle
-
     bundle = ArtifactBundle.create(tmp_path, "file-swap")
     stage_complete(bundle)
     target = bundle.staged_path("json")
-    real_open = artifact_bundle.os.open
+    real_open = os.open
     replaced = False
 
     def swapping_open(
@@ -196,7 +192,7 @@ def test_artifact_replacement_between_lstat_and_open_is_refused(
             target.write_bytes(b"replacement")
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr(artifact_bundle.os, "open", swapping_open)
+    monkeypatch.setattr(os, "open", swapping_open)
 
     with pytest.raises(BundleError, match="identity changed"):
         bundle.publish()

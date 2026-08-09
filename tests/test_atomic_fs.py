@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-import hawedit.atomic_fs as atomic_fs
 from hawedit.atomic_fs import rename_directory_noreplace
 
 
@@ -44,13 +45,13 @@ def test_posix_publication_uses_the_kernel_no_replace_flag(
             return -1
 
     function = FakeFunction()
-    monkeypatch.setattr(atomic_fs.os, "name", "posix")
+    monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setattr(
-        atomic_fs.ctypes,
+        ctypes,
         "CDLL",
         lambda *args, **kwargs: SimpleNamespace(renameat2=function),
     )
-    monkeypatch.setattr(atomic_fs.ctypes, "get_errno", lambda: errno.EEXIST)
+    monkeypatch.setattr(ctypes, "get_errno", lambda: errno.EEXIST)
 
     with pytest.raises(FileExistsError):
         rename_directory_noreplace(source, destination)
