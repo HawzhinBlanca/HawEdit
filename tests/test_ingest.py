@@ -271,6 +271,27 @@ def test_a_segment_at_the_ceiling_is_accepted() -> None:
     assert_within_asr_ceiling((SpeechSegment(start_ms=0, end_ms=40_000),))
 
 
+def test_vad_regions_are_intersected_with_the_video_media_clock() -> None:
+    from hawedit.ingest import _clip_speech_to_media
+
+    segments = (
+        SpeechSegment(start_ms=-20, end_ms=100),
+        SpeechSegment(start_ms=900, end_ms=1_020),
+        SpeechSegment(start_ms=1_100, end_ms=1_200),
+    )
+    assert _clip_speech_to_media(segments, 1_000) == (
+        SpeechSegment(start_ms=0, end_ms=100),
+        SpeechSegment(start_ms=900, end_ms=1_000),
+    )
+
+
+def test_an_invalid_vad_region_is_refused_instead_of_hidden_by_clipping() -> None:
+    from hawedit.ingest import _clip_speech_to_media
+
+    with pytest.raises(IngestError, match="invalid speech region"):
+        _clip_speech_to_media((SpeechSegment(start_ms=20, end_ms=20),), 1_000)
+
+
 # --- the artifact ------------------------------------------------------------------------
 
 
@@ -283,6 +304,16 @@ def test_ingest_produces_every_stage_0_artifact(tmp_path: Path) -> None:
     assert result.duration_ms == pytest.approx(4_162, abs=50)
     assert len(result.shot_cuts_ms) == 2
     assert len(result.speech) == 2
+    assert max(segment.end_ms for segment in result.speech) <= result.duration_ms
+
+
+@needs_ffmpeg
+@needs_media_stack
+def test_real_vad_cannot_publish_a_timestamp_after_the_fixture_ends(tmp_path: Path) -> None:
+    """Silero reports this fixture's padded audio through 4180 ms; video ends at 4162 ms."""
+    result = ingest(FIXTURE, tmp_path / "work", media_id="fixture")
+    assert result.duration_ms == 4_162
+    assert result.speech[-1].end_ms == result.duration_ms
 
 
 @needs_ffmpeg

@@ -85,15 +85,14 @@ The fixture is deliberately Kurmanji synthetic speech. Its own test documentatio
 it for §8.1 accuracy. The output therefore proves that the real components and runner join work;
 it supplies no CER, dialect, named-entity or code-switch result.
 
-## Remaining clock edge
+## Clock edge exposed here and closed by D-086
 
 The source video duration is 4162 ms, while its extracted audio and Silero's second speech span
-end at 4180 ms. The final aligned word therefore ends at 4180 ms. Stage 1 now reads the exact PCM
-duration after every cut, which prevents scaling to a requested duration when ffmpeg truncates;
-here ffmpeg did not truncate because the audio stream genuinely outlives the video. The pipeline's
-boundary fusion clamps to media duration, but Stage 0/pipeline should reconcile speech spans to
-the visual media clock so raw word timings cannot exceed shippable video. This is recorded, not
-misrepresented as fixed.
+ended at 4180 ms in this run. The final aligned word therefore ended at 4180 ms. Stage 1 reads the
+exact PCM duration after every cut, which prevents scaling to a requested duration when ffmpeg
+truncates; it correctly exposed rather than hid the upstream mismatch. D-086 subsequently made
+Stage 0 intersect VAD regions with the 4162 ms media clock before Stage 1. See
+`evidence/stage0-media-clock.md` for the real regression and runner-level proof.
 
 ## Adversarial controls
 

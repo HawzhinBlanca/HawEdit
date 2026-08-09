@@ -864,7 +864,9 @@ def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: P
 
 @needs_ffmpeg
 def test_runner_invokes_canonical_asr_when_no_transcript_is_supplied(tmp_path: Path) -> None:
-    seen: list[tuple[str, Path, int]] = []
+    from hawedit.ingest import IngestResult
+
+    seen: list[tuple[str, Path, tuple[tuple[int, int], ...]]] = []
 
     class CanonicalAsr:
         def transcribe(
@@ -876,11 +878,19 @@ def test_runner_invokes_canonical_asr_when_no_transcript_is_supplied(tmp_path: P
             ffmpeg: Path | None = None,
         ) -> RawTranscript:
             segments = tuple(speech_segments)
-            seen.append((media_id, audio_path, len(segments)))
+            seen.append(
+                (
+                    media_id,
+                    audio_path,
+                    tuple((segment.start_ms, segment.end_ms) for segment in segments),
+                )
+            )
             return a_transcript(media_id)
 
     run = run_pipeline(FIXTURE, tmp_path / "work", media_id="asr", asr=CanonicalAsr())
-    assert seen and seen[0][0] == "asr" and seen[0][1].exists() and seen[0][2] > 0
+    assert seen and seen[0][0] == "asr" and seen[0][1].exists() and seen[0][2]
+    assert isinstance(run.ingest, IngestResult)
+    assert max(end_ms for _, end_ms in seen[0][2]) == run.ingest.duration_ms
     assert not isinstance(run.transcript, StageSkipped)
 
 

@@ -312,6 +312,33 @@ def assert_within_asr_ceiling(
         )
 
 
+def _clip_speech_to_media(
+    segments: tuple[SpeechSegment, ...], duration_ms: int
+) -> tuple[SpeechSegment, ...]:
+    """Intersect VAD output with the video media clock.
+
+    Audio decoders and VAD padding may expose samples a few milliseconds past the duration
+    ffprobe reports for the video. Those samples have no corresponding frame and therefore
+    cannot become canonical words, evidence timestamps, or clip boundaries in a video
+    repurposing system. Regions wholly outside the media clock are omitted; overlapping regions
+    retain exactly their in-range portion.
+    """
+    if duration_ms <= 0:
+        raise IngestError(f"media duration must be positive, got {duration_ms} ms")
+
+    clipped: list[SpeechSegment] = []
+    for segment in segments:
+        if segment.end_ms <= segment.start_ms:
+            raise IngestError(
+                f"VAD emitted an invalid speech region {segment.start_ms}..{segment.end_ms} ms"
+            )
+        start_ms = max(0, segment.start_ms)
+        end_ms = min(duration_ms, segment.end_ms)
+        if end_ms > start_ms:
+            clipped.append(SpeechSegment(start_ms=start_ms, end_ms=end_ms))
+    return tuple(clipped)
+
+
 @dataclass(frozen=True, slots=True)
 class IngestResult:
     """Everything Stage 0 produces, as JSON-serialisable data (§1)."""
@@ -391,7 +418,8 @@ def ingest(
 
     audio = extract_audio(source, work_dir / "audio.wav", ffmpeg=binary)
     proxy = extract_proxy(source, work_dir / "proxy.mp4", ffmpeg=binary)
-    speech = detect_speech(audio)
+    duration_ms = probe_duration_ms(source, ffmpeg=binary)
+    speech = _clip_speech_to_media(detect_speech(audio), duration_ms)
     assert_within_asr_ceiling(speech)
 
     return IngestResult(
@@ -399,7 +427,7 @@ def ingest(
         source=str(source),
         audio_path=str(audio),
         proxy_path=str(proxy),
-        duration_ms=probe_duration_ms(source, ffmpeg=binary),
+        duration_ms=duration_ms,
         shot_cuts_ms=detect_shots(source),
         speech=speech,
         diarization=None,

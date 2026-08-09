@@ -2796,10 +2796,10 @@ earlier inverts it to 1700 vs 1790 and the out point lands on the silence. A pos
 would have certified the rejected reading equally well; the control fails for it. Both assert on
 `run.clip.boundary`, through a real `run_pipeline` over the real media with real VAD.
 
-**An edge the measurement exposed:** Silero reports region 2 ending at 4180 ms on a 4162 ms file.
-`media_duration_ms`'s existing clamp absorbs it, which makes that clamp load-bearing for a second
-independent reason. The boundary invariant is safe regardless, because the 200 ms tail is always
-in the `max()`.
+**An edge the measurement exposed:** Silero reported region 2 ending at 4180 ms on a 4162 ms file.
+`media_duration_ms`'s existing clamp absorbed it at the boundary; D-086 later moved the invariant
+to Stage 0 so impossible timestamps cannot enter the canonical transcript in the first place.
+The boundary clamp remains defence in depth and the 200 ms tail remains in the `max()`.
 
 §3's fifth out-point signal, `speaker_turn_end`, still needs the gated diarization model
 (`BLOCKED.md` #4, measured 401 from here). Four of five, with the fifth absent for a stated
@@ -3428,13 +3428,34 @@ seconds and emitted 13 words with canonical, aligner and validator provenance.
 
 The committed fixture is Kurmanji `espeak-ng`, explicitly a VAD positive control, so no CER or
 Sorani quality claim is derived from it. M0.12/M0.13 remain blocked on labelled Sorani. It also
-exposed a separate clock edge: the fixture's audio stream/VAD ends at 4180 ms while video ends at
-4162 ms. Stage 1 now measures the emitted PCM rather than blindly trusting a requested cut, but
-that audio really is longer; clamping speech to the visual media clock belongs at Stage 0/pipeline
-reconciliation and remains open rather than being hidden in ASR. Evidence:
-`evidence/m1-4-stage1-validator.md`.
+exposed a separate clock edge: VAD ended at 4180 ms while the media clock ended at 4162 ms.
+Stage 1 measures emitted PCM rather than trusting the request; D-086 subsequently closed the
+ownership gap at Stage 0 so those out-of-footage samples never become ASR input. Evidence:
+`evidence/m1-4-stage1-validator.md`, `evidence/stage0-media-clock.md`.
 
 **Mutation audit 4/4.** The focused regressions fail when routing is bypassed, when the validator
 is called but its correction is discarded, when alignment trusts the requested cut instead of
 the emitted PCM duration, and when the matched torchaudio pin is removed. All four exact source
 mutations were restored before the final gate.
+
+---
+
+## D-086 · Stage 0 owns the video media clock for every speech region
+
+**A real canonical run produced words after the footage ended.** The committed fixture probes at
+4162 ms, while Silero's padded final speech region ends at 4180 ms. Stage 1 correctly used the
+audio it was given and published that later timestamp. Every downstream video window, boundary,
+keyframe and render uses the 4162 ms media clock, so canonical evidence could point at 18 ms of
+footage that does not exist.
+
+**Decision.** Stage 0 intersects every VAD region with `[0, media_duration_ms]` before checking
+the OmniASR ceiling or handing regions to Stage 1. An overlapping region keeps its exact in-range
+portion; a region wholly outside is omitted because this is video repurposing and it has no
+corresponding frame. A malformed zero/negative-length VAD span is refused rather than made to
+disappear through clipping, and a non-positive media duration is likewise refused.
+
+**Evidence.** The real fixture now stores and passes 1954..4162 ms, not 1954..4180 ms. A runner
+integration test captures the exact segments received by the canonical ASR producer and proves
+their latest end equals Stage 0's duration. Mutation audit 3/3 catches bypassing the intersection,
+removing the end clamp, and silently dropping an invalid region. See
+`evidence/stage0-media-clock.md`.

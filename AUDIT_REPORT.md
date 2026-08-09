@@ -90,7 +90,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,195 collected, 1,195 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,198 collected, 1,198 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -103,6 +103,9 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   4,250,408,448 peak allocated bytes on GPU 1; the real CLI then ran OmniASR LLM-7B + CTC-3B,
   validator routing and Viterbi timing over the committed media fixture in 212.9 seconds from a
   warm asset cache. The fixture is synthetic Kurmanji, so this proves execution, not Sorani CER.
+- Stage 0 now owns the video media clock: the real fixture's padded VAD previously ended at
+  4180 ms against 4162 ms of footage; it is intersected at 4162 ms before canonical ASR, and a
+  runner integration test proves no speech region handed downstream can exceed the media end.
 - A real 30000/1001 transcode completes JSON/SRT/EDL delivery with SMPTE drop-frame timecode;
   25 fps remains non-drop and unsupported 24000/1001 refuses before any sidecar write.
 - Real pipeline delivery publishes one exact ASS/MP4/SRT/EDL/JSON directory. Tests inject ASS
