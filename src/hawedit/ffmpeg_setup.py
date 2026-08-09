@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Final
 
 from hawedit.captions import MissingRtlStack, assert_rtl_stack, ffprobe_for, find_ffmpeg
+from hawedit.cli import use_utf8_streams
 from hawedit.environment import EnvironmentAuditError, resolve_installed_hawedit_data
 
 __all__ = ["FfmpegSetupError", "default_ffmpeg_dir", "main"]
@@ -157,6 +158,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    use_utf8_streams()
     args = _parser().parse_args(argv)
     try:
         active = _verified_existing()

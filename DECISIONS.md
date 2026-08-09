@@ -4994,3 +4994,30 @@ environment passed its packaged hash lock, `pip check`, RECORD-authenticated scr
 real RTL probe. Linux automatic download remains exercised by the required gate and executable shell
 transaction tests. This packages remediation; it does not redistribute FFmpeg or claim its GPL
 review complete. `evidence/installed-ffmpeg-provisioning.md`.
+
+## D-151 - SRT and ASS use the same word-aligned RTL breaks
+
+`build_ass` applied §4.3.5's explicit word-aligned wrapping while `build_srt` emitted each sentence
+as one line, leaving playback software to choose breaks without the word alignment. On the real
+38-minute transcript, 149 of 182 clip-eligible sentences exceeded the recorded 32-character width;
+the median needed four lines and the widest needed 33.
+
+**Decision:** SRT uses the same `wrap_caption_lines` function and recorded width as ASS. A separate
+SRT width would be an unmeasured threshold, and a two-line cap would require inventing an overflow
+policy. Tests pin both formats to each other, exercise word rather than character splitting, and
+distinguish in-cue line breaks from blank lines that create new cues. The FFmpeg round-trip is an
+independent reader for preserved line breaks, but it does not enforce the blank-line grammar; the
+cue parser test carries that obligation. `evidence/the-srt-let-the-player-choose-the-break-points.md`.
+
+## D-152 - Every CLI configures UTF-8 before its first write
+
+Redirected Python streams on the production Windows host use cp1252. A completed 38-minute pipeline
+run therefore raised `UnicodeEncodeError` while emitting its Sorani JSON and left a zero-byte report;
+characters that cp1252 could represent were silently written as non-UTF-8 bytes, while stderr used
+backslash escapes. Console testing did not expose any of those paths.
+
+**Decision:** `cli.use_utf8_streams()` is the first statement of every declared entry-point `main()`.
+It changes only the encoding and preserves the stream error policy. The contract test reads the
+entry points from `pyproject.toml`, forces cp1252, and asserts exact Sorani UTF-8 bytes on stdout and
+stderr, so new commands enter the obligation automatically. Importing the library does not mutate
+its caller's streams. `evidence/the-report-died-on-the-way-to-the-file.md`.

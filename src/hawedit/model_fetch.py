@@ -29,6 +29,7 @@ from types import ModuleType
 from typing import Final, Protocol, cast
 
 from hawedit import windows_security as _windows_security
+from hawedit.cli import use_utf8_streams
 from hawedit.environment import EnvironmentAuditError, audit_installed_profile
 from hawedit.models import (
     CheckpointIntegrityError,
@@ -586,6 +587,7 @@ def _print_status(store: ModelStore) -> tuple[ModelStatus, ...] | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    use_utf8_streams()
     args = _parser().parse_args(argv)
     store = ModelStore(root=args.models_dir) if args.models_dir is not None else ModelStore()
     if args.status:

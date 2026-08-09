@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
+from hawedit.cli import use_utf8_streams
 from hawedit.omni_assets import OMNI_ASSETS
 from hawedit.vex import (
     AssetIdentity,
@@ -744,6 +745,7 @@ def run_live_gate(
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_streams()
     parser = argparse.ArgumentParser(
         description="Run and evidence the live WSL OmniASR vulnerability gate"
     )

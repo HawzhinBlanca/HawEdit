@@ -33,6 +33,8 @@ from typing import Final, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from hawedit.cli import use_utf8_streams
+
 __all__ = ["ReleaseArtifact", "ReleaseError", "build_reproducible_wheel", "main"]
 
 _REQUIRED_WHEEL_MEMBERS: Final = (
@@ -993,6 +995,7 @@ def build_reproducible_wheel(
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_streams()
     parser = argparse.ArgumentParser(
         description=(
             "verify an exact successful main-branch gate run, then build HawEdit twice and "

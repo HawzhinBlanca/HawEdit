@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from hawedit.cli import use_utf8_streams
+
 __all__ = [
     "ENV_FILE",
     "GEMINI_API_KEY",
@@ -365,6 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     in shell history. There is deliberately no `--key` flag: command-line arguments are
     visible in `ps` to every user on the machine.
     """
+    use_utf8_streams()
     import argparse
     from getpass import getpass
 
