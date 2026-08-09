@@ -74,9 +74,16 @@ _LOCK_HEADER: Final = re.compile(r"^# ([a-z][a-z0-9-]*): (\S.*)$")
 _LOCK_REQUIREMENT: Final = re.compile(
     r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+) --hash=sha256:([0-9a-f]{64})$"
 )
-_LOCK_OPTIONS: Final = frozenset(
+_CPU_LOCK_OPTIONS: Final = frozenset(
     {
         "--extra-index-url https://download.pytorch.org/whl/cpu",
+        "--only-binary=:all:",
+    }
+)
+_GPU_LOCK_OPTIONS: Final = frozenset(
+    {
+        "--index-url https://download.pytorch.org/whl/cu130",
+        "--extra-index-url https://pypi.org/simple",
         "--only-binary=:all:",
     }
 )
@@ -84,6 +91,7 @@ _PROFILE_EXTRAS: Final = {
     "base": (),
     "gate": ("dev", "media"),
     "models": ("models",),
+    "gpu": ("media", "gpu"),
 }
 
 
@@ -269,10 +277,17 @@ def validate_host_lock(
         raise EnvironmentAuditError(
             f"unsupported host lock version {headers['hawedit-lock-version']!r}"
         )
-    if options != _LOCK_OPTIONS:
+    scope = headers["scope"]
+    expected_options = _GPU_LOCK_OPTIONS if scope == "gpu" else _CPU_LOCK_OPTIONS
+    if options != expected_options:
         raise EnvironmentAuditError(
             f"host lock {resolved} has unsafe or incomplete installer options: {sorted(options)}"
         )
+    torch_backend = headers.get("torch-backend")
+    if scope == "gpu" and torch_backend != "cu130":
+        raise EnvironmentAuditError("GPU host lock does not declare torch-backend cu130")
+    if scope != "gpu" and torch_backend is not None:
+        raise EnvironmentAuditError(f"non-GPU host lock declares torch backend {torch_backend!r}")
     if not requirements:
         raise EnvironmentAuditError(f"host lock {resolved} contains no requirements")
 
@@ -296,10 +311,8 @@ def validate_host_lock(
     expected_scope = scope_by_extras.get(tuple(extras))
     if expected_scope is None:
         raise EnvironmentAuditError(f"no host-lock profile exists for extras {tuple(extras)}")
-    if headers["scope"] != expected_scope:
-        raise EnvironmentAuditError(
-            f"host lock scope is {headers['scope']!r}, expected {expected_scope!r}"
-        )
+    if scope != expected_scope:
+        raise EnvironmentAuditError(f"host lock scope is {scope!r}, expected {expected_scope!r}")
     contract_sha256 = headers["contract-sha256"]
     if not re.fullmatch(r"[0-9a-f]{64}", contract_sha256):
         raise EnvironmentAuditError("host lock contract-sha256 is not a SHA-256 digest")
@@ -321,7 +334,7 @@ def validate_host_lock(
     return HostLock(
         path=resolved,
         sha256=actual_sha256,
-        scope=headers["scope"],
+        scope=scope,
         platform=target,
         python_version=python_version,
         extras=locked_extras,

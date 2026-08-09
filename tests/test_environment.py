@@ -107,6 +107,7 @@ dependencies = ["fonttools==4.60.2", "klpt==0.1.7"]
 [project.optional-dependencies]
 dev = ["pytest==9.1.1"]
 media = ["torch==2.13.0"]
+gpu = ["torchvision==0.28.0"]
 models = ["huggingface-hub==0.36.2"]
 asr = [
     "torch==2.8.0; platform_system != 'Windows'",
@@ -138,7 +139,12 @@ def _write_lock(
     platform_name: str = "linux",
     python: str = "3.11",
 ) -> Path:
-    scope = {(): "base", ("dev", "media"): "gate", ("models",): "models"}[extras]
+    scope = {
+        (): "base",
+        ("dev", "media"): "gate",
+        ("models",): "models",
+        ("media", "gpu"): "gpu",
+    }[extras]
     path = root / "requirements" / f"host-{scope}-{platform_name}-py{python.replace('.', '')}.txt"
     lines = [
         "# hawedit-lock-version: 1",
@@ -150,9 +156,18 @@ def _write_lock(
         f"# contract-sha256: {dependency_contract_digest(root, extras)}",
         "# resolver: uv==0.11.26",
         "# exclude-newer: 2026-08-09T00:00:00Z",
-        "--extra-index-url https://download.pytorch.org/whl/cpu",
-        "--only-binary=:all:",
     ]
+    if scope == "gpu":
+        lines.extend(
+            (
+                "# torch-backend: cu130",
+                "--index-url https://download.pytorch.org/whl/cu130",
+                "--extra-index-url https://pypi.org/simple",
+            )
+        )
+    else:
+        lines.append("--extra-index-url https://download.pytorch.org/whl/cpu")
+    lines.append("--only-binary=:all:")
     lines.extend(
         f"{name}=={version} --hash=sha256:{index:064x}"
         for index, (name, version) in enumerate(packages, 1)
@@ -486,6 +501,58 @@ def test_lock_target_and_contract_drift_are_refused_before_install(tmp_path: Pat
             extras=(),
             python_version=(3, 11),
             platform_name="Linux",
+            _lock_hashes=TEST_LOCK_HASHES,
+        )
+
+
+def test_gpu_lock_binds_cuda_backend_target_and_options(tmp_path: Path) -> None:
+    _write_project(tmp_path)
+    lock = _write_lock(
+        tmp_path,
+        extras=("media", "gpu"),
+        packages=(("torch", "2.13.0+cu130"), ("torchvision", "0.28.0+cu130")),
+        platform_name="windows",
+        python="3.11",
+    )
+    validated = validate_host_lock(
+        lock,
+        project_root=tmp_path,
+        extras=("media", "gpu"),
+        python_version=(3, 11),
+        platform_name="windows",
+        _lock_hashes=TEST_LOCK_HASHES,
+    )
+    assert validated.scope == "gpu"
+    assert dict(validated.requirements)["torch"] == "2.13.0+cu130"
+
+    text = lock.read_text(encoding="utf-8")
+    lock.write_text(text.replace("# torch-backend: cu130\n", ""), encoding="utf-8")
+    TEST_LOCK_HASHES[lock.name] = hashlib.sha256(lock.read_bytes()).hexdigest()
+    with pytest.raises(EnvironmentAuditError, match="does not declare torch-backend cu130"):
+        validate_host_lock(
+            lock,
+            project_root=tmp_path,
+            extras=("media", "gpu"),
+            python_version=(3, 11),
+            platform_name="windows",
+            _lock_hashes=TEST_LOCK_HASHES,
+        )
+
+    lock.write_text(
+        text.replace(
+            "--index-url https://download.pytorch.org/whl/cu130",
+            "--index-url https://pypi.org/simple",
+        ),
+        encoding="utf-8",
+    )
+    TEST_LOCK_HASHES[lock.name] = hashlib.sha256(lock.read_bytes()).hexdigest()
+    with pytest.raises(EnvironmentAuditError, match="unsafe or incomplete installer options"):
+        validate_host_lock(
+            lock,
+            project_root=tmp_path,
+            extras=("media", "gpu"),
+            python_version=(3, 11),
+            platform_name="windows",
             _lock_hashes=TEST_LOCK_HASHES,
         )
 

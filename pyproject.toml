@@ -107,6 +107,7 @@ where = ["src"]
     "requirements/host-models-linux-py312.txt",
     "requirements/host-models-windows-py311.txt",
     "requirements/host-models-windows-py312.txt",
+    "requirements/host-gpu-windows-py311.txt",
 ]
 "share/hawedit/security" = ["security/wsl-asr-vex.json"]
 

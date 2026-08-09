@@ -1,4 +1,4 @@
-"""Regenerate HawEdit's exact Linux/Windows CPU host dependency locks.
+"""Regenerate HawEdit's exact CPU host locks and measured Windows CUDA lock.
 
 This is a maintainer command, not an installer. It asks one pinned uv resolver for each
 supported CPython/OS target, then reduces PEP 751 output to one exact wheel hash per package.
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -27,6 +28,7 @@ UV_VERSION: Final = "0.11.26"
 EXCLUDE_NEWER: Final = "2026-08-09T00:00:00Z"
 ALLOWED_WHEEL_HOSTS: Final = frozenset({"files.pythonhosted.org", "download-r2.pytorch.org"})
 HASH_MODULE: Final = ROOT / "src" / "hawedit" / "host_lock_hashes.py"
+MAX_HASH_DOWNLOAD_BYTES: Final = 1024**3
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,7 @@ class Target:
     uv_platform: str
     python: str
     extras: tuple[str, ...]
+    torch_backend: str
 
     @property
     def destination(self) -> Path:
@@ -43,14 +46,24 @@ class Target:
         return ROOT / "requirements" / f"host-{self.scope}-{self.platform}-py{version}.txt"
 
 
-TARGETS: Final = tuple(
-    Target(scope, platform, uv_platform, python, extras)
-    for scope, extras in (("base", ()), ("gate", ("dev", "media")), ("models", ("models",)))
-    for platform, uv_platform in (
-        ("linux", "x86_64-unknown-linux-gnu"),
-        ("windows", "x86_64-pc-windows-msvc"),
-    )
-    for python in ("3.11", "3.12")
+TARGETS: Final = (
+    *(
+        Target(scope, platform, uv_platform, python, extras, "cpu")
+        for scope, extras in (("base", ()), ("gate", ("dev", "media")), ("models", ("models",)))
+        for platform, uv_platform in (
+            ("linux", "x86_64-unknown-linux-gnu"),
+            ("windows", "x86_64-pc-windows-msvc"),
+        )
+        for python in ("3.11", "3.12")
+    ),
+    Target(
+        "gpu",
+        "windows",
+        "x86_64-pc-windows-msvc",
+        "3.11",
+        ("media", "gpu"),
+        "cu130",
+    ),
 )
 
 
@@ -80,7 +93,7 @@ def _compile(uv: str, target: Target, temporary: Path) -> Path:
         "--python-platform",
         target.uv_platform,
         "--torch-backend",
-        "cpu",
+        target.torch_backend,
         "--only-binary=:all:",
         "--no-emit-package",
         "hawedit",
@@ -106,6 +119,30 @@ def _project_version() -> str:
     return cast(str, project["version"])
 
 
+def _download_wheel_sha256(url: str) -> str:
+    request = Request(url, headers={"User-Agent": "HawEdit-host-lock/1"})
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with urlopen(request, timeout=60) as response:
+            resolved = urlsplit(response.geturl())
+            if resolved.scheme != "https" or resolved.hostname not in ALLOWED_WHEEL_HOSTS:
+                raise SystemExit(f"wheel download redirected to untrusted URL: {response.geturl()}")
+            declared_size = response.headers.get("Content-Length")
+            if declared_size is not None and int(declared_size) > MAX_HASH_DOWNLOAD_BYTES:
+                raise SystemExit(f"wheel is too large to hash safely: {url}")
+            while chunk := response.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_HASH_DOWNLOAD_BYTES:
+                    raise SystemExit(f"wheel exceeded hash download limit: {url}")
+                digest.update(chunk)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"cannot hash selected official wheel {url}: {exc}") from exc
+    if size == 0:
+        raise SystemExit(f"selected official wheel is empty: {url}")
+    return digest.hexdigest()
+
+
 def _render(target: Target, pylock: Path) -> str:
     document = tomllib.loads(pylock.read_text(encoding="utf-8"))
     if document.get("lock-version") != "1.0" or document.get("created-by") != "uv":
@@ -125,10 +162,20 @@ def _render(target: Target, pylock: Path) -> str:
         f"# contract-sha256: {dependency_contract_digest(ROOT, target.extras)}",
         f"# resolver: uv=={UV_VERSION}",
         f"# exclude-newer: {EXCLUDE_NEWER}",
-        "--extra-index-url https://download.pytorch.org/whl/cpu",
-        "--only-binary=:all:",
-        "",
     ]
+    if target.torch_backend == "cpu":
+        lines.append("--extra-index-url https://download.pytorch.org/whl/cpu")
+    elif target.torch_backend == "cu130":
+        lines.extend(
+            (
+                "# torch-backend: cu130",
+                "--index-url https://download.pytorch.org/whl/cu130",
+                "--extra-index-url https://pypi.org/simple",
+            )
+        )
+    else:
+        raise SystemExit(f"unsupported torch backend for {target}")
+    lines.extend(("--only-binary=:all:", ""))
     seen: set[str] = set()
     for item in packages:
         package = cast(dict[str, object], item)
@@ -149,9 +196,18 @@ def _render(target: Target, pylock: Path) -> str:
             raise SystemExit(f"non-HTTPS wheel URL for {name}=={version}: {url!r}")
         if urlsplit(url).hostname not in ALLOWED_WHEEL_HOSTS:
             raise SystemExit(f"untrusted wheel host for {name}=={version}: {url!r}")
-        if not isinstance(hashes, dict) or set(hashes) != {"sha256"}:
-            raise SystemExit(f"wheel lacks one SHA-256 for {name}=={version}")
-        digest = hashes["sha256"]
+        if not urlsplit(url).path.casefold().endswith(".whl"):
+            raise SystemExit(f"selected artifact is not a wheel for {name}=={version}: {url!r}")
+        if not isinstance(hashes, dict) or set(hashes) not in (set(), {"sha256"}):
+            raise SystemExit(f"wheel has unsupported hashes for {name}=={version}")
+        if not hashes:
+            if urlsplit(url).hostname != "download-r2.pytorch.org":
+                raise SystemExit(
+                    f"non-PyTorch wheel lacks repository SHA-256 for {name}=={version}"
+                )
+            digest = _download_wheel_sha256(url)
+        else:
+            digest = hashes["sha256"]
         if not isinstance(digest, str) or len(digest) != 64:
             raise SystemExit(f"invalid wheel SHA-256 for {name}=={version}")
         lines.extend((f"# selected wheel {url}", f"{name}=={version} --hash=sha256:{digest}"))

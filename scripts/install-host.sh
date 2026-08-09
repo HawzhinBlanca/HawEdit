@@ -6,15 +6,15 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "usage: bash scripts/install-host.sh PYTHON {base|gate|models} [--dependencies-only]" >&2
+  echo "usage: bash scripts/install-host.sh PYTHON {base|gate|models|gpu} [--dependencies-only]" >&2
   exit 2
 fi
 
 python="$1"
 scope="$2"
 mode="${3:-}"
-if [[ "$scope" != base && "$scope" != gate && "$scope" != models ]]; then
-  echo "REFUSED: host dependency scope must be base, gate or models, got: $scope" >&2
+if [[ "$scope" != base && "$scope" != gate && "$scope" != models && "$scope" != gpu ]]; then
+  echo "REFUSED: host dependency scope must be base, gate, models or gpu, got: $scope" >&2
   exit 2
 fi
 if [[ -n "$mode" && "$mode" != --dependencies-only ]]; then
@@ -49,6 +49,7 @@ fi
 extras=()
 if [[ "$scope" == gate ]]; then extras=(--extra dev --extra media); fi
 if [[ "$scope" == models ]]; then extras=(--extra models); fi
+if [[ "$scope" == gpu ]]; then extras=(--extra media --extra gpu); fi
 
 # Bind target + semantic dependency contract before the first network request. Running the
 # checker by path under -I means this works in a brand-new venv and cannot import another clone.
@@ -73,5 +74,8 @@ fi
 "$python" -m pip check
 "$python" -I "$here/src/hawedit/environment.py" \
   --project-root "$here" --lock "$lock" "${extras[@]}" >/dev/null
+if [[ "$scope" == gpu ]]; then
+  "$python" -I -m hawedit.gpu_runtime
+fi
 
 printf 'host environment locked: %s (%s)\n' "$identity" "$scope"

@@ -29,6 +29,9 @@ HOST_LOCK_SHA256: Final[dict[str, str]] = {
     "host-gate-windows-py312.txt": (
         "1731e42705c632406f4fdacb9d1be878cd01a9ca67c8b9976d1b74b2f5fddabf"
     ),
+    "host-gpu-windows-py311.txt": (
+        "0000dc0d275c2f34867110c86359957da7fd670e331de0f446c9b5ab29759857"
+    ),
     "host-models-linux-py311.txt": (
         "b02d6cf11e22688c508fa9c80db6a889782370530e0a4aa02b84b9dea5e4f40c"
     ),

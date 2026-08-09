@@ -83,6 +83,7 @@ def _release_source(root: Path) -> Path:
         "host-models-linux-py312.txt",
         "host-models-windows-py311.txt",
         "host-models-windows-py312.txt",
+        "host-gpu-windows-py311.txt",
     ):
         (project / "requirements" / target).write_text("# fixture lock\n", encoding="utf-8")
     (project / "security").mkdir()
@@ -123,6 +124,7 @@ where = ["src"]
     "requirements/host-models-linux-py312.txt",
     "requirements/host-models-windows-py311.txt",
     "requirements/host-models-windows-py312.txt",
+    "requirements/host-gpu-windows-py311.txt",
 ]
 "share/hawedit/security" = ["security/wsl-asr-vex.json"]
 """,
@@ -335,6 +337,7 @@ def test_release_builds_twice_and_publishes_verified_provenance(
             "host-models-linux-py312.txt",
             "host-models-windows-py311.txt",
             "host-models-windows-py312.txt",
+            "host-gpu-windows-py311.txt",
         ):
             assert any(
                 name.endswith(f"share/hawedit/requirements/{target}") for name in wheel.namelist()
