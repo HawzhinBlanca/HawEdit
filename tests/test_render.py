@@ -43,6 +43,7 @@ from hawedit.render import (
     crop_filter,
     encoder_available,
     frame_duration_ms,
+    frame_rate,
     render_clip,
 )
 from hawedit.sentences import Sentence
@@ -721,3 +722,104 @@ def test_the_burn_refuses_an_ass_whose_stamps_fall_outside_the_clip(tmp_path: Pa
     )
     assert Path(rendered.path).exists()
     assert rendered.captions_burned_in
+
+
+# --- D-112: the guard was tested, its wiring was not -----------------------------------------
+
+
+def test_render_refuses_when_the_written_file_is_short(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`assert_encoded_span` is unit-tested; that it is *called with the measurement* was not.
+
+    Found by adversarial pass #8: replacing the call site with
+    `assert_encoded_span(duration_ms, duration_ms, …)` — the guard comparing the request against
+    itself — left the whole suite green. The guard is only ever reached through `render_clip`, and
+    truncation by a short source is prevented upstream, so no test drove it.
+
+    The probe is replaced rather than the encode, because what is under test here is the wiring:
+    the guard's own arithmetic is covered by the unit tests above with real measured numbers.
+    D-112.
+    """
+    clip = _clip()
+    requested = clip.out_ms - clip.in_ms
+    real = probe_duration_ms
+
+    def short_for_the_output(path: Path, ffmpeg: Path | None = None) -> int:
+        # The pre-flight check probes the SOURCE with this same helper, and it is wired and
+        # tested — a blanket patch trips that refusal instead of the one under test.
+        return requested - 200 if path.name == "short.mp4" else real(path, ffmpeg)
+
+    monkeypatch.setattr("hawedit.render.probe_duration_ms", short_for_the_output)
+
+    with pytest.raises(RenderError, match="shorter than"):
+        render_clip(
+            clip=clip,
+            source=FIXTURE,
+            ass_path=_write_ass(tmp_path),
+            output=tmp_path / "short.mp4",
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+            fonts_dir=FONTS,
+        )
+
+
+def test_render_accepts_a_file_that_measures_what_was_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control. A wiring that refused every render would satisfy the test above."""
+    clip = _clip()
+    requested = clip.out_ms - clip.in_ms
+    real = probe_duration_ms
+
+    def exact_for_the_output(path: Path, ffmpeg: Path | None = None) -> int:
+        return requested if path.name == "exact.mp4" else real(path, ffmpeg)
+
+    monkeypatch.setattr("hawedit.render.probe_duration_ms", exact_for_the_output)
+
+    result = render_clip(
+        clip=clip,
+        source=FIXTURE,
+        ass_path=_write_ass(tmp_path),
+        output=tmp_path / "exact.mp4",
+        source_width=SOURCE_WIDTH,
+        source_height=SOURCE_HEIGHT,
+        fonts_dir=FONTS,
+    )
+    assert result.measured_duration_ms == requested
+
+
+@needs_ffmpeg
+def test_one_frame_is_read_from_the_source_not_assumed_to_be_forty_ms(tmp_path: Path) -> None:
+    """`frame_duration_ms`'s docstring: "Not a constant … a 30 fps source is 33 ms."
+
+    Every fixture here is 25 fps, where the constant 40 is *correct*, so replacing the function
+    body with `return 40` left the suite green — the same fixture-satisfies-the-rule blindness as
+    D-086, D-088 and D-101. A 30 fps source is generated here so the two answers differ.
+    """
+    thirty = tmp_path / "thirty.mp4"
+    subprocess.run(
+        [
+            str(find_ffmpeg()),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x240:r=30:d=1",
+            "-c:v",
+            "libx264",
+            "-y",
+            str(thirty),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    assert frame_rate(thirty, find_ffmpeg()) == pytest.approx(30.0)
+    assert frame_duration_ms(thirty, find_ffmpeg()) == 33, (
+        "one frame of a 30 fps source is 33 ms; 40 would make the shipped-clip tolerance too "
+        "loose by a fifth of a frame, and too loose is the direction that ships a truncated clip"
+    )
+    assert frame_duration_ms(FIXTURE, find_ffmpeg()) == 40, "the 25 fps fixture is still 40 ms"

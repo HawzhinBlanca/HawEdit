@@ -4740,3 +4740,46 @@ create a second thing to keep in sync. The reporting layer is where the ambiguit
 the control alone), emptying the per-path split CAUGHT, hardcoding the count CAUGHT, and dropping
 `editorial`'s guard CAUGHT (4 — it would raise on a run with no clip).
 `evidence/a-stage-that-ran-reported-nothing.md`.
+
+## D-112
+
+**M3.4's shipped-clip guard was tested; that it is *called with the measurement* was not.**
+Adversarial pass #8 attacked the row whose own history is "`RenderResult.duration_ms` was the request
+echoed back and the file was never opened". Four of six mechanisms held. Two did not:
+
+```
+RED    the measured duration is the request echoed back (the original defect)
+RED    the shipped-clip guard never fires
+RED    the tolerance widens to ten frames
+RED    the file is never opened at all
+GREEN  one frame is assumed to be 40 ms for every source          <- UNPROTECTED
+GREEN  the guard compares the request against itself              <- UNPROTECTED
+```
+
+**The wiring.** Replacing the call site with `assert_encoded_span(duration_ms, duration_ms, …)` — the
+guard comparing the request against itself — left the whole suite green. `assert_encoded_span` is
+unit-tested with real measured numbers, but it is only ever reached through `render_clip`, and
+truncation by a short source is prevented upstream by the pre-flight check, so nothing drove it. Third
+time this shape has appeared: D-105 and D-108 were both "the function is tested, the trip to it is
+not".
+
+**`frame_duration_ms` returning a constant 40 also survived**, and its own docstring is the claim it
+breaks: *"Not a constant: the fixture here is 25 fps (40 ms), a 30 fps source is 33 ms … 'too loose' is
+the direction that ships a truncated clip."* Every fixture in the suite is 25 fps, where 40 is
+**correct** — the fixture-satisfies-the-rule blindness of D-086, D-088 and D-101.
+
+**Decision: drive the guard through `render_clip`, and generate a source whose frame is not 40 ms.**
+The wiring test replaces the *output's* measurement rather than the encode, because the guard's own
+arithmetic is already covered by unit tests with real numbers; what was missing was proof that
+`render_clip` hands it the measured value. A control asserts an exact measurement still renders, so a
+wiring that refused everything would not pass.
+
+**A first attempt that was wrong, and what it taught.** Patching `probe_duration_ms` wholesale tripped
+the **pre-flight** refusal instead — that check probes the *source* with the same helper, and it is
+wired and tested, which the failure proved by firing. The patch is now keyed to the output file's name.
+
+For the frame rate, a 30 fps source is generated with ffmpeg so the constant and the measurement differ:
+33 ms against 40. The 25 fps fixture is asserted at 40 in the same test, so the pair pins both.
+
+**Mutation audit 6/6** after the fix, each survivor caught by exactly the test written for it.
+`evidence/adversarial-pass-8-2026-08-09.md`.
