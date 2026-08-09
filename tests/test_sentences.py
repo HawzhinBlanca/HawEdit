@@ -150,3 +150,38 @@ def test_sentences_carry_their_words_for_caption_line_breaking() -> None:
 def test_a_non_positive_pause_threshold_is_refused() -> None:
     with pytest.raises(ValueError, match="pause"):
         segment_sentences(words(("ئەمە", 0, 300)), pause_ms=0)
+
+
+# --- §4.2's VAD-pause half is currently inert ---------------------------------------------
+#
+# This test documents a DEFECT, not a desired behaviour. When it goes red, the fix has landed:
+# update the M1.2 row, close BLOCKED.md #14, and delete this test.
+#
+# `pause_follows` reaches its VAD branch only when the word gap is *below* `pause_ms`, and that
+# branch requires a silence contained in `[earlier.end_ms, later.start_ms]` whose own length is
+# *at least* `pause_ms` — which forces the gap to be at least `pause_ms`. The two conditions
+# cannot both hold, so no `vad_pauses` value can ever split a sentence. Measured by brute force
+# over 3,528 candidate silences: zero splits. D-081.
+
+
+def test_vad_pauses_currently_cannot_split_a_sentence() -> None:
+    """A defect pinned so the dead branch cannot be mistaken for a working feature."""
+    words = (
+        Word(w="یەک", start_ms=0, end_ms=1_000, conf=0.9),
+        Word(w="دوو", start_ms=1_100, end_ms=2_000, conf=0.9),
+    )
+    # A 400 ms silence sitting exactly where §4.2 would have it end the sentence.
+    for silence in ((1_000, 1_400), (900, 1_500), (1_000, 1_100), (0, 2_000)):
+        segmented = segment_sentences(words, vad_pauses=(silence,), pause_ms=400)
+        assert len(segmented) == 1, (
+            f"a VAD silence {silence} split the sentence — the branch is no longer dead, which "
+            "is the intended fix. Update M1.2, close BLOCKED.md #14 and delete this test."
+        )
+
+    # The control: the word-gap half of the rule does work, so this is specifically the VAD
+    # half being inert rather than segmentation being broken.
+    far_apart = (
+        Word(w="یەک", start_ms=0, end_ms=1_000, conf=0.9),
+        Word(w="دوو", start_ms=1_500, end_ms=2_000, conf=0.9),
+    )
+    assert len(segment_sentences(far_apart, vad_pauses=(), pause_ms=400)) == 2

@@ -3245,3 +3245,46 @@ M7.1's cell recorded this as an open gap when D-077 landed; that note is now clo
 deleted, so the row records both that the gap existed and when it was shut.
 
 Gate: `VERIFY OK — 1118 passed, 0 skipped`.
+
+## D-081
+
+**§4.2's VAD-pause segmentation is dead code.** M1.2's Definition of Done is "Kurdish punctuation
+**plus** VAD pauses". `pause_follows` reaches its VAD branch only when the word gap is *below*
+`pause_ms`, and that branch requires a silence *contained* in the inter-word interval whose own
+length is *at least* `pause_ms` — which forces the gap to be at least `pause_ms`. The two conditions
+are mutually exclusive. Brute-forced over 3,528 candidate silences on a 25 ms grid: **0 splits**,
+including a 400 ms silence starting exactly at the first word's end
+(`evidence/vad-pause-segmentation-dead.md`). Demoted to PARTIAL.
+
+**It is computed and discarded, not merely unwired.** `pipeline.py` derives the silences from Stage
+0's real Silero output via `_pauses_between` and passes them to `segment_sentences`, where they have
+no effect. That is the second time the same helper's output has reached a parameter that ignores it —
+D-070 was `natural_silence_ms` from the identical function.
+
+**Decision: refuse to pick the replacement rule, and record both candidates.** The containment test
+is clearly wrong, but what replaces it decides where Kurdish sentences end — and therefore §5's
+anchors, every fused boundary and every rendered clip. **Overlap** (any qualifying silence
+overlapping the inter-word interval) catches the case the feature exists for, since CTC alignment
+stretches words across silence so the timings show a small gap where VAD saw 400 ms of quiet; it
+risks over-splitting when a long silence clips the boundary by a millisecond. **Boundary
+containment** (the silence must span from before `earlier.end_ms` to after `later.start_ms`) is
+conservative and fires only on genuine VAD/alignment disagreement. §4.2 does not say which, and there
+is no labelled Sorani audio here to measure them against. Picking by taste is what the "never guess a
+threshold" rule forbids. `BLOCKED.md` #14.
+
+**A test that asserts a feature does not work.** `test_vad_pauses_currently_cannot_split_a_sentence`
+pins the measured behaviour across four silences and states in its docstring that it documents a
+defect, not a desired behaviour: going red means the fix landed, at which point M1.2 is re-statused,
+#14 closes and the test is deleted. Unusual, and the alternative was worse — leaving code that reads
+as though VAD segmentation happens, in the module every clip boundary depends on. A control in the
+same test confirms the word-gap path still splits, so the finding is specifically the VAD half.
+
+**Methodological caveat, recorded because it weakens the source.** The second adversarial pass found
+this, and that agent's baseline was **red**: a git worktree has no `.venv`, so `tests/test_gate.py`
+contributes 9 failures there. It compensated by comparing failure counts against the known-red
+baseline, which is weaker than this project's rule. Everything here was re-derived and re-measured in
+the main checkout against a green 1,118 baseline before anything changed. Three of that pass's ten
+agents had the same red baseline (M0.2, M1.2, M2.1); their remaining findings are unverified until
+measured the same way, and the worktree harness needs the venv made visible before the next pass.
+
+Gate: `VERIFY OK — 1119 passed, 0 skipped`.

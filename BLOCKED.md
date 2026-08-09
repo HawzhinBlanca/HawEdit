@@ -634,3 +634,55 @@ real material.
 
 Either answer closes this. Guessing at the first without the second is how a normalizer that
 silently destroys a phonemic contrast ends up in a Kurdish pipeline.
+
+---
+
+## #14 · §4.2's VAD-pause segmentation is dead code, and the correct rule needs real audio
+
+**Needs:** Hawa, or `BLOCKED.md` #1's labelled Sorani audio. No credentials, no hardware.
+
+§4.2 requires sentence segmentation on **"Kurdish punctuation plus VAD pauses"**. The punctuation
+half works. The VAD half has never fired, and cannot.
+
+### Measured 2026-08-09 on hawapc01
+
+`pause_follows` (`src/hawedit/sentences.py:104-107`) reaches its VAD branch only when the word gap
+is *below* `pause_ms`. That branch then requires a silence **contained** in
+`[earlier.end_ms, later.start_ms]` whose own length is **at least** `pause_ms` — which forces the
+gap to be at least `pause_ms`. Both conditions cannot hold. Brute-forced to be sure:
+
+```
+gap = 100 ms, pause_ms = 400
+  no vad pauses            -> 1 sentence
+  vad silence 1000..1400   -> 1        (400 ms, starting exactly at the first word's end)
+  vad silence  900..1500   -> 1        (spans the gap generously)
+  vad silence    0..2000   -> 1        (spans both words)
+
+brute force over 3,528 candidate silences: splits caused = 0
+```
+
+The runner computes these silences from Stage 0's real Silero output (`_pauses_between`) and passes
+them to `segment_sentences`, where they have no effect — computed and discarded, the same shape as
+D-070's `natural_silence_ms`.
+
+### Why this is not a code task
+
+The containment test is clearly wrong, and what should replace it is a decision about Kurdish
+speech, not a refactor. Two candidates, both defensible, with opposite failure modes:
+
+1. **Overlap** — a qualifying silence that overlaps `[earlier.end_ms, later.start_ms]` at all ends
+   the sentence. Catches the real case this exists for: CTC alignment stretches a word across
+   silence, so the word timings show a small gap while VAD saw 400 ms of quiet. Risks
+   over-splitting when a long silence merely clips the boundary by a millisecond.
+2. **Containment of the boundary point** — the silence must span from before `earlier.end_ms` to
+   after `later.start_ms`. Conservative, and only fires when VAD and the alignment genuinely
+   disagree about where speech stopped.
+
+Choosing between them changes where Kurdish sentences end, which changes §5's anchors, every
+boundary, and every rendered clip. There is no labelled Sorani audio here to measure which
+produces better sentence boundaries, and picking by taste is exactly what the "never guess a
+threshold" rule exists to prevent. §4.2 does not say.
+
+Until it is answered, `tests/test_sentences.py::test_vad_pauses_currently_cannot_split_a_sentence`
+pins the defect so the dead branch cannot be mistaken for a working feature. That test going red
+means the fix has landed; delete it then and re-status M1.2.
