@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,6 +35,7 @@ from hawedit.asr import (
     OmniAsrAdapter,
     OmniAsrBackend,
     OmniAsrProducer,
+    QwenSoraniValidator,
     SegmentTranscript,
     WslOmniAsrProducer,
     create_omni_asr_producer,
@@ -195,14 +198,37 @@ class FakeOmniBackend:
         assert audio_path.exists()
         return SegmentTranscript(
             text_raw="کوردی.",
+            ctc_text="کوردی.",
             words=(Word(w="کوردی.", start_ms=50, end_ms=500, conf=0.9),),
             mean_logprob=-0.1,
         )
 
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        assert audio_path.exists()
+        return SegmentTranscript(
+            text_raw=text,
+            ctc_text=text,
+            words=(Word(w=text, start_ms=50, end_ms=500, conf=0.9),),
+            mean_logprob=-0.1,
+        )
+
+
+def _write_pcm(path: Path, duration_s: float = 1.0) -> None:
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16_000)
+        stream.writeframes(b"\0\0" * round(duration_s * 16_000))
+
+
+def _write_requested_pcm(args: list[str]) -> None:
+    duration_s = float(args[args.index("-t") + 1])
+    _write_pcm(Path(args[-1]), duration_s)
+
 
 def test_canonical_omni_adapter_is_runnable_by_the_real_benchmark(tmp_path: Path) -> None:
     audio = tmp_path / "clip.wav"
-    audio.write_bytes(b"wav")
+    _write_pcm(audio)
     result = OmniAsrAdapter(FakeOmniBackend()).transcribe(audio, 1.0)
     assert result.text_raw == "کوردی."
     assert result.words[0].w == "کوردی."
@@ -222,10 +248,10 @@ def test_llm_and_ctc_forwards_start_in_parallel() -> None:
         def _load(self) -> tuple[object, object]:
             return Llm(), object()
 
-        def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int]:
+        def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int, str]:
             ctc_started.set()
             assert llm_started.wait(1), "LLM did not start while CTC was running"
-            return object(), 10
+            return object(), 10, "کوردی."
 
         def _align_emissions(
             self,
@@ -245,7 +271,7 @@ def test_canonical_producer_runs_vad_segments_and_shifts_ctc_words(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        Path(args[-1]).write_bytes(b"wav")
+        _write_requested_pcm(args)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
@@ -269,6 +295,38 @@ def test_canonical_producer_runs_vad_segments_and_shifts_ctc_words(
     assert transcript.asr.aligner == "ctc_viterbi"
 
 
+def test_canonical_producer_scales_alignment_to_the_emitted_pcm_not_vad_overshoot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed_durations: list[float] = []
+
+    class DurationBackend(FakeOmniBackend):
+        def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+            observed_durations.append(duration_s)
+            end_ms = round(duration_s * 1_000)
+            return SegmentTranscript(
+                text_raw="کوردی.",
+                ctc_text="کوردی.",
+                words=(Word("کوردی.", 0, end_ms, 0.9),),
+                mean_logprob=-0.1,
+            )
+
+    def shortened_cut(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        _write_pcm(Path(args[-1]), 0.982)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.asr.subprocess.run", shortened_cut)
+    transcript = OmniAsrProducer(DurationBackend()).transcribe(
+        "media",
+        tmp_path / "audio.wav",
+        (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    assert observed_durations == [pytest.approx(0.982)]
+    assert transcript.words[-1].end_ms == 1_982
+
+
 def test_canonical_producer_refuses_an_empty_vad_result(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="no Stage 0 speech"):
         OmniAsrProducer(FakeOmniBackend()).transcribe(
@@ -278,13 +336,14 @@ def test_canonical_producer_refuses_an_empty_vad_result(tmp_path: Path) -> None:
 
 def test_wsl_worker_loads_one_backend_and_publishes_canonical_transcript(tmp_path: Path) -> None:
     segment = tmp_path / "speech-0000.wav"
-    segment.write_bytes(b"wav")
+    _write_pcm(segment)
     request = tmp_path / "request.json"
     request.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "media_id": "episode",
+                "validator_model_dir": "unused-in-agreeing-control",
                 "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
             }
         ),
@@ -300,13 +359,14 @@ def test_wsl_worker_loads_one_backend_and_publishes_canonical_transcript(tmp_pat
 
 def test_wsl_worker_rejects_a_segment_outside_the_shared_directory(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.wav"
-    outside.write_bytes(b"wav")
+    _write_pcm(outside)
     request = tmp_path / "request.json"
     request.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "media_id": "episode",
+                "validator_model_dir": "unused-in-agreeing-control",
                 "segments": [{"path": "../outside.wav", "start_ms": 1_000, "end_ms": 2_000}],
             }
         ),
@@ -321,6 +381,8 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
 ) -> None:
     worker_calls: list[list[str]] = []
     stage1 = tmp_path / "stage1"
+    validator_dir = tmp_path / "validator"
+    validator_dir.mkdir()
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         if "wslpath" in args:
@@ -334,11 +396,13 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
             )
             assert transcript.media_id == "episode"
             return subprocess.CompletedProcess(args, 0, b"", b"")
-        Path(args[-1]).write_bytes(b"wav")
+        _write_requested_pcm(args)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
-    transcript = WslOmniAsrProducer(interpreter="/opt/hawedit/python").transcribe(
+    transcript = WslOmniAsrProducer(
+        interpreter="/opt/hawedit/python", validator_model_dir=validator_dir
+    ).transcribe(
         "episode",
         tmp_path / "audio.wav",
         (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
@@ -349,6 +413,168 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
     assert len(worker_calls) == 1
     assert worker_calls[0][0] == "wsl.exe"
     assert "/opt/hawedit/python" in worker_calls[0]
+
+
+class FakeValidator:
+    model_id = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
+
+    def __init__(self, text: str = "ڕاستکراوە.") -> None:
+        self.text = text
+        self.calls: list[Path] = []
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> str:
+        self.calls.append(audio_path)
+        return self.text
+
+
+class RoutingBackend:
+    def __init__(self, scores: tuple[float, ...], *, disagree_at: int | None = None) -> None:
+        self.scores = scores
+        self.disagree_at = disagree_at
+        self.align_calls: list[tuple[Path, str]] = []
+
+    @staticmethod
+    def _index(audio_path: Path) -> int:
+        return int(audio_path.stem.rsplit("-", 1)[1])
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+        index = self._index(audio_path)
+        text = f"دەقی{index}."
+        ctc_text = "جیاواز." if index == self.disagree_at else text
+        return SegmentTranscript(
+            text_raw=text,
+            ctc_text=ctc_text,
+            words=(Word(text, 0, 500, 0.9),),
+            mean_logprob=self.scores[index],
+        )
+
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        self.align_calls.append((audio_path, text))
+        return SegmentTranscript(
+            text_raw=text,
+            ctc_text="جیاواز.",
+            words=(Word(text, 10, 510, 0.8),),
+            mean_logprob=-0.2,
+        )
+
+
+def _fake_ffmpeg(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+    _write_requested_pcm(args)
+    return subprocess.CompletedProcess(args, 0, b"", b"")
+
+
+def test_stage1_routes_the_bottom_quartile_to_the_real_validator_seam(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("hawedit.asr.subprocess.run", _fake_ffmpeg)
+    backend = RoutingBackend((-0.1, -2.0, -0.2, -0.3))
+    validator = FakeValidator()
+    transcript = OmniAsrProducer(backend, validator).transcribe(
+        "episode",
+        tmp_path / "audio.wav",
+        tuple(SimpleNamespace(start_ms=i * 1_000, end_ms=(i + 1) * 1_000) for i in range(4)),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    assert transcript.text_ckb.splitlines() == ["دەقی0.", "ڕاستکراوە.", "دەقی2.", "دەقی3."]
+    assert [path.name for path in validator.calls] == ["speech-0001.wav"]
+    assert [(path.name, text) for path, text in backend.align_calls] == [
+        ("speech-0001.wav", "ڕاستکراوە.")
+    ]
+    assert transcript.words[1].w == "ڕاستکراوە."
+    assert transcript.words[1].start_ms == 1_010
+    assert transcript.asr.validated_by == validator.model_id
+
+
+def test_stage1_routes_material_disagreement_even_without_a_confidence_quartile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("hawedit.asr.subprocess.run", _fake_ffmpeg)
+    backend = RoutingBackend((-0.1,), disagree_at=0)
+    validator = FakeValidator()
+    transcript = OmniAsrProducer(backend, validator).transcribe(
+        "episode",
+        tmp_path / "audio.wav",
+        (SimpleNamespace(start_ms=0, end_ms=1_000),),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    assert transcript.text_ckb == "ڕاستکراوە."
+    assert len(validator.calls) == 1
+
+
+def test_wsl_worker_applies_the_same_validator_routing_contract(tmp_path: Path) -> None:
+    segment = tmp_path / "speech-0000.wav"
+    _write_pcm(segment)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "media_id": "episode",
+                "validator_model_dir": "unused-with-injected-validator",
+                "segments": [{"path": segment.name, "start_ms": 2_000, "end_ms": 3_000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    backend = RoutingBackend((-0.1,), disagree_at=0)
+    validator = FakeValidator()
+    transcript = run_request(request, tmp_path / "output.json", backend, validator)
+    assert transcript.text_ckb == "ڕاستکراوە."
+    assert transcript.words[0].start_ms == 2_010
+    assert transcript.asr.validated_by == validator.model_id
+
+
+def test_stage1_does_not_load_validator_weights_when_no_segment_is_selected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("hawedit.asr.subprocess.run", _fake_ffmpeg)
+    backend = RoutingBackend((-0.1, -0.2, -0.3))
+    transcript = OmniAsrProducer(backend).transcribe(
+        "episode",
+        tmp_path / "audio.wav",
+        tuple(SimpleNamespace(start_ms=i * 1_000, end_ms=(i + 1) * 1_000) for i in range(3)),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    assert transcript.asr.validated_by is None
+    assert backend.align_calls == []
+
+
+def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+    audio = tmp_path / "segment.wav"
+    _write_pcm(audio)
+    loaded: dict[str, object] = {}
+
+    class Model:
+        def transcribe(self, **kwargs: object) -> list[SimpleNamespace]:
+            loaded["transcribe"] = kwargs
+            return [SimpleNamespace(text="سۆرانی.")]
+
+    class Loader:
+        @staticmethod
+        def from_pretrained(path: str, **kwargs: object) -> Model:
+            loaded["path"] = path
+            loaded["kwargs"] = kwargs
+            return Model()
+
+    torch = SimpleNamespace(bfloat16="bf16", cuda=SimpleNamespace(is_available=lambda: True))
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "qwen_asr", SimpleNamespace(Qwen3ASRModel=Loader))
+    validator = QwenSoraniValidator(model_dir)
+    assert validator.transcribe_segment(audio, 1.0) == "سۆرانی."
+    assert loaded["path"] == str(model_dir)
+    assert loaded["kwargs"] == {
+        "dtype": "bf16",
+        "device_map": "cuda:1",
+        "max_inference_batch_size": 1,
+    }
+    assert loaded["transcribe"] == {"audio": str(audio)}
 
 
 def test_omni_runtime_selection_is_explicit() -> None:

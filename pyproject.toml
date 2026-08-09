@@ -63,7 +63,12 @@ gpu = [
 ]
 asr = [
     # fairseq2n has no Windows wheel. The Windows runner invokes this extra inside WSL2.
+    # omnilingual-asr forces torch 2.8 but only floors torchaudio; without the explicit
+    # matching pin uv selected torchaudio 2.11 (CUDA 13), which failed to import on hawapc01.
+    "torch==2.8.0; platform_system != 'Windows'",            # BSD-3-Clause
+    "torchaudio==2.8.0; platform_system != 'Windows'",       # BSD-2-Clause
     "omnilingual-asr==0.2.0; platform_system != 'Windows'", # Apache-2.0
+    "qwen-asr==0.0.6; platform_system != 'Windows'",        # Apache-2.0
 ]
 cloud = [
     "google-auth>=2.40,<3", # Apache-2.0 — Vertex ADC bearer authentication
@@ -124,6 +129,7 @@ module = [
   "torch.*",
   "google.*",
   "omnilingual_asr.*",
+  "qwen_asr.*",
   "fairseq2.*",
   # The `gpu` extra. CI installs `.[dev,media]` only — §6 puts Stage 0 on CPU and the CUDA
   # build of torch is ~2 GB of runner disk for kernels nothing in the gate calls — so these

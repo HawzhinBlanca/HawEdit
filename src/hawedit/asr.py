@@ -28,6 +28,7 @@ import math
 import os
 import subprocess
 import time
+import wave
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -36,7 +37,9 @@ from typing import Any, Final, Protocol, runtime_checkable
 
 from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
+from hawedit.escalation import SegmentScore, select_for_validation
 from hawedit.forced_alignment import align_words
+from hawedit.models import ModelStore
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, wsl_path
@@ -53,7 +56,9 @@ __all__ = [
     "OmniAsrAdapter",
     "OmniAsrBackend",
     "OmniAsrProducer",
+    "QwenSoraniValidator",
     "SegmentTranscript",
+    "SoraniValidator",
     "WslOmniAsrProducer",
     "create_omni_asr_producer",
     "long_audio_failure_rate",
@@ -64,6 +69,7 @@ __all__ = [
 # stay under it, so anything past this is by definition outside the designed operating range
 # and its failure rate is a property worth measuring rather than an accident.
 LONG_AUDIO_THRESHOLD_S: Final = 40.0
+VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 
 
 class IncomparableHardware(ValueError):
@@ -120,18 +126,35 @@ class SegmentTranscript:
     """One sub-40-second OmniASR result with CTC-Viterbi word timings."""
 
     text_raw: str
+    ctc_text: str
     words: tuple[Word, ...]
-    mean_logprob: float | None = None
+    mean_logprob: float
 
     def __post_init__(self) -> None:
         if not self.text_raw.strip():
             raise ValueError("OmniASR returned an empty speech segment")
+        if not isinstance(self.ctc_text, str):
+            raise ValueError("CTC hypothesis must be a string")
         if not self.words:
             raise ValueError("canonical ASR returned text without CTC-aligned words")
+        if not math.isfinite(self.mean_logprob) or self.mean_logprob > 0:
+            raise ValueError("segment mean_logprob must be a finite log-probability <= 0")
 
 
 class OmniSegmentBackend(Protocol):
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript: ...
+
+    def align_segment(
+        self, audio_path: Path, duration_s: float, text: str
+    ) -> SegmentTranscript: ...
+
+
+class SoraniValidator(Protocol):
+    """One registry-approved second opinion for an escalated Stage 1 segment."""
+
+    model_id: str
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> str: ...
 
 
 class SpeechSegment(Protocol):
@@ -153,6 +176,62 @@ class CanonicalTranscriptProducer(Protocol):
         work_dir: Path,
         ffmpeg: Path | None = None,
     ) -> RawTranscript: ...
+
+
+class QwenSoraniValidator:
+    """The official Qwen-ASR loader for §3's fine-tuned Sorani validator."""
+
+    model_id = VALIDATOR_MODEL_ID
+
+    def __init__(
+        self,
+        model_dir: Path,
+        *,
+        device: str = "cuda:1",
+        model_id: str = VALIDATOR_MODEL_ID,
+    ) -> None:
+        resolve_role(model_id, frozenset({"asr_validator"}), "the ASR validator")
+        if not model_dir.is_dir():
+            raise RuntimeError(
+                f"no validator weights at {model_dir}. Run scripts/fetch-models.sh {model_id}."
+            )
+        self.model_id = model_id
+        self.model_dir = model_dir
+        self.device = device
+        self._model: Any | None = None
+
+    def _load(self) -> Any:
+        if self._model is None:
+            try:
+                import torch
+                from qwen_asr import Qwen3ASRModel
+            except ImportError as exc:
+                raise RuntimeError(
+                    "the Sorani validator needs qwen-asr==0.0.6 and a CUDA Stage 1 runtime"
+                ) from exc
+            if self.device.startswith("cuda") and not torch.cuda.is_available():
+                raise RuntimeError(
+                    f"validator device {self.device!r} was requested but CUDA is unavailable"
+                )
+            self._model = Qwen3ASRModel.from_pretrained(
+                str(self.model_dir),
+                dtype=torch.bfloat16,
+                device_map=self.device,
+                max_inference_batch_size=1,
+            )
+        return self._model
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> str:
+        if not audio_path.is_file():
+            raise FileNotFoundError(f"validator audio segment is missing: {audio_path}")
+        if not 0 < duration_s <= LONG_AUDIO_THRESHOLD_S:
+            raise ValueError(
+                f"validator segment is {duration_s:.3f}s; expected 0..{LONG_AUDIO_THRESHOLD_S:.0f}s"
+            )
+        results = self._load().transcribe(audio=str(audio_path))
+        if len(results) != 1 or not str(results[0].text).strip():
+            raise RuntimeError("Sorani validator returned no transcription for one speech segment")
+        return str(results[0].text)
 
 
 class OmniAsrBackend:
@@ -210,7 +289,7 @@ class OmniAsrBackend:
         }
         return tuple(int(value) for value in values if int(value) not in special)
 
-    def _ctc_emissions(self, pipeline: Any, audio_path: Path) -> tuple[Any, int]:
+    def _ctc_emissions(self, pipeline: Any, audio_path: Path) -> tuple[Any, int, str]:
         try:
             import torch
             from fairseq2.nn.batch_layout import BatchLayout
@@ -229,8 +308,17 @@ class OmniAsrBackend:
         with torch.inference_mode():
             logits, output_layout = pipeline.model(batch.source_seqs, layout)
             frame_count = int(output_layout.seq_lens[0])
-            log_probs = torch.log_softmax(logits[0, :frame_count].float(), dim=-1).cpu()
-        return log_probs, frame_count
+            if frame_count <= 0:
+                raise RuntimeError("OmniASR CTC returned no acoustic frames for a speech segment")
+            segment_logits = logits[0, :frame_count]
+            log_probs = torch.log_softmax(segment_logits.float(), dim=-1).cpu()
+            # This is the official omnilingual-asr CTC greedy decoder: collapse consecutive
+            # ids, then let the tokenizer's skip-special decoder remove blank/special ids.
+            sequence = torch.argmax(segment_logits, dim=-1)
+            keep = torch.ones(sequence.shape[0], dtype=torch.bool, device=sequence.device)
+            keep[1:] = sequence[1:] != sequence[:-1]
+            ctc_text = str(pipeline.token_decoder(sequence[keep]))
+        return log_probs, frame_count, ctc_text
 
     def _align_emissions(
         self,
@@ -278,19 +366,31 @@ class OmniAsrBackend:
             )
             emissions_future = executor.submit(self._ctc_emissions, ctc, audio_path)
             texts = text_future.result()
-            log_probs, frame_count = emissions_future.result()
+            log_probs, frame_count, ctc_text = emissions_future.result()
         if len(texts) != 1 or not str(texts[0]).strip():
             raise RuntimeError("OmniASR LLM returned no transcription for one speech segment")
         text = str(texts[0])
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
-        total_ms = sum(word.end_ms - word.start_ms for word in words)
-        mean_logprob = (
-            sum(math.log(max(word.conf, 1e-12)) * (word.end_ms - word.start_ms) for word in words)
-            / total_ms
-            if total_ms
-            else None
-        )
-        return SegmentTranscript(text, words, mean_logprob)
+        return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
+
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        """Align a validator correction with a fresh CTC pass on the same bounded audio."""
+        if not text.strip():
+            raise ValueError("cannot align an empty validator transcription")
+        _, ctc = self._load()
+        log_probs, frame_count, ctc_text = self._ctc_emissions(ctc, audio_path)
+        words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
+        return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
+
+
+def _mean_aligned_logprob(words: Sequence[Word]) -> float:
+    total_ms = sum(word.end_ms - word.start_ms for word in words)
+    if total_ms <= 0:
+        raise RuntimeError("CTC alignment produced no positive-duration words")
+    return (
+        sum(math.log(max(word.conf, 1e-12)) * (word.end_ms - word.start_ms) for word in words)
+        / total_ms
+    )
 
 
 class OmniAsrAdapter:
@@ -318,8 +418,26 @@ class OmniAsrAdapter:
 class OmniAsrProducer:
     """Run canonical ASR on Stage 0's VAD-bounded speech regions."""
 
-    def __init__(self, backend: OmniSegmentBackend | None = None) -> None:
+    def __init__(
+        self,
+        backend: OmniSegmentBackend | None = None,
+        validator: SoraniValidator | None = None,
+        validator_model_dir: Path | None = None,
+    ) -> None:
+        if validator is not None and validator_model_dir is not None:
+            raise ValueError("provide a validator or validator_model_dir, not both")
         self.backend = backend or OmniAsrBackend()
+        self.validator = validator
+        self.validator_model_dir = validator_model_dir
+
+    def _validator(self) -> SoraniValidator:
+        if self.validator is not None:
+            return self.validator
+        model_dir = self.validator_model_dir or ModelStore().assert_available(VALIDATOR_MODEL_ID)
+        if model_dir is None:  # WEIGHTS entries always return a path; keep the type honest.
+            raise RuntimeError(f"{VALIDATOR_MODEL_ID} did not resolve to a model directory")
+        self.validator = QwenSoraniValidator(model_dir)
+        return self.validator
 
     def transcribe(
         self,
@@ -330,11 +448,12 @@ class OmniAsrProducer:
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
-        results = tuple(
+        initial = tuple(
             (segment, self.backend.transcribe_segment(segment.path, segment.duration_s))
             for segment in prepared
         )
-        return _assemble_canonical_transcript(media_id, results)
+        results, validated_by = _validate_hard_segments(initial, self.backend, self._validator)
+        return _assemble_canonical_transcript(media_id, results, validated_by=validated_by)
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,13 +520,47 @@ def _cut_speech_regions(
                 f"ffmpeg failed to cut ASR segment {index}: "
                 f"{result.stderr.decode('utf-8', 'replace')[-400:]}"
             )
-        prepared.append(_PreparedSpeechSegment(segment_path, start_ms, end_ms))
+        actual_duration_ms = _pcm_duration_ms(segment_path)
+        requested_duration_ms = end_ms - start_ms
+        if actual_duration_ms > requested_duration_ms + 1:
+            raise RuntimeError(
+                f"ffmpeg emitted {actual_duration_ms}ms for ASR segment {index}, longer than "
+                f"the requested {requested_duration_ms}ms"
+            )
+        prepared.append(
+            _PreparedSpeechSegment(segment_path, start_ms, start_ms + actual_duration_ms)
+        )
     return tuple(prepared)
+
+
+def _pcm_duration_ms(path: Path) -> int:
+    """Read the exact duration of Stage 1's emitted 16 kHz mono PCM, without ffprobe."""
+    try:
+        with wave.open(str(path), "rb") as stream:
+            channels = stream.getnchannels()
+            sample_width = stream.getsampwidth()
+            sample_rate = stream.getframerate()
+            frame_count = stream.getnframes()
+            compression = stream.getcomptype()
+    except (EOFError, wave.Error) as exc:
+        raise RuntimeError(f"ASR segment is not a readable PCM WAV: {path}") from exc
+    if (channels, sample_width, sample_rate, compression) != (1, 2, 16_000, "NONE"):
+        raise RuntimeError(
+            f"ASR segment has unexpected WAV format at {path}: "
+            f"channels={channels}, sample_width={sample_width}, sample_rate={sample_rate}, "
+            f"compression={compression}"
+        )
+    duration_ms = round(frame_count * 1_000 / sample_rate)
+    if duration_ms <= 0:
+        raise RuntimeError(f"ASR segment contains no audio frames: {path}")
+    return duration_ms
 
 
 def _assemble_canonical_transcript(
     media_id: str,
     results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
+    *,
+    validated_by: str | None = None,
 ) -> RawTranscript:
     texts: list[str] = []
     words: list[Word] = []
@@ -437,9 +590,43 @@ def _assemble_canonical_transcript(
         asr=AsrProvenance(
             canonical="omniASR_LLM_7B_v2",
             aligner="ctc_viterbi",
+            validated_by=validated_by,
             mean_logprob=sum(logprobs) / len(logprobs) if logprobs else None,
         ),
     )
+
+
+def _validate_hard_segments(
+    results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
+    backend: OmniSegmentBackend,
+    validator_factory: Callable[[], SoraniValidator],
+) -> tuple[tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...], str | None]:
+    """Apply §3's confidence/disagreement router and realign only corrected segments."""
+    scores = tuple(
+        SegmentScore(
+            segment_id=f"segment-{index:04d}",
+            mean_logprob=item.mean_logprob,
+            llm_text=item.text_raw,
+            ctc_text=item.ctc_text,
+            duration_s=segment.duration_s,
+        )
+        for index, (segment, item) in enumerate(results)
+    )
+    decisions = select_for_validation(scores)
+    if not any(decision.escalate for decision in decisions):
+        return tuple(results), None
+
+    validator = validator_factory()
+    resolve_role(validator.model_id, frozenset({"asr_validator"}), "the ASR validator")
+    routed: list[tuple[_PreparedSpeechSegment, SegmentTranscript]] = []
+    for (segment, item), decision in zip(results, decisions, strict=True):
+        if not decision.escalate:
+            routed.append((segment, item))
+            continue
+        corrected = validator.transcribe_segment(segment.path, segment.duration_s)
+        aligned = backend.align_segment(segment.path, segment.duration_s, corrected)
+        routed.append((segment, aligned))
+    return tuple(routed), validator.model_id
 
 
 class WslOmniAsrProducer:
@@ -456,10 +643,12 @@ class WslOmniAsrProducer:
         distro: str | None = None,
         interpreter: str | None = None,
         wsl_executable: str = "wsl.exe",
+        validator_model_dir: Path | None = None,
     ) -> None:
         self.distro = distro
         self.interpreter = interpreter
         self.wsl_executable = wsl_executable
+        self.validator_model_dir = validator_model_dir
 
     def _prefix(self) -> list[str]:
         prefix = [self.wsl_executable]
@@ -517,11 +706,17 @@ class WslOmniAsrProducer:
     ) -> RawTranscript:
         interpreter, wsl_source = self._runtime()
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
+        validator_model_dir = self.validator_model_dir or ModelStore().assert_available(
+            VALIDATOR_MODEL_ID
+        )
+        if validator_model_dir is None:
+            raise RuntimeError(f"{VALIDATOR_MODEL_ID} did not resolve to a model directory")
         request_path = work_dir / "omni-asr-request.json"
         output_path = work_dir / "omni-asr-worker-output.json"
         request = {
-            "schema_version": 1,
+            "schema_version": 2,
             "media_id": media_id,
+            "validator_model_dir": self._wsl_path(validator_model_dir),
             "segments": [
                 {
                     "path": segment.path.name,

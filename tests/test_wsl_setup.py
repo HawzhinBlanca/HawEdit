@@ -48,11 +48,15 @@ def test_wheel_safe_setup_copies_only_the_package_and_marks_success(
     (package / "__pycache__" / "worker.pyc").write_bytes(b"cache")
     runtime = tmp_path / "runtime"
     calls: list[list[str]] = []
+    setup_scripts: list[bytes] = []
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         calls.append(args)
         if "wslpath" in args:
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        script = kwargs.get("input")
+        if isinstance(script, bytes):
+            setup_scripts.append(script)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_run)
@@ -65,6 +69,12 @@ def test_wheel_safe_setup_copies_only_the_package_and_marks_success(
     setup_call = next(call for call in calls if "bash" in call)
     assert "HAWEDIT_WSL_RUNTIME=/mnt/c/runtime" in setup_call
     assert "HAWEDIT_WSL_SOURCE=/mnt/c/runtime" in setup_call
+    assert setup_call[-3:] == ["bash", "-l", "-s"]
+    setup_script = setup_scripts[0].decode("utf-8")
+    assert "'torch==2.8.0' 'torchaudio==2.8.0'" in setup_script
+    assert "'qwen-asr==0.0.6'" in setup_script
+    assert "from qwen_asr import Qwen3ASRModel" in setup_script
+    assert 'torchaudio_version = torchaudio.__version__.split("+", 1)[0]' in setup_script
 
 
 def test_a_ready_runtime_is_idempotent_without_another_wsl_call(

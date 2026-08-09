@@ -18,8 +18,11 @@ from hawedit.asr import (
     LONG_AUDIO_THRESHOLD_S,
     OmniAsrBackend,
     OmniSegmentBackend,
+    QwenSoraniValidator,
+    SoraniValidator,
     _assemble_canonical_transcript,
     _PreparedSpeechSegment,
+    _validate_hard_segments,
 )
 from hawedit.transcripts import RawTranscript
 
@@ -47,10 +50,11 @@ def run_request(
     request_path: Path,
     output_path: Path,
     backend: OmniSegmentBackend | None = None,
+    validator: SoraniValidator | None = None,
 ) -> RawTranscript:
     """Execute one strict bridge request; primarily separated for deterministic tests."""
     payload: Any = json.loads(request_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if not isinstance(payload, dict) or payload.get("schema_version") != 2:
         raise ValueError("unsupported OmniASR worker request schema")
     media_id = payload.get("media_id")
     if not isinstance(media_id, str) or not media_id.strip():
@@ -58,6 +62,9 @@ def run_request(
     raw_segments = payload.get("segments")
     if not isinstance(raw_segments, list) or not raw_segments:
         raise ValueError("ASR worker request must contain at least one speech segment")
+    validator_path = payload.get("validator_model_dir")
+    if not isinstance(validator_path, str) or not validator_path.strip():
+        raise ValueError("ASR worker validator_model_dir must be a non-empty path")
 
     root = request_path.resolve().parent
     prepared: list[_PreparedSpeechSegment] = []
@@ -77,13 +84,23 @@ def run_request(
         prepared.append(segment)
 
     model = backend or OmniAsrBackend()
-    transcript = _assemble_canonical_transcript(
-        media_id,
-        tuple(
-            (segment, model.transcribe_segment(segment.path, segment.duration_s))
-            for segment in prepared
-        ),
+    initial = tuple(
+        (segment, model.transcribe_segment(segment.path, segment.duration_s))
+        for segment in prepared
     )
+    selected_validator = validator
+
+    def validator_factory() -> SoraniValidator:
+        nonlocal selected_validator
+        if selected_validator is None:
+            model_dir = Path(validator_path)
+            if not model_dir.is_dir():
+                raise FileNotFoundError(f"ASR worker validator weights are missing: {model_dir}")
+            selected_validator = QwenSoraniValidator(model_dir)
+        return selected_validator
+
+    results, validated_by = _validate_hard_segments(initial, model, validator_factory)
+    transcript = _assemble_canonical_transcript(media_id, results, validated_by=validated_by)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(transcript.to_json())

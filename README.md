@@ -5,13 +5,15 @@ Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1
 ## What this is today
 
 **This is a fully composed, rigorously tested pipeline, not a production-proven product.** The
-runner wires canonical OmniASR, Qwen retrieval/reranking, survivor-only VideoChat3, multimodal
+runner wires canonical OmniASR, real confidence/disagreement routing to the rzgar Sorani
+validator, Qwen retrieval/reranking, survivor-only VideoChat3, multimodal
 Gemini judging, TimeLens grounding, automatic sentence selection and face-aware reframing. A
 production claim still needs external weights, an authorized cloud route and real
 human-labelled Sorani/editorial sets; this repository does not fabricate those results.
 Stage 1 is runnable through `--omni-asr`; on Windows the runner automatically uses the WSL2
-bridge because Meta's fairseq2 native extension has no Windows wheel. Its model execution is
-not a measured Sorani benchmark until the package-managed weights and labels are present.
+bridge because Meta's fairseq2 native extension has no Windows wheel. The complete LLM + CTC +
+validator path has run on both RTX 3090 Ti GPUs; that execution is not a measured Sorani
+benchmark until a labelled Sorani corpus exists.
 
 ```bash
 .venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work
@@ -39,7 +41,7 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 | §3 Stage | State | What is missing |
 |---|---|---|
 | 0 · Ingest | **runs** | Diarization — Community-1 is a gated repo (`BLOCKED.md` #4). |
-| 1 · Speech | **wired** | `--omni-asr` runs official OmniASR inference plus CTC-Viterbi timing. Real weights and labelled Sorani validation remain external. |
+| 1 · Speech | **runs** | `--omni-asr` runs official OmniASR LLM/CTC in parallel, decodes the CTC hypothesis, routes the bottom confidence quartile and material disagreement to rzgar, and CTC-realigns validator corrections. Labelled Sorani accuracy remains external. |
 | 2 · Index | **wired** | `--visual` extracts each scene once, embeds all windows, retrieves top 50, reranks all hits and retains 5–10. Media with fewer scenes than the survivor count is **refused**, not silently shortened — measured on the 3-scene fixture, `evidence/unlisted-modules.md`. |
 | 3 · Discovery | **wired** | Path A and composed Path B union without promoting non-survivor scenes; `--auto-select` anchors complete contiguous sentences. |
 | 4 · Editorial judge | **wired** | Requests carry actual source JPEG bytes. Developer API handles non-confidential work; Vertex uses ADC bearer auth and an attributed ZDR gate. Credentials/billing remain external. |
@@ -89,7 +91,8 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-wsl-asr.ps1
 ```
 
 That creates a source-fingerprinted runtime below `%LOCALAPPDATA%\HawEdit\wsl-asr`, using Python
-3.12, and probes both CUDA GPUs. The host runner still owns Stage 0, cuts every VAD-bounded WAV
+3.12, matched Torch/torchaudio 2.8, official OmniASR 0.2.0 and Qwen-ASR 0.0.6, then imports both
+stacks and probes both CUDA GPUs. The host runner still owns Stage 0, cuts every VAD-bounded WAV
 locally, invokes one WSL worker so both models load once, then validates the returned immutable
 transcript. An installed wheel exposes the same operation as `hawedit-asr-setup`. Override the
 distribution with `-Distribution Ubuntu`; advanced deployments can set
@@ -165,11 +168,14 @@ runtime never reads.
 
 Weights themselves never enter the repository: `models/*` and `.ffmpeg/` are git-ignored.
 
-On Linux, install `.[asr]` for the official OmniASR runtime. On Windows, run
-`scripts/setup-wsl-asr.ps1`; the `asr` dependency is intentionally platform-marked away from the
-host venv because `fairseq2n` cannot install there. Model loading is lazy, so a missing package
-or checkpoint is reported without making basic ingest unusable. This checkout has not run the
-full canonical pair on a real labelled Sorani set; wiring is not accuracy evidence.
+On Linux, install `.[asr]` for the official OmniASR + validator runtime. Keep it in a separate
+environment from `.[gpu]`: fairseq2n requires Torch 2.8 while the visual checkpoint stack is
+verified on Torch 2.13, so resolving both extras together is intentionally unsupported. On
+Windows that isolation is automatic through WSL2; run `scripts/setup-wsl-asr.ps1`. Model loading
+is lazy, so a missing package or checkpoint is reported without making basic ingest unusable.
+The full canonical pair and rzgar routing have run on hawapc01, including through the real CLI.
+The committed media fixture is synthetic Kurmanji, so this is execution evidence—not Sorani
+accuracy evidence. See `evidence/m1-4-stage1-validator.md`.
 
 ## GPU (§3 Stages 2, 3 Path B, 5)
 
@@ -289,7 +295,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `alignment.py` | §4.2, §8.1 | Alignment accuracy. Kurdish invariant #5. |
 | `metrics.py` | §8.1 | Normalized CER, spacing-free CER, named-entity error, code-switch error. |
 | `corpus.py` | §8.1, §4.4 | The labelled set and its coverage grid — 3 dialects × 7 conditions. |
-| `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, RTF, VRAM and failure rate. Hardware is required. |
+| `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |

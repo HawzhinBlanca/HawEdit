@@ -84,24 +84,35 @@ if command -v uv >/dev/null 2>&1; then
     uv venv --python 3.12 "$venv"
   fi
   uv pip install --python "$venv/bin/python" \
-    'omnilingual-asr==0.2.0' 'klpt==0.1.7' 'fonttools==4.55.3'
+    'torch==2.8.0' 'torchaudio==2.8.0' \
+    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' 'fonttools==4.55.3'
 elif command -v python3.12 >/dev/null 2>&1; then
   if [[ ! -x "$venv/bin/python" ]]; then
     python3.12 -m venv "$venv"
   fi
   "$venv/bin/python" -m pip install --upgrade pip
   "$venv/bin/python" -m pip install \
-    'omnilingual-asr==0.2.0' 'klpt==0.1.7' 'fonttools==4.55.3'
+    'torch==2.8.0' 'torchaudio==2.8.0' \
+    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' 'fonttools==4.55.3'
 else
   printf '%s\n' 'Install uv or Python 3.12 inside WSL2.' >&2
   exit 1
 fi
 PYTHONPATH="$HAWEDIT_WSL_SOURCE" "$venv/bin/python" - <<'PY'
 import torch
+import torchaudio
 from hawedit.asr_worker import run_request
 from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+from qwen_asr import Qwen3ASRModel
 
-del run_request, ASRInferencePipeline
+torch_version = torch.__version__.split("+", 1)[0]
+torchaudio_version = torchaudio.__version__.split("+", 1)[0]
+if torch_version != "2.8.0" or torchaudio_version != "2.8.0":
+    raise SystemExit(
+        f"Stage 1 requires matched torch/torchaudio 2.8.0, got "
+        f"{torch_version}/{torchaudio_version}"
+    )
+del run_request, ASRInferencePipeline, Qwen3ASRModel, torchaudio
 if not torch.cuda.is_available():
     raise SystemExit("OmniASR installed, but CUDA is not visible inside WSL2")
 if torch.cuda.device_count() < 2:
@@ -145,9 +156,10 @@ def provision_wsl_runtime(
             f"HAWEDIT_WSL_RUNTIME={translated}",
             f"HAWEDIT_WSL_SOURCE={translated_source}",
             "bash",
-            "-lc",
-            _SETUP_SCRIPT,
+            "-l",
+            "-s",
         ],
+        input=_SETUP_SCRIPT.encode("utf-8"),
         capture_output=False,
         check=False,
     )

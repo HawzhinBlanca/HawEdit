@@ -3382,3 +3382,59 @@ SBOM bytes. The emitted HawEdit document was parsed and validated independently 
 **Still open.** Checksums prove integrity only when their source is trusted. The release has no
 signature/attestation identity, and Meta's package-managed OmniASR downloads have no
 project-owned byte manifest. M3.7 therefore remains PARTIAL.
+---
+
+## D-085 · Stage 1 routes real CTC disagreement through the rzgar validator
+
+**The policy existed and the producer ignored it.** `escalation.select_for_validation` correctly
+implemented §3's bottom-quartile plus material-disagreement rule, but no source caller existed.
+The CTC forward returned only posteriors, not its decoded hypothesis, so the producer lacked one
+of the policy's two inputs. `AsrProvenance.validated_by` could describe a validator that Stage 1
+never loaded.
+
+**Decision 1 — a routed validator result is the final raw text for that segment.** LLM-7B remains
+the canonical first pass and provenance names it as such. On a selected segment, the registered
+rzgar model is a correction pass, not a no-op observer: its exact output replaces the first-pass
+surface, then the existing CTC model runs on the same bounded WAV and Viterbi-aligns that final
+surface. A validator output never inherits timings for different words. `validated_by` is set only
+when at least one segment actually took this path.
+
+**Decision 2 — decode CTC from the forward already used for alignment.** The official
+`omnilingual-asr==0.2.0` implementation takes argmax, collapses consecutive ids and decodes with
+special tokens skipped. HawEdit now applies that exact recipe to the same logits whose softmax
+feeds forced alignment. No second CTC model and no text-length heuristic is introduced. The
+episode-level policy sees every segment before routing; duration remains reporting-only.
+
+**Decision 3 — the official Qwen loader lives in Stage 1's isolated environment.** The rzgar
+model card uses `qwen-asr`; version 0.0.6 pins Transformers 4.57.6 and Accelerate 1.12.0. The WSL
+worker receives the host's registry-resolved checkpoint path and lazily loads it on GPU 1 only if
+a segment is selected. Local Linux uses the same adapter. Windows does not install it into the
+visual-model host venv.
+
+That separation is necessary, not cosmetic. A real Linux resolution proved `omnilingual-asr`
+forces Torch 2.8 through fairseq2n, while the verified visual stack uses Torch 2.13. Combining
+`.[asr,gpu]` is unsatisfiable. Worse, OmniASR only floors torchaudio, so the first real setup chose
+torchaudio 2.11 beside Torch 2.8 and failed import with missing `libcudart.so.13`. Stage 1 now pins
+and runtime-checks the matched Torch/torchaudio 2.8 pair. The provisioner also sends its script on
+stdin to avoid WSL argument mangling and uses a login shell so user-installed `uv`/Python 3.12 are
+visible. These were three real-host failures, not hypothetical guards.
+
+**Real proof, with its boundary stated.** On hawapc01, Qwen loaded the 4.08 GB rzgar checkpoint on
+GPU 1 and reproduced the model card's `demo_04.wav` Sorani reference exactly: 128.0 seconds
+including first load and 4,250,408,448 peak allocated bytes. The official 31.2 GB LLM and 12.3 GB
+CTC assets were then downloaded and the real CLI ran Stage 0 → LLM/CTC → disagreement routing →
+rzgar → CTC/Viterbi → immutable raw + normalized transcript. The final warm-cache run took 212.9
+seconds and emitted 13 words with canonical, aligner and validator provenance.
+
+The committed fixture is Kurmanji `espeak-ng`, explicitly a VAD positive control, so no CER or
+Sorani quality claim is derived from it. M0.12/M0.13 remain blocked on labelled Sorani. It also
+exposed a separate clock edge: the fixture's audio stream/VAD ends at 4180 ms while video ends at
+4162 ms. Stage 1 now measures the emitted PCM rather than blindly trusting a requested cut, but
+that audio really is longer; clamping speech to the visual media clock belongs at Stage 0/pipeline
+reconciliation and remains open rather than being hidden in ASR. Evidence:
+`evidence/m1-4-stage1-validator.md`.
+
+**Mutation audit 4/4.** The focused regressions fail when routing is bypassed, when the validator
+is called but its correction is discarded, when alignment trusts the requested cut instead of
+the emitted PCM duration, and when the matched torchaudio pin is removed. All four exact source
+mutations were restored before the final gate.

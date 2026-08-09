@@ -17,7 +17,10 @@ on real Sorani client footage.
   persisted through the immutable transcript store. Windows automatically uses one WSL2 worker;
   Linux executes locally. The WSL request is path-confined and the output is create-once. A
   wheel-safe setup command provisions a source-fingerprinted user runtime rather than assuming
-  the process is running from a checkout.
+  the process is running from a checkout. The CTC forward now also produces its official greedy
+  hypothesis; the production router invokes rzgar for the bottom confidence quartile or material
+  disagreement, uses its correction for that segment, then CTC-realigns the final text. The full
+  route has run through the real CLI on both RTX 3090 Ti GPUs.
 - `VisualComposer` owns extraction → embedding → top-50 retrieval → rerank-all → keep 5–10 →
   VideoChat3. Only exact survivors reach Path B, and returned IDs/scores must match reranker
   provenance. Media with fewer scenes than the survivor count is refused outright, not
@@ -50,10 +53,7 @@ These cannot be truthfully solved from the checkout alone:
    misleading-edit rate and judge preference remain unmeasured. Unit tests are not human review.
 3. **Cloud authorization is external.** Vertex code exists, but the project, billing, ADC,
    contractual ZDR configuration and named approver must be supplied by the operator.
-4. **Canonical-ASR model execution is still unmeasured.** The WSL2 runtime path is real and both
-   GPUs are visible, but this audit did not install/download the roughly 44 GB pair or claim an
-   unrun full-model result. Visual models have separate real-fixture evidence in `evidence/`.
-5. **Reframing is face-aware, not active-speaker-aware.** Without gated diarization and a
+4. **Reframing is face-aware, not active-speaker-aware.** Without gated diarization and a
    speaker-to-face association model, multiple visible faces can still make the wrong person the
    crop target. The current tracker prefers continuity and face area; it does not infer speech.
 
@@ -66,7 +66,8 @@ These cannot be truthfully solved from the checkout alone:
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.
-- The WSL2 setup installs pinned PyPI packages but package-manager integrity is not the same as
+- The WSL2 setup installs pinned, import-checked OmniASR/Qwen packages with a matched
+  Torch/torchaudio 2.8 pair, but package-manager integrity is not the same as
   vendored/checksummed model assets; Meta's model-card downloader still owns those remote bytes.
 - **All six Hugging Face repository revisions are pinned as of 2026-08-09** (D-073/D-075).
   `models/revisions.json` fixes every fetchable repository to a full commit obtained from Hub
@@ -89,7 +90,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,169 collected, 1,169 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,175 collected, 1,175 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -98,6 +99,10 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   `hawedit-editorial-bench`, `hawedit-asr-setup`, `hawedit-credentials` and `hawedit-release`
   all start from the installed wheel.
 - Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker and setup module.
+- Real Stage 1: the rzgar checkpoint reproduced its shipped Sorani demo reference exactly at
+  4,250,408,448 peak allocated bytes on GPU 1; the real CLI then ran OmniASR LLM-7B + CTC-3B,
+  validator routing and Viterbi timing over the committed media fixture in 212.9 seconds from a
+  warm asset cache. The fixture is synthetic Kurmanji, so this proves execution, not Sorani CER.
 - A real 30000/1001 transcode completes JSON/SRT/EDL delivery with SMPTE drop-frame timecode;
   25 fps remains non-drop and unsupported 24000/1001 refuses before any sidecar write.
 - Real pipeline delivery publishes one exact ASS/MP4/SRT/EDL/JSON directory. Tests inject ASS

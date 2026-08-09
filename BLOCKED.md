@@ -435,10 +435,10 @@ under the user's local app-data, installs official `omnilingual-asr`, and refuse
 both CUDA GPUs. Stage 0 and WAV cutting stay on the host, one worker loads both models
 once, and the returned `RawTranscript` is validated before the immutable store accepts it.
 Direct Linux execution remains available through `--omni-asr-runtime local`. This resolves the
-architecture/runtime blocker, not the missing labelled Sorani corpus or an unrun 44 GB model
-pair; those remain measurement blockers under #1.
+architecture/runtime blocker. The 44 GB pair and rzgar validator have since run through the real
+CLI (D-085); the missing labelled Sorani corpus remains the measurement blocker under #1.
 
-**Needs:** Hawa, one decision — where §3 Stage 1 runs. No credentials, no purchase.
+**Needs:** nothing. The historical platform analysis is retained below.
 
 Answering #10 supplied the repository ids and immediately produced a different obstacle. This
 is not a naming question and not a network question; it is a platform one, and it is the last
@@ -496,12 +496,14 @@ two models §7 makes canonical, which is the worst place for it.
 3. **Stage 1 runs on a Linux host** and hawapc01 does Stage 0 and Stage 6. Matches §6's
    split most closely and needs hardware that is not here.
 
-Until one is chosen, M0.11, M0.13 and M1.4 stay open: the weights are identified, downloadable
-and licensed Apache-2.0, and nothing on this OS can open them.
+Before WSL2 was chosen, M0.11, M0.13 and M1.4 stayed open: the weights were identified,
+downloadable and licensed Apache-2.0, and nothing in the Windows host environment could open
+them. D-064 chose WSL2; D-085 provisioned and ran the complete route.
 
 **Not blocked by this:** every other §7 model. Stage 2's embedder and reranker, Stage 3 Path B,
-Stage 5's TimeLens2 and the Stage 1 validator are all ordinary `transformers` repositories that
-load natively on Windows, and they are being integrated regardless.
+Stage 5's TimeLens2 and the Stage 1 validator are ordinary `transformers` repositories. The
+validator now runs in the same isolated WSL2 worker as OmniASR so Stage 1 has one compatible
+Torch environment.
 
 ---
 
