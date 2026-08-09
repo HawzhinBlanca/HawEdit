@@ -438,7 +438,9 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as stream:
         if os.name == "nt":
-            import msvcrt
+            # The Linux typeshed intentionally has no ``msvcrt.locking`` members even
+            # though mypy still checks this runtime-only Windows branch in CI.
+            msvcrt = importlib.import_module("msvcrt")
 
             if stream.seek(0, os.SEEK_END) == 0:
                 stream.write(b"\0")
