@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
+import textwrap
+import zipfile
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
@@ -24,6 +30,36 @@ def _literal_paths(section: str, field: str) -> tuple[str, ...]:
     match = re.search(rf"^          {field}: \|\n((?:            .+\n)+)", section, re.MULTILINE)
     assert match is not None
     return tuple(line.strip() for line in match.group(1).splitlines())
+
+
+def _identity_verifier() -> str:
+    marker = 'identity_output="$(python3 - "${wheels[0]}" <<\'PY\'\n'
+    tail = '\n          PY\n          )"'
+    embedded = _workflow().split(marker, 1)[1].split(tail, 1)[0]
+    return textwrap.dedent(embedded)
+
+
+def _identity_wheel(
+    root: Path,
+    *,
+    filename_name: str = "hawedit",
+    filename_version: str = "1.2.3",
+    metadata_name: str = "hawedit",
+    metadata_version: str = "1.2.3",
+    extra_metadata: bool = False,
+) -> Path:
+    wheel = root / f"{filename_name}-{filename_version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"{filename_name}-{filename_version}.dist-info/METADATA",
+            f"Metadata-Version: 2.4\nName: {metadata_name}\nVersion: {metadata_version}\n\n",
+        )
+        if extra_metadata:
+            archive.writestr(
+                "other-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.4\nName: other\nVersion: 1.0\n\n",
+            )
+    return wheel
 
 
 def test_release_workflow_only_promotes_an_official_successful_main_push_gate() -> None:
@@ -178,9 +214,18 @@ def test_privileged_job_independently_refuses_any_noncanonical_transport() -> No
     assert "grep -Ec '^[0-9a-f]{64}  [A-Za-z0-9_.+-]+$'" in attest
     assert 'test "$actual_names" = "$expected_names"' in attest
     assert "sha256sum --check --strict SHA256SUMS" in attest
+    assert 'name.endswith(".dist-info/METADATA")' in attest
+    assert "release wheel must contain exactly one METADATA" in attest
+    assert 'normalize(distribution) != "hawedit"' in attest
+    assert "release filename distribution does not match METADATA" in attest
+    assert "release filename version does not match METADATA" in attest
+    assert '--arg distribution "$distribution"' in attest
+    assert '--arg version "$version"' in attest
     for binding in (
-        ".schema == 4",
+        ".schema == 5",
         ".revision == $revision",
+        ".distribution == $distribution",
+        ".version == $version",
         '.gate.repository == "HawzhinBlanca/HawEdit"',
         '.gate.workflow == ".github/workflows/gate.yml"',
         ".gate.run_id == $run_id",
@@ -188,6 +233,52 @@ def test_privileged_job_independently_refuses_any_noncanonical_transport() -> No
         ".sbom_sha256 == $sbom_sha",
     ):
         assert binding in attest
+
+
+@pytest.mark.parametrize(
+    ("filename_name", "filename_version", "metadata_name", "extra_metadata"),
+    [
+        ("hawedit", "1.2.3", "hawedit-impostor", False),
+        ("hawedit_impostor", "1.2.3", "hawedit", False),
+        ("hawedit", "9.9.9", "hawedit", False),
+        ("hawedit", "1.2.3", "hawedit", True),
+    ],
+)
+def test_privileged_identity_verifier_refuses_adversarial_wheels(
+    tmp_path: Path,
+    filename_name: str,
+    filename_version: str,
+    metadata_name: str,
+    extra_metadata: bool,
+) -> None:
+    wheel = _identity_wheel(
+        tmp_path,
+        filename_name=filename_name,
+        filename_version=filename_version,
+        metadata_name=metadata_name,
+        extra_metadata=extra_metadata,
+    )
+    result = subprocess.run(
+        [sys.executable, "-", str(wheel)],
+        input=_identity_verifier(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+
+
+def test_privileged_identity_verifier_accepts_canonical_wheel(tmp_path: Path) -> None:
+    wheel = _identity_wheel(tmp_path)
+    result = subprocess.run(
+        [sys.executable, "-", str(wheel)],
+        input=_identity_verifier(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["hawedit", "1.2.3"]
 
 
 def test_release_workflow_pins_every_remote_action_to_a_full_commit() -> None:

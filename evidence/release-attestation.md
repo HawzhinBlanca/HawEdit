@@ -2,7 +2,7 @@
 
 ## The gap
 
-`hawedit-release` produced a byte-reproducible wheel, deterministic SPDX SBOM, schema-4
+`hawedit-release` produced a byte-reproducible wheel, deterministic SPDX SBOM, schema-5
 provenance and `SHA256SUMS`, all bound to an exact successful canonical gate. Those files still
 authenticated only one another. A party able to replace the bundle could rebuild the wheel,
 rewrite its self-asserted metadata and publish a new checksum manifest with no external trust root.
@@ -40,8 +40,11 @@ The final dependent job starts on another fresh runner and does not check out or
 `actions/download-artifact` validates the transport digest. Trusted workflow shell then refuses
 anything except one regular wheel, its one regular SPDX document, `release-provenance.json` and
 `SHA256SUMS`: nested, linked, special, extra, missing, malformed-manifest or digest-mismatched
-entries all fail. It also binds schema-4 repository/workflow/event/branch/run/SHA/wheel/SBOM fields
-to the triggering event and measured bytes. Only this isolated job has `contents: read`,
+entries all fail. It opens the wheel independently, requires exactly one METADATA member,
+requires the normalized distribution to be `hawedit`, and requires its name/version to match the
+PEP 427 filename. It then binds schema-5 distribution/version plus
+repository/workflow/event/branch/run/SHA/wheel/SBOM fields to the triggering event and measured
+bytes. Only this isolated job has `contents: read`,
 `id-token: write` and `attestations: write`. It uses GitHub OIDC through `actions/attest` to create
 build-provenance attestations for the exact same explicit four paths that the final upload action
 receives. Repository code therefore never receives attestation authority, and un-attested
@@ -61,16 +64,17 @@ All remote actions are immutable full commits resolved from their official relea
 
 - `tests/test_release_workflow.py` pins the trigger, official-repository/main-push conditions,
   permission split, clean 3.11/3.12 installed-wheel matrix, fresh privileged job, exact-SHA
-  checkout, release-run binding, exact-set and manifest/provenance checks, action commits, equal
+  checkout, release-run binding, exact-set, wheel-identity and manifest/provenance checks, action commits, equal
   attestation/upload path lists and step order.
 - `tests/test_release.py` continues to exercise the exact-gate verifier and real double build.
 - `tests/test_fetch_scripts.py` rejects every remote workflow action not pinned to 40 hex digits.
 - PyYAML 6.0.3 parsed the workflow.
 - The official `actionlint` v1.7.12 Windows archive was verified against its release checksum;
-  `actionlint .github/workflows/release.yml .github/workflows/gate.yml` returned zero findings.
+  `release.yml` returned zero findings, and the combined release/gate run returned zero after the
+  one declared custom self-hosted label `hawedit-gpu` was ignored explicitly.
 
-The local workflow/security set passed, and actionlint accepted both workflows. The combined
-canonical gate then passed 1,457/1,457 with zero skips; Ruff, format, Mypy and fresh JUnit evidence
+The local workflow/security set passed, and actionlint accepted the edited release workflow. The combined
+canonical gate then passed 1,818/1,818 with zero skips; Ruff, format, Mypy and fresh JUnit evidence
 passed. Fresh local Python 3.11.15 and 3.12.13 venvs also installed and executed the exact same
 edited-tree wheel contract; see `evidence/python-support.md`.
 

@@ -20,6 +20,7 @@ import pytest
 import hawedit.release as release_module
 from hawedit.release import (
     ReleaseError,
+    _assert_release_identity,
     _extract_git_archive,
     _github_json,
     _locked_build_contract,
@@ -213,6 +214,14 @@ def test_release_builds_twice_and_publishes_verified_provenance(
     revision = _git(project, "rev-parse", "HEAD")
     run, jobs = _successful_gate_responses(revision)
     _stub_gate_api(monkeypatch, run, jobs)
+    identity_calls: list[tuple[Path, Path]] = []
+    original_identity_check = release_module._assert_release_identity
+
+    def record_identity(project_root: Path, wheel: Path) -> tuple[str, str]:
+        identity_calls.append((project_root, wheel))
+        return original_identity_check(project_root, wheel)
+
+    monkeypatch.setattr(release_module, "_assert_release_identity", record_identity)
 
     artifact = build_reproducible_wheel(
         project,
@@ -223,6 +232,10 @@ def test_release_builds_twice_and_publishes_verified_provenance(
 
     assert artifact.output_dir == destination
     assert artifact.wheel.is_file()
+    assert artifact.distribution == "hawedit-release-fixture"
+    assert artifact.version == "1.0.0"
+    assert len(identity_calls) == 1
+    assert identity_calls[0][0].name == "source-first"
     assert artifact.checksum_file.read_text(encoding="utf-8") == (
         f"{artifact.sha256}  {artifact.wheel.name}\n"
         f"{artifact.sbom_sha256}  {artifact.sbom_file.name}\n"
@@ -230,9 +243,11 @@ def test_release_builds_twice_and_publishes_verified_provenance(
     )
     provenance = json.loads(artifact.provenance_file.read_text(encoding="utf-8"))
     assert provenance == {
-        "schema": 4,
+        "schema": 5,
         "revision": revision,
         "source_date_epoch": artifact.source_date_epoch,
+        "distribution": "hawedit-release-fixture",
+        "version": "1.0.0",
         "gate": {
             "repository": "HawzhinBlanca/HawEdit",
             "workflow": ".github/workflows/gate.yml",
@@ -361,6 +376,58 @@ def test_release_builds_twice_and_publishes_verified_provenance(
             python=Path(sys.executable),
             gate_run_id=GATE_RUN_ID,
         )
+
+
+def _identity_fixture(
+    root: Path,
+    *,
+    project_name: str = "hawedit",
+    project_version: str = "1.2.3",
+    metadata_name: str = "hawedit",
+    metadata_version: str = "1.2.3",
+    filename_name: str = "hawedit",
+    filename_version: str = "1.2.3",
+) -> tuple[Path, Path]:
+    project = root / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        f'[project]\nname = "{project_name}"\nversion = "{project_version}"\n',
+        encoding="utf-8",
+    )
+    wheel = root / f"{filename_name}-{filename_version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"{filename_name}-{filename_version}.dist-info/METADATA",
+            f"Metadata-Version: 2.4\nName: {metadata_name}\nVersion: {metadata_version}\n\n",
+        )
+    return project, wheel
+
+
+@pytest.mark.parametrize(
+    ("changed", "message"),
+    [
+        ({"metadata_name": "hawedit-impostor"}, "METADATA name"),
+        ({"metadata_version": "9.9.9"}, "METADATA version"),
+        ({"filename_name": "hawedit_impostor"}, "filename distribution"),
+        ({"filename_version": "9.9.9"}, "filename version"),
+    ],
+)
+def test_release_identity_refuses_source_metadata_or_filename_drift(
+    tmp_path: Path, changed: dict[str, str], message: str
+) -> None:
+    project, wheel = _identity_fixture(tmp_path, **changed)
+    with pytest.raises(ReleaseError, match=message):
+        _assert_release_identity(project, wheel)
+
+
+def test_release_identity_accepts_pep503_name_spelling_only(tmp_path: Path) -> None:
+    project, wheel = _identity_fixture(
+        tmp_path,
+        project_name="HawEdit.Release_Fixture",
+        metadata_name="hawedit-release-fixture",
+        filename_name="hawedit_release_fixture",
+    )
+    assert _assert_release_identity(project, wheel) == ("hawedit-release-fixture", "1.2.3")
 
 
 def test_release_refuses_to_build_without_an_explicit_gate_run(tmp_path: Path) -> None:
@@ -633,6 +700,11 @@ def test_release_builds_from_the_gated_git_object_not_live_worktree(
     monkeypatch.setattr(release_module, "_create_locked_builder", fake_builder)
     monkeypatch.setattr(release_module, "_build_once", fake_build_once)
     monkeypatch.setattr(release_module, "_validate_hawedit_wheel", lambda _wheel: None)
+    monkeypatch.setattr(
+        release_module,
+        "_assert_release_identity",
+        lambda _source, _wheel: ("hawedit-fixture", "1.0.0"),
+    )
     monkeypatch.setattr(release_module, "_spdx_sbom", fake_sbom)
     destination = tmp_path / "published-from-snapshot"
     try:

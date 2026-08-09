@@ -146,19 +146,21 @@ The run id is explicit: the command queries GitHub and requires the official rep
 successful. A feature-branch, pull-request, manual, fork, queued, failed, wrong-SHA or incomplete
 run is refused; network/API failure is also a refusal. Set `GITHUB_TOKEN` when unauthenticated API
 limits are insufficient. Redirects are rejected before following so that token is never forwarded
-to another host. The accepted run and job are written into schema-4 provenance.
+to another host. The accepted run and job are written into schema-5 provenance.
 
 Only then does the command derive `SOURCE_DATE_EPOCH` from `HEAD`, create a private temporary
 builder from the exact Pip and Setuptools wheels hash-locked in
 `requirements/release-build.txt`, export the verified Git object twice with replacement refs
 disabled, and build each wheel from its own pristine source directory. It requires identical
 filenames and SHA-256 digests, checks the archive for the Kurdish font/licence and model
-source/revision manifests, then atomically publishes a
+source/revision manifests, and requires one distribution name/version across the archived
+`pyproject.toml`, wheel filename and the wheel's single METADATA record, then atomically publishes a
 write-once directory under `dist/`. That directory contains the wheel, `SHA256SUMS`,
 `release-provenance.json`, and deterministic SPDX 2.3 JSON. The SBOM binds the exact wheel and
 bundled Noto font hashes and records every base/optional dependency declared by the wheel; it
 marks unbundled requirements unresolved instead of borrowing versions from the build machine.
-Provenance records the measured Python, build frontend/backend and build-lock digest.
+Provenance records that distribution identity, the measured Python, build frontend/backend and
+build-lock digest.
 `SHA256SUMS` covers all three metadata/artifact payloads. A dirty checkout, unpinned or drifting
 gate mismatch, builder drift, hash mismatch, non-reproducible build, missing runtime file, corrupt
 wheel, or existing release directory is refused.
@@ -169,7 +171,9 @@ verifier in a read-only job, then requires fresh no-checkout Python 3.11 and 3.1
 the exact wheel, run `pip check`, resolve installed package data and start all seven CLIs. Only after
 both pass does it transfer the four explicit payloads to a fresh runner. Only that isolated job has
 OIDC/attestation authority; it refuses any extra, nested,
-linked, malformed or digest-mismatched entry and binds schema-4 provenance to the triggering run
+linked, malformed or digest-mismatched entry, independently requires the wheel to identify the
+`hawedit` distribution with the same filename/METADATA version, and binds schema-5 provenance to
+that identity and the triggering run
 before attesting and uploading the same explicit four-file set. The workflow actions are
 full-commit pinned and neither job has repository-content write permission. Verify a downloaded
 run artifact rather than trusting its filename. If `main` advances before an older gate is

@@ -115,6 +115,8 @@ class ReleaseArtifact:
     build_frontend: str
     build_backend: str
     build_lock_sha256: str
+    distribution: str
+    version: str
 
     def to_dict(self) -> dict[str, str | int]:
         return {
@@ -135,6 +137,8 @@ class ReleaseArtifact:
             "build_frontend": self.build_frontend,
             "build_backend": self.build_backend,
             "build_lock_sha256": self.build_lock_sha256,
+            "distribution": self.distribution,
+            "version": self.version,
         }
 
 
@@ -680,6 +684,66 @@ def _wheel_metadata(wheel: Path) -> tuple[str, str, tuple[str, ...]]:
     return name, version, requirements
 
 
+def _project_identity(project_root: Path) -> tuple[str, str]:
+    """Read the distribution identity the exact source revision authorizes."""
+    path = project_root / "pyproject.toml"
+    try:
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise ReleaseError(f"could not read release project identity from {path}: {exc}") from exc
+    project = raw.get("project")
+    if not isinstance(project, dict):
+        raise ReleaseError("pyproject.toml must contain one [project] table")
+    name = project.get("name")
+    version = project.get("version")
+    if not isinstance(name, str) or not name.strip() or name != name.strip():
+        raise ReleaseError("pyproject.toml [project].name must be one nonblank trimmed string")
+    if not isinstance(version, str) or not version.strip() or version != version.strip():
+        raise ReleaseError("pyproject.toml [project].version must be one nonblank trimmed string")
+    return name, version
+
+
+def _wheel_filename_identity(wheel: Path) -> tuple[str, str]:
+    """Return the distribution/version encoded by a PEP 427 wheel filename."""
+    if not wheel.name.endswith(".whl"):
+        raise ReleaseError(f"built artifact is not named as a wheel: {wheel.name}")
+    stem = wheel.name.removesuffix(".whl")
+    fields = stem.rsplit("-", 3)
+    if len(fields) != 4 or any(not field for field in fields):
+        raise ReleaseError(f"built wheel has a malformed filename: {wheel.name}")
+    identity = fields[0].split("-")
+    if len(identity) not in (2, 3) or any(not field for field in identity):
+        raise ReleaseError(f"built wheel has a malformed distribution/version: {wheel.name}")
+    return identity[0], identity[1]
+
+
+def _assert_release_identity(project_root: Path, wheel: Path) -> tuple[str, str]:
+    """Bind source, filename and METADATA to one distribution name and version."""
+    expected_name, expected_version = _project_identity(project_root)
+    metadata_name, metadata_version, _ = _wheel_metadata(wheel)
+    filename_name, filename_version = _wheel_filename_identity(wheel)
+    if _pypi_name(metadata_name) != _pypi_name(expected_name):
+        raise ReleaseError(
+            f"wheel METADATA name {metadata_name!r} does not match pyproject name {expected_name!r}"
+        )
+    if metadata_version != expected_version:
+        raise ReleaseError(
+            f"wheel METADATA version {metadata_version!r} does not match pyproject version "
+            f"{expected_version!r}"
+        )
+    if _pypi_name(filename_name) != _pypi_name(metadata_name):
+        raise ReleaseError(
+            f"wheel filename distribution {filename_name!r} does not match METADATA name "
+            f"{metadata_name!r}"
+        )
+    if filename_version != metadata_version:
+        raise ReleaseError(
+            f"wheel filename version {filename_version!r} does not match METADATA version "
+            f"{metadata_version!r}"
+        )
+    return metadata_name, metadata_version
+
+
 def _wheel_member_bytes(wheel: Path, suffix: str) -> bytes:
     try:
         with zipfile.ZipFile(wheel) as archive:
@@ -923,6 +987,7 @@ def build_reproducible_wheel(
                 f"{first.name} {first_digest} != {second.name} {second_digest}"
             )
         _validate_hawedit_wheel(first)
+        distribution, version = _assert_release_identity(first_source, first)
 
         # Refuse if HEAD or the worktree changed while the two builds were running.
         if _source_identity(root) != (revision, epoch):
@@ -944,9 +1009,11 @@ def build_reproducible_wheel(
             )
             sbom_digest = hashlib.sha256(sbom_payload).hexdigest()
             provenance = {
-                "schema": 4,
+                "schema": 5,
                 "revision": revision,
                 "source_date_epoch": epoch,
+                "distribution": distribution,
+                "version": version,
                 "gate": gate.to_dict(),
                 "builder": builder.to_dict(),
                 "wheel": first.name,
@@ -991,6 +1058,8 @@ def build_reproducible_wheel(
         build_frontend=builder.frontend,
         build_backend=builder.backend,
         build_lock_sha256=builder.lock_sha256,
+        distribution=distribution,
+        version=version,
     )
 
 

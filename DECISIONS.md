@@ -4009,7 +4009,8 @@ redirect-rejecting handler, so a 30x is an HTTP refusal and `GITHUB_TOKEN` never
 The provenance URLs are constructed locally from already-verified official run/job ids rather
 than treating GitHub's display-link formatting as a security boundary.
 
-**Provenance schema 4 records the proof.** Repository, workflow, run id/attempt, event, branch,
+**Provenance schema 4 introduced the proof (schema 5 adds D-157's artifact identity).** Repository,
+workflow, run id/attempt, event, branch,
 revision, result, completion, job id and official URLs are now part of the checksummed provenance.
 An explicit id makes the result stable and reviewable; it also prevents a newer unrelated success
 from blessing an older source tree.
@@ -4317,7 +4318,7 @@ ship in a nominally attested bundle.
 `contents: read` and `actions: read`, checks out the exact successful official `gate` push SHA,
 invokes the existing independent gate verifier and uploads four explicit paths as a short-lived transport. A dependent
 job starts on a fresh runner, checks out no repository code, validates the transport digest and
-refuses anything except one regular wheel, its SPDX JSON, schema-4 provenance and `SHA256SUMS`.
+refuses anything except one regular wheel, its SPDX JSON, schema-5 provenance and `SHA256SUMS`.
 Trusted workflow shell rechecks the manifest and binds repository, workflow, event, branch, gate
 run, revision, wheel and SBOM fields to the event and actual bytes. Only then does that job receive
 GitHub OIDC/attestation authority. `actions/attest` and the final upload receive the same explicit
@@ -5092,3 +5093,26 @@ the reranked survivor IDs, so the model cannot silently omit or invent a window.
 still runs after the complete survivor phase and cannot mask the primary failure. Eight mutations
 are caught, including a direct trip through the real reader method.
 `evidence/one-window-discarded-every-candidate.md`.
+
+## D-157 - Reproducible bytes must still identify HawEdit
+
+The release command proved that two builds emitted the same bytes, but it never proved which
+distribution those bytes claimed to be. A real HawEdit wheel reconstructed with METADATA
+`Name: hawedit-impostor`, `Version: 9.9.9` and a matching wrong filename still passed
+`_validate_hawedit_wheel`. It could therefore receive HawEdit gate provenance and a GitHub OIDC
+attestation even though the attested artifact identity was not the project identity authorized by
+the gated source.
+
+**Decision:** publication requires one identity across three independent representations. The
+archived `pyproject.toml` supplies the authorized project name/version, the wheel must contain
+exactly one METADATA record, and the PEP 427 filename must encode the same normalized distribution
+name and exact version. The check runs on the immutable first source export before any release
+directory is created. Schema-5 provenance records the measured distribution and version.
+
+The privileged attestation job does not trust that repository-code check. On its fresh no-checkout
+runner it opens the transported wheel with the standard library, requires exactly one METADATA,
+requires normalized distribution `hawedit`, checks filename/METADATA identity, and requires the
+same fields in schema-5 provenance before granting OIDC attestation authority. Tests mutate source,
+METADATA and filename name/version independently and pin the workflow-side verifier. This closes
+artifact-identity substitution; it does not invent the still-missing version/tag policy or durable
+GitHub Release. `evidence/release-identity-binding.md`.

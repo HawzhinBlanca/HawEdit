@@ -199,7 +199,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > `main` push run of `.github/workflows/gate.yml` for the exact clean release SHA. The API, exported
 > Python function and CLI all fail closed before creating a builder or output directory when the
 > run, repository, workflow, branch, event, SHA, attempt, job or any mandatory step is wrong. The
-> exact run/job is recorded in schema-4 provenance. Redirects are refused before authorization can
+> exact run/job is recorded in schema-5 provenance. Redirects are refused before authorization can
 > cross hosts. Both wheel builds consume separate pristine `git --no-replace-objects archive`
 > exports of the verified SHA, so live-worktree races and build-1 residue cannot enter or stabilize
 > the artifact. `evidence/release-exact-gate.md`.
@@ -216,7 +216,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > **M3.7 authenticity amendment (D-113).** A successful official `gate` push on `main` now feeds a
 > permission-separated release workflow. Repository code builds with a read-only token; fresh
 > no-checkout 3.11/3.12 jobs install and execute the exact wheel; a final fresh job independently
-> validates the exact four-file transport, binds schema-4 provenance to the event, and alone
+> validates the exact four-file transport, binds schema-5 provenance to the event, and alone
 > receives GitHub OIDC/attestation authority. Attestation and final upload receive the same
 > explicit allowlist. The workflow and actions are locally linted and contract-tested, but the
 > live hosted acceptance gate remains open until this workflow is on default `main` and all four
@@ -236,6 +236,15 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > relocation. Windows 3.11/3.12 and source/wheel/model-fetch paths are measured; Linux is
 > resolver-verified and exercised by CI. CUDA remains a separate open lock.
 > `evidence/host-dependency-locks.md`.
+
+> **M3.7 artifact-identity amendment (D-157).** Reproducible bytes are no longer sufficient if the
+> wheel identifies a different project or version. Release now requires the archived
+> `pyproject.toml`, the single wheel METADATA record and the PEP 427 filename to agree on one
+> normalized distribution name and exact version before publication. Schema-5 provenance records
+> both fields. The fresh privileged workflow job independently opens the wheel without a checkout,
+> requires distribution `hawedit`, rechecks filename/METADATA equality and binds those measured
+> fields to provenance before OIDC attestation. This closes artifact-identity substitution; a
+> version/tag policy and durable GitHub Release remain open. `evidence/release-identity-binding.md`.
 
 | M1.8 | Windows private checkpoint staging and hard-crash resume | DONE | `src/hawedit/windows_security.py` + `src/hawedit/model_fetch.py` + `tests/test_model_fetch.py`. Fresh directories receive protected native DACLs at creation; root/member owner and ACEs are revalidated, `Everyone:F` is refused, and one revision-specific private tree survives hard process death. `evidence/checkpoint-provisioning.md`, D-124. |
 | M3.10 | Code-bound host dependency locks | DONE | `src/hawedit/host_lock_hashes.py` + `src/hawedit/environment.py` + twelve `requirements/host-*.txt` locks + `tests/test_host_dependencies.py`. CPU base, gate and model-fetch environments are exact wheel-hash graphs for Linux/Windows Python 3.11/3.12. `evidence/host-dependency-locks.md`, D-122. |

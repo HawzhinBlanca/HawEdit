@@ -27,7 +27,8 @@ directory is created, HawEdit queries the GitHub API and requires all of the fol
 Missing IDs, API/network errors, forks, manual/PR/feature runs, wrong revisions, incomplete or
 failed jobs, skipped/missing steps and malformed evidence are release refusals. `GITHUB_TOKEN` is
 optional for public API access and is sent only in the authorization header. The exact accepted
-run, attempt, job, completion time and URLs are recorded in deterministic schema-4 provenance.
+run, attempt, job, completion time and URLs are recorded in deterministic schema-5 provenance
+(schema 4 was the original exact-gate format; D-157 adds distribution/version identity).
 Redirect responses are not followed, preventing the authorization header from crossing hosts.
 
 Both builds read two separate pristine exports produced by

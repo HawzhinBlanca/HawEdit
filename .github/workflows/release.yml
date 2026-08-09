@@ -192,6 +192,57 @@ jobs:
 
           wheel_name="$(basename "${wheels[0]}")"
           sbom_name="$(basename "${sboms[0]}")"
+          identity_output="$(python3 - "${wheels[0]}" <<'PY'
+          import re
+          import sys
+          import zipfile
+          from email.parser import BytesParser
+          from pathlib import Path
+
+          wheel = Path(sys.argv[1])
+          try:
+              with zipfile.ZipFile(wheel) as archive:
+                  members = [
+                      name
+                      for name in archive.namelist()
+                      if name.endswith(".dist-info/METADATA")
+                  ]
+                  if len(members) != 1:
+                      raise ValueError(
+                          f"release wheel must contain exactly one METADATA, found {len(members)}"
+                      )
+                  metadata = BytesParser().parsebytes(archive.read(members[0]))
+          except (OSError, KeyError, zipfile.BadZipFile) as exc:
+              raise SystemExit(f"release wheel METADATA is unreadable: {exc}") from exc
+
+          distribution = str(metadata.get("Name", "")).strip()
+          version = str(metadata.get("Version", "")).strip()
+          if not distribution or not version or any(
+              character in distribution + version for character in "\r\n\0"
+          ):
+              raise SystemExit("release wheel has an invalid METADATA identity")
+
+          stem = wheel.name.removesuffix(".whl")
+          fields = stem.rsplit("-", 3)
+          identity = fields[0].split("-") if len(fields) == 4 else []
+          if len(identity) not in (2, 3) or any(not field for field in (*fields, *identity)):
+              raise SystemExit(f"release wheel has a malformed filename: {wheel.name}")
+          filename_distribution, filename_version = identity[:2]
+          normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+          if normalize(distribution) != "hawedit":
+              raise SystemExit(f"release distribution must be hawedit, got {distribution!r}")
+          if normalize(filename_distribution) != normalize(distribution):
+              raise SystemExit("release filename distribution does not match METADATA")
+          if filename_version != version:
+              raise SystemExit("release filename version does not match METADATA")
+          print(distribution)
+          print(version)
+          PY
+          )"
+          mapfile -t identity <<< "$identity_output"
+          test "${#identity[@]}" -eq 2
+          distribution="${identity[0]}"
+          version="${identity[1]}"
           test "$(wc -l < "$RELEASE_DIR/SHA256SUMS")" -eq 3
           test "$(grep -Ec '^[0-9a-f]{64}  [A-Za-z0-9_.+-]+$' \
             "$RELEASE_DIR/SHA256SUMS")" -eq 3
@@ -213,8 +264,12 @@ jobs:
             --arg wheel_sha "$wheel_sha" \
             --arg sbom "$sbom_name" \
             --arg sbom_sha "$sbom_sha" \
-            '.schema == 4 and
+            --arg distribution "$distribution" \
+            --arg version "$version" \
+            '.schema == 5 and
              .revision == $revision and
+             .distribution == $distribution and
+             .version == $version and
              .gate.repository == "HawzhinBlanca/HawEdit" and
              .gate.workflow == ".github/workflows/gate.yml" and
              .gate.event == "push" and
