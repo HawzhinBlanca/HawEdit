@@ -27,7 +27,6 @@ should be told so before it spends an hour finding out.
 
 from __future__ import annotations
 
-import ctypes
 import errno
 import hashlib
 import importlib
@@ -44,6 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final, cast
 
+from hawedit.atomic_fs import rename_directory_noreplace
 from hawedit.environment import EnvironmentAuditError, resolve_installed_hawedit_data
 from hawedit.registry import REGISTRY, ModelEntry, Provisioning
 from hawedit.wsl_setup import WSL_MODEL_METADATA_DIRECTORY, probe_wsl_runtime
@@ -1005,41 +1005,14 @@ def _path_is_reparse(path: Path) -> bool:
 
 def _publish_checkpoint_directory(source: Path, destination: Path) -> None:
     """Atomically rename one verified directory without replacing any existing final path."""
-    if os.name == "nt":
-        # Windows MoveFile already has no-replace semantics for os.rename().
-        os.rename(source, destination)
-        return
-
-    encoded_source = os.fsencode(source)
-    encoded_destination = os.fsencode(destination)
-    library = ctypes.CDLL(None, use_errno=True)
-    renameat2 = getattr(library, "renameat2", None)
-    if renameat2 is not None:
-        renameat2.argtypes = [
-            ctypes.c_int,
-            ctypes.c_char_p,
-            ctypes.c_int,
-            ctypes.c_char_p,
-            ctypes.c_uint,
-        ]
-        renameat2.restype = ctypes.c_int
-        # Linux: RENAME_NOREPLACE, relative to the current directory when paths are relative.
-        result = renameat2(-100, encoded_source, -100, encoded_destination, 1)
-    else:
-        renamex_np = getattr(library, "renamex_np", None)
-        if renamex_np is None:
+    try:
+        rename_directory_noreplace(source, destination)
+    except OSError as exc:
+        if exc.errno == errno.ENOTSUP:
             raise CheckpointIntegrityError(
                 "this platform has no atomic no-replace directory publication primitive"
-            )
-        renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-        renamex_np.restype = ctypes.c_int
-        # Darwin: RENAME_EXCL.
-        result = renamex_np(encoded_source, encoded_destination, 0x00000004)
-    if result != 0:
-        error = ctypes.get_errno()
-        if error in {errno.EEXIST, errno.ENOTEMPTY}:
-            raise FileExistsError(error, os.strerror(error), destination)
-        raise OSError(error, os.strerror(error), destination)
+            ) from exc
+        raise
 
 
 def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
