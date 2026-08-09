@@ -226,6 +226,13 @@ def check_test_evidence(
     # a Windows account may not create) collected 873 and passed 872, so the first run raised
     # the floor to 873 and every run after it was refused for missing a bar the previous run
     # invented. Two floors, one job, and they disagreed on any host with a skip.
+    # Measured 2026-08-09: this fix was described here at length and held in place by nothing.
+    # Substituting `collected` for `passed` in the ratchet below left all 1,164 tests green,
+    # because every ratchet test used a report with `skipped=0` — where the two numbers are equal
+    # by construction — and this host skips nothing. The defect is invisible exactly here and
+    # fires on a machine where something legitimately skips. Now pinned by the idempotence
+    # property in `tests/test_gate_evidence.py`: a green run must never leave the gate refusing
+    # an identical one. D-095.
     floor = read_floor(floor_path)
     if evidence.passed < floor:
         raise NoTestEvidence(

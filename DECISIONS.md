@@ -3876,3 +3876,48 @@ an *unrelated* field vanishing CAUGHT (1, the recorded schema alone — the diff
 the field and fixing the class), scoring an unmeasured dialect `0.0` CAUGHT (6 — the hard rule
 "unmeasured is None, never 0.0"), and every dialect reporting the aggregate CAUGHT (7).
 `evidence/aggregate-cer-without-its-dialects.md`.
+
+## D-095
+
+**The gate's own self-poisoning fix was described in the code at length and held in place by nothing.**
+`gate.py` records why the floor ratchets on `passed`: ratcheting on `collected` while gating on
+`passed` once wrote a bar of 873 from a run that passed 872, and every run after it was refused for
+missing a number no run had achieved. Substituting `collected` back into the ratchet, with counts read
+from a JUnit report rather than a summary line:
+
+```
+baseline: collected=1164 skipped=0 failures=0 errors=0 passed=1164
+mutated:  collected=1164 skipped=0 failures=0 errors=0 passed=1164
+```
+
+Two reasons, and the second matters more. Every ratchet test used a report with `skipped=0`, where the
+two numbers are equal by construction — correct tests that could not tell them apart, the shape of
+D-086, D-088 and D-094. And **this host skips nothing**, so the defect is invisible exactly here and
+fires on a machine where something legitimately skips: a box without the pinned ffmpeg, or CI if the
+golden render ever starts skipping. The regression would land on somebody else's machine.
+
+Run directly against the 873/872 numbers in the comment: correct behaviour writes 872 and accepts an
+identical second run; the reverted behaviour writes 873 and refuses it.
+
+**Decision: pin it with the idempotence property, not with a number.** "A green run must never leave
+the gate refusing an identical one" needs no knowledge of which count is right — a ratchet on
+`collected` fails it, a ratchet on `passed` cannot. Alongside it, the direct assertion on the
+**artifact** (the floor file reads 872, not 873) and a control requiring the floor to reach the full
+count when nothing skips, so "ratchet on `passed`" is not read as "ratchet lower than collected",
+which would stop the gate noticing deletions.
+
+**Tried and backed out: binding `ran = evidence.passed` for both sites.** The reasoning was that one
+name makes "gate on one, ratchet on the other" unexpressible. It does not — `ran = evidence.collected`
+is the same one-word edit, so the rename only moves the single point. It also broke
+`test_the_readme_describes_the_gate_floor_as_tests_that_passed`, which asserts the literal
+`if evidence.passed < floor:` in the source to keep the README's wording honest (D-069). The audit
+settled it: the third mutation below is caught by **that test alone**, so the rename would have traded
+real protection for a cosmetic gain. `gate.py`'s diff here is comment-only.
+
+**Mutation audit 5/5.** The ratchet writing `collected` CAUGHT (2), writing `collected` on every run
+rather than only on growth CAUGHT (2), the *gate* comparing `collected` CAUGHT (1, the source-text
+claims test alone), the ratchet never firing CAUGHT (4), and the floor ratcheted one below what ran —
+the over-lax direction, which would leave room for a test to vanish between two green runs — CAUGHT
+(4). Unlike D-087/088/090/091 the new control is not the only witness: the existing ratchet tests
+already covered downward drift. What they could not see was *which of two equal numbers* was written.
+`evidence/floor-ratchet-unprotected.md`.

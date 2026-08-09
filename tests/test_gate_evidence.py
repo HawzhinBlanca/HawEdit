@@ -115,3 +115,52 @@ def test_the_projects_own_floor_is_committed() -> None:
     floor = Path(__file__).resolve().parents[1] / "scripts" / "test-count.floor"
     assert floor.exists(), f"no committed test-count floor at {floor}"
     assert read_floor(floor) > 0
+
+
+# --- D-095: the gate's own self-poisoning fix was held in place by nothing -------------------
+
+
+def test_the_ratchet_writes_what_ran_not_what_was_collected(tmp_path: Path) -> None:
+    """`gate.py` describes this fix at length and no test held it.
+
+    Measured: substituting `collected` for `passed` in the ratchet alone left all 1,164 tests
+    green. Every ratchet test used a report with `skipped=0`, where the two numbers are equal by
+    construction, and this host skips nothing — so the defect is invisible exactly here and
+    fires on a machine where something legitimately skips.
+
+    Asserted on the artifact: the committed floor file, not the returned counts.
+    """
+    floor = tmp_path / "floor"
+    write_floor(floor, 800)
+    check_test_evidence(_report(tmp_path / "r.xml", tests=873, skipped=1), floor_path=floor)
+    assert read_floor(floor) == 872, (
+        "the floor recorded a number no run achieved — 873 collected, 872 passed, and a bar of "
+        "873 refuses the very run that set it"
+    )
+
+
+def test_a_run_with_a_skip_does_not_poison_the_next_identical_run(tmp_path: Path) -> None:
+    """The property, stated the way it actually failed: 873 collected, 872 passed, then red.
+
+    This is the strongest form of the check, because it needs no knowledge of which number is
+    right — it says only that a green run must not leave the gate refusing an identical one. A
+    ratchet on `collected` fails it; a ratchet on `passed` cannot.
+    """
+    floor = tmp_path / "floor"
+    report = _report(tmp_path / "r.xml", tests=873, skipped=1)
+    first = check_test_evidence(report, floor_path=floor)
+    second = check_test_evidence(report, floor_path=floor)  # must not raise
+    assert first.passed == second.passed == 872
+    assert read_floor(floor) == 872
+
+
+def test_the_floor_still_reaches_the_full_count_when_nothing_skips(tmp_path: Path) -> None:
+    """The control. "Ratchet on `passed`" must not be read as "ratchet lower than collected".
+
+    With no skips the two numbers are the same and the floor has to reach it, or a suite that
+    skips nothing would be ratcheted below its own size and the gate would stop noticing
+    deletions — the failure the ratchet exists to prevent, arrived at from the other side.
+    """
+    floor = tmp_path / "floor"
+    check_test_evidence(_report(tmp_path / "r.xml", tests=1164), floor_path=floor)
+    assert read_floor(floor) == 1164
