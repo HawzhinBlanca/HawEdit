@@ -109,11 +109,37 @@ def test_the_whole_transcript_is_sent_unfiltered() -> None:
     Sending a sample, or only what a local heuristic liked, is the failure the dual path was
     designed to prevent — and it would be invisible, because the candidates that came back
     would still look perfectly reasonable.
+
+    Asserted on the WHOLE `text_ckb`, not on sampled fragments. The three fragments this test
+    used to check — ڕۆژنامەوانی, گرنگە, بکەین — are all entries in the fixture's `words` tuple, so
+    `_timing_table` renders every one of them above the transcript and `fragment in api.prompt`
+    was satisfied by the timing table alone. Measured: deleting the transcript text from the
+    prompt entirely left `tests/test_path_a.py` at 21 passed and the full suite at `exit=0,
+    0 FAILED`. The test could not see the thing it was written to protect. D-086.
     """
+    transcript = a_transcript()
     api = Api()
-    a_path_a(api).discover(a_transcript())
-    for fragment in ("ڕۆژنامەوانی", "گرنگە", "بکەین"):
+    a_path_a(api).discover(transcript)
+
+    assert transcript.text_ckb in api.prompt, (
+        "the normalized transcript was not sent verbatim. §3 requires the full text, and a "
+        "subset would be invisible in the output because the candidates still look reasonable."
+    )
+    # The fragments that discriminate: present in `text_ckb` and absent from `words`, so only
+    # the transcript itself can put them in the prompt.
+    words = {word.w.strip(".،") for word in transcript.words}
+    discriminating = [
+        fragment
+        for fragment in transcript.text_ckb.replace(".", " ").split()
+        if fragment.strip(".،") not in words
+    ]
+    assert discriminating, "the fixture no longer has text outside `words`; this test is blind"
+    for fragment in discriminating:
         assert fragment in api.prompt, f"{fragment!r} was withheld from the judge"
+
+    # The control: the timing table must still be there. Otherwise a prompt that dropped
+    # timings and kept the text would pass everything above.
+    assert "0-900" in api.prompt, "the timing table vanished"
 
 
 def test_a_verbal_only_moment_is_discoverable_because_nothing_pre_filtered() -> None:

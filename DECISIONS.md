@@ -3473,3 +3473,41 @@ gaps "would be a threefold overstatement", so the redundancy instruction added a
 intended.
 
 Gate: `VERIFY OK — 1136 passed, 0 skipped`.
+
+## D-086
+
+**Path A's transcript could be deleted entirely and the whole suite stayed green.** M2.3's row
+says "Sends the **whole** normalized transcript — a test asserts every fragment reaches the judge,
+because sending a subset is the exact failure §3 built the dual path to prevent and would be
+invisible in the output." Measured: replacing `text=transcript.text_ckb` with `text=""` — so the
+judge receives a timing table and no Kurdish text at all — left `tests/test_path_a.py` at 21 passed
+and the full suite at `exit=0, 0 FAILED`.
+
+**Why the cited test could not see it.** `test_the_whole_transcript_is_sent_unfiltered` asserted
+three fragments — ڕۆژنامەوانی, گرنگە, بکەین — and all three are entries in the fixture's `words`
+tuple, so `_timing_table` renders each of them above the transcript. `fragment in api.prompt` was
+satisfied by the timing table alone. The fixture's `text_ckb` deliberately carries material absent
+from `words` (لە, هەولێر, زۆر, بۆ, ئێمە, با, باسی) and not one of those was asserted, so the test
+sampled exactly the fragments that could not discriminate.
+
+**Decision: assert the whole `text_ckb` verbatim, not sampled fragments.** A substring check on the
+complete transcript cannot be satisfied by a timing table, and it needs no list of magic fragments
+to maintain. The discriminating fragments are additionally derived at runtime — computed as
+`text_ckb` minus `words` — with an assertion that the set is non-empty, so a future fixture whose
+text adds nothing beyond its words fails loudly instead of silently blinding the test again.
+
+**A control was added because the fix could have caused the opposite defect.** A prompt that dropped
+the timing table and kept the text would satisfy every assertion above, so the test now also
+requires a timing row to be present. Mutation audit **3/3**: text dropped entirely CAUGHT, text
+truncated to a subset CAUGHT, timing table dropped CAUGHT.
+
+**A claim from the same agent that I could not reproduce, recorded because it was alarming.** It
+reported that a `RawTranscript` reaches `countTokens` before invariant #3 refuses — "RAW text in an
+emitted request body: True". Measured with the suite's own recording transport: both
+`discover(raw)` and `build_request(raw)` raise `TypeError` with **zero endpoints hit** and no raw
+text in any body. Invariant #3 holds at the door on both public entry points. Whatever path that
+agent constructed, it is not one I can reach, and the claim is refuted as stated rather than carried
+forward. This is the third pass in which an agent's framing needed correcting before the finding was
+actionable — and the first in which the correction was that the alarming half was simply wrong.
+
+Gate: `VERIFY OK — 1136 passed, 0 skipped`.
