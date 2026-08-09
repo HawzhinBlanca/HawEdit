@@ -5877,3 +5877,67 @@ probe-supplying control beside it.
 **Mutation audit 9/9 after.** No production code changed: all nine mechanisms were already right and
 two were unheld one layer up from where they are enforced.
 `evidence/adversarial-pass-17-2026-08-09.md`.
+
+## D-131
+
+**§8.1's last metric was computed for every scored item and dropped at the report boundary.** M0.8 is
+DONE for "Alignment-accuracy metric against CTC emissions (§8.1 last metric)", and the metric never
+reached the document §8.1 *is*.
+
+Measured, before changing anything, on a six-item corpus with reference timings and a hypothesis
+shifted 30 ms:
+
+```
+per item, computed and stored on ItemScore.alignment
+  hewler-1: matched 2/2  onset 30.0 ms  offset 30.0 ms  within 1.00 @ 50 ms  coverage 1.00
+  hewler-2: matched 2/2  onset 30.0 ms  offset 30.0 ms  within 1.00 @ 50 ms  coverage 1.00
+
+keys in the written model report
+  model_id, adapter_impls, scored_items, failed_items, normalized_cer, spacing_free_cer,
+  normalized_cer_by_dialect, named_entity_error, code_switch_error, mean_rtf, worst_rtf,
+  long_audio_failure_rate, peak_vram_bytes
+
+any key mentioning alignment            []
+'align' anywhere in the whole JSON      False
+```
+
+**Computed and discarded, not never computed** — the distinction the loop asks for, and the same shape
+as D-070's `natural_silence_ms` (derived, then spent on nothing) and D-109's per-segment
+`mean_logprob` (averaged away). Found by following pass #17's finding: that pass showed the
+`None`-versus-0.0 rule held per measurement and not in the aggregate, so the aggregate is where the
+next metric's gap would be. It was worse than a gap — the field was absent.
+
+**Decision: `ModelReport.alignment` aggregates it, weighted by matched words.** The same weighting
+`_micro_cer` uses for characters, and for the same reason: a two-word item and a sixty-word one are
+not equal evidence about timing.
+
+**Coverage travels with the errors.** `AlignmentAccuracy` already says why — *"a tiny mean error over
+two matched words out of sixty is not a good alignment, it is a bad transcription"* — so an aggregate
+carrying the errors alone would hide exactly the case the type was written to expose. `matched_words`,
+`reference_words` and `scored_items` are all emitted beside it.
+
+**`None` when nothing was aligned, never a zero.** 0.0 ms of error is the *best possible score*, so a
+zero here is the most flattering number the report could invent — pass #17's rule (D-130), applied at
+the point of adding a field rather than discovered later. The key is always present so its emptiness
+is readable (D-110's rule).
+
+**Two tolerances in one report are refused, not averaged.** A within-tolerance rate mixed across a
+50 ms and a 200 ms bar was measured at neither. That is `assert_one_hardware`'s objection one metric
+over, and it is a refusal rather than a chosen reconciliation because no reconciliation exists.
+
+**Rejected: a macro mean of the per-item rates.** It is one line shorter and it lets a two-word item
+outweigh a sixty-word one, which is the mistake `_micro_cer`'s own docstring exists to warn about.
+
+**Rejected: emitting the per-item `AlignmentAccuracy` list.** §8.1 is a comparison between models; a
+per-item dump belongs to the evidence file, and the report already summarises every other metric.
+
+**The recorded schema caught the new key, and that is the system working.**
+`test_the_emitted_report_schema_is_recorded_field_by_field` (D-094) went red the moment `alignment`
+appeared, so adding a field to the artifact is a deliberate edit to the recorded contract rather than
+a silent change. Declared there with the reason.
+
+**Mutation audit 5/5:** dropping the aggregate again CAUGHT, an unmeasured alignment returning a
+perfect zero CAUGHT, coverage omitted CAUGHT, two tolerances averaged CAUGHT, and the
+within-tolerance rate ignoring the timings CAUGHT — the last by the control, which shifts the
+hypothesis past the 50 ms bar and requires the rate to move from 1.0 to 0.0.
+`evidence/section-8-1s-last-metric-never-reached-the-report.md`.

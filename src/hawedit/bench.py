@@ -155,6 +155,59 @@ class ModelReport:
         return sum(measured) / len(measured) if measured else None
 
     @property
+    def alignment(self) -> dict[str, float | int] | None:
+        """§8.1's last metric, aggregated over the items that produced one.
+
+        Weighted by **matched words**, the way `_micro_cer` weights by reference characters: a
+        two-word item and a sixty-word one are not equal evidence about timing.
+
+        `coverage` travels with the errors because `AlignmentAccuracy` says why — "a tiny mean
+        error over two matched words out of sixty is not a good alignment, it is a bad
+        transcription" — and an aggregate that omitted it would hide exactly that.
+
+        Returns:
+            `None` when no scored item produced an alignment. Not a zero: **0.0 ms of error is
+            the best possible score**, and §8.1's last metric reading perfect because nobody
+            measured it is the failure this whole report is written against (D-131).
+
+        Raises:
+            ValueError: the items were scored at more than one tolerance. A within-tolerance
+                rate mixed across a 50 ms and a 200 ms bar is a number measured at neither,
+                which is `assert_one_hardware`'s objection one metric over.
+        """
+        measured = [s.alignment for s in self.scores if s.alignment is not None]
+        if not measured:
+            return None
+        tolerances = {a.tolerance_ms for a in measured}
+        if len(tolerances) > 1:
+            raise ValueError(
+                f"alignment was scored at {sorted(tolerances)} ms tolerances in one report. "
+                f"Averaging within-tolerance rates across different bars invents a rate that "
+                f"was measured at neither."
+            )
+        matched = sum(a.matched_words for a in measured)
+        reference = sum(a.reference_words for a in measured)
+        return {
+            "matched_words": matched,
+            "reference_words": reference,
+            "coverage": matched / reference,
+            "mean_onset_abs_error_ms": sum(
+                a.mean_onset_abs_error_ms * a.matched_words for a in measured
+            )
+            / matched,
+            "mean_offset_abs_error_ms": sum(
+                a.mean_offset_abs_error_ms * a.matched_words for a in measured
+            )
+            / matched,
+            "within_tolerance_rate": sum(
+                a.within_tolerance_rate * a.matched_words for a in measured
+            )
+            / matched,
+            "tolerance_ms": tolerances.pop(),
+            "scored_items": len(measured),
+        }
+
+    @property
     def mean_rtf(self) -> float | None:
         return sum(s.rtf for s in self.scores) / len(self.scores) if self.scores else None
 
@@ -177,6 +230,10 @@ class ModelReport:
             "code_switch_error": self.code_switch_error,
             "mean_rtf": self.mean_rtf,
             "worst_rtf": self.worst_rtf,
+            # §8.1's last metric. It was computed for every scored item and dropped here:
+            # measured, `align` appeared nowhere in the written document while every item
+            # carried matched 2/2, onset 30.0 ms, within 1.00 at 50 ms. D-131.
+            "alignment": self.alignment,
             "long_audio_failure_rate": self.long_audio_failure_rate,
             "peak_vram_bytes": self.peak_vram_bytes,
         }

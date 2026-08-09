@@ -12,10 +12,12 @@ The rule is deliberately hard to satisfy. §1: "No model changes without measure
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from hawedit.alignment import DEFAULT_TOLERANCE_MS
 from hawedit.asr import (
     ASRResult,
     Hardware,
@@ -32,6 +34,7 @@ from hawedit.bench import (
     run_benchmark,
 )
 from hawedit.corpus import Condition, Corpus, CorpusItem, Dialect, Provenance
+from hawedit.transcripts import Word
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti")
 INCUMBENT = "omniASR_LLM_7B_v2"
@@ -378,6 +381,10 @@ _MODEL_REPORT_KEYS = {
     "code_switch_error",
     "mean_rtf",
     "worst_rtf",
+    # §8.1's last metric. Added by D-131: it was computed per item and emitted nowhere,
+    # and this recorded schema is what makes adding it a deliberate change rather than a
+    # silent one.
+    "alignment",
     "long_audio_failure_rate",
     "peak_vram_bytes",
 }
@@ -614,3 +621,127 @@ def test_a_measured_throughput_is_still_a_number() -> None:
     assert emitted["mean_rtf"] == pytest.approx(0.5)
     assert emitted["worst_rtf"] == pytest.approx(0.75)
     assert emitted["peak_vram_bytes"] == 17 * 1024**3
+
+
+# --- D-131: §8.1's last metric was computed and then dropped ----------------------------
+
+# `_score_item` scores alignment for every item that has reference timings and a timed
+# hypothesis, and `ModelReport.to_dict()` emitted no alignment key at all. Measured before the
+# fix: every item carried `matched 2/2, onset 30.0 ms, offset 30.0 ms, within 1.00 @ 50 ms,
+# coverage 1.00`, and the substring `align` appeared **nowhere** in the written document.
+
+_REF_WORDS = (
+    Word(w="ڕۆژنامەوانی", start_ms=0, end_ms=800, conf=0.95),
+    Word(w="کوردی", start_ms=800, end_ms=1_600, conf=0.94),
+)
+
+
+def _timed_hypothesis(shift_ms: int) -> tuple[Word, ...]:
+    """The same two words, every boundary off by `shift_ms`."""
+    return tuple(
+        Word(w=w.w, start_ms=w.start_ms + shift_ms, end_ms=w.end_ms + shift_ms, conf=0.9)
+        for w in _REF_WORDS
+    )
+
+
+class _TimedAdapter:
+    """Returns word timings, which is what makes alignment scorable at all."""
+
+    def __init__(self, model_id: str, shift_ms: int) -> None:
+        self.model_id = model_id
+        self._shift = shift_ms
+
+    def transcribe(self, audio_path: Path, duration_s: float) -> ASRResult:
+        return ASRResult(text_raw=PERFECT, words=_timed_hypothesis(self._shift))
+
+
+def _timed_corpus() -> Corpus:
+    items = tuple(
+        CorpusItem(
+            item_id=f"{dialect.value}-{index}",
+            audio_path=f"{dialect.value}-{index}.wav",
+            reference_ckb=PERFECT,
+            dialect=dialect,
+            conditions=frozenset({Condition.FORMAL_NEWS}),
+            duration_s=60.0,
+            reference_words=_REF_WORDS,
+        )
+        for dialect in (Dialect.HEWLER, Dialect.SLEMANI, Dialect.MUKRIYAN)
+        for index in (1, 2)
+    )
+    return Corpus(items=items, provenance=TWO_DIALECT_CORPUS.provenance)
+
+
+def _timed_report(shift_ms: int = 30) -> ModelReport:
+    times = iter([float(i) * 6.0 for i in range(200)])
+    session = MeasurementSession(hardware=HAWAPC01, clock=lambda: next(times))
+    report = run_benchmark(_timed_corpus(), [_TimedAdapter(INCUMBENT, shift_ms)], session)
+    return report.models[INCUMBENT]
+
+
+def _emitted_alignment(report: ModelReport) -> dict[str, float | int]:
+    """The aggregate as the JSON carries it. `to_dict` is `dict[str, object]`, so narrow once."""
+    alignment = report.to_dict()["alignment"]
+    assert isinstance(alignment, dict), alignment
+    return alignment
+
+
+def test_the_written_report_carries_section_8_1s_alignment_metric() -> None:
+    """M0.8's whole deliverable, in the document §8.1 is.
+
+    It was computed per item and dropped here — `align` appeared nowhere in the JSON — which is
+    the same shape as D-070's `natural_silence_ms` and D-109's `mean_logprob`: measured, then
+    spent on nothing.
+    """
+    report = _timed_report(shift_ms=30)
+    assert "alignment" in report.to_dict(), sorted(report.to_dict())
+    alignment = _emitted_alignment(report)
+    assert alignment["matched_words"] == 12
+    assert alignment["mean_onset_abs_error_ms"] == pytest.approx(30.0)
+    assert alignment["mean_offset_abs_error_ms"] == pytest.approx(30.0)
+    assert alignment["tolerance_ms"] == DEFAULT_TOLERANCE_MS
+
+
+def test_the_alignment_aggregate_reports_coverage_beside_its_errors() -> None:
+    """`AlignmentAccuracy` says why: "a tiny mean error over two matched words out of sixty is
+    not a good alignment, it is a bad transcription." An aggregate without coverage hides it."""
+    alignment = _emitted_alignment(_timed_report())
+    assert alignment["coverage"] == pytest.approx(1.0)
+    assert alignment["reference_words"] == 12
+    assert alignment["scored_items"] == 6
+
+
+def test_an_unmeasured_alignment_is_none_in_the_report_not_zero() -> None:
+    """0.0 ms of error is the **best possible score**, so a zero here is the most flattering
+    number the report could invent. The scripted adapter returns no word timings, so no item
+    can be aligned — which is the ordinary case until `BLOCKED.md` #1 supplies timed labels."""
+    emitted = a_run({"hew-1": PERFECT, "muk-1": PERFECT}).models[INCUMBENT].to_dict()
+    assert "alignment" in emitted, "the key must be present so its absence is readable"
+    assert emitted["alignment"] is None
+
+
+def test_the_within_tolerance_rate_tracks_the_error_it_measures() -> None:
+    """The control. Emitting the same numbers whatever the timings measured would satisfy the
+    tests above; a shift past the 50 ms bar has to move the rate off 1.0."""
+    inside = _emitted_alignment(_timed_report(shift_ms=30))
+    outside = _emitted_alignment(_timed_report(shift_ms=120))
+    assert inside["within_tolerance_rate"] == pytest.approx(1.0)
+    assert outside["within_tolerance_rate"] == pytest.approx(0.0)
+    assert outside["mean_onset_abs_error_ms"] == pytest.approx(120.0)
+
+
+def test_two_tolerances_in_one_report_are_refused_rather_than_averaged() -> None:
+    """A within-tolerance rate mixed across a 50 ms and a 200 ms bar was measured at neither —
+    `assert_one_hardware`'s objection, one metric over."""
+    report = _timed_report()
+    second = report.scores[1].alignment
+    assert second is not None
+    mixed = replace(
+        report,
+        scores=(
+            report.scores[0],
+            replace(report.scores[1], alignment=replace(second, tolerance_ms=200)),
+        ),
+    )
+    with pytest.raises(ValueError, match="tolerances"):
+        mixed.to_dict()
