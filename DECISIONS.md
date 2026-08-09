@@ -5397,3 +5397,36 @@ shortfall and it is recorded there, not a false DONE here. Moving it would put t
 cells and make the tally disagree with itself. The M1.5 cell now says so explicitly instead of
 leaving a reader to find it under another row.
 `evidence/adversarial-pass-10-2026-08-09.md`.
+
+## D-123
+
+**CI went red on a 142 MB download, and nothing about the code was wrong.**
+
+```
+==> downloading ffmpeg (~140 MB) from https://media.githubusercontent.com/media/…
+curl: (92) HTTP/2 stream 1 was not closed cleanly: PROTOCOL_ERROR (err 1)
+##[error]Process completed with exit code 92
+```
+
+100 seconds into the transfer, on the same pinned URL that had completed in **2 seconds** one run
+earlier (`bba56a9`). Not `--fail`'s doing: exit 92 is a transport error, not an HTTP status, and
+plain `curl` returns it either way. The defect is that the gate of record turned on a single
+attempt at 142 MB.
+
+**Decision: `--retry 3 --retry-delay 2 --retry-all-errors`.** `--retry` alone covers timeouts and
+5xx and treats a transport error as final, which is exactly the class that failed. Both curls in
+play are 8.x, so the flag is available.
+
+**Retrying is only safe because D-121 landed first.** A retried or partially-resumed download is
+compared against the recorded digest before it is unzipped or made executable, so the failure mode
+retries introduce — a truncated file that looks complete — is the one thing already refused.
+
+**Rejected: a bash retry loop.** It would be version-independent, and it would also reimplement
+backoff, partial-file cleanup and error classification that curl already has and that nothing here
+would exercise.
+
+**Rejected: caching the archive in CI.** It would hide exactly this: the point of fetching on every
+run is that the pinned URL and the digest are checked on every run.
+
+**2/2 mutations:** dropping the retry CAUGHT, and `--retry` without `--retry-all-errors` CAUGHT —
+the second matters because it is the plausible half-fix that looks right and does not cover exit 92.

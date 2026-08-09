@@ -214,7 +214,10 @@ payload="${stage}/payload"
 url="https://media.githubusercontent.com/media/zackees/ffmpeg_bins/${ffmpeg_bins_commit}/v8.0/linux.zip"
 
 echo "==> downloading ffmpeg (~140 MB) from ${url}"
-curl --fail --silent --show-error --location --retry 3 \
+# `--retry-all-errors` is load-bearing: the hosted gate observed curl exit 92 (HTTP/2
+# PROTOCOL_ERROR) after 100 seconds, and plain `--retry` does not cover that transport class.
+# A retried partial transfer is still refused by the exact digest before unzip. D-123.
+curl --fail --silent --show-error --location --retry 3 --retry-delay 2 --retry-all-errors \
   --proto '=https' --tlsv1.2 -o "$archive" "$url"
 bash "$(dirname "$0")/verify-sha256.sh" "$archive" "$linux_zip_sha256" || \
   refuse "ffmpeg archive SHA-256 did not match; nothing was unpacked or published."
