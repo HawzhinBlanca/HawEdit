@@ -4783,3 +4783,54 @@ For the frame rate, a 30 fps source is generated with ffmpeg so the constant and
 
 **Mutation audit 6/6** after the fix, each survivor caught by exactly the test written for it.
 `evidence/adversarial-pass-8-2026-08-09.md`.
+
+## D-113
+
+**A test aimed a real credential writer at its own source file, and an audit deleted 262 lines with
+it.** `test_writing_to_a_tracked_path_is_refused` passed `Path(__file__)` as the target, on the sound
+reasoning that the test file is certainly committed. That made `assert_ignored_by_git` — the thing
+under test — the only barrier between the suite and its own source.
+
+While sweeping for untested call sites, that guard was neutered for one run. The test then did what it
+was asking the guard to prevent: it wrote a credentials dump over `tests/test_credentials.py`, leaving
+eleven `KEY=VALUE` fragments scavenged from the module it had just destroyed, including
+`GEMINI_API_KEY=…` and the header "hawedit credentials. Git-ignored. Never commit this file." Restored
+from HEAD; nothing reached a commit.
+
+**Decision: the target is a path that does not exist and is not ignored.** `git check-ignore` answers
+from `.gitignore` patterns rather than from the filesystem, so a non-existent path exercises exactly
+the same refusal. If the guard ever fails open, the worst case is one stray file instead of a deleted
+test. Measured with the guard neutered by line number:
+
+```
+the guard fails open                     : test FAILS (caught)
+test source still intact (280 lines)     : yes      (before: 262 lines -> 11)
+damage                                   : one 109-byte stray file
+```
+
+Two assertions bracket the call — the probe must not exist before, and must not exist after — so a
+refusal that happened *after* the write would also be caught.
+
+**Rejected: asserting the probe is not gitignored inside the test.** `.gitignore` has `.env` and
+`.env.*`, neither of which matches the probe (verified: `check-ignore` exits 1). If a future pattern
+did match, `pytest.raises` would report DID NOT RAISE — loud, not silent — so a subprocess call to
+pre-empt a hypothetical is not worth its weight.
+
+**The sweep that caused this also found nothing.** Its purpose was to hunt the D-105/D-108/D-112
+pattern — a guard whose single call site can be neutered with the suite green. Corrected result:
+**15 of 15 call sites CAUGHT, 0 unprotected.** The pattern is not systemic; those three were found by
+hand and fixed.
+
+**The first run of that sweep reported 9 unprotected, and every one was false.** It judged pytest by
+`re.search(r"^FAILED |failed", stdout)` instead of the process exit code. Verifying one result by hand
+— `assert_tools_are_from_this_environment`, which is D-093's own claim — showed it fails three tests,
+so the instrument was wrong, not the code. That is the same error as reading a CI run's step text
+instead of its `conclusion` field, made a second time; the sweep now raises on any exit code that is
+neither 0 nor 1.
+
+**A second instrument error in the same iteration:** the first attempt to neuter the guard replaced
+`if result.returncode != 0:` by text, and that line occurs **twice** in `credentials.py` — the replace
+hit line 105, not the guard at 169, so the "proof" measured nothing and reported a pass. Mutating by
+line number fixed it. Both errors were caught by checking the result rather than trusting it, which is
+the only reason this entry is not a false claim.
+`evidence/a-test-that-could-delete-itself.md`.
