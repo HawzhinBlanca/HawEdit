@@ -79,74 +79,22 @@ These cannot be truthfully solved from the checkout alone:
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.
-- The WSL2 setup installs exact OmniASR 0.2.0/fairseq2 0.6/Qwen packages with a matched
-  Torch/torchaudio 2.8 pair. HawEdit now owns exact byte identities for the 43.5 GB canonical
-  LLM-7B/CTC-3B/tokenizer set and official card document, atomically provisions only matching
-  downloads, freezes external card sources, validates effective model/tokenizer policy and hashes
-  every asset again before model construction. Both real models load through aliases to the held
-  verified descriptors, and failed setup invalidates readiness
-  (`evidence/omniasr-asset-integrity.md`).
-- WSL readiness is a validated receipt over an exact source snapshot and one
-  versioned/revalidated venv generation. Setup is cross-process serialized; launch re-hashes the
-  copied worker and probes the recorded interpreter, exact 140-distribution lock union, assets and
-  CUDA route. Importability alone cannot make OmniASR appear ready. KenLM/Sox source archives are
-  hashed, but compiler/header/native-output bytes are not attested; the VEX is identity-bound and
-  honest about affected findings, but still lacks a canonical live report
-  (`evidence/wsl-runtime-receipt.md`, `evidence/wsl-asr-vex.md`).
-- **All six Hugging Face repository revisions are pinned as of 2026-08-09** (D-073/D-075).
-  `models/revisions.json` fixes every fetchable repository to a full commit obtained from Hub
-  metadata, and the wheel-installed `hawedit-fetch-models` refuses any repository with no pin;
-  the checkout script is only a launcher for that same transaction. Four local visual
-  checkpoints were cross-checked against their commits; pyannote's revision is public metadata,
-  while its gated file downloads remain blocked by `BLOCKED.md` #4.
-- Project-managed checkpoint provisioning is transactional and automation-visible: verified-status
-  planning, a byte-only root override with separate trusted metadata, full-SHA runtime validation,
-  0700/protected-DACL crash-resumable staging, exact manifest verification, locked native
-  no-replace publication,
-  preserved invalid/concurrent finals and aggregate nonzero
-  failure (`evidence/checkpoint-provisioning.md`). Consumers hold the matching shared lock from
-  byte verification through config/recipe parsing and model construction, preventing a verified
-  path from being reopened after cooperative replacement; the Windows host lease spans the WSL
-  validator boundary (`evidence/checkpoint-load-binding.md`).
-  The code/test boundary is closed; a fresh full-size real-model load under it is not yet measured.
-- The project-fetched Linux ffmpeg archive is addressed by an immutable upstream commit and its
-  Git-LFS SHA-256 is verified before unpacking.
-- `hawedit-release` makes source-to-wheel bytes reproducible and emits checksummed Git
-  provenance plus a deterministic SPDX 2.3 SBOM. The SBOM binds the exact wheel, bundled Noto
-  font, and every base/optional `Requires-Dist` relationship without inventing unresolved
-  dependency versions. Its two builds now run under a private, hash-locked Pip/Setuptools
-  toolchain and provenance records that builder identity; an ambient backend cannot silently
-  change the wheel. Publication also requires an explicit successful official `main` push gate
-  for the exact release SHA and records its run/job in provenance; a clean but untested commit is
-  no longer publishable. A permission-separated workflow now requires clean 3.11/3.12 installed-
-  wheel smokes before defining GitHub-OIDC attestations for the exact four-file release set without
-  exposing attestation authority to repository build code; its
-  first post-merge protected-`main` run is still required before authenticity has live evidence.
-  CPU base/gate/model-fetch graphs are code-digest-bound hash locks and installed through exact
-  wheel inventories (`evidence/host-dependency-locks.md`). Versioned durable publication, CUDA
-  locking and WSL native-build provenance remain open; OmniASR package-asset byte identity is
-  closed separately at runtime.
-
-## Current hardening delta - 2026-08-09
-
-- Local `VERIFY OK` is now checkout/environment evidence, not merely command success: only the
-  canonical `.venv` interpreter is accepted and its editable-root/distribution/dependency identity
-  is checked before the gate (`evidence/environment-identity.md`).
-- WSL snapshots carry their trusted checkpoint manifests, preserve prior valid receipts across
-  failed reprovision and publish results through a random descriptor-bound file. Checkpoint resume
-  trees survive hard process death and are recursively validated before any downloader write;
-  Windows roots use native protected DACLs (`evidence/wsl-runtime-receipt.md`,
-  `evidence/checkpoint-provisioning.md`).
-- Twelve host locks cover CPU base, gate and model-fetch environments on Linux/Windows 3.11/3.12.
-  The wheel authenticates its locks and VEX through raw `RECORD`, including `pip --target` layouts.
-- Expected model/transport failures now terminate only their stage, with zero forbidden downstream
-  work. Candidate traversal is refused, empty selection is no-bill, and all exception-derived JSON
-  is printable and bounded. Credential/ADC I/O is lazy and zero-transport; programmer/schema
-  failures remain visible (`evidence/pipeline-failures.md`).
-
-This improves robustness; it does not create the absent real Sorani corpus, human editorial set,
-authorized Vertex acceptance, real 5-or-more-scene visual run, pyannote access, speaker reframing
-evidence, a CUDA lock, WSL native-build attestation or a live hardware VEX report.
+- The WSL2 setup installs pinned PyPI packages but package-manager integrity is not the same as
+  vendored/checksummed model assets; Meta's model-card downloader still owns those remote bytes.
+- **Hugging Face model revisions are pinned as of 2026-08-09** (D-073). `models/revisions.json`
+  fixes **all six** downloadable repositories to commit SHAs that were read from the Hub and then
+  verified against the weights on this machine, and `fetch-models.sh` refuses a repository with
+  no pin rather than resolving a branch head. **Corrected 2026-08-09 (D-120):** this bullet said
+  *five* repositories and called `pyannote/speaker-diarization-community-1` deliberately unpinned
+  with "a test asserts it is the only one". D-075 pinned it — that repo is gated for *downloads*
+  and public for *metadata*, so its revision was always a verifiable fact here — and
+  `tests/test_models.py` now asserts `unpinned == []` with no exemptions. Measured: 6 pinned, 6
+  registry entries with a download source, 0 unpinned.
+- **`fetch-ffmpeg.sh` is still unpinned.** It downloads
+  `media.githubusercontent.com/…/ffmpeg_bins/main/v8.0/linux.zip` — a branch path, so the bytes
+  behind it can change — then unzips and executes it with no SHA-256 comparison. The versioned
+  path segment is not a substitute for a fixed ref, and no published digest for that archive has
+  been found to compare against.
 
 ## Honest release call
 
@@ -162,50 +110,19 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.11.15 and 3.12.13 current-wheel installs: `pip check` clean, installed font/model
-  metadata present; `hawedit`, `hawedit-asr-bench`,
-  `hawedit-editorial-bench`, `hawedit-asr-setup`, `hawedit-credentials` and `hawedit-release`
-  all start from the installed wheel.
-- Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker/setup module and
-  the source-fingerprinted OmniASR asset allowlist.
-- Fresh FontTools 4.60.2 compatibility environment: `pip check` clean, real bundled Noto Kurdish
-  coverage passed, and `pip-audit==2.10.1` found no known third-party vulnerabilities. Three
-  independent dependency-pin mutations were caught and restored (`evidence/dependency-security.md`).
-- Real Stage 1: the rzgar checkpoint reproduced its shipped Sorani demo reference exactly at
-  4,250,408,448 peak allocated bytes on GPU 1; the real CLI then ran OmniASR LLM-7B + CTC-3B,
-  validator routing and Viterbi timing over the committed media fixture in 212.9 seconds from a
-  warm asset cache. A separate integrity run rehashed all 43.5 GB and loaded both actual model
-  classes through held descriptors in 249 seconds. The fixture is synthetic Kurmanji, so this
-  proves execution, not Sorani CER.
-- Stage 0 now owns the video media clock: the real fixture's padded VAD previously ended at
-  4180 ms against 4162 ms of footage; it is intersected at 4162 ms before canonical ASR, and a
-  runner integration test proves no speech region handed downstream can exceed the media end.
-- A real 30000/1001 transcode completes JSON/SRT/EDL delivery with SMPTE drop-frame timecode;
-  25 fps remains non-drop and unsupported 24000/1001 refuses before any sidecar write.
-- Real pipeline delivery publishes one exact ASS/MP4/SRT/EDL/JSON directory. Tests inject ASS
-  and sidecar write failures and a two-worker publication race; failures expose no partial set.
-- `hawedit-release` first verifies an explicit official `main` push run whose workflow, exact SHA,
-  successful `gate` job and mandatory steps all match the clean Git `HEAD`, then derives
-  `SOURCE_DATE_EPOCH` and exports that Git object twice with replacement refs disabled. Each wheel
-  builds from its own pristine source tree under a private builder populated only from hash-locked
-  Pip 26.2.1 and Setuptools 84.0.0 wheels. It refuses unequal bytes, validates release-critical
-  package data, and atomically emits
-  the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision/gate/builder provenance. The
-  independent `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally
-  live beside the artifacts instead of in this changing source file. The OIDC workflow is
-  permission-separated, installed-wheel gated on 3.11/3.12, exact-set tested and action-linted,
-  but not yet live-proven from default
-  `main`; transitive environment hash locking also remains open supply-chain work
-  (`evidence/release-builder-lock.md`, `evidence/release-exact-gate.md`,
-  `evidence/release-attestation.md`, `evidence/python-support.md`,
-  `evidence/omniasr-asset-integrity.md`).
-- Cross-Python release proof: Python 3.11.15 and 3.12.10 each emitted the same 329,973-byte wheel
-  from revision `8d4810d28fd1`, SHA-256 `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9`.
-  Provenance differs deliberately because it records the measured interpreter.
-- CI action runtime audit: exact-SHA run 31291508018 exposed deprecated Node-20 action runtimes.
-  Checkout 7.0.1 and Setup Python 7.0.0 are now pinned to audited full commits whose official
-  `action.yml` declares Node 24; a focused regression refuses rollback. Exact-SHA run 31291847181
-  completed successfully with zero check-run annotations (`evidence/ci-actions.md`).
+- Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
+  `hawedit-editorial-bench` and `hawedit-asr-setup` all start from the installed wheel.
+- Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
+- **The wheel build is reproducible as of 2026-08-09** (D-120). It was not: two consecutive
+  `pip wheel --no-deps` runs at one unchanged tree produced the same **333,362 bytes** and the
+  hashes `a7c3b2f1c280aff4…` and `38d1d2475c46e120…`, because nothing set `SOURCE_DATE_EPOCH` and
+  every ZIP entry carried the mtime of the instant it was written. `scripts/build-wheel.sh` now
+  takes the epoch from the commit's own author date and prints the digest, and two builds are
+  byte-identical. **No SHA-256 is quoted here, and the reason has changed:** the digest is
+  per-commit by construction, so an inlined hash would be stale at the next commit and would read
+  as a claim about this code rather than about one build of it. Compute it with
+  `bash scripts/build-wheel.sh`. A test asserts both halves — two builds identical, and every ZIP
+  entry stamped with the commit rather than the clock. `evidence/two-builds-of-one-commit.md`.
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

@@ -5154,25 +5154,67 @@ holding stdout swallowing the exit code CAUGHT (the second control), and `editor
 the shared stream CAUGHT.
 `evidence/the-report-shared-stdout-with-a-library.md`.
 
-## D-157 - Reproducible bytes must still identify HawEdit
+## D-120
 
-The release command proved that two builds emitted the same bytes, but it never proved which
-distribution those bytes claimed to be. A real HawEdit wheel reconstructed with METADATA
-`Name: hawedit-impostor`, `Version: 9.9.9` and a matching wrong filename still passed
-`_validate_hawedit_wheel`. It could therefore receive HawEdit gate provenance and a GitHub OIDC
-attestation even though the attested artifact identity was not the project identity authorized by
-the gated source.
+**The wheel build was not reproducible, so the one artifact that leaves this repository could not be
+identified at all.** `AUDIT_REPORT.md` recorded that as a deliberate omission — it quotes a byte count
+and no SHA-256 — and the reason it gave was correct. Reproduced today:
 
-**Decision:** publication requires one identity across three independent representations. The
-archived `pyproject.toml` supplies the authorized project name/version, the wheel must contain
-exactly one METADATA record, and the PEP 427 filename must encode the same normalized distribution
-name and exact version. The check runs on the immutable first source export before any release
-directory is created. Schema-5 provenance records the measured distribution and version.
+```
+two `pip wheel --no-deps` runs, one unchanged tree
+  build 1  333,362 bytes  sha256 a7c3b2f1c280aff4…
+  build 2  333,362 bytes  sha256 38d1d2475c46e120…
+```
 
-The privileged attestation job does not trust that repository-code check. On its fresh no-checkout
-runner it opens the transported wheel with the standard library, requires exactly one METADATA,
-requires normalized distribution `hawedit`, checks filename/METADATA identity, and requires the
-same fields in schema-5 provenance before granting OIDC attestation authority. Tests mutate source,
-METADATA and filename name/version independently and pin the workflow-side verifier. This closes
-artifact-identity substitution; it does not invent the still-missing version/tag policy or durable
-GitHub Release. `evidence/release-identity-binding.md`.
+Same size, different bytes: nothing sets `SOURCE_DATE_EPOCH`, so every ZIP entry carries the mtime of
+the instant it was written. "Pinned and checksummed supply chain" cannot hold when the thing being
+checksummed changes between two builds of one commit.
+
+```
+with SOURCE_DATE_EPOCH taken from the commit
+  build 3  333,362 bytes  sha256 c450f9310d956e90dcd4f9c711efd04aa6e1adfacd690d630c9d34988ed4fec2
+  build 4  333,362 bytes  sha256 c450f9310d956e90dcd4f9c711efd04aa6e1adfacd690d630c9d34988ed4fec2
+```
+
+**Decision: `scripts/build-wheel.sh`, with the epoch taken from the commit's own author date.**
+`git log -1 --format=%ct` — derived from the tree being built, so the same commit yields the same
+bytes on any machine on any day. It prints the digest, which is the number that previously could not
+be quoted.
+
+**Rejected: `SOURCE_DATE_EPOCH` from the current time, or from a fixed constant.** `now` restores the
+defect silently. A constant would be a number chosen rather than measured, and it would make two
+different commits produce wheels stamped identically — the pin would then say nothing about which
+code is inside.
+
+**Outside a git checkout it refuses.** There is no commit to derive the epoch from, and substituting
+`now` there is the one behaviour this script exists to remove. Named in the evidence as untested: the
+script resolves the repository from its own location, so reaching that branch means copying the tree
+out of git, which costs more than three fail-closed lines are worth.
+
+**Rejected: quoting the digest in `AUDIT_REPORT.md`.** It is per-commit by construction — the epoch is
+the commit's date — so an inlined hash would be stale on the next commit and would read as a claim
+about the code rather than about one build of it. The document now says how to compute it instead.
+
+**The control is the mechanism, not the equality.** Two builds matching is also what a build system
+that happened to be deterministic today would produce, so equality alone would let the epoch be
+deleted unnoticed — and a control asserting *"setuptools is non-deterministic"* would break the day
+that stopped being true, which is a check whose cheapest fix is deleting it. The test asserts instead
+that **every ZIP entry is stamped with the commit's timestamp in UTC**, which is false the moment the
+epoch stops being set.
+
+**Three statements in `AUDIT_REPORT.md`'s supply-chain section were stale, and one contradicted
+another in the same document.** Measured against the code:
+
+```
+revisions.json pinned repositories        6   (the report says "all five")
+registry entries with a download source   6
+unpinned among them                       0   (the report says pyannote is "deliberately unpinned"
+                                               and that "a test asserts it is the only one")
+```
+
+`tests/test_models.py` asserts `unpinned == []` with no exemptions, and its own comment records that
+D-075 removed the pyannote one. And line 101 called the model revisions "unpinned" while line 66 of
+the same file called them pinned. Corrected in place.
+
+**Mutation audit 4/4.**
+`evidence/two-builds-of-one-commit.md`.
