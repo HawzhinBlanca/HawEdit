@@ -682,8 +682,10 @@ def test_visual_composer_refusal_is_reported_as_a_skipped_stage(tmp_path: Path) 
         tmp_path / "work",
         media_id="short",
         transcript=a_transcript("short"),
+        # An explicit query, because without one Stage 2 now refuses before the composer is
+        # reached (D-154) and this test is about the composer's own refusal.
+        visual_query="ڕۆژنامەوانی",
         visual_composer=Composer(),  # type: ignore[arg-type]
-        visual_query="گرنگ",
     )
 
     assert isinstance(run.visual_index, StageSkipped)
@@ -824,7 +826,7 @@ def test_path_b_refuses_the_whole_transcript_when_path_a_has_no_candidate(
     assert isinstance(run.discovery, StageSkipped)
     assert isinstance(run.visual_index, StageSkipped)
     assert "refusing the whole episode transcript" in run.visual_index.reason
-    assert "an explicit visual query or Path A candidate" in run.visual_index.blocked_by
+    assert run.visual_index.blocked_by == ("a retrieval query",)
     assert run.visual_query_source is None
     assert run.to_dict()["visual_query_source"] is None
     assert run.candidates == ()
@@ -2661,4 +2663,121 @@ def test_the_rejection_split_names_every_path_that_found_a_candidate() -> None:
     assert quiet.to_dict()["rejected"] == []
     assert quiet.to_dict()["rejected_by_path"] == {"visual": 0}, (
         "an absent path reads as a path that never ran; zero is the readable answer (D-110)"
+    )
+
+
+# --- D-154: the retrieval query was the corpus ------------------------------------------------
+
+
+@needs_ffmpeg
+def test_stage_2_refuses_rather_than_retrieving_against_the_whole_transcript(
+    tmp_path: Path,
+) -> None:
+    """The fallback query was `normalized.text_ckb` — the entire episode.
+
+    Measured on hawapc01 with the real 38-minute media: embedding its 35,185-character
+    transcript asks for **40.89 GiB** on a 23.99 GiB card and the run dies mid-Stage-2. Where it
+    does fit, ranking every window against the whole episode orders nothing in particular. §3
+    Stage 2 retrieves against a query; without one there is nothing to retrieve against.
+    """
+    asked: list[str] = []
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            asked.append("called")
+            raise AssertionError("the composer must not be reached without a query")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="noquery",
+        transcript=a_transcript("noquery"),
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert asked == [], "no GPU work may start before the query is known to exist"
+    assert isinstance(run.visual_index, StageSkipped)
+    assert run.visual_index.blocked_by == ("a retrieval query",)
+    assert "--visual-query" in run.visual_index.reason
+    assert run.candidates == ()
+    # The skip is named in the report, not merely absent from it.
+    assert "visual_index" in {name for name, _ in run.skipped()}
+
+
+@needs_ffmpeg
+def test_an_explicit_query_still_reaches_the_composer(tmp_path: Path) -> None:
+    """The control. Refusing whenever Path A found nothing would satisfy the test above and
+    disable `--visual --visual-query` entirely, which is the one invocation that works today."""
+    from hawedit.visual_index import SceneWindow
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    seen: list[str] = []
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[SceneWindow],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            seen.append(query)
+            return VisualDiscoveryResult(media_id, query, len(windows), len(windows), (), ())
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="explicit",
+        transcript=a_transcript("explicit"),
+        visual_query="هەولێر",
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+    assert seen == ["هەولێر"], seen
+    assert not isinstance(run.visual_index, StageSkipped), run.visual_index
+
+
+@needs_ffmpeg
+def test_a_verbal_anchor_still_supplies_the_query_it_always_did(tmp_path: Path) -> None:
+    """The second control: the anchored query must be the candidate's slice, not the episode.
+
+    A refusal that also dropped this path would pass the first test and delete the behaviour
+    D-066 composed. The slice is short by construction — one candidate's transcript — which is
+    why it never met the ceiling the whole transcript does.
+    """
+    from hawedit.discovery import Candidate
+    from hawedit.visual_index import SceneWindow
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    seen: list[str] = []
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[SceneWindow],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            seen.append(query)
+            return VisualDiscoveryResult(media_id, query, len(windows), len(windows), (), ())
+
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="anchored",
+        transcript=a_transcript("anchored"),
+        discover=lambda _n: [
+            Candidate("best", "anchored", 2_000, 4_100, DiscoveryPath.VERBAL, 1, 0.9)
+        ],
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+    assert seen == ["لە هەولێر."], seen
+    assert a_transcript("anchored").text_ckb not in seen, (
+        "the whole transcript must never be the query again"
     )

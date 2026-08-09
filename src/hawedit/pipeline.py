@@ -1131,7 +1131,7 @@ def run_pipeline(
                         "transcript slice can scope retrieval; refusing the whole episode "
                         "transcript because the measured fallback exhausted GPU memory"
                     ),
-                    blocked_by=("an explicit visual query or Path A candidate",),
+                    blocked_by=("a retrieval query",),
                 )
             else:
                 query, visual_query_source = query_with_source

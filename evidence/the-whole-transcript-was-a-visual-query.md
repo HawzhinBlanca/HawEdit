@@ -52,5 +52,5 @@ may no longer invent the episode-wide query silently.
 
 Acceptance from the isolated readiness worktree, using the canonical Git Bash command
 `scripts/verify.sh`: Ruff passed; mypy passed across 125 source files; all 125 files were formatted;
-1,793/1,793 tests passed in 159.43 s with zero skips; the independent JUnit evidence check accepted
-the same 1,793 collected/passed count; `VERIFY OK`.
+1,796/1,796 tests passed in 153.65 s with zero skips; the independent JUnit evidence check accepted
+the same 1,796 collected/passed count; `VERIFY OK`.

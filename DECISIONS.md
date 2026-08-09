@@ -5055,4 +5055,8 @@ constructs any GPU adapter. The library remains more general: an injected Path A
 at runtime, in which case both that failure and Path B's bounded-query refusal are returned in one
 structured report. No character/token ceiling was guessed; an explicitly authorized oversized
 query reaches the existing bounded adapter failure path, while the dangerous *implicit* whole-media
-fallback is gone. `evidence/the-whole-transcript-was-a-visual-query.md`.
+fallback is gone. The independent model-boundary sweep measured 200–8,000 characters fitting,
+16,000 OOMing, and the real 35,185 characters/26,191 tokens reproducing the exact 40.89 GiB
+allocation. Its five query/refusal mutations were all caught. Full measurements remain in
+`evidence/adversarial-pass-9-2026-08-09.md`; the composed contract and provenance are in
+`evidence/the-whole-transcript-was-a-visual-query.md`.
