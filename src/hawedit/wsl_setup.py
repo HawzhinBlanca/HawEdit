@@ -76,6 +76,8 @@ def wsl_path(path: Path, distro: str | None = None, executable: str = "wsl.exe")
     return value
 
 
+_FONTOOLS_VERSION = "4.60.2"
+
 _SETUP_SCRIPT = r"""
 set -euo pipefail
 venv="$HAWEDIT_WSL_RUNTIME/venv"
@@ -85,7 +87,8 @@ if command -v uv >/dev/null 2>&1; then
   fi
   uv pip install --python "$venv/bin/python" \
     'torch==2.8.0' 'torchaudio==2.8.0' \
-    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' 'fonttools==4.55.3'
+    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' \
+    'fonttools==__FONTOOLS_VERSION__'
 elif command -v python3.12 >/dev/null 2>&1; then
   if [[ ! -x "$venv/bin/python" ]]; then
     python3.12 -m venv "$venv"
@@ -93,7 +96,8 @@ elif command -v python3.12 >/dev/null 2>&1; then
   "$venv/bin/python" -m pip install --upgrade pip
   "$venv/bin/python" -m pip install \
     'torch==2.8.0' 'torchaudio==2.8.0' \
-    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' 'fonttools==4.55.3'
+    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' \
+    'fonttools==__FONTOOLS_VERSION__'
 else
   printf '%s\n' 'Install uv or Python 3.12 inside WSL2.' >&2
   exit 1
@@ -119,7 +123,7 @@ if torch.cuda.device_count() < 2:
     raise SystemExit("HawEdit OmniASR needs two visible GPUs (LLM cuda:0, CTC cuda:1)")
 print(f"OmniASR import OK; CUDA GPUs visible: {torch.cuda.device_count()}")
 PY
-""".strip()
+""".replace("__FONTOOLS_VERSION__", _FONTOOLS_VERSION).strip()
 
 
 def provision_wsl_runtime(

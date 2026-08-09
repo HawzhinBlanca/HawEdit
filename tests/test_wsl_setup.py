@@ -73,6 +73,7 @@ def test_wheel_safe_setup_copies_only_the_package_and_marks_success(
     setup_script = setup_scripts[0].decode("utf-8")
     assert "'torch==2.8.0' 'torchaudio==2.8.0'" in setup_script
     assert "'qwen-asr==0.0.6'" in setup_script
+    assert setup_script.count("'fonttools==4.60.2'") == 2
     assert "from qwen_asr import Qwen3ASRModel" in setup_script
     assert 'torchaudio_version = torchaudio.__version__.split("+", 1)[0]' in setup_script
 

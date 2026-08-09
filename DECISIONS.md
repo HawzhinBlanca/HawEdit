@@ -461,7 +461,7 @@ is a shipped asset, not a host assumption.
 | Item | Version | Licence | Verified from |
 |---|---|---|---|
 | Noto Naskh Arabic Regular | 2.012 | **OFL-1.1** | the font's own `name` table, IDs 13/14 |
-| `fonttools` | 4.55.3 | MIT | PyPI metadata |
+| `fonttools` | 4.60.2 | MIT | PyPI metadata; CVE-2025-66034 fixed |
 
 OFL-1.1 permits commercial use and embedding; it requires the licence accompany the font, so
 `assets/fonts/OFL.txt` ships beside it. The licence was read from the binary's name table
@@ -3514,3 +3514,39 @@ mutations above, since comparing failure counts against a red baseline hides whi
 why.
 
 Gate: `VERIFY OK — 1125 passed, 0 skipped`.
+
+---
+
+## D-088 · A release dependency audit is a measured gate, not an SBOM substitute
+
+**The deterministic SBOM disclosed a known-vulnerable runtime pin.** Auditing the clean wheel
+environment from revision `53ecc475b7db` with `pip-audit==2.10.1` found FontTools 4.55.3 affected
+by CVE-2025-66034. The affected range is 4.33.0 through 4.60.1; the upstream advisory describes
+path traversal and arbitrary file writes when `fontTools.varLib.main()` processes a malicious
+designspace. HawEdit uses FontTools for bundled-font coverage rather than designspace conversion,
+but shipping a vulnerable, reachable library is still an unnecessary release risk.
+
+**Decision 1 — use the smallest fixed exact pin.** Both the wheel dependency and Stage 1's
+separately provisioned WSL runtime require `fonttools==4.60.2`, the upstream backport release that
+contains the fix. An open-ended `>=4.60.2` range is rejected: reproducible installation is part of
+the release contract, and a security floor must not silently become an unreviewed upgrade policy.
+
+**Decision 2 — one regression covers both environments and refuses drift.** The dependency test
+parses `pyproject.toml`, requires one numeric exact pin, requires at least 4.60.2, extracts both
+installer branches from the generated WSL setup script, and requires their versions to equal the
+base pin. The provisioner keeps one replacement constant so its `uv` and `pip` branches cannot
+diverge.
+
+**Evidence and boundary.** A fresh Python 3.12 environment resolved the edited project with
+FontTools 4.60.2, passed `pip check`, and the real bundled Noto font passed
+`assert_font_covers_kurdish`. `pip-audit==2.10.1` then reported no known vulnerabilities in that
+environment; it correctly skipped the local editable HawEdit package itself. Bootstrap `pip`
+findings seen in the baseline were removed by upgrading that audit environment and are not HawEdit
+`Requires-Dist` entries. This is dated evidence, not proof against future disclosures. Upstream:
+<https://github.com/fonttools/fonttools/security/advisories/GHSA-768j-98cg-p3fv> and
+<https://github.com/fonttools/fonttools/releases/tag/4.60.2>. Full commands and outputs are recorded
+in `evidence/dependency-security.md`.
+
+**Mutation audit 3/3.** Reverting the base dependency to 4.55.3 fails the fixed-version floor;
+changing it to `>=4.60.2` fails exact-pin parsing; changing only the WSL runtime to 4.55.3 fails
+cross-environment equality. Every mutation was restored before the final gate.

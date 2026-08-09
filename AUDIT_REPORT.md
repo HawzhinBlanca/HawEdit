@@ -42,6 +42,11 @@ on real Sorani client footage.
   requires an attributed zero-data-retention confirmation and never places credentials in URLs.
 - A strict editorial regression manifest now requires real source media, exact paired spans,
   two named reviewers, at least 20 items and at least five items per Sorani dialect.
+- The clean-wheel dependency audit found FontTools 4.55.3 affected by CVE-2025-66034. The base
+  wheel and isolated Stage 1 WSL runtime now share the smallest fixed exact pin, 4.60.2; a fresh
+  Python 3.12 environment passes `pip check`, real Kurdish font coverage and a third-party
+  `pip-audit==2.10.1` scan with no known vulnerabilities (D-088). This is dated evidence, not a
+  claim that future advisories cannot appear.
 
 ## Remaining production blockers
 
@@ -90,7 +95,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,204 collected, 1,204 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,205 collected, 1,205 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -99,6 +104,9 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   `hawedit-editorial-bench`, `hawedit-asr-setup`, `hawedit-credentials` and `hawedit-release`
   all start from the installed wheel.
 - Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker and setup module.
+- Fresh FontTools 4.60.2 compatibility environment: `pip check` clean, real bundled Noto Kurdish
+  coverage passed, and `pip-audit==2.10.1` found no known third-party vulnerabilities. Three
+  independent dependency-pin mutations were caught and restored (`evidence/dependency-security.md`).
 - Real Stage 1: the rzgar checkpoint reproduced its shipped Sorani demo reference exactly at
   4,250,408,448 peak allocated bytes on GPU 1; the real CLI then ran OmniASR LLM-7B + CTC-3B,
   validator routing and Viterbi timing over the committed media fixture in 212.9 seconds from a
