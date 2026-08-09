@@ -5635,3 +5635,76 @@ for up to twenty inline images. §3 Stage 4's cost model counts them.
 **Mutation audit 10/10 after.** No production code changed: every mechanism was already right, and
 six of them were unheld.
 `evidence/adversarial-pass-13-2026-08-09.md`.
+
+## D-127
+
+**Adversarial pass #14 took M1.6 — model provisioning, DONE and never attacked. Its code held 7/7.
+Two of its claims were false, and this project's own commits are what made them false.**
+
+```
+CAUGHT  every component prints OK whatever its verdict
+CAUGHT  every verdict is inverted
+CAUGHT  a measured size of zero prints as unmeasured again
+CAUGHT  the summary claims everything is available
+CAUGHT  the summary counts something other than what it lists
+CAUGHT  an unpinned repository resolves to a branch head instead of refusing
+CAUGHT  a checkpoint whose loader is missing reports available
+
+7/7
+```
+
+D-100's report fix survives intact, as does `revision_for`'s refusal and D-099's loader check.
+
+**What was false, measured against the code:**
+
+```
+the cell: "pins all five downloaded repositories"
+  revisions.json pins                        6
+  registry entries with a download source    6
+  unpinned among them                        0
+
+the cell: pyannote is "deliberately unpinned … a test asserts it is the only one"
+  pyannote pinned                            True   (D-075)
+  tests/test_models.py asserts               unpinned == []   with no exemptions
+
+the cell: "Still unpinned: fetch-ffmpeg.sh downloads a mutable main/ archive and executes
+           it with no SHA-256 check"
+  URL carries a 40-hex commit ref            True   (D-121)
+  a 64-hex digest is recorded                True
+  compared before the unzip                  True
+```
+
+**D-120 corrected the same two sentences in `AUDIT_REPORT.md` and did not look in the ledger.** That
+is the failure this project keeps finding in itself — a correction landing in one document and not the
+other — and it has now happened to me twice on one pair of facts.
+
+**Decision: bind the factual half of both claims to the file it is about, in `tests/test_claims.py`.**
+Reading found these; the gate did not, and reading is not a mechanism.
+
+* Any live document stating *"all N download… repositories"* must state the number
+  `models/revisions.json` actually pins. **Only the count** is checked — a number is a fact about
+  that file, and binding anything looser would fail on an innocent rewording.
+* No live document may describe *"mutable `main/` archive"* while the URL in `fetch-ffmpeg.sh`
+  carries a commit. Keyed on the script's own URL line, and it **fails in both directions**: if the
+  URL ever goes back to a branch, a document that stopped saying so is the thing that is wrong.
+
+**`DECISIONS.md` is exempt by design.** It is append-only, and its older entries are supposed to say
+what was true when they were written; a test that forced them current would be a test whose cheapest
+fix is editing history.
+
+**Rejected: a phrase list for "still unpinned".** I would be guessing which wordings a future writer
+picks, and a list that misses one reads as a guarantee it does not give. The two facts chosen — a
+count, and a substring of a URL — are checkable exactly.
+
+**Both tests were verified to fail before the correction**, naming `PROGRESS.md` and the exact
+sentences. A claims test that passes on the tree that motivated it measures nothing.
+
+**The ffmpeg test's first version was wrong, and the correction exposed it.** It asserted that no
+live document says *"mutable `main/` archive"* while the URL carries a commit — and it failed on the
+very edit that retired the claim, because the convention here is to **quote** a wrong sentence while
+correcting it. A grep cannot distinguish making a claim from retiring one. Rewritten to bind the
+40-hex commit in `fetch-ffmpeg.sh` to its appearance in a live document: a reader can then verify the
+pin without opening the script, a moved pin must be republished, and an unpinned archive fails the
+other way. **3/3** on its own audit — the wrong count restored CAUGHT, the published commit removed
+CAUGHT, the script unpinned CAUGHT.
+`evidence/adversarial-pass-14-2026-08-09.md`.
