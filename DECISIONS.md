@@ -3722,3 +3722,23 @@ gaps "would be a threefold overstatement", so the redundancy instruction added a
 intended.
 
 Gate: `VERIFY OK — 1136 passed, 0 skipped`.
+
+---
+
+## D-093 · A full action SHA can still pin a deprecated runtime
+
+**Exact source identity was necessary and insufficient.** GitHub Actions run 31291508018 passed on
+the exact release-candidate SHA, then annotated both infrastructure actions: Checkout v4 and Setup
+Python v5 target deprecated Node 20 and were being force-run on Node 24. The workflow was green only
+through platform compatibility emulation. The existing regression correctly refused moving tags
+but would accept those obsolete commits forever.
+
+**Decision.** Upgrade to the latest official Node-24 releases measured on 2026-08-09 and keep full
+commit pins: Checkout 7.0.1 at `3d3c42e…`, Setup Python 7.0.0 at `5fda3b95…`. GitHub's tag objects
+resolve directly to those commits, and each official `action.yml` declares `runs.using: node24`.
+The focused test binds action name, full commit and audited release comment; changing any one
+requires a new evidence update rather than silently accepting another 40-hex value.
+
+**Boundary.** Static inspection proves the declared runtime and source identity, not that GitHub can
+execute them. Exact-SHA workflow dispatch is the required runtime proof. Sources and the resulting
+run are recorded in `evidence/ci-actions.md`.

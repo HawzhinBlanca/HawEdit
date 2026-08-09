@@ -97,7 +97,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,218 collected, 1,218 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,219 collected, 1,219 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -130,6 +130,9 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 - Cross-Python release proof: Python 3.11.15 and 3.12.10 each emitted the same 329,973-byte wheel
   from revision `8d4810d28fd1`, SHA-256 `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9`.
   Provenance differs deliberately because it records the measured interpreter.
+- CI action runtime audit: exact-SHA run 31291508018 exposed deprecated Node-20 action runtimes.
+  Checkout 7.0.1 and Setup Python 7.0.0 are now pinned to audited full commits whose official
+  `action.yml` declares Node 24; a focused regression refuses rollback (`evidence/ci-actions.md`).
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

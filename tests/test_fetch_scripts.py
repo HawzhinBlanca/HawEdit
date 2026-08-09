@@ -40,3 +40,14 @@ def test_every_remote_github_action_is_pinned_to_a_full_commit() -> None:
         assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action), (
             f"{workflow}: remote action {action!r} is not pinned to a full commit"
         )
+
+
+def test_gate_uses_the_audited_node24_action_commits() -> None:
+    """A full SHA can still identify an action whose retired Node runtime is being emulated."""
+    workflow = (ROOT / ".github" / "workflows" / "gate.yml").read_text(encoding="utf-8")
+    expected = {
+        "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", "v7.0.1"),
+        "actions/setup-python": ("5fda3b95a4ea91299a34e894583c3862153e4b97", "v7.0.0"),
+    }
+    for action, (commit, release) in expected.items():
+        assert f"uses: {action}@{commit} # {release}" in workflow

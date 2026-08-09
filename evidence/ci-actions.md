@@ -1,18 +1,31 @@
 # GitHub Actions source identity — 2026-08-09
 
 The gate previously executed moving major-version tags. The official action repositories were
-queried with `git ls-remote` and the tag refs resolved as follows:
+queried and the release tags resolved to immutable commits as follows:
 
 | Action tag | Full commit used by the workflow |
 |---|---|
-| `actions/checkout@v4` | `11d5960a326750d5838078e36cf38b85af677262` |
-| `actions/setup-python@v5` | `a26af69be951a213d495a4c3e4e4022e16d87065` |
+| `actions/checkout@v7.0.1` | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `actions/setup-python@v7.0.0` | `5fda3b95a4ea91299a34e894583c3862153e4b97` |
 
 `.github/workflows/gate.yml` now uses the commits while keeping the tag names in comments for
 human update context. `tests/test_fetch_scripts.py` scans every workflow and refuses any remote
 `uses:` target that is not a full 40-hex commit. Local actions and `docker://` images are treated
 separately because they do not have this `owner/repo@commit` form.
 
-The first workflow-dispatch run after this change is the runtime evidence that both pinned action
-commits still execute successfully; a local YAML assertion alone cannot prove GitHub can fetch
-and run them.
+## Node runtime audit
+
+Exact-SHA gate run 31291508018 succeeded but GitHub annotated both former commits: their actions
+targeted deprecated Node 20 and the runner was force-executing them on Node 24. A full commit pin
+therefore proved source identity while still depending on compatibility emulation.
+
+The official `action.yml` at Checkout 7.0.1 and Setup Python 7.0.0 was read through the GitHub API;
+both declare `runs.using: node24`. The release pages and immutable tag objects are:
+
+- <https://github.com/actions/checkout/releases/tag/v7.0.1>
+- <https://github.com/actions/setup-python/releases/tag/v7.0.0>
+
+The new regression requires these two audited commit/tag pairs in addition to the generic full-SHA
+rule, so rolling back to a pinned Node-20 action is red. The first workflow-dispatch run after this
+change remains the runtime evidence that GitHub can fetch and execute the commits; a local YAML
+assertion alone cannot prove that.
