@@ -435,8 +435,9 @@ def test_windows_setup_lock_retries_beyond_msvcrt_short_lock_window(
 
     fake = ContendedMsvcrt()
     monkeypatch.setattr("hawedit.wsl_setup._WINDOWS_HOST", True)
-    monkeypatch.setattr("hawedit.wsl_setup.importlib.import_module", lambda _name: fake)
     monkeypatch.setattr("hawedit.wsl_setup.time.sleep", lambda _seconds: None)
+    # Patch import resolution last: pytest itself uses importlib to resolve string targets.
+    monkeypatch.setattr("hawedit.wsl_setup.importlib.import_module", lambda _name: fake)
 
     with _runtime_transaction_lock(tmp_path / "runtime"):
         assert fake.attempts == 12
