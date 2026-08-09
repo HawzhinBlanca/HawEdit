@@ -41,9 +41,11 @@ __all__ = [
     "ModelNotInRegistry",
     "NonCommercialLicence",
     "Provisioning",
+    "RegistryContradiction",
     "ShippedAsset",
     "WrongRole",
     "assert_commercially_usable",
+    "assert_registry_excludes_nothing_it_registers",
     "attribution_notices",
     "resolve",
     "resolve_role",
@@ -124,6 +126,10 @@ class ModelNotInRegistry(LookupError):
 
 class ModelExcluded(ModelNotInRegistry):
     """Raised for a model §7 explicitly excludes. Subclass so one `except` catches both."""
+
+
+class RegistryContradiction(ValueError):
+    """Raised when §7's production table and its exclusion table name the same model."""
 
 
 class NonCommercialLicence(ValueError):
@@ -370,10 +376,61 @@ _EXCLUDED_ENTRIES: Final = (
     ),
 )
 
+
+def assert_registry_excludes_nothing_it_registers(
+    registry: Mapping[str, ModelEntry], excluded: Mapping[str, ExcludedEntry]
+) -> None:
+    """§7's production table and its exclusion table must not name the same model.
+
+    Enforced at import, not in a test, because the two tables naming one model is a
+    contradiction in the data rather than a routing question — and `resolve` reads `REGISTRY`
+    before `EXCLUDED`, so the contradiction resolves *in favour of the excluded model*.
+
+    Measured before this existed: adding `Whisper` — which §7 excludes because "OmniASR is
+    stronger for ckb" — to `_ENTRIES` with a `blueprint_model_cell` §7 already contains, no
+    role, and a licence requiring no attribution made `resolve("Whisper")` return the entry
+    with no `ModelExcluded` raised, and the full suite stayed at `exit=0, 0 FAILED`. The
+    set-equality tests could not see it: they compare the *cells* each table self-declares, so
+    a duplicate cell is invisible, and nothing related the two tables to each other. Two of
+    §7's nine exclusions are CC-BY-NC-4.0 hard rejects, so the same hole routes work to a
+    NonCommercial model. D-082.
+
+    Raises:
+        RegistryContradiction: any model id appears in both tables.
+    """
+    both = sorted(set(registry) & set(excluded))
+    if both:
+        raise RegistryContradiction(
+            f"BLUEPRINT §7 both registers and excludes {both}. `resolve` returns the registered "
+            f"entry before it consults the exclusion table, so an excluded model would be "
+            f"handed out for production use — and two of §7's exclusions are NonCommercial "
+            f"hard rejects. §7 is frozen: remove the entry rather than the exclusion."
+        )
+    # The other half of the same hole. `test_registry.py` compares the *set* of cells each table
+    # declares against §7, so a second entry claiming a cell §7 already has is invisible: the set
+    # is unchanged. That is how the rogue entry above hid, and the realistic trigger is not
+    # malice — copy an existing ModelEntry as a template, edit model_id and component, forget the
+    # cell. §7 lists one model per cell, so two entries claiming one cell means at least one is
+    # accountable to a blueprint row it is not.
+    claimed: dict[str, list[str]] = {}
+    for model_id, entry in registry.items():
+        claimed.setdefault(entry.blueprint_model_cell, []).append(model_id)
+    shared = {cell: sorted(ids) for cell, ids in claimed.items() if len(ids) > 1}
+    if shared:
+        raise RegistryContradiction(
+            f"these BLUEPRINT §7 cells are claimed by more than one registry entry: {shared}. "
+            f"§7 names one model per cell, so the set-equality check cannot see the extra entry "
+            f"— its cell is already in the set. Give the new model its own §7 row, or correct "
+            f"the cell it is accountable to."
+        )
+
+
 REGISTRY: Final[Mapping[str, ModelEntry]] = MappingProxyType({e.model_id: e for e in _ENTRIES})
 EXCLUDED: Final[Mapping[str, ExcludedEntry]] = MappingProxyType(
     {e.model_id: e for e in _EXCLUDED_ENTRIES}
 )
+
+assert_registry_excludes_nothing_it_registers(REGISTRY, EXCLUDED)
 
 # Benchmark controls: models the blueprint requires for *measurement* but deliberately keeps
 # out of §7's production table. §3 Stage 0 — "Keep speaker-diarization-3.1 (MIT) as a
