@@ -57,7 +57,22 @@ to be deterministic today, so the epoch could be deleted unnoticed; and a contro
 setuptools is *non*-deterministic would break the day that stopped being true, which is a check whose
 cheapest fix is deleting it.
 
-Two instrument errors on the way here, both mine, both caught by reading the raw failure:
+## The first version of this test was wrong, and only CI could see it
+
+It compared the ZIP stamps against the raw epoch and passed here — because `450684b` happened to
+carry an **even** timestamp. The runner's commit was odd, and the test failed by exactly one second:
+
+```
+assert {(2026, 8, 9, 17, 43, 52)} == {(2026, 8, 9, 17, 43, 53)}
+```
+
+ZIP stores the second as `sec // 2`, so every stamp the format can hold is an even second —
+verified directly: writing `second=53` reads back `52`. The expectation now rounds down, which is
+not a tolerance but the value the format can represent; a clock-based mtime is wrong by far more
+than one second in every entry. The local gate was green on a tree whose HEAD is now odd, and the
+same test fails on the pre-fix expectation there too.
+
+Two further instrument errors on the way here, both mine, both caught by reading the raw failure:
 
 * `subprocess.run(["bash", …])` on Windows resolves **WSL's** `bash.exe`, which cannot open a `C:/…`
   path and reported the script as "No such file or directory" while Git Bash ran it. Resolved by
