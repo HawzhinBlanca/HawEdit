@@ -5860,3 +5860,21 @@ The adjacent M6.3 audit also corrects stale progress prose: TimeLens is composed
 released after use; its remaining shortfall is labelled real-footage accuracy, not missing wiring.
 
 `evidence/adversarial-pass-20-2026-08-10.md`.
+
+## D-166 - A rewritable normalized transcript must still publish atomically and content-bound
+
+`transcript.norm.json` is derived and legitimately rewritable after a KLPT upgrade; it is not
+write-once like raw. That distinction was incorrectly implemented as `Path.write_text` on the
+predictable final name. Measured on Windows, planting that name as a hardlink changed an external
+victim from `ORIGINAL` to the normalized JSON while leaving link count two. A crash during the same
+call could expose truncated JSON, and a stale normalized transcript was written successfully and
+only refused if a later reader happened to inspect it.
+
+`write_norm` now takes the media's existing hardened transcript lock, verifies the immutable raw,
+requires `source_sha256` to match that exact file, writes and fsyncs a securely created private
+sibling, repeats raw integrity and identity checks, and atomically replaces the final name. The
+replacement unlinks a planted symlink/hardlink instead of following it. A failed replace keeps the
+previous complete norm; private-stage cleanup never masks the primary exception. The reader's
+stale guard remains because an old build or out-of-band actor can still place an artifact.
+
+`evidence/adversarial-pass-21-2026-08-10.md`.

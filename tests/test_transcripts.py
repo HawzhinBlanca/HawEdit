@@ -500,7 +500,12 @@ def test_a_stale_normalized_transcript_is_detected(tmp_path: Path) -> None:
     store = TranscriptStore(tmp_path)
     store.write_raw(a_raw())
     other = normalize_transcript(a_raw("a completely different transcript"))
-    store.write_norm(other)
+    # The publisher refuses this, and the reader retains its own guard for artifacts planted by
+    # an older build or an out-of-band writer.
+    with pytest.raises(StaleNormalizedTranscript, match="refusing to publish"):
+        store.write_norm(other)
+    assert not store.norm_path("media-001").exists()
+    store.norm_path("media-001").write_text(other.to_json(), encoding="utf-8")
     with pytest.raises(StaleNormalizedTranscript):
         store.read_norm("media-001")
 
@@ -520,6 +525,69 @@ def test_norm_may_be_rewritten_because_it_is_derived(tmp_path: Path) -> None:
     norm = normalize_transcript(store.read_raw("media-001"))
     store.write_norm(norm)
     store.write_norm(norm)  # must not raise
+
+
+def test_norm_publication_replaces_a_hardlink_without_touching_its_victim(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path / "store")
+    raw = a_raw()
+    store.write_raw(raw)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("ORIGINAL", encoding="utf-8")
+    os.link(victim, store.norm_path(raw.media_id))
+
+    norm = normalize_transcript(raw)
+    store.write_norm(norm)
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL"
+    assert store.read_norm(raw.media_id) == norm
+    assert not store.norm_path(raw.media_id).samefile(victim)
+
+
+def test_failed_norm_publication_preserves_the_previous_complete_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    norm = normalize_transcript(raw)
+    store.write_norm(norm)
+    before = store.norm_path(raw.media_id).read_bytes()
+
+    def refuse_replace(_source: Path, _destination: Path) -> None:
+        raise PermissionError("simulated publication refusal")
+
+    monkeypatch.setattr(os, "replace", refuse_replace)
+    with pytest.raises(PermissionError, match="publication refusal"):
+        store.write_norm(norm)
+
+    assert store.norm_path(raw.media_id).read_bytes() == before
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_norm_staging_cleanup_failure_does_not_mask_the_publication_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    norm = normalize_transcript(raw)
+    original_unlink = Path.unlink
+
+    def refuse_replace(_source: Path, _destination: Path) -> None:
+        raise PermissionError("PRIMARY publication refusal")
+
+    def refuse_staging_unlink(path: Path, missing_ok: bool = False) -> None:
+        if path.name.endswith(".tmp"):
+            raise OSError("SECONDARY cleanup refusal")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "replace", refuse_replace)
+    monkeypatch.setattr(Path, "unlink", refuse_staging_unlink)
+    with pytest.raises(PermissionError, match="PRIMARY") as caught:
+        store.write_norm(norm)
+
+    notes = getattr(caught.value, "__notes__", ())
+    assert any("SECONDARY cleanup refusal" in note for note in notes)
 
 
 # --- provenance must name a model §7 permits ------------------------------------------

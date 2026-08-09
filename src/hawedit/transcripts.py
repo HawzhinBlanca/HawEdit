@@ -36,6 +36,7 @@ import json
 import math
 import os
 import stat
+import tempfile
 import threading
 import time
 import uuid
@@ -691,10 +692,64 @@ class TranscriptStore:
             )
 
     def write_norm(self, norm: NormalizedTranscript) -> Path:
-        """Write the derived artifact. Unlike raw this may be rewritten — re-normalizing
-        after a KLPT upgrade is a legitimate operation."""
+        """Atomically publish a derived artifact only for this store's verified raw.
+
+        Unlike raw, norm may be replaced: re-normalizing after a KLPT upgrade is legitimate.
+        Replacement must still be content-bound and atomic. Writing directly to the predictable
+        final name follows a planted hardlink/symlink and exposes half-written JSON to readers.
+        """
         path = self.norm_path(norm.media_id)
-        path.write_text(norm.to_json(), encoding="utf-8")
+        lock = self.root / f".{self._safe(norm.media_id)}.transcript.raw.lock"
+        staging: Path | None = None
+        with _exclusive_file_lock(lock):
+            self._verify_raw_integrity_locked(norm.media_id)
+            source_digest = hashlib.sha256(self.raw_path(norm.media_id).read_bytes()).hexdigest()
+            if norm.source_sha256 != source_digest:
+                raise StaleNormalizedTranscript(
+                    f"refusing to publish {path}: it was derived from raw "
+                    f"{norm.source_sha256[:12]}… but this store holds {source_digest[:12]}…. "
+                    "Normalize the verified raw from this store before publishing its derived "
+                    "artifact."
+                )
+
+            payload = norm.to_json().encode("utf-8")
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    dir=self.root,
+                    delete=False,
+                ) as stream:
+                    staging = Path(stream.name)
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+
+                # Recheck immediately before publication. Raw is write-once for HawEdit writers,
+                # but an out-of-band mutation must not race a valid first check and make the
+                # newly published norm stale on arrival.
+                self._verify_raw_integrity_locked(norm.media_id)
+                current_digest = hashlib.sha256(
+                    self.raw_path(norm.media_id).read_bytes()
+                ).hexdigest()
+                if current_digest != source_digest:
+                    raise RawTranscriptTampered(
+                        f"{self.raw_path(norm.media_id)} changed while its normalized artifact "
+                        "was being staged. The derived artifact was not published."
+                    )
+                os.replace(staging, path)
+                staging = None
+            except BaseException as primary:
+                if staging is not None:
+                    try:
+                        staging.unlink(missing_ok=True)
+                    except OSError as cleanup:
+                        primary.add_note(
+                            f"normalized-transcript staging cleanup also failed for {staging}: "
+                            f"{cleanup}"
+                        )
+                raise
         return path
 
     def read_norm(self, media_id: str) -> NormalizedTranscript:
