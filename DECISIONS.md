@@ -3592,3 +3592,40 @@ the six are caught only by controls, which is what keeps a refusal from being im
 "reject everything".
 
 Gate: `VERIFY OK — 1130 passed, 0 skipped`.
+
+---
+
+## D-090 · Reproducible wheel bytes require a hash-locked builder, not two ambient builds
+
+**The release command reproduced its environment, not its artifact inputs.** It invoked
+`pip wheel --no-build-isolation` twice with the caller's Python while `[build-system]` allowed
+`setuptools>=68`. On clean revision `2c44e759f099`, Setuptools 79.0.1 emitted wheel SHA-256
+`716908c3…`; 84.0.0 emitted `799c82b1…`. The only content change was the generator in `WHEEL` and
+the consequent `RECORD` checksum, but the published bytes were different. Setuptools 68.2.2—also
+allowed—failed with `invalid command 'bdist_wheel'`. A same-process double build could detect none
+of this.
+
+**Decision 1 — publication owns its builder.** `hawedit-release` creates a temporary venv and
+installs exact Pip 26.2.1 and Setuptools 84.0.0 pure-Python wheels from
+`requirements/release-build.txt` using `--require-hashes --only-binary=:all: --no-deps`. The two
+SHA-256 values were independently computed from downloaded files and matched official PyPI JSON.
+The ordinary runtime wheel does not depend on these release-only packages.
+
+**Decision 2 — specification, lock, resolved environment and artifact must agree.** Every
+`[build-system]` requirement must be an exact pin, must match the release lock, and the backend's
+own package must appear in both. After installation, the command measures every locked version.
+Both copies are built only with that private Python, and the output wheel must name Setuptools
+84.0.0 as its generator. A caller cannot pass a plausible lock while continuing to build with its
+ambient backend.
+
+**Decision 3 — builder identity is provenance, not tribal knowledge.** Provenance schema 3 records
+the measured Python, frontend, backend, full locked requirement map, lock path and lock SHA-256.
+Python is recorded rather than artificially fixed to one minor: the wheel supports 3.11+, and the
+next cross-version proof can distinguish an input change from unexplained drift.
+
+**Mutation audit 3/3.** The gate catches reopening the Setuptools range, bypassing the private
+builder for both wheel copies, and altering one nibble of the official Setuptools wheel hash. See
+`evidence/release-builder-lock.md`.
+
+**Still open.** The artifact is unsigned and the package-managed OmniASR byte supply chain remains
+outside project-owned manifests, so M3.7 stays PARTIAL.

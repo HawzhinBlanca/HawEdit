@@ -126,15 +126,19 @@ Release from a clean, committed checkout with one command:
 hawedit-release --project-root .
 ```
 
-The command derives `SOURCE_DATE_EPOCH` from `HEAD`, builds the wheel twice in independent
-temporary directories, requires identical filenames and SHA-256 digests, checks the archive for
-the Kurdish font/licence and model source/revision manifests, then atomically publishes a
+The command derives `SOURCE_DATE_EPOCH` from `HEAD`, creates a private temporary builder from
+the exact Pip and Setuptools wheels hash-locked in `requirements/release-build.txt`, builds the
+wheel twice in independent temporary directories, requires identical filenames and SHA-256
+digests, checks the archive for the Kurdish font/licence and model source/revision manifests,
+then atomically publishes a
 write-once directory under `dist/`. That directory contains the wheel, `SHA256SUMS`,
 `release-provenance.json`, and deterministic SPDX 2.3 JSON. The SBOM binds the exact wheel and
 bundled Noto font hashes and records every base/optional dependency declared by the wheel; it
 marks unbundled requirements unresolved instead of borrowing versions from the build machine.
-`SHA256SUMS` covers all three metadata/artifact payloads. A dirty checkout, non-reproducible
-build, missing runtime file, corrupt wheel, or existing release directory is refused.
+Provenance records the measured Python, build frontend/backend and build-lock digest.
+`SHA256SUMS` covers all three metadata/artifact payloads. A dirty checkout, unpinned or drifting
+builder, hash mismatch, non-reproducible build, missing runtime file, corrupt wheel, or existing
+release directory is refused.
 
 This proves repeatable source-to-wheel bytes and a standards-validated component manifest. It is
 not a signature, an OmniASR byte manifest, a resolved deployment lock, or proof that a machine's

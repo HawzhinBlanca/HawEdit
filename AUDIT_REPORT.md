@@ -84,7 +84,9 @@ These cannot be truthfully solved from the checkout alone:
 - `hawedit-release` makes source-to-wheel bytes reproducible and emits checksummed Git
   provenance plus a deterministic SPDX 2.3 SBOM. The SBOM binds the exact wheel, bundled Noto
   font, and every base/optional `Requires-Dist` relationship without inventing unresolved
-  dependency versions. Releases are still unsigned, and package-managed OmniASR assets lack a
+  dependency versions. Its two builds now run under a private, hash-locked Pip/Setuptools
+  toolchain and provenance records that builder identity; an ambient backend cannot silently
+  change the wheel. Releases are still unsigned, and package-managed OmniASR assets lack a
   project-owned byte manifest.
 
 ## Honest release call
@@ -95,7 +97,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,211 collected, 1,211 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,213 collected, 1,213 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -119,11 +121,12 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 - Real pipeline delivery publishes one exact ASS/MP4/SRT/EDL/JSON directory. Tests inject ASS
   and sidecar write failures and a two-worker publication race; failures expose no partial set.
 - `hawedit-release` derives `SOURCE_DATE_EPOCH` from clean Git `HEAD`, builds independently
-  twice, refuses unequal bytes, validates release-critical package data, and atomically emits
-  the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision provenance. The independent
-  `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally live beside
-  the artifacts instead of in this changing source file. Signing and a project-owned OmniASR
-  byte manifest remain open supply-chain work.
+  twice under a private builder populated only from hash-locked Pip 26.2.1 and Setuptools 84.0.0
+  wheels, refuses unequal bytes, validates release-critical package data, and atomically emits
+  the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision/builder provenance. The
+  independent `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally
+  live beside the artifacts instead of in this changing source file. Signing and a project-owned
+  OmniASR byte manifest remain open supply-chain work (`evidence/release-builder-lock.md`).
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,6 +42,10 @@ _REQUIREMENT_NAME: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _EXACT_REQUIREMENT_VERSION: Final = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^]]+\])?\s*==\s*([^,;\s*]+)(?:\s*;.*)?$"
 )
+_LOCKED_REQUIREMENT: Final = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s]+)\s+--hash=sha256:([0-9a-f]{64})$"
+)
+_BUILD_LOCK: Final = Path("requirements/release-build.txt")
 
 
 class ReleaseError(RuntimeError):
@@ -60,6 +65,10 @@ class ReleaseArtifact:
     sbom_sha256: str
     provenance_sha256: str
     size_bytes: int
+    build_python: str
+    build_frontend: str
+    build_backend: str
+    build_lock_sha256: str
 
     def to_dict(self) -> dict[str, str | int]:
         return {
@@ -74,6 +83,30 @@ class ReleaseArtifact:
             "sbom_sha256": self.sbom_sha256,
             "provenance_sha256": self.provenance_sha256,
             "size_bytes": self.size_bytes,
+            "build_python": self.build_python,
+            "build_frontend": self.build_frontend,
+            "build_backend": self.build_backend,
+            "build_lock_sha256": self.build_lock_sha256,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _BuildIdentity:
+    python: str
+    frontend: str
+    backend: str
+    requirements: tuple[tuple[str, str], ...]
+    lock_path: str
+    lock_sha256: str
+
+    def to_dict(self) -> dict[str, str | dict[str, str]]:
+        return {
+            "python": self.python,
+            "frontend": self.frontend,
+            "backend": self.backend,
+            "requirements": dict(self.requirements),
+            "lock": self.lock_path,
+            "lock_sha256": self.lock_sha256,
         }
 
 
@@ -123,6 +156,136 @@ def _source_identity(project_root: Path) -> tuple[str, int]:
     if epoch < 315_532_800:  # ZIP timestamps cannot precede 1980-01-01.
         raise ReleaseError(f"commit timestamp {epoch} predates the wheel/ZIP timestamp range")
     return revision, epoch
+
+
+def _locked_build_contract(project_root: Path) -> tuple[Path, tuple[tuple[str, str], ...], str]:
+    """Require exact build pins and a hash for every release-builder package."""
+    pyproject_path = project_root / "pyproject.toml"
+    lock_path = project_root / _BUILD_LOCK
+    if not lock_path.is_file():
+        raise ReleaseError(f"release builder lock is missing: {lock_path}")
+    try:
+        project = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        build_system = project["build-system"]
+        raw_requires = build_system["requires"]
+        backend = build_system["build-backend"]
+    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+        raise ReleaseError(
+            f"could not read the build-system contract from {pyproject_path}"
+        ) from exc
+    if not isinstance(build_system, dict) or not isinstance(raw_requires, list):
+        raise ReleaseError("pyproject build-system must contain a requirements list")
+    if not isinstance(backend, str) or not backend.strip():
+        raise ReleaseError("pyproject build-system must name its build backend")
+
+    declared: dict[str, str] = {}
+    for requirement in raw_requires:
+        if not isinstance(requirement, str):
+            raise ReleaseError("every build-system requirement must be a string")
+        match = _EXACT_REQUIREMENT_VERSION.fullmatch(requirement)
+        if match is None:
+            raise ReleaseError(
+                f"release build requirement {requirement!r} is not exactly pinned; "
+                "two builds under one ambient backend are not reproducibility evidence"
+            )
+        name = _requirement_name(requirement)
+        normalized = _pypi_name(name)
+        if normalized in declared:
+            raise ReleaseError(f"duplicate build-system requirement {name!r}")
+        declared[normalized] = match.group(1)
+
+    locked: dict[str, str] = {}
+    try:
+        lock_lines = lock_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ReleaseError(f"could not read release builder lock {lock_path}: {exc}") from exc
+    for line_number, raw_line in enumerate(lock_lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _LOCKED_REQUIREMENT.fullmatch(line)
+        if match is None:
+            raise ReleaseError(
+                f"{lock_path}:{line_number} must be one exact package and one SHA-256 hash"
+            )
+        name = _pypi_name(match.group(1))
+        if name in locked:
+            raise ReleaseError(f"duplicate release builder requirement {name!r}")
+        locked[name] = match.group(2)
+    if "pip" not in locked:
+        raise ReleaseError("release builder lock must pin the pip build frontend")
+    for name, version in declared.items():
+        if locked.get(name) != version:
+            raise ReleaseError(
+                f"build-system requires {name}=={version}, but the release lock has "
+                f"{name}=={locked.get(name)!s}"
+            )
+    backend_package = _pypi_name(backend.split(".", 1)[0])
+    if backend_package not in declared:
+        raise ReleaseError(
+            f"build backend {backend!r} is not represented by an exact build-system requirement"
+        )
+    return lock_path, tuple(sorted(locked.items())), backend
+
+
+def _create_locked_builder(
+    project_root: Path, temporary_root: Path, bootstrap_python: Path
+) -> tuple[Path, _BuildIdentity]:
+    lock_path, requirements, backend_module = _locked_build_contract(project_root)
+    _run([str(bootstrap_python), "-m", "venv", str(temporary_root)], cwd=project_root)
+    builder_python = (
+        temporary_root / "Scripts" / "python.exe"
+        if os.name == "nt"
+        else temporary_root / "bin" / "python"
+    )
+    if not builder_python.is_file():
+        raise ReleaseError(f"builder venv did not create {builder_python}")
+    install_env = os.environ.copy()
+    install_env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    _run(
+        [
+            str(builder_python),
+            "-m",
+            "pip",
+            "install",
+            "--require-hashes",
+            "--only-binary=:all:",
+            "--no-deps",
+            "--no-cache-dir",
+            "-r",
+            str(lock_path),
+        ],
+        cwd=project_root,
+        env=install_env,
+    )
+    package_names = [name for name, _version in requirements]
+    identity_script = (
+        "import importlib.metadata as m, json, platform; "
+        f"names={package_names!r}; "
+        "print(json.dumps({'python': platform.python_version(), "
+        "'packages': {name: m.version(name) for name in names}}, sort_keys=True))"
+    )
+    try:
+        measured = json.loads(_run([str(builder_python), "-c", identity_script], cwd=project_root))
+        measured_python = measured["python"]
+        measured_packages = measured["packages"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ReleaseError("could not measure the locked release builder identity") from exc
+    expected = dict(requirements)
+    if measured_packages != expected:
+        raise ReleaseError(
+            f"locked builder resolved {measured_packages!r}, expected exactly {expected!r}"
+        )
+    backend_name = _pypi_name(backend_module.split(".", 1)[0])
+    lock_relative = lock_path.relative_to(project_root).as_posix()
+    return builder_python, _BuildIdentity(
+        python=str(measured_python),
+        frontend=f"pip=={expected['pip']}",
+        backend=f"{backend_name}=={expected[backend_name]}",
+        requirements=requirements,
+        lock_path=lock_relative,
+        lock_sha256=_sha256(lock_path),
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -422,7 +585,7 @@ def build_reproducible_wheel(
     *,
     python: Path = Path(sys.executable),
 ) -> ReleaseArtifact:
-    """Build twice from clean HEAD and atomically publish only byte-identical wheels."""
+    """Build twice with one hash-locked private builder and publish byte-identical wheels."""
     root = project_root.resolve()
     revision, epoch = _source_identity(root)
     output = (
@@ -438,8 +601,11 @@ def build_reproducible_wheel(
 
     with tempfile.TemporaryDirectory(prefix="hawedit-wheel-build-") as temporary:
         temporary_root = Path(temporary)
-        first = _build_once(root, temporary_root / "first", python, epoch)
-        second = _build_once(root, temporary_root / "second", python, epoch)
+        builder_python, builder = _create_locked_builder(
+            root, temporary_root / "builder", python.resolve()
+        )
+        first = _build_once(root, temporary_root / "first", builder_python, epoch)
+        second = _build_once(root, temporary_root / "second", builder_python, epoch)
         first_digest = _sha256(first)
         second_digest = _sha256(second)
         if first.name != second.name or first_digest != second_digest:
@@ -469,9 +635,10 @@ def build_reproducible_wheel(
             )
             sbom_digest = hashlib.sha256(sbom_payload).hexdigest()
             provenance = {
-                "schema": 2,
+                "schema": 3,
                 "revision": revision,
                 "source_date_epoch": epoch,
+                "builder": builder.to_dict(),
                 "wheel": first.name,
                 "sha256": first_digest,
                 "size_bytes": size,
@@ -508,6 +675,10 @@ def build_reproducible_wheel(
         sbom_sha256=sbom_digest,
         provenance_sha256=provenance_digest,
         size_bytes=size,
+        build_python=builder.python,
+        build_frontend=builder.frontend,
+        build_backend=builder.backend,
+        build_lock_sha256=builder.lock_sha256,
     )
 
 

@@ -13,10 +13,17 @@ import pytest
 
 from hawedit.release import (
     ReleaseError,
+    _locked_build_contract,
     _publish_directory,
     _spdx_sbom,
     build_reproducible_wheel,
 )
+
+RELEASE_BUILD_LOCK = """\
+pip==26.2.1 --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e
+setuptools==84.0.0 --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
+"""
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _git(root: Path, *args: str) -> str:
@@ -30,6 +37,7 @@ def _release_source(root: Path) -> Path:
     (project / "src" / "hawedit").mkdir(parents=True)
     (project / "assets" / "fonts").mkdir(parents=True)
     (project / "models").mkdir()
+    (project / "requirements").mkdir()
     (project / "src" / "hawedit" / "__init__.py").write_text("", encoding="utf-8")
     (project / "src" / "hawedit" / "release.py").write_text(
         '"""release fixture"""\n', encoding="utf-8"
@@ -38,10 +46,13 @@ def _release_source(root: Path) -> Path:
     (project / "assets" / "fonts" / "OFL.txt").write_text("OFL", encoding="utf-8")
     (project / "models" / "sources.json").write_text("{}\n", encoding="utf-8")
     (project / "models" / "revisions.json").write_text("{}\n", encoding="utf-8")
+    (project / "requirements" / "release-build.txt").write_text(
+        RELEASE_BUILD_LOCK, encoding="utf-8"
+    )
     (project / ".gitignore").write_text("/build/\n/dist/\n*.egg-info/\n", encoding="utf-8")
     (project / "pyproject.toml").write_text(
         """[build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -95,9 +106,17 @@ def test_release_builds_twice_and_publishes_verified_provenance(tmp_path: Path) 
     )
     provenance = json.loads(artifact.provenance_file.read_text(encoding="utf-8"))
     assert provenance == {
-        "schema": 2,
+        "schema": 3,
         "revision": _git(project, "rev-parse", "HEAD"),
         "source_date_epoch": artifact.source_date_epoch,
+        "builder": {
+            "python": artifact.build_python,
+            "frontend": "pip==26.2.1",
+            "backend": "setuptools==84.0.0",
+            "requirements": {"pip": "26.2.1", "setuptools": "84.0.0"},
+            "lock": "requirements/release-build.txt",
+            "lock_sha256": artifact.build_lock_sha256,
+        },
         "wheel": artifact.wheel.name,
         "sha256": artifact.sha256,
         "size_bytes": artifact.size_bytes,
@@ -162,6 +181,8 @@ def test_release_builds_twice_and_publishes_verified_provenance(tmp_path: Path) 
     }
     with zipfile.ZipFile(artifact.wheel) as wheel:
         assert wheel.testzip() is None
+        wheel_metadata = wheel.read("hawedit_release_fixture-1.0.0.dist-info/WHEEL").decode()
+        assert "Generator: setuptools (84.0.0)" in wheel_metadata
         assert any(name.endswith("share/hawedit/models/sources.json") for name in wheel.namelist())
         assert any(
             name.endswith("share/hawedit/models/revisions.json") for name in wheel.namelist()
@@ -169,6 +190,31 @@ def test_release_builds_twice_and_publishes_verified_provenance(tmp_path: Path) 
 
     with pytest.raises(ReleaseError, match="refusing to overwrite"):
         build_reproducible_wheel(project, destination, python=Path(sys.executable))
+
+
+def test_release_refuses_an_unpinned_or_drifting_build_backend(tmp_path: Path) -> None:
+    project = _release_source(tmp_path)
+    pyproject = project / "pyproject.toml"
+    original = pyproject.read_text(encoding="utf-8")
+
+    pyproject.write_text(original.replace("setuptools==84.0.0", "setuptools>=68"), encoding="utf-8")
+    with pytest.raises(ReleaseError, match="not exactly pinned"):
+        _locked_build_contract(project)
+
+    pyproject.write_text(
+        original.replace("setuptools==84.0.0", "setuptools==83.0.0"), encoding="utf-8"
+    )
+    with pytest.raises(ReleaseError, match="release lock has setuptools==84.0.0"):
+        _locked_build_contract(project)
+
+
+def test_project_release_builder_is_exactly_pinned_and_officially_hashed() -> None:
+    lock_path, requirements, backend = _locked_build_contract(ROOT)
+    assert backend == "setuptools.build_meta"
+    assert dict(requirements) == {"pip": "26.2.1", "setuptools": "84.0.0"}
+    lock = lock_path.read_text(encoding="utf-8")
+    assert "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e" in lock
+    assert "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670" in lock
 
 
 def test_release_refuses_uncommitted_or_untracked_source(tmp_path: Path) -> None:
