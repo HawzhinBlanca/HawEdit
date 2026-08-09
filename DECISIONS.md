@@ -4345,3 +4345,55 @@ the over-strict direction — CAUGHT (6) by the clean-run control, and a blank r
 (1). That last one survived the first audit: I had written the guard and no test exercised it, which
 is the same absence-of-a-check this whole iteration is about.
 `evidence/one-region-discarded-a-38-minute-run.md`.
+
+## D-104
+
+**The frame-count guard graded its own parity step's output and refused a good extraction.** Found by
+running the visual path on the real 38-minute file. It stopped after **three** windows:
+
+```
+✗ zar38final:s2:w0 planned 36 frames over 17720 ms and ffmpeg produced 34. One frame of tail
+  rounding is normal; this is 2. The window likely runs past the end of the media …
+```
+
+The diagnosis in that message is wrong, and the files on disk prove it: `s2_w0/` holds **35** JPEGs.
+ffmpeg delivered 35 of 36 — exactly the one tail frame the message itself calls normal — and then
+this function's own even-alignment step (D-060, which drops a frame rather than let the processor pad
+by repeating one) removed a second. The guard then compared **34** against `36 - 1` and raised. The
+window sits early in a 2313.8 s file; every frame it asked for existed.
+
+Any window whose planned count is even and whose delivered count is odd hit this — roughly half of
+them, since `ceil(duration × 2.0)` is even about half the time.
+
+**Decision: judge ffmpeg's delivery before trimming, and the trim separately.** `extracted` is what
+the binary wrote; the plan comparison runs against that. `paths` is what the model is handed, and the
+parity step still applies. Two facts, two checks, in the order the data flows.
+
+**Rejected: widening the tolerance to two frames.** It is the obvious one-character fix and it is
+wrong: a window the media genuinely does not cover also delivers two frames short, and that must stay
+refused because an embedding of whatever frames existed describes less footage than the window claims.
+Judging the delivered count separates the two cases; a tolerance cannot. The mutation audit pins this
+— widening to 2 is CAUGHT by the control alone.
+
+**A guard I added and then deleted.** I also added a check that the kept count is a whole number of
+temporal patches. It survived mutation, and the reason is that it is **unreachable**: after trimming,
+any count above `TEMPORAL_PATCH_FRAMES` is even by construction, so the branch can never fire. A
+guard that cannot fire reads as protection and is not, so it was removed and the property is asserted
+in a test across every odd delivery the plan allows instead. Second iteration running in which my own
+new guard was the thing the audit caught (D-103's blank reason was the first).
+
+**Also found by the audit: `len(extracted) > window.frame_count` had no test at all.** §3 Stage 2's
+64-frame ceiling was enforced by a branch nothing exercised — replacing it with `if False:` left the
+suite green. `-frames:v` makes an overshoot unlikely, which is exactly how a check goes unfired for
+months. Now tested.
+
+**Mutation audit 4/4** after the dead guard was removed: grading the truncated tuple CAUGHT (9),
+widening the tolerance CAUGHT (1, the control alone), accepting more frames than planned CAUGHT (1,
+the newly added test), and reverting the parity trim CAUGHT (3).
+
+**Note on the audit harness itself:** a transient Windows file lock made one restore fail and left
+`video_input.py` mutated. The backup on hand predated the fix, so the line was restored by hand and
+the file verified byte-identical to the verified-green version before committing. The harness now
+retries every write and re-reads to confirm — an audit that can corrupt the tree it audits is worse
+than no audit.
+`evidence/frame-count-guard-graded-its-own-output.md`.

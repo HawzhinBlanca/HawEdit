@@ -204,30 +204,42 @@ def extract_window_frames(
             f"({result.returncode}): {result.stderr.decode('utf-8', 'replace')[-400:]}"
         )
 
-    paths = tuple(sorted(dest_dir.glob(f"{window.window_index:03d}_*.jpg")))
+    extracted = tuple(sorted(dest_dir.glob(f"{window.window_index:03d}_*.jpg")))
+
+    # What ffmpeg delivered, judged before this function drops anything of its own. The two checks
+    # below used to run on the *truncated* tuple, so they graded the parity step's output as though
+    # ffmpeg had produced it — and refused a perfectly good extraction. Measured 2026-08-09 on a
+    # real 38-minute file: `s2:w0` planned 36 frames over 17,720 ms, ffmpeg wrote **35** (the one
+    # tail frame the message itself calls normal), the parity step dropped a second, and the guard
+    # then compared 34 against 36-1 and raised "the window likely runs past the end of the media".
+    # It does not; the window sits early in a 2313.8 s file and every frame it asked for existed.
+    # Any window whose planned count is even and whose delivered count is odd hit this, which is
+    # about half of them — the visual path got through three windows before stopping. D-104.
+    if len(extracted) > window.frame_count:
+        raise FrameCountMismatch(
+            f"{window.window_id} planned {window.frame_count} frames and ffmpeg produced "
+            f"{len(extracted)}. More frames than the plan means the ceiling §3 Stage 2 sets is "
+            f"not the ceiling being enforced."
+        )
+    if len(extracted) < window.frame_count - 1:
+        raise FrameCountMismatch(
+            f"{window.window_id} planned {window.frame_count} frames over "
+            f"{window.duration_ms} ms and ffmpeg produced {len(extracted)}. One frame of tail "
+            f"rounding is normal; this is {window.frame_count - len(extracted)}. The window "
+            f"likely runs past the end of the media, and an embedding of whatever frames "
+            f"existed would describe less footage than the window claims."
+        )
+
     # An odd count is padded by the processor **repeating the last frame** (D-060), so the model
     # would see a frame that was never filmed, at the moment the window ends — which biases a
     # temporal reading toward its own tail. Dropping the last real frame instead costs at most one
     # sampling interval of footage and leaves every frame the model sees a frame that existed.
     # Measured: 2 frames is always delivered intact at every rate, so the floor here is 2 and
     # `WindowFrames` / the one-frame refusal below still catch anything shorter.
+    paths = extracted
     if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
         paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
     frames = WindowFrames(window=window, paths=paths)
-    if frames.count > window.frame_count:
-        raise FrameCountMismatch(
-            f"{window.window_id} planned {window.frame_count} frames and ffmpeg produced "
-            f"{frames.count}. More frames than the plan means the ceiling §3 Stage 2 sets is "
-            f"not the ceiling being enforced."
-        )
-    if frames.count < window.frame_count - 1:
-        raise FrameCountMismatch(
-            f"{window.window_id} planned {window.frame_count} frames over "
-            f"{window.duration_ms} ms and ffmpeg produced {frames.count}. One frame of tail "
-            f"rounding is normal; this is {window.frame_count - frames.count}. The window "
-            f"likely runs past the end of the media, and an embedding of whatever frames "
-            f"existed would describe less footage than the window claims."
-        )
     # A window the plan says is temporal, arriving as a single still, is the exact failure §7
     # excludes CLIP for — "frame-averaging loses temporal structure" — reached from the other
     # direction: there is no structure left to lose. It is also invisible downstream, because
