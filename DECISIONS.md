@@ -3629,3 +3629,49 @@ builder for both wheel copies, and altering one nibble of the official Setuptool
 
 **Still open.** The artifact is unsigned and the package-managed OmniASR byte supply chain remains
 outside project-owned manifests, so M3.7 stays PARTIAL.
+---
+
+## D-091
+
+**§8.1's coverage grid certified itself, and D-009's hours floor answered to nothing.**
+`tests/test_corpus.py` referenced `BLUEPRINT.md` **nowhere**: it compared the `Dialect` and
+`Condition` enums against literal sets typed into the test. `tests/test_registry.py` has parsed §7
+out of the frozen blueprint from the start and asserts set equality both ways; §8.1 never got the
+same treatment while M0.6's row claims "(3 dialects × 7 conditions)" implements its list. If §8.1
+gained a category the enum and the test would agree with each other and both be wrong. Measured: an
+eighth condition and a fourth dialect were both invisible.
+
+**The mapping is explicit because §8.1's phrasing is not one-to-one with the enum.** §8.1's coverage
+line yields **nine** items against a **seven**-member enum: "Kurdish–English and Kurdish–Arabic
+code-switching" is one phrase covering two members. That is the shape of §4.1's single "Numerals" row
+covering three numeral systems — the shape that made M0.3 claim five collisions handled when four
+were (D-076). Comparing item count to `len(Condition)` would have reproduced that error, so each
+phrase maps to the set of members it covers and set equality is asserted both ways.
+
+**`MINIMUM_HOURS` was referenced by no test at all.** `grep -rn MINIMUM_HOURS tests/` returned no
+matches, so D-009's recorded 3.0 could drift from the code; 3.0 → 1.0 left the whole suite green. The
+value is now parsed out of D-009's heading rather than retyped, so changing the floor requires
+amending the record — which is the reason for recording it. The drift is caught.
+
+**A negative result recorded because it is worth knowing.** D-077, D-080 and D-089 were three
+separate violations of "unmeasured is None, never 0.0" in metrics, so all fifteen public metric
+functions were swept rather than waiting for a fourth. There is no fourth: every one answers the
+unmeasured case with `None`, `{}` or a `ValueError`, and 6/6 mutations turning an unmeasured branch
+into a zero are CAUGHT. The class is closed, behaviourally and by test, and nothing was changed for
+it — inventing a fix there would have been work to look busy.
+
+**Mutation audit 4/5 on the grid, plus the hours-floor drift caught.** The survivor is D-078's
+neutral class: replacing the blueprint parse with a retyped literal changes nothing observable while
+the blueprint is frozen. Reported rather than papered over with a test about implementation.
+
+**BLUEPRINT.md is frozen and was touched in this audit**, because simulating §8.1 growing is the only
+way to measure the property. Restored in a `finally` and verified twice — `sha256` identical before
+and after (`b7e05d219be4e527`), and `git status --porcelain BLUEPRINT.md` empty. Recorded explicitly
+so the touch is on the record rather than inferred.
+
+**Kept deliberately:** the two literal-set tests stay alongside the parsed ones. They are not
+redundant — the parsed test checks membership against §8.1, the literal tests pin the enum's `.value`
+strings that the serialized corpus manifest depends on. Removing them would also have meant lowering
+the test-count floor, which the hard rules forbid doing casually.
+
+Gate: `VERIFY OK — 1134 passed, 0 skipped`.

@@ -329,3 +329,97 @@ def test_an_interim_corpus_still_round_trips_through_the_manifest(tmp_path: Path
     path = tmp_path / "interim.json"
     path.write_text(corpus.to_json(), encoding="utf-8")
     assert Corpus.load(path) == corpus
+
+
+# --- §8.1's coverage grid, parsed from the frozen blueprint rather than retyped ------------
+#
+# `test_the_three_dialects_of_section_4_4_are_the_dialect_enum` and
+# `test_every_section_8_1_condition_is_representable` compared the enums against literal sets
+# typed into this file, and this file referenced BLUEPRINT.md nowhere — so the grid certified
+# itself. `tests/test_registry.py` has parsed §7 out of the blueprint from the start; §8.1 never
+# got the same treatment, and M0.6's row claims "(3 dialects × 7 conditions)" implements §8.1's
+# list. D-091.
+#
+# The mapping is deliberately explicit because §8.1's phrasing does not line up one-to-one with
+# the enum: "Kurdish–English and Kurdish–Arabic code-switching" is ONE §8.1 item covering TWO
+# members. That is the same shape as §4.1's single "Numerals" row covering three numeral systems,
+# which is precisely how M0.3 came to claim five collisions were handled when four were (D-076).
+# Counting §8.1's items and comparing to `len(Condition)` would reproduce that error.
+
+_BLUEPRINT = Path(__file__).resolve().parents[1] / "BLUEPRINT.md"
+
+# Each §8.1 coverage phrase, mapped to the enum members it covers.
+_SECTION_8_1_DIALECTS: dict[str, Dialect] = {
+    "Hewlêr": Dialect.HEWLER,
+    "Slemani": Dialect.SLEMANI,
+    "Mukriyan": Dialect.MUKRIYAN,
+}
+_SECTION_8_1_CONDITIONS: dict[str, frozenset[Condition]] = {
+    "formal news": frozenset({Condition.FORMAL_NEWS}),
+    "casual podcast": frozenset({Condition.CASUAL_PODCAST}),
+    # One phrase, two members — see the note above.
+    "Kurdish–English and Kurdish–Arabic code-switching": frozenset(
+        {Condition.CODE_SWITCH_EN, Condition.CODE_SWITCH_AR}
+    ),
+    "noisy environments": frozenset({Condition.NOISY}),
+    "overlapping speakers": frozenset({Condition.OVERLAPPING_SPEAKERS}),
+    "named entities and political terminology": frozenset({Condition.NAMED_ENTITIES}),
+}
+
+
+def _section_8_1_coverage_items() -> list[str]:
+    """§8.1's coverage list, read out of the frozen blueprint."""
+    for line in _BLUEPRINT.read_text(encoding="utf-8").splitlines():
+        if "Several hours across:" in line:
+            bolded = line.split("**")[1]
+            return [item.strip().rstrip(".") for item in bolded.split("·")]
+    raise AssertionError("§8.1's 'Several hours across:' coverage line was not found")
+
+
+def test_section_8_1_coverage_line_is_parseable() -> None:
+    """Guard the guard: if §8.1's shape changes these tests must fail loudly, not vacuously."""
+    items = _section_8_1_coverage_items()
+    assert len(items) == 9, items
+
+
+def test_every_section_8_1_coverage_item_maps_to_the_enums() -> None:
+    """Set equality both ways, as `test_registry.py` does for §7.
+
+    Left to right: a category §8.1 adds has no mapping and fails here rather than being silently
+    unrepresentable. Right to left: an enum member nobody can point at a §8.1 phrase fails too.
+    """
+    items = set(_section_8_1_coverage_items())
+    mapped = set(_SECTION_8_1_DIALECTS) | set(_SECTION_8_1_CONDITIONS)
+    assert items == mapped, (
+        f"§8.1 lists {sorted(items - mapped)} with no mapping; "
+        f"mapped-but-absent: {sorted(mapped - items)}"
+    )
+    assert set(_SECTION_8_1_DIALECTS.values()) == set(Dialect)
+    covered: set[Condition] = set()
+    for members in _SECTION_8_1_CONDITIONS.values():
+        covered |= members
+    assert covered == set(Condition), (
+        f"conditions §8.1 does not cover: {sorted(c.value for c in set(Condition) - covered)}"
+    )
+
+
+def test_the_hours_floor_matches_the_decision_that_records_it() -> None:
+    """`MINIMUM_HOURS` was referenced by no test at all, so it could drift from D-009.
+
+    §8.1 asks for "several hours" without a number; D-009 fixes 3.0 as "the smallest quantity
+    'several' honestly describes". The value is parsed out of D-009 rather than retyped here, so
+    changing the floor requires changing the record — which is the point of recording it. Measured
+    before this existed: 3.0 → 1.0 left the whole suite green.
+    """
+    import re
+
+    from hawedit.corpus import MINIMUM_HOURS
+
+    decisions = (Path(__file__).resolve().parents[1] / "DECISIONS.md").read_text(encoding="utf-8")
+    heading = next(line for line in decisions.splitlines() if line.startswith("## D-009"))
+    recorded = re.search(r"([0-9]+\.[0-9]+)-hour floor", heading)
+    assert recorded is not None, f"D-009's heading no longer states the floor: {heading!r}"
+    assert float(recorded.group(1)) == MINIMUM_HOURS, (
+        f"MINIMUM_HOURS is {MINIMUM_HOURS} and D-009 records {recorded.group(1)}. Changing the "
+        f"floor means amending the decision, not only the constant."
+    )
