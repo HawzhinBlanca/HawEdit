@@ -252,8 +252,9 @@ The gate is deliberately hard to fool, because it is the only thing that decides
   did (D-005).
 
 CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the
-pinned ffmpeg, and fails if the §4.3 golden render or the §3 Stage 0 tests *skip* rather than
-run. Making that job a required status check is a repository setting, and is not done.
+ffmpeg archive **at a pinned commit and verifies its SHA-256 before unzipping it** (D-121 — this
+line said "pinned" for a while when the URL was a branch path), and fails if the §4.3 golden render
+or the §3 Stage 0 tests *skip* rather than run. Making that job a required status check is a repository setting, and is not done.
 
 ## Module map
 

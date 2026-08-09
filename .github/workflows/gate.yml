@@ -31,11 +31,13 @@ jobs:
 
       # §4.3.6's golden render is a pixel comparison, so it needs the *pinned* build the
       # reference was rendered from — a distro ffmpeg is a different libass and would fail on
-      # rendering differences that are not regressions. fetch-ffmpeg.sh pins the URL.
+      # rendering differences that are not regressions. fetch-ffmpeg.sh pins the URL to a
+      # commit and verifies the archive's SHA-256 before unzipping it (D-121); it said it
+      # pinned the URL for a while when the URL was a branch path.
       #
       # Required, not best-effort: `skipif(find_ffmpeg() is None)` means a failed fetch would
       # silently retire Kurdish invariant #4 from CI.
-      - name: fetch the pinned ffmpeg (libass + HarfBuzz + FriBidi)
+      - name: fetch the pinned, checksummed ffmpeg (libass + HarfBuzz + FriBidi)
         run: bash scripts/fetch-ffmpeg.sh
 
       - name: gate

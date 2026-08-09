@@ -63,9 +63,25 @@ if [[ -x "${dest}/ffmpeg" ]]; then
 else
   # Served through the Git-LFS media endpoint: the plain raw.githubusercontent URL returns a
   # 134-byte LFS pointer, not the archive.
-  url="https://media.githubusercontent.com/media/zackees/ffmpeg_bins/main/v8.0/linux.zip"
+  #
+  # Pinned to a commit, not `main`. This URL used to end `/main/v8.0/linux.zip` — a branch path,
+  # so the bytes behind it could change under a name that looked fixed, and this script unzips
+  # them, marks them executable and runs them. README and the CI step both called it "pinned"
+  # while `AUDIT_REPORT.md` correctly called it unpinned; the audit was right. Measured
+  # 2026-08-09: the media endpoint serves a commit ref, and at this one it returns byte-identical
+  # content to what `main` returned that day. D-121.
+  ref="df95abcb0ce6efff710dda5ef28a2f6f1dc21493"
+  # Measured from the archive at that commit, twice, on hawapc01. Not copied from a release page:
+  # the project publishes no digest for it, which is why AUDIT_REPORT.md said there was nothing
+  # to compare against. There is now, and it is ours.
+  sha256="ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad"
+  url="https://media.githubusercontent.com/media/zackees/ffmpeg_bins/${ref}/v8.0/linux.zip"
   echo "==> downloading ffmpeg (~140 MB) from ${url}"
-  curl -sSL -o "${dest}/linux.zip" "$url"
+  # `--fail`: without it an HTTP error page is written to linux.zip and the failure surfaces as
+  # a confusing unzip error about a file that was never an archive.
+  curl -sSL --fail -o "${dest}/linux.zip" "$url"
+  # Before unzip, before chmod +x, before anything executes.
+  bash "$(dirname "$0")/verify-sha256.sh" "${dest}/linux.zip" "$sha256"
   unzip -oq "${dest}/linux.zip" -d "${dest}/extract"
   find "${dest}/extract" -name ffmpeg -type f -exec cp {} "${dest}/ffmpeg" \;
   find "${dest}/extract" -name ffprobe -type f -exec cp {} "${dest}/ffprobe" \;
