@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from hawedit.wsl_setup import (
+    _prefix,
     default_wsl_source,
     package_fingerprint,
     provision_wsl_runtime,
@@ -87,3 +88,43 @@ def test_a_ready_runtime_is_idempotent_without_another_wsl_call(
         provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
         == runtime
     )
+
+
+# --- D-102: `--` sends the command through a shell that eats the environment -----------------
+
+
+def test_every_wsl_invocation_bypasses_the_default_shell() -> None:
+    """`--exec`, not `--`. Measured 2026-08-09 on hawapc01, the same probe under both spellings:
+
+        wsl.exe --      env HAWEDIT_WSL_RUNTIME=/tmp/x bash -lc …
+            -> RUNTIME=[UNSET]  uv=none  python3.12=none
+        wsl.exe --exec  env HAWEDIT_WSL_RUNTIME=/tmp/x bash -lc …
+            -> RUNTIME=[/tmp/x]  uv=/home/ai/.local/bin/uv  python3.12=…/python3.12
+
+    `--` only ends option parsing; the command line still goes through the distribution's default
+    shell, which expanded the `$VAR` references before the `bash -lc` script saw them and ran
+    with a PATH omitting `~/.local/bin`. So the runtime root arrived empty,
+    `uv venv --python 3.12 ""` failed with uv's own "a value is required for '[PATH]'", and
+    `hawedit-asr-setup` could provision nothing — which is why M1.4 recorded the runtime as
+    absent on this machine. With `--exec` it provisions: "OmniASR import OK; CUDA GPUs visible: 2".
+    """
+    assert _prefix(None) == ["wsl.exe", "--exec"]
+    assert _prefix("Ubuntu") == ["wsl.exe", "--distribution", "Ubuntu", "--exec"]
+    assert "--" not in _prefix("Ubuntu"), (
+        "a bare `--` routes the command through the default shell, which drops every `env VAR=`"
+    )
+
+
+def test_the_asr_producer_uses_the_shared_prefix_rather_than_its_own() -> None:
+    """The same bug existed in a second copy, and that is why it is now one function.
+
+    `WslOmniAsrProducer` passes `env PYTHONPATH=<source>` to reach `hawedit.asr_worker` inside
+    WSL. With `--`, that assignment was eaten too, so Stage 1 would have died on an unimportable
+    worker however well the runtime was provisioned — a separate failure with the same cause,
+    which is exactly what duplicated invocation logic buys.
+    """
+    from hawedit.asr import WslOmniAsrProducer
+
+    producer = WslOmniAsrProducer(distro="Ubuntu")
+    assert producer._prefix() == _prefix("Ubuntu", producer.wsl_executable)
+    assert "--exec" in producer._prefix()

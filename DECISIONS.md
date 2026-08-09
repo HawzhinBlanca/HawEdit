@@ -4242,3 +4242,46 @@ cue's own text was the numeral "2" — the ambiguity that would make the separat
 test was added for a property whose consequence I cannot measure with the parser on this machine;
 recorded here so the next reader knows it was examined rather than missed.
 `evidence/adversarial-pass-6-2026-08-09.md`.
+
+## D-102
+
+**`wsl.exe --` sent every command through a shell that ate the environment, so the OmniASR runtime
+could never be provisioned.** Found by running the pipeline on a real 38-minute file
+(`ZAR38MinTest.mp4`, 640×360 h264 25 fps, 2313.8 s) rather than on a fixture.
+
+`hawedit-asr-setup` failed with uv's own error, `a value is required for '[PATH]'`. Measured cause —
+the same probe under both spellings:
+
+```
+wsl.exe --      env HAWEDIT_WSL_RUNTIME=/tmp/x bash -lc …
+    -> RUNTIME=[UNSET]   uv=none   python3.12=none
+wsl.exe --exec  env HAWEDIT_WSL_RUNTIME=/tmp/x bash -lc …
+    -> RUNTIME=[/tmp/x]  uv=~/.local/bin/uv   python3.12=~/.local/bin/python3.12
+```
+
+`--` only ends option parsing; the command line still goes through the distribution's default shell,
+which expanded the `$VAR` references before the `bash -lc` script saw them **and** ran with a PATH
+omitting `~/.local/bin`. So `venv="$HAWEDIT_WSL_RUNTIME/venv"` was empty and
+`uv venv --python 3.12 ""` had no path to create. This is why M1.4 recorded "the WSL runtime itself
+is not provisioned here either" — not an absent prerequisite, a broken command.
+
+**The same bug had a second copy.** `WslOmniAsrProducer._prefix` was its own implementation of the
+same three lines, also using `--`, and it passes `env PYTHONPATH=<source>` to reach
+`hawedit.asr_worker` inside WSL. That assignment was eaten too, so Stage 1 would have died on an
+unimportable worker however well the runtime was provisioned — a second failure with one cause, which
+is what duplicated invocation logic buys. There is one prefix now, used by both.
+
+**Decision: `--exec`, in the shared builder.** Verified end to end, not by inspection:
+`hawedit-asr-setup` now prints `OmniASR import OK; CUDA GPUs visible: 2` and `READY`, having
+installed the pinned `omnilingual-asr==0.2.0`, `klpt==0.1.7`, `fonttools==4.55.3` into a Python
+3.12 venv inside WSL2.
+
+**Measured next, and not fixed here:** the runtime is fingerprinted over **every `*.py` in the
+package** (`package_fingerprint` hashes all of them), so editing any module — including the lint fix
+in this very change — invalidates it and the pipeline reports "not provisioned" again. Seven
+fingerprint directories had already accumulated on this machine, four carrying `.ready`. The venv is
+shared, so re-provisioning is cheap (`Checked 3 packages in 1.80s`), but the error message cannot
+distinguish *never provisioned* from *provisioned, then the source changed*, and those need different
+actions — the same conflation D-099 fixed for downloaded-versus-runnable. Recorded rather than
+patched, because narrowing the fingerprint to the worker's real import closure is a design step.
+`evidence/wsl-exec-and-the-38-minute-run.md`.

@@ -55,10 +55,29 @@ def default_wsl_source(package_dir: Path | None = None, runtime_root: Path | Non
 
 
 def _prefix(distro: str | None, executable: str = "wsl.exe") -> list[str]:
+    """Every `wsl.exe` invocation this project makes, built once.
+
+    `--exec`, not `--`. `--` only ends option parsing: the command line still goes through the
+    distribution's default shell, which expands `$VAR` references before the `bash -lc` script
+    ever sees them and runs with a PATH that omits `~/.local/bin`. Measured 2026-08-09 on
+    hawapc01, the same probe under both spellings:
+
+        wsl.exe --      env HAWEDIT_WSL_RUNTIME=/tmp/x bash -lc …
+            -> RUNTIME=[UNSET]  uv=none  python3.12=none
+        wsl.exe --exec  env HAWEDIT_WSL_RUNTIME=/tmp/x bash -lc …
+            -> RUNTIME=[/tmp/x]  uv=~/.local/bin/uv  python3.12=~/.local/bin/python3.12
+
+    So the runtime root arrived empty, `uv venv --python 3.12 ""` failed with uv's own "a value
+    is required for '[PATH]'", and `hawedit-asr-setup` could not provision anything — which is
+    why M1.4 recorded the runtime as absent here. The ASR worker call had the same bug in a
+    second copy of this function: its `PYTHONPATH=` would have arrived empty too, so Stage 1
+    would have failed on an unimportable `hawedit.asr_worker` even after a successful install.
+    One prefix now, used by both. D-102.
+    """
     prefix = [executable]
     if distro:
         prefix.extend(("--distribution", distro))
-    prefix.append("--")
+    prefix.append("--exec")
     return prefix
 
 

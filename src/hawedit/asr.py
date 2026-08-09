@@ -39,6 +39,7 @@ from hawedit.corpus import CorpusItem
 from hawedit.forced_alignment import align_words
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.wsl_setup import _prefix as wsl_prefix
 from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, wsl_path
 
 __all__ = [
@@ -462,11 +463,11 @@ class WslOmniAsrProducer:
         self.wsl_executable = wsl_executable
 
     def _prefix(self) -> list[str]:
-        prefix = [self.wsl_executable]
-        if self.distro:
-            prefix.extend(("--distribution", self.distro))
-        prefix.append("--")
-        return prefix
+        # The shared builder, not a second copy. This one used `--`, which routes the command
+        # through the distribution's default shell and loses the `env PYTHONPATH=…` assignment
+        # below — so `hawedit.asr_worker` would have been unimportable inside WSL however well
+        # the runtime was provisioned. Measured 2026-08-09; see `wsl_setup._prefix`. D-102.
+        return wsl_prefix(self.distro, self.wsl_executable)
 
     def _wsl_path(self, path: Path) -> str:
         return wsl_path(path, self.distro, self.wsl_executable)
