@@ -364,3 +364,49 @@ def test_an_unshifted_interval_extends_a_clip_on_evidence_from_elsewhere() -> No
 
     assert fused(shifted) == (600, "tail")
     assert fused(unshifted) == (800, "timelens_interval_end")
+
+
+# --- 1 ms of overlap currently counts as "about the clip" ---------------------------------
+#
+# This test documents a DEFECT, not a desired behaviour. When it goes red the fix has landed:
+# re-status M6.1, close BLOCKED.md #15, and delete this test.
+#
+# M6.1's row says intervals are fused "only where they are about the clip". `interval_for_fusion`
+# accepts any interval that overlaps the anchor at all, so evidence ending five minutes later
+# qualifies on a single millisecond of overlap and `fuse_boundary` extends the out point to it.
+# Measured through the real `run_pipeline` on the fixture: a 1.60 s anchored sentence shipped as a
+# 4.10 s clip, attributed to `timelens_interval_end`. The runner's uncaptioned-speech guard catches
+# this only when unselected WORDS fall in the swallowed span — which is exactly what "applause
+# five minutes later" does not have. D-092.
+
+
+def test_one_millisecond_of_overlap_currently_qualifies_as_relevant() -> None:
+    """Pinned so the relevance gate cannot be read as bounding how far evidence may reach."""
+    from hawedit.timelens import interval_for_fusion
+
+    anchor_in, anchor_out = 10_000, 14_000
+    far = VisualEvidenceInterval("m1", 13_999, 305_000, "applause five minutes later")
+    assert far.overlaps(anchor_in, anchor_out)
+    chosen = interval_for_fusion((far,), anchor_in, anchor_out, "m1")
+    assert chosen is far, (
+        "the relevance gate now bounds the overlap — that is the intended fix. Re-status M6.1, "
+        "close BLOCKED.md #15 and delete this test."
+    )
+
+    boundary = fuse_boundary(
+        BoundaryInputs(
+            anchor_in_ms=anchor_in,
+            anchor_out_ms=anchor_out,
+            sentence_complete=True,
+            timelens_interval_start_ms=chosen.start_ms,
+            timelens_interval_end_ms=chosen.end_ms,
+        )
+    )
+    # A 4 s sentence becomes a 295 s clip. Recorded as the measurement, not as an aspiration.
+    assert boundary.final_out_ms == 305_000
+    assert boundary.out_extended_by == "timelens_interval_end"
+
+    # The control: an interval that does not overlap at all is still refused, so the gate is
+    # not simply inert.
+    unrelated = VisualEvidenceInterval("m1", 200_000, 305_000, "much later, no overlap")
+    assert interval_for_fusion((unrelated,), anchor_in, anchor_out, "m1") is None

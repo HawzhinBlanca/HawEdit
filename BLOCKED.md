@@ -673,3 +673,63 @@ threshold" rule exists to prevent. §4.2 does not say.
 Until it is answered, `tests/test_sentences.py::test_vad_pauses_currently_cannot_split_a_sentence`
 pins the defect so the dead branch cannot be mistaken for a working feature. That test going red
 means the fix has landed; delete it then and re-status M1.2.
+
+---
+
+## #15 · How much overlap makes TimeLens evidence "about the clip"?
+
+**Needs:** Hawa, or `BLOCKED.md` #1's labelled Sorani footage. No credentials, no hardware.
+
+M6.1's row says intervals are fused *"only where they are about the clip"*. Measured, **one
+millisecond of overlap qualifies**, and §3's `final_out = latest of { …, timelens_interval_end }`
+then extends the clip to wherever that interval ends.
+
+### Measured 2026-08-09 on hawapc01
+
+Library level:
+
+```
+anchor      : 10000..14000 ms  (a 4.0s sentence)
+evidence    : 13999..305000 ms 'applause five minutes later'
+overlap     : 1 ms
+relevance gate -> ACCEPTED
+fused clip  : 10000..305000 ms = 295.0s  extended by 'timelens_interval_end'
+```
+
+Through the real `run_pipeline` on the fixture, asserted on the shipped clip:
+
+```
+CLIP SHIPPED: 0..4100 ms = 4.10s   (anchor 100..1700 = 1.60s, 2.56x longer)
+  extended by 'timelens_interval_end' on 1 ms of overlap
+```
+
+The runner's uncaptioned-speech guard **does** catch this when unselected *words* fall in the
+swallowed span — verified: a second sentence at 2000 ms produces
+`soft boundary expansion 0..4100 ms would include unselected speech beginning with 'لە'`. It cannot
+catch the case the feature is most likely to hit: applause, music, silence and untranscribed tails
+contain no words, which is exactly what "applause five minutes later" means.
+
+### Why this is not a code task
+
+Bounding the overlap requires a number, and §3 does not give one. It bounds the shot-cut signal
+explicitly — *"following shot_cut within 400 ms"* — and says nothing of the kind for
+`timelens_interval_end`. Three defensible rules, with different failure modes:
+
+1. **A minimum overlap fraction of the anchor** (say the interval must cover half the anchored
+   sentence). Rejects the applause case; also rejects a genuine reaction shot that begins just as
+   the sentence ends, which is the commonest real case Stage 5 exists to catch.
+2. **A maximum extension window**, like the shot cut's 400 ms. Symmetric with §3's only stated
+   window, but TimeLens exists precisely to find ends *beyond* a 400 ms neighbourhood, so this may
+   neuter the stage.
+3. **A cap relative to the anchored sentence's own length** (e.g. the clip may not exceed some
+   multiple of the anchor). Scales with content instead of fixing a constant, and needs the
+   multiple chosen.
+
+Each is a threshold, and §8.2 calls misleading output the error class that matters most for a media
+organisation — so choosing one by taste is the failure this project's "never guess a threshold" rule
+exists to prevent. Real footage would settle it: the question is empirical, not stylistic.
+
+Until it is answered,
+`tests/test_timelens.py::test_one_millisecond_of_overlap_currently_qualifies_as_relevant` pins the
+measurement so the relevance gate cannot be read as bounding how far evidence may reach. That test
+going red means the fix landed — re-status M6.1, close this entry, delete the test.
