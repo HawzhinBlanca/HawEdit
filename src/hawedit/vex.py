@@ -46,6 +46,7 @@ class AssetIdentity:
 
 @dataclass(frozen=True)
 class RuntimeIdentity:
+    source_sha256: str
     python_version: str
     packages: dict[str, str]
     build_lock_sha256: str
@@ -81,6 +82,7 @@ class VexDocument:
     reviewed: date
     expires: date
     python: str
+    source_sha256: str
     packages: dict[str, str]
     build_lock_sha256: str
     runtime_lock_sha256: str
@@ -104,19 +106,30 @@ def _duplicate_safe_object(pairs: list[tuple[str, object]]) -> dict[str, object]
     return result
 
 
-def _load_json(path: Path, *, limit: int, label: str) -> object:
+def _load_bytes(path: Path, *, limit: int, label: str) -> bytes:
     try:
         if path.is_symlink() or not path.is_file():
             raise VexError(f"{label} is not one regular file: {path}")
         size = path.stat().st_size
         if size > limit:
             raise VexError(f"{label} exceeds the {limit}-byte input limit")
-        raw = path.read_text(encoding="utf-8")
-        return json.loads(raw, object_pairs_hook=_duplicate_safe_object)
+        return path.read_bytes()
     except VexError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except OSError as exc:
         raise VexError(f"cannot read {label}: {exc}") from exc
+
+
+def _load_json(path: Path, *, limit: int, label: str) -> object:
+    try:
+        return json.loads(
+            _load_bytes(path, limit=limit, label=label).decode("utf-8"),
+            object_pairs_hook=_duplicate_safe_object,
+        )
+    except VexError:
+        raise
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise VexError(f"cannot decode {label}: {exc}") from exc
 
 
 def _object(value: object, label: str) -> dict[str, object]:
@@ -220,9 +233,8 @@ def _parse_assets(value: object, label: str, *, with_path: bool) -> tuple[AssetI
     return tuple(sorted(result))
 
 
-def load_vex(path: Path) -> VexDocument:
-    """Load the intentionally narrow HawEdit WSL-ASR VEX schema."""
-    raw = _object(_load_json(path, limit=_VEX_LIMIT, label="VEX document"), "VEX document")
+def _parse_vex(raw_value: object) -> VexDocument:
+    raw = _object(raw_value, "VEX document")
     _keys(
         raw,
         {"schema", "product", "reviewed", "expires", "applicability", "dispositions"},
@@ -240,7 +252,14 @@ def load_vex(path: Path) -> VexDocument:
     applicability = _object(raw["applicability"], "VEX applicability")
     _keys(
         applicability,
-        {"python", "packages", "build_lock_sha256", "runtime_lock_sha256", "assets"},
+        {
+            "python",
+            "source_sha256",
+            "packages",
+            "build_lock_sha256",
+            "runtime_lock_sha256",
+            "assets",
+        },
         "VEX applicability",
     )
     python = _string(applicability["python"], "VEX applicability.python")
@@ -315,12 +334,31 @@ def load_vex(path: Path) -> VexDocument:
         reviewed,
         expires,
         python,
+        _digest(applicability["source_sha256"], "VEX source snapshot"),
         dict(sorted(packages.items())),
         _digest(applicability["build_lock_sha256"], "VEX build lock"),
         _digest(applicability["runtime_lock_sha256"], "VEX runtime lock"),
         _parse_assets(applicability["assets"], "VEX applicability.assets", with_path=False),
         tuple(dispositions),
     )
+
+
+def parse_vex_json(payload: bytes) -> VexDocument:
+    """Parse one bounded VEX byte snapshot without reopening a mutable pathname."""
+    if len(payload) > _VEX_LIMIT:
+        raise VexError(f"VEX document exceeds the {_VEX_LIMIT}-byte input limit")
+    try:
+        raw = json.loads(payload.decode("utf-8"), object_pairs_hook=_duplicate_safe_object)
+    except VexError:
+        raise
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise VexError(f"cannot decode VEX document: {exc}") from exc
+    return _parse_vex(raw)
+
+
+def load_vex(path: Path) -> VexDocument:
+    """Load the intentionally narrow HawEdit WSL-ASR VEX schema."""
+    return parse_vex_json(_load_bytes(path, limit=_VEX_LIMIT, label="VEX document"))
 
 
 def load_runtime_identity(path: Path) -> RuntimeIdentity:
@@ -387,6 +425,7 @@ def load_runtime_identity(path: Path) -> RuntimeIdentity:
     locks = _object(runtime["dependency_locks"], "WSL runtime receipt.dependency_locks")
     _keys(locks, {"build_sha256", "runtime_sha256"}, "WSL runtime receipt.dependency_locks")
     return RuntimeIdentity(
+        _digest(raw["source_sha256"], "WSL runtime receipt.source_sha256"),
         _string(runtime["python_version"], "WSL runtime receipt.runtime.python_version"),
         dict(sorted(packages.items())),
         _digest(locks["build_sha256"], "WSL runtime build lock"),
@@ -395,23 +434,26 @@ def load_runtime_identity(path: Path) -> RuntimeIdentity:
     )
 
 
-def load_pip_audit(path: Path) -> tuple[tuple[Finding, ...], dict[str, str]]:
-    """Parse pip-audit 2.10's JSON array with aliases enabled."""
-    raw = _list(_load_json(path, limit=_REPORT_LIMIT, label="pip-audit report"), "pip-audit report")
+def _parse_pip_audit(raw: object) -> tuple[tuple[Finding, ...], dict[str, str]]:
+    document = _object(raw, "pip-audit report")
+    _keys(document, {"dependencies", "fixes"}, "pip-audit report")
+    applied_fixes = _list(document["fixes"], "pip-audit report.fixes")
+    if applied_fixes:
+        raise VexError("pip-audit report.fixes must be empty for a non-mutating audit")
+    dependencies = _list(document["dependencies"], "pip-audit report.dependencies")
     findings: list[Finding] = []
     packages: dict[str, str] = {}
     primary_keys: set[tuple[str, str]] = set()
-    for dep_index, item in enumerate(raw):
-        dependency = _object(item, f"pip-audit report[{dep_index}]")
-        _keys(dependency, {"name", "version", "vulns"}, f"pip-audit report[{dep_index}]")
-        name = _package_name(dependency["name"], f"pip-audit report[{dep_index}].name")
-        version = _string(dependency["version"], f"pip-audit report[{dep_index}].version")
+    for dep_index, item in enumerate(dependencies):
+        label = f"pip-audit report.dependencies[{dep_index}]"
+        dependency = _object(item, label)
+        _keys(dependency, {"name", "version", "vulns"}, label)
+        name = _package_name(dependency["name"], f"{label}.name")
+        version = _string(dependency["version"], f"{label}.version")
         if name in packages:
             raise VexError(f"pip-audit report repeats normalized dependency {name!r}")
         packages[name] = version
-        for vuln_index, raw_vuln in enumerate(
-            _list(dependency["vulns"], f"pip-audit report[{dep_index}].vulns")
-        ):
+        for vuln_index, raw_vuln in enumerate(_list(dependency["vulns"], f"{label}.vulns")):
             vuln = _object(raw_vuln, f"pip-audit vulnerability {dep_index}:{vuln_index}")
             required = {"id", "fix_versions", "aliases"}
             if not required <= set(vuln) or set(vuln) - (required | {"description"}):
@@ -425,11 +467,11 @@ def load_pip_audit(path: Path) -> tuple[tuple[Finding, ...], dict[str, str]]:
             )
             if primary in aliases or len(set(aliases)) != len(aliases):
                 raise VexError(f"pip-audit vulnerability {primary} repeats an ID or alias")
-            fixes = tuple(
+            fix_versions = tuple(
                 _string(version, "pip-audit vulnerability fix version")
                 for version in _list(vuln["fix_versions"], "pip-audit vulnerability fix_versions")
             )
-            if len(fixes) != len(set(fixes)):
+            if len(fix_versions) != len(set(fix_versions)):
                 raise VexError(f"pip-audit vulnerability {primary} repeats a fix version")
             if "description" in vuln and type(vuln["description"]) is not str:
                 raise VexError("pip-audit vulnerability description must be a string")
@@ -439,6 +481,27 @@ def load_pip_audit(path: Path) -> tuple[tuple[Finding, ...], dict[str, str]]:
             primary_keys.add(key)
             findings.append(Finding(name, version, primary, aliases))
     return tuple(findings), dict(sorted(packages.items()))
+
+
+def parse_pip_audit_json(
+    payload: bytes,
+) -> tuple[tuple[Finding, ...], dict[str, str], dict[str, object]]:
+    """Parse bounded pip-audit 2.10.1 JSON bytes and retain the validated document."""
+    if len(payload) > _REPORT_LIMIT:
+        raise VexError(f"pip-audit report exceeds the {_REPORT_LIMIT}-byte input limit")
+    try:
+        raw = json.loads(payload.decode("utf-8"), object_pairs_hook=_duplicate_safe_object)
+    except VexError:
+        raise
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise VexError(f"cannot decode pip-audit report: {exc}") from exc
+    findings, packages = _parse_pip_audit(raw)
+    return findings, packages, _object(raw, "pip-audit report")
+
+
+def load_pip_audit(path: Path) -> tuple[tuple[Finding, ...], dict[str, str]]:
+    """Parse pip-audit 2.10.1's ``dependencies``/``fixes`` JSON object."""
+    return _parse_pip_audit(_load_json(path, limit=_REPORT_LIMIT, label="pip-audit report"))
 
 
 def evaluate(
@@ -458,6 +521,8 @@ def evaluate(
         failures.append(f"VEX expired on {vex.expires.isoformat()}")
     if ".".join(identity.python_version.split(".")[:2]) != vex.python:
         failures.append(f"Python identity drift: {identity.python_version!r} != {vex.python!r}")
+    if identity.source_sha256 != vex.source_sha256:
+        failures.append("HawEdit source snapshot digest drifted")
     if identity.build_lock_sha256 != vex.build_lock_sha256:
         failures.append("WSL ASR build lock digest drifted")
     if identity.runtime_lock_sha256 != vex.runtime_lock_sha256:

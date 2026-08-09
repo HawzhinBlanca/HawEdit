@@ -17,6 +17,7 @@ from hawedit.vex import (
     main,
 )
 from hawedit.wsl_asr_locks import BUILD_LOCK_SHA256, RUNTIME_LOCK_SHA256
+from hawedit.wsl_setup import package_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "security" / "wsl-asr-vex.json"
@@ -28,7 +29,7 @@ def _policy_payload() -> dict[str, Any]:
     return value
 
 
-def _audit_payload(policy: dict[str, Any] | None = None) -> list[dict[str, object]]:
+def _audit_payload(policy: dict[str, Any] | None = None) -> dict[str, object]:
     selected = _policy_payload() if policy is None else policy
     applicability = selected["applicability"]
     assert isinstance(applicability, dict)
@@ -56,7 +57,17 @@ def _audit_payload(policy: dict[str, Any] | None = None) -> list[dict[str, objec
                 "description": "fixture",
             }
         )
-    return [dependencies[name] for name in sorted(dependencies)]
+    return {
+        "dependencies": [dependencies[name] for name in sorted(dependencies)],
+        "fixes": [],
+    }
+
+
+def _audit_dependencies(audit: dict[str, object]) -> list[dict[str, object]]:
+    dependencies = audit["dependencies"]
+    assert isinstance(dependencies, list)
+    assert all(isinstance(dependency, dict) for dependency in dependencies)
+    return dependencies
 
 
 def _receipt_payload(policy: dict[str, Any] | None = None) -> dict[str, object]:
@@ -67,7 +78,7 @@ def _receipt_payload(policy: dict[str, Any] | None = None) -> dict[str, object]:
     assert isinstance(assets, list)
     return {
         "schema": 2,
-        "source_sha256": "1" * 64,
+        "source_sha256": applicability["source_sha256"],
         "source_directory": "source",
         "source_snapshot": "snapshot",
         "generation": "Ubuntu-generation",
@@ -117,6 +128,7 @@ def _evaluate_fixture(tmp_path: Path, policy: dict[str, Any] | None = None) -> N
 
 def test_checked_in_policy_binds_current_lock_and_assets_and_closes_report(tmp_path: Path) -> None:
     policy = load_vex(POLICY)
+    assert policy.source_sha256 == package_digest(ROOT / "src" / "hawedit")
     assert policy.build_lock_sha256 == BUILD_LOCK_SHA256
     assert policy.runtime_lock_sha256 == RUNTIME_LOCK_SHA256
     assert {(asset.name, asset.size, asset.sha256) for asset in policy.assets} == {
@@ -125,10 +137,26 @@ def test_checked_in_policy_binds_current_lock_and_assets_and_closes_report(tmp_p
     _evaluate_fixture(tmp_path)
 
 
+def test_reviewed_source_snapshot_drift_is_refused(tmp_path: Path) -> None:
+    receipt = _receipt_payload()
+    receipt["source_sha256"] = "f" * 64
+    findings, packages = load_pip_audit(_write_json(tmp_path / "audit.json", _audit_payload()))
+    with pytest.raises(VexError, match="source snapshot digest drifted"):
+        evaluate(
+            load_vex(POLICY),
+            load_runtime_identity(_write_json(tmp_path / "receipt.json", receipt)),
+            findings,
+            packages,
+            as_of=date(2026, 8, 9),
+        )
+
+
 def test_unknown_new_advisory_is_refused(tmp_path: Path) -> None:
     policy = _policy_payload()
     audit = _audit_payload(policy)
-    torch = next(dependency for dependency in audit if dependency["name"] == "torch")
+    torch = next(
+        dependency for dependency in _audit_dependencies(audit) if dependency["name"] == "torch"
+    )
     vulns = torch["vulns"]
     assert isinstance(vulns, list)
     vulns.append({"id": "CVE-2026-99999", "fix_versions": [], "aliases": [], "description": "new"})
@@ -145,7 +173,7 @@ def test_unknown_new_advisory_is_refused(tmp_path: Path) -> None:
 
 def test_unknown_alias_on_known_advisory_is_refused(tmp_path: Path) -> None:
     audit = _audit_payload()
-    vulns = audit[1]["vulns"]
+    vulns = _audit_dependencies(audit)[1]["vulns"]
     assert isinstance(vulns, list)
     assert isinstance(vulns[0], dict)
     aliases = vulns[0]["aliases"]
@@ -238,7 +266,7 @@ def test_truncated_audit_inventory_is_refused(tmp_path: Path) -> None:
 
 def test_alias_emitted_as_primary_still_matches_one_disposition(tmp_path: Path) -> None:
     audit = _audit_payload()
-    first_vuln = audit[1]["vulns"]
+    first_vuln = _audit_dependencies(audit)[1]["vulns"]
     assert isinstance(first_vuln, list)
     assert isinstance(first_vuln[0], dict)
     primary = first_vuln[0]["id"]
@@ -275,16 +303,54 @@ def test_duplicate_alias_across_dispositions_is_refused(tmp_path: Path) -> None:
 
 def test_duplicate_primary_advisory_in_audit_is_refused(tmp_path: Path) -> None:
     audit = _audit_payload()
-    vulns = audit[1]["vulns"]
+    vulns = _audit_dependencies(audit)[1]["vulns"]
     assert isinstance(vulns, list)
     vulns.append(dict(vulns[0]))
     with pytest.raises(VexError, match="repeats primary advisory"):
         load_pip_audit(_write_json(tmp_path / "audit.json", audit))
 
 
+def test_captured_pip_audit_2_10_1_schema_is_accepted(tmp_path: Path) -> None:
+    """Captured from pinned pip-audit 2.10.1 with OSV, aliases on, descriptions off."""
+    report = {
+        "dependencies": [
+            {
+                "name": "torch",
+                "version": "2.8.0",
+                "vulns": [
+                    {
+                        "id": "PYSEC-2026-2286",
+                        "fix_versions": ["2.10.0"],
+                        "aliases": [
+                            "GHSA-63cw-57p8-fm3p",
+                            "PYSEC-2026-1856",
+                            "CVE-2026-24747",
+                            "BIT-pytorch-2026-24747",
+                        ],
+                    }
+                ],
+            }
+        ],
+        "fixes": [],
+    }
+    findings, packages = load_pip_audit(_write_json(tmp_path / "captured.json", report))
+    assert packages == {"torch": "2.8.0"}
+    assert len(findings) == 1
+    assert findings[0].primary_id == "PYSEC-2026-2286"
+    assert "CVE-2026-24747" in findings[0].aliases
+
+
+@pytest.mark.parametrize("fixes", [{}, True, [{"name": "torch"}]])
+def test_audit_only_report_requires_an_empty_fixes_array(tmp_path: Path, fixes: object) -> None:
+    report = _audit_payload()
+    report["fixes"] = fixes
+    with pytest.raises(VexError, match="fixes"):
+        load_pip_audit(_write_json(tmp_path / "fixes.json", report))
+
+
 def test_removed_advisory_makes_the_disposition_visibly_stale(tmp_path: Path) -> None:
     audit = _audit_payload()
-    vulns = audit[1]["vulns"]
+    vulns = _audit_dependencies(audit)[1]["vulns"]
     assert isinstance(vulns, list)
     vulns.pop()
     findings, packages = load_pip_audit(_write_json(tmp_path / "audit.json", audit))
@@ -302,7 +368,7 @@ def test_removed_advisory_makes_the_disposition_visibly_stale(tmp_path: Path) ->
     ("loader", "payload", "message"),
     [
         (load_vex, [], "VEX document must be an object"),
-        (load_pip_audit, {}, "pip-audit report must be an array"),
+        (load_pip_audit, [], "pip-audit report must be an object"),
         (load_runtime_identity, [], "WSL runtime receipt must be an object"),
     ],
 )
@@ -378,7 +444,9 @@ def test_cli_accepts_closed_fixture_and_refuses_unknown_advisory(
     assert '"status": "accepted"' in capsys.readouterr().out
 
     audit = _audit_payload()
-    torch = next(dependency for dependency in audit if dependency["name"] == "torch")
+    torch = next(
+        dependency for dependency in _audit_dependencies(audit) if dependency["name"] == "torch"
+    )
     vulns = torch["vulns"]
     assert isinstance(vulns, list)
     vulns.append({"id": "CVE-2026-99999", "fix_versions": [], "aliases": []})
