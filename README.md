@@ -224,7 +224,14 @@ hook-quality win or cultural-fit score would be fabricated evidence.
 ```bash
 bash scripts/verify.sh          # lint + typecheck + format + tests — this decides DONE
 bash scripts/verify.sh --fast   # lint + typecheck only, for editor feedback
+bash scripts/build-wheel.sh     # the wheel, reproducibly, and its SHA-256
 ```
+
+`build-wheel.sh` takes `SOURCE_DATE_EPOCH` from the commit's own author date, so the same commit
+produces the same bytes on any machine on any day. Two builds of one tree used to differ (D-120),
+which is why `AUDIT_REPORT.md` quoted a size and no digest; now the digest is printed and a test
+holds both halves — two builds identical, every ZIP entry stamped with the commit rather than the
+clock.
 
 A task is DONE when this exits 0 **and** its evidence is recorded in `PROGRESS.md`. Nothing
 is marked done by judgment.

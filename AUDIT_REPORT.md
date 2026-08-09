@@ -64,11 +64,14 @@ These cannot be truthfully solved from the checkout alone:
 - The WSL2 setup installs pinned PyPI packages but package-manager integrity is not the same as
   vendored/checksummed model assets; Meta's model-card downloader still owns those remote bytes.
 - **Hugging Face model revisions are pinned as of 2026-08-09** (D-073). `models/revisions.json`
-  fixes all five downloaded repositories to commit SHAs that were read from the Hub and then
+  fixes **all six** downloadable repositories to commit SHAs that were read from the Hub and then
   verified against the weights on this machine, and `fetch-models.sh` refuses a repository with
-  no pin rather than resolving a branch head. `pyannote/speaker-diarization-community-1` is
-  deliberately unpinned — gated, never downloaded here (`BLOCKED.md` #4) — and a test asserts it
-  is the only one.
+  no pin rather than resolving a branch head. **Corrected 2026-08-09 (D-120):** this bullet said
+  *five* repositories and called `pyannote/speaker-diarization-community-1` deliberately unpinned
+  with "a test asserts it is the only one". D-075 pinned it — that repo is gated for *downloads*
+  and public for *metadata*, so its revision was always a verifiable fact here — and
+  `tests/test_models.py` now asserts `unpinned == []` with no exemptions. Measured: 6 pinned, 6
+  registry entries with a download source, 0 unpinned.
 - **`fetch-ffmpeg.sh` is still unpinned.** It downloads
   `media.githubusercontent.com/…/ffmpeg_bins/main/v8.0/linux.zip` — a branch path, so the bytes
   behind it can change — then unzips and executes it with no SHA-256 comparison. The versioned
@@ -91,14 +94,16 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 - Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
   `hawedit-editorial-bench` and `hawedit-asr-setup` all start from the installed wheel.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
-- Audited wheel: `hawedit-0.1.0-py3-none-any.whl`, **309,536 bytes** at the commit this line was
-  last re-measured against. **No SHA-256 is quoted, deliberately.** The build is not
-  reproducible: two consecutive `pip wheel --no-deps` runs at one unchanged commit produced the
-  same 309,536 bytes and the hashes `89CA7434…` and `A77FEEA0…`, because nothing sets
-  `SOURCE_DATE_EPOCH` and the ZIP entries carry build mtimes. A digest here would therefore
-  identify one build at one instant rather than this code, and would read as a supply-chain
-  guarantee the project does not yet make. Pinning it is tracked as an open reproducibility
-  gap alongside the unpinned model revisions below.
+- **The wheel build is reproducible as of 2026-08-09** (D-120). It was not: two consecutive
+  `pip wheel --no-deps` runs at one unchanged tree produced the same **333,362 bytes** and the
+  hashes `a7c3b2f1c280aff4…` and `38d1d2475c46e120…`, because nothing set `SOURCE_DATE_EPOCH` and
+  every ZIP entry carried the mtime of the instant it was written. `scripts/build-wheel.sh` now
+  takes the epoch from the commit's own author date and prints the digest, and two builds are
+  byte-identical. **No SHA-256 is quoted here, and the reason has changed:** the digest is
+  per-commit by construction, so an inlined hash would be stale at the next commit and would read
+  as a claim about this code rather than about one build of it. Compute it with
+  `bash scripts/build-wheel.sh`. A test asserts both halves — two builds identical, and every ZIP
+  entry stamped with the commit rather than the clock. `evidence/two-builds-of-one-commit.md`.
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex
