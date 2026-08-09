@@ -34,7 +34,8 @@ from typing import Any
 import pytest
 
 from hawedit.captions import find_ffmpeg
-from hawedit.clip import Qc
+from hawedit.clip import DiscoveryPath, Qc
+from hawedit.discovery import MergedCandidate
 from hawedit.judge import JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
@@ -1709,3 +1710,74 @@ def test_a_run_with_nothing_missing_reports_zero_rather_than_omitting_the_key(
     assert payload["transcript_gaps"] == []
     assert payload["speech_without_transcription_ms"] == 0
     assert run.transcript_gaps == ()
+
+
+# --- D-111: a stage that ran reported nothing about itself -------------------------------------
+
+
+def _seven_candidates() -> tuple[MergedCandidate, ...]:
+    """The shape the real 38-minute run produced: seven survivors, all from Path B."""
+    return tuple(
+        MergedCandidate(
+            candidate_id=f"c{index}",
+            media_id="zar38final",
+            in_ms=index * 1_000,
+            out_ms=index * 1_000 + 900,
+            discovery_path=DiscoveryPath.VISUAL,
+            sources=(f"c{index}",),
+            verbal_rank=None,
+            visual_rank=index,
+            verbal_score=None,
+            visual_score=0.5,
+            sv6d=None,
+        )
+        for index in range(7)
+    )
+
+
+def test_a_discovery_that_ran_says_so_in_its_own_field() -> None:
+    """`discovery` holds only a `StageSkipped` or `None`, and `None` was how success was written.
+
+    Measured on the real 38-minute run: `discovery: null` in the emitted report alongside **7**
+    merged candidates, with "discovery" absent from `skipped` as well. A reader checking that field
+    could not tell "Stage 3 produced seven candidates" from "Stage 3 was never attempted" without
+    cross-referencing another key. This module's §1 is fail visible, not silent. D-111.
+    """
+    run = PipelineRun(
+        media_id="zar38final", source="x", work_dir="w", candidates=_seven_candidates()
+    )
+    reported = run.to_dict()["discovery"]
+
+    assert reported is not None, "a stage that ran must not report null"
+    assert reported["skipped"] is False
+    assert reported["candidates"] == 7
+    assert reported["by_path"] == {"visual": 7}, (
+        "§8.2 partitions on discovery_path, so the split is what a reader needs — not a bare 'ran'"
+    )
+
+
+def test_a_stage_nobody_attempted_still_reads_as_unknown() -> None:
+    """The control. Emitting a positive record unconditionally would satisfy the test above and
+    claim Stage 3 ran on every run that never reached it — the same falsehood in the other
+    direction.
+    """
+    run = PipelineRun(media_id="m", source="x", work_dir="w")
+    assert run.to_dict()["discovery"] is None
+    assert run.to_dict()["editorial"] is None
+
+
+def test_a_named_skip_still_wins_over_the_positive_record() -> None:
+    """The other control: an explicit refusal must never be overwritten by an inferred success."""
+    skip = StageSkipped(
+        stage="discovery", reason="no Stage 3 producer was enabled", blocked_by=("x",)
+    )
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        discovery=skip,
+        candidates=_seven_candidates(),
+    )
+    reported = run.to_dict()["discovery"]
+    assert reported["skipped"] is True
+    assert reported["blocked_by"] == ["x"]

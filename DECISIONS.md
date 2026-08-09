@@ -4698,3 +4698,45 @@ either way.
 CAUGHT, the total hardcoded to zero CAUGHT, the reason emitted empty CAUGHT, and the duration negated
 CAUGHT.
 `evidence/the-report-did-not-say-what-the-transcript-omits.md`.
+
+## D-111
+
+**A stage that ran reported nothing about itself.** `pipeline.py`'s docstring says "every stage
+yields either a result or a `StageSkipped` that names its blocker", and `discovery` and `editorial`
+are typed `StageSkipped | None` — so **`None` was how success was written**. Measured on the real
+38-minute run:
+
+```
+discovery   : None        <- Stage 3 ran
+candidates  : 7           <- and produced seven merged candidates
+skipped list: editorial, boundary, render, delivery   <- discovery is not there either
+```
+
+A reader checking `report["discovery"]` got `null` whether Stage 3 produced seven candidates or was
+never attempted, and had to cross-reference another key to tell which. The module's own §1 is "fail
+visible, not silent"; a stage saying nothing about itself is the silent case, and it is the same shape
+as D-100 and D-110 — the fact existed, the field a human reads did not carry it.
+
+**Decision: derive the positive record from the evidence, not from a second flag.**
+`_discovery_ran()` reports `{"skipped": false, "stage": "discovery", "candidates": N, "by_path": …}`
+computed from the candidates themselves. A separate "it ran" boolean could disagree with the
+candidates; a count taken from them cannot. The per-path split is included because §8.2 partitions on
+`discovery_path`, and a reader deciding whether the dual-path cost was justified needs the split
+rather than a bare "ran".
+
+**An explicit refusal still wins.** `encode(self.discovery) or self._discovery_ran()` puts the
+`StageSkipped` first, so a named blocker is never overwritten by an inferred success — one of the two
+controls covers exactly that.
+
+**`None` is kept for "nothing is known".** A run object that never reached Stage 3 must not claim it
+ran; the other control asserts that, and it is the mutation that would otherwise pass — claiming a
+positive record unconditionally satisfies the main test and lies in the other direction.
+
+**Rejected: giving discovery a result object like `visual_index` has.** That is the tidier shape and a
+larger change: Stage 3's output *is* `candidates`, so a parallel result type would duplicate it and
+create a second thing to keep in sync. The reporting layer is where the ambiguity was.
+
+**Mutation audit 5/5:** reporting `null` again CAUGHT, claiming a record when nothing ran CAUGHT (by
+the control alone), emptying the per-path split CAUGHT, hardcoding the count CAUGHT, and dropping
+`editorial`'s guard CAUGHT (4 — it would raise on a run with no clip).
+`evidence/a-stage-that-ran-reported-nothing.md`.

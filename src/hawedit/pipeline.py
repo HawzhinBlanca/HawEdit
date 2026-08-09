@@ -186,6 +186,33 @@ class PipelineRun:
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
 
+    def _discovery_ran(self) -> dict[str, Any] | None:
+        """What Stage 3 did, when it did something. `None` only where nothing is known.
+
+        Success is evidenced by the candidates themselves, so the count and the per-path
+        breakdown come from them rather than from a second record that could disagree — §8.2
+        partitions on `discovery_path`, and a reader deciding whether the dual-path cost was
+        justified needs that split, not a bare "ran".
+        """
+        if self.discovery is not None or not self.candidates:
+            return None
+        by_path: dict[str, int] = {}
+        for candidate in self.candidates:
+            key = candidate.discovery_path.value
+            by_path[key] = by_path.get(key, 0) + 1
+        return {
+            "skipped": False,
+            "stage": "discovery",
+            "candidates": len(self.candidates),
+            "by_path": dict(sorted(by_path.items())),
+        }
+
+    def _editorial_ran(self) -> dict[str, Any] | None:
+        """Stage 4's verdict, when one was reached. `None` where nothing is known."""
+        if self.editorial is not None or self.clip is None or self.clip.editorial is None:
+            return None
+        return {"skipped": False, "stage": "editorial", "judge": self.clip.editorial.judge}
+
     def skipped(self) -> tuple[tuple[str, StageSkipped], ...]:
         """Every stage that did not run, in pipeline order."""
         ordered = (
@@ -279,8 +306,15 @@ class PipelineRun:
             "delivery": encode(self.delivery),
             "candidates": [c.to_dict() for c in self.candidates],
             "visual_index": encode(self.visual_index),
-            "discovery": encode(self.discovery),
-            "editorial": encode(self.editorial),
+            # A stage that ran says so. `discovery` and `editorial` hold *only* a `StageSkipped`
+            # or `None`, and `None` is how success was represented — so a reader checking
+            # `report["discovery"]` got `null` whether Stage 3 produced candidates or was never
+            # attempted, and had to cross-reference `candidates` to tell which. Measured on the
+            # real 38-minute run: `discovery: null` alongside **7** merged candidates, with
+            # "discovery" absent from `skipped` too. This module's §1 is fail visible, not
+            # silent; a stage reporting nothing about itself is the silent case. D-111.
+            "discovery": encode(self.discovery) or self._discovery_ran(),
+            "editorial": encode(self.editorial) or self._editorial_ran(),
             "boundary": encode(self.boundary),
             "clip": self.clip.to_dict() if self.clip is not None else None,
             "render": (
