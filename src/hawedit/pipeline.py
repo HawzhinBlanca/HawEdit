@@ -75,6 +75,7 @@ from hawedit.transcripts import (
 )
 from hawedit.visual_index import (
     DECLARED_SAMPLING_FPS,
+    MAX_FRAMES_PER_WINDOW,
     REFERENCE_FPS,
     SceneWindow,
     plan_scene_windows,
@@ -648,6 +649,7 @@ def run_pipeline(
     subject_tracker: SubjectTracker | None = None,
     auto_select: bool = False,
     visual_fps: float | None = None,
+    visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
@@ -666,6 +668,9 @@ def run_pipeline(
         read_scenes: retired unsafe injection seam. Any non-``None`` value is refused because a
             bare reader has no retrieval/rerank provenance and can promote every scene. Use
             ``visual_composer`` so only bounded, scored survivors reach VideoChat3.
+        visual_max_frames: the most frames any planned window may hold. Defaults to §3's
+            ceiling and may only be lowered — the Path B reader's memory is the binding
+            constraint on real hardware (D-106, D-108, `BLOCKED.md` #17).
         visual_fps: one sampling rate for every planned visual window. Omitted uses the
             blueprint's 1 fps planning reference, or the checkpoints' declared 2 fps ceiling
             when the composed model path is enabled.
@@ -726,7 +731,11 @@ def run_pipeline(
         else (DECLARED_SAMPLING_FPS if visual_composer is not None else REFERENCE_FPS)
     )
     windows = plan_scene_windows(
-        identifier, ingested.duration_ms, ingested.shot_cuts_ms, fps=effective_visual_fps
+        identifier,
+        ingested.duration_ms,
+        ingested.shot_cuts_ms,
+        fps=effective_visual_fps,
+        max_frames=visual_max_frames,
     )
 
     run = PipelineRun(
@@ -1293,6 +1302,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="device for the Path B reader (VideoChat3-4B) — §6: GPU 0",
     )
     parser.add_argument(
+        "--visual-max-frames",
+        type=int,
+        default=MAX_FRAMES_PER_WINDOW,
+        help=(
+            "most frames any planned window may hold; §3's ceiling by default and only "
+            "lowerable. Measured on hawapc01, VideoChat3-4B reads at most 8 on a 3090 Ti "
+            "(D-106); a lower ceiling means more, shorter windows (D-108)"
+        ),
+    )
+    parser.add_argument(
         "--index-device",
         default="cuda:1",
         help="device for Stage 2 indexing (Qwen embedding + reranking) — §6: GPU 1",
@@ -1461,6 +1480,7 @@ def main(argv: list[str] | None = None) -> int:
             subject_tracker=subject_tracker,
             auto_select=args.auto_select,
             visual_fps=args.visual_fps,
+            visual_max_frames=args.visual_max_frames,
         )
     except (
         CredentialError,

@@ -97,9 +97,9 @@ def _frames_the_model_reads(duration_ms: int) -> int:
     return max(_MIN_SAMPLED_FRAMES, round(DECLARED_SAMPLING_FPS * duration_ms / 1000))
 
 
-def _max_window_ms(fps: float) -> int:
-    """The longest window that still fits 64 frames at `fps`."""
-    return math.floor(MAX_FRAMES_PER_WINDOW * 1000 / fps)
+def _max_window_ms(fps: float, max_frames: int = MAX_FRAMES_PER_WINDOW) -> int:
+    """The longest window that still fits `max_frames` frames at `fps`."""
+    return math.floor(max_frames * 1000 / fps)
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +197,7 @@ def plan_scene_windows(
     duration_ms: int,
     shot_cuts_ms: Sequence[int],
     fps: float = REFERENCE_FPS,
+    max_frames: int = MAX_FRAMES_PER_WINDOW,
 ) -> tuple[SceneWindow, ...]:
     """Turn Stage 0's shot cuts into windows that tile the media and fit the ceiling.
 
@@ -207,7 +208,30 @@ def plan_scene_windows(
     windows plus a remainder. A 64 s window followed by a 1 s window would embed one frame as
     a whole scene, and that vector then competes for retrieval slots against vectors built
     from sixty-four.
+
+    `max_frames` defaults to §3's `MAX_FRAMES_PER_WINDOW` and may only be lowered. It exists
+    because §3's ceiling and the Path B reader's memory are in tension on real hardware:
+    measured on hawapc01, `MCG-NJU/VideoChat3-4B` reads at most **8** frames per window on a
+    23.99 GiB 3090 Ti, and the demand is quadratic in frames (D-106, `BLOCKED.md` #17). Planning
+    windows the reader cannot read is the failure that stopped the 38-minute run; planning
+    smaller ones is the only option that neither lowers §3's constant nor truncates a window at
+    read time, both of which this repo refuses elsewhere.
+
+    A lower ceiling changes what a window *is*: more of them, each seeing less context, so
+    §8.2's Recall@K is then measured on a different retrieval unit than §3 describes. That is a
+    real cost, recorded rather than hidden. D-108.
+
+    Raises:
+        VisualIndexError: `duration_ms` is not positive, a shot cut is invalid, or `max_frames`
+            is outside `[TEMPORAL_PATCH_FRAMES, MAX_FRAMES_PER_WINDOW]`.
     """
+    if not TEMPORAL_PATCH_FRAMES <= max_frames <= MAX_FRAMES_PER_WINDOW:
+        raise VisualIndexError(
+            f"max_frames={max_frames} is outside {TEMPORAL_PATCH_FRAMES}.."
+            f"{MAX_FRAMES_PER_WINDOW}. Above the ceiling it would exceed §3 Stage 2's published "
+            f"setting; below {TEMPORAL_PATCH_FRAMES} a window cannot fill one temporal patch, so "
+            f"the processor would pad it by repeating a frame that was never filmed (D-060)."
+        )
     if duration_ms <= 0:
         raise VisualIndexError(f"media duration must be positive, got {duration_ms} ms")
 
@@ -228,7 +252,7 @@ def plan_scene_windows(
         seen.add(cut)
 
     boundaries = [0, *sorted(seen), duration_ms]
-    max_ms = _max_window_ms(fps)
+    max_ms = _max_window_ms(fps, max_frames)
     windows: list[SceneWindow] = []
     for scene_index, (start, end) in enumerate(pairwise(boundaries)):
         scene_ms = end - start

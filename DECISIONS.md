@@ -4547,3 +4547,59 @@ new test alone), tamper evidence CAUGHT (2), stale-norm detection CAUGHT (1), an
 `assert_model_input` CAUGHT (2). A no-op edit control stayed green, so the suite is not merely failing
 on any change.
 `evidence/adversarial-pass-7-2026-08-09.md`.
+
+## D-108
+
+**Windows are now planned to fit the reader, because §3's 64 does not fit it on this machine.**
+D-106 measured the ceiling: `MCG-NJU/VideoChat3-4B` reads at most **8** frames per window on a
+23.99 GiB 3090 Ti, and the demand is quadratic in frames. BLOCKED #17 listed three options and refused
+two of them — lowering `MAX_FRAMES_PER_WINDOW` (§3's constant, frozen) and truncating a window at read
+time (D-104's guard exists for exactly that). The third is this one.
+
+**Decision: `plan_scene_windows` takes `max_frames`, defaulting to §3's ceiling and only lowerable.**
+`--visual-max-frames` exposes it. The default is unchanged, so no machine silently inherits another's
+limit; hawapc01 passes 8 and the run completes.
+
+**The bounds are derived, not chosen.** Above `MAX_FRAMES_PER_WINDOW` a plan would exceed §3's
+published setting. Below `TEMPORAL_PATCH_FRAMES` a window cannot fill one temporal patch, so the
+processor pads it by repeating a frame that was never filmed (D-060). Both ends come from constants
+already recorded.
+
+**The cost, measured on the real media** (2,313,800 ms, 2 fps, no cuts):
+
+```
+ceiling 64  ->  73 windows, longest 31,696 ms
+ceiling  8  -> 579 windows, longest  3,997 ms
+```
+
+7.9× the windows, each seeing an eighth of the context. **§8.2's Recall@K is therefore measured on a
+different retrieval unit than §3 describes**, and that is a real cost rather than a free win — which is
+why the default stays §3's and the lower ceiling is an explicit operator choice with a recorded reason.
+
+**Proven end to end on the real 38-minute file**, not on the fixture. With `--visual-max-frames 8` the
+visual stage **ran** rather than skipping, for the first time:
+
+```
+visual_windows planned : 641
+indexed_windows        : 641
+retrieved              :  50     (§3's RETRIEVE_K)
+survivors              :   7     (--visual-keep 7, inside §3's 5..10)
+candidate_ids          :   7
+```
+
+Both GPUs were loaded at 17,881 MiB — D-105's split carrying indexing on GPU 1 and the reader on GPU 0
+— and no CUDA OOM occurred. Editorial, boundary, render and delivery are still skipped, each naming
+Stage 4's absent judge (`BLOCKED.md` #3), which is Hawa's.
+
+**Mutation audit 5/5**, after a first run that found two survivors — both of them *wiring*: the plan
+ignoring the ceiling it was handed CAUGHT (3), a ceiling outside the derived bounds CAUGHT (2), the
+default silently becoming one machine's limit CAUGHT (6), the pipeline dropping the flag CAUGHT (1) and
+the CLI value never reaching `run_pipeline` CAUGHT (1). The last two survived the first audit for
+exactly D-105's reason one iteration earlier — the planner was tested and the trip from the CLI was
+not — so both new tests assert the **windows the run reports**, not the argument it was handed.
+
+**A test premise of mine that was wrong, kept in the record.** The first version capped the fixture at
+2 frames, but its 1400 ms scenes already plan exactly 2 at 1 fps, so the cap changed nothing and the
+test asserted a difference that could not exist. At 2 fps those scenes plan 3, which a ceiling of 2
+genuinely splits.
+`evidence/planning-windows-the-reader-can-read.md`.

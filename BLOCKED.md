@@ -820,3 +820,12 @@ The demand is quadratic in frames (48 -> 196.44 GiB requested, 32 -> 87.31, 24 -
 
 Stage 2's frame extraction, indexing, retrieval and reranking all run: the 38-minute file produced
 **164** windows and reached the reader. Only the read step is blocked.
+
+**Resolved for the implementable option, 2026-08-09 (D-108).** `plan_scene_windows` now takes
+`max_frames`, exposed as `--visual-max-frames`, defaulting to §3's ceiling and only lowerable. With
+`--visual-max-frames 8` the real 38-minute run's visual stage **ran**: 641 windows indexed, 50
+retrieved, 7 survivors, 7 candidates, both GPUs at 17,881 MiB, no OOM. The cost is recorded rather than
+hidden — 73 windows become 579, each seeing an eighth of the context, so §8.2's Recall@K is measured on
+a different retrieval unit than §3 describes. This entry stays open for the part that is **not** mine:
+whether HawEdit should ship with §3's window on different hardware, or accept the smaller unit as the
+product's real behaviour. That is Hawa's call, and the numbers to make it are above.

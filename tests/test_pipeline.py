@@ -42,9 +42,11 @@ from hawedit.pipeline import (
     assert_devices_available,
     build_parser,
     build_visual_composer,
+    main,
     run_pipeline,
 )
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.visual_index import MAX_FRAMES_PER_WINDOW
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -1587,3 +1589,62 @@ def test_the_composer_wires_each_model_to_the_device_section_6_assigns(
     assert seen["embedder"] != seen["reader"], (
         "indexing and the reader on one GPU is the packing that OOM'd on real media"
     )
+
+
+# --- D-108: the frame ceiling has to survive the trip from the CLI to the plan ----------------
+
+
+@needs_ffmpeg
+def test_the_frame_ceiling_reaches_the_planned_windows(tmp_path: Path) -> None:
+    """Asserted on the windows the run reports, not on the argument it was handed.
+
+    The D-108 audit found the planner tested and the *wiring* untested: replacing
+    `max_frames=visual_max_frames` with `max_frames=MAX_FRAMES_PER_WINDOW` left the suite green.
+    That is D-105's survivor one iteration earlier, in a new place — so this asserts the artifact.
+
+    At 2 fps the fixture's 1400 ms scenes plan 3 frames each, which a ceiling of 2 splits. At 1 fps
+    they plan exactly 2 and no legal ceiling bites, which is how the first version of this test came
+    to assert a difference that could not exist.
+    """
+    wide = run_pipeline(FIXTURE, tmp_path / "wide", visual_fps=2.0)
+    narrow = run_pipeline(FIXTURE, tmp_path / "narrow", visual_fps=2.0, visual_max_frames=2)
+
+    assert max(window.frame_count for window in wide.visual_windows) == 3
+    assert max(window.frame_count for window in narrow.visual_windows) <= 2
+    assert len(narrow.visual_windows) > len(wide.visual_windows), (
+        "a lower ceiling must produce more windows, or it did not reach the planner"
+    )
+
+
+@needs_ffmpeg
+def test_the_cli_hands_the_ceiling_to_the_run(tmp_path: Path) -> None:
+    """The other half of the trip. Deleting the keyword at the call site left the suite
+    green too.
+    """
+    captured: dict[str, object] = {}
+    real = run_pipeline
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("hawedit.pipeline.run_pipeline", spy)
+        main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), "--visual-max-frames", "2"])
+
+    assert captured.get("visual_max_frames") == 2, (
+        f"the CLI value never reached run_pipeline: {sorted(captured)}"
+    )
+
+
+@needs_ffmpeg
+def test_the_default_run_still_plans_at_section_3s_ceiling(tmp_path: Path) -> None:
+    """The control. Defaulting the pipeline to one machine's limit would satisfy both tests above
+    and quietly replace §3's published setting for every machine.
+    """
+    run = run_pipeline(FIXTURE, tmp_path / "work", visual_fps=2.0)
+
+    assert max(window.frame_count for window in run.visual_windows) == 3, (
+        "the fixture's scenes plan 3 frames at 2 fps; a default ceiling below §3's would cut this"
+    )
+    assert build_parser().parse_args(["x.mp4"]).visual_max_frames == MAX_FRAMES_PER_WINDOW
