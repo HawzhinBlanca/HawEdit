@@ -277,7 +277,12 @@ def test_the_run_report_serializes_to_json(full_run: PipelineRun) -> None:
     """The run is data (§1). A report you cannot store is a report you cannot compare."""
     payload = json.loads(json.dumps(full_run.to_dict(), ensure_ascii=False))
     assert payload["media_id"] == "fixture"
-    assert payload["index"]["document_count"] == 1
+    # This asserted `== 1` until D-134, which is the defect written down as an expectation: a
+    # one-document index carries a single idf value and returns the whole media as its only
+    # window. The count is now the sentence count, and it must be more than one or §2's text half
+    # cannot order anything.
+    assert payload["index"]["document_count"] == len(full_run.sentences)
+    assert payload["index"]["document_count"] > 1
     assert payload["boundary"]["sentence_complete"] is True
     assert payload["clip"]["boundary"]["sentence_complete"] is True
     assert payload["render"]["reframe"] == "static_centre"

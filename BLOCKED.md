@@ -850,3 +850,39 @@ impossible — a third of the sentences would fit inside a window that length �
 visual path routinely proposes footage no complete Kurdish sentence sits inside, and §5's anchors are
 sentence-hard. Choosing the retrieval unit is still yours: §3 fixes 64 frames, this card reads 8
 (D-106), and the two cannot both hold.
+
+## #18 · What queries the §2 text index?
+
+**Raised 2026-08-10 (D-134, adversarial pass #19). Needs Hawa.**
+
+`Bm25Index.search` has no caller in `src/`. Measured:
+
+```
+$ grep -rn "\.search(" src/
+src/hawedit/clip.py:102:            if not _TIMESTAMP.search(label):   # a regex, not the index
+```
+
+The runner builds the index (186 documents on the real 38-minute file, 37 distinct idf values),
+emits `document_count`, `ngram_size` and `ngram_weight` in the report, and never retrieves from it.
+
+**Two parts of the frozen blueprint disagree about why it exists.**
+
+* §3 Stage 3 Path A: *"Send the **full normalized Sorani transcript** to the Kurdish judge in one
+  pass. Not a filtered subset. … If the visual stage filters first, the best clip in the episode is
+  gone before anything that understands Kurdish ever reads it."* Under this reading the text index
+  is deliberately **not** a pre-filter, and nothing in Stage 3 should query it.
+* §9's M2 row: *"Vertical slice: transcript → **BM25** → Gemini → manual boundary → one rendered
+  clip"*. Under this reading BM25 is on the path to the judge.
+
+**What the answer changes.** §8.2 measures Recall@K **per discovery path**. If there is a text
+retrieval path, it needs a K, a query source and a labelled set to measure against (#1). If there
+is not, then §2's text half is a tool for something outside Stage 3 — repurposing search, an
+operator query, §7 — and its Recall@K column does not exist.
+
+**Not guessed here.** Inventing a query would put a number in §8.2's per-path table that no design
+decision stands behind, and D-117 already showed what happens when a query source is chosen by
+convenience: the whole transcript became the query and Stage 2 asked for 40.89 GiB.
+
+**What is done in the meantime:** the index is built in the only shape that can retrieve
+(`from_sentences`, D-134), so whichever way this is answered, the structure is ready and the report
+says how many documents it holds.

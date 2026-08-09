@@ -15,6 +15,9 @@ Kurdish invariant #3 also lands here: an index reads `transcript.norm.json`, nev
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
+
 import pytest
 
 from hawedit.index import (
@@ -24,10 +27,24 @@ from hawedit.index import (
     character_ngrams,
     index_tokens,
 )
-from hawedit.transcripts import AsrProvenance, NormalizedTranscript, RawTranscript
+from hawedit.sentences import Sentence
+from hawedit.transcripts import (
+    AsrProvenance,
+    NormalizedTranscript,
+    RawTranscript,
+)
 
 BOOK = "کتێب"  # book
 MY_BOOK = "کتێبەکەم"  # my book — the same stem with clitics attached
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _norm(media_id: str = "m1", text: str = "ئەمە زۆر باشە") -> NormalizedTranscript:
+    """A normalized transcript to hang a sentence index off — `from_sentences` takes the
+    transcript rather than a bare id so invariant #3's type guard is on that path (D-134)."""
+    return NormalizedTranscript(media_id=media_id, text_ckb=text, source_sha256="abc")
 
 
 def doc(doc_id: str, text: str, start_ms: int = 0, end_ms: int = 1000) -> Document:
@@ -224,7 +241,7 @@ def test_an_index_can_be_built_from_segmented_sentences() -> None:
         Word(w="ئەمە", start_ms=2000, end_ms=2400, conf=0.9),
         Word(w="باشە.", start_ms=2400, end_ms=2800, conf=0.9),
     )
-    index = Bm25Index.from_sentences(segment_sentences(words), media_id="m1")
+    index = Bm25Index.from_sentences(segment_sentences(words), _norm("m1"))
     hit = index.search("کوردستان")[0]
     assert (hit.start_ms, hit.end_ms) == (0, 900)
     assert hit.doc_id.startswith("m1")
@@ -236,6 +253,142 @@ def test_sentences_are_normalized_on_the_way_into_the_index() -> None:
     from hawedit.transcripts import Word
 
     sentence = Sentence(words=(Word(w="كوردي.", start_ms=0, end_ms=500, conf=0.9),), complete=True)
-    index = Bm25Index.from_sentences((sentence,), media_id="m1")
+    index = Bm25Index.from_sentences((sentence,), _norm("m1"))
     assert index.documents[0].text_norm == "کوردی."
     assert index.search("کوردی")
+
+
+# --- §2, D-134: the shape the runner builds, and what a single document can do -------------
+
+
+def _sentences_of(*specs: tuple[str, int, int]) -> tuple[Sentence, ...]:
+    from hawedit.sentences import segment_sentences
+    from hawedit.transcripts import Word
+
+    return segment_sentences(tuple(Word(w=w, start_ms=s, end_ms=e, conf=0.9) for w, s, e in specs))
+
+
+SPECS = (
+    ("کوردستان", 0, 500),
+    ("جوانە.", 500, 900),
+    ("هەولێر", 2000, 2400),
+    ("جوانە.", 2400, 2800),
+    ("سلێمانی", 4000, 4400),
+    ("گەورەیە.", 4400, 4800),
+)
+
+
+def test_a_single_document_index_has_one_idf_and_cannot_rank() -> None:
+    """The arithmetic behind D-134, stated as arithmetic.
+
+    BM25's idf is `log(1 + (N - df + 0.5) / (df + 0.5))`. At N=1 every term has df=1, so every
+    term's idf is `log(1 + 0.5/1.5)` — one value for the whole vocabulary. Measured on the real
+    38-minute transcript: 2,784 distinct terms, **1** distinct idf, and the single hit's window
+    was 322..2,313,729 ms. This pins it on a fixture so the property is checked every run.
+    """
+    single = Bm25Index.from_transcript(
+        _norm("whole", "کوردستان جوانە هەولێر جوانە سلێمانی گەورەیە")
+    )
+    assert len(single.documents) == 1
+    idfs = {
+        round(math.log(1.0 + (1 - len(posting) + 0.5) / (len(posting) + 0.5)), 9)
+        for posting in single._words.postings.values()
+    }
+    assert idfs == {round(math.log(1.0 + 0.5 / 1.5), 9)}, idfs
+    # Whatever is asked, the same one document comes back — there is no ordering to produce, and
+    # its window is the whole media rather than a passage. (Term *frequency* still varies within
+    # that document, which is why this asserts what a single document cannot do rather than
+    # claiming its scores are all equal — the first version of this test claimed that and the
+    # control caught it.)
+    for query in ("کوردستان", "جوانە", "سلێمانی"):
+        hits = single.search(query)
+        assert len(hits) == 1
+        assert hits[0].doc_id == "whole"
+
+
+def test_the_sentence_index_ranks_and_the_whole_transcript_one_does_not() -> None:
+    """The control, and the reason D-134 is a fix rather than a preference.
+
+    Same text, two shapes. Ranking means ordering *documents* for one query, so that is what is
+    compared: the per-sentence index answers different queries with different best documents and
+    real per-sentence windows; the single-document index answers every query with the same one.
+
+    The idf spread is the mechanism §2's paragraph depends on — a term in one sentence must
+    outweigh a term in two — and it exists only when there is more than one document.
+    """
+    sentences = _sentences_of(*SPECS)
+    per_sentence = Bm25Index.from_sentences(sentences, _norm("m1"))
+    whole = Bm25Index.from_transcript(_norm("m1", " ".join(w for w, _, _ in SPECS)))
+
+    rare = per_sentence.search("کوردستان")[0].word_score  # in 1 of 3 sentences
+    common = per_sentence.search("جوانە")[0].word_score  # in 2 of 3
+    assert rare > common, f"rare {rare} should outrank common {common}"
+
+    best_per_query = {q: per_sentence.search(q)[0].doc_id for q in ("کوردستان", "سلێمانی")}
+    assert len(set(best_per_query.values())) == 2, best_per_query
+    whole_per_query = {q: whole.search(q)[0].doc_id for q in ("کوردستان", "سلێمانی")}
+    assert len(set(whole_per_query.values())) == 1, (
+        "the single-document index returned two different documents, so this control measures "
+        "nothing"
+    )
+
+
+def test_a_sentence_hit_carries_its_own_window_not_the_whole_media() -> None:
+    """§3 Stage 5 consumes a window. A hit spanning the whole episode is not one.
+
+    Asserted on the hit: the window must be the matching sentence's, and must not be the media's
+    full span — the plausible wrong answer, which is exactly what the runner used to produce.
+    """
+    sentences = _sentences_of(*SPECS)
+    index = Bm25Index.from_sentences(sentences, _norm("m1"))
+    hit = index.search("سلێمانی")[0]
+    assert (hit.start_ms, hit.end_ms) == (4000, 4800)
+    media_span = (SPECS[0][1], SPECS[-1][2])
+    assert (hit.start_ms, hit.end_ms) != media_span, "the hit spans the whole media"
+
+
+def test_the_runner_indexes_sentences_and_the_report_shows_more_than_one_document() -> None:
+    """The wiring, which is what actually shipped wrong — the factory was right and unused.
+
+    Asserted on `pipeline.py`'s source because the claim is *which* factory the runner calls;
+    `test_the_run_report_serializes_to_json` asserts the consequence on the emitted JSON.
+    """
+    pipeline_py = ROOT / "src" / "hawedit" / "pipeline.py"
+    source = pipeline_py.read_text(encoding="utf-8")
+    assert "Bm25Index.from_sentences(sentences, normalized)" in source, (
+        "the runner no longer builds the sentence index; a one-document index cannot rank and "
+        "its only hit spans the whole media"
+    )
+    assert "Bm25Index.from_transcript(" not in source, (
+        "the runner is back on the single-document shape"
+    )
+
+
+def test_from_sentences_refuses_a_raw_transcript() -> None:
+    """Invariant #3 moved with the runner. `from_transcript` held the type guard and the runner
+    left it; a bare `media_id` string cannot be refused, a `RawTranscript` can."""
+    raw = RawTranscript(
+        media_id="m",
+        text_ckb="ئەمە",
+        words=(),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2"),
+    )
+    with pytest.raises(TypeError, match="raw"):
+        Bm25Index.from_sentences(_sentences_of(*SPECS), raw)  # type: ignore[arg-type]
+
+
+def test_a_limit_that_cannot_return_a_document_is_refused() -> None:
+    """D-090 fixed `scored[:k]` in `visual_index.retrieve` and this sibling kept the defect.
+
+    Measured on a 10-document index before the guard: `limit=-1` returned **9** hits and
+    `limit=-10` returned **0**, because a negative slice drops the tail rather than keeping a
+    head — the caller gets the best documents minus some and cannot tell.
+    """
+    index = Bm25Index([doc(f"d{i}", "کوردستان") for i in range(10)])
+    for limit in (0, -1, -5, -10):
+        with pytest.raises(ValueError, match="cannot return a document"):
+            index.search("کوردستان", limit=limit)
+    # The control: limit=1 is the tight boundary and must still work, so this is not measuring
+    # "any limit is refused". D-090's over-strict direction is the one only a control catches.
+    assert len(index.search("کوردستان", limit=1)) == 1
+    assert len(index.search("کوردستان", limit=10)) == 10

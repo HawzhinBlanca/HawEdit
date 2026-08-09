@@ -919,12 +919,18 @@ def run_pipeline(
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
 
-    # --- §3 Stage 2 (text half) -----------------------------------------------------------
-    index = Bm25Index.from_transcript(normalized)
-
     # --- §4.2 sentence segmentation, against this run's own VAD ---------------------------
     vad_pauses = _pauses_between(ingested)
     sentences = segment_sentences(transcript.words, vad_pauses=vad_pauses)
+
+    # --- §3 Stage 2 (text half) -----------------------------------------------------------
+    # One document per sentence, not one for the episode. Measured on the real 38-minute file,
+    # `from_transcript` gave a **single** document: BM25's idf is then log(1 + 0.5/1.5) for every
+    # one of 2,784 terms — one distinct value against the per-sentence index's 37 — so rarity is
+    # invisible, every query returns that one document, and its window is 322..2,313,729 ms, the
+    # whole 38.6 minutes. Built after segmentation for that reason; the sentences were already
+    # three lines away. D-134.
+    index = Bm25Index.from_sentences(sentences, normalized)
 
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 

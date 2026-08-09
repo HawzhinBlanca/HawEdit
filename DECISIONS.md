@@ -6117,3 +6117,87 @@ everything on one line CAUGHT.
 **What survived the pass:** shaping and own-line-breaks held completely — three mutations each
 against the pixel-level tests from the 2026-08-08 pass, all caught. Nothing about §4.3.1, §4.3.3,
 §4.3.5 or §4.3.6 was found wanting. `evidence/adversarial-pass-18-2026-08-10.md`.
+
+## D-134
+
+**Adversarial pass #19, on M2.1.** The runner's §2 text index was one document for the whole
+episode, so BM25 had nothing to rank and nothing to hand Stage 5. Measured on the real
+38-minute transcript (6,104 words, 35,185 chars, 186 sentences):
+
+```
+from_transcript (what the runner built)     from_sentences (what existed, unused)
+  documents                   1               documents                   186
+  distinct word terms      2,784               distinct word terms      2,784
+  distinct idf values          1               distinct idf values         37
+  idf range         0.287682..0.287682         idf range      0.855352..4.825644
+  average doc length   6,123.0 tokens          average doc length    32.9 tokens
+
+  search("کوردستان") -> 1 hit, window 322..2,313,729 ms — the whole 38.6 minutes
+```
+
+**Arithmetic, not a preference.** BM25's idf is `log(1 + (N - df + 0.5)/(df + 0.5))`. At N=1 every
+term has df=1, so every term's idf is `log(1 + 0.5/1.5) = 0.287682` — a single value across the
+whole vocabulary, which means rarity is invisible; length normalization compares the document to
+itself; and there is exactly one document any query can return. §2's paragraph is about matching
+Sorani variants *across passages*, and there was one passage.
+
+**Decision: `pipeline.py` builds `from_sentences`, three lines later than it built the old one.**
+The sentences were already being computed immediately below — `from_sentences`'s own docstring
+says the per-sentence form is "what lets a hit hand Stage 5 a real time window instead of a whole
+episode" — so this is a reordering plus a factory swap. After: 186 documents, 37 idf values, and
+the widest window any hit can hand Stage 5 is **102,524 ms of 2,313,729 — 4.43%** of the media
+instead of 100%.
+
+**Invariant #3 moved with the runner rather than being left behind.** `from_transcript` held the
+type guard (`assert_model_input`); `from_sentences` took a bare `media_id: str`, which cannot be
+refused. Its signature is now `from_sentences(sentences, transcript)` — the transcript it belongs
+to, from which `media_id` is read — so the guard is on the path the runner uses, in the factory
+rather than at the call site. The normalization half was never at risk: `index_tokens` calls
+`normalize_sorani` for every document and every query on all paths, which is the arrangement
+recorded for §2 and mirrored in `embed_text`.
+
+**Rejected: keeping `from_transcript` on the runner and giving it sentence documents.** That makes
+one factory mean two shapes, and the report's `document_count` would no longer say which.
+
+**Rejected: deleting `from_transcript`.** "Does this episode mention X" is a real question with one
+document, and its docstring now says plainly that it cannot order results and returns the whole
+media as its window. Dead-code removal is not worth losing the honest single-document case.
+
+**The pipeline test asserted the defect.** `test_the_run_report_serializes_to_json` required
+`payload["index"]["document_count"] == 1`. That is the defect written down as an expectation, so it
+was proved wrong before being changed — the measurement above is the proof — and it now asserts the
+sentence count *and* that the count exceeds one, so the shape cannot silently revert.
+
+**A second finding, D-090's sibling.** D-090 fixed `scored[:k]` in `visual_index.retrieve` for
+negative `k` and recorded that "a negative slice drops the tail instead of keeping a head".
+`Bm25Index.search` ended in `hits[:limit]` and kept the defect. Measured on a 10-document index:
+
+```
+limit=  3 ->  3 hits      limit= -1 ->  9 hits      limit=-10 -> 0 hits
+limit=  1 ->  1 hit       limit= -5 ->  5 hits      limit=-20 -> 0 hits
+limit=  0 ->  0 hits
+```
+
+`limit=-1` returns the best nine of ten — an answer, silently a different operation. Refused as
+arithmetic rather than as a threshold, the way D-090 put it: a retrieval that cannot return one
+document is not a retrieval. `limit=1` is the tight boundary and must still work, which is the
+control the over-strict mutation only trips against.
+
+**Mutation audit 7/7:** the runner reverted to the single-document index CAUGHT, `from_sentences`
+collapsed to one document CAUGHT, a hit carrying the media's window instead of the sentence's
+CAUGHT, invariant #3's type guard dropped CAUGHT, sentence text indexed raw CAUGHT, the limit guard
+removed CAUGHT, and the limit guard made over-strict CAUGHT — the last only by the control.
+
+**What survived the pass.** M2.1's headline claim holds exactly as written: on the clitic pair, word
+BM25 scores the stem query **0.000000** and the n-gram field scores **1.829909**, so n-grams are
+what retrieve it. D-016's weighting, the tokenizer, the n-gram padding and the tie-break are all
+held by tests that redden when reverted.
+
+**Named as open, not invented: `Bm25Index.search` still has no production caller.** `grep -rn
+"\.search(" src/` finds one match and it is `_TIMESTAMP.search` in `clip.py`. The runner builds the
+index, reports its three statistics and never queries it, because §3 Path A is explicit that the
+judge reads "the **full normalized Sorani transcript** in one pass. Not a filtered subset", while
+§9's M2 row describes a "transcript → BM25 → Gemini" slice. Those two readings disagree about what
+the text index is for, and choosing between them decides what §8.2's per-path Recall@K measures.
+`BLOCKED.md` #18 records it for Hawa rather than inventing a query here.
+`evidence/adversarial-pass-19-2026-08-10.md`.
