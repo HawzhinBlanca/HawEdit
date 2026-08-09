@@ -50,6 +50,7 @@ from typing import Any, Protocol
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import CaptionStyle, build_ass
+from hawedit.cli import use_utf8_streams
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
@@ -1406,6 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
     Exits non-zero on an incomplete run. A partial pipeline that exited 0 would be indis-
     tinguishable from a working one to anything scripting it.
     """
+    use_utf8_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
 

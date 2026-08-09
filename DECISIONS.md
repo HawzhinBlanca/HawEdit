@@ -4894,3 +4894,64 @@ every word on its own line CAUGHT (the control — always-wrap satisfies the wid
 equally wrong), the wrapper losing its last line CAUGHT, lines separated by a blank line CAUGHT,
 breaking by character instead of by word CAUGHT, and the two formats given different widths CAUGHT.
 `evidence/the-srt-let-the-player-choose-the-break-points.md`.
+
+## D-115
+
+**The CLI destroyed the report of a completed run by the act of capturing it.** Python takes the
+standard streams' encoding from the locale; on Windows that is the ANSI code page — cp1252 on
+hawapc01, which is §6's own machine — and this product's output is Sorani. Measured, with stdout
+redirected to a file:
+
+```
+locale.getpreferredencoding(False)   cp1252
+redirected stdout   encoding cp1252  errors surrogateescape
+redirected stderr   encoding cp1252  errors backslashreplace
+
+python -m hawedit.pipeline ZAR38MinTest.mp4 --omni-asr --json > report.json
+  38-minute Stage 0, ~10 minutes on two 3090 Ti, 547 regions transcribed
+  -> UnicodeEncodeError: 'charmap' codec can't encode characters in position 45257-45260
+  -> exit 1, report.json is 0 bytes
+```
+
+Three distinct behaviours, one cause:
+
+* **outside cp1252 → raises.** That is all Kurdish, plus `✓ ✗ →`. The report is not written at all.
+* **inside cp1252 → written as a cp1252 byte.** A run with no transcript exited normally and wrote
+  9 high bytes — `0xB7` for `·` five times, `0xA7` for `§`, `0x96`/`0x97` for the dashes — and the
+  file **fails to decode as UTF-8** at the first one. No error, wrong bytes.
+* **stderr → `backslashreplace`, so it mangles instead of raising.** `✗ canonical OmniASR WSL2
+  runtime is not provisioned` reached the log as the literal `\u2717`, which is how it appeared in
+  this loop's own captures for days.
+
+None of it is visible from a console, where Python writes UTF-16 straight to the Windows terminal.
+It appears the moment output is redirected, which is the moment someone is keeping it.
+
+**Decision: one `use_utf8_streams()` in a new `cli.py`, called first in all five `main()`s, and the
+test drives the entry points instead of checking the call.** `tests/test_cli.py` reads
+`[project.scripts]` out of `pyproject.toml` and runs each declared module under
+`PYTHONIOENCODING=cp1252`, then asserts the Sorani sentinel's **UTF-8 bytes** are on both streams.
+A sixth entry point added without the fix fails there rather than in a client's terminal. Forcing
+the codec is what makes it discriminate on the Linux runner, where the locale is UTF-8 and all of
+this passes without any fix at all.
+
+**Rejected: reconfiguring the streams in `__init__.py`.** It is the one file
+`test_the_ledger_accounts_for_every_module` exempts, so logic there is logic with no recorded
+status — and a library that reconfigures the importing process's stdout is wrong whatever the
+ledger says.
+
+**Rejected: `PYTHONUTF8=1` in the docs.** It is correct and it is not a fix: it puts the burden on
+whoever runs the command, and the failure it prevents is silent in one of its two forms.
+
+**Rejected: changing the error handlers.** Only the encoding is set. UTF-8 encodes every character
+this product produces, so `surrogateescape` and `backslashreplace` stop being reachable for text
+and stay in place for the one thing they are for — a path that came out of the filesystem with
+lone surrogates in it.
+
+**Mutation audit 8/8** against a baseline verified green first. Five of the eight remove the call
+from one `main()` at a time, because a helper five callers must remember is exactly the shape of
+D-105, D-108 and D-112 — *the function is tested, the trip to it is not*. All five CAUGHT, plus the
+helper as a no-op CAUGHT, pinning only stdout CAUGHT, and pinning cp1252 instead of UTF-8 CAUGHT.
+
+Verified on the artifact by re-running the command that failed: **1,010,979 bytes, decodes as
+UTF-8, 20 keys, 6,104 words, 35,185 Kurdish characters**, `speech_without_transcription_ms: 664`
+and its two gaps intact. `evidence/the-report-died-on-the-way-to-the-file.md`.

@@ -16,6 +16,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from hawedit.cli import use_utf8_streams
+
 __all__ = [
     "default_wsl_runtime",
     "default_wsl_source",
@@ -178,6 +180,7 @@ def provision_wsl_runtime(
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_streams()
     parser = argparse.ArgumentParser(
         description="Provision HawEdit's official OmniASR runtime inside WSL2"
     )

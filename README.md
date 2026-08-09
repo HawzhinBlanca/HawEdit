@@ -292,6 +292,7 @@ run. Making that job a required status check is a repository setting, and is not
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) and the CMX 3600 EDL (source timeline). Refuses NTSC rather than writing timecode that drifts. Shares §4.3.5's line breaks with the ASS — an SRT cue on one line hands the break points to the player. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
+| `cli.py` | — | What every entry point does before it writes: pin stdout and stderr to UTF-8. The locale's codec is cp1252 on §6's machine and the output is Sorani. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |
 | `models.py` | §7 | Which §7 components this machine actually has, and the registry-driven fetcher. |

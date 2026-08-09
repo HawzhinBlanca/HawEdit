@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
+from hawedit.cli import use_utf8_streams
 from hawedit.corpus import Dialect
 from hawedit.judge import (
     JUDGE_SHADOW,
@@ -187,6 +188,7 @@ class EditorialRegressionSet:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    use_utf8_streams()
     parser = argparse.ArgumentParser(
         description="Validate and score a real human-labelled Sorani editorial regression set"
     )
