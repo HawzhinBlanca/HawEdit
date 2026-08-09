@@ -152,3 +152,62 @@ def test_the_imported_manifest_round_trips(tmp_path: Path) -> None:
     out = tmp_path / "interim.json"
     out.write_text(corpus.to_json(), encoding="utf-8")
     assert Corpus.load(out) == corpus
+
+
+# --- an unreadable locale is refused, not waved through -----------------------------------
+#
+# The check was `if row_locale and row_locale != locale:`. The leading truthiness clause skipped
+# it for every row whose locale was absent or blank, so a Kurmanji `validated.tsv` with no
+# `locale` column — or with the cell empty — imported clean, and the manifest still declared
+# "Mozilla Common Voice ckb" because the provenance name is built from the *parameter* and never
+# from the data. Measured: two Kurmanji rows imported as `reference_ckb='Ev pir bas e'` under a
+# ckb provenance. Found by the fourth adversarial pass. D-103.
+
+
+def _kurmanji_tsv(path: Path, *, locale_column: bool, blank: bool = False) -> Path:
+    """A Kurmanji split whose locale is unreadable in one of the two real ways."""
+    rows = [("common_voice_kmr_001.mp3", "Ev pir bas e"), ("common_voice_kmr_002.mp3", "Kurdistan")]
+    if locale_column:
+        header = (
+            "client_id\tpath\tsentence\tup_votes\tdown_votes\tage\tgender\taccents\tlocale\tsegment"
+        )
+        body = [
+            f"cid{i}\t{c}\t{s}\t2\t0\t\t\t\t{'' if blank else 'kmr'}\t"
+            for i, (c, s) in enumerate(rows)
+        ]
+    else:
+        header = "client_id\tpath\tsentence\tup_votes\tdown_votes\tage\tgender\taccents\tsegment"
+        body = [f"cid{i}\t{c}\t{s}\t2\t0\t\t\t\t" for i, (c, s) in enumerate(rows)]
+    path.write_text("\n".join([header, *body]) + "\n", encoding="utf-8")
+    durations = path.parent / "clip_durations.tsv"
+    durations.write_text(
+        "clip\tduration[ms]\n" + "".join(f"{c}\t4000\n" for c, _ in rows), encoding="utf-8"
+    )
+    return path
+
+
+def test_a_missing_locale_column_is_refused_not_assumed_kurdish(tmp_path: Path) -> None:
+    """A file that never states its language cannot confirm the one the manifest asserts."""
+    tsv = _kurmanji_tsv(tmp_path / "validated.tsv", locale_column=False)
+    with pytest.raises(WrongLocale, match="blank or missing locale"):
+        import_common_voice(tsv, tmp_path / "clip_durations.tsv")
+
+
+def test_a_blank_locale_cell_is_refused(tmp_path: Path) -> None:
+    tsv = _kurmanji_tsv(tmp_path / "validated.tsv", locale_column=True, blank=True)
+    with pytest.raises(WrongLocale, match="blank or missing locale"):
+        import_common_voice(tsv, tmp_path / "clip_durations.tsv")
+
+
+def test_an_honest_ckb_split_still_imports(tmp_path: Path) -> None:
+    """The control. Refusing every row would pass both tests above and import nothing ever.
+
+    Also asserts the provenance, because the defect was that the manifest asserted a language the
+    data never confirmed — so the two have to be checked together.
+    """
+    corpus = import_common_voice(
+        write_tsv(tmp_path / "validated.tsv"),
+        write_durations(tmp_path / "clip_durations.tsv"),
+    )
+    assert len(corpus.items) == len(ROWS)
+    assert "ckb" in corpus.provenance.name
