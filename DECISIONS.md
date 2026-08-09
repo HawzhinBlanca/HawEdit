@@ -3205,3 +3205,43 @@ files M1.1 cites went 5/11 → 7/11, and the chain-removal test flipped from `ex
 across other modules. The headline count should not be quoted again without it.
 
 Gate: `VERIFY OK — 1104 passed, 0 skipped`.
+
+## D-080
+
+**§8.2's retrieval metrics accepted a cutoff and an overlap threshold that cannot mean what §8.2
+asks them to, and reported 0.0 instead of refusing.** Measured against one gold winner retrieved
+exactly at IoU 1.0: `iou_match=1.5` and `2.0` gave 0.0 (no overlap can ever qualify),
+`iou_match=float("nan")` gave 0.0 (NaN comparisons are always false, so total failure is reported
+silently), `iou_match=-1.0` gave 1.0 while matching candidates with no overlap at all, and `k=0`
+and `k=-5` gave 0.0. §8.2's collapse test reads a zero as licence to delete a discovery path, so
+this is D-077's defect by a second route: that one produced an unmeasured zero from an empty gold
+set, this one a measured-looking zero from a bad argument.
+
+**`k` was not in the original finding.** The adversarial pass named `iou_match`; `k` turned up while
+grepping the callers and fails identically. Fixing one and leaving the other would have left half
+the defect, so a single guard covers both.
+
+**Decision: validate at the three public entry points, not in the shared funnel.**
+`_found_winners` is the funnel all three metrics route through and is the obvious site — but it is
+skipped when the gold set has no winners, because each metric short-circuits to `None`/`{}` first.
+A caller passing `k=-5` against an unlabelled set would have been handed "unmeasured" and never
+told the cutoff was nonsense. `_assert_metric_parameters` therefore runs ahead of that
+short-circuit: one rule, three places where the arguments enter, the same shape as D-071's
+overwrite guard rather than three copies of a rule.
+
+**`0.0` and `1.0` are deliberately legal and are pinned by controls.** `0.0` means "any overlap
+counts", `1.0` means "the exact span only"; §8.2 forbids neither. A guard that rejected them would
+break honest callers while passing every refusal test — which is exactly what the mutation *"the
+legal boundary 1.0 is wrongly rejected"* demonstrates, and it is CAUGHT by the control rather than
+by any refusal test.
+
+**Mutation audit 7/7** (`evidence/metric-parameter-validation.md`), run over
+`tests/test_discovery.py` as well since it also calls these metrics. *"recall_at_k stops
+validating"* is CAUGHT, which is what confirms the entry-point placement is load-bearing rather
+than decorative: dropping the call from one metric while leaving it in the others does not slip
+through.
+
+M7.1's cell recorded this as an open gap when D-077 landed; that note is now closed rather than
+deleted, so the row records both that the gap existed and when it was shut.
+
+Gate: `VERIFY OK — 1118 passed, 0 skipped`.

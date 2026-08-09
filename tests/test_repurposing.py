@@ -305,3 +305,70 @@ def test_a_measured_zero_is_still_reported_for_every_path() -> None:
     assert set(wins) == set(DiscoveryPath), f"a path went missing from a measured result: {wins}"
     assert wins[DiscoveryPath.VERBAL] == 1
     assert wins[DiscoveryPath.VISUAL] == 0
+
+
+# --- a nonsense cutoff or threshold must be refused, not reported as 0.0 ------------------
+#
+# `k` and `iou_match` were accepted unvalidated, and both fail the same way: every match misses
+# and the metric reports 0.0, which §8.2's collapse test reads as "this path found nothing".
+# Measured against one gold winner retrieved exactly (IoU 1.0): iou_match=1.5 gave 0.0,
+# iou_match=nan gave 0.0, k=0 gave 0.0, and iou_match=-1.0 matched candidates with no overlap.
+# Found by the 2026-08-09 adversarial pass. D-080.
+
+_METRICS = (recall_at_k, recall_at_k_by_path, path_unique_wins)
+
+
+def _one_perfect_match() -> tuple[tuple[RetrievedCandidate, ...], tuple[GoldCandidate, ...]]:
+    """One winner, retrieved exactly. Any honest threshold in [0, 1] must find it."""
+    gold = (GoldCandidate("g1", "m", 0, 1_000, DiscoveryPath.VERBAL, is_winner=True),)
+    retrieved = (RetrievedCandidate("m", 0, 1_000, DiscoveryPath.VERBAL, 1),)
+    return retrieved, gold
+
+
+@pytest.mark.parametrize("bad", [1.5, 2.0, -1.0, -0.001, float("nan")])
+def test_an_iou_threshold_outside_zero_to_one_is_refused(bad: float) -> None:
+    """Every entry point, because each was independently reachable with a bad threshold."""
+    retrieved, gold = _one_perfect_match()
+    for metric in _METRICS:
+        with pytest.raises(ValueError, match="iou_match must be within"):
+            metric(retrieved, gold, iou_match=bad)
+
+
+@pytest.mark.parametrize("bad", [0, -1, -20])
+def test_a_cutoff_below_one_is_refused(bad: int) -> None:
+    retrieved, gold = _one_perfect_match()
+    for metric in _METRICS:
+        with pytest.raises(ValueError, match="k must be at least 1"):
+            metric(retrieved, gold, k=bad)
+
+
+def test_the_refusal_happens_even_when_there_is_nothing_to_measure() -> None:
+    """The guard sits at the entry points, not in the funnel that no-winner sets skip.
+
+    Otherwise a caller passing `k=-5` is handed `None`/`{}` — "unmeasured" — and never learns
+    the cutoff was nonsense.
+    """
+    gold = (GoldCandidate("g1", "m", 0, 1_000, DiscoveryPath.VERBAL, is_winner=False),)
+    retrieved = (RetrievedCandidate("m", 0, 1_000, DiscoveryPath.VERBAL, 1),)
+    for metric in _METRICS:
+        with pytest.raises(ValueError, match="k must be at least 1"):
+            metric(retrieved, gold, k=-5)
+
+
+@pytest.mark.parametrize("legal", [0.0, 0.5, DEFAULT_IOU_MATCH, 1.0])
+def test_the_legal_threshold_boundaries_are_still_accepted(legal: float) -> None:
+    """The control. A guard rejecting 0.0 or 1.0 would break honest callers.
+
+    0.0 means "any overlap counts" and 1.0 means "exact span only"; both are defensible
+    choices §8.2 does not forbid, and the perfect match must be found at every one of them.
+    """
+    retrieved, gold = _one_perfect_match()
+    assert recall_at_k(retrieved, gold, iou_match=legal) == 1.0
+    assert recall_at_k_by_path(retrieved, gold, iou_match=legal)[DiscoveryPath.VERBAL] == 1.0
+    assert path_unique_wins(retrieved, gold, iou_match=legal)[DiscoveryPath.VERBAL] == 1
+
+
+def test_a_cutoff_of_one_is_still_accepted() -> None:
+    """The control for `k`: Recall@1 is a real question, and only k < 1 is nonsense."""
+    retrieved, gold = _one_perfect_match()
+    assert recall_at_k(retrieved, gold, k=1) == 1.0

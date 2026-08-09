@@ -100,6 +100,34 @@ def temporal_iou(a: tuple[int, int], b: tuple[int, int]) -> float:
     return intersection / union if union else 0.0
 
 
+def _assert_metric_parameters(k: int, iou_match: float) -> None:
+    """Refuse a cutoff or a threshold that cannot mean what §8.2 asks it to.
+
+    Both were accepted unvalidated, and both fail the same way: they make every match miss and
+    the metric reports **0.0**, which §8.2's collapse test reads as "this path found nothing"
+    and therefore as licence to delete a discovery path. Measured against one gold winner
+    retrieved exactly, IoU 1.0 — `iou_match=1.5` gave 0.0, `iou_match=float("nan")` gave 0.0
+    (NaN comparisons are always false), `k=0` gave 0.0. `iou_match=-1.0` fails the other way,
+    matching candidates with no overlap at all. D-080.
+
+    Called at each public entry point rather than inside `_found_winners`, because that funnel
+    is skipped when the gold set has no winners — so a caller passing `k=-5` would have been
+    handed `None` (unmeasured) instead of being told the cutoff was nonsense.
+    """
+    if k < 1:
+        raise ValueError(
+            f"k must be at least 1, got {k}. §8.2 measures Recall@20; a cutoff below one "
+            f"retrieves nothing and reports 0.0, which reads as a path that found no winners."
+        )
+    if not 0.0 <= iou_match <= 1.0:
+        raise ValueError(
+            f"iou_match must be within [0, 1], got {iou_match!r}. Above 1 no overlap can ever "
+            f"qualify and every metric reports 0.0; below 0 every candidate qualifies including "
+            f"ones that do not overlap at all; NaN fails every comparison and also reports 0.0. "
+            f"§8.2 fixes the threshold at {DEFAULT_IOU_MATCH} (D-020)."
+        )
+
+
 def _found_winners(
     retrieved: Sequence[RetrievedCandidate],
     winners: Sequence[GoldCandidate],
@@ -129,6 +157,7 @@ def recall_at_k(
         The recall, or `None` when the gold set contains no winner — a file nobody found a
         clip in measures no recall, and 0.0 would read as total failure.
     """
+    _assert_metric_parameters(k, iou_match)
     winners = [candidate for candidate in gold if candidate.is_winner]
     if not winners:
         return None
@@ -146,6 +175,7 @@ def recall_at_k_by_path(
     Every path appears in the result, including ones that found nothing: a path scoring 0.0
     is a finding, and omitting it from the report would read as "not measured".
     """
+    _assert_metric_parameters(k, iou_match)
     winners = [candidate for candidate in gold if candidate.is_winner]
     if not winners:
         return {}
@@ -186,6 +216,7 @@ def path_unique_wins(
     with it, so "unmeasured is None, never 0.0" held in one metric of the pair and not the other.
     D-077.
     """
+    _assert_metric_parameters(k, iou_match)
     winners = [candidate for candidate in gold if candidate.is_winner]
     if not winners:
         return {}
