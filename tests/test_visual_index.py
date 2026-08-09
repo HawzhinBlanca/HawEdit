@@ -620,3 +620,38 @@ def test_a_reranked_hit_rank_is_one_based() -> None:
             rank=0,
             model_id=RERANKER,
         )
+
+
+# --- `k` walked past the survivor floor ---------------------------------------------------
+#
+# The floor was checked against `len(index)` only. Measured on a 60-window index with keep=5:
+# k=3 returned 3 survivors and no error, k=1 returned 1, k=0 returned an empty tuple, and k=-5
+# returned 5 survivors after reranking 55 windows, because `retrieve` slices `scored[:k]` and a
+# negative k drops the tail instead of keeping a head. D-037 clause 4 forbids exactly this kind
+# of quiet shortening. D-090.
+
+
+@pytest.mark.parametrize("k", [3, 1, 0, -5])
+def test_a_retrieval_depth_below_the_survivor_count_is_refused(k: int) -> None:
+    """Retrieving fewer candidates than survivors can only ever produce a short slice."""
+    index = _index_of(60)
+    with pytest.raises(VisualIndexError, match="retrieves fewer candidates"):
+        rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker(), keep=5, k=k)
+
+
+def test_the_honest_retrieval_depths_still_work() -> None:
+    """The control. A guard on `k` that refused §3's own depth would pass the test above.
+
+    `RETRIEVE_K` is §3 Stage 2's stated depth, and `k == keep` is the tight boundary: it can
+    still fill the slice exactly, so it must not be rejected.
+    """
+    index = _index_of(60)
+    for k in (RETRIEVE_K, 5):
+        kept = rerank_and_keep(index, (1.0, 0.0), "q", FakeReranker(), keep=5, k=k)
+        assert [hit.rank for hit in kept] == [1, 2, 3, 4, 5]
+
+
+def test_the_index_floor_is_still_what_refuses_short_media() -> None:
+    """The other half must keep working: a small index refuses even at §3's full depth."""
+    with pytest.raises(VisualIndexError, match="the index holds"):
+        rerank_and_keep(_index_of(3), (1.0, 0.0), "q", FakeReranker(), keep=5)

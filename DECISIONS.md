@@ -3623,3 +3623,41 @@ is stale in KLPT's data — where the measured entry count is 24 894. Same defec
 a number copied from a source rather than measured from it. `evidence/waw-separation.md`.
 
 Gate: `VERIFY OK — 1142 passed, 0 skipped`.
+
+## D-090
+
+**`k` walked straight past the survivor floor.** D-037 clause 4 says Stage 2 refuses rather than
+shortening the survivor slice, and D-066 restored that after it was once reverted. The check only
+ever looked at `len(index)`. Measured on a 60-window index with `keep=5`:
+
+```
+  k=50 -> 5 survivors        k=3  -> 3 survivors, no error
+  k=5  -> 5 survivors        k=1  -> 1 survivor
+                             k=0  -> 0 survivors, empty tuple
+                             k=-5 -> 5 survivors, after reranking 55 windows
+```
+
+The negative case is its own small defect: `retrieve` slices `scored[:k]`, so a negative `k` drops
+the tail instead of keeping a head — 55 windows reranked where 5 were wanted, silently different
+semantics and wasted GPU time on a real index.
+
+**Decision: refuse `k < keep`, as arithmetic rather than a threshold.** Retrieving fewer candidates
+than the survivor count cannot produce `keep` survivors, so the slice could only ever be short —
+which is exactly what clause 4 forbids. Nothing is chosen here; the relation between the two
+arguments settles it, which is why this is a fix rather than a `BLOCKED` entry like #14 and #15.
+
+**Placed in `rerank_and_keep`, not in `retrieve`.** `retrieve`'s contract is "the top k", and that is
+honest at any k — the survivor floor is Stage 2's concern, and `rerank_and_keep` is the one function
+that knows both numbers. One guard, at the only place that can see the relation.
+
+**The control is the boundary.** `k == keep` can still fill the slice exactly and must not be
+refused, and §3's own `RETRIEVE_K` must keep working. Mutation audit **3/3**: the guard never firing
+is CAUGHT, refusing only negative `k` is CAUGHT, and `k <= keep` — the over-strict direction that
+would reject the tight boundary — is CAUGHT only by that control.
+
+**Scope, stated plainly:** `pipeline.py` builds `VisualComposer` without `retrieve_k`, so the shipped
+CLI always ran at §3's depth of 50 and could not reach this. The defect was in the public API and in
+the written proof — D-037 clause 4's guarantee was weaker than its own wording. Found by the third
+adversarial pass. `evidence/survivor-floor-bypassed-by-k.md`.
+
+Gate: `VERIFY OK — 1148 passed, 0 skipped`.

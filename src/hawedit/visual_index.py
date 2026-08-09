@@ -490,6 +490,20 @@ def rerank_and_keep(
         raise VisualIndexError(
             f"keep={keep} is outside §3 Stage 2's survivor range of {KEEP_MIN}–{KEEP_MAX}"
         )
+    # The floor was checked against `len(index)` only, so `k` walked straight past it: on a
+    # 60-window index with keep=5, k=3 returned 3 survivors and no error, k=1 returned 1, k=0
+    # returned an empty tuple, and k=-5 returned 5 survivors after reranking 55 windows because
+    # `retrieve` slices `scored[:k]` and a negative k drops the tail instead of keeping a head.
+    # Retrieving fewer candidates than the survivor count cannot produce `keep` survivors — that
+    # is arithmetic, not a chosen threshold — so it is refused here rather than silently
+    # shortening the slice the same way D-037 clause 4 forbids. D-090.
+    if k < keep:
+        raise VisualIndexError(
+            f"k={k} retrieves fewer candidates than the {keep} survivors §3 Stage 2 asks for, so "
+            f"the survivor slice could only ever be short. §3 fixes the retrieval depth at "
+            f"{RETRIEVE_K}; a smaller k is a caller error, and a negative one silently reranks "
+            f"everything except the tail. Raise k or lower keep, deliberately."
+        )
     # Below the survivor floor the retrieval refuses instead of shortening — D-037 clause 4,
     # which considered "return whatever exists" and rejected it: §8.2 counts Recall@K on this
     # list, and three results in a column that says five is a number that does not mean what the
