@@ -191,6 +191,10 @@ class PipelineRun:
     # even though the embedder cannot; `visual_index` stays skipped for the embedding itself.
     visual_windows: tuple[SceneWindow, ...] = ()
     visual_index: VisualDiscoveryResult | StageSkipped | None = None
+    # Where the Path B retrieval query came from. The query itself is recorded by
+    # `VisualDiscoveryResult`; this says who authorized its scope. `None` means Path B did not
+    # run, never "the whole transcript was used implicitly". D-154.
+    visual_query_source: str | None = None
     discovery: StageSkipped | None = None
     editorial: StageSkipped | None = None
     candidates: tuple[MergedCandidate, ...] = ()
@@ -335,13 +339,14 @@ class PipelineRun:
             ),
             "sentence_count": len(self.sentences),
             "visual_windows": [w.to_dict() for w in self.visual_windows],
+            "visual_query_source": self.visual_query_source,
             "delivery": encode(self.delivery),
             "candidates": [c.to_dict() for c in self.candidates],
             # §5 makes rejection first-class and calls the rejection set "your only measure
             # of recall"; §8.2 measures Recall@20 *per discovery path*, so the split is here
             # rather than left for a reader to compute. Reported even when empty — an
             # absent key cannot be told apart from a build that does not record rejections,
-            # which is the same reason D-110 reports zero gaps explicitly.
+            # which is the same reason D-145 reports zero gaps explicitly.
             "rejected": [r.to_dict() for r in self.rejected],
             "rejected_by_path": self._rejected_by_path(),
             "visual_index": encode(self.visual_index),
@@ -770,6 +775,33 @@ def _candidate_slice_text(transcript: NormalizedTranscript, in_ms: int, out_ms: 
     return normalize_sorani(" ".join(words))
 
 
+def _visual_retrieval_query(
+    transcript: NormalizedTranscript,
+    verbal: Sequence[Candidate],
+    explicit: str | None,
+) -> tuple[str, str] | None:
+    """Return one bounded, provenance-bearing Path B query or refuse to invent one.
+
+    An explicit operator query is authority to use exactly that normalized text. Otherwise the
+    top Path A survivor scopes retrieval to the words aligned inside its own time span. The whole
+    transcript is intentionally not a fallback: on the measured 38-minute episode its 35,185
+    characters made the reranker request 40.89 GiB on a 23.99 GiB GPU before Stage 3 could run.
+    """
+    if explicit is not None:
+        query = normalize_sorani(explicit)
+        if not query.strip():
+            raise ValueError("visual query must contain non-whitespace Sorani retrieval text")
+        return query, "explicit"
+
+    best = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
+    if best is None:
+        return None
+    query = _candidate_slice_text(transcript, best.in_ms, best.out_ms)
+    if not query.strip():
+        return None
+    return query, f"path_a:{best.candidate_id}"
+
+
 def _candidate_work_component(candidate_id: str) -> str:
     """Stage 4 directory name derived from one safe candidate-id component.
 
@@ -941,6 +973,9 @@ def run_pipeline(
         visual_fps: one sampling rate for every planned visual window. Omitted uses the
             blueprint's 1 fps planning reference, or the checkpoints' declared 2 fps ceiling
             when the composed model path is enabled.
+        visual_query: an explicit Sorani Path B retrieval query. When omitted, the top Path A
+            survivor's aligned transcript slice is used. If neither exists, Path B is reported
+            skipped rather than silently sending the whole episode transcript to the GPU.
         judge: §3 Stage 4. Supply `GeminiJudge(...)` and the runner scores the top candidate
             itself rather than needing `verdict` handed to it.
         verdict: what §3 Stage 4 would have returned. The second stand-in, for the same reason
@@ -1070,6 +1105,7 @@ def run_pipeline(
     merged: tuple[MergedCandidate, ...] = ()
     visual_result: VisualDiscoveryResult | None = None
     visual_skipped: StageSkipped | None = None
+    visual_query_source: str | None = None
     discovery_skipped: StageSkipped | None = None
     if discover is not None or visual_composer is not None:
         verbal: tuple[Candidate, ...] = ()
@@ -1086,35 +1122,43 @@ def run_pipeline(
         # a composer *is* supplied it retrieves and reranks before reading any scene.
         visual_candidates_tuple: tuple[Candidate, ...] = ()
         if visual_composer is not None:
-            best_verbal = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
-            query = visual_query or (
-                _candidate_slice_text(normalized, best_verbal.in_ms, best_verbal.out_ms)
-                if best_verbal is not None
-                else normalized.text_ckb
-            )
-            try:
-                visual_result = visual_composer.discover(
-                    source,
-                    run.visual_windows,
-                    query,
-                    work_dir / "visual",
-                    media_id=identifier,
-                    ffmpeg=ffmpeg,
-                )
-            except VisualPipelineError as exc:
+            query_with_source = _visual_retrieval_query(normalized, verbal, visual_query)
+            if query_with_source is None:
                 visual_skipped = StageSkipped(
                     stage="visual_index",
-                    reason=_safe_exception_text(str(exc), budget=1_024),
-                    blocked_by=("visual retrieval refused this media",),
+                    reason=(
+                        "Path B requires --visual-query or a Path A candidate whose aligned "
+                        "transcript slice can scope retrieval; refusing the whole episode "
+                        "transcript because the measured fallback exhausted GPU memory"
+                    ),
+                    blocked_by=("an explicit visual query or Path A candidate",),
                 )
             else:
-                visual_candidates_tuple = visual_result.candidates
+                query, visual_query_source = query_with_source
+                try:
+                    visual_result = visual_composer.discover(
+                        source,
+                        run.visual_windows,
+                        query,
+                        work_dir / "visual",
+                        media_id=identifier,
+                        ffmpeg=ffmpeg,
+                    )
+                except VisualPipelineError as exc:
+                    visual_skipped = StageSkipped(
+                        stage="visual_index",
+                        reason=_safe_exception_text(str(exc), budget=1_024),
+                        blocked_by=("visual retrieval refused this media",),
+                    )
+                else:
+                    visual_candidates_tuple = visual_result.candidates
         merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
             discovery=discovery_skipped or (None if merged else _STAGE_3_NOTHING_FOUND),
             candidates=merged,
             visual_index=visual_result or visual_skipped or _STAGE_2_VISUAL,
+            visual_query_source=visual_query_source,
         )
 
     if auto_select and not select_sentences and merged:
@@ -1762,8 +1806,12 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--verdict requires a Stage 1 source and --sentences")
         if args.visual and not (args.transcript or args.omni_asr):
             raise ValueError("--visual requires --transcript or --omni-asr")
-        if args.visual_query and not args.visual:
+        if args.visual_query is not None and not args.visual:
             raise ValueError("--visual-query requires --visual")
+        if args.visual_query is not None and not normalize_sorani(args.visual_query).strip():
+            raise ValueError("--visual-query must contain non-whitespace Sorani retrieval text")
+        if args.visual and not (args.visual_query or args.gemini or args.vertex_project):
+            raise ValueError("--visual without Path A requires --visual-query")
         if args.qc_pass and not (args.sentences or args.auto_select):
             raise ValueError("--qc-pass requires --sentences or --auto-select")
         if args.auto_select and not (args.visual or args.gemini or args.vertex_project):

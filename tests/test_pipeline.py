@@ -519,6 +519,22 @@ def test_the_cli_refuses_flags_whose_prerequisites_are_absent(
     assert main([str(source), *flags]) == 2
 
 
+@pytest.mark.parametrize("query", [None, "   "])
+def test_the_cli_refuses_visual_without_a_bounded_query_source(
+    tmp_path: Path, query: str | None
+) -> None:
+    from hawedit.pipeline import main
+
+    source = tmp_path / "source.mp4"
+    source.touch()
+    transcript = tmp_path / "transcript.json"
+    flags = [str(source), "--transcript", str(transcript), "--visual"]
+    if query is not None:
+        flags.extend(("--visual-query", query))
+
+    assert main(flags) == 2
+
+
 def test_the_cli_can_load_the_documented_stage_4_verdict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -667,6 +683,7 @@ def test_visual_composer_refusal_is_reported_as_a_skipped_stage(tmp_path: Path) 
         media_id="short",
         transcript=a_transcript("short"),
         visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="گرنگ",
     )
 
     assert isinstance(run.visual_index, StageSkipped)
@@ -713,6 +730,7 @@ def test_visual_composer_plans_to_the_measured_videochat_capacity(
         media_id="capacity",
         transcript=a_transcript("capacity"),
         visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="گرنگ",
         visual_max_frames=8,
     )
     assert selected == [8], "the 64-frame general ceiling still reached VideoChat3"
@@ -732,6 +750,7 @@ def test_visual_composer_failure_reason_is_single_line_and_bounded(tmp_path: Pat
         media_id="bounded-visual-error",
         transcript=a_transcript("bounded-visual-error"),
         visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="گرنگ",
     )
 
     assert isinstance(run.visual_index, StageSkipped)
@@ -772,6 +791,43 @@ def test_visual_backend_failure_preserves_path_a_candidates(tmp_path: Path) -> N
 
     assert isinstance(run.visual_index, StageSkipped)
     assert [candidate.discovery_path for candidate in run.candidates] == [DiscoveryPath.VERBAL]
+
+
+@needs_ffmpeg
+def test_path_b_refuses_the_whole_transcript_when_path_a_has_no_candidate(
+    tmp_path: Path,
+) -> None:
+    from hawedit.discovery import Candidate
+    from hawedit.gemini import GeminiUnavailable
+
+    calls = 0
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            nonlocal calls
+            calls += 1
+            raise AssertionError("the GPU must not be touched without a bounded query")
+
+    def broken_path_a(_transcript: Any) -> Sequence[Candidate]:
+        raise GeminiUnavailable("temporary cloud refusal")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="no-query-authority",
+        transcript=a_transcript("no-query-authority"),
+        discover=broken_path_a,
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert calls == 0
+    assert isinstance(run.discovery, StageSkipped)
+    assert isinstance(run.visual_index, StageSkipped)
+    assert "refusing the whole episode transcript" in run.visual_index.reason
+    assert "an explicit visual query or Path A candidate" in run.visual_index.blocked_by
+    assert run.visual_query_source is None
+    assert run.to_dict()["visual_query_source"] is None
+    assert run.candidates == ()
 
 
 @needs_ffmpeg
@@ -1459,7 +1515,7 @@ def test_composed_visual_path_uses_measured_fps_and_best_verbal_slice_as_query(
                 (Candidate("scene", media_id, 2_000, 4_100, DiscoveryPath.VISUAL, 1, 0.8),),
             )
 
-    run_pipeline(
+    run = run_pipeline(
         FIXTURE,
         tmp_path / "work",
         media_id="composed",
@@ -1470,6 +1526,8 @@ def test_composed_visual_path_uses_measured_fps_and_best_verbal_slice_as_query(
         visual_composer=Composer(),  # type: ignore[arg-type]
     )
     assert observed == {"query": "لە هەولێر.", "fps": 2.0, "media_id": "composed"}
+    assert run.visual_query_source == "path_a:best"
+    assert run.to_dict()["visual_query_source"] == "path_a:best"
 
 
 @needs_ffmpeg
@@ -1513,12 +1571,14 @@ def test_path_a_operational_failure_stays_visible_while_independent_visual_path_
         transcript=a_transcript("one-path"),
         discover=broken_path_a,
         visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="گرنگ",
     )
 
     assert isinstance(run.discovery, StageSkipped)
     assert "GeminiUnavailable: temporary cloud refusal" in run.discovery.reason
     assert tuple(candidate.candidate_id for candidate in run.candidates) == ("visual",)
     assert not isinstance(run.visual_index, StageSkipped)
+    assert run.visual_query_source == "explicit"
 
 
 @needs_ffmpeg

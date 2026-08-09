@@ -5035,3 +5035,24 @@ and selected-span containment computations that make the decision; rank is the r
 Nothing is recorded when no decision chose a survivor. The serialized per-path split includes zero
 for a path that found candidates but lost none, distinguishing that outcome from a path that never
 ran. Stage 2 windows are not candidates and are excluded. `evidence/the-rejection-set-had-no-producer.md`.
+
+## D-154 - Path B has no implicit whole-episode query
+
+The real 38-minute run had no Path A candidate because Gemini was not configured. `run_pipeline`
+then silently used the entire normalized transcript as Path B's query: 35,185 characters and 6,104
+words. The reranker tried to allocate 40.89 GiB on a 23.99 GiB GPU before Stage 3 produced a single
+candidate. This was not a model-capacity limit: it was an unbounded query invented by composition.
+
+**Decision:** a visual retrieval query has exactly two authorized sources. An explicit
+`--visual-query` is normalized and used as supplied, or the top Path A candidate contributes only
+the aligned words inside its own time span. If neither source exists, the composer is not called and
+`visual_index` reports a `StageSkipped` that names the missing authority and the measured OOM. The
+serialized run records `visual_query_source` as `explicit`, `path_a:<candidate-id>`, or `null`, while
+`VisualDiscoveryResult` continues to record the query bytes themselves.
+
+The CLI rejects `--visual` without either an explicit query or a configured Path A route before it
+constructs any GPU adapter. The library remains more general: an injected Path A producer may fail
+at runtime, in which case both that failure and Path B's bounded-query refusal are returned in one
+structured report. No character/token ceiling was guessed; an explicitly authorized oversized
+query reaches the existing bounded adapter failure path, while the dangerous *implicit* whole-media
+fallback is gone. `evidence/the-whole-transcript-was-a-visual-query.md`.
