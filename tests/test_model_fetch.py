@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from getpass import getuser
 from pathlib import Path
 from types import ModuleType
 
@@ -22,13 +23,41 @@ from hawedit.model_fetch import (
     main,
     validate_private_stage,
 )
-from hawedit.models import CheckpointIntegrityError, CheckpointIntegrityReport, ModelStore
+from hawedit.models import (
+    CheckpointIntegrityError,
+    CheckpointIntegrityReport,
+    ModelStatus,
+    ModelStore,
+)
 from hawedit.registry import REGISTRY
 from hawedit.windows_security import create_private_directory
 
 MODEL_ID = "Qwen3-VL-Embedding-2B"
 REPOSITORY = "Qwen/test-embedding"
 REVISION = "a" * 40
+
+
+@pytest.fixture(autouse=True)
+def _private_model_root_fixture(tmp_path: Path) -> None:
+    """Production requires a non-writable model root; make pytest's shared temp root one."""
+    if os.name != "nt":
+        tmp_path.chmod(0o700)
+        return
+    result = subprocess.run(
+        [
+            "icacls",
+            str(tmp_path),
+            "/inheritance:r",
+            "/grant:r",
+            f"{getuser()}:(OI)(CI)F",
+            "*S-1-5-18:(OI)(CI)F",
+            "*S-1-5-32-544:(OI)(CI)F",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _item(tmp_path: Path) -> FetchItem:
@@ -140,14 +169,13 @@ def test_happy_download_verifies_then_publishes_without_a_partial_final(
         _self: ModelStore, model_id: str, selected: Path | None = None
     ) -> CheckpointIntegrityReport:
         assert model_id == MODEL_ID and selected is not None
-        assert selected != item.destination
-        events.append("verify")
+        events.append("verify-final" if selected == item.destination else "verify-stage")
         return _report(selected)
 
     monkeypatch.setattr(ModelStore, "verify_checkpoint", verify)
     report = fetch_checkpoint(item, store, download)
 
-    assert events == ["download", "verify"]
+    assert events == ["download", "verify-stage", "verify-final"]
     assert report.files_verified == 1
     assert (item.destination / "config.json").read_text(encoding="utf-8") == "{}"
 
@@ -297,8 +325,9 @@ def test_process_death_leaves_one_discoverable_resume_for_the_next_run(tmp_path:
         def verify_checkpoint(
             self, _model_id: str, selected: Path | None = None
         ) -> CheckpointIntegrityReport:
-            assert selected == resume
-            return _report(resume)
+            assert selected in (resume, item.destination)
+            assert selected is not None
+            return _report(selected)
 
     def finish(**kwargs: object) -> object:
         assert Path(str(kwargs["local_dir"])) == resume
@@ -332,6 +361,141 @@ def test_download_failure_diagnostic_is_bounded_printable_and_secret_free(tmp_pa
     assert "https://cdn.invalid/file?<redacted>" in message
     assert "\n" not in message and "\x00" not in message
     assert message.endswith("…")
+
+
+def test_bare_hugging_face_token_is_redacted_through_api_and_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret = "hf_SUPERSECRET123456789"
+    item = _item(tmp_path)
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+
+    def leaking_download(**_kwargs: object) -> object:
+        raise OSError(f"HF_TOKEN {secret}")
+
+    with pytest.raises(ModelFetchError) as raised:
+        fetch_checkpoint(item, store, leaking_download)
+    assert secret not in str(raised.value)
+    assert "hf_<redacted>" in str(raised.value)
+
+    monkeypatch.setattr(
+        "hawedit.model_fetch.build_fetch_plan", lambda _store, _only="": FetchPlan((item,), ())
+    )
+    monkeypatch.setattr("hawedit.model_fetch._download_client", lambda: leaking_download)
+    monkeypatch.setattr(ModelStore, "status", lambda _self: ())
+    assert main(["--models-dir", str(tmp_path), MODEL_ID]) == 1
+    captured = capsys.readouterr()
+    assert secret not in captured.out + captured.err
+    assert "hf_<redacted>" in captured.err
+
+
+def test_final_published_path_is_reverified_and_invalid_bytes_are_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = _item(tmp_path)
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+
+    def download(**kwargs: object) -> object:
+        (Path(str(kwargs["local_dir"])) / "config.json").write_text("{}", encoding="utf-8")
+        return None
+
+    def verify(
+        _self: ModelStore, _model_id: str, selected: Path | None = None
+    ) -> CheckpointIntegrityReport:
+        assert selected is not None
+        if selected == item.destination:
+            raise CheckpointIntegrityError("published path changed after staging verification")
+        return _report(selected)
+
+    monkeypatch.setattr(ModelStore, "verify_checkpoint", verify)
+    with pytest.raises(ModelFetchError, match="published path changed"):
+        fetch_checkpoint(item, store, download)
+
+    assert item.destination.is_dir()
+    assert (item.destination / "config.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_model_root_identity_drift_stops_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = _item(tmp_path)
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+    original_lstat = os.lstat
+    drifted = False
+
+    class ChangedIdentity:
+        def __init__(self, original: os.stat_result) -> None:
+            self._original = original
+            self.st_ino = original.st_ino + 1
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._original, name)
+
+    def lstat(path: object, *args: object, **kwargs: object) -> os.stat_result | ChangedIdentity:
+        observed = original_lstat(path, *args, **kwargs)
+        if drifted and Path(os.fsdecode(path)) == tmp_path:
+            return ChangedIdentity(observed)
+        return observed
+
+    monkeypatch.setattr(os, "lstat", lstat)
+
+    def download(**kwargs: object) -> object:
+        nonlocal drifted
+        (Path(str(kwargs["local_dir"])) / "config.json").write_text("{}", encoding="utf-8")
+        drifted = True
+        return None
+
+    with pytest.raises(ModelFetchError, match="model root changed"):
+        fetch_checkpoint(item, store, download)
+    assert not item.destination.exists()
+
+
+def test_model_root_reparse_is_refused_before_downloader_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = _item(tmp_path)
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+    called = False
+    module = __import__("hawedit.model_fetch", fromlist=["_path_is_reparse"])
+    original = module._path_is_reparse
+    monkeypatch.setattr(
+        "hawedit.model_fetch._path_is_reparse",
+        lambda path: Path(path) == tmp_path or original(path),
+    )
+
+    def download(**_kwargs: object) -> object:
+        nonlocal called
+        called = True
+        return None
+
+    with pytest.raises(ModelFetchError, match="unlinked regular directory"):
+        fetch_checkpoint(item, store, download)
+    assert called is False
+
+
+def test_untrusted_model_root_writer_is_refused_before_download(tmp_path: Path) -> None:
+    item = _item(tmp_path)
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+    if os.name == "nt":
+        grant = subprocess.run(
+            ["icacls", str(tmp_path), "/grant", "*S-1-1-0:(OI)(CI)F"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert grant.returncode == 0, grant.stderr
+    else:
+        tmp_path.chmod(0o777)
+    called = False
+
+    def download(**_kwargs: object) -> object:
+        nonlocal called
+        called = True
+        return None
+
+    with pytest.raises(ModelFetchError, match="mutation"):
+        fetch_checkpoint(item, store, download)
+    assert called is False
 
 
 def test_download_client_is_exact_and_never_auto_installed(
@@ -465,6 +629,40 @@ def test_one_failed_target_does_not_hide_later_work_or_exit_zero(
     assert attempted == [first.destination, second.destination]
     assert f"FAILED: {MODEL_ID}: first transfer failed" in captured.err
     assert "done: 1 files, 7 bytes" in captured.out
+
+
+def test_final_target_readiness_not_status_printing_drives_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    item = _item(tmp_path)
+    monkeypatch.setattr(
+        "hawedit.model_fetch.build_fetch_plan", lambda _store, _only="": FetchPlan((item,), ())
+    )
+    monkeypatch.setattr("hawedit.model_fetch._download_client", lambda: lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "hawedit.model_fetch.fetch_checkpoint",
+        lambda _item, _store, _download: CheckpointIntegrityReport(
+            MODEL_ID, REPOSITORY, REVISION, files_verified=1, size_bytes=7
+        ),
+    )
+    monkeypatch.setattr(
+        ModelStore,
+        "status",
+        lambda _self: (
+            ModelStatus(
+                MODEL_ID,
+                item.entry.component,
+                item.entry.provisioning,
+                False,
+                "published bytes failed final readiness",
+            ),
+        ),
+    )
+
+    assert main(["--models-dir", str(tmp_path), MODEL_ID]) == 1
+    captured = capsys.readouterr()
+    assert "done: 1 files, 7 bytes" in captured.out
+    assert f"FAILED: final checkpoint readiness refused {MODEL_ID}" in captured.err
 
 
 def test_project_declares_installed_fetch_command_and_exact_optional_client() -> None:

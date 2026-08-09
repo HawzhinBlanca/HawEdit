@@ -1120,7 +1120,7 @@ def test_the_fetcher_passes_the_pinned_revision_to_snapshot_download(
         staging = Path(str(calls[0]["local_dir"]))
         assert staging.parent == tmp_path
         assert staging.name == ".dest.resume-" + "b" * 40
-        assert verified == [staging]
+        assert verified == [staging, destination]
         assert (destination / "downloaded.bin").read_bytes() == b"verified"
     finally:
         monkeypatch.undo()
