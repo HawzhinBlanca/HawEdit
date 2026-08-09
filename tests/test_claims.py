@@ -617,3 +617,100 @@ def test_every_value_the_decision_log_states_is_the_value_the_code_holds() -> No
             f"threshold means amending the decision that justifies it, not only the constant."
         )
     assert not unresolved, "; ".join(unresolved)
+
+
+# =========================================================================================
+# The pinning claims are bound to the code (D-127)
+#
+# Twice now a pin has landed and a document has gone on describing the gap it closed: D-120
+# found `AUDIT_REPORT.md` calling the model revisions unpinned two bullets below the one saying
+# they were pinned, and adversarial pass #14 found M1.6's ledger cell still saying *five*
+# repositories and still calling `fetch-ffmpeg.sh` a mutable `main/` archive with no SHA-256
+# check — both made stale by this project's own commits (D-075, D-121). Reading found them; the
+# gate did not. These two bind the factual half to the file it is about.
+# =========================================================================================
+
+LIVE_DOCS = ("README.md", "PROGRESS.md", "AUDIT_REPORT.md")
+
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+
+def _pinned_repositories() -> int:
+    """How many repositories `models/revisions.json` actually pins."""
+    import json
+
+    revisions = json.loads((ROOT / "models" / "revisions.json").read_text(encoding="utf-8"))
+    return len([key for key in revisions if not key.startswith("_")])
+
+
+def test_a_document_stating_how_many_repositories_are_pinned_states_the_real_number() -> None:
+    """`all five downloaded repositories` was true when written and is not now.
+
+    Only the *count* is checked, not the prose: a number is a fact about `revisions.json`, and
+    binding anything looser would fail on an innocent rewording. DECISIONS.md is exempt by
+    design — it is append-only and its older entries are supposed to say what was true then.
+    """
+    expected = _pinned_repositories()
+    wrong: list[str] = []
+    for name in LIVE_DOCS:
+        body = (ROOT / name).read_text(encoding="utf-8")
+        for match in re.finditer(r"all (\*{0,2}\w+\*{0,2}) download\w* repositor", body):
+            word = match.group(1).strip("*").lower()
+            stated = _NUMBER_WORDS.get(word) or (int(word) if word.isdigit() else None)
+            if stated is not None and stated != expected:
+                wrong.append(f"{name}: 'all {match.group(1)} downloadable repositories'")
+    assert not wrong, (
+        f"models/revisions.json pins {expected} repositories, and these say otherwise: "
+        f"{wrong}. Correct the cell — a count nobody re-derived is how 'five' outlived D-075."
+    )
+
+
+def test_the_commit_the_ffmpeg_archive_is_pinned_to_is_published() -> None:
+    """Fact bound to fact, because a phrase cannot be bound at all.
+
+    The first version of this asserted that no live document still described a *"mutable `main/`
+    archive"*. It failed on the correction that removed the claim — because this project's
+    convention is to **quote** a wrong sentence while correcting it (D-069, D-076, D-105), and a
+    grep cannot tell a document making a claim from one retiring it.
+
+    So the binding is the commit itself. `fetch-ffmpeg.sh` unzips 142 MB and executes it; which
+    commit those bytes come from is a fact a reader must be able to check without opening the
+    script, and if the pin moves the document has to move with it. If the archive is ever
+    unpinned, no commit can be published and this fails the other way.
+    """
+    fetch = (ROOT / "scripts" / "fetch-ffmpeg.sh").read_text(encoding="utf-8")
+    ref = re.search(
+        r'^\s*(?P<variable>ref|ffmpeg_bins_commit)="(?P<commit>[0-9a-f]{40})"', fetch, re.M
+    )
+    published = {
+        name: (ref is not None and ref.group("commit") in (ROOT / name).read_text(encoding="utf-8"))
+        for name in LIVE_DOCS
+    }
+    if ref is None:
+        assert not any(published.values())
+        raise AssertionError(
+            "scripts/fetch-ffmpeg.sh no longer pins the archive to a commit. It unzips and "
+            "executes those bytes; a branch path means they can change under a fixed-looking "
+            "name (D-121)."
+        )
+    assert f"${{{ref.group('variable')}}}" in fetch, (
+        f"the pinned commit variable {ref.group('variable')!r} is not used by the fetch script; "
+        "a published but disconnected pin does not authenticate the downloaded archive"
+    )
+    assert any(published.values()), (
+        f"the archive is pinned to {ref.group('commit')[:12]}… and no live document says which "
+        "commit. "
+        f"A reader cannot verify a pin they have to read the script to find, and a pin that moves "
+        f"silently is the thing D-121 removed."
+    )
