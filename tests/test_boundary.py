@@ -15,6 +15,9 @@ that feels broken."
 
 from __future__ import annotations
 
+import itertools
+from collections import Counter
+
 import pytest
 
 from hawedit.boundary import (
@@ -204,27 +207,56 @@ def test_the_latest_candidate_wins() -> None:
 
 
 def test_the_invariant_holds_across_every_combination_of_soft_inputs() -> None:
-    """Exhaustive over the sign of each input: inward candidates must never win."""
+    """Exhaustive over the sign of every optional input: inward candidates must never win.
+
+    "Exhaustive" is now true. It was not: this swept five of `BoundaryInputs`' seven optional
+    fields, omitting `media_duration_ms` and — more to the point — `natural_silence_ms`, which
+    D-070 wired into the runner as §3's fourth out-point signal without extending the sweep that
+    two ledger rows cite as proof of Kurdish invariant #2. Found by the 2026-08-09 adversarial
+    pass; 3,125 combinations became 78,125. D-078.
+
+    The counts are asserted, not just the invariant. A field quietly dropped from the product
+    shrinks the space, and a sweep that silently got smaller is exactly how this claim went
+    stale in the first place.
+    """
     offsets = (-5_000, -300, 0, 300, 5_000)
-    for vad in offsets:
-        for cut in offsets:
-            for turn_start in offsets:
-                for turn_end in offsets:
-                    for lens in offsets:
-                        boundary = fuse_boundary(
-                            inputs(
-                                vad_onset_ms=ANCHOR_IN + vad,
-                                shot_cuts_ms=(ANCHOR_IN + cut, ANCHOR_OUT + cut),
-                                speaker_turn_start_ms=ANCHOR_IN + turn_start,
-                                speaker_turn_end_ms=ANCHOR_OUT + turn_end,
-                                # Overlapping the anchor for every offset, so this sweep keeps
-                                # measuring the invariant rather than the relevance guard.
-                                timelens_interval_start_ms=ANCHOR_IN + 100,
-                                timelens_interval_end_ms=ANCHOR_OUT + lens,
-                            )
-                        )
-                        assert boundary.final_in_ms <= boundary.anchor_in_ms
-                        assert boundary.final_out_ms >= boundary.anchor_out_ms
+    built = 0
+    refusals: Counter[str] = Counter()
+    for vad, cut, turn_start, turn_end, lens, silence, duration in itertools.product(
+        offsets, repeat=7
+    ):
+        try:
+            boundary = fuse_boundary(
+                inputs(
+                    vad_onset_ms=ANCHOR_IN + vad,
+                    shot_cuts_ms=(ANCHOR_IN + cut, ANCHOR_OUT + cut),
+                    speaker_turn_start_ms=ANCHOR_IN + turn_start,
+                    speaker_turn_end_ms=ANCHOR_OUT + turn_end,
+                    # Overlapping the anchor for every offset, so this sweep keeps
+                    # measuring the invariant rather than the relevance guard.
+                    timelens_interval_start_ms=ANCHOR_IN + 100,
+                    timelens_interval_end_ms=ANCHOR_OUT + lens,
+                    natural_silence_ms=ANCHOR_OUT + silence,
+                    media_duration_ms=ANCHOR_OUT + duration,
+                )
+            )
+        except ValueError as exc:
+            # A media file that ends before the anchored sentence does is refused by design
+            # rather than clamped (clamping an anchor that does not fit would violate the very
+            # invariant this sweep checks). Counted, not skipped: a refusal that started
+            # happening for some *other* reason must not read as coverage.
+            assert "is after the media ends" in str(exc), str(exc)
+            refusals[type(exc).__name__] += 1
+            continue
+        built += 1
+        assert boundary.final_in_ms <= boundary.anchor_in_ms
+        assert boundary.final_out_ms >= boundary.anchor_out_ms
+
+    # Two of the five duration offsets put the media end before anchor_out, so exactly two
+    # fifths of the space is legitimately refused and three fifths must produce a boundary.
+    assert built + sum(refusals.values()) == len(offsets) ** 7 == 78_125
+    assert built == 46_875, built
+    assert refusals == Counter({"ValueError": 31_250}), refusals
 
 
 def test_an_incomplete_sentence_is_rejected_never_rendered() -> None:

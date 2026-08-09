@@ -3120,3 +3120,45 @@ asked it, which a cell restating its own DoD can never surface.
 function; folding it in would have made neither individually auditable.
 
 Gate: `VERIFY OK — 1099 passed, 0 skipped`.
+
+## D-078
+
+**Two ledger rows called the invariant sweep "exhaustive" while it covered five of seven optional
+inputs.** M2.2 and M6.2 both cite
+`test_the_invariant_holds_across_every_combination_of_soft_inputs` as evidence for Kurdish
+invariant #2. It varied `vad_onset_ms`, `shot_cuts_ms`, both `speaker_turn_*` and
+`timelens_interval_end_ms`, and omitted `media_duration_ms` and `natural_silence_ms` entirely.
+
+**The omission is mine.** D-070 wired `natural_silence_ms` into the runner as §3's fourth
+out-point signal three iterations ago and did not extend the sweep those rows lean on. The hard
+rule says a change touching a Kurdish invariant must assert it; I asserted the new signal's own
+behaviour and left the invariant's exhaustive check behind. The adversarial pass found it.
+
+**Extended to all seven: 3,125 → 78,125 combinations, 0.40 s, 0 violations.** 46,875 boundaries
+built and 31,250 refused — exactly the two duration offsets that place the media end before
+`anchor_out`, which `fuse_boundary` refuses by design because clamping an anchor that does not fit
+would violate the invariant being checked. Refusals are counted and their message asserted rather
+than skipped, so a refusal arising for a different reason cannot read as coverage.
+
+**It found nothing, as expected, and that is the honest result.** The 200 ms tail is always in the
+out-point `max()`, so `final_out >= anchor_out + 200` whatever `natural_silence_ms` contributes,
+and `anchor_out <= media_duration` is enforced before the clamp. This converts a false claim into
+a true one and covers an input added this week; it did not uncover a defect.
+
+**The sweep's marginal value, measured rather than assumed.** The pass claimed it catches nothing
+the surrounding unit tests do not. Confirmed by running four invariant-breaking mutations against
+the whole file and against the file with the sweep deselected: all four are caught either way, so
+the sweep is defence-in-depth and never the sole catcher. Kept — 0.4 s of combinatorial cover on
+an invariant the blueprint calls non-negotiable is cheap against a mutation nobody thought to
+unit-test — but the rows now describe it instead of leaning on the adjective.
+
+**What is uniquely load-bearing is the sweep's self-assertion of breadth.** The test asserts
+`built == 46_875` and `refusals == {"ValueError": 31_250}`, summing to 5⁷. Shrinking `offsets`
+from five values to four is CAUGHT at that assertion, and nothing else in the suite notices a
+field dropped from the product — which is exactly how this claim went stale.
+
+**Not done:** `media_duration_ms` is swept only as `ANCHOR_OUT + offset`. Values below `anchor_out`
+and the `<= 0` refusal stay with their dedicated unit tests; sweeping duration independently would
+multiply the space for behaviour already pinned. `evidence/exhaustive-sweep.md`.
+
+Gate: `VERIFY OK — 1099 passed, 0 skipped`.
