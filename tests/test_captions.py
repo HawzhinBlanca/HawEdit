@@ -21,6 +21,7 @@ captions."
 
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from hawedit.captions import (
     GoldenReferenceMissing,
     MissingRtlStack,
     assert_font_covers_kurdish,
+    assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
     build_ass,
     compare_golden_render,
@@ -127,6 +129,38 @@ def test_the_required_set_includes_the_collision_pair_measurement_found() -> Non
     """D-013: `ھ` U+06BE appears in real Kurdish. A font missing it renders boxes."""
     assert "ھ" in KURDISH_REQUIRED_GLYPHS
     assert "ه" in KURDISH_REQUIRED_GLYPHS
+
+
+def test_the_required_set_contains_kurdish_letters_the_normalizer_produces() -> None:
+    from hawedit.normalize import normalize_sorani
+
+    emitted = {
+        character
+        for character in normalize_sorani(GOLDEN_CAPTION_TEXT + " كوردي")
+        if unicodedata.category(character).startswith("L") and ord(character) > 0x0660
+    }
+    assert emitted <= KURDISH_REQUIRED_GLYPHS, sorted(emitted - KURDISH_REQUIRED_GLYPHS)
+
+
+def test_the_required_set_explicitly_includes_kurdish_keheh_and_yeh() -> None:
+    assert {"ک", "ی"} <= KURDISH_REQUIRED_GLYPHS
+
+
+def test_the_shipped_fonts_directory_has_a_covering_font() -> None:
+    assert assert_fonts_dir_covers_kurdish(FONT.parent) == FONT
+
+
+def test_an_empty_or_noncovering_fonts_directory_is_refused(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(FontCoverageError, match="no font file"):
+        assert_fonts_dir_covers_kurdish(empty)
+
+    only_naskh = tmp_path / "only-naskh"
+    only_naskh.mkdir()
+    (only_naskh / FONT.name).write_bytes(FONT.read_bytes())
+    with pytest.raises(FontCoverageError, match=r"U\+1F600"):
+        assert_fonts_dir_covers_kurdish(only_naskh, required=frozenset({"😀"}))
 
 
 def test_the_shipped_font_covers_the_kurdish_set() -> None:

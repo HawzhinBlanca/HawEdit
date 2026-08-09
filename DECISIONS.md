@@ -5785,8 +5785,9 @@ The upstream implementation wrote a rerun directly onto the final artifact. This
 the publication boundary: each destination has a safe cross-thread/process lock; ffmpeg writes a
 suffix-preserving private sibling; a zero-byte result or source mutation is refused; the completed
 artifact and fsync'd provenance JSON are individually atomically replaced. A failed encode or
-source validation therefore preserves the last good artifact and provenance, concurrent identical reruns encode once, and a hardlinked
-lock is refused without modifying its victim. Audio format validation still runs after cache reuse.
+source validation therefore preserves the last good artifact and provenance, concurrent identical
+reruns encode once, and a hardlinked lock is refused without modifying its victim. Audio format
+validation still runs after cache reuse.
 
 Eight new controls distinguish reuse from an implementation that never reruns or always trusts the
 destination: same-input reuse, same-path source replacement, settings drift plus truncation,
@@ -5796,3 +5797,23 @@ Upstream recorded the performance finding as D-132; that identifier already exis
 so the semantic integration is D-162.
 
 `evidence/two-thirds-of-stage-0-redone-on-every-run.md`.
+
+## D-163 - Font coverage must include normalized Kurdish and run at the burn
+
+The M3.1 font guard omitted `ک` U+06A9 and `ی` U+06CC even though §4.1's normalizer converts
+Arabic kaf/yeh into exactly those Kurdish forms. The golden caption contains both. Upstream
+measurement removed only U+06A9 from the shipped Noto font while retaining Arabic U+0643: the old
+guard passed, and libass rendered `کوردی` as detached fallback runs with 15,999 changed subpixels.
+
+`KURDISH_REQUIRED_GLYPHS` now includes both normalized forms and a test derives the requirement
+from `normalize_sorani`, rather than trusting another handwritten alphabet list. The per-file guard
+also had no product caller: tests checked the checkout font while an installed render consumed an
+arbitrary runtime `fonts_dir`. `assert_fonts_dir_covers_kurdish` now requires at least one covering
+font in the exact directory passed to `render_clip`; the render adapter normalizes a refusal into
+`RenderError` so the pipeline keeps its structured-failure contract.
+
+Controls require the shipped directory to pass, empty and non-covering directories to fail, and a
+real render path to refuse before publishing an MP4. Upstream recorded this as D-133; that number is
+already used on this branch, so the semantic integration is D-163.
+
+`evidence/adversarial-pass-18-2026-08-10.md`.

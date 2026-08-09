@@ -44,7 +44,9 @@ from pathlib import Path
 from typing import Final
 
 from hawedit.captions import (
+    FontCoverageError,
     assert_captions_within_clip,
+    assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
     find_ffmpeg,
     subtitle_filter,
@@ -408,6 +410,10 @@ def render_clip(
 
     if not ass_path.exists():
         raise RenderError(f"no subtitle file at {ass_path} — §4.3 captions are not optional")
+    try:
+        assert_fonts_dir_covers_kurdish(fonts_dir)
+    except FontCoverageError as exc:
+        raise RenderError(str(exc)) from exc
 
     duration_ms = clip.out_ms - clip.in_ms
     # Subtitles are burned into a stream ffmpeg has already cut, so t=0 is the start of the

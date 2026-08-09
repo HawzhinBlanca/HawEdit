@@ -683,6 +683,24 @@ def test_a_clip_running_past_the_end_of_the_media_is_refused(tmp_path: Path) -> 
 
 
 @needs_ffmpeg
+def test_the_burn_refuses_a_fonts_directory_without_kurdish_coverage(tmp_path: Path) -> None:
+    fonts = tmp_path / "empty-fonts"
+    fonts.mkdir()
+    output = tmp_path / "missing-font.mp4"
+    with pytest.raises(RenderError, match="no font file"):
+        render_clip(
+            clip=_clip(),
+            source=FIXTURE,
+            ass_path=_write_ass(tmp_path),
+            fonts_dir=fonts,
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+        )
+    assert not output.exists()
+
+
+@needs_ffmpeg
 def test_the_result_reports_the_duration_of_the_file_not_of_the_request(tmp_path: Path) -> None:
     """A number carries its provenance: `measured_duration_ms` comes from the artifact."""
     clip = _clip()

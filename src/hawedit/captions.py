@@ -49,6 +49,7 @@ __all__ = [
     "RtlStackReport",
     "assert_captions_within_clip",
     "assert_font_covers_kurdish",
+    "assert_fonts_dir_covers_kurdish",
     "assert_rtl_stack",
     "build_ass",
     "compare_golden_render",
@@ -60,10 +61,10 @@ __all__ = [
     "wrap_caption_lines",
 ]
 
-# §4.3.4's list, plus the two heh forms. `ھ` U+06BE is not in §4.3's list but appears in
-# ordinary Kurdish words — measured at 204 entries in the real lexicon (D-013) — and a font
-# missing it renders boxes in words like دھۆک.
-KURDISH_REQUIRED_GLYPHS: Final[frozenset[str]] = frozenset("ڕڵۆێچژپگە" + "هھ")
+# §4.3.4's list, the two heh forms, and the two letters §4.1 normalizes Arabic `ك`/`ي`
+# into. A font can contain Arabic kaf/yeh and still lack Kurdish `ک` U+06A9 / `ی` U+06CC;
+# measured, libass then split `کوردی` across fallback fonts (D-163).
+KURDISH_REQUIRED_GLYPHS: Final[frozenset[str]] = frozenset("ڕڵۆێچژپگە" + "هھ" + "کی")
 
 # Caption line width. Long RTL lines are hard to read on a vertical crop; this is a
 # reporting default, adjustable per output format.
@@ -191,6 +192,36 @@ def assert_font_covers_kurdish(
             f"(U+{' U+'.join(f'{ord(c):04X}' for c in missing)}). These render as boxes in "
             f"burned-in captions — §4.3.4."
         )
+
+
+def assert_fonts_dir_covers_kurdish(
+    fonts_dir: Path,
+    required: frozenset[str] = KURDISH_REQUIRED_GLYPHS,
+) -> Path:
+    """Return one font libass can use for every required glyph, or fail before encoding."""
+    try:
+        candidates = sorted(
+            path
+            for path in fonts_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".ttf", ".otf", ".ttc"}
+        )
+    except OSError as exc:
+        raise FontCoverageError(f"cannot inspect fonts directory {fonts_dir}: {exc}") from exc
+    if not candidates:
+        raise FontCoverageError(
+            f"{fonts_dir} holds no font file; §4.3.4 forbids host font fallback"
+        )
+
+    failures: list[str] = []
+    for candidate in candidates:
+        try:
+            assert_font_covers_kurdish(candidate, required=required)
+        except (FontCoverageError, OSError) as exc:
+            failures.append(f"{candidate.name}: {exc}")
+        else:
+            return candidate
+    detail = failures[0] if failures else "no readable candidate"
+    raise FontCoverageError(f"no font in {fonts_dir} covers Kurdish; closest failure: {detail}")
 
 
 def _escape_filter_path(path: Path) -> str:
