@@ -31,12 +31,20 @@ fi
 # one of them grading the other four. So an interpreter proves it can run *this* project
 # before it is trusted to say whether this project works, and the shell checks the value
 # rather than the exit code, because an exit code is what `true.exe` is good at. D-092.
-_probe="$("$PY" -c 'import hawedit; print("hawedit-interpreter-ok")' 2>&1 || true)"
+#
+# The same probe now also asks where the programs the steps consist of came from. A real PY was
+# not enough: a 30-line `pytest/__main__.py` on PYTHONPATH wrote a clean 1,200-test report and
+# the gate printed VERIFY OK in 4 seconds having run nothing — then ratcheted the committed
+# floor 1155 -> 1200, so every honest run after it would fail a bar a forgery invented.
+# Measured 2026-08-09. D-093.
+_probe="$("$PY" -m hawedit.gate --check-tools 2>&1 || true)"
 if [[ "$_probe" != *hawedit-interpreter-ok* ]]; then
-  echo "REFUSED: $PY cannot import hawedit, so it is not an interpreter that runs this" >&2
-  echo "project — and a gate graded by something that cannot run the code proves nothing." >&2
+  echo "REFUSED: $PY cannot import hawedit, or the gate's tools are not its own, so it is" >&2
+  echo "not an interpreter that runs this project — a gate graded by something that cannot" >&2
+  echo "run the code, or by a substituted program, proves nothing." >&2
   echo "It answered: ${_probe:-<nothing at all>}" >&2
-  echo "Install the project into it (bash scripts/setup.sh), or unset PY." >&2
+  echo "Install the project into it (bash scripts/setup.sh), unset PY, or clear whatever is" >&2
+  echo "shadowing the tool named above — PYTHONPATH is the usual one." >&2
   exit 3
 fi
 

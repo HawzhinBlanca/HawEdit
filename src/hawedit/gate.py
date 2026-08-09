@@ -25,14 +25,19 @@ a suite that quietly got smaller between two green runs.
 
 from __future__ import annotations
 
+import importlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 from xml.etree import ElementTree
 
 __all__ = [
+    "GATE_TOOLS",
+    "ForeignTool",
     "NoTestEvidence",
     "TestEvidence",
+    "assert_tools_are_from_this_environment",
     "check_test_evidence",
     "read_floor",
     "write_floor",
@@ -41,6 +46,69 @@ __all__ = [
 
 class NoTestEvidence(RuntimeError):
     """Raised when the test report does not prove a healthy run happened."""
+
+
+class ForeignTool(RuntimeError):
+    """Raised when a gate step would be run by something outside this environment."""
+
+
+# The three third-party programs the gate's steps are. `hawedit` is deliberately absent: it is
+# installed editable both here and in CI, so its file lives in the checkout rather than under
+# `sys.prefix`, and requiring otherwise would refuse the only install layout this repo uses.
+# That it imports at all is proved by this module running.
+GATE_TOOLS: Final = ("pytest", "ruff", "mypy")
+
+
+def assert_tools_are_from_this_environment(tools: tuple[str, ...] = GATE_TOOLS) -> None:
+    """Refuse a gate whose tools were substituted from outside the interpreter's environment.
+
+    D-092 closed the case where `PY` was not a Python that runs this project. It could not
+    close this one: with a real `PY`, anything earlier on `sys.path` that answers to
+    `-m pytest` becomes the test step. Measured — a 30-line `pytest/__main__.py` on
+    `PYTHONPATH` wrote a clean 1,200-test JUnit report, and the gate printed `VERIFY OK` in
+    four seconds having run nothing, **and ratcheted the committed floor from 1,155 to 1,200**,
+    so every honest run after it would be refused for a bar a forgery invented.
+
+    The rule is provenance, not a list of hostile environment variables — a list of ways to
+    redirect an import is the same losing shape as the blacklist of no-op commands this
+    module's docstring describes. `sys.prefix` is where the interpreter's own packages live, so
+    a tool outside it is not the one the environment installed, whether it arrived via
+    `PYTHONPATH`, user site-packages or a directory in the working tree. Nothing is chosen; the
+    interpreter and the module settle it between them.
+
+    Not closed, and not closeable here: a substituted `hawedit` itself. This check would then
+    be the forgery's own code. Stated rather than implied — see D-093.
+
+    Raises:
+        ForeignTool: a tool is missing, has no file, or resolves outside `sys.prefix`.
+    """
+    prefix = Path(sys.prefix).resolve()
+    foreign: list[str] = []
+    for name in tools:
+        try:
+            module = importlib.import_module(name)
+        except ImportError as exc:
+            raise ForeignTool(
+                f"{name} does not import in {prefix} — the gate cannot run a step whose "
+                f"program is missing ({exc})."
+            ) from exc
+        origin = getattr(module, "__file__", None)
+        if origin is None:
+            # A namespace package: a bare directory named `pytest` on the path, with no
+            # `__init__.py`. It imports, it has no file, and `Path(None)` would crash here
+            # rather than refuse — which would read as a broken gate instead of a caught one.
+            foreign.append(f"{name} -> a namespace package with no file")
+            continue
+        resolved = Path(origin).resolve()
+        if not resolved.is_relative_to(prefix):
+            foreign.append(f"{name} -> {resolved}")
+    if foreign:
+        raise ForeignTool(
+            "these gate tools do not come from this interpreter's environment "
+            f"({prefix}): {'; '.join(foreign)}. A step run by a substituted program proves "
+            f"nothing about this project — check PYTHONPATH, user site-packages, and any "
+            f"directory of that name in the working tree."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +243,23 @@ def check_test_evidence(
 
 
 def main(argv: list[str]) -> int:
-    """`python -m hawedit.gate <report.xml> <floor> [<not_before_mtime>]`."""
+    """`python -m hawedit.gate <report.xml> <floor> [<not_before_mtime>]`.
+
+    Also `python -m hawedit.gate --check-tools`, which `verify.sh` runs before any step: it
+    proves in one call that the interpreter runs this project (it is this module) and that the
+    programs the steps consist of came from the interpreter's own environment.
+    """
+    if argv[1:2] == ["--check-tools"]:
+        try:
+            assert_tools_are_from_this_environment()
+        except ForeignTool as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 7
+        # `verify.sh` matches on this value, not on the exit code — an exit code is exactly
+        # what a no-op interpreter is good at (D-092).
+        print("hawedit-interpreter-ok")
+        return 0
+
     if not 3 <= len(argv) <= 4:
         print("usage: python -m hawedit.gate <report.xml> <floor> [not_before]", file=sys.stderr)
         return 64

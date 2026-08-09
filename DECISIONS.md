@@ -3758,3 +3758,66 @@ answering to `-m pytest` on `PYTHONPATH` could write an XML that layer 3 reads b
 probe cannot see it, because the interpreter genuinely is this project's. It needs its own
 measurement — it was reported by an adversarial-pass agent and I have not reproduced it.
 `evidence/py-override-bypassed-the-whole-gate.md`.
+
+## D-093
+
+**A 30-line fake `pytest` on `PYTHONPATH` printed `VERIFY OK` and ratcheted the committed floor.**
+D-092 made `PY` prove it runs this project and named this as what it could not close. Reproduced
+rather than inherited from the agent's report:
+
+```
+$ PYTHONPATH=<fake> PY=$PWD/.venv/Scripts/python.exe bash scripts/verify.sh
+==> lint / typecheck / format   all real, all pass
+==> tests                       1200 passed in 61.50s   [forged]
+==> test evidence               1200 collected, 1200 passed, 0 skipped
+VERIFY OK    exit=0  elapsed=4s      floor 1155 -> 1200
+```
+
+Four seconds, zero test bodies. Only the step that produces the evidence was substituted. Freshness
+cannot see it — `not_before` exists for a leftover report, and this one was written during the run by
+the thing pretending to be pytest. Layer 3's reasoning ("the report is the evidence") holds only while
+the report comes from pytest.
+
+The consequence outlives the run: `write_floor` moved the committed floor to 1,200, so every honest run
+afterwards would be refused for a bar a forgery invented — a fake green that leaves the gate
+permanently red. Same self-poisoning shape as the `collected`-vs-`passed` bug already recorded in
+`gate.py`, reached from outside.
+
+**Decision: the gate's tools must resolve under `sys.prefix`.** `assert_tools_are_from_this_environment`
+checks `pytest`, `ruff` and `mypy`, folded into D-092's existing probe so there is one call and one
+refusal path before any step runs. The rule is **provenance, not a list of hostile environment
+variables**: enumerating ways to redirect an import (`PYTHONPATH`, user site-packages, a directory of
+that name in the working tree) is the same losing shape as the blacklist of no-op commands this repo
+already replaced. Nothing is chosen — the interpreter and the module settle it.
+
+**`hawedit` is deliberately excluded from the list.** It is installed editable here and in CI, so its
+file lives in `src/` and not under `sys.prefix`; requiring otherwise would refuse the only install
+layout this repo uses. That it imports at all is proved by the probe running.
+
+**Rejected: refusing `PYTHONPATH` (or any env-var list).** Incomplete by construction — user site,
+`PYTHONUSERBASE` and a `pytest/` directory in the working tree all reach the same end — and it would
+break the worktree-isolated adversarial passes, which set `PYTHONPATH=$PWD/src` against a junctioned
+`.venv`. Provenance lets those keep working: their `pytest` still comes from the junctioned
+environment.
+
+**Rejected: running each step with `-E -s`** (interpreter-level isolation). It closes the same class,
+but silently — and it would silently drop `PYTHONIOENCODING` and `PYTHONUTF8`, which on this Windows
+box are exactly the variables that decide whether Kurdish output survives the console. A gate that
+quietly changes what the caller asked for is the failure mode this repo keeps paying for.
+
+**Rejected: cross-checking the report's `<testcase>` names against files on disk.** The forger writes
+those too; it raises the cost of the forgery without changing what is provable.
+
+**Mutation audit 6/6.** The rule never firing CAUGHT (2), offenders collected and discarded CAUGHT (3),
+a tool with no file falling through to `Path(None)` CAUGHT (5), `pytest` dropped from `GATE_TOOLS`
+CAUGHT (2) — by a test that reads `verify.sh` and requires every `$PY -m <tool>` step to be in the
+list, because a checked list that drifts behind the steps is a hole the same shape as this one — the
+over-strict inversion CAUGHT (13), and reverting `verify.sh` to D-092's import-only probe CAUGHT (1),
+by the end-to-end forgery test alone. The audit also reproduced the damage: with the rule mutated away
+the forged run moved the floor 1,161 → 1,200, which the "floor unchanged" assertion caught and which
+was restored by hand before committing.
+
+**Not closed, precisely:** a substituted `hawedit` itself, where `--check-tools` would be the forgery's
+own code. No check written in this module can outrank that. Stated rather than implied, because the
+cheapest version of this fix is one that quietly claims to be complete.
+`evidence/forged-test-report-accepted.md`.

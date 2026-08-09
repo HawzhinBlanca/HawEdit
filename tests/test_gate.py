@@ -8,10 +8,19 @@ every DONE mark downstream of it would be worthless.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+from hawedit.gate import (
+    GATE_TOOLS,
+    ForeignTool,
+    assert_tools_are_from_this_environment,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "verify.sh"
@@ -354,3 +363,129 @@ def test_the_projects_own_interpreter_still_passes_the_probe() -> None:
     result = _run_gate("--fast", PY=Path(sys.executable).as_posix())
     assert result.returncode == 0, f"the real interpreter was refused: {result.stderr}"
     assert "fast checks OK" in result.stdout
+
+
+# --- D-093: a real interpreter is not enough if the step's program was substituted ----------
+
+
+def _forged_pytest(root: Path) -> Path:
+    """A `pytest` that writes a clean JUnit report and runs nothing. Reproduction, not a tool.
+
+    Thirty lines is the whole cost of the forgery, which is the point: this is not an exotic
+    attack, it is a file in a directory named by an environment variable.
+    """
+    package = root / "pytest"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "__init__.py").write_text('__version__ = "8.0.0"\n', encoding="utf-8")
+    (package / "__main__.py").write_text(
+        "import sys\n"
+        "for arg in sys.argv[1:]:\n"
+        "    if arg.startswith('--junitxml='):\n"
+        "        cases = ''.join(\n"
+        '            f\'<testcase classname="tests.t" name="t{i}" time="0.001"/>\'\n'
+        "            for i in range(1200)\n"
+        "        )\n"
+        "        with open(arg.split('=', 1)[1], 'w', encoding='utf-8') as handle:\n"
+        "            handle.write(\n"
+        '                \'<testsuites><testsuite name="pytest" errors="0" failures="0" \'\n'
+        '                \'skipped="0" tests="1200" time="61.5">\' + cases +\n'
+        "                '</testsuite></testsuites>'\n"
+        "            )\n"
+        "        print('1200 passed in 61.50s')\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_a_forged_test_report_cannot_produce_a_green_gate(tmp_path: Path) -> None:
+    """The measured defect. D-092 made `PY` real; the step's *program* was still substitutable.
+
+    Measured before the fix: `VERIFY OK`, exit 0, four seconds, zero test bodies executed —
+    layer 3 read the forged report back and accepted it, because the report was fresh, complete
+    and internally consistent. Freshness could not see it: the forgery was written during this
+    run, by design.
+
+    The assertion that matters is on the **artifact the forgery corrupted**: the committed floor
+    ratcheted 1,155 -> 1,200, so every honest run afterwards would have been refused for a bar
+    a forgery invented. A gate that can be poisoned into permanent red by a fake green is worse
+    than one that is merely fooled once.
+    """
+    floor_file = ROOT / "scripts" / "test-count.floor"
+    floor_before = floor_file.read_bytes()
+
+    result = _run_gate(PYTHONPATH=str(_forged_pytest(tmp_path)))
+
+    assert FULL_GATE_SUCCESS_LINE not in result.stdout, (
+        "a forged JUnit report produced the full-gate success line"
+    )
+    assert result.returncode == 3, f"expected exit 3, got {result.returncode}: {result.stderr}"
+    assert "pytest ->" in result.stderr, (
+        f"the refusal did not name the substituted tool: {result.stderr}"
+    )
+    assert floor_file.read_bytes() == floor_before, (
+        "the run moved scripts/test-count.floor — a refused gate must not touch the ratchet"
+    )
+
+
+def test_a_tool_with_no_file_is_refused_rather_than_crashing(tmp_path: Path) -> None:
+    """A namespace package imports with `__file__ = None`, which `Path(None)` cannot resolve.
+
+    Unit-level on purpose. Routing this through `PYTHONPATH` does not reproduce it: a namespace
+    portion loses to a regular package found later on the path, so the real `pytest` still won
+    and the gate ran on to the format step. That version of this test asserted a refusal that
+    was never going to happen — the mechanism, not the guard, was wrong.
+
+    The branch stays because the case is reachable when the tool is *not* installed and a bare
+    directory of that name is on the path: the difference between a caught forgery and a gate
+    that looks broken.
+    """
+    (tmp_path / "hawedit_tool_with_no_file").mkdir()
+    sys.path.insert(0, str(tmp_path))
+    try:
+        with pytest.raises(ForeignTool, match="namespace package with no file"):
+            assert_tools_are_from_this_environment(("hawedit_tool_with_no_file",))
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("hawedit_tool_with_no_file", None)
+
+
+def test_a_tool_outside_the_environment_is_named_not_merely_counted(tmp_path: Path) -> None:
+    """The refusal has to say which tool and where from, or exit 3 is a riddle."""
+    package = tmp_path / "hawedit_tool_from_elsewhere"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    sys.path.insert(0, str(tmp_path))
+    try:
+        with pytest.raises(ForeignTool) as caught:
+            assert_tools_are_from_this_environment(("hawedit_tool_from_elsewhere",))
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("hawedit_tool_from_elsewhere", None)
+    assert "hawedit_tool_from_elsewhere ->" in str(caught.value)
+    assert str(tmp_path.resolve()) in str(caught.value)
+
+
+def test_a_missing_tool_is_refused_and_says_which() -> None:
+    with pytest.raises(ForeignTool, match="hawedit_tool_that_is_not_installed does not import"):
+        assert_tools_are_from_this_environment(("hawedit_tool_that_is_not_installed",))
+
+
+def test_this_environments_tools_are_accepted() -> None:
+    """The control. A provenance rule that refuses everything satisfies both tests above and
+    makes the gate unrunnable — and `pytest` running this line is the proof it is wrong.
+    """
+    assert_tools_are_from_this_environment()  # must not raise in the environment CI installs
+
+
+def test_every_gate_step_program_is_covered_by_the_provenance_rule() -> None:
+    """A tool the gate runs but does not check is a hole the shape of the one just closed."""
+    steps = (ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8")
+    for tool in GATE_TOOLS:
+        assert f"-m {tool}" in steps, f"{tool} is checked but is not a gate step"
+    for invoked in re.findall(r"\$PY -m ([a-z_]+)", steps):
+        if invoked.startswith("hawedit"):
+            continue  # editable install: its file lives in the checkout by design
+        assert invoked in GATE_TOOLS, (
+            f"verify.sh runs `-m {invoked}` but GATE_TOOLS does not check where it came from"
+        )
