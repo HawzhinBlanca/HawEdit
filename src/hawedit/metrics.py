@@ -137,6 +137,29 @@ def spacing_free_cer(reference: str, hypothesis: str) -> float:
     )
 
 
+def _normalized_annotation(value: str, kind: str) -> str:
+    """One annotated span, §4.1-normalized, refusing an empty result.
+
+    Shared by the two §8.1 metrics that score annotated spans, because they had the same rule
+    and only one of them enforced it. `code_switch_error_rate` raised; `named_entity_error_rate`
+    did not, and an empty entity is the worst possible input there — `"" in anything` is `True`,
+    so a blank annotation counted as a name that **survived** and scored 0.0, the same value as a
+    name transcribed perfectly. Measured: `CorpusItem(..., named_entities=("",))` constructs
+    without complaint and scores 0.0, so a corpus item annotated for named entities with a blank
+    label silently inflated §8.1's accuracy. D-083.
+
+    Raises:
+        ValueError: the span is empty after normalization — a corpus defect, not a score.
+    """
+    normalized = normalize_sorani(value)
+    if not normalized:
+        raise ValueError(
+            f"empty {kind} after normalization — this is a corpus defect, "
+            f"fix the labelled set rather than scoring an undefined span."
+        )
+    return normalized
+
+
 def named_entity_error_rate(hypothesis: str, entities: Sequence[str]) -> float | None:
     """Fraction of reference named entities that did not survive transcription.
 
@@ -150,11 +173,21 @@ def named_entity_error_rate(hypothesis: str, entities: Sequence[str]) -> float |
 
     Returns:
         The error rate, or `None` when no entities were annotated — unmeasured is not 0.0.
+
+    Raises:
+        ValueError: an annotated entity is empty after normalization. Distinct from `entities`
+            being empty, which is "nothing was annotated" and correctly returns `None`; a blank
+            entry inside the tuple is a corpus defect, and scoring it 0.0 would report a name as
+            found when no name was given.
     """
     if not entities:
         return None
     normalized_hypothesis = normalize_sorani(hypothesis)
-    missed = sum(1 for entity in entities if normalize_sorani(entity) not in normalized_hypothesis)
+    missed = sum(
+        1
+        for entity in entities
+        if _normalized_annotation(entity, "named entity") not in normalized_hypothesis
+    )
     return missed / len(entities)
 
 
@@ -176,12 +209,7 @@ def code_switch_error_rate(hypothesis: str, spans: Sequence[str]) -> float | Non
     normalized_hypothesis = normalize_sorani(hypothesis)
     rates: list[float] = []
     for span in spans:
-        normalized_span = normalize_sorani(span)
-        if not normalized_span:
-            raise ValueError(
-                "empty code-switch span after normalization — this is a corpus defect, "
-                "fix the labelled set rather than scoring an undefined span."
-            )
+        normalized_span = _normalized_annotation(span, "code-switch span")
         distance = substring_edit_distance(normalized_span, normalized_hypothesis)
         rates.append(distance / len(normalized_span))
     return sum(rates) / len(rates)
