@@ -35,9 +35,13 @@ from hawedit.vex import (
     parse_vex_json,
 )
 from hawedit.wsl_audit_locks import (
-    AUDIT_DISTRIBUTIONS,
-    AUDIT_LOCK_SHA256,
-    AUDIT_REQUIREMENTS,
+    AUDIT_DISTRIBUTIONS as AUDIT_DISTRIBUTIONS,
+)
+from hawedit.wsl_audit_locks import (
+    AUDIT_LOCK_SHA256 as AUDIT_LOCK_SHA256,
+)
+from hawedit.wsl_audit_locks import (
+    AUDIT_REQUIREMENTS as AUDIT_REQUIREMENTS,
 )
 from hawedit.wsl_setup import (
     WslRuntimeError,
