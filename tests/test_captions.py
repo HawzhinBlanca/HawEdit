@@ -21,6 +21,7 @@ captions."
 
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from hawedit.captions import (
     GoldenReferenceMissing,
     MissingRtlStack,
     assert_font_covers_kurdish,
+    assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
     build_ass,
     compare_golden_render,
@@ -77,6 +79,19 @@ A_SENTENCE = Sentence(
 # --- §4.3.2 the RTL stack, verified at deploy time -------------------------------------
 
 
+def _render_clip_source() -> str:
+    """`render_clip`'s body, for the two guards whose claim is *where the call is*.
+
+    Both are wiring, and wiring is what pass #18 found unheld twice — D-105's lesson, and the
+    reason `assert_font_covers_kurdish` sat in the module with no caller at all.
+    """
+    render_py = FONT.resolve().parents[2] / "src" / "hawedit" / "render.py"
+    source = render_py.read_text(encoding="utf-8")
+    body = source[source.index("def render_clip(") :]
+    following = body.find("\ndef ")  # render_clip is currently the last function in the module
+    return body if following == -1 else body[:following]
+
+
 def test_a_complete_build_passes() -> None:
     report = assert_rtl_stack(FULL_BUILDCONF, LDD_OUTPUT)
     assert report.libass and report.harfbuzz and report.fribidi
@@ -99,6 +114,43 @@ def test_a_build_without_fribidi_is_refused() -> None:
     buildconf = "  configuration:\n    --enable-libass\n    --enable-libharfbuzz\n"
     with pytest.raises(MissingRtlStack, match="FriBidi"):
         assert_rtl_stack(buildconf, "")
+
+
+def test_an_explicit_disable_beats_an_enable_for_the_same_library() -> None:
+    """Found SURVIVED by adversarial pass #18 (D-133): the `disabled` precedence in `find()`
+    could be deleted with the whole suite green.
+
+    Every other case reaches `None` by absence — `--disable-libass` alone leaves libass out of
+    `enabled` too, so removing the precedence changes nothing there. It matters only when both
+    flags are present, which is how a build script appending `--disable-libass` to an inherited
+    `--enable-libass` base actually looks. ffmpeg takes the last flag; so does this.
+
+    A linked `libass.so` must not rescue it either: an explicitly disabled library is a
+    statement about the build, and the .so on the box may be a different ffmpeg's.
+    """
+    both = "  configuration:\n    --enable-libass\n    --disable-libass\n"
+    with pytest.raises(MissingRtlStack, match="libass"):
+        assert_rtl_stack(both + "    --enable-libharfbuzz\n    --enable-libfribidi\n", "")
+    with pytest.raises(MissingRtlStack, match="libass"):
+        assert_rtl_stack(both, LDD_OUTPUT)
+    # The control: without the --disable- the very same configure line is accepted, so this is
+    # measuring the precedence and not merely that some string is refused.
+    report = assert_rtl_stack("  configuration:\n    --enable-libass\n", LDD_OUTPUT)
+    assert report.libass is True
+
+
+def test_the_burn_verifies_the_rtl_stack_it_shapes_with() -> None:
+    """Also SURVIVED pass #18: `assert_rtl_stack` could be deleted from `render_clip` and no
+    test noticed — while the comment beside it says "Checked here, not only in the golden test".
+
+    The claim is about where the call is, so that is what is asserted. Same shape as
+    `test_the_burn_verifies_the_font_directory_it_was_handed`, one guard over.
+    """
+    body = _render_clip_source()
+    assert "assert_rtl_stack(" in body, (
+        "render_clip no longer verifies the shaping stack; §4.3.2's failure is invisible until "
+        "a client sees the burned-in captions, and the golden test only covers this host"
+    )
 
 
 def test_linked_libraries_can_supply_what_buildconf_omits() -> None:
@@ -491,4 +543,160 @@ def test_wrap_style_2_really_stops_libass_wrapping(tmp_path: Path) -> None:
     assert len(zero) > len(two), (
         f"WrapStyle 0 produced {len(zero)} bands and WrapStyle 2 produced {len(two)}: the setting "
         f"is doing nothing, so the header assertion is measuring a string and not a behaviour."
+    )
+
+
+# --- §4.3.4, D-133: the set, and the check that had no production caller -------------------
+
+
+def _font_without(tmp_path: Path, codepoint: int) -> Path:
+    """The real shipped Noto, subset to drop exactly one codepoint.
+
+    A hand-made font would prove nothing about a plausible one. This keeps every other glyph,
+    every layout feature and the family name, so libass resolves it by the same name the ASS
+    asks for — the only difference is the one character.
+    """
+    from fontTools import subset
+    from fontTools.ttLib import TTFont
+
+    fonts_dir = tmp_path / f"fonts-without-{codepoint:04X}"
+    fonts_dir.mkdir()
+    victim = TTFont(FONT)
+    subsetter = subset.Subsetter(
+        subset.Options(layout_features="*", name_IDs="*", glyph_names=True)
+    )
+    subsetter.populate(unicodes={cp for cp in TTFont(FONT).getBestCmap() if cp != codepoint})
+    subsetter.subset(victim)
+    out = fonts_dir / FONT.name
+    victim.save(out)
+    return out
+
+
+def test_the_required_set_contains_every_letter_the_normalizer_emits_as_kurdish() -> None:
+    """§4.1's normalizer converts Arabic `ك`/`ي` **into** `ک` U+06A9 / `ی` U+06CC — it calls
+    them "the Farsi forms Kurdish uses" — so every normalized transcript is written in them.
+    A font requirement that omits them certifies a font that cannot draw Kurdish text.
+
+    Derived from what `normalize_sorani` actually returns, not from a list of the alphabet.
+    """
+    from hawedit.normalize import normalize_sorani
+
+    emitted = {
+        char
+        for char in normalize_sorani(GOLDEN_CAPTION_TEXT + " كوردي")
+        if unicodedata.category(char).startswith("L")
+    }
+    kurdish_specific = {char for char in emitted if ord(char) > 0x0660}
+    missing = sorted(kurdish_specific - KURDISH_REQUIRED_GLYPHS)
+    assert not missing, (
+        "the normalizer produces "
+        + " ".join(f"{c} U+{ord(c):04X}" for c in missing)
+        + " and no font is required to have them"
+    )
+
+
+def test_the_golden_sentences_own_letters_are_all_required() -> None:
+    """The control for the test above, from the other direction: this project's own §4.3.6
+    reference line is Kurdish text, so every Kurdish-specific letter in it must be required.
+    A set that satisfies the normalizer by accident but not the shipped caption is not enough.
+    """
+    letters = {
+        char
+        for char in GOLDEN_CAPTION_TEXT
+        if unicodedata.category(char).startswith("L") and ord(char) > 0x0660
+    }
+    assert letters <= KURDISH_REQUIRED_GLYPHS, sorted(letters - KURDISH_REQUIRED_GLYPHS)
+
+
+def test_a_font_with_the_arabic_kaf_but_not_the_kurdish_one_is_refused(tmp_path: Path) -> None:
+    """The measured defect. Before D-133 this font *passed*: the required set had no U+06A9,
+    so a font keeping Arabic kaf U+0643 and dropping the Kurdish keheh was certified.
+    """
+    maimed = _font_without(tmp_path, 0x06A9)
+    from fontTools.ttLib import TTFont
+
+    cmap = TTFont(maimed).getBestCmap()
+    assert 0x0643 in cmap, "this font is supposed to keep the Arabic kaf"
+    assert 0x06A9 not in cmap, "the subset did not drop the Kurdish keheh"
+
+    with pytest.raises(FontCoverageError, match=r"U\+06A9"):
+        assert_font_covers_kurdish(maimed)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_the_refused_font_really_does_break_the_render(tmp_path: Path) -> None:
+    """Asserted on the decoded pixels, because "missing glyph" is a claim about the artifact.
+
+    §4.3.4 says missing glyphs render as boxes. Measured, it is worse: libass falls back to
+    another font for that one character, so `کوردی` comes apart into a detached `ک` at a
+    different size and `وردی` — a word the viewer reads as two. The frame gains ink rather
+    than losing it, which is why "the caption looks present" is no evidence at all.
+    """
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "captions.ass"
+    ass_path.write_text(build_ass((_golden_sentence(),)), encoding="utf-8")
+
+    maimed = _font_without(tmp_path, 0x06A9)
+    broken = render_caption_png(ffmpeg, ass_path, maimed.parent, tmp_path / "broken.png")
+    good = render_caption_png(ffmpeg, ass_path, FONTS_DIR, tmp_path / "good.png")
+
+    broken_pixels = decode_to_rgb(ffmpeg, broken)
+    good_pixels = decode_to_rgb(ffmpeg, good)
+    assert len(broken_pixels) == len(good_pixels)
+    # Both frames must actually contain a caption: two black frames compare equal and would
+    # make every assertion here vacuous. This is the trap the first measurement fell into.
+    assert sum(1 for b in good_pixels if b > 32) > 4_000, "the reference frame rendered nothing"
+    assert sum(1 for b in broken_pixels if b > 32) > 4_000, "the broken frame rendered nothing"
+    assert broken_pixels != good_pixels, (
+        "a font with no Kurdish keheh rendered the golden line identically, so the coverage "
+        "requirement would be measuring nothing"
+    )
+
+
+def test_the_directory_check_accepts_the_directory_the_product_ships(tmp_path: Path) -> None:
+    """The positive control. A check that refuses everything would pass every test below."""
+    assert assert_fonts_dir_covers_kurdish(FONTS_DIR) == FONT
+
+
+def test_a_fonts_directory_with_no_font_at_all_is_refused(tmp_path: Path) -> None:
+    """§4.3.4 forbids relying on fontconfig resolution. An empty `fontsdir` is exactly that:
+    libass draws Kurdish in whatever the render host happens to have."""
+    empty = tmp_path / "fonts"
+    empty.mkdir()
+    with pytest.raises(FontCoverageError, match="no font file"):
+        assert_fonts_dir_covers_kurdish(empty)
+
+
+def test_a_fonts_directory_whose_only_font_cannot_draw_kurdish_is_refused(
+    tmp_path: Path,
+) -> None:
+    maimed = _font_without(tmp_path, 0x06A9)
+    with pytest.raises(FontCoverageError, match=r"Closest is .*U\+06A9"):
+        assert_fonts_dir_covers_kurdish(maimed.parent)
+
+
+def test_one_covering_font_beside_a_broken_one_is_accepted(tmp_path: Path) -> None:
+    """The control for the test above. libass searches the directory, so a second font that
+    cannot draw Kurdish is not by itself a failure — refusing here would make the guard fire
+    on any host that keeps more than one font in the directory.
+    """
+    maimed = _font_without(tmp_path, 0x06A9)
+    shipped_copy = maimed.parent / "ZZ-covering.ttf"
+    shipped_copy.write_bytes(FONT.read_bytes())
+    assert assert_fonts_dir_covers_kurdish(maimed.parent) == shipped_copy
+
+
+def test_the_burn_verifies_the_font_directory_it_was_handed() -> None:
+    """This is the whole point of D-133: `assert_font_covers_kurdish` had **no caller in
+    `src/`**. It ran in one test against one hard-coded path while `render_clip` burned
+    whatever font sat in the `fonts_dir` argument — and `pipeline._runtime_fonts_dir()`
+    resolves to an installed location off a real deployment, which no test ever looks at.
+
+    Asserted on the source, in the shape D-119's entry-point test uses: the call has to be
+    in `render_clip`, not merely imported somewhere in the module.
+    """
+    assert "assert_fonts_dir_covers_kurdish(fonts_dir)" in _render_clip_source(), (
+        "render_clip does not verify the font directory it burns from; §4.3.4's check would "
+        "again be a function nothing in the product calls"
     )

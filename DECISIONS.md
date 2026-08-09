@@ -6009,3 +6009,111 @@ consecutive instance of a test that cannot distinguish the rule it names (D-124,
 D-128, D-129, D-130, D-131). Rewritten to hold the path constant and change only the content, which
 is both what binds the digest and what actually happens in practice.
 `evidence/two-thirds-of-stage-0-redone-on-every-run.md`.
+
+## D-133
+
+**Adversarial pass #18, on M3.1.** The row is DONE for four deliverables — *shaping, stack check,
+font coverage, own line breaks* — and its cell substantiates one of them. Two of the four turned out
+not to hold, both in the same guard, and the pass found two further unheld mechanisms by mutation.
+
+### The required glyph set omitted the two letters §4.1's normalizer produces
+
+`KURDISH_REQUIRED_GLYPHS` was §4.3.4's nine characters plus D-013's two heh forms. It did not
+contain `ک` U+06A9 or `ی` U+06CC — and `normalize_sorani` **converts Arabic `ك`/`ي` into exactly
+those**, which §4.1 calls "the Farsi forms Kurdish uses". Measured:
+
+```
+normalize_sorani('كوردي')
+  in :  ك=U+0643 و=U+0648 ر=U+0631 د=U+062F ي=U+064A
+  out:  ک=U+06A9 و=U+0648 ر=U+0631 د=U+062F ی=U+06CC
+
+GOLDEN_CAPTION_TEXT = ڕۆژنامەوانی کوردی لە هەولێر.
+  Kurdish-specific letters in it that no font was required to have:  ک U+06A9   ی U+06CC
+```
+
+So every normalized transcript in this product is written in two characters the font requirement
+did not mention, and one of them is in the project's own §4.3.6 reference line. `captions.py`'s own
+comment on `GOLDEN_CAPTION_TEXT` even said the line exercises *"ڕ ۆ ژ ە ی from §4.3.4's required
+set"* — naming `ی` as required while the set contained no `ی`. The contradiction was sitting in the
+file, readable, for as long as the row has said DONE.
+
+**These are not the Arabic kaf and yeh a font is likely to have.** Proved by subsetting the real
+shipped Noto Naskh Arabic to drop *only* U+06A9, keeping U+0643 and every other glyph, feature and
+name:
+
+```
+subset font: U+06A9 present? False   U+0643 (Arabic kaf) present? True   codepoints 1122
+assert_font_covers_kurdish: PASSED — a font with no Kurdish kaf is certified
+```
+
+And the pixels, which is where §4.3 says the failure shows up:
+
+```
+shipped    8,367 subpixels above black
+no-keheh   9,267 subpixels above black
+pixels differ: True   subpixels changed: 15,999 (0.26% of the frame)
+```
+
+**§4.3.4 says missing glyphs render as boxes; measured, it is worse than that.** libass falls back
+to another font for the single character, so `کوردی` comes apart into a detached, differently sized
+`ک` and `وردی` — the viewer reads one word as two, in a caption that looks entirely present. The
+frame *gains* ink rather than losing it, which is why "there is text on screen" is no evidence.
+
+**Decision: extend the frozen list by two, derived from the normalizer rather than from an
+alphabet.** BLUEPRINT is frozen and §4.3.4's nine stay; this is the same divergence D-013 already
+took for `ھ`, recorded the same way. The addition is not my reading of Sorani orthography — it is
+what `normalize_sorani` returns, asserted as such: the test derives the requirement by running the
+normalizer, so a future change to §4.1's target forms moves the font requirement with it.
+
+**Rejected: requiring every Arabic-script letter the normalizer can emit.** That pulls in baseline
+Arabic (ا د ر ل م ن و) which any Arabic font has, and the check's value is in naming the
+*Kurdish-specific* characters a plausible font lacks. The test therefore bounds itself above
+U+0660 and says so.
+
+### The check had no caller in `src/`
+
+`assert_font_covers_kurdish` was called from `tests/test_captions.py` and **nowhere else in the
+product** — while its own docstring says "this runs at build time rather than being trusted". It ran
+at neither build time nor the burn. `render_clip` takes `fonts_dir: Path` and hands it to
+`subtitle_filter`; nothing ever looked inside it. And `pipeline._runtime_fonts_dir()` has an
+**installed** branch — `sys.prefix/share/hawedit/assets/fonts` — so a real deployment reads a
+directory no test has ever seen.
+
+`assert_fonts_dir_covers_kurdish` is the directory-level form, called in `render_clip` beside
+`assert_rtl_stack`, for the reason that call already gives: *"Checked here, not only in the golden
+test."* One guard where every burn routes, not one per caller.
+
+**Directory-level rather than by family name, and the shortfall is named.** libass searches the
+directory, so a second non-covering font there is not a failure — refusing on it would fire on any
+host that keeps two fonts. What this therefore does **not** verify is that the font libass resolves
+*for the family name the ASS asks for* is the covering one; mapping family name to file means
+reading each font's name table, and inventing that resolution without being able to check it against
+libass's own is how a guard starts lying. Recorded here rather than guessed.
+
+**Rejected: checking the burned-in frame for boxes.** The decisive artifact test, and there is no
+cheap way to distinguish a tofu box from legitimate ink after the encode. The subset-font render
+above is that measurement done once, by hand, as evidence.
+
+### Two mechanisms M3.1 claimed that no test held
+
+The audit's first pass was **9/11**, both survivors on the *stack check*:
+
+* **`--disable-libass` beating `--enable-libass` was untested.** Every other refusal reaches `None`
+  by absence, so deleting the `disabled` precedence changed nothing the suite could see. It matters
+  only when both flags are present — a build script appending `--disable-libass` to an inherited
+  `--enable-libass` base — which is the shape audit finding #4 was originally about. Now pinned in
+  both forms, including that a linked `libass.so` must not rescue an explicitly disabled build, with
+  a control requiring the same line minus the `--disable-` to be accepted.
+* **`render_clip`'s own `assert_rtl_stack` call could be deleted unnoticed.** The comment beside it
+  claims it is checked at the burn and nothing checked that. Same shape as the font check having no
+  caller at all — wiring, which is what D-105 and D-108 were both about.
+
+**Mutation audit 11/11** after those two tests: the required set reverted CAUGHT, the burn's font
+check removed CAUGHT, an empty fonts directory accepted CAUGHT, a non-covering font accepted CAUGHT,
+`shaping=auto` CAUGHT, the disable precedence CAUGHT, the burn's stack check removed CAUGHT, a
+missing glyph reported as covered CAUGHT, `WrapStyle: 0` CAUGHT, the `\N` not emitted CAUGHT, and
+everything on one line CAUGHT.
+
+**What survived the pass:** shaping and own-line-breaks held completely — three mutations each
+against the pixel-level tests from the 2026-08-08 pass, all caught. Nothing about §4.3.1, §4.3.3,
+§4.3.5 or §4.3.6 was found wanting. `evidence/adversarial-pass-18-2026-08-10.md`.

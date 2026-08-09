@@ -39,6 +39,7 @@ from typing import Final
 
 from hawedit.captions import (
     assert_captions_within_clip,
+    assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
     find_ffmpeg,
     subtitle_filter,
@@ -346,6 +347,7 @@ def render_clip(
         BoundaryInvariantViolated: Kurdish invariant #2 fails for this clip.
         ValueError: the clip has not cleared QC, or has no editorial/output block.
         MissingRtlStack: this ffmpeg cannot shape Arabic script (§4.3.2).
+        FontCoverageError: `fonts_dir` has no font that can draw Kurdish (§4.3.4).
         RenderError: no ffmpeg, the requested encoder is absent, or the encode failed.
     """
     clip.assert_renderable()
@@ -372,6 +374,10 @@ def render_clip(
 
     if not ass_path.exists():
         raise RenderError(f"no subtitle file at {ass_path} — §4.3 captions are not optional")
+    # §4.3.4: the font is verified where the burn happens, not only in a test against the one
+    # font in the checkout. `_runtime_fonts_dir()` resolves to an installed location off a real
+    # deployment, and nothing looked at what was in it. Same reason as assert_rtl_stack above.
+    assert_fonts_dir_covers_kurdish(fonts_dir)
 
     duration_ms = clip.out_ms - clip.in_ms
     # Subtitles are burned into a stream ffmpeg has already cut, so t=0 is the start of the
