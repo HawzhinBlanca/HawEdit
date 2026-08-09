@@ -5695,3 +5695,21 @@ pin without opening the script, a moved pin must be republished, and an unpinned
 other way. **3/3** on its own audit — the wrong count restored CAUGHT, the published commit removed
 CAUGHT, the script unpinned CAUGHT.
 `evidence/adversarial-pass-14-2026-08-09.md`.
+
+## D-158 - Stage 4 promotion and billing boundaries need exact controls
+
+Adversarial pass #15 revisited the M2.6 editorial-judge contract. The production code already
+refused all nine tested mutations, but three guarantees were not held by discriminating tests:
+
+- the old tie test used 5 wins against 5 wins, so the 20-item minimum answered before the tie rule;
+- the token tests did not stand on the exclusive 200,000-token ceiling; and
+- no test held the 20-keyframe maximum even though inline image bytes are billed.
+
+The regression set now uses 10 wins against 10 wins, asserts that the floor did not answer, and
+includes an 11-to-10 promotion control. A request at exactly 200,000 tokens is refused while one
+token below is accepted. Twenty-one keyframes are refused while exactly twenty inside the candidate
+span are accepted. This makes the cost and managed-migration boundaries mutation-sensitive without
+changing production behavior. The upstream pass called this D-128; the readiness branch already
+used that identifier, so the semantic integration is recorded here as D-158.
+
+`evidence/adversarial-pass-15-2026-08-09.md`.

@@ -49,6 +49,7 @@ from hawedit.judge import (
     WITH_VIDEO_TOKENS_PER_HOUR,
     EditorialJudge,
     InputMode,
+    JudgeFrame,
     JudgeRequest,
     JudgeVerdict,
     NotRoutable,
@@ -546,6 +547,67 @@ def test_kurdish_text_that_merely_contains_digits_is_still_accepted() -> None:
     """
     verdict = a_verdict(title_ckb="یک ٠١")
     assert verdict.title_ckb == "یک 01"
+
+
+# --- what adversarial pass #15 found revertible (D-158) ---------------------------------
+
+
+def test_a_tie_above_the_regression_floor_is_still_not_a_win() -> None:
+    """A 10-v-10 tie clears the 20-item floor, so the tie rule must answer."""
+    decision = decide_judge(incumbent_wins=10, shadow_wins=10, ties=0)
+    assert not decision.switch
+    assert any("tied with" in reason for reason in decision.reasons), decision.reasons
+    assert not any("below the" in reason for reason in decision.reasons), (
+        "the floor answered this, so the tie rule is still unmeasured"
+    )
+
+
+def test_a_one_win_margin_above_the_floor_does_promote() -> None:
+    """The control: refusing every tie and every win must not pin the incumbent forever."""
+    decision = decide_judge(incumbent_wins=10, shadow_wins=11, ties=0)
+    assert decision.switch, decision.reasons
+    assert any("beat" in reason for reason in decision.reasons)
+
+
+def test_a_request_exactly_at_the_tier_ceiling_is_refused() -> None:
+    """Section 3 says requests stay under 200K tokens, so 200K is outside the tier."""
+    at_ceiling = JudgeRequest(
+        candidate_id="at-ceiling",
+        mode=InputMode.STAGE_4_WITH_VIDEO,
+        tokens=PRO_TIER_TOKEN_CEILING,
+    )
+    with pytest.raises(RequestTooLarge, match="ceiling"):
+        at_ceiling.assert_within_tier()
+
+    JudgeRequest(
+        candidate_id="under-ceiling",
+        mode=InputMode.STAGE_4_WITH_VIDEO,
+        tokens=PRO_TIER_TOKEN_CEILING - 1,
+    ).assert_within_tier()
+
+
+def test_more_keyframes_than_section_3_prescribes_are_refused() -> None:
+    """Inline keyframe bytes are billed, so the 20-frame contract needs an exact cap."""
+    frames = tuple(
+        JudgeFrame(timestamp_ms=index * 100, mime_type="image/jpeg", data=b"\xff\xd8jpeg")
+        for index in range(21)
+    )
+    with pytest.raises(ValueError, match="at most 20"):
+        JudgeRequest(
+            candidate_id="too-many",
+            mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
+            tokens=1_000,
+            keyframes=frames,
+        )
+
+    JudgeRequest(
+        candidate_id="exactly-twenty",
+        mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
+        tokens=1_000,
+        keyframes=frames[:20],
+        clip_in_ms=0,
+        clip_out_ms=2_100,
+    )
 
 
 def test_normalization_is_still_applied_to_an_accepted_field() -> None:

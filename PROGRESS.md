@@ -320,6 +320,11 @@ pyannote access, or real-speaker reframing.
 
 ## Upstream adversarial-pass amendments - 2026-08-09
 
+- **M2.6 / D-158:** Stage 4's managed-migration and billing boundaries are now pinned at the exact
+  edges: a 20-item tie cannot promote, an 11-to-10 win can, 200,000 tokens is refused while 199,999
+  passes, and 21 keyframes are refused while exactly 20 in-span frames pass. The production contract
+  was already correct; the previous tie test was answered by the sample floor and matched `ties 0`.
+  `evidence/adversarial-pass-15-2026-08-09.md`.
 - **M0.1 / D-125/D-127:** canonical environment identity is now paired with gate-tool origin
   validation, and the passed-test floor is idempotent when legitimate skips exist. A forged
   `pytest` can neither mint JUnit evidence nor poison the ratchet.
