@@ -5444,3 +5444,58 @@ run is that the pinned URL and the digest are checked on every run.
 
 **2/2 mutations:** dropping the retry CAUGHT, and `--retry` without `--retry-all-errors` CAUGHT —
 the second matters because it is the plausible half-fix that looks right and does not cover exit 92.
+
+## D-124
+
+**Adversarial pass #11 took M2.5 — §3 Stage 3's dual-path merge, DONE and never attacked — and six
+of ten mechanisms held. Three survivors, and every one was a fixture that could not tell the two
+behaviours apart.**
+
+§3 calls this "the most important structural decision in the system", and §8.2 spends its output on
+the per-path recall that decides whether Path B is worth its cost.
+
+```
+CAUGHT  Path B's unmatched candidates dropped (intersect, not union)
+CAUGHT  the merged span becomes the union, not the anchor's
+CAUGHT  one visual candidate corroborates every overlapping verbal one
+MISSED  rank no longer decides who claims a contested visual candidate
+CAUGHT  a path dedupes itself: verbal candidates can claim each other
+MISSED  the output order depends on input order
+CAUGHT  candidates from different media can merge
+CAUGHT  an unmeasured visual score becomes 0.0 instead of None
+CAUGHT  the visual path's SV6D is dropped on the merged candidate
+MISSED  §8.2's rank becomes the worse of the two paths, not the better
+
+6/10
+```
+
+**Survivor 1 — rank versus id.** `test_a_visual_candidate_is_claimed_by_exactly_one_verbal_candidate`
+asserts *"the lower-ranked verbal candidate should claim it"* and cannot see rank at all: its fixture
+is `v1` at rank 1 and `v2` at rank 2, so alphabetical order and rank order agree, and
+`sorted(verbal, key=lambda c: c.candidate_id)` passes. The new test makes them **disagree** — `v2` is
+rank 1 — so the claim goes to `v2` while `v1` sorts first. D-086/D-088/D-101's shape again: the
+fixture happens to satisfy the rule.
+
+**Survivor 2 — the promised output order.** The docstring promises "(media, then start, then id)" and
+`test_the_order_of_the_output_does_not_depend_on_the_order_of_the_input` shuffles the inputs 20 times
+against a reference — but every visual in that fixture is claimed, so there are no leftovers, and the
+merge's *internal* order (anchors in rank order) is already deterministic. Deleting the final sort
+left it green. The new test uses a visual-only candidate that **starts before** the first verbal
+anchor: leftovers are appended after the anchors, so without the sort it comes out last, and the
+contract says first.
+
+**Survivor 3 — which rank §8.2 scores against.** `to_retrieved` takes the `min` of the two paths'
+ranks, with a docstring explaining why: *"a moment Path B ranked 2nd was available at position 2
+whatever Path A thought of it."* `max` passed, because the one test that exercises it scores at
+`k=20`, where 2 and 9 are indistinguishable. Now pinned at verbal 9 / visual 2 → rank 2, **with a
+control** at verbal 2 / visual 7, because returning `verbal_rank` whenever it exists would satisfy
+the first test by accident of which number is smaller.
+
+**Mutation audit 10/10 after the fix.** One mutation had to be rewritten first: deleting
+`del unclaimed[...]` emptied its `if` block and the module stopped importing, which the audit
+reported as SKIPPED rather than counting — replaced by `pass`, it is CAUGHT.
+
+**No production code changed.** Every survivor was a test that could not discriminate, not a wrong
+behaviour: the merge does claim in rank order, does sort its output, and does take the better rank.
+The row's claims are true; three of them were unheld.
+`evidence/adversarial-pass-11-2026-08-09.md`.
