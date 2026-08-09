@@ -31,6 +31,7 @@ from hawedit.transcripts import (
     RawTranscript,
     RawTranscriptImmutable,
     RawTranscriptTampered,
+    SegmentConfidence,
     StaleNormalizedTranscript,
     TranscriptStore,
     UnalignedSpeech,
@@ -637,3 +638,34 @@ def test_the_first_layer_still_refuses_while_the_digest_is_present(tmp_path: Pat
         store.write_raw(a_raw("a second, different ASR output"))
 
     store.verify_raw_integrity("media-001")
+
+
+# --- D-144: a per-segment confidence that lies inverts §3's quartile -------------------------
+
+
+def test_a_positive_log_probability_is_refused() -> None:
+    """`SegmentScore` already refuses this, for the reason it names: escalation ranks on log
+    probabilities, so a value on the wrong scale silently inverts the bottom quartile — the
+    confident segments would be the ones routed to the validator.
+
+    Found unprotected by D-144's own mutation audit: I wrote this guard and no test reached it,
+    which is the third iteration running where the audit's real catch was my own new guard.
+    """
+    with pytest.raises(ValueError, match="inverts the bottom quartile"):
+        SegmentConfidence(start_ms=0, end_ms=1_000, mean_logprob=0.5)
+
+
+def test_a_zero_length_segment_confidence_is_refused() -> None:
+    with pytest.raises(ValueError, match="no length"):
+        SegmentConfidence(start_ms=1_000, end_ms=1_000, mean_logprob=-1.0)
+
+
+def test_a_real_segment_confidence_is_accepted() -> None:
+    """The control: the two refusals above must not amount to refusing every measurement.
+
+    Zero is a legitimate log-probability — certainty — and must not be confused with the positive
+    values that indicate a wrong scale.
+    """
+    scored = SegmentConfidence(start_ms=1_000, end_ms=1_316, mean_logprob=-6.523425833753913)
+    assert scored.end_ms - scored.start_ms == 316
+    assert SegmentConfidence(start_ms=0, end_ms=1, mean_logprob=0.0).mean_logprob == 0.0

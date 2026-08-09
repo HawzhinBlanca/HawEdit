@@ -33,7 +33,7 @@ Measured result:
 - generation `Ubuntu-a3a875601325fe6bd6497791`;
 - 140 exact installed distributions; `uv pip check` reported all compatible;
 - `kenlm==0.3.0` and `sox==1.5.0` built as the two explicitly reviewed sdist exceptions;
-- source SHA-256 `540fa9c0a9f56b1d9ecda04761270fddbf018a1a255db46de7038c43b3c5d411`;
+- source SHA-256 `aa651eeb520967ee7a8c195508ce863741a7563a336eaf18ec87a997a96ae3db`;
 - build/runtime lock SHA-256 `b153285953b96583bf60945783364662f6ab58f8fc1cb6f58fbdd2caa454a9a9`
   / `190844f326d409b8d6b7b9536a880e2a77a9eebfe056369688337ce6386f5aea`;
 - all three OmniASR assets verified: 43,546,500,168 bytes total;
@@ -46,7 +46,7 @@ Command:
 
 ```powershell
 .venv\Scripts\python.exe -m hawedit.wsl_vex_gate `
-  --evidence .gate/wsl-asr-vex-540fa9c0.json `
+  --evidence .gate/wsl-asr-vex-aa651eeb.json `
   --distro Ubuntu --timeout-seconds 1200
 ```
 
@@ -55,11 +55,12 @@ Result: `status=accepted`, 12 findings, 12 dispositions, 12 matched dispositions
 - pip-audit `2.10.1`, OSV service;
 - scanner inventory: 29 exact wheels, SHA-256
   `b20c9ba80b886f9f64845197dcd6e88158ad0c126eb4bfd71e6d913e9e30ad6c`;
-- raw audit SHA-256 `f700054ba05a53744985ae36a8bf6b860d5f5096a0645214eb0393ee1d6eddd0`;
-- reviewed policy SHA-256 `063b2669af43f2cbf10b746dd5557d9ee5a07942499cc021aa52fabc26255ec7`;
-- receipt SHA-256 `12be11242a1e5329931d52bbe7c5ffa24db6adc3de3eb7955f557103fea97b85`;
+- raw audit SHA-256 `d61cf8934ca504bea4a61dff2ec2bcf4610e9c10ac0297d3ce60aed341b96a1d`;
+- reviewed policy SHA-256 `41f1314207c1d1ccce876d67d9fb4beccc53f96bd281428dd8d347f7f9682e31`;
+- receipt SHA-256 `39985fd0e5280d1dff216c298cb332281bad246e03964b8b7645ffb9c604bfcf`;
 - accepted evidence: 10,382 bytes, SHA-256
-  `ea0a9889b8d521d092e5b3dc99f26ae413a3c2c36b1cc9bf4834cc3050474404`.
+  `d0ec1a240dcbed17a6f248b6641e26c8b7250fbd2161272d61bc3b6646b9cc6d`, observed at
+  `2026-08-09T14:47:17Z` in `.gate/wsl-asr-vex-aa651eeb.json`.
 
 The VEX result does **not** claim a vulnerability-free environment. It proves that every finding in
 the exact audited inventory has a current explicit disposition, including affected-but-mitigated

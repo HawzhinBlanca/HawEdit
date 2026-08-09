@@ -4,7 +4,7 @@
 
 The code-solvable boundary and a native acceptance run are complete. On 2026-08-09 the canonical
 Ubuntu WSL receipt for HawEdit source SHA-256
-`540fa9c0a9f56b1d9ecda04761270fddbf018a1a255db46de7038c43b3c5d411` passed the live gate on
+`aa651eeb520967ee7a8c195508ce863741a7563a336eaf18ec87a997a96ae3db` passed the live gate on
 the two-RTX-3090-Ti host: 140 exact distributions, CPython 3.12.0, three canonical OmniASR assets
 totalling 43,546,500,168 bytes, and two CUDA devices were revalidated before and after the audit.
 The exact result and artifact digest are recorded in
@@ -13,7 +13,7 @@ The exact result and artifact digest are recorded in
 `security/wsl-asr-vex.json` is a 30-day disposition expiring 2026-09-08, not a claim that the
 dependency graph is vulnerability-free. It binds CPython 3.12, exact dependency locks, package
 versions, all three OmniASR asset identities, and the reviewed HawEdit source SHA-256
-`540fa9c0a9f56b1d9ecda04761270fddbf018a1a255db46de7038c43b3c5d411`. Any later source change
+`aa651eeb520967ee7a8c195508ce863741a7563a336eaf18ec87a997a96ae3db`. Any later source change
 must trigger disposition review and a new digest; code mitigations cannot be carried onto old or
 modified worker bytes by matching only dependencies and assets.
 

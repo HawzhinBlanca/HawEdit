@@ -80,6 +80,7 @@ from hawedit.transcripts import (
     RawTranscript,
     RawTranscriptImmutable,
     TranscriptStore,
+    UnalignedSpeech,
     Word,
     normalize_transcript,
     validate_media_id,
@@ -90,7 +91,6 @@ from hawedit.visual_index import (
     DECLARED_SAMPLING_FPS,
     MAX_FRAMES_PER_WINDOW,
     REFERENCE_FPS,
-    VIDEOCHAT3_3090TI_MAX_FRAMES,
     SceneWindow,
     plan_scene_windows,
 )
@@ -176,6 +176,13 @@ class PipelineRun:
     work_dir: str
     ingest: IngestResult | StageSkipped | None = None
     transcript: NormalizedTranscript | StageSkipped | None = None
+    # Speech the canonical transcript does not contain, carried up from the raw artifact.
+    #
+    # D-103 put this in `transcript.raw.json`, and the report a human reads is the normalized
+    # transcript, which by design has no such field — so a run that dropped speech said nothing
+    # about it here. Measured on the real 38-minute run: 2 of 547 regions, 664 ms of Kurdish, and
+    # the emitted report mentioned neither. §1 of this module: fail visible, not silent. D-145.
+    transcript_gaps: tuple[UnalignedSpeech, ...] = ()
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
     # §3 Stage 2's visual half splits into a part that needs weights and a part that does not.
@@ -190,6 +197,33 @@ class PipelineRun:
     clip: Clip | None = None
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
+
+    def _discovery_ran(self) -> dict[str, Any] | None:
+        """What Stage 3 did, when it did something. `None` only where nothing is known.
+
+        Success is evidenced by the candidates themselves, so the count and the per-path
+        breakdown come from them rather than from a second record that could disagree — §8.2
+        partitions on `discovery_path`, and a reader deciding whether the dual-path cost was
+        justified needs that split, not a bare "ran".
+        """
+        if self.discovery is not None or not self.candidates:
+            return None
+        by_path: dict[str, int] = {}
+        for candidate in self.candidates:
+            key = candidate.discovery_path.value
+            by_path[key] = by_path.get(key, 0) + 1
+        return {
+            "skipped": False,
+            "stage": "discovery",
+            "candidates": len(self.candidates),
+            "by_path": dict(sorted(by_path.items())),
+        }
+
+    def _editorial_ran(self) -> dict[str, Any] | None:
+        """Stage 4's verdict, when one was reached. `None` where nothing is known."""
+        if self.editorial is not None or self.clip is None or self.clip.editorial is None:
+            return None
+        return {"skipped": False, "stage": "editorial", "judge": self.clip.editorial.judge}
 
     def skipped(self) -> tuple[tuple[str, StageSkipped], ...]:
         """Every stage that did not run, in pipeline order."""
@@ -247,6 +281,18 @@ class PipelineRun:
             "complete": self.complete,
             "skipped": [name for name, _ in self.skipped()],
             "ingest": encode(self.ingest),
+            "transcript_gaps": [
+                {
+                    "start_ms": gap.start_ms,
+                    "end_ms": gap.end_ms,
+                    "duration_ms": gap.end_ms - gap.start_ms,
+                    "reason": gap.reason,
+                }
+                for gap in self.transcript_gaps
+            ],
+            "speech_without_transcription_ms": sum(
+                gap.end_ms - gap.start_ms for gap in self.transcript_gaps
+            ),
             "transcript": (
                 self.transcript.to_dict()
                 if isinstance(self.transcript, StageSkipped)
@@ -272,8 +318,15 @@ class PipelineRun:
             "delivery": encode(self.delivery),
             "candidates": [c.to_dict() for c in self.candidates],
             "visual_index": encode(self.visual_index),
-            "discovery": encode(self.discovery),
-            "editorial": encode(self.editorial),
+            # A stage that ran says so. `discovery` and `editorial` hold *only* a `StageSkipped`
+            # or `None`, and `None` is how success was represented — so a reader checking
+            # `report["discovery"]` got `null` whether Stage 3 produced candidates or was never
+            # attempted, and had to cross-reference `candidates` to tell which. Measured on the
+            # real 38-minute run: `discovery: null` alongside **7** merged candidates, with
+            # "discovery" absent from `skipped` too. This module's §1 is fail visible, not
+            # silent; a stage reporting nothing about itself is the silent case. D-146.
+            "discovery": encode(self.discovery) or self._discovery_ran(),
+            "editorial": encode(self.editorial) or self._editorial_ran(),
             "boundary": encode(self.boundary),
             "clip": self.clip.to_dict() if self.clip is not None else None,
             "render": (
@@ -774,6 +827,7 @@ def run_pipeline(
     subject_tracker: SubjectTracker | None = None,
     auto_select: bool = False,
     visual_fps: float | None = None,
+    visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
@@ -792,6 +846,9 @@ def run_pipeline(
         read_scenes: retired unsafe injection seam. Any non-``None`` value is refused because a
             bare reader has no retrieval/rerank provenance and can promote every scene. Use
             ``visual_composer`` so only bounded, scored survivors reach VideoChat3.
+        visual_max_frames: the most frames any planned window may hold. Defaults to §3's
+            ceiling and may only be lowered — the Path B reader's memory is the binding
+            constraint on real hardware (D-138, D-143, `BLOCKED.md` #17).
         visual_fps: one sampling rate for every planned visual window. Omitted uses the
             blueprint's 1 fps planning reference, or the checkpoints' declared 2 fps ceiling
             when the composed model path is enabled.
@@ -860,9 +917,7 @@ def run_pipeline(
         ingested.duration_ms,
         ingested.shot_cuts_ms,
         fps=effective_visual_fps,
-        max_frames_per_window=(
-            VIDEOCHAT3_3090TI_MAX_FRAMES if visual_composer is not None else MAX_FRAMES_PER_WINDOW
-        ),
+        max_frames=visual_max_frames,
     )
 
     run = PipelineRun(
@@ -901,6 +956,7 @@ def run_pipeline(
             ) from None
         transcript = stored
     store.verify_raw_integrity(identifier)
+    run = replace(run, transcript_gaps=transcript.unaligned)
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
 
@@ -1534,6 +1590,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="device for the Path B reader (VideoChat3-4B) — §6: GPU 0",
     )
     parser.add_argument(
+        "--visual-max-frames",
+        type=int,
+        default=MAX_FRAMES_PER_WINDOW,
+        help=(
+            "most frames any planned window may hold; §3's ceiling by default and only "
+            "lowerable. Measured on hawapc01, VideoChat3-4B reads at most 8 on a 3090 Ti "
+            "(D-138); a lower ceiling means more, shorter windows (D-143)"
+        ),
+    )
+    parser.add_argument(
         "--index-device",
         default="cuda:1",
         help="device for Stage 2 indexing (Qwen embedding + reranking) — §6: GPU 1",
@@ -1702,6 +1768,7 @@ def main(argv: list[str] | None = None) -> int:
             subject_tracker=subject_tracker,
             auto_select=args.auto_select,
             visual_fps=args.visual_fps,
+            visual_max_frames=args.visual_max_frames,
         )
     except (
         CredentialError,

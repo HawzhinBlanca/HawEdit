@@ -4653,3 +4653,290 @@ pip-audit 2.10.1 can emit several affected-range rows with one package, version,
 and alias set but different `fix_versions`. Those rows are canonicalized to one VEX finding.
 Repeated primary IDs with conflicting aliases remain a hard refusal, and evidence retains the raw
 report digest. `evidence/wsl-asr-live-acceptance-2026-08-09.md`.
+
+## D-143 - Visual window capacity is explicit
+
+**Windows are now planned to fit the reader, because §3's 64 does not fit it on this machine.**
+D-106 measured the ceiling: `MCG-NJU/VideoChat3-4B` reads at most **8** frames per window on a
+23.99 GiB 3090 Ti, and the demand is quadratic in frames. BLOCKED #17 listed three options and refused
+two of them — lowering `MAX_FRAMES_PER_WINDOW` (§3's constant, frozen) and truncating a window at read
+time (D-104's guard exists for exactly that). The third is this one.
+
+**Decision: `plan_scene_windows` takes `max_frames`, defaulting to §3's ceiling and only lowerable.**
+`--visual-max-frames` exposes it. The default is unchanged, so no machine silently inherits another's
+limit; hawapc01 passes 8 and the run completes.
+
+**The bounds are derived, not chosen.** Above `MAX_FRAMES_PER_WINDOW` a plan would exceed §3's
+published setting. Below `TEMPORAL_PATCH_FRAMES` a window cannot fill one temporal patch, so the
+processor pads it by repeating a frame that was never filmed (D-060). Both ends come from constants
+already recorded.
+
+**The cost, measured on the real media** (2,313,800 ms, 2 fps, no cuts):
+
+```
+ceiling 64  ->  73 windows, longest 31,696 ms
+ceiling  8  -> 579 windows, longest  3,997 ms
+```
+
+7.9× the windows, each seeing an eighth of the context. **§8.2's Recall@K is therefore measured on a
+different retrieval unit than §3 describes**, and that is a real cost rather than a free win — which is
+why the default stays §3's and the lower ceiling is an explicit operator choice with a recorded reason.
+
+**Proven end to end on the real 38-minute file**, not on the fixture. With `--visual-max-frames 8` the
+visual stage **ran** rather than skipping, for the first time:
+
+```
+visual_windows planned : 641
+indexed_windows        : 641
+retrieved              :  50     (§3's RETRIEVE_K)
+survivors              :   7     (--visual-keep 7, inside §3's 5..10)
+candidate_ids          :   7
+```
+
+Both GPUs were loaded at 17,881 MiB — D-105's split carrying indexing on GPU 1 and the reader on GPU 0
+— and no CUDA OOM occurred. Editorial, boundary, render and delivery are still skipped, each naming
+Stage 4's absent judge (`BLOCKED.md` #3), which is Hawa's.
+
+**Mutation audit 5/5**, after a first run that found two survivors — both of them *wiring*: the plan
+ignoring the ceiling it was handed CAUGHT (3), a ceiling outside the derived bounds CAUGHT (2), the
+default silently becoming one machine's limit CAUGHT (6), the pipeline dropping the flag CAUGHT (1) and
+the CLI value never reaching `run_pipeline` CAUGHT (1). The last two survived the first audit for
+exactly D-105's reason one iteration earlier — the planner was tested and the trip from the CLI was
+not — so both new tests assert the **windows the run reports**, not the argument it was handed.
+
+**A test premise of mine that was wrong, kept in the record.** The first version capped the fixture at
+2 frames, but its 1400 ms scenes already plan exactly 2 at 1 fps, so the cap changed nothing and the
+test asserted a difference that could not exist. At 2 fps those scenes plan 3, which a ceiling of 2
+genuinely splits.
+`evidence/planning-windows-the-reader-can-read.md`.
+
+## D-144 - Per-segment confidence must survive ASR
+
+**§3 Stage 1's escalation rule ranks segments, and Stage 1 averaged them away.**
+`escalation.select_for_validation` — the bottom-quartile-plus-disagreement rule, implemented and
+tested — has **no reference anywhere in `src/` outside its own module**. The reason is not that nobody
+wired it: its input does not survive Stage 1.
+
+`asr.py` collects every region's `mean_logprob` into a list and then stores `sum / len` as one
+`AsrProvenance.mean_logprob`. Measured on the real 38-minute run: **547 regions produced 547 values,
+and the artifact kept `-6.523425833753913`**. A quartile of an average is nothing. This is
+**computed and discarded**, which the hard rules distinguish from never computed because they need
+different fixes, and this is the fix for the first.
+
+**Decision: each region's own confidence is kept, on the media clock, in the artifact.**
+`RawTranscript.segment_confidence` carries `(start_ms, end_ms, mean_logprob)` per transcribed region.
+The aggregate is untouched, so nothing that read it changes. `from_json` reads pre-D-144 transcripts
+with `.get`, as D-103 established.
+
+**Proven on the real run's own geometry.** Re-running 38 minutes of OmniASR costs about half an hour of
+GPU, so the run's 547 regions were replayed through the fixed assembly:
+
+```
+the real run: 547 regions, one recorded aggregate -6.523425833753913
+per-segment values in the artifact: 0
+assembled: 547 per-segment values retained
+§3's rule over those values: 136 of 547 escalate   (547 // 4 = 136, the bottom quartile)
+before the change, over one aggregate: 0 escalate
+```
+
+**What that does and does not show.** It shows the quartile is computable at all — the count is exactly
+`n // 4`, and the pre-change case is inert. The confidence *values* in the replay are spread around the
+run's own aggregate rather than being the models' per-segment measurements, so **it is not a finding
+about which real segments are weak**. That needs the run repeated, and it is not what this change
+claims.
+
+**Still not wired, and this is why.** `select_for_validation` needs `ctc_text` as well, and that is
+**never computed**: the CTC pass produces frame-level emissions for alignment
+(`OmniAsrBackend._ctc_emissions`) and nothing decodes them to text, so `SegmentTranscript` carries only
+the LLM's `text_raw`. Half of §3's rule now has its input and half does not. Inventing a `ctc_text` to
+make the call typecheck would fabricate the disagreement the rule is supposed to detect.
+
+**Rejected: ranking on word confidences instead.** `Word.conf` exists per word, and §3 says segments.
+Substituting a different unit to make a rule runnable is the kind of quiet redefinition this repo
+refuses elsewhere.
+
+**Mutation audit 5/5**, after a first run with two survivors — **both of them validation I had just
+written on `SegmentConfidence` with no test reaching it**. That is the third iteration running where the
+audit's real catch was my own new guard (D-103's blank reason, D-104's unreachable parity check). The
+five: dropping the collected values CAUGHT (3), recording the running average once per segment — the
+plausible wrong fix, which would leave every segment tied and the quartile empty — CAUGHT (2), losing
+the segment's own bounds CAUGHT (2), accepting a positive log-probability CAUGHT (1), and accepting a
+zero-length span CAUGHT (1).
+`evidence/per-segment-confidence-was-averaged-away.md`.
+
+## D-145 - Transcript gaps belong in the run report
+
+**The run report was silent about speech the transcript does not contain.** D-103 put every
+unalignable region into `transcript.raw.json`, and `PipelineRun.to_dict` reports the **normalized**
+transcript, which by design carries no such field. So the fact reached the canonical artifact and not
+the document an operator reads.
+
+Measured on the real 38-minute run:
+
+```
+raw artifact:  226754..227070 ms (316 ms)  AlignmentInfeasible: 15 frames cannot emit 15 tokens
+               1985346..1985694 ms (348 ms) AlignmentInfeasible: 17 frames cannot emit 16 tokens
+               total speech with no transcription: 664 ms
+emitted report: mentions "unaligned"        -> False
+                mentions segment_confidence -> False
+```
+
+664 ms of Kurdish absent from a report whose module docstring opens with "§1: fail visible, not
+silent" — the same shape as D-100, where the statuses were right and the thing a human reads was not.
+
+**Decision: the run carries what the transcript omits, and the report totals it.**
+`PipelineRun.transcript_gaps` is populated where the raw is in hand, and `to_dict` emits each gap
+with its bounds, its duration and its reason, plus `speech_without_transcription_ms`. The total is
+there because two entries are readable and five hundred are not.
+
+**The empty case is reported, not omitted.** A report that mentions gaps only when there are some
+makes their absence unreadable — an operator cannot tell "nothing was dropped" from "this build does
+not check". It is also what would let the new test pass while every real run reported nothing.
+
+**Rejected: making `complete` false when speech was dropped.** `complete` means every stage ran, and
+the CLI's exit code follows it, so redefining it would change what automation reads from a stage-level
+fact to a content-level one — and it would conflate "a stage did not run" with "some speech could not
+be aligned". Whether a run that drops speech should also *fail* is a product decision about exit-code
+semantics, not a reporting fix, so it is named here rather than taken. The number is now in the report
+either way.
+
+**Mutation audit 5/5**, with a no-op control that stayed green: the gaps never reaching the run
+CAUGHT, the total hardcoded to zero CAUGHT, the reason emitted empty CAUGHT, and the duration negated
+CAUGHT.
+`evidence/the-report-did-not-say-what-the-transcript-omits.md`.
+
+## D-146 - Successful stages report themselves
+
+**A stage that ran reported nothing about itself.** `pipeline.py`'s docstring says "every stage
+yields either a result or a `StageSkipped` that names its blocker", and `discovery` and `editorial`
+are typed `StageSkipped | None` — so **`None` was how success was written**. Measured on the real
+38-minute run:
+
+```
+discovery   : None        <- Stage 3 ran
+candidates  : 7           <- and produced seven merged candidates
+skipped list: editorial, boundary, render, delivery   <- discovery is not there either
+```
+
+A reader checking `report["discovery"]` got `null` whether Stage 3 produced seven candidates or was
+never attempted, and had to cross-reference another key to tell which. The module's own §1 is "fail
+visible, not silent"; a stage saying nothing about itself is the silent case, and it is the same shape
+as D-100 and D-110 — the fact existed, the field a human reads did not carry it.
+
+**Decision: derive the positive record from the evidence, not from a second flag.**
+`_discovery_ran()` reports `{"skipped": false, "stage": "discovery", "candidates": N, "by_path": …}`
+computed from the candidates themselves. A separate "it ran" boolean could disagree with the
+candidates; a count taken from them cannot. The per-path split is included because §8.2 partitions on
+`discovery_path`, and a reader deciding whether the dual-path cost was justified needs the split
+rather than a bare "ran".
+
+**An explicit refusal still wins.** `encode(self.discovery) or self._discovery_ran()` puts the
+`StageSkipped` first, so a named blocker is never overwritten by an inferred success — one of the two
+controls covers exactly that.
+
+**`None` is kept for "nothing is known".** A run object that never reached Stage 3 must not claim it
+ran; the other control asserts that, and it is the mutation that would otherwise pass — claiming a
+positive record unconditionally satisfies the main test and lies in the other direction.
+
+**Rejected: giving discovery a result object like `visual_index` has.** That is the tidier shape and a
+larger change: Stage 3's output *is* `candidates`, so a parallel result type would duplicate it and
+create a second thing to keep in sync. The reporting layer is where the ambiguity was.
+
+**Mutation audit 5/5:** reporting `null` again CAUGHT, claiming a record when nothing ran CAUGHT (by
+the control alone), emptying the per-path split CAUGHT, hardcoding the count CAUGHT, and dropping
+`editorial`'s guard CAUGHT (4 — it would raise on a run with no clip).
+`evidence/a-stage-that-ran-reported-nothing.md`.
+
+## D-147 - Render-duration wiring needs an integration test
+
+**M3.4's shipped-clip guard was tested; that it is *called with the measurement* was not.**
+Adversarial pass #8 attacked the row whose own history is "`RenderResult.duration_ms` was the request
+echoed back and the file was never opened". Four of six mechanisms held. Two did not:
+
+```
+RED    the measured duration is the request echoed back (the original defect)
+RED    the shipped-clip guard never fires
+RED    the tolerance widens to ten frames
+RED    the file is never opened at all
+GREEN  one frame is assumed to be 40 ms for every source          <- UNPROTECTED
+GREEN  the guard compares the request against itself              <- UNPROTECTED
+```
+
+**The wiring.** Replacing the call site with `assert_encoded_span(duration_ms, duration_ms, …)` — the
+guard comparing the request against itself — left the whole suite green. `assert_encoded_span` is
+unit-tested with real measured numbers, but it is only ever reached through `render_clip`, and
+truncation by a short source is prevented upstream by the pre-flight check, so nothing drove it. Third
+time this shape has appeared: D-105 and D-108 were both "the function is tested, the trip to it is
+not".
+
+**`frame_duration_ms` returning a constant 40 also survived**, and its own docstring is the claim it
+breaks: *"Not a constant: the fixture here is 25 fps (40 ms), a 30 fps source is 33 ms … 'too loose' is
+the direction that ships a truncated clip."* Every fixture in the suite is 25 fps, where 40 is
+**correct** — the fixture-satisfies-the-rule blindness of D-086, D-088 and D-101.
+
+**Decision: drive the guard through `render_clip`, and generate a source whose frame is not 40 ms.**
+The wiring test replaces the *output's* measurement rather than the encode, because the guard's own
+arithmetic is already covered by unit tests with real numbers; what was missing was proof that
+`render_clip` hands it the measured value. A control asserts an exact measurement still renders, so a
+wiring that refused everything would not pass.
+
+**A first attempt that was wrong, and what it taught.** Patching `probe_duration_ms` wholesale tripped
+the **pre-flight** refusal instead — that check probes the *source* with the same helper, and it is
+wired and tested, which the failure proved by firing. The patch is now keyed to the output file's name.
+
+For the frame rate, a 30 fps source is generated with ffmpeg so the constant and the measurement differ:
+33 ms against 40. The 25 fps fixture is asserted at 40 in the same test, so the pair pins both.
+
+**Mutation audit 6/6** after the fix, each survivor caught by exactly the test written for it.
+`evidence/adversarial-pass-8-2026-08-09.md`.
+
+## D-148 - Tests must not aim credential writes at source
+
+**A test aimed a real credential writer at its own source file, and an audit deleted 262 lines with
+it.** `test_writing_to_a_tracked_path_is_refused` passed `Path(__file__)` as the target, on the sound
+reasoning that the test file is certainly committed. That made `assert_ignored_by_git` — the thing
+under test — the only barrier between the suite and its own source.
+
+While sweeping for untested call sites, that guard was neutered for one run. The test then did what it
+was asking the guard to prevent: it wrote a credentials dump over `tests/test_credentials.py`, leaving
+eleven `KEY=VALUE` fragments scavenged from the module it had just destroyed, including
+`GEMINI_API_KEY=…` and the header "hawedit credentials. Git-ignored. Never commit this file." Restored
+from HEAD; nothing reached a commit.
+
+**Decision: the target is a path that does not exist and is not ignored.** `git check-ignore` answers
+from `.gitignore` patterns rather than from the filesystem, so a non-existent path exercises exactly
+the same refusal. If the guard ever fails open, the worst case is one stray file instead of a deleted
+test. Measured with the guard neutered by line number:
+
+```
+the guard fails open                     : test FAILS (caught)
+test source still intact (280 lines)     : yes      (before: 262 lines -> 11)
+damage                                   : one 109-byte stray file
+```
+
+Two assertions bracket the call — the probe must not exist before, and must not exist after — so a
+refusal that happened *after* the write would also be caught.
+
+**Rejected: asserting the probe is not gitignored inside the test.** `.gitignore` has `.env` and
+`.env.*`, neither of which matches the probe (verified: `check-ignore` exits 1). If a future pattern
+did match, `pytest.raises` would report DID NOT RAISE — loud, not silent — so a subprocess call to
+pre-empt a hypothetical is not worth its weight.
+
+**The sweep that caused this also found nothing.** Its purpose was to hunt the D-105/D-108/D-112
+pattern — a guard whose single call site can be neutered with the suite green. Corrected result:
+**15 of 15 call sites CAUGHT, 0 unprotected.** The pattern is not systemic; those three were found by
+hand and fixed.
+
+**The first run of that sweep reported 9 unprotected, and every one was false.** It judged pytest by
+`re.search(r"^FAILED |failed", stdout)` instead of the process exit code. Verifying one result by hand
+— `assert_tools_are_from_this_environment`, which is D-093's own claim — showed it fails three tests,
+so the instrument was wrong, not the code. That is the same error as reading a CI run's step text
+instead of its `conclusion` field, made a second time; the sweep now raises on any exit code that is
+neither 0 nor 1.
+
+**A second instrument error in the same iteration:** the first attempt to neuter the guard replaced
+`if result.returncode != 0:` by text, and that line occurs **twice** in `credentials.py` — the replace
+hit line 105, not the guard at 169, so the "proof" measured nothing and reported a pass. Mutating by
+line number fixed it. Both errors were caught by checking the result rather than trusting it, which is
+the only reason this entry is not a false claim.
+`evidence/a-test-that-could-delete-itself.md`.

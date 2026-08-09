@@ -1008,3 +1008,88 @@ def test_a_clean_run_records_no_gaps_at_all(tmp_path: Path) -> None:
     transcript = _assemble_canonical_transcript("zar38", results, unaligned)
     assert transcript.unaligned == ()
     assert json.loads(transcript.to_json())["unaligned"] == []
+
+
+# --- D-144: §3's escalation rule ranks segments, and Stage 1 averaged them away ---------------
+
+
+class _VaryingConfidence:
+    """Each region comes back with its own log-probability, as the real models do."""
+
+    def __init__(self, by_stem: dict[str, float]) -> None:
+        self.by_stem = by_stem
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+        return SegmentTranscript(
+            text_raw="کوردی.",
+            ctc_text="کوردی.",
+            words=(Word(w="کوردی.", start_ms=50, end_ms=500, conf=0.9),),
+            mean_logprob=self.by_stem[audio_path.stem],
+        )
+
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        raise AssertionError("the confidence-only backend must not be routed to validation")
+
+
+def test_each_segments_own_confidence_survives_into_the_artifact(tmp_path: Path) -> None:
+    """Measured on the real 38-minute run: 547 segments produced 547 log-probabilities and the
+    artifact kept one number, `-6.523425833753913`.
+
+    §3 Stage 1 escalates "any segment in the bottom log-probability quartile", and a quartile of an
+    average is nothing — which is why `escalation.select_for_validation` had no caller anywhere in
+    `src/`. Computed and discarded, not never computed. D-144.
+    """
+    prepared = _regions(tmp_path, 4)
+    backend = _VaryingConfidence(
+        {f"speech-{index:04d}": value for index, value in enumerate((-0.5, -9.0, -1.5, -3.0))}
+    )
+    results, unaligned = transcribe_prepared_segments(backend, prepared)
+    transcript = _assemble_canonical_transcript("zar38", results, unaligned)
+
+    document = json.loads(transcript.to_json())
+    recorded = [entry["mean_logprob"] for entry in document["segment_confidence"]]
+    assert recorded == [-0.5, -9.0, -1.5, -3.0], "the per-segment values were reordered or lost"
+    assert [entry["start_ms"] for entry in document["segment_confidence"]] == [
+        0,
+        1_000,
+        2_000,
+        3_000,
+    ]
+    assert RawTranscript.from_json(transcript.to_json()) == transcript
+
+
+def test_the_recorded_values_are_the_segments_own_not_the_average(tmp_path: Path) -> None:
+    """The control, and the whole point of the change.
+
+    A field that repeated `asr.mean_logprob` once per segment would satisfy a "the key exists" test
+    and still make the bottom quartile uncomputable — every segment would tie. So this asserts the
+    values *differ* from the aggregate and from each other.
+    """
+    prepared = _regions(tmp_path, 4)
+    backend = _VaryingConfidence(
+        {f"speech-{index:04d}": value for index, value in enumerate((-0.5, -9.0, -1.5, -3.0))}
+    )
+    results, unaligned = transcribe_prepared_segments(backend, prepared)
+    transcript = _assemble_canonical_transcript("zar38", results, unaligned)
+
+    aggregate = transcript.asr.mean_logprob
+    assert aggregate is not None, "the aggregate is still reported"
+    assert aggregate == pytest.approx(-3.5), "the aggregate is still the mean of the four"
+    values = [entry.mean_logprob for entry in transcript.segment_confidence]
+    assert len(set(values)) == 4, "the segments must not all report the same number"
+    assert min(values) < aggregate < max(values), (
+        "an aggregate that is not inside its own range means these are not the segments' values"
+    )
+    # the ranking §3 needs, which an average cannot express
+    assert min(values, key=lambda value: value) == -9.0
+
+
+def test_a_clean_run_still_reports_one_aggregate_as_before(tmp_path: Path) -> None:
+    """The other control: adding the per-segment record must not change what was already there."""
+    prepared = _regions(tmp_path, 3)
+    results, unaligned = transcribe_prepared_segments(FakeOmniBackend(), prepared)
+    transcript = _assemble_canonical_transcript("zar38", results, unaligned)
+
+    assert transcript.asr.mean_logprob == pytest.approx(-0.1)
+    assert len(transcript.segment_confidence) == 3
+    assert all(entry.mean_logprob == pytest.approx(-0.1) for entry in transcript.segment_confidence)

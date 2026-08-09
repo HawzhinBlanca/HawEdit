@@ -50,16 +50,20 @@ from hawedit.omni_assets import (
     open_verified_omni_assets,
 )
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
-from hawedit.transcripts import AsrProvenance, RawTranscript, UnalignedSpeech, Word
+from hawedit.transcripts import (
+    AsrProvenance,
+    RawTranscript,
+    SegmentConfidence,
+    UnalignedSpeech,
+    Word,
+)
 from hawedit.wsl_setup import (
     WslRuntimeError,
     default_wsl_runtime,
     load_wsl_runtime_receipt,
     wsl_path,
 )
-from hawedit.wsl_setup import (
-    _prefix as wsl_prefix,
-)
+from hawedit.wsl_setup import _prefix as wsl_prefix
 
 __all__ = [
     "LONG_AUDIO_THRESHOLD_S",
@@ -700,6 +704,7 @@ def _assemble_canonical_transcript(
     texts: list[str] = []
     words: list[Word] = []
     logprobs: list[float] = []
+    confidences: list[SegmentConfidence] = []
     for index, (segment, item) in enumerate(results):
         segment_ms = segment.end_ms - segment.start_ms
         if item.words[-1].end_ms > segment_ms + 100:
@@ -718,6 +723,16 @@ def _assemble_canonical_transcript(
         )
         if item.mean_logprob is not None:
             logprobs.append(item.mean_logprob)
+            # Kept per segment, not only averaged. §3 Stage 1 ranks segments by log-probability
+            # and takes the bottom quartile; a quartile of one average is nothing. Measured on the
+            # real 38-minute run: 547 values were computed and reduced to -6.5234. D-144.
+            confidences.append(
+                SegmentConfidence(
+                    start_ms=segment.start_ms,
+                    end_ms=segment.end_ms,
+                    mean_logprob=item.mean_logprob,
+                )
+            )
     return RawTranscript(
         media_id=media_id,
         text_ckb="\n".join(texts),
@@ -729,6 +744,7 @@ def _assemble_canonical_transcript(
             mean_logprob=sum(logprobs) / len(logprobs) if logprobs else None,
         ),
         unaligned=tuple(unaligned),
+        segment_confidence=tuple(confidences),
     )
 
 

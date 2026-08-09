@@ -27,6 +27,7 @@ from hawedit.visual_index import (
     MAX_FRAMES_PER_WINDOW,
     REFERENCE_FPS,
     RETRIEVE_K,
+    TEMPORAL_PATCH_FRAMES,
     VIDEOCHAT3_3090TI_MAX_FRAMES,
     RerankedHit,
     SceneWindow,
@@ -162,7 +163,7 @@ def test_the_measured_videochat_capacity_splits_without_losing_coverage() -> Non
         duration_ms=30_000,
         shot_cuts_ms=(10_000, 20_000),
         fps=2.0,
-        max_frames_per_window=VIDEOCHAT3_3090TI_MAX_FRAMES,
+        max_frames=VIDEOCHAT3_3090TI_MAX_FRAMES,
     )
     assert all(window.frame_count <= VIDEOCHAT3_3090TI_MAX_FRAMES for window in windows)
     assert windows[0].in_ms == 0 and windows[-1].out_ms == 30_000
@@ -170,14 +171,14 @@ def test_the_measured_videochat_capacity_splits_without_losing_coverage() -> Non
     assert {window.scene_index for window in windows} == {0, 1, 2}
 
 
-@pytest.mark.parametrize("capacity", [False, 0, -1, 65, 8.0, "8"])
-def test_consumer_frame_capacity_is_an_exact_bounded_integer(capacity: object) -> None:
+@pytest.mark.parametrize("capacity", [False, 8.0, "8"])
+def test_consumer_frame_capacity_is_an_exact_integer(capacity: object) -> None:
     with pytest.raises(VisualIndexError, match="exact integer"):
         plan_scene_windows(
             "m1",
             30_000,
             (),
-            max_frames_per_window=capacity,  # type: ignore[arg-type]
+            max_frames=capacity,  # type: ignore[arg-type]
         )
 
 
@@ -681,3 +682,70 @@ def test_the_index_floor_is_still_what_refuses_short_media() -> None:
     """The other half must keep working: a small index refuses even at §3's full depth."""
     with pytest.raises(VisualIndexError, match="the index holds"):
         rerank_and_keep(_index_of(3), (1.0, 0.0), "q", FakeReranker(), keep=5)
+
+
+# --- D-143: the reader's capacity, not §3's ceiling, is what a plan has to fit ---------------
+
+
+def test_a_lower_frame_ceiling_plans_windows_the_reader_can_read() -> None:
+    """§3's 64-frame window does not fit the Path B reader on the machine §6 names.
+
+    Measured (D-138): `MCG-NJU/VideoChat3-4B` reads at most **8** frames per window on a 23.99 GiB
+    3090 Ti, and the demand is quadratic in frames. The 38-minute run reached the reader with
+    64-frame windows and OOM'd. Lowering `MAX_FRAMES_PER_WINDOW` is refused (§3's constant, now
+    recorded), and truncating a window at read time is refused (D-104), so the plan has to be
+    smaller. D-143.
+    """
+    windows = plan_scene_windows(
+        "m1", duration_ms=2_313_800, shot_cuts_ms=(), fps=2.0, max_frames=8
+    )
+
+    assert max(window.frame_count for window in windows) <= 8
+    assert all(window.frame_count >= TEMPORAL_PATCH_FRAMES for window in windows)
+    assert_window_coverage(windows, media_id="m1", duration_ms=2_313_800)
+
+
+def test_the_lower_ceiling_costs_windows_and_the_number_is_recorded() -> None:
+    """The cost, asserted rather than described: a lower ceiling means more, shorter windows.
+
+    §8.2's Recall@K is then measured on a different retrieval unit than §3 describes, which is why
+    this is a recorded decision and not a default.
+    """
+    at_64 = plan_scene_windows("m1", duration_ms=2_313_800, shot_cuts_ms=(), fps=2.0, max_frames=64)
+    at_8 = plan_scene_windows("m1", duration_ms=2_313_800, shot_cuts_ms=(), fps=2.0, max_frames=8)
+
+    assert (len(at_64), len(at_8)) == (73, 579), (
+        f"the measured window counts for the real media changed: {len(at_64)} and {len(at_8)}"
+    )
+    assert max(w.duration_ms for w in at_64) == 31_696
+    assert max(w.duration_ms for w in at_8) == 3_997
+
+
+def test_the_default_ceiling_is_still_section_3s() -> None:
+    """The control. A planner that always used the reader's capacity would satisfy the tests above
+    and quietly replace §3's published setting with one machine's limit.
+    """
+    default_plan = plan_scene_windows("m1", duration_ms=2_313_800, shot_cuts_ms=(), fps=2.0)
+    explicit = plan_scene_windows(
+        "m1", duration_ms=2_313_800, shot_cuts_ms=(), fps=2.0, max_frames=MAX_FRAMES_PER_WINDOW
+    )
+    assert default_plan == explicit
+    assert max(window.frame_count for window in default_plan) == MAX_FRAMES_PER_WINDOW
+
+
+def test_a_ceiling_above_section_3s_is_refused() -> None:
+    """Only lowerable: above §3's ceiling the plan would exceed the published setting."""
+    with pytest.raises(VisualIndexError, match="outside"):
+        plan_scene_windows(
+            "m1", duration_ms=30_000, shot_cuts_ms=(), max_frames=MAX_FRAMES_PER_WINDOW + 1
+        )
+
+
+def test_a_ceiling_below_one_temporal_patch_is_refused() -> None:
+    """The other bound, and it is derived rather than chosen: a window that cannot fill one
+    temporal patch is padded by the processor repeating a frame that was never filmed (D-060).
+    """
+    with pytest.raises(VisualIndexError, match="temporal patch"):
+        plan_scene_windows(
+            "m1", duration_ms=30_000, shot_cuts_ms=(), max_frames=TEMPORAL_PATCH_FRAMES - 1
+        )

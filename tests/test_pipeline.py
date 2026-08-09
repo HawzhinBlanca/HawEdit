@@ -34,7 +34,8 @@ from typing import Any
 import pytest
 
 from hawedit.captions import find_ffmpeg
-from hawedit.clip import Qc
+from hawedit.clip import DiscoveryPath, Qc
+from hawedit.discovery import MergedCandidate
 from hawedit.judge import JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
@@ -42,9 +43,11 @@ from hawedit.pipeline import (
     assert_devices_available,
     build_parser,
     build_visual_composer,
+    main,
     run_pipeline,
 )
-from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.transcripts import AsrProvenance, RawTranscript, UnalignedSpeech, Word
+from hawedit.visual_index import MAX_FRAMES_PER_WINDOW
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -688,15 +691,15 @@ def test_visual_composer_plans_to_the_measured_videochat_capacity(
         shot_cuts_ms: Sequence[int],
         fps: float,
         *,
-        max_frames_per_window: int,
+        max_frames: int,
     ) -> tuple[SceneWindow, ...]:
-        selected.append(max_frames_per_window)
+        selected.append(max_frames)
         return real_plan(
             media_id,
             duration_ms,
             shot_cuts_ms,
             fps,
-            max_frames_per_window=max_frames_per_window,
+            max_frames=max_frames,
         )
 
     class Composer:
@@ -710,6 +713,7 @@ def test_visual_composer_plans_to_the_measured_videochat_capacity(
         media_id="capacity",
         transcript=a_transcript("capacity"),
         visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_max_frames=8,
     )
     assert selected == [8], "the 64-frame general ceiling still reached VideoChat3"
 
@@ -2269,3 +2273,194 @@ def test_the_composer_wires_each_model_to_the_device_section_6_assigns(
     assert seen["embedder"] != seen["reader"], (
         "indexing and the reader on one GPU is the packing that OOM'd on real media"
     )
+
+
+# --- D-143: the frame ceiling has to survive the trip from the CLI to the plan ----------------
+
+
+@needs_ffmpeg
+def test_the_frame_ceiling_reaches_the_planned_windows(tmp_path: Path) -> None:
+    """Asserted on the windows the run reports, not on the argument it was handed.
+
+    The D-143 audit found the planner tested and the *wiring* untested: replacing
+    `max_frames=visual_max_frames` with `max_frames=MAX_FRAMES_PER_WINDOW` left the suite green.
+    That is D-137's survivor one iteration earlier, in a new place — so this asserts the artifact.
+
+    At 2 fps the fixture's 1400 ms scenes plan 3 frames each, which a ceiling of 2 splits. At 1 fps
+    they plan exactly 2 and no legal ceiling bites, which is how the first version of this test came
+    to assert a difference that could not exist.
+    """
+    wide = run_pipeline(FIXTURE, tmp_path / "wide", visual_fps=2.0)
+    narrow = run_pipeline(FIXTURE, tmp_path / "narrow", visual_fps=2.0, visual_max_frames=2)
+
+    assert max(window.frame_count for window in wide.visual_windows) == 3
+    assert max(window.frame_count for window in narrow.visual_windows) <= 2
+    assert len(narrow.visual_windows) > len(wide.visual_windows), (
+        "a lower ceiling must produce more windows, or it did not reach the planner"
+    )
+
+
+@needs_ffmpeg
+def test_the_cli_hands_the_ceiling_to_the_run(tmp_path: Path) -> None:
+    """The other half of the trip. Deleting the keyword at the call site left the suite
+    green too.
+    """
+    captured: dict[str, object] = {}
+    real = run_pipeline
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("hawedit.pipeline.run_pipeline", spy)
+        main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), "--visual-max-frames", "2"])
+
+    assert captured.get("visual_max_frames") == 2, (
+        f"the CLI value never reached run_pipeline: {sorted(captured)}"
+    )
+
+
+@needs_ffmpeg
+def test_the_default_run_still_plans_at_section_3s_ceiling(tmp_path: Path) -> None:
+    """The control. Defaulting the pipeline to one machine's limit would satisfy both tests above
+    and quietly replace §3's published setting for every machine.
+    """
+    run = run_pipeline(FIXTURE, tmp_path / "work", visual_fps=2.0)
+
+    assert max(window.frame_count for window in run.visual_windows) == 3, (
+        "the fixture's scenes plan 3 frames at 2 fps; a default ceiling below §3's would cut this"
+    )
+    assert build_parser().parse_args(["x.mp4"]).visual_max_frames == MAX_FRAMES_PER_WINDOW
+
+
+# --- D-145: the report was silent about speech the transcript does not contain ----------------
+
+
+@needs_ffmpeg
+def test_the_report_says_which_speech_has_no_transcription(tmp_path: Path) -> None:
+    """D-103 put the gaps in `transcript.raw.json`; the report shows the *normalized* transcript,
+    which by design has no such field, so a run that dropped speech said nothing about it.
+
+    Measured on the real 38-minute run: 2 of 547 regions, **664 ms** of Kurdish with no
+    transcription, and the emitted report mentioned neither `unaligned` nor
+    `segment_confidence`. This module's own §1 is "fail visible, not silent". D-145.
+    """
+    with_gaps = RawTranscript(
+        media_id="fixture",
+        text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
+        words=WORDS,
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        unaligned=(
+            UnalignedSpeech(
+                start_ms=226_754,
+                end_ms=227_070,
+                reason="AlignmentInfeasible: 15 frames cannot emit 15 tokens",
+            ),
+            UnalignedSpeech(
+                start_ms=1_985_346,
+                end_ms=1_985_694,
+                reason="AlignmentInfeasible: 17 frames cannot emit 16 tokens",
+            ),
+        ),
+    )
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="fixture", transcript=with_gaps)
+
+    payload = run.to_dict()
+    assert payload["speech_without_transcription_ms"] == 664, (
+        "the report has to total the speech it does not contain, or 664 ms of Kurdish vanishes "
+        "into a run that looks finished"
+    )
+    assert [gap["duration_ms"] for gap in payload["transcript_gaps"]] == [316, 348]
+    assert [gap["start_ms"] for gap in payload["transcript_gaps"]] == [226_754, 1_985_346]
+    assert "AlignmentInfeasible" in payload["transcript_gaps"][0]["reason"], (
+        "a gap with no reason is indistinguishable from silence that was never there"
+    )
+
+
+@needs_ffmpeg
+def test_a_run_with_nothing_missing_reports_zero_rather_than_omitting_the_key(
+    tmp_path: Path,
+) -> None:
+    """The control. A report that only mentions gaps when there are some makes their absence
+    unreadable — the operator cannot tell "nothing was dropped" from "this build does not check".
+
+    It is also what would let the test above pass while the field stayed empty on every real run.
+    """
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="fixture", transcript=a_transcript())
+
+    payload = run.to_dict()
+    assert payload["transcript_gaps"] == []
+    assert payload["speech_without_transcription_ms"] == 0
+    assert run.transcript_gaps == ()
+
+
+# --- D-146: a stage that ran reported nothing about itself -------------------------------------
+
+
+def _seven_candidates() -> tuple[MergedCandidate, ...]:
+    """The shape the real 38-minute run produced: seven survivors, all from Path B."""
+    return tuple(
+        MergedCandidate(
+            candidate_id=f"c{index}",
+            media_id="zar38final",
+            in_ms=index * 1_000,
+            out_ms=index * 1_000 + 900,
+            discovery_path=DiscoveryPath.VISUAL,
+            sources=(f"c{index}",),
+            verbal_rank=None,
+            visual_rank=index,
+            verbal_score=None,
+            visual_score=0.5,
+            sv6d=None,
+        )
+        for index in range(7)
+    )
+
+
+def test_a_discovery_that_ran_says_so_in_its_own_field() -> None:
+    """`discovery` holds only a `StageSkipped` or `None`, and `None` was how success was written.
+
+    Measured on the real 38-minute run: `discovery: null` in the emitted report alongside **7**
+    merged candidates, with "discovery" absent from `skipped` as well. A reader checking that field
+    could not tell "Stage 3 produced seven candidates" from "Stage 3 was never attempted" without
+    cross-referencing another key. This module's §1 is fail visible, not silent. D-146.
+    """
+    run = PipelineRun(
+        media_id="zar38final", source="x", work_dir="w", candidates=_seven_candidates()
+    )
+    reported = run.to_dict()["discovery"]
+
+    assert reported is not None, "a stage that ran must not report null"
+    assert reported["skipped"] is False
+    assert reported["candidates"] == 7
+    assert reported["by_path"] == {"visual": 7}, (
+        "§8.2 partitions on discovery_path, so the split is what a reader needs — not a bare 'ran'"
+    )
+
+
+def test_a_stage_nobody_attempted_still_reads_as_unknown() -> None:
+    """The control. Emitting a positive record unconditionally would satisfy the test above and
+    claim Stage 3 ran on every run that never reached it — the same falsehood in the other
+    direction.
+    """
+    run = PipelineRun(media_id="m", source="x", work_dir="w")
+    assert run.to_dict()["discovery"] is None
+    assert run.to_dict()["editorial"] is None
+
+
+def test_a_named_skip_still_wins_over_the_positive_record() -> None:
+    """The other control: an explicit refusal must never be overwritten by an inferred success."""
+    skip = StageSkipped(
+        stage="discovery", reason="no Stage 3 producer was enabled", blocked_by=("x",)
+    )
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        discovery=skip,
+        candidates=_seven_candidates(),
+    )
+    reported = run.to_dict()["discovery"]
+    assert reported["skipped"] is True
+    assert reported["blocked_by"] == ["x"]

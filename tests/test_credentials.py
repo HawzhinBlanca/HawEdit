@@ -23,6 +23,7 @@ import pytest
 
 from hawedit.credentials import (
     GEMINI_API_KEY,
+    REPO_ROOT,
     CredentialError,
     KeyCheck,
     credential_status,
@@ -60,9 +61,26 @@ def test_writing_to_a_tracked_path_is_refused(tmp_path: Path) -> None:
     A key in a commit outlives its own revocation: rotating it does not remove it from the
     history, and anyone who cloned in between has it.
     """
-    tracked = Path(__file__).resolve()  # this test file is committed
+    # A path git does not ignore, chosen so that a *failure* here cannot destroy anything.
+    #
+    # This test used `Path(__file__)` — its own source — on the reasoning that the test file is
+    # certainly committed. That made the guard under test the only thing standing between the
+    # suite and its own source code, and on 2026-08-09 an audit that neutered
+    # `assert_ignored_by_git` proved the point: this test wrote a credentials dump over
+    # `tests/test_credentials.py`, replacing 262 lines with eleven `KEY=VALUE` fragments
+    # scavenged from the module it had just overwritten. `git check-ignore` answers from
+    # `.gitignore` patterns rather than from the filesystem, so a path that does not exist is
+    # just as un-ignored — and if the guard ever fails open, the worst case is one stray file
+    # instead of a deleted test. D-148.
+    not_ignored = REPO_ROOT / "a-credential-must-never-be-written-here.env"
+    assert not not_ignored.exists(), "the probe path must not exist before the call"
+
     with pytest.raises(CredentialError, match="not ignored by git"):
-        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=tracked)
+        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=not_ignored)
+
+    assert not not_ignored.exists(), (
+        "the refusal has to happen before the write, or a rejected credential is on disk anyway"
+    )
 
 
 def test_the_default_credential_file_is_outside_the_checkout() -> None:
