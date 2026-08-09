@@ -3886,3 +3886,49 @@ a file-based script with the ASS as a short constant so the only variable is the
 `evidence/caption-guard-wiring-unprotected.md`.
 
 Gate: `VERIFY OK — 1137 passed, 0 skipped`.
+
+---
+
+## D-098 · SV6D timestamps cannot smuggle a far claim through a duration
+
+**M5.3's headline claim was false for every window this pipeline plans.** That row says a label
+citing `9999s` on a short scene "constructed cleanly" and `assert_sv6d_within_window` "closes it".
+The guard's rule is *some* cited time inside the window — a documented tradeoff, because a label may
+name a length as well as a moment. Pair `9999s` with a duration the window happens to contain and
+the claim rides through. Measured on the three windows Stage 0 actually plans for the fixture:
+
+```
+0..1400   'speaker gestures at 9999s, held over 1s' -> ACCEPTED
+1400..2800  … 'over 2s'                             -> ACCEPTED
+2800..4162  … 'over 3s'                             -> ACCEPTED
+300000..312000  (the window the cited tests use)    -> refused
+```
+
+The tests exercised the single distance from zero where 1000 ms falls outside the window, so the
+rule bit there and nowhere the pipeline runs.
+
+**Decision: bound the out-of-window citation by the window's own length. No invented constant.**
+In the legitimate case the guard exists to permit — "slow push-in over 3s, starting 5:04" — the
+out-of-window number is a small *duration* (3 000 ms) and the in-window one is the *moment*
+(304 000 ms). In the defect it is reversed: the out-of-window number is vastly larger than the
+scene. So a cited time outside the window is admissible only if it is shorter than the window
+itself, which is the longest duration anything inside it can have. That is derived from the
+arguments the function already receives, not chosen — which is why this is a fix rather than
+another `BLOCKED` entry like #14 and #15.
+
+**Verified in all four directions before writing a test:** the exploit is refused on all three
+planned windows; the docstring's legitimate label stays ACCEPTED; the original headline defect
+(`9999s` alone, no in-window time) is still refused by the existing rule; and an ordinary short
+label on a short window still passes.
+
+**Mutation audit 3/3.** Two of them matter for opposite reasons: *"the plausibility bound never
+fires"* is the defect restored, and *"in-window times are also rejected"* is the over-strict
+direction — the failure mode the original docstring explicitly warned about, caught by the control
+rather than by any refusal test.
+
+**Parametrized over the real windows on purpose.** The previous tests were correct and blind for the
+same reason D-095's were: they used a fixture where the rule happened to work. These use
+0..1400, 1400..2800 and 2800..4162 — what `plan_scene_windows` produces on the only media in this
+checkout. `evidence/sv6d-duration-smuggling.md`.
+
+Gate: `VERIFY OK — 1142 passed, 0 skipped`.

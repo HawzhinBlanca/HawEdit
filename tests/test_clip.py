@@ -29,6 +29,7 @@ from hawedit.clip import (
     Qc,
     RejectedCandidate,
     Sv6d,
+    assert_sv6d_within_window,
 )
 from hawedit.registry import ModelNotInRegistry
 from hawedit.transcripts import AsrProvenance, Word
@@ -305,3 +306,48 @@ def test_a_clip_may_omit_the_editorial_block_before_the_judge_has_run() -> None:
     clip = a_clip(editorial=None, output=None)
     assert clip.to_dict()["editorial"] is None
     assert Clip.from_dict(clip.to_dict()) == clip
+
+
+# --- the 9999s claim could ride in on a duration phrase -----------------------------------
+#
+# "Some cited time inside the window" is a deliberate, documented tradeoff: a label may name a
+# length as well as a moment. But pair `9999s` with a duration the window happens to contain and
+# the claim rides through. Measured on the three windows Stage 0 actually plans for the fixture,
+# 'speaker gestures at 9999s, held over 1s' was ACCEPTED on 0..1400 ms, and the same trick works
+# on 1400..2800 ("over 2s") and 2800..4162 ("over 3s"). The cited tests used only a
+# 300000..312000 window — the one distance from zero where 1000 ms falls outside. D-098.
+
+
+def _sv6d_all(label: str) -> Sv6d:
+    return Sv6d(**{dimension: label for dimension in Sv6d.DIMENSIONS})
+
+
+@pytest.mark.parametrize(
+    ("in_ms", "out_ms", "duration"),
+    [(0, 1_400, "1s"), (1_400, 2_800, "2s"), (2_800, 4_162, "3s")],
+)
+def test_a_far_claim_cannot_ride_in_on_a_duration_the_window_contains(
+    in_ms: int, out_ms: int, duration: str
+) -> None:
+    """These are the windows this pipeline plans, not a window chosen to make the rule bite."""
+    label = f"speaker gestures at 9999s, held over {duration}"
+    with pytest.raises(ValueError, match="too large to be a duration"):
+        assert_sv6d_within_window(_sv6d_all(label), in_ms, out_ms)
+
+
+def test_a_label_naming_a_length_and_a_moment_is_still_accepted() -> None:
+    """The control, and it is the case the guard's docstring exists to permit.
+
+    "slow push-in over 3s, starting 5:04" cites 3 000 ms and 304 000 ms. The first is a duration
+    shorter than the 12 s window, the second is the moment. Rejecting this would be the opposite
+    defect: honest labels refused, which is what "requiring all of them" would have caused.
+    """
+    assert_sv6d_within_window(_sv6d_all("slow push-in over 3s, starting 5:04"), 300_000, 312_000)
+    # And an ordinary short label on a short window.
+    assert_sv6d_within_window(_sv6d_all("a red number 0 centred, 0.4s"), 0, 1_400)
+
+
+def test_the_original_headline_defect_is_still_refused() -> None:
+    """`9999s` with no in-window time at all — the case M5.3's row was written about."""
+    with pytest.raises(ValueError, match="all outside the scene"):
+        assert_sv6d_within_window(_sv6d_all("speaker gestures at 9999s"), 300_000, 312_000)
