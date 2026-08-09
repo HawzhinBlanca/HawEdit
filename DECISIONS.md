@@ -4206,3 +4206,98 @@ answering to `-m pytest` on `PYTHONPATH` could write an XML that layer 3 reads b
 probe cannot see it, because the interpreter genuinely is this project's. It needs its own
 measurement — it was reported by an adversarial-pass agent and I have not reproduced it.
 `evidence/py-override-bypassed-the-whole-gate.md`.
+
+---
+
+## D-105 · Automatic QC can advise a human; it cannot impersonate one
+
+`Clip.assert_renderable()` said the human gate was always required and implemented
+`auto_pass or human_reviewed`. The canonical test fixture used the bypass itself. A public JSON or
+library caller could therefore publish a clip with no recorded human review.
+
+**Decision:** `human_reviewed` is independently mandatory at the last render boundary. `auto_pass`
+remains useful telemetry and may be true or false, but never substitutes for a person. Both the
+clip gate and `render_clip` have regressions proving an automatic-only pass leaves no artifact.
+
+## D-106 · Hosted-model numbers are parsed, never coerced
+
+Python treats booleans as integers, and `float()`/`int()` also accept numeric strings. Gemini
+verdicts, Path A candidates, TimeLens spans and Gemini token counts used those coercions at the
+least-trusted boundary. Measured examples promoted `true` to a perfect score, grounded
+`[[false,true]]` as 0..1 seconds and accepted `totalTokens=true` as a billable count of one.
+
+**Decision:** model numeric fields must have their exact JSON category: non-boolean finite numbers,
+exact integers where the schema says integer, and non-negative integers for token authority.
+Strings, booleans, NaN, infinities and unrepresentable magnitudes fail before generation,
+ranking or boundary fusion.
+
+## D-107 · One ffmpeg call owns one frame namespace
+
+Both visual extraction paths wrote into a reused directory and globbed every matching filename.
+A retry producing five frames could silently return fifteen stale frames from the previous run,
+with fresh timestamps. That contaminated Gemini, Qwen retrieval/reranking, VideoChat3 and TimeLens.
+
+**Decision:** every ffmpeg invocation writes into an atomically created private directory and may
+enumerate only that directory. Failed attempts remove only their owned directory. Stage 4 deletes
+successful temporary JPEGs after copying their bytes; shared visual frames persist because the
+local models still consume their paths. Regressions preserve hostile caller-owned stale files and
+prove none enter the result.
+
+## D-108 · Encoded duration has an upper privacy boundary
+
+The render gate rejected a file that was too short but accepted one of arbitrary length. A broken
+encode could therefore publish trailing source footage with no matching transcript, captions,
+editorial judgment or consent.
+
+**Decision:** measured and requested duration may differ by at most one measured frame in either
+direction. Anything longer or shorter is refused before the staging file is published.
+
+## D-109 · Transcript publication is a transaction for readers and competing writers
+
+The digest sidecar deliberately reserved a media id before the raw hard link appeared. A losing
+pipeline writer immediately caught `RawTranscriptImmutable` and read the raw path, creating a
+reproducible digest-visible/raw-missing race.
+
+**Decision:** all raw publication, read, digest and integrity operations share one per-media
+thread-and-process lock. A loser cannot receive the immutable refusal until the winning raw/digest
+pair is complete. A digest left without raw after process death is reported as interrupted or
+tampered evidence and is never reconstructed in place.
+
+## D-110 · Known visual component refusals belong in the pipeline report
+
+The runner promised model-stage failures as `StageSkipped`, but the composer normalized only
+`VisualIndexError`; real frame, Qwen and VideoChat3/Path B domain failures escaped and aborted the
+run even when Path A had valid candidates.
+
+**Decision:** concrete Qwen/VideoChat adapters normalize backend `RuntimeError`/`OSError`, frame
+extraction normalizes ffmpeg launch errors, and `VisualComposer` converts those known component
+domain errors into `VisualPipelineError`, preserving the cause. The runner already records that
+type. Unexpected exceptions still escape, so programming defects are not mislabeled as an
+unavailable model.
+
+## D-111 · WSL readiness is a receipt for one source snapshot and one venv generation
+
+The old `.ready` flag named only a source fingerprint while every fingerprint reused one mutable
+`runtime/venv`. Two setup processes could mutate that venv concurrently; a failed process could
+leave another marker positive, and the loader accepted a marker even when the interpreter did not
+exist. Package importability also reported OmniASR ready without proving its 43.5 GB assets.
+
+**Decision:** setup is one cross-process transaction. It publishes a fresh exact Python-only
+source snapshot and a schema-2 JSON receipt only after a versioned venv generation, distro/user,
+Python 3.12, pinned top-level packages, two visible CUDA devices and all canonical assets agree.
+Launch re-hashes the snapshot and live-probes the recorded interpreter; `ModelStore` uses the same
+proof rather than importability. The venv is described as versioned and revalidated, not
+byte-immutable: transitive artifact hash locking remains open release work.
+
+## D-112 · A predictable lock filename is untrusted filesystem input
+
+Transcript publication, WSL setup and 43.5 GB model provisioning all used predictable lock names.
+Opening one with `a+b` can follow a hardlink, symlink or reparse point and modify an unrelated
+file; Windows `LK_LOCK` also stops retrying after roughly nine seconds, far shorter than model
+setup can take.
+
+**Decision:** every long-lived project lock opens the final component without following it where
+the platform permits, requires one regular link, binds the pathname identity to the descriptor
+before and after waiting, and initializes only after validation. Windows uses explicit bounded
+`LK_NBLCK` retry. Replacement, timeout, open and release failures are domain errors, never an
+unhandled platform exception.

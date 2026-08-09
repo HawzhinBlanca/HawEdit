@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import io
 import os
+import stat
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import Request
@@ -100,6 +103,235 @@ def test_only_environment_disabled_official_cards_are_canonical() -> None:
         assert_canonical_omni_cards("omniASR_LLM_7B_v2", CANONICAL_CTC_CARD)
     with pytest.raises(OmniAssetError, match="only permits"):
         assert_canonical_omni_cards(CANONICAL_LLM_CARD, "custom")
+
+
+def test_windows_provision_lock_retries_beyond_the_crt_short_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.omni_assets as omni_module
+
+    class ContendedMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self) -> None:
+            self.attempts = 0
+            self.unlocked = False
+
+        def locking(self, _descriptor: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                self.unlocked = True
+                return
+            assert mode == self.LK_NBLCK
+            self.attempts += 1
+            if self.attempts <= 11:
+                raise OSError(36, "simulated contention")
+
+    fake = ContendedMsvcrt()
+    real_import = importlib.import_module
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    with omni_module._exclusive_file_lock(tmp_path / "retry.lock"):
+        assert fake.attempts == 12
+    assert fake.unlocked
+
+
+@pytest.mark.parametrize("body_fails", (False, True))
+def test_provision_unlock_failure_is_normalized_without_masking_the_body(
+    body_fails: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.omni_assets as omni_module
+
+    class FailingUnlock:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def locking(self, _descriptor: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                raise OSError("unlock failed")
+
+    fake = FailingUnlock()
+    real_import = importlib.import_module
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    expected = LookupError if body_fails else OmniAssetError
+    message = "body failed" if body_fails else "cannot release OmniASR"
+    with (
+        pytest.raises(expected, match=message),
+        omni_module._exclusive_file_lock(tmp_path / f"unlock-{body_fails}.lock"),
+    ):
+        if body_fails:
+            raise LookupError("body failed")
+
+
+def test_provision_lock_refuses_a_hardlink_without_touching_its_other_name(
+    tmp_path: Path,
+) -> None:
+    import hawedit.omni_assets as omni_module
+
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"do-not-touch")
+    lock = tmp_path / ".hawedit-omniasr.lock"
+    os.link(victim, lock)
+
+    with (
+        pytest.raises(OmniAssetError, match="one unlinked regular file"),
+        omni_module._exclusive_file_lock(lock),
+    ):
+        pytest.fail("a hardlinked provision lock must never be acquired")
+    assert victim.read_bytes() == b"do-not-touch"
+
+
+def test_provision_lock_refuses_a_final_component_symlink_without_creating_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.omni_assets as omni_module
+
+    lock = tmp_path / ".hawedit-omniasr.lock"
+    real_lstat = os.lstat
+
+    def symlink_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        result = real_lstat(tmp_path)
+        if Path(os.fsdecode(path)) == lock:
+            values = list(result)
+            values[0] = stat.S_IFLNK | 0o777
+            return os.stat_result(values)
+        return real_lstat(path)
+
+    monkeypatch.setattr(os, "lstat", symlink_lstat)
+    with (
+        pytest.raises(OmniAssetError, match="symlinks"),
+        omni_module._exclusive_file_lock(lock),
+    ):
+        pytest.fail("a symlinked provision lock must never be acquired")
+    assert not lock.exists()
+
+
+def test_provision_lock_refuses_a_reparse_point(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.omni_assets as omni_module
+
+    lock = tmp_path / ".hawedit-omniasr.lock"
+    lock.write_bytes(b"existing-lock")
+    real_lstat = os.lstat
+
+    def reparse_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> object:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) != lock:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_nlink=result.st_nlink,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_file_attributes=0x400,
+        )
+
+    monkeypatch.setattr(os, "lstat", reparse_lstat)
+    with (
+        pytest.raises(OmniAssetError, match="reparse points"),
+        omni_module._exclusive_file_lock(lock),
+    ):
+        pytest.fail("a reparse-point provision lock must never be acquired")
+    assert lock.read_bytes() == b"existing-lock"
+
+
+def test_provision_lock_refuses_a_non_regular_final_component(tmp_path: Path) -> None:
+    import hawedit.omni_assets as omni_module
+
+    lock = tmp_path / ".hawedit-omniasr.lock"
+    lock.mkdir()
+    with (
+        pytest.raises(OmniAssetError, match="one unlinked regular file"),
+        omni_module._exclusive_file_lock(lock),
+    ):
+        pytest.fail("a directory provision lock must never be acquired")
+
+
+def test_provision_lock_normalizes_platform_open_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.omni_assets as omni_module
+
+    lock = tmp_path / ".hawedit-omniasr.lock"
+
+    def denied_open(*_args: object, **_kwargs: object) -> int:
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(os, "open", denied_open)
+    with (
+        pytest.raises(OmniAssetError, match="cannot safely open"),
+        omni_module._exclusive_file_lock(lock),
+    ):
+        pytest.fail("an unopened provision lock must never enter the critical section")
+
+
+def test_provision_lock_refuses_name_to_descriptor_replacement_after_wait(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.omni_assets as omni_module
+
+    lock = tmp_path / ".hawedit-omniasr.lock"
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"replacement")
+    replaced = False
+
+    class ReplacingMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self) -> None:
+            self.unlocked = False
+
+        def locking(self, _descriptor: int, mode: int, _count: int) -> None:
+            nonlocal replaced
+            if mode == self.LK_UNLCK:
+                self.unlocked = True
+            else:
+                assert mode == self.LK_NBLCK
+                replaced = True
+
+    fake = ReplacingMsvcrt()
+    real_lstat = os.lstat
+    real_import = importlib.import_module
+
+    def replaced_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        if replaced and Path(os.fsdecode(path)) == lock:
+            return real_lstat(replacement)
+        return real_lstat(path)
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(os, "lstat", replaced_lstat)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    with (
+        pytest.raises(OmniAssetError, match="bound to its opened descriptor"),
+        omni_module._exclusive_file_lock(lock),
+    ):
+        pytest.fail("a replaced provision lock must never enter the critical section")
+    assert fake.unlocked
 
 
 def test_cached_asset_requires_exact_size_and_sha256(tmp_path: Path) -> None:

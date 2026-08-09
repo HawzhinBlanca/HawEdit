@@ -29,12 +29,20 @@ on real Sorani client footage.
   callers cannot bypass the survivor slice and promote an episode wholesale.
 - Stage 4 extracts up to 20 real JPEG keyframes from the exact candidate slice. The identical
   multimodal parts go through token counting and generation; text-only visual judgment refuses.
+  Each extraction owns a private namespace, so retry debris cannot become current evidence.
+- Hosted-model numeric output is accepted only with its exact JSON type. Booleans, numeric
+  strings, NaN/infinity and invalid token counts fail before ranking, fusion, billing or judging.
 - Automatic selection chooses complete contiguous sentences wholly contained by the best
   per-path-ranked survivor. A partial overlap cannot borrow a candidate's scores or SV6D.
 - TimeLens2 is wired into Stage 5 over overlapping scene windows. Window-relative spans are
   shifted to the media clock, and only evidence overlapping the anchored sentence can extend it.
 - Rendering accepts time-varying focus points from dominant-face continuity tracking and labels
   the result `face_tracked`; it no longer claims every crop is static centre.
+- Rendering requires recorded human review independently of automated QC and refuses encoded
+  duration more than one measured frame above or below the reviewed clip.
+- Canonical transcript raw/digest publication is serialized per media id across threads and
+  processes. A competing writer cannot observe the reservation before the pair is complete;
+  interrupted orphan evidence is refused rather than reconstructed.
 - A delivered clip is now one write-once directory transaction. ASS, MP4, SRT, EDL and editing
   JSON remain private until the exact non-empty set has been flushed and atomically renamed;
   a sidecar failure publishes no render, and concurrent workers cannot mix or replace bundles.
@@ -78,6 +86,11 @@ These cannot be truthfully solved from the checkout alone:
   every asset again before model construction. Both real models load through aliases to the held
   verified descriptors, and failed setup invalidates readiness
   (`evidence/omniasr-asset-integrity.md`).
+- WSL readiness is a validated receipt over an exact source snapshot and one
+  versioned/revalidated venv generation. Setup is cross-process serialized; launch re-hashes the
+  copied worker and probes the recorded interpreter, package versions, assets and CUDA route.
+  Importability alone cannot make OmniASR appear ready. This does not claim transitive venv-byte
+  immutability (`evidence/wsl-runtime-receipt.md`).
 - **All six Hugging Face repository revisions are pinned as of 2026-08-09** (D-073/D-075).
   `models/revisions.json` fixes every fetchable repository to a full commit obtained from Hub
   metadata, and `fetch-models.sh` refuses any repository with no pin. Four local visual
@@ -103,7 +116,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,307 collected, 1,307 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,417 collected, 1,417 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;

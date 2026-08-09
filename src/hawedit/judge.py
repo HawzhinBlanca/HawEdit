@@ -40,6 +40,7 @@ of being a field nobody noticed was missing. See D-030.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
@@ -179,15 +180,54 @@ class JudgeVerdict:
     sv6d: Sv6d | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.self_contained, bool):
+            raise ValueError(
+                "self_contained must be a JSON boolean, got "
+                f"{self.self_contained!r} ({type(self.self_contained).__name__})"
+            )
+        for field in (
+            "candidate_id",
+            "narrative_role",
+            "title_ckb",
+            "description_ckb",
+            "judge",
+        ):
+            value = getattr(self, field)
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"{field} must be a JSON string, got {value!r} ({type(value).__name__})"
+                )
+        if not isinstance(self.hashtags_ckb, tuple) or not all(
+            isinstance(tag, str) for tag in self.hashtags_ckb
+        ):
+            raise ValueError("hashtags_ckb must be a tuple of strings")
+        if self.sv6d is not None and not isinstance(self.sv6d, Sv6d):
+            raise ValueError("sv6d must be an Sv6d value or None")
+
         for field in (
             "hook_score",
             "meaning_fidelity",
             "misleading_edit_risk",
             "cultural_landing",
         ):
-            value: float = getattr(self, field)
+            value = getattr(self, field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or (isinstance(value, float) and not math.isfinite(value))
+            ):
+                raise ValueError(
+                    f"{field} must be a finite JSON number, got {value!r} ({type(value).__name__})"
+                )
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field} must be within [0, 1], got {value}")
+
+        for field in ("payoff_at_ms", "clip_in_ms", "clip_out_ms"):
+            value = getattr(self, field)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"{field} must be a JSON integer, got {value!r} ({type(value).__name__})"
+                )
 
         if not self.clip_in_ms <= self.payoff_at_ms <= self.clip_out_ms:
             raise ValueError(

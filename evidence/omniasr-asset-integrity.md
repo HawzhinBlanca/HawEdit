@@ -88,5 +88,5 @@ the actual `Wav2Vec2LlamaModel` and `Wav2Vec2AsrModel` from all 43.5 GB through 
 `omniASR_LLM_Unlimited_3B_v2` remains deliberately outside this allowlist. It is not installed and
 has no independently measured reviewed SHA-256; adding an upstream card name is not provisioning.
 
-Canonical gate after the unit: Ruff, formatting and mypy clean across 102 source files; **1,307
+Canonical gate after the unit: Ruff, formatting and mypy clean across 102 source files; **1,417
 passed, 0 skipped**; fresh JUnit evidence accepted; `VERIFY OK`.

@@ -25,6 +25,7 @@ inventing a default.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -109,9 +110,17 @@ def parse_spans(answer: str) -> tuple[tuple[float, float], ...]:
                 f"would be a guess about which."
             )
         start, end = pair
-        if not isinstance(start, int | float) or not isinstance(end, int | float):
-            raise GroundingError(f"span bounds must be numbers, got {pair!r}")
-        spans.append((float(start), float(end)))
+        if any(
+            isinstance(bound, bool)
+            or not isinstance(bound, int | float)
+            or (isinstance(bound, float) and not math.isfinite(bound))
+            for bound in pair
+        ):
+            raise GroundingError(f"span bounds must be finite JSON numbers, got {pair!r}")
+        try:
+            spans.append((float(start), float(end)))
+        except OverflowError as exc:
+            raise GroundingError(f"span bounds must fit finite JSON numbers, got {pair!r}") from exc
     return tuple(spans)
 
 

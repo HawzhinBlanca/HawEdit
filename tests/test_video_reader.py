@@ -245,6 +245,22 @@ def test_videochat_proves_checkpoint_integrity_before_loading(
         reader._load()
 
 
+def test_videochat_backend_failures_become_path_b_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = VideoChat3Reader(
+        tmp_path,
+        read_frames=lambda window: WindowFrames(window, (Path("f0.jpg"), Path("f1.jpg"))),
+        score_window=lambda _window: 0.5,
+    )
+    failure = RuntimeError("CUDA out of memory")
+    monkeypatch.setattr(reader, "_load", lambda: (_ for _ in ()).throw(failure))
+
+    with pytest.raises(PathBError, match="CUDA out of memory") as caught:
+        reader.read_window(a_window())
+    assert caught.value.__cause__ is failure
+
+
 # --- the wiring, driven through a stub processor and model ----------------------------------
 
 

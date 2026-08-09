@@ -51,7 +51,12 @@ from hawedit.omni_assets import (
 )
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
-from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, package_fingerprint, wsl_path
+from hawedit.wsl_setup import (
+    WslRuntimeError,
+    default_wsl_runtime,
+    load_wsl_runtime_receipt,
+    wsl_path,
+)
 
 __all__ = [
     "LONG_AUDIO_THRESHOLD_S",
@@ -730,16 +735,18 @@ class WslOmniAsrProducer:
         self.interpreter = interpreter
         self.wsl_executable = wsl_executable
         self.validator_model_dir = validator_model_dir
+        self._receipt_distro: str | None = None
 
     def _prefix(self) -> list[str]:
         prefix = [self.wsl_executable]
-        if self.distro:
-            prefix.extend(("--distribution", self.distro))
+        selected_distro = self._receipt_distro or self.distro
+        if selected_distro:
+            prefix.extend(("--distribution", selected_distro))
         prefix.append("--")
         return prefix
 
     def _wsl_path(self, path: Path) -> str:
-        return wsl_path(path, self.distro, self.wsl_executable)
+        return wsl_path(path, self._receipt_distro or self.distro, self.wsl_executable)
 
     def _runtime(self) -> tuple[str, str]:
         """Return (WSL Python, WSL PYTHONPATH), supporting checkouts and installed wheels."""
@@ -748,47 +755,31 @@ class WslOmniAsrProducer:
         repo_root = Path(__file__).resolve().parents[2]
         checkout_source = repo_root / "src"
         runtime = Path(os.environ.get("HAWEDIT_WSL_RUNTIME", default_wsl_runtime()))
-        source_snapshot = (
-            Path(configured_source)
-            if configured_source
-            else default_wsl_source(runtime_root=runtime)
-        )
-
         if configured_python:
-            source = (
-                Path(configured_source)
-                if configured_source
-                else checkout_source
-                if (checkout_source / "hawedit").is_dir()
-                else source_snapshot
-            )
+            if configured_source:
+                source = Path(configured_source)
+            elif (checkout_source / "hawedit").is_dir():
+                source = checkout_source
+            else:
+                raise RuntimeError(
+                    "HAWEDIT_WSL_SOURCE must accompany a custom HAWEDIT_WSL_PYTHON "
+                    "outside a source checkout"
+                )
             return configured_python, self._wsl_path(source)
 
-        if (source_snapshot / ".ready").is_file():
-            copied_package = source_snapshot / "hawedit"
-            try:
-                copied_identity = package_fingerprint(copied_package)
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    "canonical OmniASR WSL2 worker source is incomplete. Run hawedit-asr-setup"
-                ) from exc
-            expected_identity = package_fingerprint()
-            if copied_identity != expected_identity:
-                raise RuntimeError(
-                    "canonical OmniASR WSL2 worker source does not match the host package. "
-                    "Run hawedit-asr-setup"
-                )
-            translated = self._wsl_path(runtime)
-            return f"{translated}/venv/bin/python", self._wsl_path(source_snapshot)
-
-        legacy = repo_root / ".venv-wsl" / "bin" / "python"
-        if legacy.exists() and (checkout_source / "hawedit").is_dir():
-            return self._wsl_path(legacy), self._wsl_path(checkout_source)
-
-        raise RuntimeError(
-            "canonical OmniASR WSL2 runtime is not provisioned. Run hawedit-asr-setup "
-            "(or scripts/setup-wsl-asr.ps1 from a checkout) first"
-        )
+        try:
+            receipt = load_wsl_runtime_receipt(
+                distro=self.distro,
+                runtime_root=runtime,
+                executable=self.wsl_executable,
+            )
+        except WslRuntimeError as exc:
+            raise RuntimeError(
+                f"canonical OmniASR WSL2 runtime receipt is invalid: {exc}. Run hawedit-asr-setup"
+            ) from exc
+        self._receipt_distro = receipt.distro
+        translated_generation = self._wsl_path(receipt.generation_root)
+        return f"{translated_generation}/bin/python", self._wsl_path(receipt.source_root)
 
     def transcribe(
         self,

@@ -28,6 +28,8 @@ should be told so before it spends an hour finding out.
 from __future__ import annotations
 
 import hashlib
+import importlib
+import importlib.metadata
 import json
 import os
 import re
@@ -38,6 +40,7 @@ from pathlib import Path, PurePosixPath
 from typing import Final, cast
 
 from hawedit.registry import REGISTRY, ModelEntry, Provisioning
+from hawedit.wsl_setup import probe_wsl_runtime
 
 __all__ = [
     "DEFAULT_MODELS_ROOT",
@@ -272,12 +275,122 @@ def _directory_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+_LOCAL_OMNI_PACKAGES: Final[Mapping[str, str]] = {
+    "fairseq2": "0.6",
+    "fonttools": "4.60.2",
+    "klpt": "0.1.7",
+    "omnilingual-asr": "0.2.0",
+    "qwen-asr": "0.0.6",
+    "torch": "2.8.0",
+    "torchaudio": "2.8.0",
+}
+_LOCAL_OMNI_IMPORTS: Final[Mapping[str, str]] = {
+    "fairseq2.assets": "get_asset_store",
+    "fairseq2.data.tokenizers.hub": "load_tokenizer",
+    "fairseq2.models.hub": "load_model",
+    "omnilingual_asr.models.inference.pipeline": "ASRInferencePipeline",
+    "qwen_asr": "Qwen3ASRModel",
+}
+
+
+def _probe_local_omni_runtime() -> tuple[str, Path, int]:
+    if sys.version_info[:2] != (3, 12):
+        raise RuntimeError(
+            f"canonical local OmniASR requires Python 3.12, got "
+            f"{sys.version_info[0]}.{sys.version_info[1]}"
+        )
+    versions: dict[str, str] = {}
+    for distribution, expected in _LOCAL_OMNI_PACKAGES.items():
+        try:
+            actual = importlib.metadata.version(distribution).split("+", 1)[0]
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise RuntimeError(f"required local package {distribution!r} is not installed") from exc
+        versions[distribution] = actual
+        if actual != expected:
+            raise RuntimeError(
+                f"required local package {distribution!r} must be {expected}, got {actual}"
+            )
+
+    from hawedit.omni_assets import (
+        assert_effective_omni_cards,
+        assert_omni_asset_integrity,
+        assert_omni_card_integrity,
+        freeze_fairseq2_asset_overrides,
+    )
+
+    assert_omni_card_integrity()
+    reports = assert_omni_asset_integrity()
+    total = sum(report.size for report in reports)
+    if len(reports) != 3 or total != 43_546_500_168:
+        raise RuntimeError(
+            f"canonical local OmniASR asset set drifted: files={len(reports)}, bytes={total}"
+        )
+    freeze_fairseq2_asset_overrides()
+    try:
+        torch = importlib.import_module("torch")
+        torchaudio = importlib.import_module("torchaudio")
+        modules = {
+            module_name: importlib.import_module(module_name) for module_name in _LOCAL_OMNI_IMPORTS
+        }
+        for module_name, symbol in _LOCAL_OMNI_IMPORTS.items():
+            getattr(modules[module_name], symbol)
+    except (ImportError, AttributeError) as exc:
+        raise RuntimeError(f"canonical local OmniASR imports are incomplete: {exc}") from exc
+    if str(getattr(torch, "__version__", "")).split("+", 1)[0] != versions["torch"]:
+        raise RuntimeError("imported torch version disagrees with installed package metadata")
+    if str(getattr(torchaudio, "__version__", "")).split("+", 1)[0] != versions["torchaudio"]:
+        raise RuntimeError("imported torchaudio version disagrees with installed package metadata")
+    cuda = getattr(torch, "cuda", None)
+    device_count = cuda.device_count() if callable(getattr(cuda, "device_count", None)) else 0
+    if (
+        cuda is None
+        or not callable(getattr(cuda, "is_available", None))
+        or not cuda.is_available()
+        or device_count < 2
+    ):
+        raise RuntimeError("canonical local OmniASR requires two visible CUDA devices")
+    asset_store = modules["fairseq2.assets"].get_asset_store()
+    assert_effective_omni_cards(asset_store)
+    return (
+        f"verified local Python 3.12 runtime, {len(versions)} packages, "
+        f"{len(reports)} OmniASR files / {total} bytes and {device_count} CUDA devices",
+        reports[0].path.parents[1],
+        total,
+    )
+
+
+def _probe_canonical_omni_runtime() -> tuple[str, Path, int]:
+    if os.name == "nt":
+        probe = probe_wsl_runtime()
+        return (
+            f"WSL {probe.receipt.distro}: verified {probe.files_verified} files / "
+            f"{probe.size_bytes} bytes in verified venv generation {probe.receipt.generation}",
+            probe.receipt.generation_root,
+            probe.size_bytes,
+        )
+    return _probe_local_omni_runtime()
+
+
 class ModelStore:
     """The on-disk home of §7's downloadable checkpoints."""
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root if root is not None else DEFAULT_MODELS_ROOT
         self._use_installed_sources = root is None
+        self._omni_runtime_probe: tuple[bool, str, Path | None, int | None] | None = None
+
+    def _omni_runtime_status(self) -> tuple[bool, str, Path | None, int | None]:
+        """Prove the canonical runtime once for both OmniASR registry entries."""
+        if self._omni_runtime_probe is not None:
+            return self._omni_runtime_probe
+        result: tuple[bool, str, Path | None, int | None]
+        try:
+            detail, path, total = _probe_canonical_omni_runtime()
+            result = (True, detail, path, total)
+        except (RuntimeError, OSError) as exc:
+            result = (False, f"canonical OmniASR runtime verification failed: {exc}", None, None)
+        self._omni_runtime_probe = result
+        return result
 
     def path_for(self, entry: ModelEntry) -> Path:
         """Where `entry`'s weights live. `/` in a model id becomes `__` in the directory."""
@@ -505,20 +618,25 @@ class ModelStore:
     def _status_for(self, entry: ModelEntry) -> ModelStatus:
         if entry.provisioning is Provisioning.PIP:
             module = _PIP_MODULES.get(entry.model_id)
+            if entry.model_id.startswith("omniASR_"):
+                available, detail, path, size_bytes = self._omni_runtime_status()
+                return ModelStatus(
+                    model_id=entry.model_id,
+                    component=entry.component,
+                    provisioning=entry.provisioning,
+                    available=available,
+                    detail=detail,
+                    path=path,
+                    size_bytes=size_bytes,
+                )
             available = module is not None and _is_importable(module)
-            package_managed = entry.model_id.startswith("omniASR_")
             return ModelStatus(
                 model_id=entry.model_id,
                 component=entry.component,
                 provisioning=entry.provisioning,
                 available=available,
                 detail=(
-                    (
-                        f"pip package {module!r} importable; official model-card asset is "
-                        "downloaded/cached on first load"
-                        if package_managed
-                        else f"pip package {module!r} importable"
-                    )
+                    f"pip package {module!r} importable"
                     if available
                     else f"pip package {module!r} not installed"
                 ),

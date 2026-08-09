@@ -17,7 +17,6 @@ run on real weights.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 import threading
@@ -76,22 +75,13 @@ def test_omni_assets_are_hashed_before_the_pipeline_module_is_imported(
         OmniAsrBackend()._load()
 
 
-def test_ready_wsl_worker_source_must_match_the_host_package(
+def test_wsl_runtime_refuses_a_legacy_ready_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import hawedit
-
     runtime = tmp_path / "runtime"
-    source_snapshot = runtime / "sources" / "identity"
-    copied_package = source_snapshot / "hawedit"
-    shutil.copytree(Path(hawedit.__file__).resolve().parent, copied_package)
-    (source_snapshot / ".ready").write_text("ready\n", encoding="ascii")
-    (copied_package / "asr_worker.py").write_text("TAMPERED = True\n", encoding="utf-8")
     monkeypatch.setattr("hawedit.asr.default_wsl_runtime", lambda: runtime)
-    monkeypatch.setattr("hawedit.asr.default_wsl_source", lambda **_kwargs: source_snapshot)
     producer = WslOmniAsrProducer()
-    monkeypatch.setattr(producer, "_wsl_path", lambda path: path.as_posix())
-    with pytest.raises(RuntimeError, match="worker source does not match"):
+    with pytest.raises(RuntimeError, match="runtime receipt is invalid"):
         producer._runtime()
 
 

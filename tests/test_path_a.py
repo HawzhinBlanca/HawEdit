@@ -209,6 +209,23 @@ def test_a_score_outside_the_unit_range_is_refused() -> None:
         a_path_a(Api(payload=candidates((0, 900, 4.2)))).discover(a_transcript())
 
 
+@pytest.mark.parametrize(
+    "candidate",
+    (
+        {"in_ms": False, "out_ms": 900, "score": 0.9, "reason_ckb": "گرنگە"},
+        {"in_ms": 0, "out_ms": True, "score": 0.9, "reason_ckb": "گرنگە"},
+        {"in_ms": 0, "out_ms": 900, "score": True, "reason_ckb": "گرنگە"},
+        {"in_ms": "0", "out_ms": 900, "score": 0.9, "reason_ckb": "گرنگە"},
+        {"in_ms": 0, "out_ms": 900, "score": float("nan"), "reason_ckb": "گرنگە"},
+        {"in_ms": 0, "out_ms": 900, "score": 10**1_000, "reason_ckb": "گرنگە"},
+        {"in_ms": 0, "out_ms": 900, "score": 0.9, "reason_ckb": {"گرنگ": True}},
+    ),
+)
+def test_schema_invalid_candidate_numbers_are_refused(candidate: dict[str, Any]) -> None:
+    with pytest.raises(JudgeUnusable, match="malformed|outside"):
+        a_path_a(Api(payload=[candidate])).discover(a_transcript())
+
+
 # --- ranks, because §8.2 counts them -------------------------------------------------------
 
 
@@ -233,6 +250,20 @@ def test_candidate_ids_are_unique_and_name_their_path() -> None:
 def test_an_empty_result_is_an_empty_tuple_not_a_failure() -> None:
     """A transcript with nothing worth clipping is a real answer, and §8.2 records it."""
     assert a_path_a(Api(payload=[])).discover(a_transcript()) == ()
+
+
+@pytest.mark.parametrize("payload", (None, 1, {"in_ms": 0}))
+def test_candidate_container_must_be_a_json_array(payload: object) -> None:
+    api = Api()
+    api.payload = payload  # type: ignore[assignment]
+    with pytest.raises(JudgeUnusable, match="JSON array"):
+        a_path_a(api).discover(a_transcript())
+
+
+def test_every_candidate_must_be_a_json_object() -> None:
+    api = Api(payload=[True])  # type: ignore[list-item]
+    with pytest.raises(JudgeUnusable, match="JSON object"):
+        a_path_a(api).discover(a_transcript())
 
 
 # --- cost, which §3 is specific about ------------------------------------------------------

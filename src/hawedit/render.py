@@ -323,7 +323,7 @@ def frame_rate(video: Path, ffmpeg: Path | None = None) -> float:
 
 
 def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> None:
-    """Refuse an encode that came out shorter than the clip it claims to be.
+    """Refuse an encode whose duration differs from the requested clip by over one frame.
 
     §8.3: "Boundary invariant: assert `final_in <= anchor_in` and `final_out >= anchor_out` on
     every shipped clip." A file short of `requested_ms` ends before the clip's own `final_out`,
@@ -332,7 +332,9 @@ def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> N
 
     One frame of slack in each direction, measured rather than assumed: correct cuts of the
     real fixture came back exact except one, which was over by 40 ms — precisely one frame at
-    25 fps. Only the short side is a defect; a frame of container rounding is not.
+    25 fps. A longer file is also a defect: it can expose trailing source footage that has no
+    corresponding transcript, captions, editorial review, or consent. One frame of container
+    rounding in either direction is not.
     """
     if measured_ms < requested_ms - frame_ms:
         raise RenderError(
@@ -340,6 +342,12 @@ def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> N
             f"claims to be (tolerance one frame, {frame_ms} ms). The clip ends before its own "
             f"final_out, which is mid-sentence — §8.3 asserts Kurdish invariant #2 on every "
             f"shipped clip, and the shipped clip is this file."
+        )
+    if measured_ms > requested_ms + frame_ms:
+        raise RenderError(
+            f"the encoded file is {measured_ms} ms, longer than the {requested_ms} ms clip it "
+            f"claims to be (tolerance one frame, {frame_ms} ms). Trailing source footage "
+            f"outside the reviewed clip must never be published."
         )
 
 

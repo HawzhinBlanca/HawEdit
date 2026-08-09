@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Protocol
 
 from hawedit.discovery import Candidate
-from hawedit.path_b import VideoUnderstanding, discover_visual
-from hawedit.video_input import WindowFrames, extract_window_frames
+from hawedit.path_b import PathBError, VideoUnderstanding, discover_visual
+from hawedit.qwen_visual import EmbedderUnavailable
+from hawedit.video_input import VideoInputError, WindowFrames, extract_window_frames
 from hawedit.visual_index import (
     RETRIEVE_K,
     RerankedHit,
@@ -31,6 +32,7 @@ from hawedit.visual_index import (
 
 __all__ = [
     "FrameReader",
+    "ReaderFactory",
     "VisualComposer",
     "VisualDiscoveryResult",
     "VisualEmbedder",
@@ -135,6 +137,32 @@ class VisualComposer:
         self.retrieve_k = retrieve_k
 
     def discover(
+        self,
+        source: Path,
+        windows: Sequence[SceneWindow],
+        query: str,
+        work_dir: Path,
+        *,
+        media_id: str,
+        ffmpeg: Path | None = None,
+    ) -> VisualDiscoveryResult:
+        try:
+            return self._discover(
+                source,
+                windows,
+                query,
+                work_dir,
+                media_id=media_id,
+                ffmpeg=ffmpeg,
+            )
+        except VisualPipelineError:
+            raise
+        except (EmbedderUnavailable, PathBError, VideoInputError, VisualIndexError) as exc:
+            raise VisualPipelineError(
+                f"visual pipeline component {type(exc).__name__} refused this media: {exc}"
+            ) from exc
+
+    def _discover(
         self,
         source: Path,
         windows: Sequence[SceneWindow],

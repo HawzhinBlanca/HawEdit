@@ -459,11 +459,12 @@ class Clip:
                 f"clip {self.clip_id!r} carries no QC record. §2 puts a human QC gate before "
                 f"output, always — a missing record is not a pass."
             )
-        if not (self.qc.auto_pass or self.qc.human_reviewed):
+        if not self.qc.human_reviewed:
             raise ValueError(
-                f"clip {self.clip_id!r} has not cleared QC (flags: {list(self.qc.flags)}). "
-                f"§2 puts a human QC gate before output, always — low confidence routes to "
-                f"review, never to silent acceptance."
+                f"clip {self.clip_id!r} has not cleared human QC "
+                f"(auto_pass={self.qc.auto_pass}, flags: {list(self.qc.flags)}). "
+                f"§2 puts a human QC gate before output, always — automation may inform "
+                f"review, but it cannot replace it."
             )
         if self.editorial is None:
             raise ValueError(

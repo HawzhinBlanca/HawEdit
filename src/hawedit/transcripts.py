@@ -31,13 +31,19 @@ blueprint does not permit is refused rather than stored and discovered later.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
 import os
+import stat
+import threading
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from hawedit.alignment import CTC_VITERBI, assert_ctc_viterbi
 from hawedit.normalize import normalize_sorani
@@ -68,6 +74,160 @@ class RawTranscriptTampered(RuntimeError):
 
 class StaleNormalizedTranscript(RuntimeError):
     """Raised when a normalized artifact was derived from a different raw transcript."""
+
+
+_RAW_LOCKS_GUARD = threading.Lock()
+_RAW_LOCKS: dict[Path, threading.Lock] = {}
+_RAW_LOCK_TIMEOUT_S = 60.0
+_RAW_LOCK_RETRY_S = 0.05
+
+
+def _invalid_lock_metadata(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or bool(getattr(metadata, "st_file_attributes", 0) & reparse_flag)
+    )
+
+
+@contextmanager
+def _exclusive_file_lock(path: Path) -> Iterator[None]:
+    """Serialize a transcript publication across threads and processes."""
+    try:
+        resolved = path.parent.resolve() / path.name
+    except OSError as exc:
+        raise RuntimeError(f"cannot prepare transcript publication lock {path}: {exc}") from exc
+    with _RAW_LOCKS_GUARD:
+        local_lock = _RAW_LOCKS.setdefault(resolved, threading.Lock())
+    with local_lock, _open_lock_file(resolved) as stream:
+        try:
+            if stream.seek(0, os.SEEK_END) == 0:
+                stream.write(b"\0")
+                stream.flush()
+                os.fsync(stream.fileno())
+            stream.seek(0)
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot initialize transcript publication lock {resolved}: {exc}"
+            ) from exc
+        if os.name == "nt":
+            msvcrt = importlib.import_module("msvcrt")
+            deadline = time.monotonic() + _RAW_LOCK_TIMEOUT_S
+            while True:
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            f"timed out after {_RAW_LOCK_TIMEOUT_S:.0f}s waiting for transcript "
+                            f"publication lock {resolved}"
+                        ) from exc
+                    time.sleep(_RAW_LOCK_RETRY_S)
+            try:
+                _assert_lock_path_identity(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                raise
+            else:
+                try:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"cannot release transcript publication lock {resolved}: {exc}"
+                    ) from exc
+        else:
+            fcntl = importlib.import_module("fcntl")
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"cannot acquire transcript publication lock {resolved}: {exc}"
+                ) from exc
+            try:
+                _assert_lock_path_identity(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                raise
+            else:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"cannot release transcript publication lock {resolved}: {exc}"
+                    ) from exc
+
+
+def _open_lock_file(path: Path) -> BinaryIO:
+    """Open one unshared regular lock inode without following a final-component link."""
+    try:
+        checked = os.lstat(path)
+    except FileNotFoundError:
+        checked = None
+    except OSError as exc:
+        raise RuntimeError(f"cannot inspect transcript publication lock {path}: {exc}") from exc
+    if checked is not None and _invalid_lock_metadata(checked):
+        raise RuntimeError(
+            "transcript publication lock must be one regular link without symlink or "
+            f"reparse indirection: {path}"
+        )
+
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise RuntimeError(f"cannot safely open transcript publication lock {path}: {exc}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if _invalid_lock_metadata(opened):
+            raise RuntimeError(
+                "transcript publication lock must be one regular link without symlink or "
+                f"reparse indirection: {path}"
+            )
+        current = os.lstat(path)
+        if checked is not None and (checked.st_dev, checked.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise RuntimeError(f"transcript publication lock was replaced before open: {path}")
+        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            raise RuntimeError(f"transcript publication lock path changed during open: {path}")
+        return os.fdopen(descriptor, "r+b")
+    except BaseException as exc:
+        with suppress(OSError):
+            os.close(descriptor)
+        if isinstance(exc, OSError):
+            raise RuntimeError(
+                f"cannot initialize transcript publication lock {path}: {exc}"
+            ) from exc
+        raise
+
+
+def _assert_lock_path_identity(path: Path, stream: BinaryIO) -> None:
+    try:
+        opened = os.fstat(stream.fileno())
+        current = os.lstat(path)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"transcript publication lock disappeared while waiting: {path}"
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot inspect transcript publication lock after waiting {path}: {exc}"
+        ) from exc
+    if (
+        _invalid_lock_metadata(opened)
+        or _invalid_lock_metadata(current)
+        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        raise RuntimeError(f"transcript publication lock changed while waiting: {path}")
 
 
 def validate_media_id(media_id: str) -> str:
@@ -309,6 +469,11 @@ class TranscriptStore:
         return self.root / f"{self._safe(media_id)}.transcript.raw.sha256"
 
     def write_raw(self, raw: RawTranscript) -> Path:
+        lock = self.root / f".{self._safe(raw.media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            return self._write_raw_locked(raw)
+
+    def _write_raw_locked(self, raw: RawTranscript) -> Path:
         """Write the canonical transcript once.
 
         Raises:
@@ -374,12 +539,27 @@ class TranscriptStore:
         return path
 
     def read_raw(self, media_id: str) -> RawTranscript:
-        return RawTranscript.from_json(self.raw_path(media_id).read_text(encoding="utf-8"))
+        lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            path = self.raw_path(media_id)
+            try:
+                content = path.read_text(encoding="utf-8")
+            except FileNotFoundError as exc:
+                if self._digest_path(media_id).exists():
+                    raise RawTranscriptTampered(
+                        f"{path} is missing while its write-once digest exists. A previous "
+                        "publication was interrupted or the canonical raw was removed; use a "
+                        "new work directory rather than reconstructing immutable evidence."
+                    ) from exc
+                raise
+            return RawTranscript.from_json(content)
 
     def raw_digest(self, media_id: str) -> str:
         """The digest of the raw file as it is on disk right now."""
-        content = self.raw_path(media_id).read_bytes()
-        return hashlib.sha256(content).hexdigest()
+        lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            content = self.raw_path(media_id).read_bytes()
+            return hashlib.sha256(content).hexdigest()
 
     def verify_raw_integrity(self, media_id: str) -> None:
         """Check the raw transcript against the digest recorded when it was written.
@@ -387,6 +567,11 @@ class TranscriptStore:
         Raises:
             RawTranscriptTampered: the file no longer matches.
         """
+        lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            self._verify_raw_integrity_locked(media_id)
+
+    def _verify_raw_integrity_locked(self, media_id: str) -> None:
         path = self.raw_path(media_id)
         try:
             recorded = self._digest_path(media_id).read_text(encoding="ascii").strip()
@@ -395,7 +580,14 @@ class TranscriptStore:
                 f"{path} has no readable digest recorded at write time. The canonical "
                 "transcript cannot be verified — Kurdish invariant #1."
             ) from exc
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            content = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise RawTranscriptTampered(
+                f"{path} is missing while its write-once digest exists. The canonical "
+                "transcript cannot be verified — Kurdish invariant #1."
+            ) from exc
+        actual = hashlib.sha256(content).hexdigest()
         if actual != recorded:
             raise RawTranscriptTampered(
                 f"{path} no longer matches the digest recorded at write "

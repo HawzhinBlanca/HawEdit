@@ -46,6 +46,7 @@ from hawedit.path_b import PATH_B_MODEL, PathBError, SceneReading
 from hawedit.qwen_visual import DEFAULT_DEVICE, EmbedderUnavailable, load_processor_and_model
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
+    VideoInputError,
     WindowFrames,
     load_window_images,
     video_content,
@@ -224,6 +225,16 @@ class VideoChat3Reader:
         return self._loaded
 
     def read_window(self, window: SceneWindow) -> SceneReading:
+        try:
+            return self._read_window(window)
+        except (EmbedderUnavailable, PathBError, VideoInputError):
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise PathBError(
+                f"{self.model_id} failed while reading {window.window_id}: {exc}"
+            ) from exc
+
+    def _read_window(self, window: SceneWindow) -> SceneReading:
         """One scene, read and turned into §3's SV6D schema on the media's clock."""
         import torch
 

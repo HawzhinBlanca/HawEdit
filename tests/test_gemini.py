@@ -82,7 +82,7 @@ def verdict_fields(**overrides: Any) -> dict[str, Any]:
 class Api:
     """A recording transport that answers countTokens and generateContent."""
 
-    def __init__(self, tokens: int = 1_200, **overrides: Any) -> None:
+    def __init__(self, tokens: object = 1_200, **overrides: Any) -> None:
         self.tokens = tokens
         self.fields = verdict_fields(**overrides)
         self.calls: list[str] = []
@@ -223,6 +223,29 @@ def test_a_score_out_of_range_is_refused() -> None:
         a_judge(Api(hook_score=1.7)).judge(a_request())
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("hook_score", True),
+        ("meaning_fidelity", "0.94"),
+        ("misleading_edit_risk", float("nan")),
+        ("cultural_landing", float("inf")),
+        ("payoff_at_ms", True),
+    ),
+)
+def test_schema_invalid_numeric_verdict_fields_are_refused(field: str, value: object) -> None:
+    with pytest.raises(JudgeUnusable, match=field):
+        a_judge(Api(**{field: value})).judge(a_request())
+
+
+@pytest.mark.parametrize("tokens", (True, -1, "5", 1.5))
+def test_invalid_token_counts_are_refused_before_generation(tokens: object) -> None:
+    api = Api(tokens=tokens)
+    with pytest.raises(GeminiUnavailable, match="non-negative JSON integer"):
+        a_judge(api).judge(a_request())
+    assert len(api.calls) == 1 and api.calls[0].endswith("countTokens")
+
+
 def test_an_omitted_field_is_named_rather_than_defaulted() -> None:
     """A default here would invent a judgement nobody made."""
     api = Api()
@@ -239,6 +262,29 @@ def test_a_non_json_response_is_refused() -> None:
 
     with pytest.raises(JudgeUnusable, match="not JSON"):
         a_judge(transport).judge(a_request())
+
+
+@pytest.mark.parametrize("payload", (None, True, 1, []))
+def test_a_verdict_container_must_be_a_json_object(payload: object) -> None:
+    api = Api()
+    api.fields = payload  # type: ignore[assignment]
+    with pytest.raises(JudgeUnusable, match="JSON object"):
+        a_judge(api).judge(a_request())
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("title_ckb", {"کورد": "garbage"}),
+        ("description_ckb", ["کورد"]),
+        ("hashtags_ckb", [{"کورد": 1}]),
+    ),
+)
+def test_structured_values_cannot_be_stringified_into_editorial_text(
+    field: str, value: object
+) -> None:
+    with pytest.raises(JudgeUnusable, match=field):
+        a_judge(Api(**{field: value})).judge(a_request())
 
 
 def test_an_empty_response_is_refused() -> None:

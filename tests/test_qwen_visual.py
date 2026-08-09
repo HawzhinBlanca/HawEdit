@@ -179,6 +179,19 @@ def test_checkpoint_integrity_is_proven_before_torch_or_transformers(
         load_processor_and_model(tmp_path, "cuda:0")
 
 
+def test_embedder_backend_failures_become_domain_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path))
+    failure = RuntimeError("CUDA out of memory")
+    monkeypatch.setattr(embedder, "_load", lambda: (_ for _ in ()).throw(failure))
+    window = a_window(0, 0)
+
+    with pytest.raises(EmbedderUnavailable, match="CUDA out of memory") as caught:
+        embedder.embed_frames(WindowFrames(window, (Path("f0.jpg"), Path("f1.jpg"))))
+    assert caught.value.__cause__ is failure
+
+
 # =========================================================================================
 # The reranker. §3 Stage 2: "Retrieve top 50 -> Qwen3-VL-Reranker-2B -> keep top 5-10."
 #
@@ -242,6 +255,21 @@ def test_a_checkpoint_that_does_not_name_its_score_tokens_is_refused(tmp_path: P
     with every score still landing in [0, 1]."""
     with pytest.raises(EmbedderUnavailable, match="which tokens its score"):
         read_score_tokens(tmp_path)
+
+
+def test_reranker_backend_failures_become_domain_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reranker = QwenVisualReranker(
+        a_reranker_checkpoint(tmp_path),
+        read_frames=lambda window: WindowFrames(window, (Path("f0.jpg"), Path("f1.jpg"))),
+    )
+    failure = RuntimeError("CUDA kernel launch failed")
+    monkeypatch.setattr(reranker, "_load", lambda: (_ for _ in ()).throw(failure))
+
+    with pytest.raises(EmbedderUnavailable, match="CUDA kernel launch failed") as caught:
+        reranker.score("گرنگ", WindowFrames(a_window(0, 0), (Path("f0.jpg"), Path("f1.jpg"))))
+    assert caught.value.__cause__ is failure
 
 
 def test_the_reranker_reorders_by_its_own_score(

@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,6 +33,59 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def store(tmp_path: Path) -> ModelStore:
     return ModelStore(root=tmp_path)
+
+
+def _stub_local_omni_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    version_overrides: dict[str, str] | None = None,
+    failed_import: str | None = None,
+    cuda_devices: int = 2,
+) -> None:
+    from hawedit import omni_assets
+
+    versions = {
+        "fairseq2": "0.6",
+        "fonttools": "4.60.2",
+        "klpt": "0.1.7",
+        "omnilingual-asr": "0.2.0",
+        "qwen-asr": "0.0.6",
+        "torch": "2.8.0",
+        "torchaudio": "2.8.0",
+        **(version_overrides or {}),
+    }
+    monkeypatch.setattr("hawedit.models.sys.version_info", (3, 12, 0))
+    monkeypatch.setattr("hawedit.models.importlib.metadata.version", versions.__getitem__)
+    monkeypatch.setattr(omni_assets, "assert_omni_card_integrity", lambda: None)
+    reports = (
+        SimpleNamespace(path=tmp_path / "cache" / "asset" / "llm.pt", size=43_546_500_166),
+        SimpleNamespace(path=tmp_path / "cache" / "asset" / "ctc.pt", size=1),
+        SimpleNamespace(path=tmp_path / "cache" / "asset" / "tokenizer.model", size=1),
+    )
+    monkeypatch.setattr(omni_assets, "assert_omni_asset_integrity", lambda: reports)
+    monkeypatch.setattr(omni_assets, "freeze_fairseq2_asset_overrides", lambda: tmp_path)
+    monkeypatch.setattr(omni_assets, "assert_effective_omni_cards", lambda _store: None)
+    cuda = SimpleNamespace(
+        is_available=lambda: cuda_devices > 0,
+        device_count=lambda: cuda_devices,
+    )
+    modules = {
+        "torch": SimpleNamespace(__version__="2.8.0", cuda=cuda),
+        "torchaudio": SimpleNamespace(__version__="2.8.0"),
+        "fairseq2.assets": SimpleNamespace(get_asset_store=lambda: object()),
+        "fairseq2.data.tokenizers.hub": SimpleNamespace(load_tokenizer=object()),
+        "fairseq2.models.hub": SimpleNamespace(load_model=object()),
+        "omnilingual_asr.models.inference.pipeline": SimpleNamespace(ASRInferencePipeline=object()),
+        "qwen_asr": SimpleNamespace(Qwen3ASRModel=object()),
+    }
+
+    def import_module(name: str) -> object:
+        if name == failed_import:
+            raise ImportError(f"missing {name}")
+        return modules[name]
+
+    monkeypatch.setattr("hawedit.models.importlib.import_module", import_module)
 
 
 def _fetcher_download_block() -> str:
@@ -133,6 +187,96 @@ def test_an_absent_checkpoint_reports_as_missing(
     monkeypatch.setattr("hawedit.models._is_importable", lambda module: module != "omnilingual_asr")
     statuses = {s.model_id: s for s in store(tmp_path).status()}
     assert statuses["omniASR_LLM_7B_v2"].available is False
+
+
+def test_importability_alone_cannot_report_omniasr_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = 0
+
+    def missing_runtime() -> tuple[str, Path, int]:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("assets are absent")
+
+    monkeypatch.setattr("hawedit.models._is_importable", lambda _module: True)
+    monkeypatch.setattr("hawedit.models._probe_canonical_omni_runtime", missing_runtime)
+    statuses = {status.model_id: status for status in store(tmp_path).status()}
+    for model_id in ("omniASR_LLM_7B_v2", "omniASR_CTC_3B_v2"):
+        assert statuses[model_id].available is False
+        assert "assets are absent" in statuses[model_id].detail
+        assert "first load" not in statuses[model_id].detail
+    assert calls == 1, "LLM and CTC must share one 43.5 GB runtime verification"
+
+
+def test_verified_omniasr_runtime_reports_exact_shared_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime = tmp_path / "runtime" / "venvs" / "versioned"
+    monkeypatch.setattr(
+        "hawedit.models._probe_canonical_omni_runtime",
+        lambda: ("verified versioned WSL generation", runtime, 43_546_500_168),
+    )
+    model_store = store(tmp_path)
+    statuses = {status.model_id: status for status in model_store.status()}
+    for model_id in ("omniASR_LLM_7B_v2", "omniASR_CTC_3B_v2"):
+        assert statuses[model_id].available is True
+        assert statuses[model_id].path == runtime
+        assert statuses[model_id].size_bytes == 43_546_500_168
+    assert model_store.assert_available("omniASR_LLM_7B_v2") == runtime
+
+
+def test_local_omniasr_readiness_refuses_wrong_package_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from hawedit.models import _probe_local_omni_runtime
+
+    _stub_local_omni_runtime(monkeypatch, tmp_path, version_overrides={"omnilingual-asr": "0.1.0"})
+    with pytest.raises(RuntimeError, match="omnilingual-asr.*must be 0.2.0"):
+        _probe_local_omni_runtime()
+
+
+def test_local_omniasr_readiness_refuses_wrong_python_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hawedit.models import _probe_local_omni_runtime
+
+    monkeypatch.setattr("hawedit.models.sys.version_info", (3, 11, 9))
+    with pytest.raises(RuntimeError, match="requires Python 3.12, got 3.11"):
+        _probe_local_omni_runtime()
+
+
+def test_local_omniasr_readiness_refuses_missing_required_import(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from hawedit.models import _probe_local_omni_runtime
+
+    _stub_local_omni_runtime(monkeypatch, tmp_path, failed_import="qwen_asr")
+    with pytest.raises(RuntimeError, match="imports are incomplete.*missing qwen_asr"):
+        _probe_local_omni_runtime()
+
+
+def test_local_omniasr_readiness_refuses_fewer_than_two_cuda_devices(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from hawedit.models import _probe_local_omni_runtime
+
+    _stub_local_omni_runtime(monkeypatch, tmp_path, cuda_devices=1)
+    with pytest.raises(RuntimeError, match="requires two visible CUDA devices"):
+        _probe_local_omni_runtime()
+
+
+def test_local_omniasr_readiness_accepts_only_the_fully_verified_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from hawedit.models import _probe_local_omni_runtime
+
+    _stub_local_omni_runtime(monkeypatch, tmp_path)
+    detail, path, total = _probe_local_omni_runtime()
+    assert "7 packages" in detail
+    assert "2 CUDA devices" in detail
+    assert path == tmp_path / "cache"
+    assert total == 43_546_500_168
 
 
 def test_a_nonempty_checkpoint_without_a_byte_manifest_is_not_reported_ready(

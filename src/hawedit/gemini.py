@@ -86,6 +86,19 @@ class JudgeUnusable(ValueError):
     """Raised when the model answered but the answer is not a verdict this system can use."""
 
 
+def _total_tokens(body: str) -> int:
+    try:
+        value: object = json.loads(body)["totalTokens"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise GeminiUnavailable(f"countTokens returned no totalTokens: {exc}") from exc
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise GeminiUnavailable(
+            "countTokens returned invalid totalTokens: expected a non-negative JSON integer, "
+            f"got {value!r} ({type(value).__name__})"
+        )
+    return value
+
+
 def _strict_list(value: object) -> list[Any]:
     """Refuse a scalar where the schema declares an array.
 
@@ -99,6 +112,14 @@ def _strict_list(value: object) -> list[Any]:
             f"hashtags_ckb is {type(value).__name__} {value!r}, not an array. A string here "
             f"would be iterated into one 'hashtag' per character, and each character would "
             f"pass the Kurdish-script check on its own."
+        )
+    return value
+
+
+def _strict_string(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        raise JudgeUnusable(
+            f"the judge returned {field}={value!r} ({type(value).__name__}), not a JSON string"
         )
     return value
 
@@ -289,10 +310,7 @@ def count_tokens(
     )
     if status != 200:
         raise GeminiUnavailable(f"countTokens failed — {_api_error(status, body)}")
-    try:
-        return int(json.loads(body)["totalTokens"])
-    except (ValueError, KeyError, TypeError) as exc:
-        raise GeminiUnavailable(f"countTokens returned no totalTokens: {exc}") from exc
+    return _total_tokens(body)
 
 
 def _count_parts(
@@ -305,10 +323,7 @@ def _count_parts(
     status, body = transport(url, payload, headers)
     if status != 200:
         raise GeminiUnavailable(f"countTokens failed — {_api_error(status, body)}")
-    try:
-        return int(json.loads(body)["totalTokens"])
-    except (ValueError, KeyError, TypeError) as exc:
-        raise GeminiUnavailable(f"countTokens returned no totalTokens: {exc}") from exc
+    return _total_tokens(body)
 
 
 class GeminiJudge:
@@ -504,6 +519,10 @@ class GeminiJudge:
             raise JudgeUnusable(
                 f"the judge's response was not JSON despite responseMimeType: {exc}"
             ) from exc
+        if not isinstance(fields, dict):
+            raise JudgeUnusable(
+                f"the judge's verdict must be a JSON object, got {type(fields).__name__}"
+            )
 
         missing = [key for key in VERDICT_SCHEMA["required"] if key not in fields]
         if missing:
@@ -515,16 +534,19 @@ class GeminiJudge:
             # model is the least trusted source in this system, not the most.
             return JudgeVerdict(
                 candidate_id=request.candidate_id,
-                hook_score=float(fields["hook_score"]),
+                hook_score=fields["hook_score"],
                 self_contained=_strict_bool(fields["self_contained"], "self_contained"),
-                payoff_at_ms=int(fields["payoff_at_ms"]),
-                meaning_fidelity=float(fields["meaning_fidelity"]),
-                misleading_edit_risk=float(fields["misleading_edit_risk"]),
-                cultural_landing=float(fields["cultural_landing"]),
-                narrative_role=str(fields["narrative_role"]),
-                title_ckb=str(fields["title_ckb"]),
-                description_ckb=str(fields["description_ckb"]),
-                hashtags_ckb=tuple(str(tag) for tag in _strict_list(fields["hashtags_ckb"])),
+                payoff_at_ms=fields["payoff_at_ms"],
+                meaning_fidelity=fields["meaning_fidelity"],
+                misleading_edit_risk=fields["misleading_edit_risk"],
+                cultural_landing=fields["cultural_landing"],
+                narrative_role=_strict_string(fields["narrative_role"], "narrative_role"),
+                title_ckb=_strict_string(fields["title_ckb"], "title_ckb"),
+                description_ckb=_strict_string(fields["description_ckb"], "description_ckb"),
+                hashtags_ckb=tuple(
+                    _strict_string(tag, "hashtags_ckb item")
+                    for tag in _strict_list(fields["hashtags_ckb"])
+                ),
                 judge=self.model_id,
                 clip_in_ms=request.clip_in_ms,
                 clip_out_ms=request.clip_out_ms,

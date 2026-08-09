@@ -18,6 +18,7 @@ The processor itself needs 4 GB of weights, so the end-to-end run is recorded in
 from __future__ import annotations
 
 import math
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -234,6 +235,42 @@ def test_integer_and_fractional_markers_both_parse() -> None:
 def test_a_window_with_no_frames_is_refused() -> None:
     with pytest.raises(FrameCountMismatch, match="no frames"):
         WindowFrames(window=a_window(), paths=())
+
+
+def test_extraction_never_promotes_stale_frames_from_a_prior_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = a_window(duration_ms=20_000, fps=1.0)
+    stale = tuple(tmp_path / f"000_{index:04d}.jpg" for index in range(1, 21))
+    for path in stale:
+        path.write_bytes(b"stale")
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        pattern = command[-1]
+        for index in range(1, 7):
+            Path(pattern.replace("%04d", f"{index:04d}")).write_bytes(f"new-{index}".encode())
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", fake_run)
+    with pytest.raises(FrameCountMismatch, match="ffmpeg produced 6"):
+        extract_window_frames(FIXTURE, window, tmp_path, ffmpeg=Path("ffmpeg"))
+
+    assert all(path.read_bytes() == b"stale" for path in stale)
+    assert set(tmp_path.iterdir()) == set(stale)
+
+
+def test_an_ffmpeg_launch_failure_is_a_video_domain_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_: object, **__: object) -> subprocess.CompletedProcess[bytes]:
+        raise PermissionError("binary is not executable")
+
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", refuse)
+    with pytest.raises(VideoInputError, match="cannot launch ffmpeg") as caught:
+        extract_window_frames(FIXTURE, a_window(), tmp_path, ffmpeg=Path("broken-ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert not list(tmp_path.glob(".000-*"))
 
 
 @needs_ffmpeg
@@ -528,4 +565,4 @@ def test_an_odd_emitted_count_is_trimmed_rather_than_padded_by_the_processor(
     assert all(path.exists() for path in frames.paths)
     # The trimmed frame is still on disk — trimming is a decision about what to hand over, not a
     # deletion, so nothing about the extraction has to be re-run to change it.
-    assert len(sorted(tmp_path.glob("000_*.jpg"))) == 3
+    assert len(sorted(frames.paths[0].parent.glob("000_*.jpg"))) == 3

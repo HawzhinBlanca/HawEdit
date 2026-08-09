@@ -58,6 +58,7 @@ from hawedit.models import (
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
+    VideoInputError,
     WindowFrames,
     extract_window_frames,
     load_window_images,
@@ -325,6 +326,16 @@ class QwenVisualEmbedder:
         return vector
 
     def embed_frames(self, frames: WindowFrames) -> VisualEmbedding:
+        try:
+            return self._embed_frames(frames)
+        except (EmbedderUnavailable, VideoInputError):
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise EmbedderUnavailable(
+                f"{self.model_id} failed while embedding video frames: {exc}"
+            ) from exc
+
+    def _embed_frames(self, frames: WindowFrames) -> VisualEmbedding:
         """One embedding for one window, from frames already on disk.
 
         The timestamps are checked on the **decoded prompt** before the model runs. Without
@@ -356,6 +367,16 @@ class QwenVisualEmbedder:
         return self.embed_frames(frames)
 
     def embed_text(self, query: str) -> tuple[float, ...]:
+        try:
+            return self._embed_text(query)
+        except (EmbedderUnavailable, VideoInputError):
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise EmbedderUnavailable(
+                f"{self.model_id} failed while embedding the retrieval query: {exc}"
+            ) from exc
+
+    def _embed_text(self, query: str) -> tuple[float, ...]:
         """The query vector `visual_index.rerank_and_keep` takes, from a Sorani query.
 
         Kurdish invariant #3: `query` is normalised here, at the boundary, exactly as
@@ -480,6 +501,16 @@ class QwenVisualReranker:
         return self._loaded
 
     def score(self, query: str, frames: WindowFrames) -> float:
+        try:
+            return self._score(query, frames)
+        except (EmbedderUnavailable, VideoInputError):
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise EmbedderUnavailable(
+                f"{self.model_id} failed while scoring a retrieved window: {exc}"
+            ) from exc
+
+    def _score(self, query: str, frames: WindowFrames) -> float:
         """How relevant this window is to `query`, in [0, 1].
 
         `query` is normalised here for the same reason `embed_text` normalises: Kurdish

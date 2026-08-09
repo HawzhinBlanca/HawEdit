@@ -79,8 +79,17 @@ def test_a_three_element_entry_is_refused_rather_than_truncated() -> None:
 
 
 def test_non_numeric_bounds_are_refused() -> None:
-    with pytest.raises(GroundingError, match="must be numbers"):
+    with pytest.raises(GroundingError, match="must be finite JSON numbers"):
         parse_spans('[["start", "end"]]')
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ("[[false, true]]", "[[NaN, 1.0]]", "[[0.0, Infinity]]", f"[[0, {10**1_000}]]"),
+)
+def test_boolean_and_non_finite_bounds_are_refused(answer: str) -> None:
+    with pytest.raises(GroundingError, match="finite JSON numbers"):
+        parse_spans(answer)
 
 
 def test_a_truncated_array_is_refused_rather_than_read_short() -> None:

@@ -37,7 +37,9 @@ model into fusion is off by the window's start. See D-049.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,74 +177,89 @@ def extract_window_frames(
         raise VideoInputError("no ffmpeg available — run scripts/fetch-ffmpeg.sh")
 
     dest_dir.mkdir(parents=True, exist_ok=True)
-    pattern = dest_dir / f"{window.window_index:03d}_%04d.jpg"
-    result = subprocess.run(
-        [
-            str(binary),
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            f"{window.in_ms / 1000:.3f}",
-            "-t",
-            f"{window.duration_ms / 1000:.3f}",
-            "-i",
-            str(video),
-            "-vf",
-            f"fps={window.fps}",
-            "-frames:v",
-            str(window.frame_count),
-            "-y",
-            str(pattern),
-        ],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise VideoInputError(
-            f"ffmpeg failed extracting {window.window_id} "
-            f"({result.returncode}): {result.stderr.decode('utf-8', 'replace')[-400:]}"
-        )
+    extraction_dir = Path(tempfile.mkdtemp(prefix=f".{window.window_index:03d}-", dir=dest_dir))
+    succeeded = False
+    try:
+        pattern = extraction_dir / f"{window.window_index:03d}_%04d.jpg"
+        try:
+            result = subprocess.run(
+                [
+                    str(binary),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-ss",
+                    f"{window.in_ms / 1000:.3f}",
+                    "-t",
+                    f"{window.duration_ms / 1000:.3f}",
+                    "-i",
+                    str(video),
+                    "-vf",
+                    f"fps={window.fps}",
+                    "-frames:v",
+                    str(window.frame_count),
+                    "-y",
+                    str(pattern),
+                ],
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise VideoInputError(f"cannot launch ffmpeg for {window.window_id}: {exc}") from exc
+        if result.returncode != 0:
+            raise VideoInputError(
+                f"ffmpeg failed extracting {window.window_id} "
+                f"({result.returncode}): {result.stderr.decode('utf-8', 'replace')[-400:]}"
+            )
 
-    paths = tuple(sorted(dest_dir.glob(f"{window.window_index:03d}_*.jpg")))
-    # An odd count is padded by the processor **repeating the last frame** (D-060), so the model
-    # would see a frame that was never filmed, at the moment the window ends — which biases a
-    # temporal reading toward its own tail. Dropping the last real frame instead costs at most one
-    # sampling interval of footage and leaves every frame the model sees a frame that existed.
-    # Measured: 2 frames is always delivered intact at every rate, so the floor here is 2 and
-    # `WindowFrames` / the one-frame refusal below still catch anything shorter.
-    if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
-        paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
-    frames = WindowFrames(window=window, paths=paths)
-    if frames.count > window.frame_count:
-        raise FrameCountMismatch(
-            f"{window.window_id} planned {window.frame_count} frames and ffmpeg produced "
-            f"{frames.count}. More frames than the plan means the ceiling §3 Stage 2 sets is "
-            f"not the ceiling being enforced."
-        )
-    if frames.count < window.frame_count - 1:
-        raise FrameCountMismatch(
-            f"{window.window_id} planned {window.frame_count} frames over "
-            f"{window.duration_ms} ms and ffmpeg produced {frames.count}. One frame of tail "
-            f"rounding is normal; this is {window.frame_count - frames.count}. The window "
-            f"likely runs past the end of the media, and an embedding of whatever frames "
-            f"existed would describe less footage than the window claims."
-        )
-    # A window the plan says is temporal, arriving as a single still, is the exact failure §7
-    # excludes CLIP for — "frame-averaging loses temporal structure" — reached from the other
-    # direction: there is no structure left to lose. It is also invisible downstream, because
-    # `video_content` will wrap one frame in a video block and the embedding looks like any
-    # other. Measured: the fixture's 1400 ms scenes plan 2 frames at 1 fps and yield 1.
-    if window.frame_count >= 2 and frames.count < 2:
-        raise FrameCountMismatch(
-            f"{window.window_id} is {window.duration_ms} ms and planned {window.frame_count} "
-            f"frames at {window.fps} fps, but only {frames.count} frame exists. A one-frame "
-            f"video has no temporal structure at all, and its embedding is indistinguishable "
-            f"from an honest window's. Raise the window's fps — `SceneWindow` permits any rate "
-            f"at or above §3 Stage 2's reference {window.fps} and enforces the 64-frame ceiling "
-            f"against it — or treat this scene as a still deliberately."
-        )
-    return frames
+        paths = tuple(sorted(extraction_dir.glob(f"{window.window_index:03d}_*.jpg")))
+        # An odd count is padded by the processor **repeating the last frame** (D-060), so the
+        # model would see a frame that was never filmed, at the moment the window ends — which
+        # biases a temporal reading toward its own tail. Dropping the last real frame instead
+        # costs at most one sampling interval of footage and leaves every frame the model sees
+        # a frame that existed. Measured: 2 frames is always delivered intact at every rate, so
+        # the floor here is 2 and `WindowFrames` / the one-frame refusal below still catch
+        # anything shorter.
+        if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
+            paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
+        frames = WindowFrames(window=window, paths=paths)
+        if frames.count > window.frame_count:
+            raise FrameCountMismatch(
+                f"{window.window_id} planned {window.frame_count} frames and ffmpeg produced "
+                f"{frames.count}. More frames than the plan means the ceiling §3 Stage 2 sets "
+                f"is not the ceiling being enforced."
+            )
+        if frames.count < window.frame_count - 1:
+            raise FrameCountMismatch(
+                f"{window.window_id} planned {window.frame_count} frames over "
+                f"{window.duration_ms} ms and ffmpeg produced {frames.count}. One frame of tail "
+                f"rounding is normal; this is {window.frame_count - frames.count}. The window "
+                f"likely runs past the end of the media, and an embedding of whatever frames "
+                f"existed would describe less footage than the window claims."
+            )
+        # A window the plan says is temporal, arriving as a single still, is the exact failure
+        # §7 excludes CLIP for — "frame-averaging loses temporal structure" — reached from the
+        # other direction: there is no structure left to lose. It is also invisible downstream,
+        # because `video_content` will wrap one frame in a video block and the embedding looks
+        # like any other. Measured: the fixture's 1400 ms scenes plan 2 frames at 1 fps and
+        # yields 1.
+        if window.frame_count >= 2 and frames.count < 2:
+            raise FrameCountMismatch(
+                f"{window.window_id} is {window.duration_ms} ms and planned "
+                f"{window.frame_count} frames at {window.fps} fps, but only {frames.count} frame "
+                f"exists. A one-frame video has no temporal structure at all, and its embedding "
+                f"is indistinguishable from an honest window's. Raise the window's fps — "
+                f"`SceneWindow` permits any rate at or above §3 Stage 2's reference "
+                f"{window.fps} and enforces the 64-frame ceiling against it — or treat this "
+                f"scene as a still deliberately."
+            )
+        succeeded = True
+        return frames
+    finally:
+        if not succeeded:
+            # The unique directory is this call's ownership boundary. Cleanup cannot consume a
+            # prior call's valid frames or caller-owned files with a matching name.
+            shutil.rmtree(extraction_dir, ignore_errors=True)
 
 
 def window_video_metadata(frames: WindowFrames) -> dict[str, Any]:

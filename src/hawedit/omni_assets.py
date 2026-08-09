@@ -17,8 +17,9 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Final
@@ -50,6 +51,8 @@ _CARD_RELATIVE_PATH: Final = Path("omnilingual_asr/cards/models/rc_models_v2.yam
 _CARD_SIZE: Final = 2_725
 _CARD_SHA256: Final = "af4d63febb0569831210e470b256ec70dc3a55065756c21c1f514d0001f283ed"
 _CARD_POLICY_TEMP: tempfile.TemporaryDirectory[str] | None = None
+_PROVISION_LOCK_TIMEOUT_S: Final = 6 * 60 * 60
+_PROVISION_LOCK_RETRY_S: Final = 0.25
 
 
 class OmniAssetError(RuntimeError):
@@ -435,33 +438,149 @@ def assert_omni_asset_integrity(
 
 @contextmanager
 def _exclusive_file_lock(path: Path) -> Iterator[None]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as stream:
+    """Serialize long-running provisioning without trusting the predictable lock name."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        resolved = path.parent.resolve(strict=True) / path.name
+    except OSError as exc:
+        raise OmniAssetError(f"cannot prepare OmniASR provision lock {path}: {exc}") from exc
+    with _open_provision_lock(resolved) as stream:
         if os.name == "nt":
             # The Linux typeshed intentionally has no ``msvcrt.locking`` members even
             # though mypy still checks this runtime-only Windows branch in CI.
             msvcrt = importlib.import_module("msvcrt")
-
-            if stream.seek(0, os.SEEK_END) == 0:
-                stream.write(b"\0")
-                stream.flush()
-            stream.seek(0)
-            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            deadline = time.monotonic() + _PROVISION_LOCK_TIMEOUT_S
+            while True:
+                try:
+                    stream.seek(0)
+                except OSError as exc:
+                    raise OmniAssetError(
+                        f"cannot position OmniASR provision lock {resolved}: {exc}"
+                    ) from exc
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise OmniAssetError(
+                            f"timed out after {_PROVISION_LOCK_TIMEOUT_S / 3600:.0f}h waiting "
+                            f"for OmniASR provision lock {resolved}"
+                        ) from exc
+                    time.sleep(_PROVISION_LOCK_RETRY_S)
             try:
+                _validate_provision_lock(stream, resolved)
                 yield
-            finally:
-                stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            except BaseException:
+                with suppress(OSError):
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                raise
+            else:
+                try:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    raise OmniAssetError(
+                        f"cannot release OmniASR provision lock {resolved}: {exc}"
+                    ) from exc
         else:
             # typeshed intentionally hides POSIX fcntl members while mypy runs on the
             # Windows host; this branch executes only inside the Linux/WSL ASR runtime.
             fcntl = importlib.import_module("fcntl")
-
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
             try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            except OSError as exc:
+                raise OmniAssetError(
+                    f"cannot acquire OmniASR provision lock {resolved}: {exc}"
+                ) from exc
+            try:
+                _validate_provision_lock(stream, resolved)
                 yield
-            finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            except BaseException:
+                with suppress(OSError):
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                raise
+            else:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                except OSError as exc:
+                    raise OmniAssetError(
+                        f"cannot release OmniASR provision lock {resolved}: {exc}"
+                    ) from exc
+
+
+def _invalid_provision_lock(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or bool(getattr(metadata, "st_file_attributes", 0) & reparse_flag)
+    )
+
+
+def _validate_provision_lock(stream: BinaryIO, path: Path) -> None:
+    try:
+        opened = os.fstat(stream.fileno())
+        named = os.lstat(path)
+    except OSError as exc:
+        raise OmniAssetError(f"cannot inspect OmniASR provision lock {path}: {exc}") from exc
+    if (
+        _invalid_provision_lock(opened)
+        or _invalid_provision_lock(named)
+        or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+    ):
+        raise OmniAssetError(
+            "OmniASR provision lock must be one unlinked regular file without symlinks or "
+            f"reparse points and remain bound to its opened descriptor: {path}"
+        )
+
+
+def _open_provision_lock(path: Path) -> BinaryIO:
+    """Open the final component without following or modifying an unsafe existing object."""
+    try:
+        checked = os.lstat(path)
+    except FileNotFoundError:
+        checked = None
+    except OSError as exc:
+        raise OmniAssetError(f"cannot inspect OmniASR provision lock {path}: {exc}") from exc
+    if checked is not None and _invalid_provision_lock(checked):
+        raise OmniAssetError(
+            "OmniASR provision lock must be one unlinked regular file without symlinks or "
+            f"reparse points: {path}"
+        )
+
+    flags = os.O_RDWR | os.O_CREAT
+    flags |= getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise OmniAssetError(f"cannot safely open OmniASR provision lock {path}: {exc}") from exc
+    try:
+        stream = os.fdopen(descriptor, "r+b")
+        descriptor = -1
+        _validate_provision_lock(stream, path)
+        opened = os.fstat(stream.fileno())
+        if checked is not None and (checked.st_dev, checked.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise OmniAssetError(f"OmniASR provision lock was replaced before open: {path}")
+        if stream.seek(0, os.SEEK_END) == 0:
+            stream.write(b"\0")
+            stream.flush()
+            os.fsync(stream.fileno())
+            _validate_provision_lock(stream, path)
+        stream.seek(0)
+        return stream
+    except BaseException as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        else:
+            stream.close()
+        if isinstance(exc, OSError):
+            raise OmniAssetError(f"cannot initialize OmniASR provision lock {path}: {exc}") from exc
+        raise
 
 
 def _download_response(request: Request, timeout: float) -> Any:

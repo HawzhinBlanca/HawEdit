@@ -225,6 +225,21 @@ def test_a_clip_that_has_not_cleared_qc_is_never_encoded(tmp_path: Path) -> None
     assert not (tmp_path / "out.mp4").exists(), "a refused clip must leave no artifact"
 
 
+def test_an_automatic_pass_without_human_review_is_never_encoded(tmp_path: Path) -> None:
+    clip = _clip(qc=Qc(auto_pass=True, flags=(), human_reviewed=False))
+    with pytest.raises(ValueError, match="human QC"):
+        render_clip(
+            clip,
+            FIXTURE,
+            _write_ass(tmp_path),
+            FONTS,
+            tmp_path / "out.mp4",
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+        )
+    assert not (tmp_path / "out.mp4").exists()
+
+
 def test_an_existing_render_is_never_overwritten(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -699,6 +714,11 @@ def test_a_file_one_frame_long_is_container_rounding_not_a_failure() -> None:
     """Measured on the real fixture: correct cuts came back exact except one, which was +40 ms
     — exactly one frame at 25 fps. Rejecting that would fail honest renders."""
     assert_encoded_span(measured_ms=2_040, requested_ms=2_000, frame_ms=40)
+
+
+def test_a_file_more_than_one_frame_long_is_refused() -> None:
+    with pytest.raises(RenderError, match="longer"):
+        assert_encoded_span(measured_ms=100_000, requested_ms=2_000, frame_ms=40)
 
 
 def test_a_file_one_frame_short_is_tolerated_and_two_frames_is_not() -> None:

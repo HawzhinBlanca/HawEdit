@@ -102,7 +102,7 @@ def a_clip(**overrides: object) -> Clip:
             caption_style="word_highlight",
             durations=(15, 30, 60),
         ),
-        "qc": Qc(auto_pass=True, flags=(), human_reviewed=False),
+        "qc": Qc(auto_pass=True, flags=(), human_reviewed=True),
     }
     payload.update(overrides)
     return Clip(**payload)  # type: ignore[arg-type]
@@ -155,6 +155,12 @@ def test_a_clip_awaiting_human_review_is_not_renderable() -> None:
     """§2's diagram puts a HUMAN QC GATE before output, always."""
     clip = a_clip(qc=Qc(auto_pass=False, flags=("low confidence",), human_reviewed=False))
     with pytest.raises(ValueError, match="QC"):
+        clip.assert_renderable()
+
+
+def test_an_automatic_pass_cannot_replace_human_review() -> None:
+    clip = a_clip(qc=Qc(auto_pass=True, flags=(), human_reviewed=False))
+    with pytest.raises(ValueError, match="human QC"):
         clip.assert_renderable()
 
 

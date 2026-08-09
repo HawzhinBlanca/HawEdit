@@ -6,15 +6,15 @@ from pathlib import Path
 import pytest
 
 from hawedit.clip import Sv6d
-from hawedit.path_b import PATH_B_MODEL, SceneReading
-from hawedit.video_input import WindowFrames
+from hawedit.path_b import PATH_B_MODEL, PathBError, SceneReading
+from hawedit.video_input import VideoInputError, WindowFrames
 from hawedit.visual_index import (
     RerankedHit,
     SceneWindow,
     VisualEmbedding,
     VisualHit,
 )
-from hawedit.visual_pipeline import FrameReader, VisualComposer, VisualPipelineError
+from hawedit.visual_pipeline import FrameReader, ReaderFactory, VisualComposer, VisualPipelineError
 
 
 def windows(count: int) -> tuple[SceneWindow, ...]:
@@ -144,3 +144,46 @@ def test_short_media_is_refused_instead_of_mislabeling_a_partial_top_five(
     )
     with pytest.raises(VisualPipelineError, match="too short for Stage 2"):
         composer.discover(tmp_path / "m.mp4", windows(3), "گرنگ", tmp_path / "work", media_id="m")
+
+
+@pytest.mark.parametrize("failure", (VideoInputError("ffmpeg failed"), PathBError("bad reading")))
+def test_component_failures_are_normalized_at_the_composer_boundary(
+    failure: RuntimeError, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reader_factory: ReaderFactory
+    if isinstance(failure, VideoInputError):
+        monkeypatch.setattr(
+            "hawedit.visual_pipeline.extract_window_frames",
+            lambda *_args: (_ for _ in ()).throw(failure),
+        )
+
+        def video_input_reader(
+            read: FrameReader, score: Callable[[SceneWindow], float]
+        ) -> FakeReader:
+            return FakeReader(read, score, [])
+
+        reader_factory = video_input_reader
+
+    else:
+        monkeypatch.setattr(
+            "hawedit.visual_pipeline.extract_window_frames",
+            lambda source, window, dest, ffmpeg: WindowFrames(
+                window, (dest / "a.jpg", dest / "b.jpg")
+            ),
+        )
+
+        class FailingReader:
+            def read_scenes(self, items: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
+                raise failure
+
+        def failing_reader(
+            _read: FrameReader, _score: Callable[[SceneWindow], float]
+        ) -> FailingReader:
+            return FailingReader()
+
+        reader_factory = failing_reader
+
+    composer = VisualComposer(FakeEmbedder(), FakeReranker, reader_factory, keep=5)
+    with pytest.raises(VisualPipelineError, match=type(failure).__name__) as caught:
+        composer.discover(tmp_path / "m.mp4", windows(5), "گرنگ", tmp_path / "work", media_id="m")
+    assert caught.value.__cause__ is failure

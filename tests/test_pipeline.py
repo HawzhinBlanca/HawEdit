@@ -639,6 +639,40 @@ def test_visual_composer_refusal_is_reported_as_a_skipped_stage(tmp_path: Path) 
 
 
 @needs_ffmpeg
+def test_visual_backend_failure_preserves_path_a_candidates(tmp_path: Path) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.visual_pipeline import VisualPipelineError
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            failure = RuntimeError("CUDA out of memory")
+            raise VisualPipelineError("Qwen backend failed: CUDA out of memory") from failure
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="oom-fallback",
+        transcript=a_transcript("oom-fallback"),
+        discover=lambda _norm: [
+            Candidate(
+                "verbal-survivor",
+                "oom-fallback",
+                0,
+                1_400,
+                DiscoveryPath.VERBAL,
+                rank=1,
+                score=0.8,
+            )
+        ],
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert isinstance(run.visual_index, StageSkipped)
+    assert [candidate.discovery_path for candidate in run.candidates] == [DiscoveryPath.VERBAL]
+
+
+@needs_ffmpeg
 def test_unranked_path_b_injection_is_refused(tmp_path: Path) -> None:
     """A bare reader could promote every scene and bypass the keep-5–10 contract."""
 

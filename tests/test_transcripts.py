@@ -11,11 +11,16 @@ past both.
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import stat
+import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,6 +137,183 @@ def test_competing_writers_publish_one_matching_raw_and_digest(tmp_path: Path) -
     assert len(winners) == 1
     assert store.read_raw("race").text_ckb == winners[0]
     store.verify_raw_integrity("race")
+
+
+def test_losing_writer_cannot_observe_digest_before_raw_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pipeline loser reads immediately after RawTranscriptImmutable; that must be safe."""
+    store = TranscriptStore(tmp_path)
+    winner = RawTranscript(media_id="race", text_ckb="first", words=(), asr=CANONICAL)
+    loser = RawTranscript(media_id="race", text_ckb="second", words=(), asr=CANONICAL)
+    digest_path = tmp_path / "race.transcript.raw.sha256"
+    digest_published = Event()
+    permit_raw_publication = Event()
+    real_link = os.link
+
+    def gated_link(source: Path, destination: Path) -> None:
+        real_link(source, destination)
+        if Path(destination) == digest_path and not digest_published.is_set():
+            digest_published.set()
+            assert permit_raw_publication.wait(timeout=5)
+
+    monkeypatch.setattr(os, "link", gated_link)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winning_write = pool.submit(store.write_raw, winner)
+        assert digest_published.wait(timeout=5)
+        losing_write = pool.submit(store.write_raw, loser)
+        try:
+            with pytest.raises(FutureTimeoutError):
+                losing_write.result(timeout=0.05)
+        finally:
+            permit_raw_publication.set()
+
+        assert winning_write.result(timeout=5) == store.raw_path("race")
+        with pytest.raises(RawTranscriptImmutable):
+            losing_write.result(timeout=5)
+
+    assert store.read_raw("race") == winner
+    store.verify_raw_integrity("race")
+
+
+def test_an_orphan_digest_is_reported_as_interrupted_publication(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    (tmp_path / "media-001.transcript.raw.sha256").write_text("0" * 64, encoding="ascii")
+
+    with pytest.raises(RawTranscriptTampered, match="publication was interrupted"):
+        store.read_raw("media-001")
+    with pytest.raises(RawTranscriptTampered, match="missing while its write-once digest"):
+        store.verify_raw_integrity("media-001")
+
+
+def test_windows_lock_retries_contention_instead_of_using_crt_short_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.transcripts as transcript_module
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self) -> None:
+            self.attempts = 0
+            self.unlocked = False
+
+        def locking(self, _fd: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                self.unlocked = True
+                return
+            self.attempts += 1
+            if self.attempts < 3:
+                raise OSError("lock held")
+
+    fake = FakeMsvcrt()
+    real_import = importlib.import_module
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    with transcript_module._exclusive_file_lock(tmp_path / "retry.lock"):
+        assert fake.attempts == 3
+    assert fake.unlocked
+
+
+@pytest.mark.parametrize("body_fails", (False, True))
+def test_transcript_unlock_failure_is_normalized_without_masking_the_body(
+    body_fails: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.transcripts as transcript_module
+
+    class FailingUnlock:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def locking(self, _fd: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                raise OSError("unlock failed")
+
+    fake = FailingUnlock()
+    real_import = importlib.import_module
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    expected = LookupError if body_fails else RuntimeError
+    message = "body failed" if body_fails else "cannot release transcript"
+    with (
+        pytest.raises(expected, match=message),
+        transcript_module._exclusive_file_lock(tmp_path / f"unlock-{body_fails}.lock"),
+    ):
+        if body_fails:
+            raise LookupError("body failed")
+
+
+def test_a_hardlinked_transcript_lock_cannot_modify_its_other_name(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"")
+    os.link(victim, tmp_path / ".media-001.transcript.raw.lock")
+
+    with pytest.raises(RuntimeError, match="one regular link"):
+        store.write_raw(a_raw())
+    assert victim.read_bytes() == b""
+
+
+def test_a_symlinked_transcript_lock_is_refused_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    lock = tmp_path / ".media-001.transcript.raw.lock"
+    real_lstat = os.lstat
+
+    def fake_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        result = real_lstat(tmp_path)
+        if Path(os.fsdecode(path)) == lock:
+            values = list(result)
+            values[0] = stat.S_IFLNK | 0o777
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(RuntimeError, match="symlink"):
+        store.write_raw(a_raw())
+
+
+def test_a_reparse_transcript_lock_is_refused_before_modification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    lock = tmp_path / ".media-001.transcript.raw.lock"
+    lock.write_bytes(b"do-not-touch")
+    real_lstat = os.lstat
+
+    def fake_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> object:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) != lock:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_nlink=result.st_nlink,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_file_attributes=0x400,
+        )
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(RuntimeError, match="reparse"):
+        store.write_raw(a_raw())
+    assert lock.read_bytes() == b"do-not-touch"
 
 
 def test_raw_file_is_marked_read_only(tmp_path: Path) -> None:
