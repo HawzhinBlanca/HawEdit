@@ -34,6 +34,8 @@ from hawedit.path_b import (
     PATH_B_MODEL,
     PathBError,
     SceneReading,
+    SceneReadings,
+    UnreadableScene,
     discover_visual,
 )
 from hawedit.registry import WrongRole
@@ -219,7 +221,7 @@ class FakeVideoChat:
         self.seen: tuple[SceneWindow, ...] = ()
         self.calls: list[tuple[SceneWindow, ...]] = []
 
-    def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
+    def read_scenes(self, windows: Sequence[SceneWindow]) -> SceneReadings:
         self.seen = tuple(windows)
         self.calls.append(self.seen)
         if self.mode == "invent":
@@ -227,17 +229,21 @@ class FakeVideoChat:
             # the reading constructs cleanly and the only thing wrong with it is that this
             # scene was never sent. Otherwise the test would pass for the wrong reason.
             invented = a_window(999_000, 999_500, scene_index=99)
-            return (SceneReading(window=invented, sv6d=_sv6d_for(invented), score=0.9),)
+            return SceneReadings(
+                (SceneReading(window=invented, sv6d=_sv6d_for(invented), score=0.9),)
+            )
         if self.mode == "duplicate":
             first = windows[0]
-            return tuple(
-                SceneReading(
-                    window=first,
-                    sv6d=_sv6d_for(first),
-                    score=0.5,
-                    model_id=PATH_B_MODEL,
+            return SceneReadings(
+                tuple(
+                    SceneReading(
+                        window=first,
+                        sv6d=_sv6d_for(first),
+                        score=0.5,
+                        model_id=PATH_B_MODEL,
+                    )
+                    for _ in range(2)
                 )
-                for _ in range(2)
             )
         if self.mode == "omit":
             windows = windows[:-1]
@@ -251,7 +257,9 @@ class FakeVideoChat:
                 out_ms=sent.out_ms,
                 fps=sent.fps,
             )
-            return (SceneReading(window=altered, sv6d=_sv6d_for(altered), score=0.9),)
+            return SceneReadings(
+                (SceneReading(window=altered, sv6d=_sv6d_for(altered), score=0.9),)
+            )
         readings = []
         for position, window in enumerate(windows):
             readings.append(
@@ -262,7 +270,7 @@ class FakeVideoChat:
                     model_id=PATH_B_MODEL,
                 )
             )
-        return tuple(readings)
+        return SceneReadings(tuple(readings))
 
 
 def _sv6d_for(window: SceneWindow) -> Sv6d:
@@ -283,7 +291,7 @@ def _windows(n: int) -> tuple[SceneWindow, ...]:
 
 
 def test_candidates_carry_the_visual_path_and_dense_ranks() -> None:
-    candidates = discover_visual(_windows(4), FakeVideoChat(), media_id="m1")
+    candidates = discover_visual(_windows(4), FakeVideoChat(), media_id="m1").candidates
     assert [c.path for c in candidates] == [DiscoveryPath.VISUAL] * 4
     assert [c.rank for c in candidates] == [1, 2, 3, 4]
 
@@ -292,12 +300,12 @@ def test_candidate_spans_are_the_windows_own_never_widened() -> None:
     """§3 Stage 5 owns boundaries. `discovery.py` refuses to widen for the same reason, and a
     path that widened its own spans would pre-empt fusion before the merge ever saw them."""
     windows = _windows(3)
-    candidates = discover_visual(windows, FakeVideoChat(), media_id="m1")
+    candidates = discover_visual(windows, FakeVideoChat(), media_id="m1").candidates
     assert [c.span for c in candidates] == [w.span for w in windows]
 
 
 def test_the_sv6d_survives_onto_the_candidate() -> None:
-    candidates = discover_visual(_windows(2), FakeVideoChat(), media_id="m1")
+    candidates = discover_visual(_windows(2), FakeVideoChat(), media_id="m1").candidates
     assert candidates[0].sv6d is not None
 
 
@@ -349,7 +357,7 @@ def test_an_episode_over_the_frame_budget_is_split_into_bounded_calls() -> None:
     )
     assert sum(w.frame_count for w in windows) == 320
     model = FakeVideoChat()
-    assert len(discover_visual(windows, model, media_id="m1")) == 5
+    assert len(discover_visual(windows, model, media_id="m1").candidates) == 5
     assert [sum(w.frame_count for w in call) for call in model.calls] == [256, 64]
 
 
@@ -367,23 +375,138 @@ def test_a_call_at_exactly_the_budget_is_allowed() -> None:
     )
     assert sum(w.frame_count for w in windows) == MAX_FRAMES_PER_CALL
     model = FakeVideoChat()
-    assert len(discover_visual(windows, model, media_id="m1")) == 4
+    assert len(discover_visual(windows, model, media_id="m1").candidates) == 4
     assert len(model.calls) == 1
 
 
 def test_no_windows_at_all_is_an_empty_result_not_a_call() -> None:
     model = FakeVideoChat()
-    assert discover_visual((), model, media_id="m1") == ()
+    assert discover_visual((), model, media_id="m1").candidates == ()
     assert model.seen == ()
 
 
 def test_candidates_are_ordered_by_score_descending() -> None:
-    candidates = discover_visual(_windows(4), FakeVideoChat(), media_id="m1")
+    candidates = discover_visual(_windows(4), FakeVideoChat(), media_id="m1").candidates
     scores = [c.score for c in candidates]
     assert scores == sorted(scores, reverse=True)  # type: ignore[type-var]
 
 
 def test_path_b_never_claims_both() -> None:
     """`DiscoveryPath.BOTH` is the merge's conclusion, never a path's claim about itself."""
-    candidates = discover_visual(_windows(2), FakeVideoChat(), media_id="m1")
+    candidates = discover_visual(_windows(2), FakeVideoChat(), media_id="m1").candidates
     assert all(c.path is not DiscoveryPath.BOTH for c in candidates)
+
+
+# --- D-156: one unreadable survivor discarded all of Path B -----------------------------------
+
+
+class PartlyUnreadable:
+    """Reads every window but the ones named, which it refuses with a stated reason."""
+
+    def __init__(self, refuse: set[int]) -> None:
+        self.refuse = refuse
+
+    def read_scenes(self, windows: Sequence[SceneWindow]) -> SceneReadings:
+        readings: list[SceneReading] = []
+        unreadable: list[UnreadableScene] = []
+        for position, window in enumerate(windows):
+            if position in self.refuse:
+                unreadable.append(
+                    UnreadableScene(
+                        window_id=window.window_id,
+                        in_ms=window.in_ms,
+                        out_ms=window.out_ms,
+                        reason="PathBError: the model returned no usable line for ['subject', …]",
+                    )
+                )
+                continue
+            readings.append(
+                SceneReading(
+                    window=window,
+                    sv6d=_sv6d_for(window),
+                    score=1.0 - position * 0.1,
+                    model_id=PATH_B_MODEL,
+                )
+            )
+        return SceneReadings(tuple(readings), tuple(unreadable))
+
+
+def test_one_unreadable_survivor_no_longer_discards_the_others() -> None:
+    """Measured on the real 38-minute file: one survivor of seven — a static logo card —
+    answered with a time *range* where the prompt asks for "the number alone", and that single
+    refusal discarded all seven candidates after Stage 0, 641 embeddings, retrieval and
+    reranking had run. The same shape D-103 fixed in Stage 1."""
+    windows = _windows(3)
+    discovery = discover_visual(windows, PartlyUnreadable({1}), media_id="m1")
+
+    assert len(discovery.candidates) == 2
+    assert len(discovery.unreadable) == 1
+    assert discovery.unreadable[0].window_id == windows[1].window_id
+    assert "no usable line" in discovery.unreadable[0].reason
+    # Ranks are dense over what was read: a gap would misreport Path B's own ordering.
+    assert [c.rank for c in discovery.candidates] == [1, 2]
+
+
+def test_nothing_readable_at_all_is_still_refused() -> None:
+    """The control. Swallowing every refusal satisfies the test above and would report a Path B
+    result for a media nothing could be read from — the one bound that needs no chosen threshold,
+    exactly as D-103 drew it for a transcript where no region aligned."""
+    with pytest.raises(PathBError, match="not one of the 3 survivor"):
+        discover_visual(_windows(3), PartlyUnreadable({0, 1, 2}), media_id="m1")
+
+
+def test_a_refusal_for_a_window_that_was_never_sent_is_refused() -> None:
+    """The second control: an invented failure is as corrosive as an invented reading, and the
+    reading side has been checked since M5.3."""
+
+    class InventsAFailure:
+        def read_scenes(self, windows: Sequence[SceneWindow]) -> SceneReadings:
+            ghost = a_window(999_000, 999_500, scene_index=99)
+            return SceneReadings(
+                tuple(
+                    SceneReading(window=w, sv6d=_sv6d_for(w), score=0.5, model_id=PATH_B_MODEL)
+                    for w in windows
+                ),
+                (
+                    UnreadableScene(
+                        window_id=ghost.window_id,
+                        in_ms=ghost.in_ms,
+                        out_ms=ghost.out_ms,
+                        reason="never shown to it",
+                    ),
+                ),
+            )
+
+    with pytest.raises(PathBError, match="unreadable, which is not among"):
+        discover_visual(_windows(2), InventsAFailure(), media_id="m1")
+
+
+def test_a_window_both_read_and_refused_is_refused() -> None:
+    """Two answers about one scene, with nothing choosing between them."""
+
+    class Both:
+        def read_scenes(self, windows: Sequence[SceneWindow]) -> SceneReadings:
+            first = windows[0]
+            return SceneReadings(
+                tuple(
+                    SceneReading(window=w, sv6d=_sv6d_for(w), score=0.5, model_id=PATH_B_MODEL)
+                    for w in windows
+                ),
+                (
+                    UnreadableScene(
+                        window_id=first.window_id,
+                        in_ms=first.in_ms,
+                        out_ms=first.out_ms,
+                        reason="also refused",
+                    ),
+                ),
+            )
+
+    with pytest.raises(PathBError, match="accounted for .* twice"):
+        discover_visual(_windows(2), Both(), media_id="m1")
+
+
+def test_a_refusal_with_no_reason_is_refused_at_construction() -> None:
+    """A window dropped for no stated reason is a window silently dropped."""
+    with pytest.raises(ValueError, match="carries no reason"):
+        UnreadableScene(window_id="m1:s0:w0", in_ms=0, out_ms=1_000, reason="   ")

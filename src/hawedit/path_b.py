@@ -51,8 +51,11 @@ from hawedit.visual_index import SceneWindow
 __all__ = [
     "MAX_FRAMES_PER_CALL",
     "PATH_B_MODEL",
+    "PathBDiscovery",
     "PathBError",
     "SceneReading",
+    "SceneReadings",
+    "UnreadableScene",
     "VideoUnderstanding",
     "discover_visual",
 ]
@@ -105,27 +108,86 @@ class SceneReading:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class UnreadableScene:
+    """A survivor the reader reached and could not turn into a reading.
+
+    §3 Stage 3 fixes the SV6D schema at six dimensions and refuses output with no timeline
+    evidence, so a refusal here is the guard working. What was wrong was the blast radius: one
+    such window aborted the whole of Path B. This is the record that keeps "six candidates"
+    from being indistinguishable from "seven, and one vanished" — the same shape D-103 gave
+    Stage 1, where one unalignable region discarded a 38-minute transcript.
+    """
+
+    window_id: str
+    in_ms: int
+    out_ms: int
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.reason.strip():
+            raise ValueError(
+                f"unreadable scene {self.window_id} carries no reason. A window dropped for no "
+                f"stated reason is a window silently dropped, which is what this type exists "
+                f"to prevent."
+            )
+        if self.out_ms <= self.in_ms:
+            raise ValueError(
+                f"unreadable scene {self.window_id} spans {self.in_ms}..{self.out_ms} ms, which "
+                f"has no length"
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "window_id": self.window_id,
+            "in_ms": self.in_ms,
+            "out_ms": self.out_ms,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SceneReadings:
+    """What one `read_scenes` call produced, including what it could not produce."""
+
+    readings: tuple[SceneReading, ...]
+    unreadable: tuple[UnreadableScene, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PathBDiscovery:
+    """Path B's candidates, and the survivors that yielded none."""
+
+    candidates: tuple[Candidate, ...]
+    unreadable: tuple[UnreadableScene, ...] = ()
+
+
 class VideoUnderstanding(Protocol):
     """`VideoChat3-4B`'s local scene-reading interface."""
 
-    def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]: ...
+    def read_scenes(self, windows: Sequence[SceneWindow]) -> SceneReadings: ...
 
 
 def discover_visual(
     windows: Sequence[SceneWindow],
     model: VideoUnderstanding,
     media_id: str,
-) -> tuple[Candidate, ...]:
+) -> PathBDiscovery:
     """§3 Stage 3 Path B: read these scenes, return candidates ordered by the model's score.
 
+    A window the reader refused is carried in `unreadable`, not dropped: "the model omitted
+    readings" below is the guard against a *model* losing scenes, and it cannot tell that apart
+    from a reading this side declined to use. Both are recall destroyed; only one is the
+    model's fault, and they need different reports.
+
     Raises:
-        PathBError: a window belongs to other media, or the model did not return exactly one
-            reading for every window in each frame-budgeted call.
+        PathBError: a window belongs to other media, the model did not account for every window
+            in each frame-budgeted call, or no window at all could be read.
     """
     if not windows:
         # Nothing to read is not an error and is not a call. §3's union proceeds with whatever
         # either path found, and Path B finding nothing on an empty plan is not a failure.
-        return ()
+        return PathBDiscovery(())
 
     foreign = sorted({w.media_id for w in windows} - {media_id})
     if foreign:
@@ -147,10 +209,19 @@ def discover_visual(
         batches.append(tuple(current))
 
     all_readings: list[SceneReading] = []
+    unreadable: list[UnreadableScene] = []
     for batch in batches:
         sent = {w.window_id: w for w in batch}
-        readings = model.read_scenes(batch)
-        seen: set[str] = set()
+        produced = model.read_scenes(batch)
+        readings = produced.readings
+        unreadable.extend(produced.unreadable)
+        seen = {scene.window_id for scene in produced.unreadable}
+        foreign_failures = sorted(seen - sent.keys())
+        if foreign_failures:
+            raise PathBError(
+                f"the model reported {foreign_failures!r} unreadable, which is not among the "
+                f"{len(batch)} windows in its frame-budgeted call."
+            )
         for reading in readings:
             window_id = reading.window.window_id
             if window_id not in sent:
@@ -167,9 +238,11 @@ def discover_visual(
                 )
             if window_id in seen:
                 raise PathBError(
-                    f"the model returned {window_id} twice. §3 Stage 2 is one embedding per "
-                    f"scene and this is one reading per scene; two would give the same footage "
-                    f"two chances to survive into Stage 4."
+                    f"the model accounted for {window_id} twice — a second reading, or a "
+                    f"reading beside a refusal for the same window. §3 Stage 2 is one embedding "
+                    f"per scene and this is one reading per scene; two would give the same "
+                    f"footage two chances to survive into Stage 4, and a reading beside a "
+                    f"refusal is two answers with nothing choosing between them."
                 )
             seen.add(window_id)
 
@@ -177,10 +250,22 @@ def discover_visual(
         if missing:
             raise PathBError(
                 f"the model omitted readings for {missing!r}. Path B requires exactly one "
-                f"reading for every one of the {len(batch)} windows in a call; silently "
-                f"dropping scenes destroys visual recall."
+                f"reading or one stated refusal for every one of the {len(batch)} windows in a "
+                f"call; silently dropping scenes destroys visual recall."
             )
         all_readings.extend(readings)
 
+    if not all_readings:
+        # The only bound that needs no chosen threshold: some readings is a partial answer with
+        # its gaps named, none at all is Path B having produced nothing while reporting a
+        # result. D-103 drew the same line for a transcript where no region aligned.
+        raise PathBError(
+            f"not one of the {len(windows)} survivor(s) could be read: "
+            + "; ".join(f"{scene.window_id}: {scene.reason}" for scene in unreadable)
+        )
+
     ordered = sorted(all_readings, key=lambda r: (-r.score, r.window.in_ms, r.window.window_id))
-    return tuple(reading.to_candidate(rank) for rank, reading in enumerate(ordered, start=1))
+    return PathBDiscovery(
+        tuple(reading.to_candidate(rank) for rank, reading in enumerate(ordered, start=1)),
+        tuple(unreadable),
+    )

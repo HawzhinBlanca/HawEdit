@@ -5075,3 +5075,20 @@ eight downstream dependants, all naming `Stage 0 ingest` as the root blocker. Mi
 invalid media identity, transcript/schema errors, and programmer assertions remain exceptions;
 this is not a broad catch. The CLI now exits 1 and emits valid JSON for an operational Stage 0
 refusal, while static invocation errors retain exit 2. `evidence/stage-0-failure-reporting.md`.
+
+## D-156 - One unreadable Path B survivor does not erase the readable survivors
+
+The bounded real 38-minute Path B run planned and embedded 641 windows, retrieved 50 and kept seven,
+then returned zero candidates because the first VideoChat3 survivor produced a time range where the
+six-dimension schema requires one point. The refusal was correct; `read_scenes` aborting the other
+six readings was not. Twelve cached real windows showed 72/72 parseable dimensions and 12/12 point
+timestamps, so widening the parser would have guessed how to collapse an exceptional range.
+
+**Decision:** `VideoChat3Reader` records each refused window as `UnreadableScene` and continues.
+`SceneReadings`, `PathBDiscovery` and `VisualDiscoveryResult` carry those gaps into the run report,
+including an explicit empty list for a clean run. Path B still refuses when no scene is readable.
+The composer's exactness invariant is not weakened: candidate IDs union unreadable IDs must equal
+the reranked survivor IDs, so the model cannot silently omit or invent a window. Reader cleanup
+still runs after the complete survivor phase and cannot mask the primary failure. Eight mutations
+are caught, including a direct trip through the real reader method.
+`evidence/one-window-discarded-every-candidate.md`.

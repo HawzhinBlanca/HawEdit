@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from hawedit.clip import Sv6d
-from hawedit.path_b import PATH_B_MODEL, PathBError, SceneReading
+from hawedit.path_b import (
+    PATH_B_MODEL,
+    PathBError,
+    SceneReading,
+    SceneReadings,
+    UnreadableScene,
+)
 from hawedit.video_input import VideoInputError, WindowFrames
 from hawedit.visual_index import (
     RerankedHit,
@@ -85,10 +91,13 @@ class FakeReader:
         self.score_window = score_window
         self.seen = seen
 
-    def read_scenes(self, items: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
+    def read_scenes(self, items: Sequence[SceneWindow]) -> SceneReadings:
         self.seen.extend(items)
-        return tuple(
-            SceneReading(item, sv6d(item), self.score_window(item), PATH_B_MODEL) for item in items
+        return SceneReadings(
+            tuple(
+                SceneReading(item, sv6d(item), self.score_window(item), PATH_B_MODEL)
+                for item in items
+            )
         )
 
 
@@ -173,7 +182,7 @@ def test_component_failures_are_normalized_at_the_composer_boundary(
         )
 
         class FailingReader:
-            def read_scenes(self, items: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
+            def read_scenes(self, items: Sequence[SceneWindow]) -> SceneReadings:
                 raise failure
 
         def failing_reader(
@@ -219,7 +228,7 @@ def test_gpu_phases_are_closed_before_the_next_model_is_constructed(
             events.append("close-reranker")
 
     class LifecycleReader(FakeReader):
-        def read_scenes(self, items: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
+        def read_scenes(self, items: Sequence[SceneWindow]) -> SceneReadings:
             events.append("read")
             return super().read_scenes(items)
 
@@ -321,3 +330,91 @@ def test_cleanup_failure_after_success_is_a_composed_pipeline_error(
             media_id="m",
         )
     assert isinstance(caught.value.__cause__, OSError)
+
+
+# --- D-156: an unreadable survivor is reported, not fatal, and still accounted for -------------
+
+
+def test_an_unreadable_survivor_is_carried_into_the_result_not_dropped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The composer's exactness guard was "candidates == survivors", which a refusal breaks.
+
+    It is now "candidates ∪ unreadable == survivors" — still exact, so a scene cannot go
+    missing between the reranker and Stage 4, which is what the guard was for. The refusal
+    reaches `to_dict`, because a result that quietly holds four candidates for five survivors
+    is the silent case this module exists to prevent.
+    """
+
+    def fake_extract(
+        source: Path, window: SceneWindow, dest: Path, ffmpeg: Path | None
+    ) -> WindowFrames:
+        return WindowFrames(window, (dest / "frame.jpg", dest / "frame2.jpg"))
+
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", fake_extract)
+
+    class RefusesTheFirst:
+        def __init__(
+            self, read_frames: object, score_window: Callable[[SceneWindow], float]
+        ) -> None:
+            self.score_window = score_window
+
+        def read_scenes(self, items: Sequence[SceneWindow]) -> SceneReadings:
+            first, *rest = items
+            return SceneReadings(
+                tuple(
+                    SceneReading(item, sv6d(item), self.score_window(item), PATH_B_MODEL)
+                    for item in rest
+                ),
+                (
+                    UnreadableScene(
+                        window_id=first.window_id,
+                        in_ms=first.in_ms,
+                        out_ms=first.out_ms,
+                        reason="PathBError: the model returned no usable line for ['subject', …]",
+                    ),
+                ),
+            )
+
+    composer = VisualComposer(
+        FakeEmbedder(), FakeReranker, lambda read, score: RefusesTheFirst(read, score), keep=5
+    )
+    result = composer.discover(
+        tmp_path / "m.mp4", windows(12), "گرنگ", tmp_path / "work", media_id="m"
+    )
+
+    assert len(result.survivors) == 5
+    assert len(result.candidates) == 4
+    assert len(result.unreadable) == 1
+    emitted = result.to_dict()
+    assert emitted["unreadable"] == [
+        {
+            "window_id": result.unreadable[0].window_id,
+            "in_ms": result.unreadable[0].in_ms,
+            "out_ms": result.unreadable[0].out_ms,
+            "reason": result.unreadable[0].reason,
+        }
+    ]
+    assert emitted["candidate_ids"] == [c.candidate_id for c in result.candidates]
+
+
+def test_a_run_with_nothing_unreadable_still_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The control (D-110's rule). Emitting the key only when non-empty makes its absence
+    unreadable — a clean run and a build that does not record refusals look identical."""
+
+    def fake_extract(
+        source: Path, window: SceneWindow, dest: Path, ffmpeg: Path | None
+    ) -> WindowFrames:
+        return WindowFrames(window, (dest / "frame.jpg", dest / "frame2.jpg"))
+
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", fake_extract)
+    composer = VisualComposer(
+        FakeEmbedder(), FakeReranker, lambda read, score: FakeReader(read, score, []), keep=5
+    )
+    result = composer.discover(
+        tmp_path / "m.mp4", windows(12), "گرنگ", tmp_path / "work", media_id="m"
+    )
+    assert result.unreadable == ()
+    assert result.to_dict()["unreadable"] == []

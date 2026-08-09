@@ -331,6 +331,10 @@ pyannote access, or real-speaker reframing.
 - **M5.4 / D-136/D-137:** raw ffmpeg delivery is checked before parity trimming inside its private
   attempt directory, and the visual phase now assigns VideoChat3 to GPU 0 while Stage 2 and
   TimeLens use GPU 1.
+- **M5.3 / M5.5 / D-156:** one schema-invalid VideoChat3 survivor is now a named
+  `UnreadableScene`, not a failure that erases every readable survivor. Candidate IDs union
+  unreadable IDs must still exactly equal the reranked survivor set, and an all-unreadable call
+  still refuses. `evidence/one-window-discarded-every-candidate.md`.
 - **M5.4 / D-138 remains PARTIAL on acceptance, not composition:** the production 3090 Ti reads at
   most eight VideoChat3 frames (eight succeeded at 21.57 GiB; nine OOMed). Composed Path B now
   plans gap-free scene windows to that measured capacity while preserving the blueprint's general

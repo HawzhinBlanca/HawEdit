@@ -42,7 +42,13 @@ from pathlib import Path
 from typing import Any, Final
 
 from hawedit.clip import Sv6d, parse_timestamps_ms
-from hawedit.path_b import PATH_B_MODEL, PathBError, SceneReading
+from hawedit.path_b import (
+    PATH_B_MODEL,
+    PathBError,
+    SceneReading,
+    SceneReadings,
+    UnreadableScene,
+)
 from hawedit.qwen_visual import (
     DEFAULT_DEVICE,
     EmbedderUnavailable,
@@ -283,14 +289,34 @@ class VideoChat3Reader:
             model_id=self.model_id,
         )
 
-    def read_scenes(self, windows: Sequence[SceneWindow]) -> tuple[SceneReading, ...]:
-        """§3 Stage 3 Path B over these scenes, one reading each.
+    def read_scenes(self, windows: Sequence[SceneWindow]) -> SceneReadings:
+        """§3 Stage 3 Path B over these scenes, one reading or one stated refusal each.
 
         One call per window rather than one model batch: §3 calls segmentation mandatory and
         gives VRAM figures per frame count. `discover_visual` additionally packs its input into
         at-most-256-frame calls for any other implementation of this protocol.
+
+        A window whose output §3 refuses is recorded rather than raised. Measured on the real
+        38-minute file, one survivor of seven — a static logo card — answered with a time
+        *range* where the prompt asks for "the number alone", and that single refusal discarded
+        all seven candidates after Stage 0, 641 embeddings, retrieval and reranking had already
+        run. `discover_visual` still refuses when *nothing* was readable. D-156.
         """
-        return tuple(self.read_window(window) for window in windows)
+        readings: list[SceneReading] = []
+        unreadable: list[UnreadableScene] = []
+        for window in windows:
+            try:
+                readings.append(self.read_window(window))
+            except PathBError as exc:
+                unreadable.append(
+                    UnreadableScene(
+                        window_id=window.window_id,
+                        in_ms=window.in_ms,
+                        out_ms=window.out_ms,
+                        reason=f"{type(exc).__name__}: {exc}",
+                    )
+                )
+        return SceneReadings(tuple(readings), tuple(unreadable))
 
 
 def _use_sdpa_vision(config: Any) -> None:
