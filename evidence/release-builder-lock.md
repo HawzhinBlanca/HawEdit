@@ -42,6 +42,20 @@ The real release fixture creates this builder, builds twice, inspects the emitte
 for `Generator: setuptools (84.0.0)`, and checks exact provenance. It does not mock the trust
 boundary.
 
+## Cross-Python proof on the real project
+
+After the fix, clean revision `8d4810d28fd1c2edb3949492c2b5287a9fe06717` was released twice
+through the production command with the same hash-locked frontend/backend:
+
+| Builder Python | Wheel bytes | Wheel SHA-256 |
+|---|---:|---|
+| 3.11.15 | 329,973 | `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9` |
+| 3.12.10 | 329,973 | `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9` |
+
+The SPDX bytes were also identical. Provenance bytes intentionally differed because each document
+records its measured Python version; that is transparent input identity, not unexplained artifact
+drift.
+
 ## Mutation evidence
 
 Three independent source mutations were run and restored:

@@ -127,6 +127,9 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   independent `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally
   live beside the artifacts instead of in this changing source file. Signing and a project-owned
   OmniASR byte manifest remain open supply-chain work (`evidence/release-builder-lock.md`).
+- Cross-Python release proof: Python 3.11.15 and 3.12.10 each emitted the same 329,973-byte wheel
+  from revision `8d4810d28fd1`, SHA-256 `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9`.
+  Provenance differs deliberately because it records the measured interpreter.
 
 That evidence proves build/install/integration behavior. It does not turn absent real Sorani and
 human editorial benchmark results into numbers, and it does not prove a confidential Vertex

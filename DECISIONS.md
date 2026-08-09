@@ -3620,8 +3620,9 @@ ambient backend.
 
 **Decision 3 — builder identity is provenance, not tribal knowledge.** Provenance schema 3 records
 the measured Python, frontend, backend, full locked requirement map, lock path and lock SHA-256.
-Python is recorded rather than artificially fixed to one minor: the wheel supports 3.11+, and the
-next cross-version proof can distinguish an input change from unexplained drift.
+Python is recorded rather than artificially fixed to one minor: the wheel supports 3.11+. Measured
+on clean revision `8d4810d28fd1`, Python 3.11.15 and 3.12.10 each emitted the identical 329,973-byte
+wheel at SHA-256 `7765db5414dd…`; provenance alone differed because it names that real input.
 
 **Mutation audit 3/3.** The gate catches reopening the Setuptools range, bypassing the private
 builder for both wheel copies, and altering one nibble of the official Setuptools wheel hash. See
