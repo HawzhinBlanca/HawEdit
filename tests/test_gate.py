@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -273,3 +274,83 @@ def test_ci_runs_the_hawedit_gate() -> None:
         "no CI workflow runs scripts/verify.sh — the gate exists only on Hawa's "
         f"laptop. Workflows present: {sorted(bodies)}"
     )
+
+
+def _noop_interpreter(tmp_path: Path) -> str:
+    """An executable that exits 0 and says nothing — the shape of every no-op interpreter."""
+    fake = tmp_path / "not-python"
+    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+    fake.chmod(0o755)
+    return fake.as_posix()
+
+
+def test_an_interpreter_that_cannot_run_the_project_cannot_grade_it(tmp_path: Path) -> None:
+    """`PY` replaced every step at once, so the override refusal was a whitelist with a hole.
+
+    Measured: `PY=/usr/bin/true.exe bash scripts/verify.sh` printed VERIFY OK in one second,
+    exit 0, with no report written. Five steps ran `true.exe` — and the fifth is the evidence
+    step that exists precisely so the exit code stops being the evidence. It was grading the
+    other four, using the one skill `true.exe` has.
+
+    LINT_CMD and friends are refused because a replaced step "proves nothing about this
+    project". `PY` replaces all four and the evidence check as well, so it gets the same rule,
+    stated as a capability rather than a spelling: an interpreter that cannot import `hawedit`
+    is not running this project, whatever it exits. D-104.
+    """
+    result = _run_gate(PY=_noop_interpreter(tmp_path))
+    assert FULL_GATE_SUCCESS_LINE not in result.stdout, (
+        "a no-op interpreter printed the full-gate success line — the gate graded itself with "
+        "something that cannot run the code"
+    )
+    assert result.returncode == 3, f"expected interpreter refusal exit 3, got {result.returncode}"
+    assert "cannot import hawedit" in result.stderr
+    assert "==>" not in result.stdout, "steps ran before the interpreter was checked"
+
+
+def test_a_no_op_interpreter_is_refused_in_fast_mode_too(tmp_path: Path) -> None:
+    """`--fast` prints its own success line, so it needs the same interpreter to be real."""
+    result = _run_gate("--fast", PY=_noop_interpreter(tmp_path))
+    assert result.returncode == 3
+    assert "fast checks OK" not in result.stdout
+
+
+def test_a_real_python_without_this_project_installed_is_refused_by_name(tmp_path: Path) -> None:
+    """The likelier mistake than `true.exe`: some other venv's python, which really is Python.
+
+    Measured against `C:/Users/.../hermes-agent/venv/Scripts/python` — a real interpreter on
+    this box — which the gate refused with `ModuleNotFoundError: No module named 'hawedit'`
+    quoted back. Reproduced here without depending on a second Python existing: `-S` skips
+    `site`, so the editable install's `.pth` is never processed and `hawedit` is genuinely
+    unimportable, while the interpreter is genuinely CPython.
+
+    `PYTHONPATH` was the first attempt and it is not a substitute: it cannot hide an editable
+    install, so that version of this test never reached the probe at all and failed downstream
+    with exit 1.
+
+    The refusal has to quote what the interpreter answered — `ModuleNotFoundError` is the whole
+    diagnosis, and swallowing it leaves a reader of exit 3 guessing whether the path was wrong
+    or the install was.
+    """
+    wrapper = tmp_path / "python-without-the-project"
+    wrapper.write_text(
+        f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" -I -S "$@"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    wrapper.chmod(0o755)
+    result = _run_gate(PY=wrapper.as_posix())
+    assert result.returncode == 3, f"expected exit 3, got {result.returncode}: {result.stderr}"
+    assert "ModuleNotFoundError" in result.stderr, (
+        f"the refusal did not quote the interpreter's own answer: {result.stderr}"
+    )
+    assert FULL_GATE_SUCCESS_LINE not in result.stdout
+
+
+def test_the_projects_own_interpreter_still_passes_the_probe() -> None:
+    """The control. A probe that refuses everything satisfies all three tests above and turns
+    the gate into a machine that can never be green — the exact failure the override refusal
+    warns about from the other side.
+    """
+    result = _run_gate("--fast", PY=Path(sys.executable).as_posix())
+    assert result.returncode == 0, f"the real interpreter was refused: {result.stderr}"
+    assert "fast checks OK" in result.stdout

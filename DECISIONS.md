@@ -4143,10 +4143,66 @@ Common Voice always writes `locale`.
 ever. Mutation audit **3/3**: restoring the truthiness bypass is CAUGHT, the guard never firing is
 CAUGHT, and `row_locale == locale` — the over-strict direction — is CAUGHT only by the honest-`ckb`
 control, which also asserts the provenance, since the defect was the two disagreeing. Fourth
-consecutive iteration where over-strictness was visible only to a control (D-087, D-088, D-090).
+consecutive iteration where over-strictness was visible only to a control (D-087, D-088, D-102).
 
 **Scope, stated plainly:** M0.16 is BLOCKED and no corpus exists on this machine, so nothing shipped
 wrong output to a client. What shipped was a false guarantee — the docstring's fourth promise and
 M0.14's row both claimed a check a missing column walked around. Found by the fourth adversarial
 pass; premise re-verified here rather than taken from the agent's report.
 `evidence/common-voice-locale-bypass.md`.
+
+## D-104 · The gate interpreter must prove it can execute HawEdit
+
+**`PY` replaced every gate step at once, including the one that grades the other four.** The override
+refusal is a whitelist of one — `LINT_CMD`, `FORMAT_CMD`, `TYPECHECK_CMD`, `TEST_CMD` are each exit 5
+— on the recorded grounds that "no blacklist of ways to run nothing can be complete". `PY` is not
+refused, because it is a deliberate feature (D-039's Windows interpreter discovery), and `PY` is the
+prefix of all four commands plus the `hawedit.gate` evidence step. Measured:
+
+```
+$ PY=/usr/bin/true.exe bash scripts/verify.sh
+==> lint / typecheck / format / tests / test evidence
+VERIFY OK — hawedit gate green
+exit=0 elapsed=1s        report exists: NO
+```
+
+Layer 3 exists so that "the exit code stops being the evidence"; layer 3 was `true.exe`, auditing four
+other runs of `true.exe`. Never computed, not computed-and-discarded: no report was written for
+anything to read back.
+
+**Decision: an interpreter proves it can run this project before it is trusted to grade it.** One
+probe after `PY` resolves and before any step, at the single point `--fast`, nested and full runs all
+pass through: `"$PY" -c 'import hawedit; print("hawedit-interpreter-ok")'`, and the **shell checks the
+value**, not the exit code — an exit code is precisely what `true.exe` is good at. Exit 3, which was
+unused. Stated as a capability rather than a spelling, which is the same inversion the override
+refusal already relies on.
+
+**Rejected: refusing `PY` outright.** It would close the hole and break the project. `PY` is how the
+gate runs on hawapc01 at all (`Scripts/` vs `bin/`, D-039), and CI resolves it from `.venv`. A gate
+that cannot be pointed at its own interpreter is not more trustworthy, only less runnable.
+
+**Rejected: asserting `hawedit.__file__` lives under the checkout.** It would additionally catch
+"a real python from a *different* checkout", and it is exactly what breaks the worktree-isolated
+adversarial passes, whose `.venv` is a junction into the main checkout — and it would refuse any
+non-editable install, including a wheel smoke test. Bought a narrow case at the price of two real
+workflows.
+
+**Rejected: a shell-side check that the report file exists after the test step.** Redundant once the
+interpreter is real, since `hawedit.gate` already refuses a missing report and is now genuinely
+running.
+
+**Mutation audit 5/5**, and stated precisely because a mutation caught for an unrelated reason reads
+as protection it does not have (D-087): the probe never refusing is CAUGHT (3), `-n "$_probe" &&` —
+the D-103 truthiness shape, which would have re-admitted `true.exe` because it says nothing — is
+CAUGHT (2), swallowing the interpreter's answer is CAUGHT (1), dropping `import hawedit` from the
+probe is CAUGHT (1), and refusing every interpreter is CAUGHT (10). The last two single-test catches
+are the ones doing real work. **The over-strict direction was already covered** by nine pre-existing
+tests of the gate's success path, so the new control makes the property explicit rather than newly
+protected — unlike D-087, D-088, D-102 and D-103, where a control was the only witness. Recording
+that difference rather than continuing the pattern by assertion.
+
+**Not closed, and left as the next item:** a forged JUnit report. With a real `PY`, something else
+answering to `-m pytest` on `PYTHONPATH` could write an XML that layer 3 reads back and accepts. The
+probe cannot see it, because the interpreter genuinely is this project's. It needs its own
+measurement — it was reported by an adversarial-pass agent and I have not reproduced it.
+`evidence/py-override-bypassed-the-whole-gate.md`.
