@@ -20,6 +20,7 @@ from hawedit.asr import (
     OmniSegmentBackend,
     _assemble_canonical_transcript,
     _PreparedSpeechSegment,
+    transcribe_prepared_segments,
 )
 from hawedit.transcripts import RawTranscript
 
@@ -77,13 +78,10 @@ def run_request(
         prepared.append(segment)
 
     model = backend or OmniAsrBackend()
-    transcript = _assemble_canonical_transcript(
-        media_id,
-        tuple(
-            (segment, model.transcribe_segment(segment.path, segment.duration_s))
-            for segment in prepared
-        ),
-    )
+    # The shared helper, not a second generator expression: one unalignable region used to
+    # discard every other region's inference. D-103.
+    results, unaligned = transcribe_prepared_segments(model, prepared)
+    transcript = _assemble_canonical_transcript(media_id, results, unaligned)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(transcript.to_json())

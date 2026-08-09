@@ -4285,3 +4285,63 @@ distinguish *never provisioned* from *provisioned, then the source changed*, and
 actions — the same conflation D-099 fixed for downloaded-versus-runnable. Recorded rather than
 patched, because narrowing the fingerprint to the worker's real import closure is a design step.
 `evidence/wsl-exec-and-the-38-minute-run.md`.
+
+## D-103
+
+**One unalignable speech region discarded a whole 38-minute run.** Measured on
+`ZAR38MinTest.mp4` (2313.8 s): Stage 0 cut **547** speech regions holding 2076.5 s of speech, and
+one 316 ms region produced 15 CTC frames for 15 tokens. `AlignmentInfeasible` refused it — correctly;
+inventing a word boundary is exactly what Kurdish invariant #5 forbids. But both producers built
+their results with a generator expression:
+
+```python
+results = tuple(
+    (segment, self.backend.transcribe_segment(segment.path, segment.duration_s))
+    for segment in prepared
+)
+```
+
+so the first raise discarded a finished Stage 0 and every other region's inference, and the operator
+got **no transcript at all** for 38 minutes of Kurdish. 6 of 547 regions sit in that duration band,
+so this is not a rare input.
+
+**Decision: a failed region becomes a recorded failure, not an aborted run.** This repo already
+settled the shape in `MeasurementSession.measure` — "a raised exception becomes a recorded failure
+rather than an aborted run", because a run that dies on the first bad item produces no rate at all.
+The same reasoning, one stage earlier. `transcribe_prepared_segments` is shared by both producers,
+because the identical generator existed twice and D-102 had just finished paying for duplicated
+invocation logic.
+
+**The record lives in the artifact, not a log.** `RawTranscript.unaligned` carries each region's
+bounds on the media clock and the reason. A transcript that quietly omits speech is worse than the
+refusal it replaces: `transcript.raw.json` ships to the client (invariant #1), and a reader cannot
+tell speech the model refused from silence that was never there. §5 states the same principle for
+candidates — "that set is your only measure of recall".
+
+**No text is kept for a failed region.** A region whose token count exceeds what its frames can emit
+has produced text the audio cannot support, so shipping it as canonical would be the invented-content
+failure invariant #5 exists to prevent. The honest record is that this much speech has no
+transcription, with the reason.
+
+**§5 is not contradicted.** BLUEPRINT's only statement about this file is "EXACTLY as ASR emitted.
+Never modified. Ships to client." — it enumerates no fields. `unaligned` is metadata *about* the
+emission rather than a modification of it, and it defaults to `()`, so a clean run's artifact is
+byte-identical to before. `from_json` reads pre-D-103 transcripts with `.get`, because refusing to
+read an old canonical artifact to satisfy a new field would break invariant #1 from the other side.
+
+**Rejected: a threshold on how many regions may fail.** Any number would be guessed, which the hard
+rules forbid. The only bound that needs no number is that *something* aligned: a run where nothing
+aligned is refused rather than written as an empty transcript, since a file with no words and no text
+would sail past every downstream stage as though the media had no speech.
+
+**Rejected: pre-filtering short regions before inference.** It needs a minimum-duration threshold —
+guessed again — and it would drop speech silently, which is the failure this change exists to make
+impossible.
+
+**Mutation audit 6/6.** Re-raising instead of recording CAUGHT (3), failures collected then dropped
+from the artifact CAUGHT (1), a nothing-aligned run written as an empty transcript CAUGHT (1),
+narrowing the catch to `AlignmentInfeasible` alone CAUGHT (3), reporting every region as unaligned —
+the over-strict direction — CAUGHT (6) by the clean-run control, and a blank reason accepted CAUGHT
+(1). That last one survived the first audit: I had written the guard and no test exercised it, which
+is the same absence-of-a-check this whole iteration is about.
+`evidence/one-region-discarded-a-38-minute-run.md`.

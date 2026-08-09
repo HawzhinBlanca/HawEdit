@@ -35,14 +35,18 @@ from hawedit.asr import (
     OmniAsrProducer,
     SegmentTranscript,
     WslOmniAsrProducer,
+    _assemble_canonical_transcript,
+    _PreparedSpeechSegment,
     create_omni_asr_producer,
     long_audio_failure_rate,
+    transcribe_prepared_segments,
     validate_adapter,
 )
 from hawedit.asr_worker import run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
+from hawedit.forced_alignment import AlignmentInfeasible
 from hawedit.registry import ModelExcluded, ModelNotInRegistry
-from hawedit.transcripts import Word
+from hawedit.transcripts import RawTranscript, Word
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti", notes="Threadripper 3990X")
 AN_A100 = Hardware(host="a100-box", accelerator="A100")
@@ -358,3 +362,110 @@ def test_omni_runtime_selection_is_explicit() -> None:
     assert isinstance(create_omni_asr_producer("wsl"), WslOmniAsrProducer)
     with pytest.raises(ValueError, match="auto, local, wsl"):
         create_omni_asr_producer("remote")
+
+
+# --- D-103: one unalignable region used to discard a whole 38-minute run ---------------------
+
+
+class _RefusingOnOneSegment:
+    """Transcribes every region except the one whose audio is too short for its tokens.
+
+    Mirrors what the real stack did on `ZAR38MinTest.mp4`: 547 regions cut, one 316 ms region
+    produced 15 CTC frames for 15 tokens, and `AlignmentInfeasible` refused.
+    """
+
+    def __init__(self, failing_stem: str) -> None:
+        self.failing_stem = failing_stem
+        self.seen: list[str] = []
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+        self.seen.append(audio_path.stem)
+        if audio_path.stem == self.failing_stem:
+            raise AlignmentInfeasible(
+                "15 frames cannot emit 15 tokens: CTC needs at least 17 frames"
+            )
+        return SegmentTranscript(
+            text_raw="کوردی.",
+            words=(Word(w="کوردی.", start_ms=50, end_ms=500, conf=0.9),),
+            mean_logprob=-0.1,
+        )
+
+
+def _regions(tmp_path: Path, count: int) -> tuple[_PreparedSpeechSegment, ...]:
+    prepared = []
+    for index in range(count):
+        path = tmp_path / f"speech-{index:04d}.wav"
+        path.write_bytes(b"wav")
+        prepared.append(_PreparedSpeechSegment(path, index * 1_000, index * 1_000 + 600))
+    return tuple(prepared)
+
+
+def test_one_unalignable_region_does_not_discard_the_others(tmp_path: Path) -> None:
+    """Measured before the fix: the run raised and 38 minutes of Kurdish produced nothing.
+
+    `AlignmentInfeasible` is correct — inventing a word boundary is what invariant #5 forbids —
+    so the refusal stays and the blast radius shrinks to the one region. D-103.
+    """
+    prepared = _regions(tmp_path, 5)
+    backend = _RefusingOnOneSegment("speech-0002")
+
+    results, unaligned = transcribe_prepared_segments(backend, prepared)
+
+    assert len(results) == 4, "the other four regions must still be transcribed"
+    assert len(backend.seen) == 5, "the failure must not stop the loop"
+    assert [gap.start_ms for gap in unaligned] == [2_000]
+    assert "AlignmentInfeasible" in unaligned[0].reason
+    assert "17 frames" in unaligned[0].reason, "the reason must survive into the record"
+
+
+def test_the_written_transcript_says_which_speech_it_does_not_contain(tmp_path: Path) -> None:
+    """Asserted on the artifact. A short transcript with no record of the gap is worse than the
+    refusal it replaced: the client cannot tell missing speech from silence that was never there.
+    """
+    prepared = _regions(tmp_path, 3)
+    results, unaligned = transcribe_prepared_segments(
+        _RefusingOnOneSegment("speech-0001"), prepared
+    )
+    transcript = _assemble_canonical_transcript("zar38", results, unaligned)
+
+    document = json.loads(transcript.to_json())
+    assert document["unaligned"] == [
+        {
+            "start_ms": 1_000,
+            "end_ms": 1_600,
+            "reason": document["unaligned"][0]["reason"],
+        }
+    ]
+    assert "AlignmentInfeasible" in document["unaligned"][0]["reason"]
+    assert RawTranscript.from_json(transcript.to_json()) == transcript
+
+
+def test_a_run_where_nothing_aligned_is_refused_rather_than_written_empty(tmp_path: Path) -> None:
+    """The control on the other side. "Record failures and continue" must not become "write an
+    empty transcript": a file with no words and no text is not a transcript, and it would sail
+    past every downstream stage as though the media had no speech.
+    """
+    prepared = _regions(tmp_path, 2)
+
+    class RefusingAlways:
+        def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+            raise AlignmentInfeasible("no frames at all")
+
+    results, unaligned = transcribe_prepared_segments(RefusingAlways(), prepared)
+    assert results == ()
+    with pytest.raises(RuntimeError, match="aligned none of 2 speech regions"):
+        _assemble_canonical_transcript("zar38", results, unaligned)
+
+
+def test_a_clean_run_records_no_gaps_at_all(tmp_path: Path) -> None:
+    """The control. A helper that reported every region as unaligned would satisfy the tests
+    above and quietly empty every transcript this project has ever produced.
+    """
+    prepared = _regions(tmp_path, 4)
+    results, unaligned = transcribe_prepared_segments(FakeOmniBackend(), prepared)
+
+    assert len(results) == 4
+    assert unaligned == ()
+    transcript = _assemble_canonical_transcript("zar38", results, unaligned)
+    assert transcript.unaligned == ()
+    assert json.loads(transcript.to_json())["unaligned"] == []

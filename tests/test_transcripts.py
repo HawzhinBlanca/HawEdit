@@ -28,6 +28,7 @@ from hawedit.transcripts import (
     RawTranscriptTampered,
     StaleNormalizedTranscript,
     TranscriptStore,
+    UnalignedSpeech,
     Word,
     assert_model_input,
     normalize_transcript,
@@ -344,3 +345,31 @@ def test_validator_model_must_also_be_registered() -> None:
             words=(),
             asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", validated_by="some-other-asr"),
         )
+
+
+# --- D-103: a gap in a client-facing transcript must say why ---------------------------------
+
+
+def test_an_unaligned_gap_must_carry_a_reason() -> None:
+    """An unexplained gap is indistinguishable from silence that was never there.
+
+    §5 already states this shape for `RejectedCandidate` — "a blank reason measures nothing" —
+    and a transcript that ships to a client has the stronger version of the problem: the reader
+    cannot tell speech the model refused from speech that did not happen.
+    """
+    with pytest.raises(ValueError, match="needs a reason"):
+        UnalignedSpeech(start_ms=1_000, end_ms=1_316, reason="   ")
+
+
+def test_an_unaligned_gap_must_have_length() -> None:
+    with pytest.raises(ValueError, match="no length"):
+        UnalignedSpeech(start_ms=1_316, end_ms=1_316, reason="AlignmentInfeasible: 15 frames")
+
+
+def test_a_real_reason_and_span_are_accepted() -> None:
+    """The control: the two refusals above must not amount to refusing every gap."""
+    gap = UnalignedSpeech(
+        start_ms=1_000, end_ms=1_316, reason="AlignmentInfeasible: 15 frames cannot emit 15 tokens"
+    )
+    assert gap.end_ms - gap.start_ms == 316
+    assert "15 tokens" in gap.reason

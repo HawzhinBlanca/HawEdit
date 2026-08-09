@@ -38,7 +38,7 @@ from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
 from hawedit.forced_alignment import align_words
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
-from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.transcripts import AsrProvenance, RawTranscript, UnalignedSpeech, Word
 from hawedit.wsl_setup import _prefix as wsl_prefix
 from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, wsl_path
 
@@ -331,11 +331,8 @@ class OmniAsrProducer:
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
-        results = tuple(
-            (segment, self.backend.transcribe_segment(segment.path, segment.duration_s))
-            for segment in prepared
-        )
-        return _assemble_canonical_transcript(media_id, results)
+        results, unaligned = transcribe_prepared_segments(self.backend, prepared)
+        return _assemble_canonical_transcript(media_id, results, unaligned)
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,10 +403,54 @@ def _cut_speech_regions(
     return tuple(prepared)
 
 
+def transcribe_prepared_segments(
+    backend: OmniSegmentBackend,
+    prepared: Sequence[_PreparedSpeechSegment],
+) -> tuple[
+    tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
+    tuple[UnalignedSpeech, ...],
+]:
+    """Transcribe every Stage 0 region, recording the ones that fail instead of aborting.
+
+    Both producers built this list with a generator expression, so the first raise discarded a
+    finished Stage 0 and every other region's inference. Measured 2026-08-09 on a real 38-minute
+    file: 547 regions cut, one 316 ms region produced 15 CTC frames for 15 tokens, and
+    `AlignmentInfeasible` refused — correctly, since inventing a word boundary is what Kurdish
+    invariant #5 forbids. The operator got no transcript for 38 minutes of Kurdish because of it.
+
+    This repo already settled the shape in `MeasurementSession.measure`: "a raised exception
+    becomes a recorded failure rather than an aborted run", because a run that dies on the first
+    bad item produces no rate at all. The same reasoning, one stage earlier. D-103.
+    """
+    results: list[tuple[_PreparedSpeechSegment, SegmentTranscript]] = []
+    failures: list[UnalignedSpeech] = []
+    for segment in prepared:
+        try:
+            item = backend.transcribe_segment(segment.path, segment.duration_s)
+        except Exception as exc:  # broad on purpose: the failure IS part of the transcript
+            failures.append(
+                UnalignedSpeech(
+                    start_ms=segment.start_ms,
+                    end_ms=segment.end_ms,
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            continue
+        results.append((segment, item))
+    return tuple(results), tuple(failures)
+
+
 def _assemble_canonical_transcript(
     media_id: str,
     results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
+    unaligned: Sequence[UnalignedSpeech] = (),
 ) -> RawTranscript:
+    if not results:
+        raise RuntimeError(
+            f"canonical ASR aligned none of {len(unaligned)} speech regions; there is no "
+            f"transcript to write. First reason: "
+            f"{unaligned[0].reason if unaligned else 'no regions were supplied'}"
+        )
     texts: list[str] = []
     words: list[Word] = []
     logprobs: list[float] = []
@@ -440,6 +481,7 @@ def _assemble_canonical_transcript(
             aligner="ctc_viterbi",
             mean_logprob=sum(logprobs) / len(logprobs) if logprobs else None,
         ),
+        unaligned=tuple(unaligned),
     )
 
 
