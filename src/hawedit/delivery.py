@@ -22,6 +22,11 @@ footage from the top of the episode, and nothing about the file looks wrong.
 
 An EDL also counts **frames**, not milliseconds, so it cannot be written without the rate —
 and 29.97 is where that stops being a rounding question and becomes a refusal.
+
+The SRT shares §4.3.5's line breaking with the ASS for the same reason it shares the clip
+offset: "Insert line breaks yourself from the word alignment … automatic wrapping on RTL text
+produces bad break points regardless." A player wraps whatever it is handed, so a cue emitted
+as one long line hands that decision to a wrapper that has no word alignment (D-114).
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import re
 from collections.abc import Sequence
 from typing import Final
 
+from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, wrap_caption_lines
 from hawedit.sentences import Sentence
 
 __all__ = [
@@ -76,11 +82,16 @@ def build_srt(
     sentences: Sequence[Sentence],
     clip_in_ms: int,
     clip_duration_ms: int | None = None,
+    max_chars_per_line: int = DEFAULT_MAX_CHARS_PER_LINE,
 ) -> str:
     """The SRT sidecar for one clip, on the clip's own timeline.
 
     Text is the **raw** surface forms, as the ASS is: a viewer sees what was said, not the
     index's normalized form (Kurdish invariant #3 runs the other way).
+
+    Lines are broken from the word alignment by the same `wrap_caption_lines` the ASS uses
+    (§4.3.5). SRT has no `WrapStyle` to disable, so the only way to keep the break points is to
+    emit them; a single-line cue delegates them to the player.
 
     Raises:
         DeliveryError: no sentences, a sentence that never closed, or one outside the clip.
@@ -108,7 +119,11 @@ def build_srt(
             )
         start = ms_to_srt_time(sentence.start_ms - clip_in_ms)
         end = ms_to_srt_time(sentence.end_ms - clip_in_ms)
-        cues.append(f"{index}\n{start} --> {end}\n{sentence.text}\n")
+        text = "\n".join(
+            " ".join(word.w for word in line)
+            for line in wrap_caption_lines(sentence.words, max_chars=max_chars_per_line)
+        )
+        cues.append(f"{index}\n{start} --> {end}\n{text}\n")
     return "\n".join(cues) + "\n"
 
 

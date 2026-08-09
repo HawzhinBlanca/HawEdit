@@ -4834,3 +4834,63 @@ hit line 105, not the guard at 169, so the "proof" measured nothing and reported
 line number fixed it. Both errors were caught by checking the result rather than trusting it, which is
 the only reason this entry is not a false claim.
 `evidence/a-test-that-could-delete-itself.md`.
+
+## D-114
+
+**§4.3.5's line breaking reached one of the two subtitle formats §2 delivers.** `build_ass` breaks
+every caption from the word alignment through `wrap_caption_lines`; `build_srt` wrote
+`sentence.text`, which is `" ".join(words)`. So the SRT that ships beside the MP4 handed its break
+points to whatever wraps the cue at playback — with no word alignment, on Arabic script.
+
+Measured on the real 38-minute run:
+
+```
+ZAR38MinTest.transcript.raw.json   878,195 bytes, 6,104 words, 185 complete sentences
+sentences <= 60 s, so a clip can carry them   182
+  wider than DEFAULT_MAX_CHARS_PER_LINE (32)  149   (81.9%)
+  median width                                104 chars  -> 4 lines
+  widest                                      973 chars  -> 33 lines
+before the fix, every one of those was a single SRT line
+
+longest sentence by time  102.5 s, 1,702 chars, 57 lines
+  §4.2 never split it — unpunctuated ASR output, and the VAD-pause branch is dead
+  (BLOCKED #14). `build_srt` refuses it for any clip shorter than 102.5 s, so it does
+  not reach a sidecar; it is evidence about segmentation, not about wrapping.
+```
+
+§4.3.5 is a numbered requirement under a section titled **MANDATORY**: *"Insert line breaks
+yourself from the word alignment … Automatic wrapping on RTL text produces bad break points
+regardless."*
+
+**Decision: the SRT calls the same `wrap_caption_lines`, at the same width, and the two formats are
+pinned to each other by a test.** Reading §4.3.5 as covering the SRT is a judgement, and it is worth
+naming: the requirement's parenthetical is about libass's `wrap_unicode` and native ASS. What
+generalises is the sentence after it — *bad break points regardless* — and §2's diagram delivers
+`SRT/ASS` as one item. SRT has no `WrapStyle: 2` to disable, so emitting the breaks is the only way
+to keep them.
+
+**Rejected: a wider line for the SRT.** A burned-in caption is 1080 px of vertical crop and an SRT
+plays at an unknown width, so a different number is arguably right — and there is no measurement
+behind any particular one. `DEFAULT_MAX_CHARS_PER_LINE` is this project's one recorded caption
+width; a second, invented one would be a guessed threshold, and the never-guess rule covers exactly
+this. The parameter is exposed the way `build_ass` exposes it, so a measured width later is a call
+site change, not a fork.
+
+**Rejected: capping a cue at two lines**, which is the common subtitling convention. The overflow
+rule is unspecified, and every way to obey a cap — drop a word, merge lines past the width, split a
+sentence into two cues with invented timings — is worse than a three-line cue. Measured, the real
+run's longest sentence needs up to **33** lines for a sentence a clip can carry, and 57 for the longest `segment_sentences` produced.
+
+**The independent witness is weaker than it looked, and that was measured rather than assumed.** The
+ffmpeg round-trip was added so this module's own `parse_srt_times` is not the only reader that says
+the file is intact. It does prove the breaks survive as in-cue line breaks. It does **not** enforce
+the format's blank-line rule: separating the wrapped lines by a blank line round-trips through
+ffmpeg **byte-identical to the correct file**, so that mutation passes the ffmpeg test on its own.
+The blank-line hazard is pinned by the cue-splitting test instead, and both docstrings now say so —
+a control that agrees for the wrong reason reads as protection it does not have (D-082).
+
+**Mutation audit 6/6** against a baseline verified green first: the cue back on one line CAUGHT,
+every word on its own line CAUGHT (the control — always-wrap satisfies the width assertion and is
+equally wrong), the wrapper losing its last line CAUGHT, lines separated by a blank line CAUGHT,
+breaking by character instead of by word CAUGHT, and the two formats given different widths CAUGHT.
+`evidence/the-srt-let-the-player-choose-the-break-points.md`.

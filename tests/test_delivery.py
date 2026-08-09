@@ -24,8 +24,13 @@ rate. 29.97 is where that becomes a refusal rather than a rounding.
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+from typing import Final
+
 import pytest
 
+from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, build_ass, find_ffmpeg
 from hawedit.delivery import (
     DeliveryError,
     build_edl,
@@ -36,6 +41,8 @@ from hawedit.delivery import (
 )
 from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
+
+needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 
 
 def a_sentence(start_ms: int, end_ms: int, text: str = "ڕۆژنامەوانی کوردی.") -> Sentence:
@@ -128,6 +135,112 @@ def test_no_sentences_is_refused_rather_than_an_empty_file() -> None:
 def test_the_srt_ends_with_a_blank_line() -> None:
     srt = build_srt((a_sentence(0, 1_000),), clip_in_ms=0)
     assert srt.endswith("\n\n")
+
+
+# =========================================================================================
+# §4.3.5 line breaking — the SRT is the other subtitle format, and a player wraps whatever
+# it is handed
+# =========================================================================================
+
+# Real Sorani, long enough that ordinary speech crosses the line width. 74 chars, 12 words.
+LONG_SORANI: Final = "ڕۆژنامەوانی کوردی لە هەولێر و سلێمانی و دهۆک بەردەوامە لەسەر کارەکانی خۆی."
+
+
+def cue_lines(srt: str) -> list[str]:
+    """The text lines of the single cue in `srt`."""
+    blocks = [block for block in srt.split("\n\n") if block.strip()]
+    assert len(blocks) == 1, f"expected one cue, got {len(blocks)}"
+    return blocks[0].splitlines()[2:]
+
+
+def test_a_long_sentence_is_broken_from_the_word_alignment_not_by_the_player() -> None:
+    """§4.3.5: insert line breaks yourself — "automatic wrapping on RTL text produces bad
+    break points regardless". SRT has no `WrapStyle: 2` to disable, so a one-line cue hands
+    the decision to a wrapper with no word alignment."""
+    lines = cue_lines(build_srt((a_sentence(0, 4_000, LONG_SORANI),), clip_in_ms=0))
+    assert len(lines) > 1, "a 74-char cue on one line is the player's break points, not ours"
+    assert max(len(line) for line in lines) <= DEFAULT_MAX_CHARS_PER_LINE
+
+
+def test_a_sentence_that_fits_is_left_on_one_line() -> None:
+    """The control. Breaking every cue satisfies the test above and is equally wrong — it
+    puts a break where the speech has none."""
+    short = "ڕۆژنامەوانی کوردی."
+    assert len(short) <= DEFAULT_MAX_CHARS_PER_LINE
+    assert cue_lines(build_srt((a_sentence(0, 1_000, short),), clip_in_ms=0)) == [short]
+
+
+def test_wrapping_neither_drops_nor_reorders_nor_splits_a_word() -> None:
+    """The second control: a wrapper that meets the width by dropping a word, or by cutting
+    one in half, passes the width assertion. Arabic script split mid-word also breaks
+    shaping, so the reassembled cue must be the sentence exactly."""
+    sentence = a_sentence(0, 4_000, LONG_SORANI)
+    lines = cue_lines(build_srt((sentence,), clip_in_ms=0))
+    assert " ".join(lines) == sentence.text
+
+
+def test_a_wrapped_cue_does_not_contain_the_blank_line_that_would_end_it() -> None:
+    """A blank line terminates a cue in SRT, so wrapping must not emit one.
+
+    Measured, ffmpeg's demuxer does **not** enforce that: separating the wrapped lines by a
+    blank line round-trips through ffmpeg byte-identical to the correct file. So this is a
+    check about the strict parsers ffmpeg is not, and the round-trip below cannot stand in
+    for it — that is why both exist.
+    """
+    srt = build_srt(
+        (a_sentence(0, 4_000, LONG_SORANI), a_sentence(4_000, 8_000, LONG_SORANI)),
+        clip_in_ms=0,
+    )
+    assert len(parse_srt_times(srt)) == 2
+    assert [line for line in srt.splitlines() if line.strip().isdigit()] == ["1", "2"]
+
+
+def test_the_two_subtitle_formats_break_the_same_sentence_the_same_way() -> None:
+    """§4.3.5 is a requirement about the delivered subtitles, and §2 delivers two formats.
+    Sharing `wrap_caption_lines` is what keeps them from drifting apart."""
+    sentence = a_sentence(0, 4_000, LONG_SORANI)
+    srt_lines = cue_lines(build_srt((sentence,), clip_in_ms=0))
+    dialogue = [
+        line
+        for line in build_ass((sentence,), clip_in_ms=0).splitlines()
+        if line.startswith("Dialogue:")
+    ]
+    assert len(dialogue) == 1
+    assert dialogue[0].split(",", 9)[9].split("\\N") == srt_lines
+
+
+@needs_ffmpeg
+def test_a_written_srt_reads_back_through_ffmpeg_with_both_cues_intact(tmp_path: Path) -> None:
+    """The written artifact, parsed by something that is not us.
+
+    Putting `\\n` inside an SRT cue is the whole change, and `parse_srt_times` is this module's
+    own reader — it cannot be the only witness that a real demuxer reads those breaks as
+    in-cue line breaks rather than as the end of the cue. ffmpeg reads the file back with both
+    cues, three lines each, and every word present.
+    """
+    written = tmp_path / "clip.srt"
+    written.write_text(
+        build_srt(
+            (a_sentence(0, 4_000, LONG_SORANI), a_sentence(4_000, 8_000, LONG_SORANI)),
+            clip_in_ms=0,
+        ),
+        encoding="utf-8",
+    )
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    out = tmp_path / "roundtrip.srt"
+    subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(written), str(out)],
+        check=True,
+        capture_output=True,
+    )
+    body = out.read_text(encoding="utf-8")
+    assert [line for line in body.splitlines() if line.strip().isdigit()] == ["1", "2"], body
+    # The breaks are still breaks after the round trip, and no word was lost on the way.
+    blocks = [block.splitlines()[2:] for block in body.split("\n\n") if block.strip()]
+    assert [len(block) for block in blocks] == [3, 3], body
+    for block in blocks:
+        assert " ".join(block) == LONG_SORANI
 
 
 # =========================================================================================
