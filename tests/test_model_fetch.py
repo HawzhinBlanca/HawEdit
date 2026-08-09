@@ -431,8 +431,10 @@ def test_model_root_identity_drift_stops_publication(
         def __getattr__(self, name: str) -> object:
             return getattr(self._original, name)
 
-    def lstat(path: object, *args: object, **kwargs: object) -> os.stat_result | ChangedIdentity:
-        observed = original_lstat(path, *args, **kwargs)
+    def lstat(
+        path: str | os.PathLike[str], *, dir_fd: int | None = None
+    ) -> os.stat_result | ChangedIdentity:
+        observed = original_lstat(path, dir_fd=dir_fd)
         if drifted and Path(os.fsdecode(path)) == tmp_path:
             return ChangedIdentity(observed)
         return observed

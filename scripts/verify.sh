@@ -88,6 +88,18 @@ if [[ "$_probe" != hawedit-environment-ok ]]; then
   exit 3
 fi
 
+# Environment identity alone does not authenticate the programs invoked by `-m`. Measured on
+# 2026-08-09, a 30-line fake pytest on PYTHONPATH forged a clean JUnit report and poisoned the
+# committed floor. Run this probe without isolated startup so it resolves modules exactly as the
+# later gate commands do, and require every gate tool to come from this locked environment.
+_tool_probe="$("$PY" -m hawedit.gate --check-tools 2>&1 || true)"
+if [[ "$_tool_probe" != *hawedit-interpreter-ok* ]]; then
+  echo "REFUSED: canonical gate tools are missing or shadowed." >&2
+  echo "It answered: ${_tool_probe:-<nothing at all>}" >&2
+  echo "Clear PYTHONPATH/module shadowing or rebuild with bash scripts/setup.sh." >&2
+  exit 3
+fi
+
 # `${VAR-default}` (no colon) substitutes only when VAR is UNSET. An explicitly empty
 # override therefore stays empty and is caught by _noop_check below. With `${VAR:-default}`
 # an empty value would be silently replaced by the default, so `LINT_CMD=` would look like a

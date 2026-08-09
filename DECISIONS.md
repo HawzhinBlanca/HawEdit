@@ -4519,3 +4519,115 @@ resume for the next run. Hardlinks, reparse points, permissive POSIX modes and a
 The boundary excludes privileged and same-account out-of-band mutation; exact post-download byte
 verification and the HawEdit reader/writer lock remain mandatory. D-124 supersedes D-120's random
 active-name mechanism, not its pre-write validation rule. `evidence/checkpoint-provisioning.md`.
+
+## D-125 - Gate evidence authenticates the real test runner
+
+A real Python interpreter could still import a forged `pytest` from `PYTHONPATH`, write a clean
+JUnit report, and ratchet the committed floor without executing the suite. The canonical gate now
+checks that every invoked gate tool resolves inside the locked environment before any step runs;
+checkout identity and dependency identity remain independently enforced by D-117.
+`evidence/forged-test-report-accepted.md`.
+
+## D-126 - Aggregate CER reports must carry their dialect denominators
+
+The benchmark object enforced per-dialect results while its serialized report could omit them.
+Report construction now requires the exact dialect breakdown that justifies the aggregate, and
+refuses a report whose totals do not close. `evidence/aggregate-cer-without-its-dialects.md`.
+
+## D-127 - The test floor ratchet must be idempotent under skips
+
+Using collected tests instead of passed tests poisons the next honest run whenever a legitimate
+skip exists. The evidence contract and committed floor now use passed counts, with an artifact
+test proving that two identical green runs leave the second green.
+`evidence/floor-ratchet-unprotected.md`.
+
+## D-128 - Ledger test counts are measurements, not standing prose
+
+Twenty-one recorded per-file counts had drifted. Counts that are not enforced are removed from
+status claims; the canonical collected/pass totals come from the gate artifact and ratchet.
+`evidence/adversarial-pass-5-2026-08-09.md`.
+
+## D-129 - A model stub cannot satisfy real-checkpoint evidence
+
+Availability and benchmark evidence must distinguish injected test doubles from reviewed weights.
+Reports now bind the concrete adapter/checkpoint identity and reject stub-equivalent promotion
+claims. `evidence/stub-indistinguishable-from-real-weights.md`.
+
+## D-130 - Recorded thresholds are executable contracts
+
+Threshold values cited as decisions must be asserted against the constants that enforce them.
+Changing a threshold therefore requires changing the decision and its regression together rather
+than silently drifting prose or code. Four existing choices are restated in canonical executable
+form so the record—not a self-following fixture—is the authority:
+
+- `MATERIAL_GAIN_RATIO = 0.10` — D-010's ≥10% relative CER improvement.
+- `DEFAULT_IOU_MATCH = 0.5` — D-020's temporal match boundary.
+- `RETRIEVE_K = 50` — §3's fixed retrieval depth.
+- `DEFAULT_TOLERANCE_MS = 50` — one roughly 24 fps frame, reported with every alignment score.
+
+`evidence/recorded-thresholds-unpinned.md`.
+
+## D-131 - Downloaded weights are unavailable without their loader
+
+An exact checkpoint on disk is not runnable when the package that implements its architecture is
+absent. Model readiness first verifies the complete byte manifest, then also requires the named
+runtime loader; downloaded-but-unloadable is reported as unavailable with both facts.
+`evidence/downloaded-is-not-runnable.md`.
+
+## D-132 - Readiness summaries are derived from structured status
+
+The human report once printed the opposite of the underlying availability state. Rendering is now
+a pure projection of `ModelStatus`, including a measured zero-byte checkpoint rather than treating
+zero as unmeasured. `evidence/readiness-report-could-print-the-opposite.md`.
+
+## D-133 - Delivery provenance names the path that actually found the clip
+
+`editing.json` may not label every result as verbal merely because the selected transcript is
+present. Discovery path is carried from the surviving candidate through clip construction and is
+rendered distinctly for verbal, visual, and union discoveries.
+`evidence/adversarial-pass-6-2026-08-09.md`.
+
+## D-134 - WSL commands bypass the distribution shell
+
+`wsl.exe --` still routed commands through the default shell, which consumed environment
+assignments and lost the runtime PATH. One shared prefix builder now uses `--exec`; setup, probes,
+path translation, the ASR worker and the live VEX gate share and test that exact argv.
+`evidence/wsl-exec-and-the-38-minute-run.md`.
+
+## D-135 - One failed speech region does not erase a completed episode
+
+Canonical ASR records an `UnalignedSpeech` interval for each segment-level inference/alignment
+failure and continues with successful regions. Only successful aligned segments enter confidence
+and disagreement routing; validator provenance and the complete unaligned set are both preserved.
+If every region fails, the producer still refuses because there is no transcript to publish.
+`evidence/one-region-discarded-a-38-minute-run.md`.
+
+## D-136 - Frame delivery is validated before parity normalization
+
+The extractor used to drop an odd tail frame and then compare the shortened tuple with ffmpeg's
+planned count, rejecting the valid measured 36-planned/35-emitted/34-kept case. Each invocation
+still owns a private directory, but count tolerance is now applied to the raw emitted set before
+the temporal-patch parity step. `evidence/frame-count-guard-graded-its-own-output.md`.
+
+## D-137 - The video phase follows the two-GPU allocation
+
+Stage 2 embedding/reranking and TimeLens use GPU 1; VideoChat3 uses GPU 0. The CLI exposes separate
+index, reader and grounding devices, validates visible CUDA ordinals, and tests the concrete
+composer wiring rather than only parser defaults. `evidence/section-6-put-the-video-phase-on-one-gpu.md`.
+
+## D-138 - VideoChat3 planning must respect the measured eight-frame capacity
+
+On the production RTX 3090 Ti, eight frames succeeded at 21.57 GiB and nine frames OOMed; the old
+64-frame application ceiling is not runnable on this hardware. This measurement is a planning
+constraint, not permission to truncate evidence inside the reader. The planner must split or
+refuse windows while preserving coverage and attribution. Composed Path B now plans against the
+measured eight-frame consumer capacity while the general Stage 2 ceiling remains 64; regressions
+prove complete, gap-free scene coverage and refuse invalid capacities. A real full-episode rerun
+must still measure retrieval quality and end-to-end memory after the increased window count.
+`evidence/largest-window-a-3090ti-can-read.md`.
+
+## D-139 - Each claimed enforcement route needs its own reachable regression
+
+Kurdish invariant #1 was described as three independent protections while one path had no test.
+Every claimed route must be reached by a mutation-sensitive regression; redundant prose does not
+increase assurance. `evidence/adversarial-pass-7-2026-08-09.md`.

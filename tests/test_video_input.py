@@ -566,3 +566,124 @@ def test_an_odd_emitted_count_is_trimmed_rather_than_padded_by_the_processor(
     # The trimmed frame is still on disk — trimming is a decision about what to hand over, not a
     # deletion, so nothing about the extraction has to be re-run to change it.
     assert len(sorted(frames.paths[0].parent.glob("000_*.jpg"))) == 3
+
+
+# --- D-136: the parity step's output was graded as though ffmpeg had produced it -------------
+
+
+def _ffmpeg_writing(count: int) -> object:
+    """Stand in for the binary, writing exactly `count` frames, so the count is the variable.
+
+    A unit test of arithmetic, not of ffmpeg: the real-binary tests above still run the extraction
+    end to end. What could not be reproduced with the fixture is a window whose *planned* count is
+    even and whose *delivered* count is odd — the combination the real 38-minute file hit — because
+    the 4162 ms fixture plans an odd count at every legal rate.
+    """
+
+    class Result:
+        returncode = 0
+        stderr = b""
+
+    def run(args: list[str], **_kwargs: object) -> Result:
+        pattern = Path(args[-1])
+        for index in range(1, count + 1):
+            path = pattern.parent / pattern.name.replace("%04d", f"{index:04d}")
+            path.write_bytes(b"\xff\xd8\xff jpeg")
+        return Result()
+
+    return run
+
+
+def test_one_tail_frame_short_is_accepted_and_kept_even(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real defect, in the numbers the 38-minute file produced.
+
+    `s2:w0` planned 36 frames over 17,720 ms and ffmpeg wrote 35 — the one tail frame the guard's
+    own message calls normal. The parity step (D-060) then dropped a second to keep whole temporal
+    patches, and the guard compared 34 against 36-1 and raised *"the window likely runs past the
+    end of the media"*. It does not: the window sits early in a 2313.8 s file and every frame it
+    asked for existed. Any window with an even plan and an odd delivery hit this — about half of
+    them — and the visual path got through three windows before stopping. D-136.
+    """
+    window = an_unplannable_window(17_720, 2.0)
+    assert window.frame_count == 36, window.frame_count
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(35))
+
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+
+    assert frames.count == 34, "the parity step keeps whole 2-frame patches"
+    assert frames.count % TEMPORAL_PATCH_FRAMES == 0
+    assert len(tuple(frames.paths[0].parent.glob("000_*.jpg"))) == 35, (
+        "all 35 delivered frames stay on disk; only the tuple handed to the model is trimmed"
+    )
+
+
+def test_two_frames_short_from_ffmpeg_is_still_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control, and the reason this is not "widen the tolerance to two".
+
+    A window the media does not cover delivers genuinely fewer frames, and that must still be
+    refused — an embedding of whatever frames existed would describe less footage than the window
+    claims. Judging ffmpeg's own count separates the two cases; a tolerance of 2 would not.
+    """
+    window = an_unplannable_window(17_720, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(34))
+
+    with pytest.raises(FrameCountMismatch, match="past the end of the media"):
+        extract_window_frames(FIXTURE, window, tmp_path)
+
+
+def test_an_exact_delivery_is_accepted_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other control. A full even delivery must pass through with nothing dropped."""
+    window = an_unplannable_window(17_720, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(36))
+
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    assert frames.count == 36
+
+
+def test_more_frames_than_planned_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-existing ceiling check, which the D-136 audit found had no test at all.
+
+    It survived being replaced with `if False:` — so §3 Stage 2's 64-frame ceiling was enforced by
+    a branch nothing exercised. `-frames:v` makes ffmpeg's overshoot unlikely, which is exactly how
+    a check goes years without being fired: the guard is for the case where the ceiling the plan
+    sets stops being the ceiling in force.
+    """
+    window = an_unplannable_window(17_720, 2.0)
+    assert window.frame_count == 36
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(37))
+
+    with pytest.raises(FrameCountMismatch, match="not the ceiling being enforced"):
+        extract_window_frames(FIXTURE, window, tmp_path)
+
+
+def test_the_kept_count_is_always_a_whole_number_of_temporal_patches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The property the trimming exists for, asserted rather than re-guarded.
+
+    While auditing D-136 I added a guard for "an odd kept count" and it survived mutation, because
+    after trimming a count above `TEMPORAL_PATCH_FRAMES` is even by construction — the branch could
+    never fire. A guard that cannot fire reads as protection and is not, so it was deleted and the
+    property is asserted here instead, across every odd delivery the plan allows.
+    """
+    for delivered in (35, 33, 5, 3):
+        window = an_unplannable_window(17_720, 2.0)
+        dest = tmp_path / f"d{delivered}"
+        monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(delivered))
+        if delivered < window.frame_count - 1:
+            with pytest.raises(FrameCountMismatch):
+                extract_window_frames(FIXTURE, window, dest)
+            continue
+        frames = extract_window_frames(FIXTURE, window, dest)
+        assert frames.count % TEMPORAL_PATCH_FRAMES == 0, (
+            f"{delivered} delivered frames were kept as {frames.count}, which the processor "
+            f"would pad by repeating the last frame (D-060)"
+        )

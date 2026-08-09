@@ -50,12 +50,15 @@ from hawedit.omni_assets import (
     open_verified_omni_assets,
 )
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
-from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.transcripts import AsrProvenance, RawTranscript, UnalignedSpeech, Word
 from hawedit.wsl_setup import (
     WslRuntimeError,
     default_wsl_runtime,
     load_wsl_runtime_receipt,
     wsl_path,
+)
+from hawedit.wsl_setup import (
+    _prefix as wsl_prefix,
 )
 
 __all__ = [
@@ -537,12 +540,11 @@ class OmniAsrProducer:
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
-        initial = tuple(
-            (segment, self.backend.transcribe_segment(segment.path, segment.duration_s))
-            for segment in prepared
-        )
+        initial, unaligned = transcribe_prepared_segments(self.backend, prepared)
         results, validated_by = _validate_hard_segments(initial, self.backend, self._validator)
-        return _assemble_canonical_transcript(media_id, results, validated_by=validated_by)
+        return _assemble_canonical_transcript(
+            media_id, results, unaligned, validated_by=validated_by
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -645,12 +647,56 @@ def _pcm_duration_ms(path: Path) -> int:
     return duration_ms
 
 
+def transcribe_prepared_segments(
+    backend: OmniSegmentBackend,
+    prepared: Sequence[_PreparedSpeechSegment],
+) -> tuple[
+    tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
+    tuple[UnalignedSpeech, ...],
+]:
+    """Transcribe every Stage 0 region, recording the ones that fail instead of aborting.
+
+    Both producers built this list with a generator expression, so the first raise discarded a
+    finished Stage 0 and every other region's inference. Measured 2026-08-09 on a real 38-minute
+    file: 547 regions cut, one 316 ms region produced 15 CTC frames for 15 tokens, and
+    `AlignmentInfeasible` refused — correctly, since inventing a word boundary is what Kurdish
+    invariant #5 forbids. The operator got no transcript for 38 minutes of Kurdish because of it.
+
+    This repo already settled the shape in `MeasurementSession.measure`: "a raised exception
+    becomes a recorded failure rather than an aborted run", because a run that dies on the first
+    bad item produces no rate at all. The same reasoning, one stage earlier. D-135.
+    """
+    results: list[tuple[_PreparedSpeechSegment, SegmentTranscript]] = []
+    failures: list[UnalignedSpeech] = []
+    for segment in prepared:
+        try:
+            item = backend.transcribe_segment(segment.path, segment.duration_s)
+        except Exception as exc:  # broad on purpose: the failure IS part of the transcript
+            failures.append(
+                UnalignedSpeech(
+                    start_ms=segment.start_ms,
+                    end_ms=segment.end_ms,
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            continue
+        results.append((segment, item))
+    return tuple(results), tuple(failures)
+
+
 def _assemble_canonical_transcript(
     media_id: str,
     results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
+    unaligned: Sequence[UnalignedSpeech] = (),
     *,
     validated_by: str | None = None,
 ) -> RawTranscript:
+    if not results:
+        raise RuntimeError(
+            f"canonical ASR aligned none of {len(unaligned)} speech regions; there is no "
+            f"transcript to write. First reason: "
+            f"{unaligned[0].reason if unaligned else 'no regions were supplied'}"
+        )
     texts: list[str] = []
     words: list[Word] = []
     logprobs: list[float] = []
@@ -682,6 +728,7 @@ def _assemble_canonical_transcript(
             validated_by=validated_by,
             mean_logprob=sum(logprobs) / len(logprobs) if logprobs else None,
         ),
+        unaligned=tuple(unaligned),
     )
 
 
@@ -741,12 +788,12 @@ class WslOmniAsrProducer:
         self._receipt_distro: str | None = None
 
     def _prefix(self) -> list[str]:
-        prefix = [self.wsl_executable]
         selected_distro = self._receipt_distro or self.distro
-        if selected_distro:
-            prefix.extend(("--distribution", selected_distro))
-        prefix.append("--")
-        return prefix
+        # The shared builder, not a second copy. This one used `--`, which routes the command
+        # through the distribution's default shell and loses the `env PYTHONPATH=…` assignment
+        # below — so `hawedit.asr_worker` would have been unimportable inside WSL however well
+        # the runtime was provisioned. Measured 2026-08-09; see `wsl_setup._prefix`. D-134.
+        return wsl_prefix(selected_distro, self.wsl_executable)
 
     def _wsl_path(self, path: Path) -> str:
         return wsl_path(path, self._receipt_distro or self.distro, self.wsl_executable)
@@ -938,7 +985,14 @@ class MeasurementSession:
         return Measurement(
             item_id=item.item_id,
             model_id=adapter.model_id,
-            adapter_impl=type(adapter).__name__,
+            # Module-qualified, not the bare class name. A bare name identifies nothing a
+            # reader can act on: a scripted stub called `OmniAsrAdapter` — no weights, no GPU,
+            # no model — produced a §8.1 report reading `normalized_cer: 0.0`, `mean_rtf: 0.1`
+            # on `hawapc01` / `2x RTX 3090 Ti` with `adapter_impls: ["OmniAsrAdapter"]`, byte
+            # for byte what the real adapter emits. Measured 2026-08-09. The hard rule is that
+            # a number carries the adapter that produced it, and `test_bench.OmniAsrAdapter`
+            # carries it while `OmniAsrAdapter` only asserts it. D-097.
+            adapter_impl=f"{type(adapter).__module__}.{type(adapter).__name__}",
             hardware=self.hardware,
             duration_s=item.duration_s,
             wall_clock_s=elapsed,

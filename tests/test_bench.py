@@ -11,11 +11,18 @@ The rule is deliberately hard to satisfy. §1: "No model changes without measure
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from hawedit.asr import ASRResult, Hardware, MeasurementSession
+from hawedit.asr import (
+    ASRResult,
+    Hardware,
+    MeasurementSession,
+    SegmentTranscript,
+)
+from hawedit.asr import OmniAsrAdapter as OmniAsrAdapterReal
 from hawedit.bench import (
     MATERIAL_GAIN_RATIO,
     BenchmarkReport,
@@ -111,7 +118,7 @@ def test_the_report_records_the_hardware_and_the_adapter_implementations() -> No
     """Without these two facts the numbers are not reproducible or trustworthy."""
     report = a_run({"hew-1": PERFECT, "muk-1": PERFECT})
     assert report.hardware.host == "hawapc01"
-    assert report.models[INCUMBENT].adapter_impls == ("ScriptedAdapter",)
+    assert report.models[INCUMBENT].adapter_impls == ("test_bench.ScriptedAdapter",)
 
 
 def test_the_report_records_real_time_factor() -> None:
@@ -120,11 +127,22 @@ def test_the_report_records_real_time_factor() -> None:
 
 
 def test_the_report_serialises_to_json() -> None:
+    """Asserted on parsed key paths, not on substrings of the document.
+
+    `assert "hewler" in payload` was the previous mechanism and it measured nothing about the
+    per-dialect numbers: with `normalized_cer_by_dialect` deleted from `ModelReport.to_dict()`
+    the string still occurred **seven** times — once in `coverage.hours_by_dialect` and six
+    times in `coverage.missing_cells` — so the assertion was satisfied by a block of the report
+    that has nothing to do with per-model accuracy. D-094.
+    """
     report = a_run({"hew-1": PERFECT, "muk-1": PERFECT})
-    payload = report.to_json()
-    assert "hawapc01" in payload
-    assert "hewler" in payload
-    assert INCUMBENT in payload
+    document = json.loads(report.to_json())
+    assert document["hardware"]["host"] == "hawapc01"
+    assert INCUMBENT in document["models"]
+    assert set(document["models"][INCUMBENT]["normalized_cer_by_dialect"]) == {
+        "hewler",
+        "mukriyan",
+    }
 
 
 def test_the_report_carries_the_corpus_coverage_it_was_run_on() -> None:
@@ -341,3 +359,156 @@ def test_an_interim_report_carries_no_per_dialect_numbers() -> None:
     exactly what §4.4 warns the aggregate hides."""
     report = an_interim_run({"cv-0": PERFECT, "cv-1": PERFECT}, {"cv-0": PERFECT, "cv-1": PERFECT})
     assert report.models[INCUMBENT].normalized_cer_by_dialect == {}
+
+
+# --- D-094: §4.4 was enforced on the property, never on the artifact a reader receives ------
+
+
+_MODEL_REPORT_KEYS = {
+    "model_id",
+    "adapter_impls",
+    "scored_items",
+    "failed_items",
+    "normalized_cer",
+    "spacing_free_cer",
+    "normalized_cer_by_dialect",
+    "named_entity_error",
+    "code_switch_error",
+    "mean_rtf",
+    "worst_rtf",
+    "long_audio_failure_rate",
+    "peak_vram_bytes",
+}
+
+
+def test_the_written_report_never_carries_an_aggregate_without_its_dialect_breakdown() -> None:
+    """`normalized_cer_by_dialect`'s docstring says "§4.4: never report the aggregate without
+    these", and nothing held it to that. Deleting the field from `ModelReport.to_dict()` left
+    all 1,161 tests green, and the emitted report carried `normalized_cer: 0.15` alone while
+    the two dialects it came from measured 0.04 and 0.26 — a 6.5x spread the aggregate hides,
+    on the number that decides which model becomes canonical.
+
+    The teeth are in the fixture: the two dialects are deliberately far apart, so the aggregate
+    genuinely misleads and the breakdown genuinely informs. A run where both dialects score the
+    same would pass whether or not the field survived.
+    """
+    report = a_run({"hew-1": PERFECT, "muk-1": "ئەمە زۆر خراپە"})
+    model = json.loads(report.to_json())["models"][INCUMBENT]
+
+    breakdown = model["normalized_cer_by_dialect"]
+    assert set(breakdown) == {"hewler", "mukriyan"}
+    assert model["normalized_cer"] is not None
+    # The aggregate sits between the two, which is exactly why it cannot stand alone.
+    assert breakdown["hewler"] < model["normalized_cer"] < breakdown["mukriyan"], (
+        f"the fixture no longer spreads the dialects, so this test has stopped measuring "
+        f"anything: {breakdown} against {model['normalized_cer']}"
+    )
+
+
+def test_an_unlabelled_run_emits_an_empty_breakdown_rather_than_omitting_the_key() -> None:
+    """The control, and the reason the fix is not "emit the key only when it has values".
+
+    An interim corpus has no §4.4 labels, so the breakdown is legitimately empty — that is
+    already tested on the property. On the artifact the distinction matters more: an absent key
+    reads as *not applicable*, an empty object reads as *we looked and the data carries no
+    labels*. Omitting it would satisfy the test above and reintroduce the unqualified aggregate
+    for exactly the corpus most likely to be quoted early.
+    """
+    report = an_interim_run({"cv-0": PERFECT, "cv-1": PERFECT}, {"cv-0": PERFECT, "cv-1": PERFECT})
+    model = json.loads(report.to_json())["models"][INCUMBENT]
+    assert "normalized_cer_by_dialect" in model, (
+        "the key vanished for an unlabelled corpus — absent reads as not-applicable, which is "
+        "the unqualified aggregate again"
+    )
+    assert model["normalized_cer_by_dialect"] == {}
+    assert model["normalized_cer"] is not None
+
+
+def test_the_emitted_report_schema_is_recorded_field_by_field() -> None:
+    """A field can vanish from a written §8.1 artifact without a single test noticing.
+
+    That is the class of defect, not one field: `to_dict` is a hand-written key list, and the
+    only tests reading it did so through substrings or through the properties behind it. The
+    recorded set is a visible line in a diff — adding a field means editing this test, the same
+    trade `scripts/test-count.floor` already makes.
+    """
+    document = json.loads(a_run({"hew-1": PERFECT, "muk-1": PERFECT}).to_json())
+
+    assert set(document) == {"provenance", "hardware", "coverage", "models"}
+    assert set(document["provenance"]) == {"name", "licence", "interim", "note"}
+    assert set(document["hardware"]) == {"host", "accelerator", "notes"}
+    assert set(document["coverage"]) == {
+        "total_hours",
+        "labelled_hours",
+        "unlabelled_hours",
+        "hours_by_dialect",
+        "missing_cells",
+        "meets_minimum_hours",
+    }
+    for model_id, model in document["models"].items():
+        assert set(model) == _MODEL_REPORT_KEYS, (
+            f"{model_id}: emitted fields drifted from the recorded schema — "
+            f"missing {_MODEL_REPORT_KEYS - set(model)}, extra {set(model) - _MODEL_REPORT_KEYS}"
+        )
+
+
+# --- D-097: the report named a class, which a stub can wear ----------------------------------
+
+
+class OmniAsrAdapter:
+    """A stub wearing the real canonical adapter's class name. No weights, no GPU, no model.
+
+    Deliberately named to collide with `hawedit.asr.OmniAsrAdapter`. `validate_adapter` checks
+    the *model id* against §7, which this claims honestly, so the class name was the only signal
+    left and it was identical.
+    """
+
+    model_id = INCUMBENT
+
+    def transcribe(self, audio_path: Path, duration_s: float) -> ASRResult:
+        return ASRResult(text_raw=PERFECT)
+
+
+def test_a_stub_wearing_the_real_adapters_class_name_is_visible_in_the_report() -> None:
+    """Measured before the fix: `adapter_impls: ["OmniAsrAdapter"]`, `normalized_cer: 0.0`,
+    `mean_rtf: 0.1`, on `hawapc01` / `2x RTX 3090 Ti` — byte for byte what a real run emits,
+    from a class with no model behind it.
+
+    Asserted on the emitted JSON, because the report is what a reader receives.
+    """
+    report = run_benchmark(TWO_DIALECT_CORPUS, [OmniAsrAdapter()], a_session())
+    impls = json.loads(report.to_json())["models"][INCUMBENT]["adapter_impls"]
+
+    assert impls == ["test_bench.OmniAsrAdapter"]
+    assert impls != ["OmniAsrAdapter"], "a bare class name is what made the stub invisible"
+    assert impls != ["hawedit.asr.OmniAsrAdapter"], (
+        "the stub is reported as the real canonical adapter — the §8.1 number claims weights "
+        "that never loaded"
+    )
+
+
+def test_the_real_canonical_adapter_reports_its_own_module() -> None:
+    """The control, and it is the half that can fail for the plausible wrong reason.
+
+    Qualifying with `__module__` is only worth anything if the real adapter's own qualified name
+    is what lands in the report — prefixing everything with a constant would satisfy the test
+    above and identify just as little. This measures the genuine `hawedit.asr.OmniAsrAdapter`,
+    with a backend that raises, so no weights are needed: "failures are recorded not raised"
+    (M0.7) means the measurement is still produced and still carries its adapter.
+    """
+
+    class RefusingBackend:
+        def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+            raise RuntimeError("no weights on this host")
+
+        def align_segment(
+            self, audio_path: Path, duration_s: float, text: str
+        ) -> SegmentTranscript:
+            raise RuntimeError("no weights on this host")
+
+    measurement = a_session().measure(
+        OmniAsrAdapterReal(backend=RefusingBackend()), an_item("hew-1", Dialect.HEWLER)
+    )
+    assert measurement.adapter_impl == "hawedit.asr.OmniAsrAdapter"
+    assert measurement.error is not None, "the failure must still be recorded, not raised"
+    assert measurement.result is None

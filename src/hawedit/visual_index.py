@@ -46,6 +46,7 @@ __all__ = [
     "REFERENCE_FPS",
     "RETRIEVE_K",
     "TEMPORAL_PATCH_FRAMES",
+    "VIDEOCHAT3_3090TI_MAX_FRAMES",
     "RerankedHit",
     "SceneWindow",
     "VisualEmbedding",
@@ -60,6 +61,9 @@ __all__ = [
 
 # §3 Stage 2, verbatim: "Reference settings run ~1 fps with a maximum of 64 frames".
 MAX_FRAMES_PER_WINDOW: Final = 64
+# Measured on the production RTX 3090 Ti with VideoChat3-4B: 8 frames succeeded at 21.57 GiB;
+# 9 frames OOMed. This is a consumer capacity below §3's general Stage 2 ceiling. D-138.
+VIDEOCHAT3_3090TI_MAX_FRAMES: Final = 8
 REFERENCE_FPS: Final = 1.0
 
 # The other end of the rate, and it is not §3's — it is the checkpoints'. All four §7 visual
@@ -97,9 +101,9 @@ def _frames_the_model_reads(duration_ms: int) -> int:
     return max(_MIN_SAMPLED_FRAMES, round(DECLARED_SAMPLING_FPS * duration_ms / 1000))
 
 
-def _max_window_ms(fps: float) -> int:
-    """The longest window that still fits 64 frames at `fps`."""
-    return math.floor(MAX_FRAMES_PER_WINDOW * 1000 / fps)
+def _max_window_ms(fps: float, frame_ceiling: int) -> int:
+    """The longest window that still fits the selected consumer capacity at ``fps``."""
+    return math.floor(frame_ceiling * 1000 / fps)
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +201,8 @@ def plan_scene_windows(
     duration_ms: int,
     shot_cuts_ms: Sequence[int],
     fps: float = REFERENCE_FPS,
+    *,
+    max_frames_per_window: int = MAX_FRAMES_PER_WINDOW,
 ) -> tuple[SceneWindow, ...]:
     """Turn Stage 0's shot cuts into windows that tile the media and fit the ceiling.
 
@@ -210,6 +216,15 @@ def plan_scene_windows(
     """
     if duration_ms <= 0:
         raise VisualIndexError(f"media duration must be positive, got {duration_ms} ms")
+    if (
+        isinstance(max_frames_per_window, bool)
+        or not isinstance(max_frames_per_window, int)
+        or not 1 <= max_frames_per_window <= MAX_FRAMES_PER_WINDOW
+    ):
+        raise VisualIndexError(
+            "max_frames_per_window must be an exact integer in "
+            f"1..{MAX_FRAMES_PER_WINDOW}, got {max_frames_per_window!r}"
+        )
 
     seen: set[int] = set()
     for cut in shot_cuts_ms:
@@ -228,7 +243,7 @@ def plan_scene_windows(
         seen.add(cut)
 
     boundaries = [0, *sorted(seen), duration_ms]
-    max_ms = _max_window_ms(fps)
+    max_ms = _max_window_ms(fps, max_frames_per_window)
     windows: list[SceneWindow] = []
     for scene_index, (start, end) in enumerate(pairwise(boundaries)):
         scene_ms = end - start
@@ -237,16 +252,20 @@ def plan_scene_windows(
         cursor = start
         for window_index in range(parts):
             length = base + 1 if window_index < remainder else base
-            windows.append(
-                SceneWindow(
-                    media_id=media_id,
-                    scene_index=scene_index,
-                    window_index=window_index,
-                    in_ms=cursor,
-                    out_ms=cursor + length,
-                    fps=fps,
-                )
+            window = SceneWindow(
+                media_id=media_id,
+                scene_index=scene_index,
+                window_index=window_index,
+                in_ms=cursor,
+                out_ms=cursor + length,
+                fps=fps,
             )
+            if window.frame_count > max_frames_per_window:
+                raise VisualIndexError(
+                    f"planner produced {window.frame_count} frames for {window.window_id}, past "
+                    f"the selected consumer capacity {max_frames_per_window}"
+                )
+            windows.append(window)
             cursor += length
 
     plan = tuple(windows)

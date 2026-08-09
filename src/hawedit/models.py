@@ -99,6 +99,17 @@ _PIP_MODULES: Final[Mapping[str, str]] = {
     "omniASR_CTC_3B_v2": "omnilingual_asr",
 }
 
+# Weights that need a loader this environment does not already have. Downloaded is not runnable,
+# and reporting `OK` for the first while meaning the second is how M1.4's row came to say "what
+# is missing is the composition, not the download" about a model that cannot be loaded here at
+# all. Measured 2026-08-09: `transformers` 4.57.6 has no `qwen3_asr` module, `AutoModel` cannot
+# map the config's `model_type`, and `Qwen3ASRForConditionalGeneration` is not importable — while
+# the checkpoint's own model card says `from qwen_asr import Qwen3ASRModel  # pip install
+# qwen-asr`. The import name comes from that card, not from a guess. D-131.
+_WEIGHTS_RUNTIMES: Final[Mapping[str, str]] = {
+    "rzgar/qwen3-asr-sorani-kurdish-ckb-v1": "qwen_asr",
+}
+
 
 class ModelNotProvisioned(RuntimeError):
     """Raised when a stage is asked to run without the weights it needs."""
@@ -859,6 +870,8 @@ class ModelStore:
         except SourceNotConfigured:
             source = "<source not configured>"
         size_bytes = None
+        runtime = _WEIGHTS_RUNTIMES.get(entry.model_id)
+        runtime_missing = runtime is not None and not _is_importable(runtime)
         if present:
             try:
                 with _checkpoint_lock_stream(path, exclusive=False):
@@ -878,13 +891,18 @@ class ModelStore:
                 f"verified {integrity.files_verified} files from "
                 f"{integrity.repository}@{integrity.revision}"
             )
+            if runtime_missing:
+                detail = (
+                    f"{detail}, but the loader {runtime!r} is not installed — the checkpoint "
+                    "cannot be loaded here, so this component cannot run"
+                )
         else:
             detail = f"not downloaded ({source})"
         return ModelStatus(
             model_id=entry.model_id,
             component=entry.component,
             provisioning=entry.provisioning,
-            available=present,
+            available=present and not runtime_missing,
             detail=detail,
             path=path if present else None,
             size_bytes=size_bytes,
@@ -1244,7 +1262,11 @@ def readiness_report(statuses: Sequence[ModelStatus]) -> str:
     lines = ["§7 component readiness", "=" * 72]
     for status in statuses:
         mark = "OK  " if status.available else "MISS"
-        size = f"  ({status.size_bytes / 1e9:.1f} GB)" if status.size_bytes else ""
+        # `is not None`, not truthiness: a checkpoint directory holding only empty files is
+        # non-empty, so it reports present with a measured size of **0**, and a falsy check
+        # printed no size at all — the same line a pip component gets, which reads as "nothing
+        # here to measure". Measured zero and unmeasured are different facts. D-100.
+        size = f"  ({status.size_bytes / 1e9:.1f} GB)" if status.size_bytes is not None else ""
         lines.append(
             f"{mark} {status.model_id:44} {status.provisioning.value:8} {status.detail}{size}"
         )

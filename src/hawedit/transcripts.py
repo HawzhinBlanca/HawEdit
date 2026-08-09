@@ -57,6 +57,7 @@ __all__ = [
     "RawTranscriptTampered",
     "StaleNormalizedTranscript",
     "TranscriptStore",
+    "UnalignedSpeech",
     "Word",
     "assert_model_input",
     "normalize_transcript",
@@ -294,6 +295,33 @@ class Word:
 
 
 @dataclass(frozen=True, slots=True)
+class UnalignedSpeech:
+    """One Stage 0 speech region that canonical ASR could not turn into timed words.
+
+    Carries the region's own bounds on the media clock and why it failed, so a short transcript
+    can never be mistaken for a complete one. No text: a region whose token count exceeds what its
+    frames can emit has produced text the audio cannot support, and shipping that as canonical
+    would be the invented-content failure invariant #5 exists to prevent — the honest record is
+    that this much speech has no transcription, with the reason.
+    """
+
+    start_ms: int
+    end_ms: int
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.end_ms <= self.start_ms:
+            raise ValueError(
+                f"unaligned speech spans {self.start_ms}..{self.end_ms} ms, which has no length"
+            )
+        if not self.reason.strip():
+            raise ValueError(
+                "unaligned speech needs a reason: an unexplained gap in a transcript that ships "
+                "to a client is indistinguishable from silence that was never there"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AsrProvenance:
     """Which models produced this transcript. Every name must be in §7."""
 
@@ -320,6 +348,19 @@ class RawTranscript:
     text_ckb: str
     words: tuple[Word, ...]
     asr: AsrProvenance
+    # Stage 0 speech regions canonical ASR could not turn into timed words. Empty on a clean run.
+    #
+    # Measured 2026-08-09 on a real 38-minute file: Stage 0 cut 547 speech regions and one 316 ms
+    # region produced 15 CTC frames for 15 tokens, which `AlignmentInfeasible` refuses because
+    # inventing a word boundary is what Kurdish invariant #5 forbids. The refusal is right; the
+    # blast radius was not — one region discarded a finished Stage 0 and every other region's
+    # inference, and the operator got no transcript at all.
+    #
+    # A transcript that quietly omits speech would be worse than that refusal, so the omission is
+    # carried **in the artifact** rather than in a log: this field is how `transcript.raw.json`
+    # says what it does not contain. §5's `RejectedCandidate` states the same principle for
+    # candidates — "that set is your only measure of recall". D-103.
+    unaligned: tuple[UnalignedSpeech, ...] = ()
 
     def __post_init__(self) -> None:
         validate_media_id(self.media_id)
@@ -340,6 +381,10 @@ class RawTranscript:
                 f"declares no aligner. Word timings come from {CTC_VITERBI!r} only "
                 f"(Kurdish invariant #5)."
             )
+
+        for position, gap in enumerate(self.unaligned):
+            if not isinstance(gap, UnalignedSpeech):
+                raise ValueError(f"raw transcript unaligned[{position}] is not an UnalignedSpeech")
 
         previous: Word | None = None
         text_cursor = 0
@@ -384,6 +429,9 @@ class RawTranscript:
             text_ckb=data["text_ckb"],
             words=tuple(Word(**w) for w in data["words"]),
             asr=AsrProvenance(**data["asr"]),
+            # `.get`: transcripts written before D-103 have no such key, and refusing to read
+            # them would make an old canonical artifact unreadable to satisfy a new field.
+            unaligned=tuple(UnalignedSpeech(**u) for u in data.get("unaligned", ())),
         )
 
 

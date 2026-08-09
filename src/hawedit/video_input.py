@@ -212,31 +212,32 @@ def extract_window_frames(
                 f"({result.returncode}): {result.stderr.decode('utf-8', 'replace')[-400:]}"
             )
 
-        paths = tuple(sorted(extraction_dir.glob(f"{window.window_index:03d}_*.jpg")))
-        # An odd count is padded by the processor **repeating the last frame** (D-060), so the
-        # model would see a frame that was never filmed, at the moment the window ends — which
-        # biases a temporal reading toward its own tail. Dropping the last real frame instead
-        # costs at most one sampling interval of footage and leaves every frame the model sees
-        # a frame that existed. Measured: 2 frames is always delivered intact at every rate, so
-        # the floor here is 2 and `WindowFrames` / the one-frame refusal below still catch
-        # anything shorter.
-        if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
-            paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
-        frames = WindowFrames(window=window, paths=paths)
-        if frames.count > window.frame_count:
+        # Judge what this invocation's ffmpeg actually delivered before HawEdit drops a parity
+        # frame. The old order graded the trimmed tuple and refused the valid 36-planned /
+        # 35-delivered / 34-kept case measured on the 38-minute file. D-136.
+        extracted = tuple(sorted(extraction_dir.glob(f"{window.window_index:03d}_*.jpg")))
+        if len(extracted) > window.frame_count:
             raise FrameCountMismatch(
                 f"{window.window_id} planned {window.frame_count} frames and ffmpeg produced "
-                f"{frames.count}. More frames than the plan means the ceiling §3 Stage 2 sets "
+                f"{len(extracted)}. More frames than the plan means the ceiling §3 Stage 2 sets "
                 f"is not the ceiling being enforced."
             )
-        if frames.count < window.frame_count - 1:
+        if len(extracted) < window.frame_count - 1:
             raise FrameCountMismatch(
                 f"{window.window_id} planned {window.frame_count} frames over "
-                f"{window.duration_ms} ms and ffmpeg produced {frames.count}. One frame of tail "
-                f"rounding is normal; this is {window.frame_count - frames.count}. The window "
+                f"{window.duration_ms} ms and ffmpeg produced {len(extracted)}. One frame of tail "
+                f"rounding is normal; this is {window.frame_count - len(extracted)}. The window "
                 f"likely runs past the end of the media, and an embedding of whatever frames "
                 f"existed would describe less footage than the window claims."
             )
+
+        # An odd count is padded by the processor **repeating the last frame** (D-060), so the
+        # model would see a frame that was never filmed at the moment the window ends. Dropping
+        # the last real frame instead costs at most one sampling interval and preserves reality.
+        paths = extracted
+        if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
+            paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
+        frames = WindowFrames(window=window, paths=paths)
         # A window the plan says is temporal, arriving as a single still, is the exact failure
         # §7 excludes CLIP for — "frame-averaging loses temporal structure" — reached from the
         # other direction: there is no structure left to lose. It is also invisible downstream,

@@ -39,6 +39,9 @@ from hawedit.judge import JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
     StageSkipped,
+    assert_devices_available,
+    build_parser,
+    build_visual_composer,
     run_pipeline,
 )
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
@@ -666,6 +669,49 @@ def test_visual_composer_refusal_is_reported_as_a_skipped_stage(tmp_path: Path) 
     assert isinstance(run.visual_index, StageSkipped)
     assert "too short" in run.visual_index.reason
     assert run.candidates == ()
+
+
+@needs_ffmpeg
+def test_visual_composer_plans_to_the_measured_videochat_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit import pipeline as pipeline_module
+    from hawedit.visual_index import SceneWindow
+    from hawedit.visual_index import plan_scene_windows as real_plan
+    from hawedit.visual_pipeline import VisualPipelineError
+
+    selected: list[int] = []
+
+    def recording_plan(
+        media_id: str,
+        duration_ms: int,
+        shot_cuts_ms: Sequence[int],
+        fps: float,
+        *,
+        max_frames_per_window: int,
+    ) -> tuple[SceneWindow, ...]:
+        selected.append(max_frames_per_window)
+        return real_plan(
+            media_id,
+            duration_ms,
+            shot_cuts_ms,
+            fps,
+            max_frames_per_window=max_frames_per_window,
+        )
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            raise VisualPipelineError("stop after observing the plan")
+
+    monkeypatch.setattr(pipeline_module, "plan_scene_windows", recording_plan)
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "capacity",
+        media_id="capacity",
+        transcript=a_transcript("capacity"),
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+    assert selected == [8], "the 64-frame general ceiling still reached VideoChat3"
 
 
 @needs_ffmpeg
@@ -1494,14 +1540,19 @@ def test_timelens_grounding_is_composed_into_boundary_fusion(tmp_path: Path) -> 
     from hawedit.visual_index import SceneWindow
 
     seen: list[SceneWindow] = []
+    events: list[str] = []
 
     class Grounder:
         def ground_all(
             self, windows: Sequence[SceneWindow], query: str
         ) -> tuple[VisualEvidenceInterval, ...]:
+            events.append("ground")
             seen.extend(windows)
             assert query
             return (VisualEvidenceInterval("grounded", 1_500, 1_950, "visible reaction"),)
+
+        def close(self) -> None:
+            events.append("close")
 
     run = run_pipeline(
         FIXTURE,
@@ -1513,6 +1564,7 @@ def test_timelens_grounding_is_composed_into_boundary_fusion(tmp_path: Path) -> 
         temporal_grounder=Grounder(),
     )
     assert seen and all(window.in_ms < 2_800 and window.out_ms > 0 for window in seen)
+    assert events == ["ground", "close"], "GPU 1 must be released before boundary/render work"
     assert run.clip is not None
     assert run.clip.boundary.final_out_ms == 1_950
     assert run.clip.boundary.out_extended_by == "timelens_interval_end"
@@ -1553,6 +1605,55 @@ def test_known_timelens_failures_skip_boundary_and_never_render(
     assert isinstance(run.boundary, StageSkipped)
     assert type(failure).__name__ in run.boundary.reason
     assert isinstance(run.render, StageSkipped)
+    assert run.clip is None
+
+
+@needs_ffmpeg
+def test_timelens_cleanup_failure_after_success_becomes_a_boundary_refusal(tmp_path: Path) -> None:
+    from hawedit.timelens import VisualEvidenceInterval
+
+    class Grounder:
+        def ground_all(self, windows: Sequence[Any], query: str) -> tuple[Any, ...]:
+            return (VisualEvidenceInterval("ok", 100, 1_700, "visible"),)
+
+        def close(self) -> None:
+            raise RuntimeError("CUDA allocator would not release")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "cleanup-after-success",
+        media_id="cleanup-after-success",
+        transcript=a_transcript("cleanup-after-success"),
+        select_sentences=(0,),
+        temporal_grounder=Grounder(),
+    )
+    assert isinstance(run.boundary, StageSkipped)
+    assert "TimeLens cleanup failed after inference" in run.boundary.reason
+    assert run.clip is None
+
+
+@needs_ffmpeg
+def test_timelens_cleanup_does_not_mask_the_primary_grounding_failure(tmp_path: Path) -> None:
+    from hawedit.video_grounding import GroundingError
+
+    class Grounder:
+        def ground_all(self, windows: Sequence[Any], query: str) -> tuple[Any, ...]:
+            raise GroundingError("primary model refusal")
+
+        def close(self) -> None:
+            raise RuntimeError("cleanup also failed")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "cleanup-after-failure",
+        media_id="cleanup-after-failure",
+        transcript=a_transcript("cleanup-after-failure"),
+        select_sentences=(0,),
+        temporal_grounder=Grounder(),
+    )
+    assert isinstance(run.boundary, StageSkipped)
+    assert "primary model refusal" in run.boundary.reason
+    assert "TimeLens cleanup failed" in run.boundary.reason
     assert run.clip is None
 
 
@@ -2061,3 +2162,110 @@ def test_an_unsupported_fractional_edl_never_writes_a_sidecar_at_all(
     assert attempted == ["ass"], f"wrote {attempted[1:]} before discovering the EDL refusal"
     assert not (work / "fractional-s0-0").exists()
     assert not tuple(work.glob(".fractional-s0-0.*.staging"))
+
+
+# --- D-137: §6 assigns the video phase across both GPUs, and the code used one ---------------
+
+
+def test_the_cli_defaults_put_each_visual_model_where_section_6_puts_it() -> None:
+    """§6, VIDEO PHASE: `GPU 0 → VideoChat3-4B` and `GPU 1 → Embedding / Reranker / TimeLens2`.
+
+    All three used to take `--visual-device`, so on hawapc01 they landed together on GPU 0 while
+    GPU 1 held 1.3 GiB — and the real 38-minute run died with *"CUDA out of memory. Tried to
+    allocate 21.83 GiB. GPU 0 has a total capacity of 23.99 GiB of which 3.59 GiB is free. Of the
+    allocated memory 18.30 GiB is allocated by PyTorch."* Asserted on the parsed defaults, because
+    a comment claiming §6 is not §6 being followed. D-137.
+    """
+    parser = build_parser()
+    args = parser.parse_args(["source.mp4"])
+    assert args.visual_device == "cuda:0", "§6 reserves GPU 0 for the Path B reader"
+    assert args.index_device == "cuda:1", "§6 puts Stage 2 embedding and reranking on GPU 1"
+    assert args.timelens_device == "cuda:1", "§6 puts TimeLens2 on GPU 1"
+    assert args.index_device != args.visual_device, (
+        "indexing and the reader on one GPU is the packing that OOM'd on real media"
+    )
+
+
+def test_a_cuda_device_this_machine_does_not_have_is_refused_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two-GPU defaults must not become a cryptic torch error on a one-GPU box.
+
+    Without this, `--index-device cuda:1` on a single-GPU machine dies inside torch with a device
+    ordinal message that names neither the stage nor the remedy.
+    """
+    monkeypatch.setattr("hawedit.pipeline.visible_cuda_devices", lambda: 1)
+    with pytest.raises(SystemExit) as caught:
+        assert_devices_available({"Stage 2 indexing": "cuda:1", "the Path B reader": "cuda:0"})
+    message = str(caught.value)
+    assert "1 CUDA device(s)" in message
+    assert "Stage 2 indexing on cuda:1" in message
+    assert "the Path B reader" not in message, "cuda:0 exists on a one-GPU machine"
+    assert "--index-device cuda:0" in message, "a refusal that names no remedy is a dead end"
+
+
+def test_the_devices_this_machine_does_have_are_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control. A check that refused every CUDA device would satisfy the test above and stop
+    the machine §6 was written for from running at all.
+    """
+    monkeypatch.setattr("hawedit.pipeline.visible_cuda_devices", lambda: 2)
+    assert_devices_available(
+        {
+            "the Path B reader": "cuda:0",
+            "Stage 2 indexing": "cuda:1",
+            "TimeLens2": "cuda:1",
+        }
+    )  # must not raise
+
+
+def test_a_non_cuda_device_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cpu`, or `cuda` with no ordinal, is not a device index to bounds-check."""
+    monkeypatch.setattr("hawedit.pipeline.visible_cuda_devices", lambda: 0)
+    assert_devices_available({"Stage 2 indexing": "cpu", "TimeLens2": "cuda"})
+
+
+def test_the_composer_wires_each_model_to_the_device_section_6_assigns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The wiring, not the flag. This is the test D-137 needed and did not have at first.
+
+    The first version asserted the parsed defaults, and the audit showed why that measures nothing:
+    reverting either Qwen model to `--visual-device` left the suite green, because a default nothing
+    reads is not an assignment. Same shape as D-094's substring — the request echoed back rather
+    than the thing that happens.
+    """
+    seen: dict[str, str] = {}
+
+    class FakeEmbedder:
+        def __init__(self, directory: Path, device: str = "") -> None:
+            seen["embedder"] = device
+
+    class FakeReranker:
+        def __init__(self, directory: Path, read: object, device: str = "") -> None:
+            seen["reranker"] = device
+
+    class FakeReader:
+        def __init__(self, directory: Path, read: object, score: object, device: str = "") -> None:
+            seen["reader"] = device
+
+    monkeypatch.setattr("hawedit.qwen_visual.QwenVisualEmbedder", FakeEmbedder)
+    monkeypatch.setattr("hawedit.qwen_visual.QwenVisualReranker", FakeReranker)
+    monkeypatch.setattr("hawedit.video_reader.VideoChat3Reader", FakeReader)
+    monkeypatch.setattr("hawedit.models.ModelStore.path_for", lambda self, entry: tmp_path)
+
+    args = build_parser().parse_args(["source.mp4", "--visual"])
+    composer = build_visual_composer(args)
+
+    def never_called(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("the factories are built, not run, in this test")
+
+    # both are factories: §3 Stage 2 builds them per run, so the device only lands when called
+    composer.reranker_factory(never_called)
+    composer.reader_factory(never_called, never_called)
+
+    assert seen["embedder"] == "cuda:1", "§6 puts Stage 2 embedding on GPU 1"
+    assert seen["reranker"] == "cuda:1", "§6 puts Stage 2 reranking on GPU 1"
+    assert seen["reader"] == "cuda:0", "§6 reserves GPU 0 for the Path B reader"
+    assert seen["embedder"] != seen["reader"], (
+        "indexing and the reader on one GPU is the packing that OOM'd on real media"
+    )

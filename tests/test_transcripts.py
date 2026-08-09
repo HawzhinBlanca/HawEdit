@@ -33,6 +33,7 @@ from hawedit.transcripts import (
     RawTranscriptTampered,
     StaleNormalizedTranscript,
     TranscriptStore,
+    UnalignedSpeech,
     Word,
     assert_model_input,
     normalize_transcript,
@@ -551,3 +552,88 @@ def test_validator_model_must_also_be_registered() -> None:
             words=(),
             asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", validated_by="some-other-asr"),
         )
+
+
+# --- D-103: a gap in a client-facing transcript must say why ---------------------------------
+
+
+def test_an_unaligned_gap_must_carry_a_reason() -> None:
+    """An unexplained gap is indistinguishable from silence that was never there.
+
+    §5 already states this shape for `RejectedCandidate` — "a blank reason measures nothing" —
+    and a transcript that ships to a client has the stronger version of the problem: the reader
+    cannot tell speech the model refused from speech that did not happen.
+    """
+    with pytest.raises(ValueError, match="needs a reason"):
+        UnalignedSpeech(start_ms=1_000, end_ms=1_316, reason="   ")
+
+
+def test_an_unaligned_gap_must_have_length() -> None:
+    with pytest.raises(ValueError, match="no length"):
+        UnalignedSpeech(start_ms=1_316, end_ms=1_316, reason="AlignmentInfeasible: 15 frames")
+
+
+def test_a_real_reason_and_span_are_accepted() -> None:
+    """The control: the two refusals above must not amount to refusing every gap."""
+    gap = UnalignedSpeech(
+        start_ms=1_000, end_ms=1_316, reason="AlignmentInfeasible: 15 frames cannot emit 15 tokens"
+    )
+    assert gap.end_ms - gap.start_ms == 316
+    assert "15 tokens" in gap.reason
+
+
+# --- D-139: the raw file's own write-once layer was never reached by a test ------------------
+
+
+def test_deleting_the_digest_does_not_open_the_raw_file_to_a_second_write(tmp_path: Path) -> None:
+    """`write_raw` refuses twice over, and only the first refusal was tested.
+
+    Found by adversarial pass #7: neutralising `os.link(staging, path)` — the raw file's own
+    write-once link — left the whole suite green, because the sidecar's link refuses first in every
+    path a test exercised. The second layer is not dead code; it is the layer that matters when the
+    sidecar is **gone**, which is the state an attacker hiding a modification would create, since
+    `verify_raw_integrity` needs that digest to detect anything.
+
+    Measured: with the sidecar deleted and the raw present, the second write is refused by the
+    raw-file layer, the raw bytes are unchanged, no sidecar is resurrected carrying the second
+    write's digest, and no staging file is left behind. D-139.
+    """
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw())
+    raw_path = tmp_path / "media-001.transcript.raw.json"
+    sidecar = tmp_path / "media-001.transcript.raw.sha256"
+    original = raw_path.read_bytes()
+
+    sidecar.chmod(stat.S_IWRITE)
+    sidecar.unlink()
+
+    with pytest.raises(RawTranscriptImmutable, match="already exists"):
+        store.write_raw(a_raw("a second, different ASR output"))
+
+    assert raw_path.read_bytes() == original, (
+        "the canonical transcript was replaced once its digest was removed — invariant #1"
+    )
+    assert not sidecar.exists(), (
+        "a refused write published a digest for content it did not write, which would "
+        "authenticate the wrong bytes"
+    )
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        ".media-001.transcript.raw.lock",
+        raw_path.name,
+    ], "the refused write left staging files behind (the persistent lock is expected)"
+
+
+def test_the_first_layer_still_refuses_while_the_digest_is_present(tmp_path: Path) -> None:
+    """The control. The test above must not be satisfiable by breaking the sidecar's own link.
+
+    With both artifacts present the refusal has to come from the *first* layer — its message says
+    "already exists or is being written", the raw-file layer's says "already exists." — so the two
+    are distinguishable and each is now pinned to its own state.
+    """
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw())
+
+    with pytest.raises(RawTranscriptImmutable, match="already exists or is being written"):
+        store.write_raw(a_raw("a second, different ASR output"))
+
+    store.verify_raw_integrity("media-001")

@@ -527,3 +527,93 @@ def test_every_data_file_the_wheel_ships_is_tracked_by_git() -> None:
         f"the wheel ships {untracked}, which git does not track — so it exists on this machine "
         "and on no other. Add a `!` exception in .gitignore and commit the file."
     )
+
+
+def test_the_ledger_states_no_test_count_it_cannot_keep_true() -> None:
+    """A per-file test count in a ledger row is a standing claim about the present, and it rots.
+
+    Measured 2026-08-09 across all 30 such counts in `PROGRESS.md`: **21 were false**, drifting
+    from -1 to +41 (`tests/test_pipeline.py` claimed 18 against 59). One was stale *downward* —
+    M6.3 claimed 20 where the file has had 19 since the commit that wrote the claim, so it was
+    miscounted on the day. And the worst pair was written by this loop one iteration earlier:
+    "29 tests, plus 17 in test_gate_evidence.py" against an actual 25 and 14.
+
+    D-083 and D-084 already chose the treatment — "the stale count is dropped rather than
+    restated" — so this generalises a decision rather than inventing one. The alternative,
+    enforcing each count against `--collect-only`, makes every new test require a ledger edit in
+    the same commit and turns the row into a generated artifact; the number is also the one part
+    of the row a reader cannot act on. The file reference stays, so "this is tested" is still
+    visible, and the ratchet in `scripts/test-count.floor` remains the instrument that notices
+    tests disappearing.
+
+    The cheapest way to satisfy this test is to not write a rotting number, which is the point.
+    Dated measurements in correction prose are untouched: a count with a date is a measurement
+    at an instant, which is exactly what `test_every_test_count_in_the_audit_is_dated` requires.
+    D-096.
+    """
+    progress = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
+    standing = re.findall(r"`((?:src|tests)/[\w/]+\.py)`\s*\((\d+) tests", progress)
+    assert not standing, (
+        "these ledger rows state a test count that has to be maintained by hand and was wrong "
+        f"21 times out of 30 when last measured: {standing}. Name the file, not the count."
+    )
+
+
+def test_every_value_the_decision_log_states_is_the_value_the_code_holds() -> None:
+    """A threshold recorded in a decision must be the threshold the code uses.
+
+    D-084 pinned one constant this way — `MINIMUM_HOURS` against D-009, after measuring that
+    3.0 could become 1.0 with the whole suite green. This generalises that pin to the log
+    instead of repeating it per constant, because the failure is a class:
+
+    Measured 2026-08-09 against a green 1,170 baseline, changing the constant alone —
+      `DEFAULT_PAUSE_MS`  500 -> 800        : GREEN, nothing noticed
+      `NVENC_MIN_FRAME`   (145,49) -> (64,64): GREEN, nothing noticed — and (64,64) is exactly
+                                               the value D-045 records as the historical defect
+      `DEFAULT_DISAGREEMENT_CER` 0.15 -> 0.25: RED, but only in behaviour tests, so the record
+                                               still drifts if those are updated alongside
+      `MINIMUM_HOURS`     3.0 -> 1.0        : RED in the record test D-084 added
+
+    `DEFAULT_PAUSE_MS` was invisible for an instructive reason: `tests/test_sentences.py` passes
+    `pause_ms=DEFAULT_PAUSE_MS`, so the tests follow the constant wherever it goes and never
+    assert what it is. Symbolic use reads as coverage and measures nothing.
+
+    The convention this enforces already existed organically — decisions write the constant and
+    its value inline in a code span. Making it load-bearing costs nothing to maintain, and means
+    changing a threshold requires amending the decision that justifies it — D-009's own wording:
+    "Changing the floor means amending the decision, not only the constant." D-098.
+    """
+    import ast
+    import importlib
+
+    decisions = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+
+    # Later statements supersede earlier ones: a decision may revise a value a previous one set.
+    recorded: dict[str, tuple[str, str]] = {}
+    for entry in re.finditer(r"## (D-\d+)((?:(?!\n## )[\s\S])*)", decisions):
+        for name, raw in re.findall(r"`([A-Z][A-Z0-9_]{2,}) = ([^`]+)`", entry.group(2)):
+            recorded[name] = (entry.group(1), raw.strip())
+
+    assert len(recorded) >= 7, (
+        f"only {len(recorded)} recorded values were found, so this test is checking almost "
+        f"nothing — the `NAME = value` convention or this pattern has drifted apart"
+    )
+
+    modules = [
+        importlib.import_module(f"hawedit.{path.stem}")
+        for path in sorted((ROOT / "src" / "hawedit").glob("*.py"))
+        if path.stem != "__init__"
+    ]
+
+    unresolved: list[str] = []
+    for name, (decision, raw) in sorted(recorded.items()):
+        holders = [module for module in modules if hasattr(module, name)]
+        if not holders:
+            unresolved.append(f"{decision} states `{name} = {raw}` and no module defines {name}")
+            continue
+        live = getattr(holders[0], name)
+        assert ast.literal_eval(raw) == live, (
+            f"{decision} records `{name} = {raw}` and the code holds {live!r}. Changing a "
+            f"threshold means amending the decision that justifies it, not only the constant."
+        )
+    assert not unresolved, "; ".join(unresolved)

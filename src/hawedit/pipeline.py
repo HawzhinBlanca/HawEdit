@@ -43,7 +43,8 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -87,7 +88,9 @@ from hawedit.video_grounding import GroundingError
 from hawedit.video_input import VideoInputError
 from hawedit.visual_index import (
     DECLARED_SAMPLING_FPS,
+    MAX_FRAMES_PER_WINDOW,
     REFERENCE_FPS,
+    VIDEOCHAT3_3090TI_MAX_FRAMES,
     SceneWindow,
     plan_scene_windows,
 )
@@ -409,6 +412,33 @@ def _safe_exception_notes(exc: Exception, budget: int = 512, maximum: int = 4) -
         if remaining <= 0:
             break
     return " | ".join(kept)
+
+
+@contextmanager
+def _release_grounder_after_use(component: object) -> Iterator[None]:
+    """Unload TimeLens without masking the inference failure that triggered cleanup."""
+    closer = getattr(component, "close", None)
+    try:
+        yield
+    except BaseException as primary:
+        if callable(closer):
+            try:
+                closer()
+            except BaseException as cleanup:
+                primary.add_note(
+                    "TimeLens cleanup failed: "
+                    f"{type(cleanup).__name__}: {_safe_exception_text(str(cleanup), 384)}"
+                )
+        raise
+    else:
+        if callable(closer):
+            try:
+                closer()
+            except (OSError, RuntimeError) as exc:
+                raise GroundingError(
+                    "TimeLens cleanup failed after inference: "
+                    f"{type(exc).__name__}: {_safe_exception_text(str(exc), 384)}"
+                ) from exc
 
 
 def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
@@ -826,7 +856,13 @@ def run_pipeline(
         else (DECLARED_SAMPLING_FPS if visual_composer is not None else REFERENCE_FPS)
     )
     windows = plan_scene_windows(
-        identifier, ingested.duration_ms, ingested.shot_cuts_ms, fps=effective_visual_fps
+        identifier,
+        ingested.duration_ms,
+        ingested.shot_cuts_ms,
+        fps=effective_visual_fps,
+        max_frames_per_window=(
+            VIDEOCHAT3_3090TI_MAX_FRAMES if visual_composer is not None else MAX_FRAMES_PER_WINDOW
+        ),
     )
 
     run = PipelineRun(
@@ -1074,10 +1110,11 @@ def run_pipeline(
                 f"{temporal_span[1]} ms"
             )
         try:
-            timelens_intervals = temporal_grounder.ground_all(
-                grounding_windows,
-                _candidate_slice_text(normalized, anchor_in, anchor_out),
-            )
+            with _release_grounder_after_use(temporal_grounder):
+                timelens_intervals = temporal_grounder.ground_all(
+                    grounding_windows,
+                    _candidate_slice_text(normalized, anchor_in, anchor_out),
+                )
         except (GroundingError, EmbedderUnavailable, VideoInputError) as exc:
             return replace(
                 run,
@@ -1373,11 +1410,81 @@ def _proxy_dimensions(source: Path, ffmpeg: Path | None) -> tuple[int, int]:
     return width, height
 
 
-def main(argv: list[str] | None = None) -> int:
-    """`python -m hawedit.pipeline <video> [--transcript t.json] [--sentences 0,1]`.
+def visible_cuda_devices() -> int:
+    """How many CUDA devices this machine actually has. Separate so tests can replace it."""
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - the gpu extra is optional
+        return 0
+    count: int = torch.cuda.device_count()
+    return count
 
-    Exits non-zero on an incomplete run. A partial pipeline that exited 0 would be indis-
-    tinguishable from a working one to anything scripting it.
+
+def assert_devices_available(assignments: Mapping[str, str]) -> None:
+    """Refuse a CUDA device this machine does not have, naming what §6 puts there.
+
+    §6 assigns the video phase across two GPUs — `GPU 0 → VideoChat3-4B`, `GPU 1 → Embedding /
+    Reranker / TimeLens2` — so the defaults below are two-GPU defaults. On a machine with fewer,
+    a stage would otherwise die inside torch with a device-ordinal error that names neither the
+    stage nor the remedy. Refusing here says both. D-137.
+    """
+    requested = {
+        role: device
+        for role, device in assignments.items()
+        if device.startswith("cuda:") and device.split(":", 1)[1].isdigit()
+    }
+    if not requested:
+        return
+    available = visible_cuda_devices()
+    missing = {
+        role: device for role, device in requested.items() if int(device.split(":")[1]) >= available
+    }
+    if missing:
+        named = "; ".join(f"{role} on {device}" for role, device in sorted(missing.items()))
+        raise SystemExit(
+            f"✗ this machine reports {available} CUDA device(s), and the run asks for {named}. "
+            f"§6 assigns the video phase across two GPUs (GPU 0 → VideoChat3-4B, GPU 1 → "
+            f"Embedding / Reranker / TimeLens2), so the defaults assume hawapc01's pair. On "
+            f"fewer, pass the devices you have — e.g. --index-device cuda:0 --timelens-device "
+            f"cuda:0 — and expect the video phase to serialise."
+        )
+
+
+def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
+    """Wire §3 Stage 2's index and Path B's reader onto the GPUs §6 assigns them.
+
+    A separate function because the *wiring* is the decision, not the flag: the first version of
+    D-137's test asserted the parsed defaults and reverting either model to `--visual-device` left
+    it green. A default nothing reads is not an assignment. D-137.
+    """
+    from hawedit.models import ModelStore
+    from hawedit.qwen_visual import QwenVisualEmbedder, QwenVisualReranker
+    from hawedit.registry import REGISTRY
+    from hawedit.video_reader import VideoChat3Reader
+
+    model_store = ModelStore()
+    embed_dir = model_store.path_for(REGISTRY["Qwen3-VL-Embedding-2B"])
+    rerank_dir = model_store.path_for(REGISTRY["Qwen3-VL-Reranker-2B"])
+    reader_dir = model_store.path_for(REGISTRY["MCG-NJU/VideoChat3-4B"])
+    # §6, VIDEO PHASE: `GPU 0 -> VideoChat3-4B (segmented)` and `GPU 1 -> Embedding / Reranker /
+    # TimeLens2 (sequential)`. All three used to take `--visual-device`, so on hawapc01 they landed
+    # together on GPU 0 while GPU 1 held 1.3 GiB, and the real 38-minute run died with `CUDA out of
+    # memory. Tried to allocate 21.83 GiB … 18.30 GiB is allocated by PyTorch`. Splitting them
+    # freed 7.86 GiB on GPU 0. Measured 2026-08-09.
+    return VisualComposer(
+        QwenVisualEmbedder(embed_dir, device=args.index_device),
+        lambda read: QwenVisualReranker(rerank_dir, read, device=args.index_device),
+        lambda read, score: VideoChat3Reader(reader_dir, read, score, device=args.visual_device),
+        keep=args.visual_keep,
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI surface, built here so its defaults can be asserted without a run.
+
+    §6 assigns the video phase across two GPUs, and the defaults below are that assignment.
+    Extracted from `main` because a default nothing can read is a default nothing can hold to
+    the blueprint — D-137's test asserts on the parsed values, not on a comment.
     """
     parser = argparse.ArgumentParser(
         prog="hawedit.pipeline", description="Run §3 over one media file, as far as it can go."
@@ -1421,7 +1528,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--visual-query", help="Sorani visual retrieval query")
     parser.add_argument("--visual-keep", type=int, default=7)
     parser.add_argument("--visual-fps", type=float, default=None)
-    parser.add_argument("--visual-device", default="cuda:0")
+    parser.add_argument(
+        "--visual-device",
+        default="cuda:0",
+        help="device for the Path B reader (VideoChat3-4B) — §6: GPU 0",
+    )
+    parser.add_argument(
+        "--index-device",
+        default="cuda:1",
+        help="device for Stage 2 indexing (Qwen embedding + reranking) — §6: GPU 1",
+    )
     parser.add_argument(
         "--auto-select",
         action="store_true",
@@ -1448,6 +1564,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sentences", help="comma-separated sentence indexes to cut, e.g. 0,1")
     parser.add_argument("--qc-pass", action="store_true", help="record a human QC pass (§2)")
     parser.add_argument("--json", action="store_true", help="print the run report as JSON")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m hawedit.pipeline <video> [--transcript t.json] [--sentences 0,1]`.
+
+    Exits non-zero on an incomplete run. A partial pipeline that exited 0 would be indis-
+    tinguishable from a working one to anything scripting it.
+    """
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     try:
@@ -1524,26 +1650,17 @@ def main(argv: list[str] | None = None) -> int:
 
             canonical_asr = create_omni_asr_producer(args.omni_asr_runtime, distro=args.wsl_distro)
 
+        assert_devices_available(
+            {
+                **({"the Path B reader": args.visual_device} if args.visual else {}),
+                **({"Stage 2 indexing": args.index_device} if args.visual else {}),
+                **({"TimeLens2": args.timelens_device} if args.timelens else {}),
+            }
+        )
+
         visual_composer = None
         if args.visual:
-            from hawedit.models import ModelStore
-            from hawedit.qwen_visual import QwenVisualEmbedder, QwenVisualReranker
-            from hawedit.registry import REGISTRY
-            from hawedit.video_reader import VideoChat3Reader
-            from hawedit.visual_pipeline import VisualComposer
-
-            model_store = ModelStore()
-            embed_dir = model_store.path_for(REGISTRY["Qwen3-VL-Embedding-2B"])
-            rerank_dir = model_store.path_for(REGISTRY["Qwen3-VL-Reranker-2B"])
-            reader_dir = model_store.path_for(REGISTRY["MCG-NJU/VideoChat3-4B"])
-            visual_composer = VisualComposer(
-                QwenVisualEmbedder(embed_dir, device=args.visual_device),
-                lambda read: QwenVisualReranker(rerank_dir, read, device=args.visual_device),
-                lambda read, score: VideoChat3Reader(
-                    reader_dir, read, score, device=args.visual_device
-                ),
-                keep=args.visual_keep,
-            )
+            visual_composer = build_visual_composer(args)
 
         temporal_grounder = None
         if args.timelens:

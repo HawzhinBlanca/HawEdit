@@ -27,6 +27,7 @@ from hawedit.visual_index import (
     MAX_FRAMES_PER_WINDOW,
     REFERENCE_FPS,
     RETRIEVE_K,
+    VIDEOCHAT3_3090TI_MAX_FRAMES,
     RerankedHit,
     SceneWindow,
     VisualEmbedding,
@@ -153,6 +154,31 @@ def test_a_scene_longer_than_the_ceiling_is_split_not_downsampled() -> None:
     assert all(w.frame_count <= MAX_FRAMES_PER_WINDOW for w in windows)
     assert [w.window_index for w in windows] == [0, 1, 2]
     assert {w.scene_index for w in windows} == {0}
+
+
+def test_the_measured_videochat_capacity_splits_without_losing_coverage() -> None:
+    windows = plan_scene_windows(
+        "m1",
+        duration_ms=30_000,
+        shot_cuts_ms=(10_000, 20_000),
+        fps=2.0,
+        max_frames_per_window=VIDEOCHAT3_3090TI_MAX_FRAMES,
+    )
+    assert all(window.frame_count <= VIDEOCHAT3_3090TI_MAX_FRAMES for window in windows)
+    assert windows[0].in_ms == 0 and windows[-1].out_ms == 30_000
+    assert all(nxt.in_ms == previous.out_ms for previous, nxt in pairwise(windows))
+    assert {window.scene_index for window in windows} == {0, 1, 2}
+
+
+@pytest.mark.parametrize("capacity", [False, 0, -1, 65, 8.0, "8"])
+def test_consumer_frame_capacity_is_an_exact_bounded_integer(capacity: object) -> None:
+    with pytest.raises(VisualIndexError, match="exact integer"):
+        plan_scene_windows(
+            "m1",
+            30_000,
+            (),
+            max_frames_per_window=capacity,  # type: ignore[arg-type]
+        )
 
 
 def test_the_split_is_even_so_no_window_is_a_runt() -> None:

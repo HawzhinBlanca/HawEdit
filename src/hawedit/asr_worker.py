@@ -23,6 +23,7 @@ from hawedit.asr import (
     _assemble_canonical_transcript,
     _PreparedSpeechSegment,
     _validate_hard_segments,
+    transcribe_prepared_segments,
 )
 from hawedit.transcripts import RawTranscript
 
@@ -84,10 +85,7 @@ def run_request(
         prepared.append(segment)
 
     model = backend or OmniAsrBackend()
-    initial = tuple(
-        (segment, model.transcribe_segment(segment.path, segment.duration_s))
-        for segment in prepared
-    )
+    initial, unaligned = transcribe_prepared_segments(model, prepared)
     selected_validator = validator
 
     def validator_factory() -> SoraniValidator:
@@ -100,7 +98,9 @@ def run_request(
         return selected_validator
 
     results, validated_by = _validate_hard_segments(initial, model, validator_factory)
-    transcript = _assemble_canonical_transcript(media_id, results, validated_by=validated_by)
+    transcript = _assemble_canonical_transcript(
+        media_id, results, unaligned, validated_by=validated_by
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(transcript.to_json())

@@ -185,3 +185,27 @@ def test_vad_pauses_currently_cannot_split_a_sentence() -> None:
         Word(w="دوو", start_ms=1_500, end_ms=2_000, conf=0.9),
     )
     assert len(segment_sentences(far_apart, vad_pauses=(), pause_ms=400)) == 2
+
+
+def test_the_recorded_pause_threshold_is_where_the_split_actually_happens() -> None:
+    """D-014's 500 ms, asserted as a boundary rather than followed as a symbol.
+
+    Every other pause test here passes `pause_ms=DEFAULT_PAUSE_MS`, so they follow the constant
+    wherever it goes: measured 2026-08-09, changing it to 800 left all 1,170 tests green. Symbolic
+    use reads as coverage and measures nothing.
+
+    So this one uses literal gaps either side of the recorded value. Changing the threshold means
+    editing this test in the same commit — a visible edit, the same trade
+    `scripts/test-count.floor` makes. D-098.
+    """
+    assert DEFAULT_PAUSE_MS == 500, "D-014 records 500 ms; the gaps below are chosen around it"
+
+    at_the_threshold = words(("ئەمە", 0, 300), ("دواتر", 800, 1100))
+    assert len(segment_sentences(at_the_threshold)) == 2, (
+        "a gap of exactly 500 ms must split — at the threshold, not past it"
+    )
+
+    just_under = words(("ئەمە", 0, 300), ("دواتر", 799, 1100))
+    assert len(segment_sentences(just_under)) == 1, (
+        "a 499 ms gap must not split, or the recorded threshold is not the one in force"
+    )
