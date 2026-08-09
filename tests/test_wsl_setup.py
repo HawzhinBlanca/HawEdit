@@ -73,12 +73,15 @@ def test_wheel_safe_setup_copies_only_the_package_and_marks_success(
     setup_script = setup_scripts[0].decode("utf-8")
     assert "'torch==2.8.0' 'torchaudio==2.8.0'" in setup_script
     assert "'qwen-asr==0.0.6'" in setup_script
+    assert setup_script.count("'fairseq2==0.6'") == 2
     assert setup_script.count("'fonttools==4.60.2'") == 2
     assert "from qwen_asr import Qwen3ASRModel" in setup_script
     assert 'torchaudio_version = torchaudio.__version__.split("+", 1)[0]' in setup_script
+    assert "from hawedit.omni_assets import provision_omni_assets" in setup_script
+    assert setup_script.index("provision_omni_assets()") < setup_script.index("import torch")
 
 
-def test_a_ready_runtime_is_idempotent_without_another_wsl_call(
+def test_a_ready_runtime_revalidates_assets_and_dependencies(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     package = tmp_path / "hawedit"
@@ -90,11 +93,44 @@ def test_a_ready_runtime_is_idempotent_without_another_wsl_call(
     source.mkdir(parents=True)
     (source / ".ready").write_text("ready\n", encoding="ascii")
 
-    def forbidden(*args: object, **kwargs: object) -> None:
-        raise AssertionError("ready setup called WSL again")
+    scripts: list[bytes] = []
 
-    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", forbidden)
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        value = kwargs.get("input")
+        if isinstance(value, bytes):
+            scripts.append(value)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_run)
     assert (
         provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
         == runtime
     )
+    assert len(scripts) == 1
+    assert b"provision_omni_assets()" in scripts[0]
+
+
+def test_failed_revalidation_invalidates_an_existing_ready_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package = tmp_path / "hawedit"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    runtime = tmp_path / "runtime"
+    source = default_wsl_source(package, runtime)
+    source.mkdir(parents=True)
+    ready = source / ".ready"
+    ready.write_text("ready\n", encoding="ascii")
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/runtime\n", b"")
+        return subprocess.CompletedProcess(args, 17, b"", b"failed")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="exit code 17"):
+        provision_wsl_runtime(runtime_root=runtime, package_source=package, platform_name="nt")
+
+    assert not ready.exists()

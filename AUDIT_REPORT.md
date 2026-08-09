@@ -71,9 +71,13 @@ These cannot be truthfully solved from the checkout alone:
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.
-- The WSL2 setup installs pinned, import-checked OmniASR/Qwen packages with a matched
-  Torch/torchaudio 2.8 pair, but package-manager integrity is not the same as
-  vendored/checksummed model assets; Meta's model-card downloader still owns those remote bytes.
+- The WSL2 setup installs exact OmniASR 0.2.0/fairseq2 0.6/Qwen packages with a matched
+  Torch/torchaudio 2.8 pair. HawEdit now owns exact byte identities for the 43.5 GB canonical
+  LLM-7B/CTC-3B/tokenizer set and official card document, atomically provisions only matching
+  downloads, freezes external card sources, validates effective model/tokenizer policy and hashes
+  every asset again before model construction. Both real models load through aliases to the held
+  verified descriptors, and failed setup invalidates readiness
+  (`evidence/omniasr-asset-integrity.md`).
 - **All six Hugging Face repository revisions are pinned as of 2026-08-09** (D-073/D-075).
   `models/revisions.json` fixes every fetchable repository to a full commit obtained from Hub
   metadata, and `fetch-models.sh` refuses any repository with no pin. Four local visual
@@ -88,8 +92,8 @@ These cannot be truthfully solved from the checkout alone:
   toolchain and provenance records that builder identity; an ambient backend cannot silently
   change the wheel. Publication also requires an explicit successful official `main` push gate
   for the exact release SHA and records its run/job in provenance; a clean but untested commit is
-  no longer publishable. Releases are still unsigned, and package-managed OmniASR assets lack a
-  project-owned byte manifest.
+  no longer publishable. Releases are still unsigned and transitive deployment dependencies are
+  not yet hash-locked; OmniASR package-asset byte identity is now closed separately at runtime.
 
 ## Honest release call
 
@@ -99,7 +103,7 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,282 collected, 1,282 passed** on 2026-08-09.
+- Full Windows gate, Ruff/formatting/mypy clean: **1,307 collected, 1,307 passed** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
@@ -107,14 +111,17 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
 - Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
   `hawedit-editorial-bench`, `hawedit-asr-setup`, `hawedit-credentials` and `hawedit-release`
   all start from the installed wheel.
-- Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker and setup module.
+- Wheel contains the Kurdish font/OFL, model source/revision manifests, WSL worker/setup module and
+  the source-fingerprinted OmniASR asset allowlist.
 - Fresh FontTools 4.60.2 compatibility environment: `pip check` clean, real bundled Noto Kurdish
   coverage passed, and `pip-audit==2.10.1` found no known third-party vulnerabilities. Three
   independent dependency-pin mutations were caught and restored (`evidence/dependency-security.md`).
 - Real Stage 1: the rzgar checkpoint reproduced its shipped Sorani demo reference exactly at
   4,250,408,448 peak allocated bytes on GPU 1; the real CLI then ran OmniASR LLM-7B + CTC-3B,
   validator routing and Viterbi timing over the committed media fixture in 212.9 seconds from a
-  warm asset cache. The fixture is synthetic Kurmanji, so this proves execution, not Sorani CER.
+  warm asset cache. A separate integrity run rehashed all 43.5 GB and loaded both actual model
+  classes through held descriptors in 249 seconds. The fixture is synthetic Kurmanji, so this
+  proves execution, not Sorani CER.
 - Stage 0 now owns the video media clock: the real fixture's padded VAD previously ended at
   4180 ms against 4162 ms of footage; it is intersected at 4162 ms before canonical ASR, and a
   runner integration test proves no speech region handed downstream can exceed the media end.
@@ -130,9 +137,9 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   package data, and atomically emits
   the wheel with `SHA256SUMS`, SPDX 2.3 JSON and stable revision/gate/builder provenance. The
   independent `spdx-tools 0.8.5` validator accepts the emitted document. Digests intentionally
-  live beside the artifacts instead of in this changing source file. Signing and a project-owned
-  OmniASR byte manifest remain open supply-chain work (`evidence/release-builder-lock.md`,
-  `evidence/release-exact-gate.md`).
+  live beside the artifacts instead of in this changing source file. Signing and transitive
+  environment hash locking remain open supply-chain work (`evidence/release-builder-lock.md`,
+  `evidence/release-exact-gate.md`, `evidence/omniasr-asset-integrity.md`).
 - Cross-Python release proof: Python 3.11.15 and 3.12.10 each emitted the same 329,973-byte wheel
   from revision `8d4810d28fd1`, SHA-256 `7765db5414dd69f8679f0646b41376907978b95e68d9a260d7ad64e49cde34b9`.
   Provenance differs deliberately because it records the measured interpreter.

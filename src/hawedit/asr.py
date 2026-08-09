@@ -40,9 +40,18 @@ from hawedit.corpus import CorpusItem
 from hawedit.escalation import SegmentScore, select_for_validation
 from hawedit.forced_alignment import align_words
 from hawedit.models import ModelStore, assert_checkpoint_integrity, assert_transformers_config_safe
+from hawedit.omni_assets import (
+    CANONICAL_CTC_CARD,
+    CANONICAL_LLM_CARD,
+    assert_canonical_omni_cards,
+    assert_effective_omni_cards,
+    assert_omni_card_integrity,
+    freeze_fairseq2_asset_overrides,
+    open_verified_omni_assets,
+)
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
-from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, wsl_path
+from hawedit.wsl_setup import default_wsl_runtime, default_wsl_source, package_fingerprint, wsl_path
 
 __all__ = [
     "LONG_AUDIO_THRESHOLD_S",
@@ -265,9 +274,10 @@ class OmniAsrBackend:
         llm_device: str = "cuda:0",
         ctc_device: str = "cuda:1",
         language: str = "ckb_Arab",
-        llm_card: str = "omniASR_LLM_7B_v2",
-        ctc_card: str = "omniASR_CTC_3B_v2",
+        llm_card: str = CANONICAL_LLM_CARD,
+        ctc_card: str = CANONICAL_CTC_CARD,
     ) -> None:
+        assert_canonical_omni_cards(llm_card, ctc_card)
         self.llm_device = llm_device
         self.ctc_device = ctc_device
         self.language = language
@@ -277,16 +287,71 @@ class OmniAsrBackend:
 
     def _load(self) -> tuple[Any, Any]:
         if self._pipelines is None:
-            try:
-                from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
-            except ImportError as exc:
-                raise RuntimeError(
-                    "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
-                ) from exc
-            self._pipelines = (
-                ASRInferencePipeline(model_card=self.llm_card, device=self.llm_device),
-                ASRInferencePipeline(model_card=self.ctc_card, device=self.ctc_device),
-            )
+            # fairseq2 trusts an existing URL-keyed cache entry and model-card ``@user``
+            # fields can override the official URI. Hash the three canonical files before
+            # importing a pipeline that can deserialize either model, and use the trailing
+            # ``@`` card names above to disable environment lookup.
+            with open_verified_omni_assets() as opened_assets:
+                assert_omni_card_integrity()
+                freeze_fairseq2_asset_overrides()
+                try:
+                    import torch
+                    from fairseq2.assets import AssetCard, get_asset_store
+                    from fairseq2.data.tokenizers.hub import load_tokenizer
+                    from fairseq2.models.hub import load_model
+                    from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
+                    ) from exc
+                assert_effective_omni_cards(get_asset_store())
+                by_name = {opened.asset.filename: opened for opened in opened_assets}
+                tokenizer_card = AssetCard(
+                    "hawedit_omniASR_tokenizer_written_v2",
+                    {
+                        "tokenizer_family": "char_tokenizer",
+                        "tokenizer": by_name["omniASR_tokenizer_written_v2.model"].file_uri,
+                    },
+                )
+                tokenizer = load_tokenizer(tokenizer_card)
+                llm_model = load_model(
+                    AssetCard(
+                        "hawedit_omniASR_LLM_7B_v2",
+                        {
+                            "model_family": "wav2vec2_llama",
+                            "model_arch": "7b_v2",
+                            "checkpoint": by_name["omniASR-LLM-7B-v2.pt"].file_uri,
+                        },
+                    ),
+                    device=torch.device(self.llm_device),
+                    dtype=torch.bfloat16,
+                )
+                ctc_model = load_model(
+                    AssetCard(
+                        "hawedit_omniASR_CTC_3B_v2",
+                        {
+                            "model_family": "wav2vec2_asr",
+                            "model_arch": "3b_v2",
+                            "checkpoint": by_name["omniASR-CTC-3B-v2.pt"].file_uri,
+                        },
+                    ),
+                    device=torch.device(self.ctc_device),
+                    dtype=torch.bfloat16,
+                )
+                self._pipelines = (
+                    ASRInferencePipeline(
+                        model_card=None,
+                        model=llm_model,
+                        tokenizer=tokenizer,
+                        device=self.llm_device,
+                    ),
+                    ASRInferencePipeline(
+                        model_card=None,
+                        model=ctc_model,
+                        tokenizer=tokenizer,
+                        device=self.ctc_device,
+                    ),
+                )
         return self._pipelines
 
     @staticmethod
@@ -700,6 +765,19 @@ class WslOmniAsrProducer:
             return configured_python, self._wsl_path(source)
 
         if (source_snapshot / ".ready").is_file():
+            copied_package = source_snapshot / "hawedit"
+            try:
+                copied_identity = package_fingerprint(copied_package)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "canonical OmniASR WSL2 worker source is incomplete. Run hawedit-asr-setup"
+                ) from exc
+            expected_identity = package_fingerprint()
+            if copied_identity != expected_identity:
+                raise RuntimeError(
+                    "canonical OmniASR WSL2 worker source does not match the host package. "
+                    "Run hawedit-asr-setup"
+                )
             translated = self._wsl_path(runtime)
             return f"{translated}/venv/bin/python", self._wsl_path(source_snapshot)
 

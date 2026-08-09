@@ -14,6 +14,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 __all__ = [
@@ -87,7 +88,8 @@ if command -v uv >/dev/null 2>&1; then
   fi
   uv pip install --python "$venv/bin/python" \
     'torch==2.8.0' 'torchaudio==2.8.0' \
-    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' \
+    'omnilingual-asr==0.2.0' 'fairseq2==0.6' \
+    'qwen-asr==0.0.6' 'klpt==0.1.7' \
     'fonttools==__FONTOOLS_VERSION__'
 elif command -v python3.12 >/dev/null 2>&1; then
   if [[ ! -x "$venv/bin/python" ]]; then
@@ -96,13 +98,21 @@ elif command -v python3.12 >/dev/null 2>&1; then
   "$venv/bin/python" -m pip install --upgrade pip
   "$venv/bin/python" -m pip install \
     'torch==2.8.0' 'torchaudio==2.8.0' \
-    'omnilingual-asr==0.2.0' 'qwen-asr==0.0.6' 'klpt==0.1.7' \
+    'omnilingual-asr==0.2.0' 'fairseq2==0.6' \
+    'qwen-asr==0.0.6' 'klpt==0.1.7' \
     'fonttools==__FONTOOLS_VERSION__'
 else
   printf '%s\n' 'Install uv or Python 3.12 inside WSL2.' >&2
   exit 1
 fi
 PYTHONPATH="$HAWEDIT_WSL_SOURCE" "$venv/bin/python" - <<'PY'
+from hawedit.omni_assets import provision_omni_assets
+
+# Download into fairseq2's exact cache layout, but publish nothing until HawEdit's
+# application-owned size and SHA-256 identities match. The worker hashes them again
+# immediately before model construction.
+provision_omni_assets()
+
 import torch
 import torchaudio
 from hawedit.asr_worker import run_request
@@ -116,7 +126,7 @@ if torch_version != "2.8.0" or torchaudio_version != "2.8.0":
         f"Stage 1 requires matched torch/torchaudio 2.8.0, got "
         f"{torch_version}/{torchaudio_version}"
     )
-del run_request, ASRInferencePipeline, Qwen3ASRModel, torchaudio
+del run_request, ASRInferencePipeline, Qwen3ASRModel, provision_omni_assets, torchaudio
 if not torch.cuda.is_available():
     raise SystemExit("OmniASR installed, but CUDA is not visible inside WSL2")
 if torch.cuda.device_count() < 2:
@@ -140,17 +150,22 @@ def provision_wsl_runtime(
     runtime = runtime_root or default_wsl_runtime(source)
     source_root = default_wsl_source(source, runtime)
     ready = source_root / ".ready"
-    if ready.is_file():
-        return runtime
-
     target = source_root / "hawedit"
     target.parent.mkdir(parents=True, exist_ok=True)
+    if ready.exists() or ready.is_symlink():
+        if ready.is_symlink() or not ready.is_file():
+            raise RuntimeError(f"invalid OmniASR readiness marker: {ready}")
+        ready.unlink()
     shutil.copytree(
         source,
         target,
         dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+    if package_fingerprint(target) != package_fingerprint(source):
+        raise RuntimeError(
+            f"the copied OmniASR worker source at {target} does not match the host package"
+        )
     translated = wsl_path(runtime, distro)
     translated_source = wsl_path(source_root, distro)
     result = subprocess.run(
@@ -169,8 +184,25 @@ def provision_wsl_runtime(
     )
     if result.returncode != 0:
         raise RuntimeError(f"OmniASR WSL2 setup failed with exit code {result.returncode}")
-    with ready.open("x", encoding="ascii", newline="\n") as stream:
-        stream.write("ready\n")
+    temporary_ready: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="ascii",
+            newline="\n",
+            prefix=".ready-",
+            dir=source_root,
+            delete=False,
+        ) as stream:
+            temporary_ready = Path(stream.name)
+            stream.write("ready\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_ready, ready)
+        temporary_ready = None
+    finally:
+        if temporary_ready is not None:
+            temporary_ready.unlink(missing_ok=True)
     return runtime
 
 

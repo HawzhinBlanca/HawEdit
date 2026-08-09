@@ -68,6 +68,7 @@ asr = [
     "torch==2.8.0; platform_system != 'Windows'",            # BSD-3-Clause
     "torchaudio==2.8.0; platform_system != 'Windows'",       # BSD-2-Clause
     "omnilingual-asr==0.2.0; platform_system != 'Windows'", # Apache-2.0
+    "fairseq2==0.6; platform_system != 'Windows'",          # BSD-3-Clause
     "qwen-asr==0.0.6; platform_system != 'Windows'",        # Apache-2.0
 ]
 cloud = [

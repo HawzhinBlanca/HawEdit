@@ -4023,4 +4023,47 @@ tests mutate every identity/status boundary and prove failure precedes output cr
 This closes promotion without claiming authenticity: GitHub's record is still not a project
 signature, and M3.7 remains partial for release signing and external asset supply-chain coverage.
 
-Gate: `VERIFY OK — 1282 passed, 0 skipped`.
+---
+
+## D-101 · An OmniASR cache key identified a URL, not the 43.5 GB behind it
+
+The official runtime was pinned by package name and still accepted arbitrary checkpoint bytes.
+fairseq2 0.6 names its cache directory with 24 hex characters of SHA-1(URL), trusts an existing
+directory without hashing it, and validates a first download only against `Content-Length`.
+Package card sources can also override checkpoint fields. Adding a trailing `@` to the two model
+cards was necessary and insufficient: the shared `tokenizer_ref` is resolved by its bare name, so
+`omniASR_tokenizer_written_v2@user` could still redirect the tokenizer.
+
+**Decision: HawEdit owns the content boundary even though Meta owns the transport.** The packaged
+Python allowlist records exact official URL/cache-key/filename/size/SHA-256 identities for LLM-7B,
+CTC-3B and the written-v2 tokenizer. Setup downloads to a private directory and atomically
+publishes only exact bytes. Every worker hashes the full set again before either pipeline is
+constructed. Symlinks, extra cache members, concurrent mutation and corrupt pre-existing entries
+are refusals. Existing corruption is not overwritten automatically; the error names the exact
+directory to move aside.
+
+**Cards are bytes and effective policy, not trusted prose.** Runtime identity is fixed to
+`omnilingual-asr==0.2.0`, fairseq2's actual PEP 440 distribution version `0.6`, and the exact 2,725
+byte official card document. Both external fairseq2 card sources are replaced before its first
+import with distinct existing verified-empty private directories. The effective model and bare
+tokenizer cards are then resolved and compared field-for-field, catching a changed URI,
+architecture, family, tokenizer reference, added `restrict: false`, or any other added field.
+
+**`.ready` is not a permanent receipt.** Rerunning `hawedit-asr-setup` always rechecks/provisions
+the assets and refreshes the fingerprinted worker copy. Inference also refuses a ready worker
+snapshot whose Python fingerprint differs from the host package. An old marker is removed before
+runtime mutation and a new fsynced marker is atomically published only after the complete setup
+and GPU probe succeed. `omniASR_LLM_Unlimited_3B_v2` is intentionally excluded until its 17+ GB
+file is actually downloaded, independently hashed and reviewed; an upstream card entry alone is
+not integrity evidence.
+
+**Verified bytes remain bound to the loader.** The three verified file descriptors stay open and
+fairseq2 loads through private suffix-preserving aliases to those descriptors until both real model
+pipelines exist. This prevents a cache pathname swap after hashing. It does not claim protection
+from a malicious same-UID process writing the already-open inode; that needs an OS-enforced
+immutable store and is outside HawEdit's application-level supply-chain threat model.
+
+Exact identities, live WSL measurements and negative controls:
+`evidence/omniasr-asset-integrity.md`.
+
+Gate: `VERIFY OK — 1307 passed, 0 skipped`.

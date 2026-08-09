@@ -91,8 +91,12 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-wsl-asr.ps1
 ```
 
 That creates a source-fingerprinted runtime below `%LOCALAPPDATA%\HawEdit\wsl-asr`, using Python
-3.12, matched Torch/torchaudio 2.8, official OmniASR 0.2.0 and Qwen-ASR 0.0.6, then imports both
-stacks and probes both CUDA GPUs. The host runner still owns Stage 0, cuts every VAD-bounded WAV
+3.12, matched Torch/torchaudio 2.8, official OmniASR 0.2.0, fairseq2 0.6 and Qwen-ASR 0.0.6.
+Before importing either model stack it downloads and SHA-256-verifies the exact 43.5 GB
+LLM-7B/CTC-3B/tokenizer set; every worker hashes those bytes and the installed official card again
+before model construction. Rerunning setup revalidates or repairs missing assets instead of
+trusting an old `.ready` marker. It then imports both stacks and probes both CUDA GPUs. The host
+runner still owns Stage 0, cuts every VAD-bounded WAV
 locally, invokes one WSL worker so both models load once, then validates the returned immutable
 transcript. An installed wheel exposes the same operation as `hawedit-asr-setup`. Override the
 distribution with `-Distribution Ubuntu`; advanced deployments can set
@@ -150,9 +154,9 @@ gate mismatch, builder drift, hash mismatch, non-reproducible build, missing run
 wheel, or existing release directory is refused.
 
 This proves repeatable source-to-wheel bytes and a standards-validated component manifest. It is
-not a signature, an OmniASR byte manifest, a resolved deployment lock, or proof that a machine's
-separately downloaded weights match the tracked revisions; those require their own provisioning
-evidence rather than a claim hidden inside a green wheel.
+not a signature or a resolved transitive deployment lock. Separately, OmniASR's package-managed
+assets and the project-managed Hugging Face snapshots have application-owned byte identities and
+pre-load verification; those runtime proofs are not implied by a green wheel.
 
 ## Models and weights
 
@@ -175,9 +179,11 @@ excludes and refuses a NonCommercial licence before any bytes move. Needs
 
 The two Qwen checkpoint names are resolved in tracked `models/sources.json`; the fetcher never
 guesses a repository id. OmniASR is deliberately absent from that file: the pinned official
-`omnilingual-asr` package ships the exact `_v2` model cards and owns their Meta asset URLs and
-cache. Downloading similarly named Hub repositories into `models/` would provision weights the
-runtime never reads.
+`omnilingual-asr` package ships the `_v2` model cards and owns their Meta transport URLs, while
+HawEdit's packaged `omni_assets.py` owns exact URL/cache-key/size/SHA-256 identities, freezes card
+overrides, verifies the effective cards and holds the verified descriptors through both real model
+loads. Empty cache paths and altered bytes are refused before any load. Downloading
+similarly named Hub repositories into `models/` would provision weights the runtime never reads.
 
 Weights themselves never enter the repository: `models/*` and `.ffmpeg/` are git-ignored.
 
@@ -312,6 +318,7 @@ disabled (`BLOCKED.md` #7 records the live setting).
 | `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
+| `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
 | `diarization.py` | §8.1, §3 Stage 0 | DER and boundary reconciliation against word alignment. |

@@ -17,12 +17,13 @@ run on real weights.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import threading
 import wave
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -44,11 +45,145 @@ from hawedit.asr import (
 )
 from hawedit.asr_worker import run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
+from hawedit.omni_assets import CANONICAL_CTC_CARD, CANONICAL_LLM_CARD, OmniAssetError
 from hawedit.registry import ModelExcluded, ModelNotInRegistry
 from hawedit.transcripts import Word
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti", notes="Threadripper 3990X")
 AN_A100 = Hardware(host="a100-box", accelerator="A100")
+
+
+def test_omni_backend_refuses_card_or_environment_overrides() -> None:
+    backend = OmniAsrBackend()
+    assert backend.llm_card == CANONICAL_LLM_CARD
+    assert backend.ctc_card == CANONICAL_CTC_CARD
+    with pytest.raises(OmniAssetError, match="environment-disabled"):
+        OmniAsrBackend(llm_card="omniASR_LLM_7B_v2")
+
+
+def test_omni_assets_are_hashed_before_the_pipeline_module_is_imported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RefuseIntegrity:
+        def __enter__(self) -> None:
+            raise OmniAssetError("integrity sentinel")
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr("hawedit.asr.open_verified_omni_assets", RefuseIntegrity)
+    with pytest.raises(OmniAssetError, match="integrity sentinel"):
+        OmniAsrBackend()._load()
+
+
+def test_ready_wsl_worker_source_must_match_the_host_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit
+
+    runtime = tmp_path / "runtime"
+    source_snapshot = runtime / "sources" / "identity"
+    copied_package = source_snapshot / "hawedit"
+    shutil.copytree(Path(hawedit.__file__).resolve().parent, copied_package)
+    (source_snapshot / ".ready").write_text("ready\n", encoding="ascii")
+    (copied_package / "asr_worker.py").write_text("TAMPERED = True\n", encoding="utf-8")
+    monkeypatch.setattr("hawedit.asr.default_wsl_runtime", lambda: runtime)
+    monkeypatch.setattr("hawedit.asr.default_wsl_source", lambda **_kwargs: source_snapshot)
+    producer = WslOmniAsrProducer()
+    monkeypatch.setattr(producer, "_wsl_path", lambda path: path.as_posix())
+    with pytest.raises(RuntimeError, match="worker source does not match"):
+        producer._runtime()
+
+
+def test_omni_loader_reads_only_held_verified_descriptors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    opened = tuple(
+        SimpleNamespace(
+            asset=SimpleNamespace(filename=filename),
+            descriptor_path=Path(f"/proc/self/fd/{descriptor}"),
+            file_uri=f"file:///held/{filename}",
+        )
+        for filename, descriptor in (
+            ("omniASR-LLM-7B-v2.pt", 10),
+            ("omniASR-CTC-3B-v2.pt", 11),
+            ("omniASR_tokenizer_written_v2.model", 12),
+        )
+    )
+
+    class HeldAssets:
+        def __enter__(self) -> tuple[SimpleNamespace, ...]:
+            events.append("descriptors-open")
+            return opened
+
+        def __exit__(self, *_args: object) -> None:
+            events.append("descriptors-closed")
+
+    class FakeCard:
+        def __init__(self, name: str, metadata: dict[str, object]) -> None:
+            self.name = name
+            self.metadata = metadata
+
+    loaded_uris: list[str] = []
+
+    def load_model(card: FakeCard, **_kwargs: object) -> object:
+        loaded_uris.append(str(card.metadata["checkpoint"]))
+        events.append(f"model:{card.name}")
+        return object()
+
+    def load_tokenizer(card: FakeCard) -> object:
+        loaded_uris.append(str(card.metadata["tokenizer"]))
+        events.append("tokenizer")
+        return object()
+
+    class FakePipeline:
+        def __init__(self, *, model_card: str | None, **_kwargs: object) -> None:
+            assert model_card is None
+            events.append("pipeline")
+
+    fake_torch = ModuleType("torch")
+    fake_torch.device = lambda value: value  # type: ignore[attr-defined]
+    fake_torch.bfloat16 = object()  # type: ignore[attr-defined]
+    fake_assets = ModuleType("fairseq2.assets")
+    fake_assets.AssetCard = FakeCard  # type: ignore[attr-defined]
+    fake_assets.get_asset_store = lambda: object()  # type: ignore[attr-defined]
+    fake_tokenizer_hub = ModuleType("fairseq2.data.tokenizers.hub")
+    fake_tokenizer_hub.load_tokenizer = load_tokenizer  # type: ignore[attr-defined]
+    fake_model_hub = ModuleType("fairseq2.models.hub")
+    fake_model_hub.load_model = load_model  # type: ignore[attr-defined]
+    fake_pipeline = ModuleType("omnilingual_asr.models.inference.pipeline")
+    fake_pipeline.ASRInferencePipeline = FakePipeline  # type: ignore[attr-defined]
+    for name, module in {
+        "torch": fake_torch,
+        "fairseq2": ModuleType("fairseq2"),
+        "fairseq2.assets": fake_assets,
+        "fairseq2.data": ModuleType("fairseq2.data"),
+        "fairseq2.data.tokenizers": ModuleType("fairseq2.data.tokenizers"),
+        "fairseq2.data.tokenizers.hub": fake_tokenizer_hub,
+        "fairseq2.models": ModuleType("fairseq2.models"),
+        "fairseq2.models.hub": fake_model_hub,
+        "omnilingual_asr": ModuleType("omnilingual_asr"),
+        "omnilingual_asr.models": ModuleType("omnilingual_asr.models"),
+        "omnilingual_asr.models.inference": ModuleType("omnilingual_asr.models.inference"),
+        "omnilingual_asr.models.inference.pipeline": fake_pipeline,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr("hawedit.asr.open_verified_omni_assets", HeldAssets)
+    monkeypatch.setattr("hawedit.asr.assert_omni_card_integrity", lambda: None)
+    monkeypatch.setattr("hawedit.asr.freeze_fairseq2_asset_overrides", lambda: Path("private"))
+    monkeypatch.setattr("hawedit.asr.assert_effective_omni_cards", lambda _store: None)
+
+    pipelines = OmniAsrBackend()._load()
+    assert len(pipelines) == 2
+    assert loaded_uris == [
+        "file:///held/omniASR_tokenizer_written_v2.model",
+        "file:///held/omniASR-LLM-7B-v2.pt",
+        "file:///held/omniASR-CTC-3B-v2.pt",
+    ]
+    assert events[0] == "descriptors-open"
+    assert events[-1] == "descriptors-closed"
+    assert events[-3:-1] == ["pipeline", "pipeline"]
 
 
 class StubAdapter:
