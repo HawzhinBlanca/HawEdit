@@ -2,16 +2,18 @@
 
 ## Honest result
 
-The code-solvable boundary is implemented, but this checkout has **no live acceptance result**.
-The current HawEdit source fingerprint is `b1387f64265aa4ea`; its required canonical receipt
-`C:\Users\Wareen\AppData\Local\HawEdit\wsl-asr\sources\b1387f64265aa4ea\.ready` does not exist.
-Only the legacy unversioned `venv` is present. It is not accepted as the current runtime and was
-not used to manufacture a success artifact.
+The code-solvable boundary and a native acceptance run are complete. On 2026-08-09 the canonical
+Ubuntu WSL receipt for HawEdit source SHA-256
+`540fa9c0a9f56b1d9ecda04761270fddbf018a1a255db46de7038c43b3c5d411` passed the live gate on
+the two-RTX-3090-Ti host: 140 exact distributions, CPython 3.12.0, three canonical OmniASR assets
+totalling 43,546,500,168 bytes, and two CUDA devices were revalidated before and after the audit.
+The exact result and artifact digest are recorded in
+`evidence/wsl-asr-live-acceptance-2026-08-09.md`.
 
 `security/wsl-asr-vex.json` is a 30-day disposition expiring 2026-09-08, not a claim that the
 dependency graph is vulnerability-free. It binds CPython 3.12, exact dependency locks, package
 versions, all three OmniASR asset identities, and the reviewed HawEdit source SHA-256
-`b1387f64265aa4eab3b712aea4d366f66b0bd51e79f2543fee0c62db7f67b722`. Any later source change
+`540fa9c0a9f56b1d9ecda04761270fddbf018a1a255db46de7038c43b3c5d411`. Any later source change
 must trigger disposition review and a new digest; code mitigations cannot be carried onto old or
 modified worker bytes by matching only dependencies and assets.
 
@@ -52,10 +54,10 @@ bytes, no-follow regular-file hashing, descriptor binding, card integrity and pa
 limit what reaches it. Other tensor-operation findings also retain residual risk where complete
 transitive non-reachability was not proven.
 
-## Acceptance handoff
+## Acceptance and renewal
 
-After all source work is final, first update/review the VEX source digest, provision the matching
-canonical runtime, then run the live gate in the same protected job:
+The accepted run used these commands; repeat them after any source or dependency change and before
+the 2026-09-08 policy expiry:
 
 ```powershell
 python -m hawedit.wsl_setup --distribution Ubuntu
@@ -64,7 +66,7 @@ python -m hawedit.wsl_vex_gate `
   --evidence evidence\live\wsl-asr-vex-20260809T120000Z.json
 ```
 
-Acceptance requires exit zero and the new evidence file. Exit one, a missing current `.ready`,
-scanner/network failure, a pre-existing evidence path, or any drift is refusal. No workflow or
-release command invokes this boundary yet; CI integration and a live success artifact remain the
-workflow owner's acceptance task.
+Acceptance requires exit zero and a new evidence file. Exit one, a missing current `.ready`,
+scanner/network failure, a pre-existing evidence path, or any drift is refusal. The protected GPU
+workflow invokes this boundary; it still needs its first post-merge run from default `main` because
+GitHub does not expose the workflow for dispatch before that merge.

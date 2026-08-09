@@ -4631,3 +4631,25 @@ must still measure retrieval quality and end-to-end memory after the increased w
 Kurdish invariant #1 was described as three independent protections while one path had no test.
 Every claimed route must be reached by a mutation-sensitive regression; redundant prose does not
 increase assurance. `evidence/adversarial-pass-7-2026-08-09.md`.
+
+## D-140 - The isolated OmniASR interpreter is exact CPython 3.12.0
+
+OmniASR 0.2.0 declares Python `<=3.12`; PEP 440 therefore rejects 3.12.13, which the unconstrained
+`uv venv --python 3.12` selected during the first real native run. The WSL environment now pins
+`3.12.0` exactly and binds it into the generation digest and receipt. Failed Linux-venv cleanup is
+performed inside WSL only after validating one direct unpublished generation, because Windows
+cannot traverse the venv's `lib64` link. `evidence/wsl-asr-live-acceptance-2026-08-09.md`.
+
+## D-141 - Receipt-bound source must never generate bytecode in place
+
+The first successful setup import created `__pycache__` inside the exact worker snapshot, so the
+live verifier correctly refused it. Every WSL execution that imports receipt-bound HawEdit source
+sets `PYTHONDONTWRITEBYTECODE=1`; the snapshot allowlist remains exact and unchanged.
+`evidence/wsl-asr-live-acceptance-2026-08-09.md`.
+
+## D-142 - Repeated OSV ranges are one advisory only when identity agrees
+
+pip-audit 2.10.1 can emit several affected-range rows with one package, version, primary advisory
+and alias set but different `fix_versions`. Those rows are canonicalized to one VEX finding.
+Repeated primary IDs with conflicting aliases remain a hard refusal, and evidence retains the raw
+report digest. `evidence/wsl-asr-live-acceptance-2026-08-09.md`.

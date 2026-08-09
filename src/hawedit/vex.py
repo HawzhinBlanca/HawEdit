@@ -443,7 +443,7 @@ def _parse_pip_audit(raw: object) -> tuple[tuple[Finding, ...], dict[str, str]]:
     dependencies = _list(document["dependencies"], "pip-audit report.dependencies")
     findings: list[Finding] = []
     packages: dict[str, str] = {}
-    primary_keys: set[tuple[str, str]] = set()
+    primary_findings: dict[tuple[str, str], Finding] = {}
     for dep_index, item in enumerate(dependencies):
         label = f"pip-audit report.dependencies[{dep_index}]"
         dependency = _object(item, label)
@@ -476,10 +476,20 @@ def _parse_pip_audit(raw: object) -> tuple[tuple[Finding, ...], dict[str, str]]:
             if "description" in vuln and type(vuln["description"]) is not str:
                 raise VexError("pip-audit vulnerability description must be a string")
             key = (name, primary)
-            if key in primary_keys:
-                raise VexError(f"pip-audit report repeats primary advisory {primary} for {name}")
-            primary_keys.add(key)
-            findings.append(Finding(name, version, primary, aliases))
+            finding = Finding(name, version, primary, tuple(sorted(aliases)))
+            previous = primary_findings.get(key)
+            if previous is not None:
+                if previous != finding:
+                    raise VexError(
+                        f"pip-audit report gives conflicting identities for advisory "
+                        f"{primary} on {name}"
+                    )
+                # OSV can emit one row per affected range, with different fix_versions, while
+                # retaining the same primary/alias identity. Fix versions do not determine VEX
+                # coverage; the raw report stays digest-bound in the live evidence.
+                continue
+            primary_findings[key] = finding
+            findings.append(finding)
     return tuple(findings), dict(sorted(packages.items()))
 
 

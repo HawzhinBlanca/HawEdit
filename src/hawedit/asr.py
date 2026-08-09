@@ -877,6 +877,7 @@ class WslOmniAsrProducer:
                 [
                     *self._prefix(),
                     "env",
+                    "PYTHONDONTWRITEBYTECODE=1",
                     f"PYTHONPATH={wsl_source}",
                     interpreter,
                     "-m",

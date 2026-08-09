@@ -301,12 +301,28 @@ def test_duplicate_alias_across_dispositions_is_refused(tmp_path: Path) -> None:
         load_vex(_write_json(tmp_path / "vex.json", policy))
 
 
-def test_duplicate_primary_advisory_in_audit_is_refused(tmp_path: Path) -> None:
+def test_repeated_osv_range_for_one_advisory_is_canonicalized(tmp_path: Path) -> None:
     audit = _audit_payload()
     vulns = _audit_dependencies(audit)[1]["vulns"]
     assert isinstance(vulns, list)
-    vulns.append(dict(vulns[0]))
-    with pytest.raises(VexError, match="repeats primary advisory"):
+    repeated = dict(vulns[0])
+    repeated["fix_versions"] = ["99.0.0"]
+    vulns.append(repeated)
+
+    findings, _ = load_pip_audit(_write_json(tmp_path / "audit.json", audit))
+
+    identities = [(finding.package, finding.primary_id) for finding in findings]
+    assert len(identities) == len(set(identities))
+
+
+def test_duplicate_primary_advisory_with_conflicting_aliases_is_refused(tmp_path: Path) -> None:
+    audit = _audit_payload()
+    vulns = _audit_dependencies(audit)[1]["vulns"]
+    assert isinstance(vulns, list)
+    conflicting = dict(vulns[0])
+    conflicting["aliases"] = ["CVE-2099-9999"]
+    vulns.append(conflicting)
+    with pytest.raises(VexError, match="conflicting identities"):
         load_pip_audit(_write_json(tmp_path / "audit.json", audit))
 
 

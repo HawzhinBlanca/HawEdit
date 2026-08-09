@@ -533,6 +533,7 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
         if "hawedit.asr_worker" in args:
             assert binding_active, "the host lease must span the entire WSL worker"
+            assert "PYTHONDONTWRITEBYTECODE=1" in args
             worker_calls.append(args)
             transcript = run_request(
                 stage1 / "omni-asr-request.json",

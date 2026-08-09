@@ -23,17 +23,22 @@ from hawedit.wsl_asr_locks import (
 )
 from hawedit.wsl_setup import (
     _IDENTITY_PROBE_SCRIPT,
+    _SETUP_SCRIPT,
+    _WSL_ASR_PYTHON_VERSION,
     WSL_MODEL_METADATA_DIRECTORY,
     WslRuntimeError,
+    _parse_runtime_payload,
     _prefix,
     _publish_runtime_candidate,
     _publish_source_snapshot,
     _read_bound_regular_file,
+    _remove_incomplete_generation,
     _runtime_transaction_lock,
     default_wsl_source,
     load_wsl_runtime_receipt,
     package_digest,
     package_fingerprint,
+    probe_wsl_runtime,
     provision_wsl_runtime,
     wsl_path,
 )
@@ -46,7 +51,7 @@ def _candidate_payload() -> dict[str, object]:
         "uid": 1000,
         "home": "/home/ai",
         "python": "/runtime/venv/bin/python",
-        "python_version": "3.12.13",
+        "python_version": _WSL_ASR_PYTHON_VERSION,
         "packages": dict(LOCKED_DISTRIBUTIONS),
         "dependency_locks": {
             "build_sha256": BUILD_LOCK_SHA256,
@@ -1041,6 +1046,102 @@ def test_receipt_refuses_live_interpreter_package_drift(
     monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", drifted_runtime)
     with pytest.raises(WslRuntimeError, match="package versions drifted"):
         load_wsl_runtime_receipt(runtime_root=runtime, package_source=package)
+
+
+def test_asr_runtime_pins_the_only_python_version_omni_declares_compatible() -> None:
+    assert 'uv venv --python 3.12.0 "$venv"' in _SETUP_SCRIPT
+    assert 'uv venv --python 3.12 "$venv"' not in _SETUP_SCRIPT
+    assert 'PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$HAWEDIT_WSL_SOURCE"' in _SETUP_SCRIPT
+
+    too_new = _candidate_payload()
+    too_new["python_version"] = "3.12.13"
+    with pytest.raises(WslRuntimeError, match="requires exact Python 3.12.0"):
+        _parse_runtime_payload(too_new, "candidate")
+
+
+def test_incomplete_linux_venv_cleanup_falls_back_to_exact_wsl_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venvs = tmp_path / "venvs"
+    generation = venvs / "Ubuntu-generation"
+    generation.mkdir(parents=True)
+    seen: list[list[str]] = []
+
+    def windows_cannot_traverse(_path: Path) -> None:
+        raise OSError(1920, "Windows cannot traverse the Linux lib64 link")
+
+    def remove_inside_wsl(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        seen.append(args)
+        os.rmdir(generation)
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.shutil.rmtree", windows_cannot_traverse)
+    monkeypatch.setattr(
+        "hawedit.wsl_setup.wsl_path", lambda *_args, **_kwargs: "/mnt/c/exact-generation"
+    )
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", remove_inside_wsl)
+
+    _remove_incomplete_generation(generation, venvs, "Ubuntu")
+
+    assert seen == [
+        [
+            "wsl.exe",
+            "--distribution",
+            "Ubuntu",
+            "--exec",
+            "rm",
+            "-rf",
+            "--",
+            "/mnt/c/exact-generation",
+        ]
+    ]
+    assert not generation.exists()
+
+
+def test_incomplete_generation_cleanup_refuses_a_sibling_root(tmp_path: Path) -> None:
+    venvs = tmp_path / "venvs"
+    venvs.mkdir()
+    outside = tmp_path / "outside-generation"
+    outside.mkdir()
+
+    with pytest.raises(WslRuntimeError, match="outside"):
+        _remove_incomplete_generation(outside, venvs, "Ubuntu")
+    assert outside.is_dir()
+
+
+def test_live_asset_probe_cannot_mutate_the_receipt_bound_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    receipt = SimpleNamespace(
+        generation_root=tmp_path / "environment",
+        source_root=tmp_path / "source",
+        distro="Ubuntu",
+        asset_bytes=43_546_500_168,
+    )
+    seen: list[str] = []
+
+    monkeypatch.setattr("hawedit.wsl_setup.load_wsl_runtime_receipt", lambda **_kwargs: receipt)
+    monkeypatch.setattr(
+        "hawedit.wsl_setup.wsl_path",
+        lambda path, *_args, **_kwargs: f"/mnt/c/{Path(path).name}",
+    )
+
+    def probe(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        seen.extend(args)
+        payload = {
+            "files_verified": 3,
+            "size_bytes": receipt.asset_bytes,
+            "cuda_device_count": 2,
+        }
+        return subprocess.CompletedProcess(args, 0, json.dumps(payload).encode(), b"")
+
+    monkeypatch.setattr("hawedit.wsl_setup.subprocess.run", probe)
+
+    result = probe_wsl_runtime(runtime_root=tmp_path, package_source=tmp_path / "hawedit")
+
+    assert result.files_verified == 3
+    assert "PYTHONDONTWRITEBYTECODE=1" in seen
+    assert "PYTHONPATH=/mnt/c/source" in seen
 
 
 # --- D-134: `--` sends the command through a shell that eats the environment -----------------

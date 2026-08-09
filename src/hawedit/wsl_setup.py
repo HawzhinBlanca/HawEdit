@@ -55,6 +55,7 @@ __all__ = [
 
 _RECEIPT_SCHEMA: Final = 2
 _ENVIRONMENT_SCHEMA: Final = 2
+_WSL_ASR_PYTHON_VERSION: Final = "3.12.0"
 _EXPECTED_PACKAGES: Final[Mapping[str, str]] = LOCKED_DISTRIBUTIONS
 _LOCK_FILES: Final[Mapping[str, tuple[str, str]]] = {
     "build_sha256": ("build-requirements.txt", BUILD_REQUIREMENTS),
@@ -524,6 +525,50 @@ def _generation_environment(generation_root: Path) -> Path:
     return generation_root / "environment"
 
 
+def _remove_incomplete_generation(
+    generation_root: Path,
+    venvs_root: Path,
+    distro: str | None,
+    executable: str = "wsl.exe",
+) -> None:
+    """Remove one validated unpublished generation, falling back to Linux for WSL links."""
+    _validate_plain_directory(venvs_root, "OmniASR venvs directory")
+    _validate_plain_directory(generation_root, "incomplete OmniASR venv generation")
+    try:
+        parent = generation_root.parent.resolve(strict=True)
+        expected_parent = venvs_root.resolve(strict=True)
+    except OSError as exc:
+        raise WslRuntimeError(
+            f"cannot resolve incomplete WSL generation {generation_root}: {exc}"
+        ) from exc
+    if parent != expected_parent or not generation_root.name:
+        raise WslRuntimeError(
+            f"refusing to remove WSL generation outside {expected_parent}: {generation_root}"
+        )
+    try:
+        shutil.rmtree(generation_root)
+        return
+    except OSError as host_error:
+        # Windows cannot traverse Linux venv links such as lib64 on DrvFS. `rm` removes the links
+        # themselves and does not follow them; the exact direct child was validated above.
+        translated = wsl_path(generation_root, distro, executable)
+        result = subprocess.run(
+            [*_prefix(distro, executable), "rm", "-rf", "--", translated],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.decode("utf-8", "replace")[-512:].strip()
+            raise WslRuntimeError(
+                f"cannot remove incomplete WSL generation {generation_root}: "
+                f"{detail or f'exit code {result.returncode}'}"
+            ) from host_error
+    if os.path.lexists(generation_root):
+        raise WslRuntimeError(
+            f"incomplete WSL generation still exists after cleanup: {generation_root}"
+        )
+
+
 def _write_generation_locks(generation_root: Path) -> None:
     lock_directory = _generation_lock_directory(generation_root)
     _ensure_plain_directory(lock_directory, "OmniASR dependency locks directory")
@@ -798,6 +843,7 @@ def _environment_digest() -> str:
     payload = json.dumps(
         {
             "schema": _ENVIRONMENT_SCHEMA,
+            "python": _WSL_ASR_PYTHON_VERSION,
             "packages": dict(_EXPECTED_PACKAGES),
             "dependency_locks": dict(_EXPECTED_LOCKS),
             "sdist_exceptions": SDIST_EXCEPTIONS,
@@ -823,6 +869,11 @@ def _parse_runtime_payload(value: object, label: str) -> dict[str, object]:
         raise WslRuntimeError(
             f"{label} has unsupported schema {payload.get('schema')!r}; "
             f"expected {_ENVIRONMENT_SCHEMA}"
+        )
+    python_version = _string(payload, "python_version", label)
+    if python_version != _WSL_ASR_PYTHON_VERSION:
+        raise WslRuntimeError(
+            f"{label} requires exact Python {_WSL_ASR_PYTHON_VERSION}, got {python_version!r}"
         )
     packages = _object(payload.get("packages"), f"{label}: packages")
     if packages != dict(_EXPECTED_PACKAGES):
@@ -880,7 +931,7 @@ if [[ "$HAWEDIT_WSL_ENV_REUSE" != 1 ]]; then
     printf '%s\n' 'Install uv inside WSL2 to provision the hash-locked OmniASR runtime.' >&2
     exit 1
   fi
-  uv venv --python 3.12 "$venv"
+  uv venv --python 3.12.0 "$venv"
   uv pip install --python "$venv/bin/python" \
     --require-hashes --no-deps \
     -r "$HAWEDIT_WSL_BUILD_LOCK"
@@ -890,7 +941,7 @@ if [[ "$HAWEDIT_WSL_ENV_REUSE" != 1 ]]; then
     -r "$HAWEDIT_WSL_RUNTIME_LOCK"
   uv pip check --python "$venv/bin/python"
 fi
-PYTHONPATH="$HAWEDIT_WSL_SOURCE" "$venv/bin/python" - <<'PY'
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$HAWEDIT_WSL_SOURCE" "$venv/bin/python" - <<'PY'
 import importlib.metadata
 import hashlib
 import json
@@ -1001,9 +1052,6 @@ def _build_receipt(
             f"WSL setup targeted {requested_distro!r}, but the runtime identified itself as "
             f"{actual_distro!r}"
         )
-    python_version = _string(parsed, "python_version", "WSL runtime validation result")
-    if not python_version.startswith("3.12."):
-        raise WslRuntimeError(f"canonical ASR requires Python 3.12, got {python_version!r}")
     return {
         "schema": _RECEIPT_SCHEMA,
         "source_sha256": package_digest(source),
@@ -1257,6 +1305,7 @@ def probe_wsl_runtime(
         [
             *_prefix(receipt.distro, executable),
             "env",
+            "PYTHONDONTWRITEBYTECODE=1",
             f"PYTHONPATH={runtime_source}",
             runtime_python,
             "-c",
@@ -1318,7 +1367,7 @@ def provision_wsl_runtime(
                 _validate_plain_directory(generation_root, "OmniASR venv generation")
             complete = _generation_is_complete(generation_root, generation)
             if generation_root.exists() and not complete:
-                shutil.rmtree(generation_root)
+                _remove_incomplete_generation(generation_root, venvs_root, distro)
             _ensure_plain_directory(generation_root, "OmniASR venv generation")
             if not complete:
                 _write_generation_locks(generation_root)
@@ -1351,7 +1400,7 @@ def provision_wsl_runtime(
             )
             if result.returncode != 0:
                 if not complete and generation_root.exists():
-                    shutil.rmtree(generation_root)
+                    _remove_incomplete_generation(generation_root, venvs_root, distro)
                 raise RuntimeError(f"OmniASR WSL2 setup failed with exit code {result.returncode}")
             payload = _read_bound_json(candidate, "WSL runtime validation result")
             receipt = _build_receipt(

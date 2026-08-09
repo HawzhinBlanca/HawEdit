@@ -41,6 +41,18 @@ def store(tmp_path: Path) -> ModelStore:
     return ModelStore(root=tmp_path, metadata_root=tmp_path)
 
 
+def _missing_canonical_omni_runtime() -> tuple[str, Path, int]:
+    raise RuntimeError("canonical OmniASR runtime is absent")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_canonical_omni_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests must not inspect or hash an operator's 43.5 GB live WSL runtime."""
+    monkeypatch.setattr(
+        "hawedit.models._probe_canonical_omni_runtime", _missing_canonical_omni_runtime
+    )
+
+
 def _stub_local_omni_runtime(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -297,7 +309,9 @@ def test_every_registry_entry_appears_in_the_status_report(tmp_path: Path) -> No
 def test_an_absent_checkpoint_reports_as_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr("hawedit.models._is_importable", lambda module: module != "omnilingual_asr")
+    monkeypatch.setattr(
+        "hawedit.models._probe_canonical_omni_runtime", _missing_canonical_omni_runtime
+    )
     statuses = {s.model_id: s for s in store(tmp_path).status()}
     assert statuses["omniASR_LLM_7B_v2"].available is False
 
@@ -439,7 +453,9 @@ def test_a_stage_refuses_to_start_without_its_weights(tmp_path: Path) -> None:
 def test_missing_omniasr_is_not_misreported_as_a_fetch_models_problem(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr("hawedit.models._is_importable", lambda _module: False)
+    monkeypatch.setattr(
+        "hawedit.models._probe_canonical_omni_runtime", _missing_canonical_omni_runtime
+    )
     with pytest.raises(ModelNotProvisioned) as raised:
         store(tmp_path).assert_available("omniASR_LLM_7B_v2")
     assert "fetch-models" not in str(raised.value)
