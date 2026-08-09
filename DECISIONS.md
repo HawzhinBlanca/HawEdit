@@ -3427,3 +3427,49 @@ strings that the serialized corpus manifest depends on. Removing them would also
 the test-count floor, which the hard rules forbid doing casually.
 
 Gate: `VERIFY OK — 1134 passed, 0 skipped`.
+
+## D-085
+
+**M6.1's contract has two halves and the second is false.** The row reads "intervals as evidence,
+never as cuts, and only where they are about the clip".
+
+**Half one was true and untested.** §3 Stage 5's formula names `timelens_interval_end` in `final_out`
+and nowhere in `final_in`. Adding the interval's *start* to the in-point candidate set left the
+entire suite green, so nothing enforced the asymmetry that makes TimeLens evidence rather than a cut.
+Pinned now — that mutation fails exactly one test — with a control requiring the interval to still
+move the out point, so the test cannot pass for a boundary that ignores TimeLens altogether. This
+half needed no judgment: the blueprint's formula is explicit.
+
+**Half two is false and is a shipping defect.** `interval_for_fusion` accepts any interval that
+overlaps the anchor at all, so **1 ms** of overlap qualifies. Measured at the library:
+anchor 10000..14000, evidence 13999..305000 → fused clip **295.0 s** from a 4.0 s sentence. Measured
+through the real `run_pipeline` and asserted on the shipped clip: a 1.60 s anchored sentence shipped
+as **4.10 s**, 2.56× longer, attributed to `timelens_interval_end`.
+
+**The runner's mitigation is real but misses the case that matters.** The uncaptioned-speech guard
+refuses the expansion when unselected *words* fall in the swallowed span — verified, a second
+sentence at 2000 ms produces exactly that refusal. Applause, music, silence and untranscribed tails
+have no words, which is precisely what "applause five minutes later" is.
+
+**Decision: refuse to choose the bound, and record three candidates.** §3 bounds the shot cut
+explicitly ("within 400 ms") and gives nothing for TimeLens. A minimum overlap fraction rejects the
+applause case but also the genuine reaction shot beginning as a sentence ends; a maximum extension
+window is symmetric with §3's only stated window but may neuter a stage whose purpose is finding ends
+beyond it; a cap relative to the anchor's own length scales with content but needs the multiple
+chosen. All three are thresholds, the question is empirical, and there is no labelled footage here.
+`BLOCKED.md` #15. M6.1 demoted to PARTIAL.
+
+**A test that asserts a defect, for the second time in this loop** (after D-081's VAD branch).
+`test_one_millisecond_of_overlap_currently_qualifies_as_relevant` records the measurement and says in
+its docstring that going red means the fix landed. Its control keeps the gate from reading as inert:
+an interval with no overlap at all is still refused.
+
+**How this was found, and the correction to my own survey.** The pass-#2 M6.1 agent reported it with
+a green baseline. I had listed M2.1 as the next target on the grounds that its findings were
+unverified; I verified them first and **M2.1 is clean** — including its whole-set removal of
+invariant #3's three guards, which I re-measured against a green baseline and which does redden the
+cited file. That agent had explicitly noted that reporting its two individually-surviving guards as
+gaps "would be a threefold overstatement", so the redundancy instruction added after D-079 worked as
+intended.
+
+Gate: `VERIFY OK — 1136 passed, 0 skipped`.

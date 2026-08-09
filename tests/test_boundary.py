@@ -426,3 +426,36 @@ def test_a_clamped_boundary_still_records_which_input_moved_it() -> None:
 def test_a_non_positive_media_duration_is_refused() -> None:
     with pytest.raises(ValueError, match="media_duration_ms"):
         fuse_boundary(inputs(anchor_in_ms=0, anchor_out_ms=1_000, media_duration_ms=0))
+
+
+# --- TimeLens is evidence for the OUT point only, and only about this clip ----------------
+#
+# §3 Stage 5's formula names `timelens_interval_end` in `final_out` and nowhere in `final_in`:
+#
+#   final_in  = earliest of { anchor_in, vad_onset − 120 ms,
+#                             preceding shot_cut within 400 ms, speaker_turn_start }
+#   final_out = latest   of { anchor_out + 200 ms tail, natural silence,
+#                             following shot_cut within 400 ms,
+#                             speaker_turn_end, timelens_interval_end }
+#
+# Nothing tested that asymmetry: adding the interval's start to the in-point candidate set left
+# the whole suite green. Found by the second adversarial pass. D-085.
+
+
+def test_timelens_never_moves_the_in_point() -> None:
+    """The interval's start is not a §3 in-point candidate, however far back it reaches."""
+    boundary = fuse_boundary(
+        inputs(
+            timelens_interval_start_ms=ANCHOR_IN - 30_000,
+            timelens_interval_end_ms=ANCHOR_OUT + 5_000,
+        )
+    )
+    assert boundary.final_in_ms == ANCHOR_IN, (
+        "TimeLens moved the in point. §3 Stage 5 lists timelens_interval_end in final_out only; "
+        "the interval is evidence about where a moment ends, not a cut."
+    )
+    assert boundary.in_extended_by is None
+    # The control: it must still move the OUT point, or this test would pass for a boundary
+    # that ignored TimeLens entirely.
+    assert boundary.final_out_ms == ANCHOR_OUT + 5_000
+    assert boundary.out_extended_by == "timelens_interval_end"
