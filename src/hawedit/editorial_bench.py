@@ -12,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.cli import use_utf8_streams
+from hawedit.cli import machine_readable_stdout, use_utf8_streams
 from hawedit.corpus import Dialect
 from hawedit.judge import (
     JUDGE_SHADOW,
@@ -197,14 +197,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
-        report = EditorialRegressionSet.load(args.manifest).evaluate(args.media_root)
-        payload = json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
-        if args.output:
-            if args.output.exists():
-                raise FileExistsError(f"refusing to overwrite benchmark report {args.output}")
-            args.output.write_text(payload + "\n", encoding="utf-8")
-        else:
-            print(payload)
+        # The same exposure `--json` had: this prints a document to a stream every library
+        # it loads can also print to, and one of them does (D-119). The report owns stdout;
+        # the rest goes to stderr, whether or not a dependency is noisy today.
+        with machine_readable_stdout() as report_stream:
+            report = EditorialRegressionSet.load(args.manifest).evaluate(args.media_root)
+            payload = json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
+            if args.output:
+                if args.output.exists():
+                    raise FileExistsError(f"refusing to overwrite benchmark report {args.output}")
+                args.output.write_text(payload + "\n", encoding="utf-8")
+            else:
+                print(payload, file=report_stream)
     except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2

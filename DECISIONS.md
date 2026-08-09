@@ -5136,3 +5136,63 @@ abort left the suite green: the function is tested, the trip to it is not, for t
 (D-105, D-108, D-112). Closed by driving the **real** `read_scenes` through the file's existing stub
 processor with the recorded range output as one of three answers.
 `evidence/one-window-discarded-every-candidate.md`.
+
+## D-119
+
+**`--json` wrote a report no parser could read, because the runner shares stdout with every library
+it loads.** Found while taking the first end-to-end composed run on the real 38-minute file: the run
+succeeded, the report was complete, and `json.loads` on the captured file raised at character 0.
+
+```
+python -m hawedit.pipeline ZAR38MinTest.mp4 … --visual --auto-select --json > report.json
+
+report.json                    1,140,793 bytes
+bytes before the JSON begins         580
+lines of foreign output                2
+  🚨 `image_grid_thw` is part of VideoChat3ForConditionalGeneration.forward's signature, …
+  🚨 `video_grid_thw` is part of VideoChat3ForConditionalGeneration.forward's signature, …
+json.loads(whole file)         JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+```
+
+The source is `transformers/utils/auto_docstring.py:1602` — `print("\n".join(undocumented_parameters))`,
+a **bare print, not a logger**, so no `TRANSFORMERS_VERBOSITY` setting reaches it. Loading
+VideoChat3's remote code fires it twice.
+
+**The defect is ours.** A pinned dependency printing to stdout is a fact of the ecosystem; owning
+the channel a documented contract writes to is this program's job. D-115 fixed what *encoding*
+stdout uses; this is who is allowed to *write* to it.
+
+**Decision: in document mode the report owns stdout and everything else goes to stderr.**
+`cli.machine_readable_stdout()` yields the real stdout and redirects the ambient one to stderr for
+the duration, so the pipeline's own prints and any dependency's land where a human reads them and no
+parser is looking. `main` splits into a four-line front and `_run_from_args(args, report_stream)`, so
+the body keeps its indentation and the report writes to the stream it was handed rather than to
+whatever `print` resolves to.
+
+**Applied at both sites, not just the one that failed.** `editorial_bench` prints its report to
+stdout under the same exposure and loads the same stack.
+
+**Rejected: silencing the dependency.** There is no handle — it is a `print`. Monkeypatching
+`transformers.utils.auto_docstring` would be reaching into a pinned package's internals to protect
+our own contract, and the next noisy dependency would need the same patch.
+
+**Rejected: writing the report to a file instead.** `--json` on stdout is the contract, pipes are the
+point of it, and moving it to `--json-out PATH` would break every caller to work around a problem
+that has a one-line fix at the right layer.
+
+**Rejected: stripping non-JSON from the output.** That is parsing the corruption instead of
+preventing it, and a dependency that printed a `{` would defeat it.
+
+**Coverage is split, and the reason is worth naming.** The pipeline's channel is checked on the
+**artifact**: the real `main` runs in a subprocess with `run_pipeline` wrapped to print to stdout
+mid-run, and the test parses what came out. `editorial_bench`'s cannot be — reaching its document
+needs a valid manifest of real reviewed comparisons against real media (`BLOCKED.md` #1, M7.2) — so a
+source-level invariant covers it: no `print` of a JSON payload in `src/hawedit` may omit `file=`. That
+also covers the site added next year, which an artifact test for one command would not.
+
+**Mutation audit 6/6** against a baseline verified green first: the report sharing stdout again
+CAUGHT, the helper handing back the redirected stream CAUGHT, the helper not redirecting CAUGHT, the
+human report redirected too CAUGHT (the control — the readable mode is what anyone runs by hand),
+holding stdout swallowing the exit code CAUGHT (the second control), and `editorial_bench` printing to
+the shared stream CAUGHT.
+`evidence/the-report-shared-stdout-with-a-library.md`.

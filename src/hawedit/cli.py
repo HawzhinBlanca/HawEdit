@@ -22,9 +22,12 @@ under a non-UTF-8 locale rather than checking that the call is present.
 
 from __future__ import annotations
 
+import contextlib
 import sys
+from collections.abc import Iterator
+from typing import TextIO
 
-__all__ = ["use_utf8_streams"]
+__all__ = ["machine_readable_stdout", "use_utf8_streams"]
 
 
 def use_utf8_streams() -> None:
@@ -43,3 +46,23 @@ def use_utf8_streams() -> None:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8")
+
+
+@contextlib.contextmanager
+def machine_readable_stdout() -> Iterator[TextIO]:
+    """Hold stdout for one document, and send everything else to stderr.
+
+    A command that promises JSON on stdout shares that stream with every library it loads, and
+    a library that prints is not a hypothetical. `transformers/utils/auto_docstring.py:1602` is
+    a bare `print` — not a logger, so no verbosity setting reaches it — and loading VideoChat3's
+    remote code fires it twice. Measured on the real 38-minute run: **580 bytes** of
+    `🚨 \\`image_grid_thw\\` is part of …` ahead of the report, and `json.loads` on the captured
+    file raises at character 0 (D-119).
+
+    Yields the real stdout, so the caller writes its one document there while the pipeline's own
+    output — and anything a dependency prints — lands on stderr, which is where a human reads it
+    and where no parser is looking.
+    """
+    real = sys.stdout
+    with contextlib.redirect_stdout(sys.stderr):
+        yield real
