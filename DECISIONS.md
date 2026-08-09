@@ -4955,3 +4955,65 @@ helper as a no-op CAUGHT, pinning only stdout CAUGHT, and pinning cp1252 instead
 Verified on the artifact by re-running the command that failed: **1,010,979 bytes, decodes as
 UTF-8, 20 keys, 6,104 words, 35,185 Kurdish characters**, `speech_without_transcription_ms: 664`
 and its two gaps intact. `evidence/the-report-died-on-the-way-to-the-file.md`.
+
+## D-116
+
+**§5's rejection set had a type, validation, `to_dict`/`from_dict` and its own tests, and nothing in
+`src/` ever constructed one.** §5: *"Rejection is a first-class outcome. Every rejected candidate
+keeps a `reject_reason` and its `discovery_path`. That set is your only measure of recall."* §8.2
+measures candidate Recall@20 **per discovery path** and uses it to decide whether the dual-path cost
+is justified — *"if Path B never surfaces a winner Path A missed, collapse it."*
+
+Measured:
+
+```
+RejectedCandidate constructed in src/hawedit  : 0 sites
+RejectedCandidate constructed in tests/       : 4 sites
+```
+
+Never computed, not computed and discarded — the difference D-103 and D-109 turn on. The runner
+*decides* which candidate survives in two places and simply returns the winner: on the real
+38-minute run recorded in D-108, Stage 3 produced **7** candidates, one was chosen, and the other
+six left no trace in the artifact or anywhere else.
+
+**Decision: one producer, taken once, after the selection settles.** `_rejected_candidates` builds
+the record from `merged` minus the chosen survivor. The survivor is now chosen in a single place
+rather than again inside Stage 4, because a candidate ruled out by two decisions would be recorded
+twice and counted twice in the recall it is the only measure of. Choosing there also means the
+record exists on a run whose Stage 4 is blocked, which is every run on this machine until
+`BLOCKED.md` #3 clears.
+
+**The reason is read off a computation the runner already performed, never invented for the
+record.** `_complete_sentences_within` is now shared between the selector and the reason, so the two
+cannot drift into a rejection that says *"no complete sentence lies inside it"* about a candidate
+`_automatic_sentence_selection` would have accepted. The three reasons are eligibility, containment
+of the selected span, and rank — in that order, because the earlier ones are the specific answer and
+rank is what is left.
+
+**Nothing is recorded when nothing chose.** A run that never reached a selection did not reject
+anything, and claiming otherwise puts candidates in §8.2's rejection column that no decision ruled
+out. That is also the mutation that would otherwise satisfy every positive test.
+
+**`rejected_by_path` names every path that found a candidate, at zero if it lost none.** A path
+missing from the split cannot be told apart from a path that was never run, which is the same reason
+D-110 reports zero gaps explicitly rather than omitting the key.
+
+**Rejected: recording Stage 2's discarded windows too.** On the real run 641 windows were indexed,
+50 retrieved and 7 kept, so 634 were never retrieved and 43 were reranked and dropped — a far larger
+set. They are **not candidates**: a window has no `discovery_path` of its own, and filing it under
+one would credit a path with a rejection it never made, which is exactly what `_assert_path` exists
+to prevent. §8.2's Recall@K over retrieval depth is a separate measurement on a separate unit, and
+`BLOCKED.md` #17 already holds the question of what that unit should be.
+
+**Mutation audit 6/6** against a baseline verified green first: the rejections never reaching the run
+CAUGHT, the chosen survivor recorded as rejected too CAUGHT, one generic reason for every rejection
+CAUGHT, recording rejections when nothing chose CAUGHT (by the control alone), a path that lost
+nothing left out of the split CAUGHT, and the empty set omitted rather than reported CAUGHT.
+
+**What this iteration could not re-measure, and why.** The intent was to take a fresh 38-minute
+number rather than cite D-108's. That run died in Stage 2 before Stage 3: with no `--gemini` there
+is no verbal candidate, so `pipeline.py`'s retrieval query falls back to `normalized.text_ckb` — the
+**whole 35,185-character transcript** — and the reranker asked for **40.89 GiB** on a 23.99 GiB card.
+A separate defect with its own iteration; named here so the gap in this entry's numbers is not
+mistaken for a measurement.
+`evidence/the-rejection-set-had-no-producer.md`.

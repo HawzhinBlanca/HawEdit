@@ -51,7 +51,7 @@ from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import CaptionStyle, build_ass
 from hawedit.cli import use_utf8_streams
-from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc
+from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
@@ -182,10 +182,29 @@ class PipelineRun:
     discovery: StageSkipped | None = None
     editorial: StageSkipped | None = None
     candidates: tuple[MergedCandidate, ...] = ()
+    # Every candidate a decision ruled out, with the reason it was ruled out and the path that
+    # found it. §5: "Rejection is a first-class outcome … that set is your only measure of
+    # recall", and §8.2 measures Recall@20 *per discovery path*. `RejectedCandidate` was built,
+    # validated and unit-tested with no producer anywhere in `src/`, so the measure had no data
+    # at all. D-116.
+    rejected: tuple[RejectedCandidate, ...] = ()
     boundary: object | None = None
     clip: Clip | None = None
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
+
+    def _rejected_by_path(self) -> dict[str, int]:
+        """How many candidates each discovery path lost, which is what §8.2 partitions on.
+
+        Every path that found a candidate appears, at zero if it lost none — a path missing
+        from the split is indistinguishable from a path that was never run, and "if Path B
+        never surfaces a winner Path A missed, collapse it" is a decision made on this table.
+        """
+        by_path = {candidate.discovery_path.value: 0 for candidate in self.candidates}
+        for rejection in self.rejected:
+            key = rejection.discovery_path.value
+            by_path[key] = by_path.get(key, 0) + 1
+        return by_path
 
     def _discovery_ran(self) -> dict[str, Any] | None:
         """What Stage 3 did, when it did something. `None` only where nothing is known.
@@ -306,6 +325,13 @@ class PipelineRun:
             "visual_windows": [w.to_dict() for w in self.visual_windows],
             "delivery": encode(self.delivery),
             "candidates": [c.to_dict() for c in self.candidates],
+            # §5 makes rejection first-class and calls the rejection set "your only measure
+            # of recall"; §8.2 measures Recall@20 *per discovery path*, so the split is here
+            # rather than left for a reader to compute. Reported even when empty — an
+            # absent key cannot be told apart from a build that does not record rejections,
+            # which is the same reason D-110 reports zero gaps explicitly.
+            "rejected": [r.to_dict() for r in self.rejected],
+            "rejected_by_path": self._rejected_by_path(),
             "visual_index": encode(self.visual_index),
             # A stage that ran says so. `discovery` and `editorial` hold *only* a `StageSkipped`
             # or `None`, and `None` is how success was represented — so a reader checking
@@ -493,18 +519,80 @@ def _candidate_for_judging(
     )
 
 
+def _complete_sentences_within(
+    candidate: MergedCandidate, sentences: Sequence[Sentence]
+) -> list[int]:
+    """Indices of the complete sentences lying wholly inside `candidate`.
+
+    Shared by the selector and by the rejection record deliberately: the reason written into
+    the artifact has to be the reason the code acted on, and two copies of this predicate could
+    drift into a rejection that says "no complete sentence lies inside it" about a candidate the
+    selector would have accepted.
+    """
+    return [
+        index
+        for index, sentence in enumerate(sentences)
+        if sentence.complete
+        and sentence.start_ms >= candidate.in_ms
+        and sentence.end_ms <= candidate.out_ms
+    ]
+
+
+def _rejected_candidates(
+    candidates: Sequence[MergedCandidate],
+    chosen: MergedCandidate,
+    sentences: Sequence[Sentence],
+    selected_span: tuple[int, int] | None,
+) -> tuple[RejectedCandidate, ...]:
+    """§5: "Every rejected candidate keeps a `reject_reason` and its `discovery_path`."
+
+    One producer, taken after the selection settles, so a candidate cannot be recorded twice
+    under two decisions and counted twice in the recall it is the only measure of. The reasons
+    are read off computations the runner already performed — the containment test
+    `_candidate_for_judging` runs, and the eligibility `_automatic_sentence_selection` runs —
+    never invented for the record.
+
+    Nothing is recorded when nothing was chosen: a run that never reached a selection did not
+    reject anything, and saying it did would put candidates in §8.2's rejection column that no
+    decision ever ruled out.
+    """
+    rejected: list[RejectedCandidate] = []
+    for candidate in candidates:
+        if candidate.candidate_id == chosen.candidate_id:
+            continue
+        if sentences and not _complete_sentences_within(candidate, sentences):
+            reason = (
+                "no complete sentence lies wholly inside this candidate, so it cannot anchor "
+                "a clip (Kurdish invariant #2)"
+            )
+        elif selected_span is not None and not (
+            candidate.in_ms <= selected_span[0] and candidate.out_ms >= selected_span[1]
+        ):
+            reason = (
+                f"does not contain the selected span {selected_span[0]}..{selected_span[1]} ms; "
+                f"a partial overlap cannot carry this candidate's score or path onto different "
+                f"footage"
+            )
+        else:
+            reason = f"out-ranked by survivor {chosen.candidate_id}"
+        rejected.append(
+            RejectedCandidate(
+                media_id=candidate.media_id,
+                in_ms=candidate.in_ms,
+                out_ms=candidate.out_ms,
+                discovery_path=candidate.discovery_path,
+                reject_reason=reason,
+            )
+        )
+    return tuple(rejected)
+
+
 def _automatic_sentence_selection(
     candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence]
 ) -> tuple[int, ...]:
     """Choose complete contiguous sentence anchors wholly contained by the best survivor."""
     for candidate in sorted(candidates, key=_candidate_priority):
-        eligible = [
-            index
-            for index, sentence in enumerate(sentences)
-            if sentence.complete
-            and sentence.start_ms >= candidate.in_ms
-            and sentence.end_ms <= candidate.out_ms
-        ]
+        eligible = _complete_sentences_within(candidate, sentences)
         if not eligible:
             continue
         runs: list[list[int]] = [[eligible[0]]]
@@ -901,13 +989,26 @@ def run_pipeline(
         # ahead of the billed Stage 4 call below.
         _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
 
+    # The survivor is chosen once, here, rather than again inside Stage 4. §5 makes rejection a
+    # first-class outcome — "that set is your only measure of recall" — and a candidate ruled out
+    # by two decisions would otherwise be recorded twice and counted twice. Choosing in one place
+    # also means the record exists on a run whose Stage 4 is blocked, which is every run on this
+    # machine until `BLOCKED.md` #3 clears.
     selected_candidate: MergedCandidate | None = None
     if merged and selected_anchors is not None:
         selected_candidate = _candidate_for_judging(merged, selected_anchors)
+    elif merged and judge is not None and not selected:
+        selected_candidate = _candidate_for_judging(merged, None)
+    if selected_candidate is not None:
+        run = replace(
+            run,
+            rejected=_rejected_candidates(merged, selected_candidate, sentences, selected_anchors),
+        )
 
     # --- §3 Stage 4 -----------------------------------------------------------------------
     if judge is not None and merged and (not selected or selected_anchors is not None):
-        survivor = selected_candidate or _candidate_for_judging(merged, None)
+        assert selected_candidate is not None, "Stage 4's condition implies a chosen survivor"
+        survivor = selected_candidate
         request_candidate = (
             replace(survivor, in_ms=selected_anchors[0], out_ms=selected_anchors[1])
             if selected_anchors is not None
