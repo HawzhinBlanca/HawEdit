@@ -2464,3 +2464,141 @@ def test_a_named_skip_still_wins_over_the_positive_record() -> None:
     reported = run.to_dict()["discovery"]
     assert reported["skipped"] is True
     assert reported["blocked_by"] == ["x"]
+
+
+# --- D-153: §5's rejection set had a type, validation, tests and no producer -------------------
+
+
+def _a_stub_judge() -> Any:
+    """Stage 4 without Gemini. `BLOCKED.md` #3 is the real judge; this only lets Stage 4 run."""
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: Any) -> JudgeVerdict:
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    return Judge()
+
+
+@needs_ffmpeg
+def test_every_candidate_a_decision_ruled_out_is_recorded_with_its_reason_and_path(
+    tmp_path: Path,
+) -> None:
+    """§5: "Rejection is a first-class outcome … that set is your only measure of recall."
+
+    `RejectedCandidate` carried that requirement — with validation, `to_dict`/`from_dict` and its
+    own tests — and **nothing in `src/` ever constructed one**. Measured on the real 38-minute
+    run, Stage 3 produced 7 candidates, 1 was chosen and the other 6 left no trace at all.
+    """
+    from hawedit.discovery import Candidate
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="rejects",
+        transcript=a_transcript("rejects"),
+        discover=lambda _n: [
+            Candidate("best", "rejects", 2_000, 4_100, DiscoveryPath.VERBAL, 1, 0.99),
+            Candidate("early", "rejects", 0, 1_700, DiscoveryPath.VERBAL, 2, 0.10),
+            Candidate("silent", "rejects", 1_700, 1_950, DiscoveryPath.VERBAL, 3, 0.80),
+        ],
+        judge=_a_stub_judge(),
+    )
+
+    assert len(run.candidates) == 3
+    assert len(run.rejected) == 2, run.rejected
+    assert {r.reject_reason for r in run.rejected}, "a rejection with no reason measures nothing"
+    # The chosen survivor is never in the set it survived.
+    chosen = (2_000, 4_100)
+    assert all((r.in_ms, r.out_ms) != chosen for r in run.rejected), run.rejected
+    # The path that found it, because §8.2 measures Recall@20 per discovery path.
+    assert {(r.in_ms, r.discovery_path) for r in run.rejected} == {
+        (0, DiscoveryPath.VERBAL),
+        (1_700, DiscoveryPath.VERBAL),
+    }
+    assert run.to_dict()["rejected_by_path"] == {"verbal": 2}
+
+
+@needs_ffmpeg
+def test_the_reason_recorded_is_the_reason_the_code_acted_on(tmp_path: Path) -> None:
+    """A generic reason on every rejection would satisfy the test above and measure nothing.
+
+    The fixture's two sentences run 100..1700 and 2000..4100 ms, so a candidate at 1700..1950
+    contains neither — it was ruled out by eligibility, not by rank, and the record has to say
+    which. `_complete_sentences_within` is shared with the selector so the two cannot drift.
+    """
+    from hawedit.discovery import Candidate
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="reasons",
+        transcript=a_transcript("reasons"),
+        discover=lambda _n: [
+            Candidate("best", "reasons", 2_000, 4_100, DiscoveryPath.VERBAL, 1, 0.99),
+            Candidate("early", "reasons", 0, 1_700, DiscoveryPath.VERBAL, 2, 0.10),
+            Candidate("silent", "reasons", 1_700, 1_950, DiscoveryPath.VERBAL, 3, 0.80),
+        ],
+        judge=_a_stub_judge(),
+    )
+
+    reasons = {r.in_ms: r.reject_reason for r in run.rejected}
+    assert "no complete sentence" in reasons[1_700], reasons
+    assert "out-ranked" in reasons[0], reasons
+    assert reasons[0] != reasons[1_700], "one reason for every rejection is not a reason"
+
+
+@needs_ffmpeg
+def test_a_run_that_chose_nothing_rejects_nothing(tmp_path: Path) -> None:
+    """The control. Recording every candidate but one as rejected passes the tests above and is
+    false whenever no decision was ever made — it would put candidates in §8.2's rejection
+    column that nothing ruled out."""
+    from hawedit.discovery import Candidate
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="undecided",
+        transcript=a_transcript("undecided"),
+        discover=lambda _n: [
+            Candidate("a", "undecided", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.9),
+            Candidate("b", "undecided", 2_000, 4_100, DiscoveryPath.VERBAL, 2, 0.8),
+        ],
+    )
+    assert len(run.candidates) == 2, "Stage 3 still ran"
+    assert run.rejected == (), "no judge, no selection — nothing chose, so nothing was rejected"
+
+
+def test_the_rejection_split_names_every_path_that_found_a_candidate() -> None:
+    """A path missing from the split cannot be told apart from a path that was never run, and
+    "if Path B never surfaces a winner Path A missed, collapse it" is decided on this table."""
+    from hawedit.clip import RejectedCandidate
+
+    run = PipelineRun(
+        media_id="zar38final",
+        source="x",
+        work_dir="w",
+        candidates=_seven_candidates(),
+        rejected=(
+            RejectedCandidate(
+                media_id="zar38final",
+                in_ms=0,
+                out_ms=900,
+                discovery_path=DiscoveryPath.VISUAL,
+                reject_reason="out-ranked by survivor c3",
+            ),
+        ),
+    )
+    payload = run.to_dict()
+    assert payload["rejected_by_path"] == {"visual": 1}
+    assert payload["rejected"][0]["reject_reason"] == "out-ranked by survivor c3"
+
+    quiet = PipelineRun(media_id="m", source="x", work_dir="w", candidates=_seven_candidates())
+    assert quiet.to_dict()["rejected"] == []
+    assert quiet.to_dict()["rejected_by_path"] == {"visual": 0}, (
+        "an absent path reads as a path that never ran; zero is the readable answer (D-110)"
+    )

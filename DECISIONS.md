@@ -5021,3 +5021,17 @@ It changes only the encoding and preserves the stream error policy. The contract
 entry points from `pyproject.toml`, forces cp1252, and asserts exact Sorani UTF-8 bytes on stdout and
 stderr, so new commands enter the obligation automatically. Importing the library does not mutate
 its caller's streams. `evidence/the-report-died-on-the-way-to-the-file.md`.
+
+## D-153 - A rejection set needs one producer after the survivor is chosen
+
+`RejectedCandidate` had validation and serialization, but no production site constructed it. The
+runner selected one of seven real-run candidates and discarded the other six without a reason or
+their discovery path, even though §5 calls that set the only measure of recall and §8.2 partitions
+candidate recall by discovery path.
+
+**Decision:** after selection settles, the runner chooses the survivor once and builds exactly one
+rejection record for every other candidate. The reason reuses the same complete-sentence eligibility
+and selected-span containment computations that make the decision; rank is the remaining reason.
+Nothing is recorded when no decision chose a survivor. The serialized per-path split includes zero
+for a path that found candidates but lost none, distinguishing that outcome from a path that never
+ran. Stage 2 windows are not candidates and are excluded. `evidence/the-rejection-set-had-no-producer.md`.
