@@ -6315,3 +6315,81 @@ Each is a decision about which segments get validator time. `BLOCKED.md` #19.
 labelled), applies §3's rule as written, and reports **which trigger fired** —
 `by_trigger: {quartile_only, disagreement_only, both}` — so the 312 can never be read as §3's
 validated routing. A bare total would have been exactly that.
+
+## D-136
+
+**Stage 1 was re-run every time, and the refusal for a differing re-run arrived after the whole
+spend.** D-132 made Stage 0 re-runnable; Stage 1 is the expensive stage — measured in D-135 at
+**1,547 s** for 545 segments on hawapc01's two 3090 Ti — and `run_pipeline` called
+`asr.transcribe(...)` **before** it consulted `TranscriptStore` at all. Measured with a counting
+producer, before changing anything:
+
+```
+first run into an empty work directory
+  asr.transcribe calls: 1        transcript.raw.json on disk: True
+second run into the SAME work directory, transcript already stored
+  asr.transcribe calls (cumulative): 2
+  -> Stage 1 was re-run with a complete transcript on disk: True
+if the second run's ASR returns anything different
+  RawTranscriptImmutable: …transcripts\probe.transcript.raw.json already contains a different …
+  the refusal arrived AFTER 1 full transcription
+```
+
+That second part is the sharper half. Greedy decoding on a GPU is not bit-reproducible in general,
+so a re-run into a used work directory can spend 1,547 s and *then* be refused by invariant #1's
+immutability guard. **D-071's shape one stage over** — there, an overwrite refusal fired after a
+billed Gemini call, and the fix was to move the guard before the spend. Same fix here.
+
+**Decision: consult the store before Stage 1, and verify reuse on two keys.**
+
+* **The audio digest.** A transcript is only this run's answer if it was made from this audio. Same
+  media_id over a different recording would otherwise ship one video's words for another — the
+  failure that costs correctness rather than time. Stage 0's own provenance (D-132) already proves
+  `audio.wav` matches the source, so hashing it is the honest link.
+* **The producer.** `asr.py` states the rule this enforces: a run driven by a test double "is
+  self-evident in the report and can never be read as a run on real weights". Keyed on audio alone,
+  a transcript stored by a stub would be reused by a real `--omni-asr` run and the report would
+  claim OmniASR output. It is also D-132's "same command" clause: a changed Stage 1 re-transcribes
+  instead of silently keeping the old answer.
+
+Absent sidecar, either key mismatched, or a failed integrity check all decline — the expensive
+answer, never the wrong one. The sidecar is written **after** the transcript is published, so one
+that outlived a failed write cannot claim a match; and reuse still runs `verify_raw_integrity`,
+because reuse is a *read* of the canonical artifact and invariant #1's tamper evidence governs
+every read of it.
+
+**A supplied `--transcript` writes no sidecar and therefore licenses no reuse.** Words handed in
+were not produced from this audio by anything here, and a later `--omni-asr` run must not present
+them as canonical ASR output. `audio_sha256` and `producer` are both optional on `write_raw` for
+exactly that reason: a caller that cannot say must not be able to claim a match by omission.
+
+**Rejected: putting the audio digest in `RawTranscript`.** It would be the natural home for
+provenance, and the artifact *ships to the client* and is immutable under invariant #1. Changing its
+schema for bookkeeping is a bigger deviation than a sidecar, which is where D-132 put the same
+information for Stage 0.
+
+**Rejected: reusing on the audio digest alone.** One key shorter, and it lets a stub's transcript
+be read as real weights. That is the rule `asr.py` opens with.
+
+**The stale request file, reproduced and fixed with it.** A `--omni-asr` run killed mid-flight left
+`stage1/omni-asr-request.json`, and the next attempt died on a bare
+`[Errno 17] File exists: …omni-asr-request.json` after **78 s** — Stage 0 re-verified, nothing to
+show, no instruction in the message. An identical request is now a resumed run and proceeds; one
+describing different segments is refused with a message naming the file and what to delete.
+
+**And the test written for that found a second blocker.** The worker's own
+`omni-asr-worker-output.json` is exclusive-create too, so a killed run left *two* files and the next
+attempt tripped on whichever came first. A finished output beside an identical request is this run's
+answer, so it is now resumed rather than discarded — verified by media_id, with a truncated or
+foreign output deleted and the worker re-run.
+
+**Measured on the real 38-minute file:** two `--omni-asr` runs over one work directory,
+**1,531 s then 54 s**, and the two reports are byte-identical (sha256 `0bf3b7da4bf84f61`,
+1,070,737 bytes each — 6,104 words, 186 index documents, 312 of 545 escalated). The sidecar
+the first run wrote records `audio_sha256 312fe70941e143ef…` and
+`producer hawedit.asr.WslOmniAsrProducer`; recomputing the digest of `stage0/audio.wav`
+independently gives the same value.
+
+**Mutation audit 11/11,** after **10/11**. The survivor was the foreign-output check: dropping the
+media_id comparison left every suite green because no test had ever put another episode's output in
+the way. `evidence/stage-1-was-re-run-every-time.md`.

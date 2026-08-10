@@ -627,9 +627,41 @@ class WslOmniAsrProducer:
                 for segment in prepared
             ],
         }
-        with request_path.open("x", encoding="utf-8", newline="\n") as stream:
-            json.dump(request, stream, ensure_ascii=False, sort_keys=True, indent=2)
-            stream.write("\n")
+        payload = json.dumps(request, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        try:
+            with request_path.open("x", encoding="utf-8", newline="\n") as stream:
+                stream.write(payload)
+        except FileExistsError:
+            # A run killed mid-transcription leaves this behind, and the next attempt used to die
+            # on a bare FileExistsError naming a path with no instruction — measured at 78 s
+            # wasted after Stage 0 had already been re-verified. If the request describes exactly
+            # this work, it is a resumed run and there is nothing to protect; if it describes
+            # different segments, two runs are sharing one work directory and that is refused
+            # loudly. D-132's rule one stage over: a dying run must not leave a record that
+            # blocks or misleads the next one. D-136.
+            existing = request_path.read_text(encoding="utf-8")
+            if existing != payload:
+                raise RuntimeError(
+                    f"{request_path} already describes a different Stage 1 request "
+                    f"({len(json.loads(existing).get('segments', ()))} segments, this run has "
+                    f"{len(prepared)}). Another run is using this work directory, or Stage 0's "
+                    f"speech regions changed. Delete that file to re-transcribe from scratch."
+                ) from None
+
+        # The worker's own output is exclusive-create too, so a killed run left *two* blockers and
+        # the next attempt tripped on whichever came first — found by the test written for the
+        # request file alone. If a finished output sits beside an identical request, that is this
+        # run's answer and the worker has nothing left to do: the resume. Verified, never assumed
+        # — a truncated or foreign output is deleted and the worker runs again, which is the
+        # expensive answer rather than the wrong one.
+        if output_path.is_file():
+            try:
+                finished = RawTranscript.from_json(output_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                finished = None
+            if finished is not None and finished.media_id == media_id:
+                return finished
+            output_path.unlink(missing_ok=True)
 
         wsl_request = self._wsl_path(request_path)
         wsl_output = self._wsl_path(output_path)

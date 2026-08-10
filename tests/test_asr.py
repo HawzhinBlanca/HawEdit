@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -35,6 +36,7 @@ from hawedit.asr import (
     OmniAsrBackend,
     OmniAsrProducer,
     SegmentTranscript,
+    SpeechSegment,
     WslOmniAsrProducer,
     _assemble_canonical_transcript,
     _PreparedSpeechSegment,
@@ -47,7 +49,7 @@ from hawedit.asr_worker import run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
 from hawedit.registry import ModelExcluded, ModelNotInRegistry
-from hawedit.transcripts import RawTranscript, Word
+from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti", notes="Threadripper 3990X")
 AN_A100 = Hardware(host="a100-box", accelerator="A100")
@@ -490,6 +492,118 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
     assert len(worker_calls) == 1
     assert worker_calls[0][0] == "wsl.exe"
     assert "/opt/hawedit/python" in worker_calls[0]
+
+
+def _wsl_producer_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stage1: Path,
+    segments: Sequence[SpeechSegment],
+) -> RawTranscript:
+    """Drive `WslOmniAsrProducer.transcribe` with the worker faked, as the test above does."""
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
+        if "hawedit.asr_worker" in args:
+            run_request(
+                stage1 / "omni-asr-request.json",
+                stage1 / "omni-asr-worker-output.json",
+                FakeOmniBackend(),
+            )
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+        Path(args[-1]).write_bytes(b"wav")
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    return WslOmniAsrProducer(interpreter="/opt/hawedit/python").transcribe(
+        "episode", tmp_path / "audio.wav", segments, stage1, ffmpeg=tmp_path / "ffmpeg"
+    )
+
+
+def test_a_killed_run_leaves_a_request_that_does_not_block_the_next_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reproduced on the real 38-minute file: a `--omni-asr` run killed mid-transcription left
+    `stage1/omni-asr-request.json`, and the next attempt died on a bare
+    `[Errno 17] File exists: …omni-asr-request.json` after **78 s** — Stage 0 re-verified, nothing
+    to show, and no instruction in the message. D-132's rule one stage over: a dying run must not
+    leave a record that blocks the next.
+
+    The request describes the same segments, so it is a resumed run and there is nothing to guard.
+    """
+    stage1 = tmp_path / "stage1"
+    segments = (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
+    _wsl_producer_run(monkeypatch, tmp_path, stage1, segments)
+    request = stage1 / "omni-asr-request.json"
+    assert request.is_file()
+    before = request.read_text(encoding="utf-8")
+
+    transcript = _wsl_producer_run(monkeypatch, tmp_path, stage1, segments)
+
+    assert transcript.words[0].start_ms == 1_050
+    assert request.read_text(encoding="utf-8") == before, "the request was rewritten"
+
+
+def test_a_request_describing_different_segments_is_refused_by_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The control. Reusing the file whatever it says would let two runs sharing one work
+    directory transcribe each other's segments, and would hide a Stage 0 whose speech regions
+    changed. The refusal has to name the file, which the bare FileExistsError did not.
+    """
+    stage1 = tmp_path / "stage1"
+    _wsl_producer_run(
+        monkeypatch, tmp_path, stage1, (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
+    )
+
+    with pytest.raises(RuntimeError, match="omni-asr-request.json"):
+        _wsl_producer_run(
+            monkeypatch,
+            tmp_path,
+            stage1,
+            (
+                SimpleNamespace(start_ms=1_000, end_ms=2_000),
+                SimpleNamespace(start_ms=3_000, end_ms=4_000),
+            ),
+        )
+
+
+def test_a_worker_output_for_another_media_is_discarded_not_resumed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The control for resuming a finished output. Reusing whatever file is there would hand this
+    run another episode's transcript — the shape D-136 keeps out of the store, one file earlier.
+
+    Found SURVIVED by D-136's own audit: dropping the media_id check left every suite green,
+    because no test had ever put a foreign output in the way.
+    """
+    stage1 = tmp_path / "stage1"
+    stage1.mkdir(parents=True)
+    foreign = RawTranscript(
+        media_id="another-episode",
+        text_ckb="ئەمە",
+        words=(Word(w="ئەمە", start_ms=0, end_ms=400, conf=0.9),),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+    )
+    output = stage1 / "omni-asr-worker-output.json"
+    output.write_text(foreign.to_json(), encoding="utf-8")
+
+    transcript = _wsl_producer_run(
+        monkeypatch, tmp_path, stage1, (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
+    )
+
+    assert transcript.media_id == "episode", (
+        "another episode's transcript was resumed as this run's Stage 1 output"
+    )
+    # And a truncated output is not trusted either — the same fall-through.
+    output.write_text('{"media_id": "epis', encoding="utf-8")
+    assert (
+        _wsl_producer_run(
+            monkeypatch, tmp_path, stage1, (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
+        ).media_id
+        == "episode"
+    )
 
 
 def test_omni_runtime_selection_is_explicit() -> None:

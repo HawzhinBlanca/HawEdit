@@ -33,6 +33,7 @@ from typing import Any
 
 import pytest
 
+from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import DiscoveryPath, Qc
 from hawedit.discovery import MergedCandidate
@@ -2243,3 +2244,68 @@ def test_stage_5_fuses_against_the_cuts_stage_0_found_on_this_video(
         f"Stage 5 was fused against {seen[-1].shot_cuts_ms} while Stage 0 found "
         f"{run.ingest.shot_cuts_ms} on this video"
     )
+
+
+def test_stage_1_is_not_re_run_when_its_output_is_already_in_the_work_directory(
+    tmp_path: Path,
+) -> None:
+    """§3 Stage 1 is the expensive stage — **1,547 s** for 545 segments on hawapc01's two 3090 Ti
+    — and `run_pipeline` called `asr.transcribe` before it consulted `TranscriptStore` at all.
+
+    Measured with a counting producer before D-136: two runs over one work directory produced
+    **2** calls, and a second pass differing by one character hit `RawTranscriptImmutable`
+    *after* the full spend — D-071's shape, where a billed Gemini call preceded an overwrite
+    refusal.
+    """
+    calls: list[str] = []
+
+    def producer(transcript: RawTranscript) -> CanonicalTranscriptProducer:
+        class Counting:
+            def transcribe(
+                self,
+                media_id: str,
+                audio_path: Path,
+                speech_segments: object,
+                work_dir: Path,
+                ffmpeg: Path | None = None,
+            ) -> RawTranscript:
+                calls.append(media_id)
+                return replace(transcript, media_id=media_id)
+
+        return Counting()
+
+    work = tmp_path / "work"
+    supplied = a_transcript("probe")
+    run_pipeline(FIXTURE, work_dir=work, media_id="probe", asr=producer(supplied))
+    assert len(calls) == 1
+
+    run_pipeline(FIXTURE, work_dir=work, media_id="probe", asr=producer(supplied))
+    assert len(calls) == 1, f"Stage 1 ran again with a complete transcript on disk: {calls}"
+
+    # The control: a *different* producer must re-transcribe, because a transcript made by one
+    # producer cannot be read as another's output. Without this, the assertion above is also
+    # satisfied by a cache that never checks anything.
+    class OtherProducer:
+        def transcribe(
+            self,
+            media_id: str,
+            audio_path: Path,
+            speech_segments: object,
+            work_dir: Path,
+            ffmpeg: Path | None = None,
+        ) -> RawTranscript:
+            calls.append("other")
+            return replace(supplied, media_id=media_id)
+
+    run_pipeline(FIXTURE, work_dir=work, media_id="probe", asr=OtherProducer())
+    assert calls[-1] == "other", "a different producer reused the first producer's transcript"
+
+
+def test_a_supplied_transcript_never_licenses_a_reuse(tmp_path: Path) -> None:
+    """`--transcript` hands in a file that was not made from this audio by any producer here, so
+    it must leave no provenance sidecar — otherwise the next `--omni-asr` run would reuse it and
+    the report would claim canonical ASR for words that came from elsewhere.
+    """
+    work = tmp_path / "work"
+    run_pipeline(FIXTURE, work_dir=work, media_id="probe", transcript=a_transcript("probe"))
+    assert not (work / "transcripts" / "probe.transcript.raw.provenance.json").exists()

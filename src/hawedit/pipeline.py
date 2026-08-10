@@ -40,6 +40,7 @@ adds none of its own and weakens none.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -817,6 +818,15 @@ def _natural_silence_for_anchor(ingested: IngestResult, anchor_out_ms: int) -> i
     return max(segment.end_ms for segment in containing) if containing else None
 
 
+def _file_digest(path: Path) -> str:
+    """SHA-256 of a file, streamed. Measured in D-132: 0.1 s for the real 82 MB source."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
@@ -894,8 +904,22 @@ def run_pipeline(
     # --- §3 Stage 0 ----------------------------------------------------------------------
     ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
 
+    audio_digest: str | None = None
+    producer_id: str | None = None
     if transcript is None and asr is not None:
-        transcript = asr.transcribe(
+        # Before the 1,547 s, not after it. `TranscriptStore` was only consulted once Stage 1 had
+        # already run, so a second run over the same work directory transcribed 545 segments
+        # again — and if the second pass differed by one character, invariant #1's immutability
+        # guard refused *after* the full spend. D-071's lesson one stage over. D-136.
+        audio_digest = _file_digest(Path(ingested.audio_path))
+        # The producer's own identity is part of the key: `asr.py`'s rule is that a run driven by
+        # a test double "can never be read as a run on real weights", and a transcript stored by a
+        # stub must not be reused by a real --omni-asr run.
+        producer_id = f"{type(asr).__module__}.{type(asr).__qualname__}"
+        reused = TranscriptStore(work_dir / "transcripts").reusable_raw(
+            identifier, audio_digest, producer_id
+        )
+        transcript = reused or asr.transcribe(
             identifier,
             Path(ingested.audio_path),
             ingested.speech,
@@ -945,7 +969,10 @@ def run_pipeline(
     # --- §3 Stage 1 (supplied) + §4.1 -----------------------------------------------------
     store = TranscriptStore(work_dir / "transcripts")
     try:
-        store.write_raw(transcript)
+        # The audio digest travels with the transcript so a later run can verify reuse rather
+        # than assume it. `None` when Stage 1 was supplied rather than run — a transcript handed
+        # in with `--transcript` was not made from this audio and must never license a reuse.
+        store.write_raw(transcript, audio_sha256=audio_digest, producer=producer_id)
     except RawTranscriptImmutable:
         # Invariant #1: the canonical transcript is never rewritten. A second run over the
         # same work directory reads what is already there rather than overwriting it.

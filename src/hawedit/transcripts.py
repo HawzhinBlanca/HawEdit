@@ -386,8 +386,59 @@ class TranscriptStore:
     def _digest_path(self, media_id: str) -> Path:
         return self.root / f"{self._safe(media_id)}.transcript.raw.sha256"
 
-    def write_raw(self, raw: RawTranscript) -> Path:
+    def _audio_provenance_path(self, media_id: str) -> Path:
+        return self.root / f"{self._safe(media_id)}.transcript.raw.provenance.json"
+
+    def reusable_raw(self, media_id: str, audio_sha256: str, producer: str) -> RawTranscript | None:
+        """The stored canonical transcript, if this exact audio and producer made it.
+
+        §3 Stage 1 is the expensive stage — measured **1,547 s** for 545 segments on hawapc01's
+        two 3090 Ti — and `run_pipeline` called `asr.transcribe` before it looked at this store at
+        all. Measured with a counting producer: a second run over a work directory holding a
+        complete transcript transcribed it again, and if the second pass differed by one
+        character, `write_raw`'s immutability guard refused **after** the full spend. That is
+        D-071's shape one stage over, where a billed Gemini call happened before an overwrite
+        refusal.
+
+        Reuse is verified rather than assumed, in D-132's shape, on **two** keys:
+
+        * the digest of the audio it was made from, so a different recording under the same
+          media_id re-transcribes instead of shipping another video's words;
+        * the **producer**, because this project's rule is that a run driven by a test double "can
+          never be read as a run on real weights" (`asr.py`). Keyed on audio alone, a transcript
+          stored by a stub would be reused by a real `--omni-asr` run and the report would claim
+          OmniASR output. It is also what makes a changed Stage 1 re-transcribe rather than keep
+          the old answer — D-132's "same command" clause, one stage over.
+
+        Absent sidecar, either key mismatched, or a failed integrity check all return `None` — the
+        expensive answer, never the wrong one. D-136.
+        """
+        path = self.raw_path(media_id)
+        provenance = self._audio_provenance_path(media_id)
+        if not path.is_file() or not provenance.is_file():
+            return None
+        try:
+            recorded = json.loads(provenance.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(recorded, dict):
+            return None
+        if recorded.get("audio_sha256") != audio_sha256 or recorded.get("producer") != producer:
+            return None
+        self.verify_raw_integrity(media_id)
+        return self.read_raw(media_id)
+
+    def write_raw(
+        self,
+        raw: RawTranscript,
+        audio_sha256: str | None = None,
+        producer: str | None = None,
+    ) -> Path:
         """Write the canonical transcript once.
+
+        `audio_sha256` and `producer` record what made it, so `reusable_raw` can answer. Optional
+        because a caller that cannot say must not be able to claim a match by omission: with
+        either missing there is no sidecar and no reuse, which is the behaviour before D-136.
 
         Raises:
             RawTranscriptImmutable: a raw transcript for this media_id already exists.
@@ -449,6 +500,13 @@ class TranscriptStore:
             staging.unlink(missing_ok=True)
             digest_staging.unlink(missing_ok=True)
         path.chmod(0o444)  # advisory: root ignores this, the digest is the real evidence
+        if audio_sha256 is not None and producer is not None:
+            # Written last, after the transcript is published: a sidecar that outlived a failed
+            # write would claim a match for a transcript that is not there. D-132's ordering.
+            self._audio_provenance_path(raw.media_id).write_text(
+                json.dumps({"audio_sha256": audio_sha256, "producer": producer}, indent=2) + "\n",
+                encoding="utf-8",
+            )
         return path
 
     def read_raw(self, media_id: str) -> RawTranscript:

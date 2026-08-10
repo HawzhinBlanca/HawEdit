@@ -461,3 +461,91 @@ def test_a_real_segment_confidence_is_accepted() -> None:
     scored = SegmentConfidence(start_ms=1_000, end_ms=1_316, mean_logprob=-6.523425833753913)
     assert scored.end_ms - scored.start_ms == 316
     assert SegmentConfidence(start_ms=0, end_ms=1, mean_logprob=0.0).mean_logprob == 0.0
+
+
+# --- D-136: Stage 1 is the expensive stage, and it was re-run every time -------------------
+
+
+def test_a_transcript_is_reused_when_the_audio_and_producer_both_match(tmp_path: Path) -> None:
+    """Measured on the real 38-minute file, Stage 1 costs **1,547 s** for 545 segments, and
+    `run_pipeline` called `asr.transcribe` before consulting this store at all."""
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw, audio_sha256="abc123", producer="pkg.RealProducer")
+
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") == raw
+
+
+def test_a_changed_audio_digest_is_not_reused(tmp_path: Path) -> None:
+    """The control that matters most: same media_id, different recording. Reusing there would
+    ship one video's words for another — worse than the 1,547 s it saves."""
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.RealProducer")
+
+    assert store.reusable_raw("media-001", "different", "pkg.RealProducer") is None
+
+
+def test_a_transcript_from_a_stub_is_not_reused_by_another_producer(tmp_path: Path) -> None:
+    """`asr.py`'s own rule: a run driven by a test double "can never be read as a run on real
+    weights". Keyed on audio alone, a stub's transcript would be reused by a real --omni-asr run
+    and the report would claim OmniASR output."""
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw(), audio_sha256="abc123", producer="tests.StubProducer")
+
+    assert store.reusable_raw("media-001", "abc123", "hawedit.asr.WslOmniAsrProducer") is None
+    # The control: the same stub asking again does get it back, so this measures the producer
+    # and not merely that some string mismatches.
+    assert store.reusable_raw("media-001", "abc123", "tests.StubProducer") is not None
+
+
+def test_a_transcript_written_without_provenance_is_never_reused(tmp_path: Path) -> None:
+    """Every transcript written before D-136 is in this state, as is one whose sidecar was
+    cleaned up. Absent evidence is not evidence of a match."""
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw())
+
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") is None
+    assert not (tmp_path / "media-001.transcript.raw.provenance.json").is_file()
+
+
+def test_half_a_provenance_record_is_not_a_match(tmp_path: Path) -> None:
+    """Both keys are required. A sidecar naming only the audio would let any producer claim it."""
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.RealProducer")
+    sidecar = tmp_path / "media-001.transcript.raw.provenance.json"
+    assert sidecar.is_file(), "the sidecar this test overwrites is not where it thinks"
+    sidecar.write_text(json.dumps({"audio_sha256": "abc123"}), encoding="utf-8")
+
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") is None
+
+
+def test_unreadable_provenance_falls_back_to_transcribing(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.RealProducer")
+    (tmp_path / "media-001.transcript.raw.provenance.json").write_text('{"audio', encoding="utf-8")
+
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") is None
+
+
+def test_reuse_still_verifies_the_transcript_against_its_digest(tmp_path: Path) -> None:
+    """A tampered transcript must not be handed back just because the sidecar matches — the
+    reuse path is a *read* of the canonical artifact and invariant #1's tamper evidence applies
+    to it exactly as it does to every other read."""
+    store = TranscriptStore(tmp_path)
+    path = store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.Real")
+    path.chmod(0o644)
+    path.write_text(a_raw(text="something else entirely").to_json(), encoding="utf-8")
+
+    with pytest.raises(RawTranscriptTampered):
+        store.reusable_raw("media-001", "abc123", "pkg.Real")
+
+
+def test_a_missing_transcript_is_not_reused_even_with_a_sidecar(tmp_path: Path) -> None:
+    """The sidecar is written after the transcript, so this state should not arise — which is
+    exactly why it must not be trusted if it does."""
+    store = TranscriptStore(tmp_path)
+    (tmp_path / "media-001.transcript.raw.provenance.json").write_text(
+        json.dumps({"audio_sha256": "abc123", "producer": "pkg.Real"}), encoding="utf-8"
+    )
+
+    assert store.reusable_raw("media-001", "abc123", "pkg.Real") is None
