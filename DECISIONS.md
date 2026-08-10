@@ -8411,3 +8411,67 @@ stream `use_utf8_streams` must leave alone. The absence of an exception is the a
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-163
+
+**Adversarial pass 26 attacked M3.2 — §4.3.6's golden-file render — and failed, 6/6.** This is the
+row §0 calls failure mode #3: *"you will catch it when a client sees the burned-in captions."*
+Every claim in it held: production dropping `shaping=complex` or the font directory reddens, the
+golden render rendering the wrong way reddens, a comparison that accepts anything reddens, and —
+the property no audit had tested — **a reference regenerated from a broken build is refused**.
+`compare_golden_render` warns that "a reference produced by a broken build enshrines the bug it is
+meant to catch"; rebuilding `tests/golden/kurdish-caption.png` from a `shaping=simple` render
+reddens two tests, because the negative control then finds the broken render *matching* the
+reference and its `pytest.raises` stops raising. The reference is checked, not trusted.
+
+**The filter string is duplicated and that is not a hole.** `subtitle_filter` (production) and
+`render_caption_png` (the golden render) build `ass=…:shaping=…:fontsdir=…` independently, so the
+pixel safeguard never renders production's own string. Mutating production's copy in either
+meaningful way reddens immediately, so today's elements are covered by the string tests.
+Recorded rather than fixed: what is *not* covered is a future element added to one and not the
+other, and unifying them is a change to the shipped render path, which this pass is not the place
+for.
+
+**One recorded measurement went stale.** D-061 recorded "the reference re-renders byte-identical
+here". Re-measured on `ffmpeg 8.1.1-full_build-www.gyan.dev`: the render is **pixel**-identical
+(6,220,800 bytes both) and the **file is 1,017 bytes larger** — 20,830 against 21,847. Not a
+defect: `decode_to_rgb` exists because "PNG encoders differ between ffmpeg and zlib versions". The
+other number holds exactly — `shaping=simple` differs on **0.2316%** of pixels (4,803 of
+2,073,600) against D-061's recorded 0.232%.
+
+**The finding, and the only change this pass makes: the decoded-pixel design was covered by
+luck.** Forcing the comparison onto file bytes *is* caught here — but only because this machine's
+encoder disagrees with the one the reference was made on. Where an encoder agreed, that regression
+would pass unnoticed, and the golden test would be one ffmpeg upgrade away from failing on a
+change no viewer can see: the "cries wolf and gets disabled" outcome `decode_to_rgb`'s own
+docstring is written against.
+
+**Decision: pin it by construction, not by the installed encoder.**
+`test_the_comparison_runs_on_pixels_and_not_on_the_encoded_file` repacks the reference at
+compression level **9** and level **1** — the same picture in different bytes on any ffmpeg — and
+requires the decoded comparison to accept them and the byte comparison to refuse them. Measured
+here: level 1 → 73,632 bytes, level 9 → 17,464, committed → 20,830, all decoding to identical
+pixels.
+
+**Rejected: comparing a repack against the committed reference.** That reintroduces the same luck.
+Measured: even a *default* re-encode already differs from the committed bytes on this machine, so
+the bytes-differ control would never fire here and the test would be trusting the encoder again.
+**Rejected: regenerating the golden reference** so the bytes match this ffmpeg. The reference is
+the artifact of a verified libass build; replacing it to make a comparison tidier is how a broken
+reference gets enshrined, and the pass above exists to prevent exactly that.
+
+**Mutation audit 4/4**, with the control mutated *together with the state it describes* — D-162's
+rule, applied deliberately this time. Collapsing the two compression levels is caught twice: by
+the bytes-differ control, and, if that is deleted too, by the closing `pytest.raises`, which stops
+raising once the two files are identical.
+
+**And the first version of this guard was rebuilt after its own audit.** It compared a repack
+against `GOLDEN`, and both "remove the compression level" mutations **SURVIVED** — on this machine
+the bytes differ regardless, so the flag changed nothing and the control could not fire. That is
+the same machine-luck the test exists to remove, one level down. Reconstructed to compare two
+repacks against each other, the control became demonstrable and the audit went 4/4.
+
+`evidence/adversarial-pass-26-m3-2-golden-render.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.

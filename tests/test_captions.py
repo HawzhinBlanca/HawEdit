@@ -415,6 +415,66 @@ def test_the_render_matches_the_golden_reference(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_the_comparison_runs_on_pixels_and_not_on_the_encoded_file(tmp_path: Path) -> None:
+    """`decode_to_rgb` exists because "PNG encoders differ between ffmpeg and zlib versions",
+    and nothing pinned that the comparison actually uses it.
+
+    Adversarial pass 26 found the existing coverage was accidental: forcing the comparison onto
+    file bytes reddens `test_the_render_matches_the_golden_reference` **here**, but only because
+    this machine's encoder happens to disagree with the one the reference was made on — measured
+    2026-08-10, 20,830 bytes against 21,847 for **pixel-identical** output. On a machine whose
+    encoder agreed, that regression would pass unnoticed and the golden test would be one
+    ffmpeg upgrade away from crying wolf.
+
+    The two files are the reference re-encoded at compression levels 9 and 1 — the same picture
+    in different bytes **by construction**, so the difference comes from the levels rather than
+    from which encoder produced the committed file. Comparing a repack against `GOLDEN` itself
+    would reintroduce the same luck: measured here, even a default re-encode already differs
+    from the committed bytes, so the control would never fire on this machine.
+    """
+    import subprocess
+
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+
+    def repack(level: str, name: str) -> Path:
+        out = tmp_path / name
+        subprocess.run(
+            [
+                str(ffmpeg),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(GOLDEN),
+                "-compression_level",
+                level,
+                "-y",
+                str(out),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return out
+
+    tight, loose = repack("9", "tight.png"), repack("1", "loose.png")
+
+    # The controls, in both directions: the bytes must really differ and the pixels must really
+    # not. Without the first this would pass on two identical files; without the second it would
+    # be asserting that the comparison ignores a difference that is real.
+    assert tight.read_bytes() != loose.read_bytes(), (
+        "the two compression levels produced identical bytes, so this test cannot tell the two "
+        "comparison modes apart"
+    )
+    assert decode_to_rgb(ffmpeg, tight) == decode_to_rgb(ffmpeg, loose)
+
+    compare_golden_render(tight, loose, ffmpeg=ffmpeg)  # decoded: same picture, must pass
+
+    with pytest.raises(AssertionError, match="differs"):
+        compare_golden_render(tight, loose)  # bytes: differ, which is why ffmpeg is passed
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 def test_simple_shaping_fails_the_golden_test(tmp_path: Path) -> None:
     """The negative control, and the whole justification for §4.3.
 
