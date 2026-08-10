@@ -5959,3 +5959,19 @@ the native platform's path separators. The existing Linux/Python 3.12 gate suppl
 host, so a Windows-only path literal cannot certify the rule.
 
 `evidence/help-names-the-invoked-command.md`.
+
+## D-170 - The README must agree with the live quality ledger and its CLI API
+
+The README is a product surface, not an archival log. It already states that `gate` is the strict
+required check on protected `main`, while `BLOCKED.md` #7 is resolved; that upstream correction is
+semantically present. The statement was unbound, so reopening the blocker or deleting the claim
+could drift again. A symmetric test now requires exactly one of “#7 is live” and “README says the
+check is required” to be true.
+
+The adjacent module map had real drift: its `cli.py` row described only UTF-8 output after the
+module gained machine-readable stdout ownership and invocation-aware help. The row now names all
+three exported helpers, and a test derives the required names from `hawedit.cli.__all__`. This is
+deliberately scoped to the module whose purpose is shared entry-point behavior; imposing symbol
+lists on every prose module-map row would make the documentation less useful.
+
+`evidence/readme-quality-bar.md`.

@@ -167,6 +167,11 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > module/script mapping from `pyproject.toml` and exercise both launcher suffixes plus module mode
 > for every declaration. `evidence/help-names-the-invoked-command.md`.
 >
+> **M0.1 amendment (D-170).** README now states the live strict required-`gate` protection and
+> its `cli.py` module-map row names every exported shared entry-point rule. Tests bind the former
+> symmetrically to `BLOCKED.md` #7 and the latter to `hawedit.cli.__all__`.
+> `evidence/readme-quality-bar.md`.
+>
 > **M5.4 amendment (D-059).** The whole-episode 256-frame shortfall named in that row is
 > closed: windows are now packed into deterministic ≤256-frame calls. The unmeasured temporal
 > discrimination on real dynamic Sorani footage remains a shortfall.

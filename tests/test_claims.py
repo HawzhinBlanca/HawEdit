@@ -55,6 +55,25 @@ def test_audit_report_names_every_declared_console_script_exactly_once() -> None
     assert f"all {_NUMBER_WORDS_REVERSE[len(declared)]}" in claim
 
 
+def test_readme_required_gate_claim_agrees_with_the_blocker_ledger() -> None:
+    claim = "`gate` is a strict required status check on protected `main`"
+    blocker_is_live = _blocked_entries().get("7", True)
+
+    assert (claim in README) is not blocker_is_live, (
+        f"README required-gate claim and BLOCKED.md #7 disagree: "
+        f"claim_present={claim in README}, blocker_live={blocker_is_live}"
+    )
+
+
+def test_readme_cli_module_row_names_every_exported_entry_point_rule() -> None:
+    from hawedit import cli
+
+    row = next((line for line in README.splitlines() if line.startswith("| `cli.py` |")), None)
+    assert row is not None, "README module map has no cli.py row"
+    missing = [name for name in cli.__all__ if f"`{name}`" not in row]
+    assert not missing, f"README cli.py row omits exported rules: {missing}"
+
+
 # --- #10 a DONE mark must be backed by the thing it claims -------------------------------
 
 
