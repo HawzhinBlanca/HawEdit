@@ -468,6 +468,15 @@ must be absent; normalized Sorani and ASCII digits must be present. An idempoten
 bidirectional query-reader class inventory prevent uniform mangling and future untested adapters.
 The focused visual slice passes 95/95. `evidence/stage2-query-normalization-2026-08-10.md`.
 
+## M0.4 invariant #1 digest-evidence amendment (2026-08-10, D-186)
+
+The missing/unreadable sidecar refusal is now held separately from digest mismatch.  Five ways the
+evidence can disappear or become invalid are derived into tests through direct integrity checking
+and normalized-artifact publication, then repeated after raw-byte tampering; an intact control
+must still verify and publish/read.  Production was already correct.  This is
+deletion/corruption detection, not a signature against an actor who can rewrite both files.
+`evidence/invariant-1-digest-evidence-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |

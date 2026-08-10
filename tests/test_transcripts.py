@@ -16,6 +16,7 @@ import json
 import os
 import stat
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -411,6 +412,100 @@ def test_byte_only_tampering_with_raw_is_detected(tmp_path: Path) -> None:
     assert store.read_raw("media-001") == a_raw()
     with pytest.raises(RawTranscriptTampered):
         store.verify_raw_integrity("media-001")
+
+
+def _delete_sidecar(path: Path) -> None:
+    path.unlink()
+
+
+def _empty_sidecar(path: Path) -> None:
+    path.write_text("", encoding="ascii")
+
+
+def _whitespace_sidecar(path: Path) -> None:
+    path.write_text("   \n", encoding="ascii")
+
+
+def _non_ascii_sidecar(path: Path) -> None:
+    path.write_bytes(b"\xff\xfe not a digest")
+
+
+def _directory_sidecar(path: Path) -> None:
+    path.unlink()
+    path.mkdir()
+
+
+_DIGEST_EVIDENCE_BREAKERS: dict[str, Callable[[Path], None]] = {
+    "deleted": _delete_sidecar,
+    "empty": _empty_sidecar,
+    "whitespace": _whitespace_sidecar,
+    "non-ASCII": _non_ascii_sidecar,
+    "directory": _directory_sidecar,
+}
+_DIGEST_EVIDENCE_STATES = tuple(_DIGEST_EVIDENCE_BREAKERS)
+_UNREADABLE_DIGEST_EVIDENCE = frozenset({"deleted", "non-ASCII", "directory"})
+
+
+@pytest.mark.parametrize("state", _DIGEST_EVIDENCE_STATES)
+@pytest.mark.parametrize("entry_point", ("verify", "write_norm"))
+def test_missing_or_invalid_digest_evidence_refuses_both_verification_doors(
+    tmp_path: Path, state: str, entry_point: str
+) -> None:
+    """Invariant #1 cannot become green by deleting the file that would contradict it."""
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    _DIGEST_EVIDENCE_BREAKERS[state](store._digest_path("media-001"))
+
+    expected_reason = (
+        "no readable digest"
+        if state in _UNREADABLE_DIGEST_EVIDENCE
+        else "no longer matches the digest"
+    )
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        if entry_point == "verify":
+            store.verify_raw_integrity("media-001")
+        else:
+            store.write_norm(normalize_transcript(raw))
+
+
+@pytest.mark.parametrize("state", _DIGEST_EVIDENCE_STATES)
+def test_tampered_raw_stays_refused_after_its_digest_evidence_is_destroyed(
+    tmp_path: Path, state: str
+) -> None:
+    store = TranscriptStore(tmp_path)
+    original = a_raw()
+    normalized = normalize_transcript(original)
+    path = store.write_raw(original)
+    path.chmod(0o644)
+    path.write_text(a_raw("TAMPERED canonical transcript").to_json(), encoding="utf-8")
+    _DIGEST_EVIDENCE_BREAKERS[state](store._digest_path("media-001"))
+
+    expected_reason = (
+        "no readable digest"
+        if state in _UNREADABLE_DIGEST_EVIDENCE
+        else "no longer matches the digest"
+    )
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        store.verify_raw_integrity("media-001")
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        store.write_norm(normalized)
+
+
+def test_intact_digest_evidence_still_verifies_and_reuses(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    expected = a_raw()
+    normalized = normalize_transcript(expected)
+    store.write_raw(expected)
+
+    store.verify_raw_integrity("media-001")
+    store.write_norm(normalized)
+    assert store.read_norm("media-001") == normalized
+
+
+def test_every_declared_digest_evidence_breaker_is_parametrized() -> None:
+    assert set(_DIGEST_EVIDENCE_STATES) == set(_DIGEST_EVIDENCE_BREAKERS)
+    assert set(_DIGEST_EVIDENCE_BREAKERS) > _UNREADABLE_DIGEST_EVIDENCE
 
 
 @pytest.mark.parametrize(

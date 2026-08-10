@@ -6051,6 +6051,27 @@ on read: the raw wheel member, RECORD and provenance must identify the same revi
 
 `evidence/release-text-byte-integrity-2026-08-10.md`.
 
+## D-186 - Missing tamper evidence is a refusal at both transcript runtime doors
+
+Protected main neutralized the missing/unreadable digest branch while leaving its full suite
+green.  Every older tamper test edited the canonical transcript and reached the digest-mismatch
+branch; none removed the evidence.  Rewriting the raw and deleting its sidecar could therefore be
+made to verify cleanly without reddening a test, even though production already contained the
+right refusal.
+
+Five explicit evidence-destruction states are now derived into a two-door matrix for
+`verify_raw_integrity` and the independent verification inside `write_norm`, then repeated against
+an actually tampered canonical file.  Unreadable states require the missing-evidence diagnostic;
+readable empty/whitespace states require digest mismatch.  An intact pair must still verify and
+publish/read its normalized artifact, preventing unconditional refusal from passing the matrix.
+
+Rejected moving verification into `read_raw`: that method deliberately exposes exact parsed bytes
+so byte-only JSON changes remain observable to the separate digest check.  Rejected claiming an
+unkeyed SHA-256 proves origin: an actor able to rewrite both files needs a signature or keyed MAC,
+which is a distinct unsatisfied trust requirement.
+
+`evidence/invariant-1-digest-evidence-2026-08-10.md`.
+
 ## D-181 - A prerequisite is held by its own diagnostic, not by a shared exit code
 
 Protected main measured that deleting twelve of fourteen older argv guards left their tests green.
