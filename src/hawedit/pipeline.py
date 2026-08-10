@@ -419,7 +419,9 @@ _STAGE_3_DISCOVERY = StageSkipped(
     stage="discovery",
     reason=(
         "no Stage 3 producer was enabled. Select --gemini or --vertex-project for Path A, "
-        "--visual for composed Path B, or both for the two-sided union."
+        "--visual with --visual-query for composed Path B — Stage 2 must retrieve against a "
+        "query, and the whole transcript is the corpus rather than a fallback query — or both "
+        "for the two-sided union."
     ),
     blocked_by=("discovery producer not enabled",),
 )
@@ -1880,8 +1882,23 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
             raise ValueError("--visual without Path A requires --visual-query")
         if args.qc_pass and not (args.sentences or args.auto_select):
             raise ValueError("--qc-pass requires --sentences or --auto-select")
-        if args.auto_select and not (args.visual or args.gemini or args.vertex_project):
-            raise ValueError("--auto-select needs at least one Stage 3 producer")
+        visual_query = args.visual_query.strip() if args.visual_query is not None else ""
+        if args.visual_query is not None and not visual_query:
+            raise ValueError("--visual-query must contain a non-whitespace retrieval query")
+        # Path B is a producer only when it has something to retrieve against. `--visual`
+        # alone plans windows but cannot rank or surface one, so accepting it for auto-selection
+        # pays all of Stage 0 for an outcome argv already proves impossible. Path A can either
+        # produce directly or anchor the optional Path B query. D-177.
+        stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
+            args.visual and visual_query
+        )
+        if args.auto_select and not stage_3_can_produce:
+            raise ValueError(
+                "--auto-select needs a Stage 3 producer that can actually produce: "
+                "--gemini/--vertex-project for Path A, or --visual with --visual-query so "
+                "Stage 2 has something to retrieve against. --visual alone cannot rank a "
+                "window."
+            )
         if args.auto_select and not (args.transcript or args.omni_asr):
             raise ValueError("--auto-select requires --transcript or --omni-asr")
         if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):

@@ -2569,6 +2569,100 @@ def test_a_run_with_nothing_missing_reports_zero_rather_than_omitting_the_key(
     assert run.transcript_gaps == ()
 
 
+# --- D-177: auto-selection must have a discovery path that can actually produce -------------
+
+
+def _query_preflight_exit(argv: list[str], tmp_path: Path) -> tuple[int, str]:
+    import contextlib
+    import io
+
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
+        code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), *argv])
+    return code, captured.getvalue()
+
+
+def test_auto_select_refuses_visual_without_a_query_before_stage_zero(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--visual", "--auto-select"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "--visual-query" in stderr
+    assert not (tmp_path / "work").exists()
+
+
+def test_auto_select_accepts_visual_with_a_query(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        [
+            "--transcript",
+            "missing.json",
+            "--visual",
+            "--visual-query",
+            "ڕۆژنامەوان",
+            "--auto-select",
+        ],
+        tmp_path,
+    )
+
+    assert code == 2, stderr
+    assert "must contain" not in stderr
+    assert "missing.json" in stderr
+
+
+def test_auto_select_accepts_path_a_without_an_explicit_visual_query(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--gemini", "--auto-select"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "Stage 3 producer" not in stderr
+
+
+def test_auto_select_still_refuses_when_no_discovery_path_is_enabled(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--auto-select"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "Stage 3 producer" in stderr
+    assert not (tmp_path / "work").exists()
+
+
+def test_visual_query_without_visual_is_refused_by_the_earlier_contract(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--visual-query", "query", "--auto-select"],
+        tmp_path,
+    )
+
+    assert code == 2, stderr
+    assert "--visual-query requires --visual" in stderr
+
+
+def test_blank_visual_query_is_refused_before_stage_zero(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        [
+            "--transcript",
+            "missing.json",
+            "--visual",
+            "--visual-query",
+            "   ",
+            "--auto-select",
+        ],
+        tmp_path,
+    )
+
+    assert code == 2, stderr
+    assert "non-whitespace" in stderr
+    assert not (tmp_path / "work").exists()
+
+
+def test_no_producer_report_names_the_query_path_b_needs() -> None:
+    from hawedit.pipeline import _STAGE_3_DISCOVERY
+
+    assert "--visual-query" in _STAGE_3_DISCOVERY.reason
+
+
 # --- D-146: a stage that ran reported nothing about itself -------------------------------------
 
 
