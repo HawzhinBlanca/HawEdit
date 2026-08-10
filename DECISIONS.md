@@ -6614,3 +6614,88 @@ The check is structural now: every pin line must continue.
 `"-e '.[dev,media]'" not in workflow`, and the workflow *comment* quotes that command to say what it
 replaced — so the test failed on its own explanation. It reads command lines only now, exactly as
 `fetch-ffmpeg.sh`'s `--fail` check had to. `evidence/the-gate-installed-whatever-the-index-served.md`.
+
+## D-140
+
+**Stage 2's visual half is the most expensive stage in the pipeline, and it was redone in full on
+every run.** D-132 made Stage 0 re-runnable (100.2 s saved) and D-136 Stage 1 (1,531 s → 54 s). This
+is the third and largest. Measured on `ZAR38MinTest.mp4` with the real `Qwen3-VL-Embedding-2B` on a
+3090 Ti, before changing anything:
+
+```
+Stage 2 plans 641 scene windows at 2.0 fps, max 8 frames
+
+frame extraction of 12 windows
+  first pass    1.14 s   ( 95.1 ms/window)
+  second pass   1.11 s   ( 92.3 ms/window)
+  jpgs on disk 81   rewritten by the second pass: 81
+  -> extrapolated over 641 windows: 60.9 s
+
+embedding 12 windows: 38.49 s (3,207 ms/window, cold)
+  -> extrapolated over 641 windows: 2,055.9 s
+```
+
+`discover` built a fresh in-memory `_FrameCache` per call and embedded every window
+unconditionally; `extract_window_frames` runs ffmpeg with `-y`. Every jpg was rewritten and every
+vector recomputed.
+
+**Decision: a per-window embedding cache on disk, verified on everything that changes a vector.**
+One file per window, so a run killed at window 400 of 641 keeps 400 — that is what "resumable"
+has to mean here, not "restart faster". Measured after, with the real weights:
+
+```
+first pass       16.49 s   embedder calls this pass: 12
+second pass       0.14 s   embedder calls this pass: 0
+cached vectors bit-identical to the fresh ones: True
+per-window embedding: 1374 ms   (warm; the 3,207 ms above includes the first forward pass)
+extrapolated over 641 windows: 880.7 s first run, 7.5 s on a re-run
+```
+
+**Frames follow the embeddings.** A cached window is never extracted, which is where the 95.1
+ms/window went; survivors still get their frames later through the same `_FrameCache`, for the
+reranker and the reader. One mechanism, not two.
+
+**The key is the window, the checkpoint and the source.**
+
+* the **window** — id, bounds, fps, frame count — so a replanned window re-embeds;
+* the **model id and revision**, because vectors from two checkpoints live in different embedding
+  spaces and mixing them makes every cosine similarity meaningless while looking fine. D-073
+  pinned the revisions and this is what makes the pin load-bearing; D-136 established the producer
+  as part of a reuse key;
+* the **source digest**, because a window is a *time range* and the same range of a different
+  recording is different footage.
+
+**An unidentified checkpoint never licenses a reuse — and the first version of this code did not do
+that.** An empty revision compared equal to itself, so unpinned weights reused their own unnamed
+vectors. The docstring stated the rule; the code did not implement it; the test written *for the
+rule* caught it. D-132's "absent evidence is not evidence of a match", one key over.
+
+**The record is staged and renamed into place.** A store that dies partway must leave no readable
+half-record, and a direct write makes the destination itself the garbage.
+
+**A cached vector still has to clear `VisualEmbedding`'s invariants.** A zero or non-finite vector
+sinks a scene below everything in every query without a trace; the cache is a store, not an
+exemption.
+
+**Named limitation, recorded rather than papered over.** The record verifies what *produced* the
+vector, not the vector's content: a hand-edited vector that still parses and still satisfies the
+invariants is indistinguishable from a legitimate one, because validating the content means
+re-embedding it — the cost the cache exists to avoid — and any checksum stored beside it is derived
+from the same file and re-derivable by whoever edited it. **The first version of the test asserted
+this was caught, and it was not.** Truncation, the realistic corruption, *is* caught.
+
+**Rejected: caching in `extract_window_frames`.** It would make the frame layer re-runnable
+independently, which is 60.9 s against the embedding's 880.7 s, and a cached embedding already
+skips the extraction entirely. One guard where the expensive work is.
+
+**Rejected: one combined cache file written at the end.** Simpler, and it keeps nothing from a run
+killed at window 400 — which is the whole point.
+
+**`discover` now requires the source to exist**, because it reads its digest. Strictly no worse
+than before: `extract_window_frames` would have run ffmpeg on it moments later. Four existing tests
+passed a path that never existed and now create a stub file.
+
+**Mutation audit 12/12,** after 10/12. Both survivors were the familiar shape: the staged write had
+no test that made a write fail, and the runner's `embedding_revision=` argument could be dropped
+with everything green — D-105, D-133 and D-135's unheld-wiring finding for the fourth time.
+`evidence/stage-2-re-embedded-641-windows-every-run.md`.

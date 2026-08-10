@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -14,7 +15,25 @@ from hawedit.visual_index import (
     VisualEmbedding,
     VisualHit,
 )
-from hawedit.visual_pipeline import FrameReader, VisualComposer, VisualPipelineError
+from hawedit.visual_pipeline import (
+    FrameReader,
+    VisualComposer,
+    VisualDiscoveryResult,
+    VisualPipelineError,
+)
+
+
+def a_source(tmp_path: Path) -> Path:
+    """A stand-in for the media file.
+
+    It has to exist: `discover` reads the source's SHA-256 to key the per-window embedding cache
+    (D-140), and every window it would embed comes out of this file anyway — failing here is
+    earlier and clearer than failing inside ffmpeg, which is where an absent source landed
+    before. These tests monkeypatch the extraction, so the bytes are never decoded.
+    """
+    source = tmp_path / "m.mp4"
+    source.write_bytes(b"not a real video, and never decoded")
+    return source
 
 
 def windows(count: int) -> tuple[SceneWindow, ...]:
@@ -115,7 +134,7 @@ def test_only_reranked_survivors_reach_videochat(
         keep=5,
     )
     result = composer.discover(
-        tmp_path / "m.mp4",
+        a_source(tmp_path),
         windows(12),
         "گرنگ",
         tmp_path / "work",
@@ -146,7 +165,7 @@ def test_short_media_is_refused_instead_of_mislabeling_a_partial_top_five(
         keep=5,
     )
     with pytest.raises(VisualPipelineError, match="too short for Stage 2"):
-        composer.discover(tmp_path / "m.mp4", windows(3), "گرنگ", tmp_path / "work", media_id="m")
+        composer.discover(a_source(tmp_path), windows(3), "گرنگ", tmp_path / "work", media_id="m")
 
 
 # --- D-118: an unreadable survivor is reported, not fatal, and still accounted for -------------
@@ -197,7 +216,7 @@ def test_an_unreadable_survivor_is_carried_into_the_result_not_dropped(
         FakeEmbedder(), FakeReranker, lambda read, score: RefusesTheFirst(read, score), keep=5
     )
     result = composer.discover(
-        tmp_path / "m.mp4", windows(12), "گرنگ", tmp_path / "work", media_id="m"
+        a_source(tmp_path), windows(12), "گرنگ", tmp_path / "work", media_id="m"
     )
 
     assert len(result.survivors) == 5
@@ -231,7 +250,217 @@ def test_a_run_with_nothing_unreadable_still_says_so(
         FakeEmbedder(), FakeReranker, lambda read, score: FakeReader(read, score, []), keep=5
     )
     result = composer.discover(
-        tmp_path / "m.mp4", windows(12), "گرنگ", tmp_path / "work", media_id="m"
+        a_source(tmp_path), windows(12), "گرنگ", tmp_path / "work", media_id="m"
     )
     assert result.unreadable == ()
     assert result.to_dict()["unreadable"] == []
+
+
+# --- D-140: Stage 2's visual half is the most expensive stage, and it was redone every run ---
+#
+# Measured on `ZAR38MinTest.mp4` with the real `Qwen3-VL-Embedding-2B` on a 3090 Ti: 641 windows
+# planned, **1,374 ms per window warm** (3,207 ms including the first forward pass), so
+# **880.7 s** extrapolated — and a second pass re-embedded all of them while ffmpeg rewrote all
+# 81 sampled jpgs. Two passes over one work directory now measure **12 embedder calls then 0**,
+# 16.49 s then 0.14 s, with the cached vectors bit-identical.
+
+
+class CountingEmbedder(FakeEmbedder):
+    """`FakeEmbedder`, recording which windows it was actually asked to embed."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def embed_frames(self, frames: WindowFrames) -> VisualEmbedding:
+        self.calls.append(frames.window.window_id)
+        return super().embed_frames(frames)
+
+
+def _discover_twice(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    between: Callable[[Path], None] | None = None,
+    revisions: tuple[str, str] = ("rev-1", "rev-1"),
+) -> tuple[CountingEmbedder, list[str], tuple[VisualDiscoveryResult, VisualDiscoveryResult]]:
+    """Run `discover` twice over one work directory, optionally disturbing it in between."""
+    extracted: list[str] = []
+
+    def fake_extract(
+        video: Path, window: SceneWindow, dest: Path, ffmpeg: Path | None = None
+    ) -> WindowFrames:
+        extracted.append(window.window_id)
+        return WindowFrames(window, (dest / "frame.jpg", dest / "frame2.jpg"))
+
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", fake_extract)
+    source = a_source(tmp_path)
+    work = tmp_path / "work"
+    embedder = CountingEmbedder()
+
+    def run(revision: str) -> VisualDiscoveryResult:
+        composer = VisualComposer(
+            embedder,
+            FakeReranker,
+            lambda read, score: FakeReader(read, score, []),
+            keep=5,
+            embedding_revision=revision,
+        )
+        return composer.discover(source, windows(12), "گرنگ", work, media_id="m")
+
+    first = run(revisions[0])
+    if between is not None:
+        between(work)
+    second = run(revisions[1])
+    return embedder, extracted, (first, second)
+
+
+def test_a_second_pass_reuses_every_embedding_and_extracts_no_frames(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The defect: 641 windows at 1,374 ms each, re-embedded on every run.
+
+    Frames are asserted too, because a cached window needs no ffmpeg either — that is where the
+    measured 95.1 ms/window goes, and a cache that still extracted would keep paying it.
+    """
+    embedder, extracted, (first, second) = _discover_twice(monkeypatch, tmp_path)
+
+    assert len(embedder.calls) == 12, "the first pass must embed every window"
+    assert embedder.calls == extracted[:12]
+    assert len(extracted) == 12, f"the second pass extracted frames again: {extracted[12:]}"
+    assert first.to_dict() == second.to_dict(), "the reused run produced a different result"
+
+
+def test_a_different_checkpoint_revision_re_embeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The control that matters most. Vectors from two checkpoints live in different embedding
+    spaces, and mixing them makes every cosine similarity meaningless while looking fine — worse
+    than the 880.7 s it saves. D-073 pinned the revisions; this makes the pin load-bearing.
+    """
+    embedder, _, _ = _discover_twice(monkeypatch, tmp_path, revisions=("rev-1", "rev-2"))
+
+    assert len(embedder.calls) == 24, "a second checkpoint reused the first one's vectors"
+
+
+def test_an_unidentified_checkpoint_never_licenses_a_reuse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An empty revision means "not pinned". It must not match itself: vectors from a checkpoint
+    nobody can name are not evidence that this run's weights produced them."""
+    embedder, _, _ = _discover_twice(monkeypatch, tmp_path, revisions=("", ""))
+
+    assert len(embedder.calls) == 24, "unpinned weights reused their own unidentified vectors"
+
+
+def test_a_replaced_source_re_embeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A window is a *time range*. The same range of a different recording is different footage,
+    so reusing there would embed one video and describe another."""
+
+    def replace_source(_work: Path) -> None:
+        (tmp_path / "m.mp4").write_bytes(b"a different recording entirely")
+
+    embedder, _, _ = _discover_twice(monkeypatch, tmp_path, between=replace_source)
+
+    assert len(embedder.calls) == 24, "a replaced source served the old video's embeddings"
+
+
+def test_a_truncated_cache_entry_re_embeds_only_that_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Half-written JSON is every sidecar's realistic failure mode, and it falls through to
+    embedding — the expensive answer, never the wrong one.
+
+    Only that window: a cache that gave up wholesale on one bad file would re-embed all twelve,
+    which is correct and throws away 11 windows of work for nothing.
+
+    **What this cannot check, and the first version of this test wrongly asserted it could:** a
+    hand-edited *vector* that still parses and still satisfies the embedding invariants is
+    indistinguishable from a legitimate one. The record verifies what *produced* the vector —
+    window, model, revision, source — because the vector's own content cannot be validated
+    without re-embedding it, which is the cost the cache exists to avoid. Any checksum stored
+    beside it would be derived from the same file and re-derivable by whoever edited it. D-140
+    records the limitation rather than pretending otherwise.
+    """
+
+    def truncate_one(work: Path) -> None:
+        entries = sorted((work / "embeddings").glob("*.json"))
+        assert len(entries) == 12, entries
+        entries[0].write_text('{"window": {"med', encoding="utf-8")
+
+    embedder, _, _ = _discover_twice(monkeypatch, tmp_path, between=truncate_one)
+
+    assert len(embedder.calls) == 13, embedder.calls
+
+
+def test_a_cached_vector_must_still_clear_the_embedding_invariants(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`VisualEmbedding` refuses a zero or non-finite vector because a NaN sinks a scene below
+    everything in every query without a trace. A cached vector has to clear the same bar — the
+    cache is a store, not an exemption.
+    """
+
+    def zero_one_vector(work: Path) -> None:
+        entry = sorted((work / "embeddings").glob("*.json"))[0]
+        stored = json.loads(entry.read_text(encoding="utf-8"))
+        stored["vector"] = [0.0, 0.0]
+        entry.write_text(json.dumps(stored), encoding="utf-8")
+
+    embedder, _, _ = _discover_twice(monkeypatch, tmp_path, between=zero_one_vector)
+
+    assert len(embedder.calls) == 13, "a zero vector was served from the cache"
+
+
+def test_the_cache_writes_one_file_per_window_so_a_killed_run_keeps_its_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The resumability property, stated as the file layout it depends on. A single combined file
+    written at the end would keep nothing from a run killed at window 400 of 641.
+    """
+    _discover_twice(monkeypatch, tmp_path)
+    entries = sorted((tmp_path / "work" / "embeddings").glob("*.json"))
+
+    assert len(entries) == 12, entries
+    assert not list((tmp_path / "work" / "embeddings").glob("*.tmp")), (
+        "a staging file survived, so a killed run can leave a half-record"
+    )
+    ids = {json.loads(path.read_text(encoding="utf-8"))["window"]["window_id"] for path in entries}
+    assert len(ids) == 12, "two windows share a cache file"
+
+
+def test_a_store_that_fails_partway_leaves_no_readable_cache_file(tmp_path: Path) -> None:
+    """The staged write, which nothing distinguished from a direct one.
+
+    Found SURVIVED by D-140's audit: replacing `staging.write_text(...); staging.replace(path)`
+    with a direct `path.write_text(...)` left every test green, because no test had a write fail.
+    The observable difference is *which file* holds the garbage — with a direct write the
+    destination itself becomes a half-record that a concurrent reader can open.
+    """
+    from hawedit.visual_pipeline import _EmbeddingCache
+
+    cache = _EmbeddingCache(tmp_path / "embeddings", "Qwen3-VL-Embedding-2B", "rev-1", "abc")
+    window = windows(1)[0]
+    embedding = VisualEmbedding(window, (1.0, 0.5), "Qwen3-VL-Embedding-2B")
+    real_write = Path.write_text
+
+    def fail_after_writing_half(self: Path, data: str, *args: object, **kwargs: object) -> int:
+        real_write(self, data[: len(data) // 2], encoding="utf-8")
+        raise OSError("no space left on device")
+
+    original = Path.write_text
+    Path.write_text = fail_after_writing_half  # type: ignore[method-assign]
+    try:
+        with pytest.raises(OSError, match="no space"):
+            cache.store(embedding)
+    finally:
+        Path.write_text = original  # type: ignore[method-assign]
+
+    published = list((tmp_path / "embeddings").glob("*.json"))
+    assert published == [], (
+        f"a failed store published a half-record a reader could open: {published}"
+    )
+    # The control: a store that does not fail publishes exactly one readable record, so this is
+    # not measuring "nothing is ever written".
+    cache.store(embedding)
+    assert len(list((tmp_path / "embeddings").glob("*.json"))) == 1
+    assert cache.load(window) is not None

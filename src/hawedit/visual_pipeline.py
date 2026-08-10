@@ -9,6 +9,8 @@ accepted only when it is the exact reranker score for that same window.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -93,6 +95,101 @@ class VisualDiscoveryResult:
         }
 
 
+def _file_digest(path: Path) -> str:
+    """SHA-256 of a file, streamed. Measured in D-132: 0.1 s for the real 82 MB source."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+class _EmbeddingCache:
+    """Per-window embeddings on disk, so Stage 2 resumes instead of restarting.
+
+    Stage 2's visual half is the most expensive thing in this pipeline. Measured on
+    `ZAR38MinTest.mp4` with the real `Qwen3-VL-Embedding-2B` on a 3090 Ti: it plans **641
+    windows** at **3,207 ms each** — **2,055.9 s** extrapolated, 34 minutes — plus 95.1 ms of
+    ffmpeg per window, and a second pass **rewrote all 81 sampled jpgs**. None of it was reused:
+    `discover` built a fresh in-memory `_FrameCache` per call and embedded every window
+    unconditionally. D-132 made Stage 0 re-runnable and D-136 Stage 1; this is the third and
+    largest. D-140.
+
+    One file per window, so a run killed at window 400 keeps 400. Reuse is verified rather than
+    assumed, on everything that changes the vector:
+
+    * the **window** — id, bounds, fps and frame count, so a replanned window re-embeds;
+    * the **model id and revision** — a different checkpoint produces a different embedding
+      space, and mixing two would make every similarity meaningless while looking fine. D-073
+      pinned the revisions for exactly this reason and D-136 made the producer part of the key;
+    * the **source digest**, because a window is a time range and the same range of a different
+      recording is different footage.
+
+    Any mismatch, unreadable file or malformed vector re-embeds — the expensive answer, never the
+    wrong one.
+    """
+
+    def __init__(self, root: Path, model_id: str, revision: str, source_sha256: str) -> None:
+        self.root = root
+        self.model_id = model_id
+        self.revision = revision
+        self.source_sha256 = source_sha256
+
+    def _path(self, window: SceneWindow) -> Path:
+        return self.root / f"{window.window_id.replace(':', '_')}.json"
+
+    def _record(self, window: SceneWindow, vector: tuple[float, ...]) -> dict[str, object]:
+        return {
+            "window": window.to_dict(),
+            "model_id": self.model_id,
+            "revision": self.revision,
+            "source_sha256": self.source_sha256,
+            "vector": list(vector),
+        }
+
+    def load(self, window: SceneWindow) -> VisualEmbedding | None:
+        if not self.revision:
+            # An unidentified checkpoint never licenses a reuse. The docstring said so and the
+            # first version of this code did not: an empty revision compared equal to itself, so
+            # unpinned weights happily reused their own unnamed vectors — caught by the test
+            # written for the rule rather than for the code. D-132's "absent evidence is not
+            # evidence of a match", one key over.
+            return None
+        path = self._path(window)
+        if not path.is_file():
+            return None
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(stored, dict):
+            return None
+        vector = stored.get("vector")
+        if not isinstance(vector, list) or not vector:
+            return None
+        expected = self._record(window, tuple(float(v) for v in vector))
+        if stored != expected:
+            return None
+        try:
+            # `VisualEmbedding` refuses an empty, zero or non-finite vector, and a cached one has
+            # to clear the same bar as a fresh one — the cache is a store, not an exemption.
+            return VisualEmbedding(window, tuple(float(v) for v in vector), self.model_id)
+        except (TypeError, ValueError):
+            return None
+
+    def store(self, embedding: VisualEmbedding) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self._path(embedding.window)
+        # Written through a temporary file: a run killed mid-write must leave no half-record for
+        # the next one to parse. D-132's ordering.
+        staging = path.with_suffix(".json.tmp")
+        staging.write_text(
+            json.dumps(self._record(embedding.window, embedding.vector), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        staging.replace(path)
+
+
 class _FrameCache:
     def __init__(
         self,
@@ -134,12 +231,17 @@ class VisualComposer:
         *,
         keep: int = 7,
         retrieve_k: int = RETRIEVE_K,
+        embedding_revision: str = "",
     ) -> None:
         self.embedder = embedder
         self.reranker_factory = reranker_factory
         self.reader_factory = reader_factory
         self.keep = keep
         self.retrieve_k = retrieve_k
+        # Which checkpoint produced the cached vectors. Empty means "not identified", and
+        # `_EmbeddingCache` then never matches — a run whose weights nobody pinned re-embeds
+        # rather than reusing vectors from an unknown model (D-073's pins, D-136's producer key).
+        self.embedding_revision = embedding_revision
 
     def discover(
         self,
@@ -163,7 +265,25 @@ class VisualComposer:
 
         read_frames = _FrameCache(source, work_dir / "frames", ffmpeg)
         index = VisualIndex(media_id)
-        index.add_all(self.embedder.embed_frames(read_frames(window)) for window in windows)
+        cache = _EmbeddingCache(
+            work_dir / "embeddings",
+            self.embedder.model_id,
+            self.embedding_revision,
+            _file_digest(source),
+        )
+
+        def embedding_for(window: SceneWindow) -> VisualEmbedding:
+            cached = cache.load(window)
+            if cached is not None:
+                return cached
+            # Frames are only extracted for windows that still need embedding. A cached window
+            # costs no ffmpeg either, which is where the 95.1 ms/window goes; survivors get their
+            # frames later through the same `read_frames`, for the reranker and the reader.
+            fresh = self.embedder.embed_frames(read_frames(window))
+            cache.store(fresh)
+            return fresh
+
+        index.add_all(embedding_for(window) for window in windows)
         query_vector = self.embedder.embed_text(query)
         reranker = self.reranker_factory(read_frames)
         try:

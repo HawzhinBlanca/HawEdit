@@ -2309,3 +2309,21 @@ def test_a_supplied_transcript_never_licenses_a_reuse(tmp_path: Path) -> None:
     work = tmp_path / "work"
     run_pipeline(FIXTURE, work_dir=work, media_id="probe", transcript=a_transcript("probe"))
     assert not (work / "transcripts" / "probe.transcript.raw.provenance.json").exists()
+
+
+def test_the_composer_is_built_with_the_pinned_embedding_revision() -> None:
+    """The wiring, which D-140's audit found unheld: dropping `embedding_revision` from
+    `build_visual_composer` left every test green, and the embedding cache then never matched —
+    a silent return to re-embedding 641 windows on every run.
+
+    Asserted on the source, the shape D-105, D-133 and D-135 all needed: the claim is *what the
+    runner passes*, and every other test builds its own composer.
+    """
+    source = (ROOT / "src" / "hawedit" / "pipeline.py").read_text(encoding="utf-8")
+    body = source[source.index("def build_visual_composer(") :]
+    following = body.find("\ndef ")
+    body = body if following == -1 else body[:following]
+    assert "embedding_revision=_embedding_revision(model_store)" in body, (
+        "the runner no longer gives the composer the pinned checkpoint revision, so its "
+        "embedding cache can never match and Stage 2 re-embeds every window"
+    )

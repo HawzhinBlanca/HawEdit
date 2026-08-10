@@ -46,7 +46,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol, TextIO
+from typing import TYPE_CHECKING, Any, Protocol, TextIO
 
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
@@ -1479,6 +1479,27 @@ def assert_devices_available(assignments: Mapping[str, str]) -> None:
         )
 
 
+if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
+    from hawedit.models import ModelStore
+
+
+def _embedding_revision(model_store: ModelStore) -> str:
+    """The pinned commit of the embedding checkpoint, or `""` if it is not pinned.
+
+    Empty rather than raising: an unpinned checkpoint must not *stop* a run, it must stop the
+    embedding cache from claiming a match — vectors from a checkpoint nobody can name are not
+    evidence that this run's weights produced them. D-140.
+    """
+    from hawedit.models import RevisionNotPinned, SourceNotConfigured
+    from hawedit.registry import REGISTRY
+
+    entry = REGISTRY["Qwen3-VL-Embedding-2B"]
+    try:
+        return model_store.revision_for(model_store.source_for(entry))
+    except (SourceNotConfigured, RevisionNotPinned):
+        return ""
+
+
 def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
     """Wire §3 Stage 2's index and Path B's reader onto the GPUs §6 assigns them.
 
@@ -1500,11 +1521,16 @@ def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
     # together on GPU 0 while GPU 1 held 1.3 GiB, and the real 38-minute run died with `CUDA out of
     # memory. Tried to allocate 21.83 GiB … 18.30 GiB is allocated by PyTorch`. Splitting them
     # freed 7.86 GiB on GPU 0. Measured 2026-08-09.
+    # The pinned revision of the embedding checkpoint travels with the composer, because the
+    # per-window embedding cache keys on it: vectors from two different checkpoints live in
+    # different spaces, and mixing them makes every similarity meaningless while looking fine.
+    # D-073 pinned the revisions; D-140 made this one part of the cache key.
     return VisualComposer(
         QwenVisualEmbedder(embed_dir, device=args.index_device),
         lambda read: QwenVisualReranker(rerank_dir, read, device=args.index_device),
         lambda read, score: VideoChat3Reader(reader_dir, read, score, device=args.visual_device),
         keep=args.visual_keep,
+        embedding_revision=_embedding_revision(model_store),
     )
 
 
