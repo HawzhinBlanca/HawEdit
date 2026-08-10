@@ -446,9 +446,11 @@ suite. `evidence/confidential-zdr-class-set-2026-08-10.md`.
 Protected main proved that most prerequisite tests could pass after deleting their target guard
 because they asserted only the shared exit code 2. Readiness now has 21 real-CLI cases covering all
 15 reachable preflight guards, including both sides of compound rules. Every case asserts its own
-diagnostic and that Stage 0 created no work directory. Two dominated branches with no CLI-reachable
-state were removed rather than certified through internal-only fixtures. The full pipeline suite
-passes 141/141. `evidence/cli-preflight-boundaries-2026-08-10.md`.
+diagnostic and that Stage 0 created no work directory; a bidirectional AST contract catches future
+uncovered guards and stale cases, while a legal-argv control proves the block does not refuse
+everything. Two dominated branches with no CLI-reachable state were removed rather than certified
+through internal-only fixtures. The full pipeline suite passes 143/143.
+`evidence/cli-preflight-boundaries-2026-08-10.md`.
 
 ## Deferred with reason
 

@@ -6008,9 +6008,11 @@ producer's own source guard fires earlier. Both were removed instead of inventin
 tests for behavior an operator cannot observe.
 
 Twenty-one real-CLI cases now cover every reachable guard and both sides of compound rules. Each
-asserts the target diagnostic and that no work directory exists, in addition to exit 2. A guard
-deleted or reordered behind filesystem work therefore fails for the reason the boundary exists.
-The focused pipeline suite passes 141/141.
+asserts the target diagnostic and that no work directory exists, in addition to exit 2. A
+bidirectional AST contract requires every pre-input `ValueError` to match exactly one case and
+every case to name a live refusal. A legal-argv control gets beyond the whole block. A guard added,
+deleted, made uniformly strict or reordered behind filesystem work therefore fails for the reason
+the boundary exists. The focused pipeline suite passes 143/143.
 
 Rejected a generic traceback assertion: it still cannot tell which boundary ran. Rejected keeping
 unreachable messages as defensive duplication: duplicated policy drifts, cannot be behaviorally

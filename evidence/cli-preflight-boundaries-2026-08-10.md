@@ -41,11 +41,18 @@ Each case invokes the real parser and `main` with the fixture source, then asser
 The exact diagnostic prevents a later unrelated failure from satisfying the test. The absent work
 directory proves the boundary ran before Stage 0 or any application-owned filesystem work.
 
+The table is also bound bidirectionally to the source. An AST check reads every direct
+`ValueError` before `_run_from_args` begins input loading and requires each message to match exactly
+one case fragment; every fragment must still name a live refusal. This catches a future uncovered
+guard and a stale case after deletion. A legal argv control passes every preflight and fails only
+when its intentionally missing transcript is read, preventing an implementation that refuses
+everything from satisfying the negative matrix.
+
 Covered boundaries are Stage 1 exclusivity; Omni runtime/distro ownership; cloud-route and Stage 4
 exclusivity; cloud, sentence, verdict and visual source prerequisites; visual-query dependency,
 content and source; QC selection; query-capable auto-selection; TimeLens/reframing selection; and
 governance-route ownership.
 
-Focused acceptance: `tests/test_pipeline.py` passed 141/141, Ruff was clean, and
+Focused acceptance: `tests/test_pipeline.py` passed 143/143, Ruff was clean, and
 `src/hawedit/pipeline.py` passed strict mypy. The exact collector and canonical gate are recorded
 after documentation and source-bound security rotation.
