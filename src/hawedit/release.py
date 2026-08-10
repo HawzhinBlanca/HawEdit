@@ -33,6 +33,7 @@ from typing import Final, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from hawedit.atomic_fs import rename_directory_noreplace
 from hawedit.cli import machine_readable_stdout, use_utf8_streams
 
 __all__ = [
@@ -1016,17 +1017,16 @@ def _write_synced(payload: bytes, destination: Path) -> None:
 
 
 def _publish_directory(staging: Path, output: Path) -> None:
-    if os.path.lexists(output):
-        raise ReleaseError(f"refusing to overwrite release directory {output}")
     try:
-        # Staging is a sibling, so the rename is one-filesystem and atomic. A populated winner
-        # cannot be replaced by os.rename on POSIX or Windows.
-        os.rename(staging, output)
+        # Staging is a sibling, so publication is one-filesystem and atomic. The native
+        # no-replace operation also preserves an empty directory created by a racing winner;
+        # ordinary POSIX os.rename would replace it after a successful preflight check.
+        rename_directory_noreplace(staging, output)
+    except FileExistsError as exc:
+        raise ReleaseError(
+            f"refusing to overwrite release directory {output}; another build published it"
+        ) from exc
     except OSError as exc:
-        if os.path.lexists(output):
-            raise ReleaseError(
-                f"refusing to overwrite release directory {output}; another build published it"
-            ) from exc
         raise ReleaseError(
             f"could not atomically publish release directory {output}: {exc}"
         ) from exc

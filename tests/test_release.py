@@ -905,3 +905,21 @@ def test_atomic_release_publication_preserves_the_winner(tmp_path: Path) -> None
 
     assert (output / "wheel.whl").read_bytes() == b"first"
     assert (staging / "wheel.whl").read_bytes() == b"second"
+
+
+def test_atomic_release_publication_never_replaces_a_racing_empty_winner(
+    tmp_path: Path,
+) -> None:
+    staging = tmp_path / ".release.worker-two"
+    output = tmp_path / "release"
+    staging.mkdir()
+    (staging / "wheel.whl").write_bytes(b"second")
+    output.mkdir()
+    winner_identity = output.stat().st_ino
+
+    with pytest.raises(ReleaseError, match="another build published it"):
+        _publish_directory(staging, output)
+
+    assert output.stat().st_ino == winner_identity
+    assert not tuple(output.iterdir())
+    assert (staging / "wheel.whl").read_bytes() == b"second"
