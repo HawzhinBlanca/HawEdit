@@ -6015,6 +6015,20 @@ was reprovisioned and the live gate accepted all 12 audit findings against 12 re
 dispositions with three authenticated assets (43,546,500,168 bytes) and two CUDA devices; this is
 affected/mitigated evidence, not a claim of zero vulnerabilities.
 
+## D-189 - Judge frames carry the requested sampling cadence, not stretched time
+
+When ffmpeg returned fewer frames because the source ended before an overlong candidate span,
+timestamps were derived from `duration / frames_returned`. That stretched surviving images across
+moments the video never had. Timestamps now use the cadence given to ffmpeg,
+`duration / requested_count`, at bucket centres. Real-media tests include a 13-second request over
+the 4.162-second fixture and require genuine partial JPEG output with no stamp past source end.
+
+Readiness already owns a unique private extraction directory per call, so prior-run JPEGs cannot
+enter enumeration; main's shared-directory stale refusal is not replayed. This change rotates the
+receipt/VEX source identity again and requires new live acceptance.
+
+`evidence/keyframe-timestamp-cadence-2026-08-10.md`.
+
 ## D-183 - Hold Kurdish invariant #3 at every Stage 2 query-reading model
 
 Protected main removed query normalization independently from the Qwen embedder and reranker. Both

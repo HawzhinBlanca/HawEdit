@@ -111,7 +111,10 @@ def extract_judge_frames(
             )
         if len(paths) > count:
             raise KeyframeError(f"asked for {count} keyframes and ffmpeg produced {len(paths)}")
-        step_ms = (out_ms - in_ms) / len(paths)
+        # Stamp from the cadence ffmpeg was told to sample at, not from the number of frames that
+        # happened to come back. If the source ends before the requested span, dividing by
+        # len(paths) stretches surviving frames across time the video never had.
+        step_ms = (out_ms - in_ms) / count
         frames = tuple(
             JudgeFrame(
                 timestamp_ms=min(out_ms, round(in_ms + (index + 0.5) * step_ms)),

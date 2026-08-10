@@ -209,6 +209,37 @@ def test_cleanup_failure_adds_privacy_note_without_masking_active_body_error(
 # request echoed back, M3.4's lesson. Replacing `-ss in_ms` with `-ss 0` left them unchanged and
 # the suite green, so the bytes reaching a billed judge could come from anywhere in the media.
 SHOT_SPANS = ((0, 1_400), (1_400, 2_800), (2_800, 4_162))
+FIXTURE_DURATION_MS = 4_162
+
+
+def _expected_frame_stamps(in_ms: int, out_ms: int, count: int, produced: int) -> list[int]:
+    step_ms = (out_ms - in_ms) / count
+    return [round(in_ms + (index + 0.5) * step_ms) for index in range(produced)]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("in_ms", "out_ms", "count"),
+    ((0, 13_000, 20), (0, 4_000, 20), (100, 4_100, 5)),
+)
+def test_keyframe_timestamps_follow_the_requested_sampling_cadence(
+    tmp_path: Path, in_ms: int, out_ms: int, count: int
+) -> None:
+    frames = extract_judge_frames(FIXTURE, in_ms, out_ms, tmp_path, count=count)
+    stamps = [frame.timestamp_ms for frame in frames]
+
+    assert stamps == _expected_frame_stamps(in_ms, out_ms, count, len(frames))
+    assert not [stamp for stamp in stamps if stamp > FIXTURE_DURATION_MS]
+
+
+@needs_ffmpeg
+def test_a_span_past_the_source_returns_real_partial_frames_without_invented_times(
+    tmp_path: Path,
+) -> None:
+    frames = extract_judge_frames(FIXTURE, 0, 13_000, tmp_path, count=20)
+    assert 2 <= len(frames) < 20
+    assert all(frame.data.startswith(b"\xff\xd8") for frame in frames)
+    assert max(frame.timestamp_ms for frame in frames) <= FIXTURE_DURATION_MS
 
 
 @needs_ffmpeg

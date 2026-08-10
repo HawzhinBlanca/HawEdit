@@ -483,6 +483,12 @@ The live Gemini smoke now refuses missing/nonexistent video before confirmation 
 billed Path A call. README documents the required flag and the absent matching 13-second recording
 as `BLOCKED.md` #19. `evidence/smoke-video-preflight-2026-08-10.md`.
 
+## M2.9 keyframe-timestamp amendment (2026-08-10, D-189)
+
+Partial ffmpeg output is stamped from the requested cadence rather than stretched across the full
+span. A real 13-second request over 4.162-second media returns genuine partial JPEGs with no
+timestamp beyond source end. `evidence/keyframe-timestamp-cadence-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |
