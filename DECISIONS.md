@@ -7058,3 +7058,92 @@ including a mutation of the new guard itself — dropping `VertexGeminiJudge` fr
 caught by the bidirectional check.
 
 `evidence/adversarial-pass-22-2026-08-10.md`.
+
+## D-146
+
+**One Ctrl-C wedged a work directory for good.** D-072 built §2's three sidecars before writing
+any of them and unlinks them in its `except`, and recorded that this "closes" D-071's
+delivery-atomicity shortfall for the sidecar set. The clause catches
+`(DeliveryError, RenderError, OSError)`. A Ctrl-C is a `KeyboardInterrupt` — a `BaseException` the
+clause never sees — and a `SIGKILL` or a power cut runs no clause at all. Measured on a real run
+against `tests/fixtures/kurdish-speech-3cuts.mp4`, interrupted at the second of the three writes:
+
+```
+--- run 2: interrupted the instant the SRT write begins ---
+  KeyboardInterrupt propagated
+on disk afterwards:
+   atomicity-s0-0.ass
+   atomicity-s0-0.json      <- §2's editing manifest, on its own
+   atomicity-s0-0.mp4       <- playable, captioned
+missing: ['atomicity-s0-0.edl', 'atomicity-s0-0.srt']
+```
+
+and then, the part that makes it worse than the partial set:
+
+```
+retry RAISED FileExistsError: refusing to overwrite existing delivery artifact(s): ...ass, ...
+after the retry: ['atomicity-s0-0.ass', 'atomicity-s0-0.json', 'atomicity-s0-0.mp4']
+```
+
+D-071's guard refused when *any* of the five paths existed, so the very files the interrupted run
+stranded made the retry impossible. A manifest and a playable MP4 with no captions is exactly
+D-072's failure mode arriving through a door D-072 did not cover, and the work directory could only
+be recovered by hand.
+
+**Decision: a delivery is finished when it says so, and only then.** Two changes, and they are
+different guarantees:
+
+* Every §2 sidecar and the ASS go through `_write_atomic` — staged as `.<name>.tmp` and renamed —
+  so a kill cannot leave a file that exists, is readable and is half-written. `transcripts.py` and
+  `visual_pipeline.py` already did this for their own artifacts; the delivery set had nothing.
+* `{clip_id}.delivery.provenance.json` is written **last**, after all five artifacts, and records
+  each one's byte length. `_assert_no_existing_artifacts` refuses only when that record exists and
+  matches. Anything else — no record, unreadable record, missing file, wrong length — answers "not
+  a delivery" and the set is redone. D-132's shape, where every failure mode falls through to
+  redoing the work rather than to trusting it.
+
+The name follows the work directory's own convention: Stage 0 already writes
+`proxy.mp4.provenance.json` and `audio.wav.provenance.json` beside their artifacts.
+
+**Byte lengths rather than digests, deliberately.** The failure this addresses is truncation and
+absence, which a length catches for free from `stat()`. A digest would additionally catch a
+*tampered but valid-length* file, which is not a failure mode a killed process produces, and it
+would mean re-hashing a 1080×1920 MP4 on every guard call — three calls per run, one of them before
+any expensive stage. Recorded rather than assumed: if content authenticity is ever wanted here it
+needs a different mechanism than a completion record.
+
+**The narrowing I am accepting, stated plainly.** The old rule caught one case the new one does
+not: two runs of the *same* media id and the *same* sentence selection into the *same* work
+directory at the same time, where the second reached the pre-write guard after the first wrote its
+ASS. That was never a real defence — if the second run passes the guard first, both proceed and
+collide anyway — so it was best-effort against a duplicate invocation, and it is traded for a
+certainty: every interrupted run used to be unrecoverable. Not a threshold and not a guess; a named
+exchange.
+
+**Rejected: keeping the any-file refusal and giving the operator a better error.** It documents the
+wedge instead of removing it, and §10/10 asks for atomic *and resumable* delivery.
+
+**Rejected: deciding staleness from mtime.** "Older than N minutes is abandoned" is exactly the
+guessed threshold the hard rules forbid, and it would call a slow live run abandoned.
+
+**Rejected: deleting the leftover set before redoing it.** D-072 keeps the MP4 and ASS on purpose,
+and every writer here already overwrites (`ffmpeg -y`, `write_text`), so a complete retry replaces
+all five files without a single `unlink`. Nothing is deleted that a retry does not immediately
+rewrite.
+
+**The overwrite is reported, not silent.** `PipelineRun.resumed_over` names the abandoned artifacts
+and appears in the emitted JSON — `[]` on a clean run, for D-110's reason that an absent key cannot
+be told apart from a build that does not record it. Silently overwriting another run's files is
+`BLOCKED.md` #12, and this is the same shape from the other direction.
+
+**Mutation audit 10/10,** after 9/10. The survivor was making a missing artifact `continue` instead
+of falsifying the record: every other test stayed green, and "someone deleted the SRT" would have
+become a permanent refusal to produce one. Now pinned by
+`test_a_delivery_missing_one_of_its_files_is_not_a_delivery`. Five existing tests had to change,
+and all five got stronger: `_existing_artifact` plants a *finished* delivery — five files plus the
+record, written by the production writer — instead of one file, and the three tests that watch
+`Path.write_text` resolve the staging name back to its target so they still assert on *which
+artifact* is written.
+
+Gate: `VERIFY OK — hawedit gate green`, 1434 tests (floor 1427 → 1434).
+`evidence/delivery-set-not-atomic-against-a-kill.md`.

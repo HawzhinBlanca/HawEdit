@@ -1184,13 +1184,22 @@ def test_there_is_no_natural_silence_to_extend_to_inside_a_pause() -> None:
 
 
 def _existing_artifact(work_dir: Path, media_id: str, sentence: int) -> Path:
-    """Plant one of the five files a completed run writes, exactly as the run names it."""
-    from hawedit.pipeline import _clip_id, _delivery_artifact_paths
+    """Plant a *finished* delivery, exactly as a completed run leaves it.
+
+    All five files plus the completion record, written by the production writer so the plant
+    cannot drift from what a real run produces. It used to plant one file, and the guard used
+    to refuse on one file — which read an abandoned attempt as a delivery and wedged the work
+    directory of any run that was interrupted (D-146). What is refused now is a delivery that
+    finished, so that is what this plants.
+    """
+    from hawedit.pipeline import _clip_id, _delivery_artifact_paths, _write_delivery_record
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    planted = _delivery_artifact_paths(work_dir, _clip_id(media_id, (sentence,)))[0]
-    planted.write_text("a previous run left this here", encoding="utf-8")
-    return planted
+    clip_id = _clip_id(media_id, (sentence,))
+    for path in _delivery_artifact_paths(work_dir, clip_id):
+        path.write_text("a previous run left this here", encoding="utf-8")
+    _write_delivery_record(work_dir, clip_id)
+    return _delivery_artifact_paths(work_dir, clip_id)[0]
 
 
 def test_an_overwriting_run_refuses_before_the_billed_judge_call(tmp_path: Path) -> None:
@@ -1381,7 +1390,26 @@ def _ntsc_copy(source: Path, dest: Path) -> Path:
 
 
 def _sidecars_on_disk(work: Path) -> list[str]:
-    return sorted(p.name for p in work.glob("*") if p.suffix in _SIDECARS)
+    from hawedit.pipeline import DELIVERY_RECORD_SUFFIX
+
+    return sorted(
+        p.name
+        for p in work.glob("*")
+        # The completion record is a `.json` beside the sidecars and is not one of them (D-146).
+        if p.suffix in _SIDECARS and not p.name.endswith(DELIVERY_RECORD_SUFFIX)
+    )
+
+
+def _write_target(path: Path) -> Path:
+    """The artifact a write is aimed at, whether it lands there directly or via staging.
+
+    §2's sidecars are written to `.<name>.tmp` and renamed, so a crash cannot leave half a file
+    (D-146). A test that watches `Path.write_text` sees the staging name; resolving it back is
+    what keeps these tests about *which artifact* is written rather than about the convention.
+    """
+    if path.name.startswith(".") and path.suffix == ".tmp":
+        return path.with_name(path.name[1 : -len(".tmp")])
+    return path
 
 
 @needs_ffmpeg
@@ -1442,7 +1470,7 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
     real_write_text = Path.write_text
 
     def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-        if self.suffix == ".srt":
+        if _write_target(Path(self)).suffix == ".srt":
             raise OSError("no space left on device")
         return real_write_text(self, *args, **kwargs)
 
@@ -1480,7 +1508,7 @@ def test_a_refused_edl_never_writes_a_sidecar_at_all(
     attempted: list[Path] = []
 
     def recording_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-        attempted.append(Path(self))
+        attempted.append(_write_target(Path(self)))
         return real_write_text(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "write_text", recording_write_text)
@@ -2327,3 +2355,156 @@ def test_the_composer_is_built_with_the_pinned_embedding_revision() -> None:
         "the runner no longer gives the composer the pinned checkpoint revision, so its "
         "embedding cache can never match and Stage 2 re-embeds every window"
     )
+
+
+# --- D-146: an interrupted delivery must be recoverable, and a finished one untouchable ------
+#
+# D-072 built all three sidecars before writing any, and its `except` unlinks them, so a write
+# that *fails* leaves none. A Ctrl-C is a `KeyboardInterrupt` — a `BaseException` the clause
+# never sees — and a SIGKILL runs no clause at all. Measured on a real run interrupted at the
+# second of the three writes: `.ass`, `.mp4` and `.json` on disk, and the retry into the same
+# directory raised `FileExistsError`. One keystroke wedged the work directory for good.
+# =========================================================================================
+
+
+def _abandoned_attempt(work: Path, media_id: str, sentence: int = 0) -> tuple[str, ...]:
+    """What a run killed partway through the sidecars leaves: artifacts, and no record."""
+    from hawedit.pipeline import _clip_id, _delivery_artifact_paths
+
+    work.mkdir(parents=True, exist_ok=True)
+    clip_id = _clip_id(media_id, (sentence,))
+    ass_path, render_path, _srt, _edl, editing_json_path = _delivery_artifact_paths(work, clip_id)
+    for path in (ass_path, render_path, editing_json_path):
+        path.write_text("from the attempt that was interrupted", encoding="utf-8")
+    return tuple(p.name for p in (ass_path, render_path, editing_json_path))
+
+
+@needs_ffmpeg
+def test_a_run_interrupted_before_the_record_is_redone_not_refused(tmp_path: Path) -> None:
+    """The artifact of this fix is a delivery set that exists after the retry.
+
+    Asserted on the work directory and on the emitted report, not on the return value: the
+    defect was files on disk, and the recovery has to be visible to whoever reads the JSON.
+    """
+    work = tmp_path / "work"
+    stranded = _abandoned_attempt(work, "resumed")
+
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="resumed",
+        transcript=a_transcript("resumed"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert not isinstance(run.delivery, StageSkipped), run.delivery
+    assert _sidecars_on_disk(work) == [
+        "resumed-s0-0.edl",
+        "resumed-s0-0.json",
+        "resumed-s0-0.srt",
+    ]
+    from hawedit.pipeline import _clip_id, _delivery_record_path
+
+    assert _delivery_record_path(work, _clip_id("resumed", (0,))).exists()
+    # Silently overwriting is the failure mode BLOCKED #12 is about; the report names what went.
+    assert json.loads(json.dumps(run.to_dict()))["resumed_over"] == list(stranded)
+
+
+@needs_ffmpeg
+def test_a_clean_run_reports_nothing_resumed(tmp_path: Path) -> None:
+    """The control. A field hard-coded to the artifact names would pass the test above."""
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="fresh",
+        transcript=a_transcript("fresh"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert run.resumed_over == ()
+    assert json.loads(json.dumps(run.to_dict()))["resumed_over"] == []
+
+
+def test_a_finished_delivery_is_still_refused(tmp_path: Path) -> None:
+    """The rule narrowed to *finished*; it did not go away."""
+    from hawedit.pipeline import _assert_no_existing_artifacts
+
+    work = tmp_path / "work"
+    _existing_artifact(work, "done", 0)
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        _assert_no_existing_artifacts(work, "done", (0,))
+
+
+def test_an_abandoned_attempt_is_not_a_delivery(tmp_path: Path) -> None:
+    from hawedit.pipeline import _assert_no_existing_artifacts
+
+    work = tmp_path / "work"
+    stranded = _abandoned_attempt(work, "partial")
+    assert _assert_no_existing_artifacts(work, "partial", (0,)) == stranded
+
+
+def test_a_record_that_does_not_match_the_artifacts_is_not_a_delivery(tmp_path: Path) -> None:
+    """A truncated artifact is exactly what a kill mid-write used to leave.
+
+    The record carries each artifact's byte length, so a file that shrank — or grew, or went
+    away — fails to match and the set falls back to being redone. Existence alone cannot tell
+    a complete file from half of one, which is why the record is not just a flag.
+    """
+    from hawedit.pipeline import (
+        _assert_no_existing_artifacts,
+        _clip_id,
+        _delivery_artifact_paths,
+    )
+
+    work = tmp_path / "work"
+    _existing_artifact(work, "torn", 0)
+    truncated = _delivery_artifact_paths(work, _clip_id("torn", (0,)))[2]
+    truncated.write_text("", encoding="utf-8")
+
+    assert _assert_no_existing_artifacts(work, "torn", (0,)), "a torn set must be redone"
+
+
+def test_a_sidecar_write_that_dies_leaves_no_file_at_all(tmp_path: Path) -> None:
+    """The staging half, measured on its own: `write_text` truncates the target first.
+
+    A reader that checks existence — this pipeline's guard, and anyone opening the work
+    directory — cannot tell an empty `.srt` from a missing one, so the target must never appear
+    until it is whole.
+    """
+    from hawedit.pipeline import _write_atomic
+
+    target = tmp_path / "clip.srt"
+    target.write_text("the previous, complete captions", encoding="utf-8")
+
+    def failing_replace(self: Path, _target: Any) -> Path:
+        raise OSError("the process died between the write and the rename")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "replace", failing_replace)
+        with pytest.raises(OSError, match="died between"):
+            _write_atomic(target, "captions that never finished being written")
+
+    assert target.read_text(encoding="utf-8") == "the previous, complete captions"
+    assert list(tmp_path.glob(".*.tmp")) == [], "a staging file survived a failed write"
+
+
+def test_a_delivery_missing_one_of_its_files_is_not_a_delivery(tmp_path: Path) -> None:
+    """The record names five files; four of them plus a record is not a delivery set.
+
+    Found by mutating the record check: making a missing file fall through instead of
+    falsifying the record left every other test green, and turned "someone deleted the SRT" into
+    a permanent refusal to produce one.
+    """
+    from hawedit.pipeline import (
+        _assert_no_existing_artifacts,
+        _clip_id,
+        _delivery_artifact_paths,
+    )
+
+    work = tmp_path / "work"
+    _existing_artifact(work, "incomplete", 0)
+    _delivery_artifact_paths(work, _clip_id("incomplete", (0,)))[2].unlink()
+
+    assert _assert_no_existing_artifacts(work, "incomplete", (0,)), "the set must be redone"

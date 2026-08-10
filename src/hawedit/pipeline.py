@@ -203,6 +203,11 @@ class PipelineRun:
     clip: Clip | None = None
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
+    # Artifacts of an earlier, unfinished attempt that this run overwrote. A previous run that
+    # died between the sidecar writes leaves files with no completion record; overwriting them
+    # is the recovery, and saying nothing about it would be the silent case this module's §1
+    # forbids. Empty on a clean directory. D-146.
+    resumed_over: tuple[str, ...] = ()
 
     def _rejected_by_path(self) -> dict[str, int]:
         """How many candidates each discovery path lost, which is what §8.2 partitions on.
@@ -368,6 +373,9 @@ class PipelineRun:
             "sentence_count": len(self.sentences),
             "visual_windows": [w.to_dict() for w in self.visual_windows],
             "delivery": encode(self.delivery),
+            # Reported even when empty, for D-110's reason: an absent key cannot be told apart
+            # from a build that does not record this at all.
+            "resumed_over": list(self.resumed_over),
             "candidates": [c.to_dict() for c in self.candidates],
             # §5 makes rejection first-class and calls the rejection set "your only measure
             # of recall"; §8.2 measures Recall@20 *per discovery path*, so the split is here
@@ -764,10 +772,81 @@ def _delivery_artifact_paths(work_dir: Path, clip_id: str) -> tuple[Path, ...]:
     )
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Write through a staging file and one rename, so a kill cannot leave half a file.
+
+    `Path.write_text` truncates first: a process that dies mid-write leaves a file that exists,
+    is readable and is wrong — and every reader here checks existence, not completeness. The
+    rename is the same shape `transcripts.py` and `visual_pipeline.py` already use for their
+    own artifacts; §2's sidecars had none. D-146.
+    """
+    staging = path.with_name(f".{path.name}.tmp")
+    try:
+        staging.write_text(text, encoding="utf-8")
+        staging.replace(path)
+    except OSError:
+        # Otherwise a failed write leaves a dotfile that looks exactly like the partial state
+        # this function exists to prevent.
+        staging.unlink(missing_ok=True)
+        raise
+
+
+# The completion record's name: beside §2's five artifacts, and not one of them. Named here so
+# a reader of the work directory — and every test that lists sidecars — reads it from one place.
+DELIVERY_RECORD_SUFFIX = "delivery.provenance.json"
+
+
+def _delivery_record_path(work_dir: Path, clip_id: str) -> Path:
+    """Where a *finished* delivery records itself, following this work directory's own
+    `<artifact>.provenance.json` convention (Stage 0 already writes two)."""
+    return work_dir / f"{clip_id}.{DELIVERY_RECORD_SUFFIX}"
+
+
+def _delivery_is_complete(work_dir: Path, clip_id: str) -> bool:
+    """Did a previous run finish this delivery, or abandon it partway?
+
+    The record is written last, after all five artifacts, and names each one with the byte
+    length it had. So a run killed anywhere leaves no record, and a truncated artifact does not
+    match the record it was written from. Every failure mode — missing record, unreadable
+    record, missing file, wrong length — answers "not complete", which routes to redoing the
+    work rather than to trusting it. D-132's shape, applied to §2's delivery set. D-146.
+    """
+    try:
+        recorded = json.loads(_delivery_record_path(work_dir, clip_id).read_text(encoding="utf-8"))
+        sizes = recorded["bytes"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    for path in _delivery_artifact_paths(work_dir, clip_id):
+        try:
+            if sizes.get(path.name) != path.stat().st_size:
+                return False
+        except (OSError, AttributeError):
+            return False
+    return True
+
+
+def _write_delivery_record(work_dir: Path, clip_id: str) -> None:
+    """Called once, after the last artifact, and never before."""
+    _write_atomic(
+        _delivery_record_path(work_dir, clip_id),
+        json.dumps(
+            {
+                "clip_id": clip_id,
+                "bytes": {
+                    path.name: path.stat().st_size
+                    for path in _delivery_artifact_paths(work_dir, clip_id)
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+    )
+
+
 def _assert_no_existing_artifacts(
     work_dir: Path, identifier: str, select_sentences: Sequence[int]
-) -> None:
-    """Refuse an overwriting run *before* it spends GPU time or money.
+) -> tuple[str, ...]:
+    """Refuse overwriting a *finished* delivery, before spending GPU time or money.
 
     This check used to live beside the render step, ~180 lines after the billed Stage 4
     `generateContent` and after Stage 2/3's model calls — so a re-run into a used work
@@ -778,21 +857,29 @@ def _assert_no_existing_artifacts(
     Called at each point where the selection first becomes knowable — after an explicit
     selection is validated, and again after `--auto-select` settles one — because those are
     genuinely different times, not two copies of the rule.
+
+    It used to refuse when *any* of the five paths existed, and that read an abandoned attempt
+    as a delivery. Measured: interrupting a real run at the second of the three sidecar writes
+    left `.ass`, `.mp4` and `.json` behind, and the retry into the same directory raised
+    `FileExistsError` — the work directory was wedged for good by one Ctrl-C. A leftover set
+    with no completion record is not a deliverable, so it is overwritten and the names are
+    returned for the report. D-146.
+
+    Returns:
+        The artifact names of an abandoned attempt this run will overwrite; empty otherwise.
     """
     if not select_sentences:
         # No selection, no clip, no artifacts. `run_pipeline` returns before the render step.
-        return
-    existing = [
-        path
-        for path in _delivery_artifact_paths(work_dir, _clip_id(identifier, select_sentences))
-        if path.exists()
-    ]
-    if existing:
+        return ()
+    clip_id = _clip_id(identifier, select_sentences)
+    existing = [path for path in _delivery_artifact_paths(work_dir, clip_id) if path.exists()]
+    if existing and _delivery_is_complete(work_dir, clip_id):
         raise FileExistsError(
             "refusing to overwrite existing delivery artifact(s): "
             + ", ".join(str(path) for path in existing)
             + ". Use a new work directory for a new run."
         )
+    return tuple(path.name for path in existing)
 
 
 def _natural_silence_for_anchor(ingested: IngestResult, anchor_out_ms: int) -> int | None:
@@ -1316,7 +1403,9 @@ def run_pipeline(
     # Kept as well as hoisted, and it costs nothing: the guard above runs before the expensive
     # stages, this one runs immediately before the first write. Anything that appeared in the
     # work directory while the models were running is still caught here.
-    _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
+    run = replace(
+        run, resumed_over=_assert_no_existing_artifacts(work_dir, identifier, select_sentences)
+    )
     try:
         clip.assert_renderable()
     except (ValueError, IncompleteSentence) as exc:
@@ -1328,7 +1417,8 @@ def run_pipeline(
         )
 
     try:
-        ass_path.write_text(
+        _write_atomic(
+            ass_path,
             # The clip's own timeline. Without this every caption is scheduled at its source
             # time, lands past the end of a clip cut from mid-episode, and libass draws
             # nothing — a playable MP4 with no captions and no error.
@@ -1338,7 +1428,6 @@ def run_pipeline(
                 clip_in_ms=clip.in_ms,
                 clip_duration_ms=clip.out_ms - clip.in_ms,
             ),
-            encoding="utf-8",
         )
         width, height = _proxy_dimensions(source, ffmpeg)
         rendered = render_clip(
@@ -1386,15 +1475,24 @@ def run_pipeline(
             fps=frame_rate(source, ffmpeg),
             title=f"{identifier} {clip.clip_id}",
         )
-        editing_json_path.write_text(editing_json, encoding="utf-8")
-        srt_path.write_text(srt, encoding="utf-8")
-        edl_path.write_text(edl, encoding="utf-8")
+        _write_atomic(editing_json_path, editing_json)
+        _write_atomic(srt_path, srt)
+        _write_atomic(edl_path, edl)
+        # Last, and only now: the record is what makes the five files a *delivery* rather than
+        # five files. A run killed at any point above leaves no record, so the next run treats
+        # what is there as an abandoned attempt and redoes it instead of refusing for ever.
+        _write_delivery_record(work_dir, clip.clip_id)
     except (DeliveryError, RenderError, OSError) as exc:
         # Building first makes the refusal case leave nothing behind; this covers a write that
         # fails partway through the three — disk full, permissions — so the set is all or none
         # either way. The MP4 and ASS are deliberately kept: Stage 6 genuinely succeeded and
         # `run.render` reports that path, so deleting them would make the report a lie.
-        for path in (editing_json_path, srt_path, edl_path):
+        for path in (
+            editing_json_path,
+            srt_path,
+            edl_path,
+            _delivery_record_path(work_dir, clip.clip_id),
+        ):
             path.unlink(missing_ok=True)
         return replace(
             run,
