@@ -1131,3 +1131,84 @@ def test_every_blocked_entry_the_docs_cite_exists() -> None:
         cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", claims_only(document)))
         missing = sorted(cited - entries, key=int)
         assert not missing, f"{name} cites BLOCKED entries that do not exist: {missing}"
+
+
+# --- D-154: the audit's claims, bound to the code they describe -------------------------------
+
+
+def test_the_audit_describes_the_delivery_behaviour_this_tree_actually_has(
+    tmp_path: Path,
+) -> None:
+    """`AUDIT_REPORT.md` said interrupted delivery "can require a fresh work directory ...
+    refused rather than repaired in place". D-146 made it repairable and the bullet stayed for
+    two days — a shipped audit document asserting the opposite of the shipped behaviour.
+
+    Bound by running the guard, so the two cannot drift again: the doc has to describe whichever
+    of the two behaviours this tree has.
+    """
+    from hawedit.pipeline import (
+        _assert_no_existing_artifacts,
+        _clip_id,
+        _delivery_artifact_paths,
+        _write_delivery_record,
+    )
+
+    work = tmp_path / "work"
+    work.mkdir()
+    clip = _clip_id("m", (0,))
+    paths = _delivery_artifact_paths(work, clip)
+
+    # An interrupted run: artifacts on disk, no completion record.
+    for path in (paths[0], paths[1], paths[4]):
+        path.write_text("from the interrupted attempt", encoding="utf-8")
+    abandoned_is_repaired = bool(_assert_no_existing_artifacts(work, "m", (0,)))
+
+    # A finished run: all five, and the record written last.
+    for path in paths:
+        path.write_text("x", encoding="utf-8")
+    _write_delivery_record(work, clip)
+    try:
+        _assert_no_existing_artifacts(work, "m", (0,))
+        finished_is_refused = False
+    except FileExistsError:
+        finished_is_refused = True
+
+    assert abandoned_is_repaired and finished_is_refused, (
+        "this test's premise moved: an abandoned attempt must be repairable and a finished "
+        "delivery must be refused"
+    )
+    # `claims_only` keeps what *precedes* a `**Corrected` marker, because this file's convention
+    # is that the live claim comes first and the marker records what it used to say. The first
+    # version of this test read a struck-through old wording and passed on it — the prose-grep
+    # trap, inside the test written to prevent it. Hence the contradiction check below: a phrase
+    # being present is not enough when the opposite phrase can sit beside it.
+    audit = claims_only((ROOT / "AUDIT_REPORT.md").read_text(encoding="utf-8"))
+    assert "repaired in place" in audit, (
+        "the audit no longer says interrupted delivery is repaired in place, but the guard "
+        "overwrites an abandoned attempt — one of the two is now wrong"
+    )
+    for contradiction in ("refused rather than repaired", "require a fresh work directory"):
+        assert contradiction not in audit, (
+            f"the audit still claims {contradiction!r} as live text while the guard repairs an "
+            f"abandoned attempt in place"
+        )
+
+
+def test_every_decision_the_docs_cite_exists() -> None:
+    """A `D-0NN` that points nowhere is a citation the reader cannot follow.
+
+    182 of them across four documents at the time this was written, and nothing checked that any
+    resolved.
+    """
+    decisions = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+    recorded = set(re.findall(r"^## (D-\d+)", decisions, re.MULTILINE))
+    assert recorded, "no decisions were parsed out of DECISIONS.md"
+    # Every root document except the register itself, derived rather than listed: a hard-coded
+    # tuple can quietly stop covering one, and mutating this list to drop `AUDIT_REPORT.md` left
+    # the suite green.
+    documents = sorted(path for path in ROOT.glob("*.md") if path.name != "DECISIONS.md")
+    assert len(documents) >= 4, f"only {len(documents)} root documents found: {documents}"
+    for path in documents:
+        cited = set(re.findall(r"\b(D-\d{3})\b", path.read_text(encoding="utf-8")))
+        missing = sorted(cited - recorded)
+        assert not missing, f"{path.name} cites decisions that do not exist: {missing}"

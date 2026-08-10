@@ -56,8 +56,18 @@ These cannot be truthfully solved from the checkout alone:
 
 ## Secondary debt
 
-- Interrupted delivery can require a fresh work directory, by design, because artifact
-  overwrite is refused rather than repaired in place.
+- An interrupted delivery is **repaired in place**. `{clip_id}.delivery.provenance.json` is written
+  last, after all five artifacts, and `_assert_no_existing_artifacts` refuses only a set whose
+  record exists and whose byte lengths match; a leftover set with no record is an abandoned attempt,
+  overwritten, with the names returned in `PipelineRun.resumed_over` so the retry says what it
+  replaced. The debt that remains is narrower: two *simultaneous* runs of the same media id and
+  selection into one work directory are no longer caught at the pre-write guard.
+  **Corrected 2026-08-10 (D-154):** this bullet said *"interrupted delivery can require a fresh
+  work directory, by design, because artifact overwrite is refused rather than repaired in place"*
+  — the opposite of the shipped behaviour from the moment D-146 landed, and it stood for two days,
+  written by me in the session that falsified it. Measured on this tree: an abandoned attempt
+  returns `('m-s0-0.ass', 'm-s0-0.mp4', 'm-s0-0.json')` and the run proceeds; a finished delivery
+  still raises `FileExistsError`. D-146 records why the simultaneous-run trade was taken.
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.

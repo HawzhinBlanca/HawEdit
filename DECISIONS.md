@@ -7721,3 +7721,81 @@ covering the first 3.6 s of a 13 s candidate is still not a live check. What cha
 six are now honestly labelled.
 
 `evidence/frames-stamped-with-times-they-did-not-come-from.md`. Floor 1494 → 1499.
+
+## D-154
+
+**A shipped audit document asserted the opposite of the shipped behaviour, for two days.**
+`AUDIT_REPORT.md`'s first Secondary-debt bullet read:
+
+> Interrupted delivery can require a fresh work directory, by design, because artifact overwrite
+> is refused rather than repaired in place.
+
+D-146 (`9e8f128`, 2026-08-10 07:40) replaced exactly that: `_assert_no_existing_artifacts` refuses
+only a set whose completion record exists **and** whose byte lengths match, so a leftover set with
+no record is an abandoned attempt, overwritten, with the names returned in
+`PipelineRun.resumed_over`. Measured on this tree rather than taken from D-146's record:
+
+```
+abandoned attempt (three artifacts, no record) -> ('m-s0-0.ass', 'm-s0-0.mp4', 'm-s0-0.json')
+                                                  the guard accepts and the run proceeds
+finished delivery (five artifacts + record)    -> FileExistsError: refusing to overwrite …
+```
+
+The bullet was written by me in the same session that falsified it, and I deferred fixing it for
+four iterations while naming it each time. Naming a known falsehood is not the same as removing it.
+
+**Decision: correct in place with the marker, and bind the claim to the guard.** The bullet is
+struck through and replaced under `**Corrected 2026-08-10 (D-154):**`, the convention this file
+already uses twice. More usefully,
+`test_the_audit_describes_the_delivery_behaviour_this_tree_actually_has` *runs* the guard — plants
+an abandoned attempt, plants a finished one — and then requires the audit's wording to describe
+whichever behaviour it found. The two cannot drift apart again without a test going red.
+
+**The remaining debt is stated as itself rather than deleted.** D-146 did not make delivery
+collision-proof; it narrowed the refusal. Two *simultaneous* runs of the same media id and
+selection into one work directory are no longer caught at the pre-write guard, and the corrected
+bullet says so and points at D-146 for why that trade was taken. Replacing an overclaim with
+silence would have been the other way of being wrong.
+
+**And a second binding, for a class rather than a bullet.** Nothing checked that a `D-0NN` cited in
+the documents exists. Measured: **182 citations** across README, AUDIT_REPORT, PROGRESS and
+BLOCKED — 8, 8, 133 and 33 — every one of which resolved today.
+`test_every_decision_the_docs_cite_exists` keeps it that way. It earned itself immediately: its
+first run failed on `AUDIT_REPORT.md cites decisions that do not exist: ['D-154']`, because I had
+written the marker before writing this entry.
+
+**Rejected: deleting the bullet.** The Secondary-debt list is what the audit offers as its honest
+account of what is still wrong; removing an item because it improved leaves the reader unable to
+tell a fixed problem from one that was never noticed. Struck through and corrected keeps both.
+
+**Rejected: a test that only greps the audit for the new wording.** It would pass with the guard
+reverted — the prose would still say "repaired in place" while the code refused everything. The
+test asserts the behaviour first and the wording second, in that order, so the doc is checked
+against the tree rather than against itself.
+
+**Mutation audit 6/6, and the first pass was 1/4 — of four mutations, three survived, two of them
+because the work above was wrong.**
+
+* **I fell into the prose-grep trap inside the test written to prevent it.** My first correction
+  struck the false bullet through and put the truth *after* the `**Corrected**` marker. But
+  `claims_only` keeps what **precedes** a marker — this file's convention is that the live claim
+  comes first and the marker records what it used to say. So the "live" text my test read was the
+  struck-through *false* claim, which happens to contain the words `repaired in place` inside
+  `refused rather than repaired in place`. The assertion passed on the sentence it existed to
+  forbid. The bullet is now written the way the convention requires, and the test additionally
+  refuses the contradicting phrases as live text — because a phrase being present is not enough
+  when its opposite can sit beside it. That is the fifth occurrence of this trap in the project
+  (D-121, D-139, D-141, D-143) and the first inside a test.
+* **The document list was hard-coded**, so a mutation dropping `AUDIT_REPORT.md` from the citation
+  check left the suite green — D-149's `_SIDECAR_STATES` lesson, one iteration later. The list is
+  derived from `ROOT.glob("*.md")` now, minus the register itself, so a new root document is
+  covered the day it is added.
+
+The load-bearing mutation is the third: revert the *guard* and leave the *prose*. A grep-only test
+cannot see that direction, and it reddens.
+
+`evidence/an-audit-that-described-the-opposite-of-the-code.md`. Floor 1499 → 1501.
+
+**BLOCKED #3 re-measured this iteration and still live:** `hawedit-credentials --check` prints
+`GEMINI_API_KEY: not set` and exits **1** (measured without a pipe — D-144's trap). Nothing here
+simulated a key.
