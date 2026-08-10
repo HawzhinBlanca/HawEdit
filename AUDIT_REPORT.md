@@ -75,7 +75,9 @@ These cannot be truthfully solved from the checkout alone:
 - Atomic delivery is a namespace-visibility guarantee on one filesystem, not a promise that a
   storage controller survives power loss. File contents are flushed before the directory
   rename; a process crash may leave a hidden staging directory, which does not block a retry and
-  is intentionally not recursively deleted without inspection.
+  is intentionally not recursively deleted without inspection. D-190 binds this statement to
+  both sides of the current guard: a hidden private attempt permits a retry, while a published
+  delivery namespace is never overwritten.
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.

@@ -489,6 +489,16 @@ Partial ffmpeg output is stamped from the requested cadence rather than stretche
 span. A real 13-second request over 4.162-second media returns genuine partial JPEGs with no
 timestamp beyond source end. `evidence/keyframe-timestamp-cadence-2026-08-10.md`.
 
+## Delivery-audit claim binding (2026-08-10, D-190)
+
+Protected main corrected a stale statement about its older flat-file recovery path. Readiness
+uses a newer publisher: incomplete work stays in a unique hidden directory and the exact five-file
+set becomes visible through one no-replace directory rename. Importing main's wording would have
+made this audit false in the opposite direction. The adapted regression executes both current
+guard outcomes and binds the live audit text to them. A second derived check requires every
+`D-NNN` citation in each root document to resolve in `DECISIONS.md`.
+`evidence/main-delivery-audit-adaptation-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |

@@ -817,3 +817,55 @@ def test_every_blocked_entry_cited_by_the_operator_docs_exists() -> None:
     for name, document in (("README.md", README), ("PROGRESS.md", PROGRESS)):
         cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", document))
         assert cited <= entries, f"{name} cites nonexistent blockers: {sorted(cited - entries)}"
+
+
+def test_the_audit_describes_the_atomic_delivery_behaviour_this_tree_has(
+    tmp_path: Path,
+) -> None:
+    """Bind the live debt statement to the current publisher, not an older flat-file design."""
+    from hawedit.pipeline import (
+        _assert_no_existing_artifacts,
+        _clip_id,
+        _delivery_artifact_paths,
+    )
+
+    work = tmp_path / "work"
+    work.mkdir()
+    selection = (0,)
+    clip_id = _clip_id("m", selection)
+
+    # A crashed private attempt is intentionally invisible and cannot block the retry.
+    abandoned = work / f".{clip_id}.abandoned.staging"
+    abandoned.mkdir()
+    (abandoned / f"{clip_id}.mp4").write_bytes(b"partial")
+    _assert_no_existing_artifacts(work, "m", selection)
+
+    # A published namespace, even if incomplete after out-of-band damage, is never overwritten.
+    final_dir = _delivery_artifact_paths(work, clip_id)[0].parent
+    final_dir.mkdir()
+    try:
+        _assert_no_existing_artifacts(work, "m", selection)
+        published_is_refused = False
+    except FileExistsError:
+        published_is_refused = True
+    assert published_is_refused
+
+    secondary_debt = AUDIT_REPORT.split("## Secondary debt", 1)[1].split("\n## ", 1)[0]
+    assert "Atomic delivery is a namespace-visibility guarantee" in secondary_debt
+    assert "hidden staging directory" in secondary_debt
+    assert "does not block a retry" in secondary_debt
+    assert "Interrupted delivery can require a fresh work directory" not in secondary_debt
+
+
+def test_every_decision_the_root_documents_cite_exists() -> None:
+    """Every D-NNN citation in a live root document must resolve in the decision register."""
+    decisions = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+    recorded = set(re.findall(r"^## (D-\d+)", decisions, re.MULTILINE))
+    assert recorded
+
+    documents = sorted(path for path in ROOT.glob("*.md") if path.name != "DECISIONS.md")
+    assert len(documents) >= 4, f"only {len(documents)} root documents found: {documents}"
+    for path in documents:
+        cited = set(re.findall(r"\b(D-\d{3})\b", path.read_text(encoding="utf-8")))
+        missing = sorted(cited - recorded)
+        assert not missing, f"{path.name} cites decisions that do not exist: {missing}"

@@ -5995,6 +5995,22 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-190 - Adapt main's audit correction to the atomic delivery publisher
+
+Protected main corrected an audit statement that contradicted its flat-file recovery guard: an
+abandoned flat artifact set was repairable there. Readiness no longer has that publication model.
+It writes into a unique hidden directory and publishes the exact five-file set with one no-replace
+directory rename. A crashed private attempt is nonblocking; any visible final namespace or legacy
+flat artifact is refused rather than overwritten.
+
+The semantic import therefore preserves main's intent instead of its obsolete sentence. One
+regression executes both current guard outcomes before asserting the audit's atomic-delivery text.
+A second derives every root Markdown document and refuses any `D-NNN` citation absent from the
+decision register. This avoids the two failures main identified without weakening the newer
+publisher or colliding with main's unrelated D-154 number.
+
+`evidence/main-delivery-audit-adaptation-2026-08-10.md`.
+
 ## D-188 - An impossible live smoke refuses before confirmation and billing
 
 The documented live check omitted `--video`, made its billed Path A calls and only then refused
