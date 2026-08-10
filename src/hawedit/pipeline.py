@@ -1699,7 +1699,8 @@ def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
     from hawedit.video_reader import VideoChat3Reader
 
     model_store = ModelStore()
-    embed_dir = model_store.path_for(REGISTRY["Qwen3-VL-Embedding-2B"])
+    embed_entry = REGISTRY["Qwen3-VL-Embedding-2B"]
+    embed_dir = model_store.path_for(embed_entry)
     rerank_dir = model_store.path_for(REGISTRY["Qwen3-VL-Reranker-2B"])
     reader_dir = model_store.path_for(REGISTRY["MCG-NJU/VideoChat3-4B"])
     # §6, VIDEO PHASE: `GPU 0 -> VideoChat3-4B (segmented)` and `GPU 1 -> Embedding / Reranker /
@@ -1712,6 +1713,7 @@ def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
         lambda read: QwenVisualReranker(rerank_dir, read, device=args.index_device),
         lambda read, score: VideoChat3Reader(reader_dir, read, score, device=args.visual_device),
         keep=args.visual_keep,
+        embedding_revision=model_store.revision_for(model_store.source_for(embed_entry)),
     )
 
 

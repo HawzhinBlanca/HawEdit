@@ -5908,3 +5908,34 @@ rename/recreate identity swap. Each is refused before a lock or transcript artif
 replacement root.
 
 `evidence/adversarial-pass-22-2026-08-10.md`.
+
+## D-168 - Stage 2 resumes only exact, pinned per-window embeddings
+
+The composed visual path rebuilt every scene embedding on every run. On the real 38-minute file
+that path plans hundreds of windows, so a late failure discarded the most expensive completed
+work even though each vector is independently reusable. Upstream measured the defect as D-140;
+that number is already used on this branch, so the semantic integration is D-168.
+
+`VisualComposer` now owns a per-window disk cache as part of the same composition that owns
+retrieval, reranking and reader provenance. Production wiring supplies the exact lowercase
+40-hex Qwen embedding revision from the trusted model metadata. A cache-enabled run hashes stable
+source bytes and binds every record to that digest, the complete `SceneWindow`, model id and
+revision. An injected composer without an identified revision remains valid but caching is off;
+an arbitrary branch/tag is refused rather than treated as identity.
+
+Records use a SHA-256 filename derived from the canonical window document, not a media-derived
+pathname. Reads are bounded, no-follow, single-link, regular-file and fd/path identity checked;
+the schema and vector numbers are strict (JSON booleans are not numbers), and `VisualEmbedding`
+re-applies the finite/non-zero invariant. Writes use a unique private sibling, flush and fsync it,
+then atomically replace the record. Corruption, truncation, source replacement or revision drift
+causes only the affected vector to be re-embedded. Cache hits/misses are emitted in
+`VisualDiscoveryResult`, making reuse observable rather than inferred from wall time.
+
+Measured with the exact hash-locked Windows/Python 3.11/CUDA 13.0 profile, Torch 2.13.0+cu130,
+two visible GPUs, the real `ZAR38MinTest.mp4`, `cuda:1`, and pinned revision
+`9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda`: pass one embedded five windows in 36.176 s; pass two
+reported five hits, zero misses, made no additional frame-embedding call and completed in 8.266 s.
+All five record SHA-256s and mtimes were unchanged. The remaining time is verified model reload
+and query embedding, not repeated scene work.
+
+`evidence/stage-2-embedding-resume.md`.

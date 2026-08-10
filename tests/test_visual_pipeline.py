@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -21,7 +23,13 @@ from hawedit.visual_index import (
     VisualEmbedding,
     VisualHit,
 )
-from hawedit.visual_pipeline import FrameReader, ReaderFactory, VisualComposer, VisualPipelineError
+from hawedit.visual_pipeline import (
+    FrameReader,
+    ReaderFactory,
+    VisualComposer,
+    VisualDiscoveryResult,
+    VisualPipelineError,
+)
 
 
 def windows(count: int) -> tuple[SceneWindow, ...]:
@@ -36,6 +44,12 @@ def windows(count: int) -> tuple[SceneWindow, ...]:
         )
         for i in range(count)
     )
+
+
+def source_file(tmp_path: Path) -> Path:
+    source = tmp_path / "m.mp4"
+    source.write_bytes(b"stable source bytes used only for the cache identity")
+    return source
 
 
 class FakeEmbedder:
@@ -462,3 +476,166 @@ def test_a_run_with_nothing_unreadable_still_says_so(
     )
     assert result.unreadable == ()
     assert result.to_dict()["unreadable"] == []
+
+
+class CountingEmbedder(FakeEmbedder):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def embed_frames(self, frames: WindowFrames) -> VisualEmbedding:
+        self.calls.append(frames.window.window_id)
+        return super().embed_frames(frames)
+
+
+def _cached_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    revisions: tuple[str, str] = ("a" * 40, "a" * 40),
+    between: Callable[[Path], None] | None = None,
+) -> tuple[CountingEmbedder, list[str], VisualDiscoveryResult, VisualDiscoveryResult]:
+    extracted: list[str] = []
+
+    def fake_extract(
+        source: Path, window: SceneWindow, dest: Path, ffmpeg: Path | None
+    ) -> WindowFrames:
+        extracted.append(window.window_id)
+        return WindowFrames(window, (dest / "frame.jpg", dest / "frame2.jpg"))
+
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", fake_extract)
+    source = source_file(tmp_path)
+    work = tmp_path / "work"
+    embedder = CountingEmbedder()
+
+    def run(revision: str) -> VisualDiscoveryResult:
+        return VisualComposer(
+            embedder,
+            FakeReranker,
+            lambda read, score: FakeReader(read, score, []),
+            keep=5,
+            embedding_revision=revision,
+        ).discover(source, windows(5), "گرنگ", work, media_id="m")
+
+    first = run(revisions[0])
+    if between is not None:
+        between(work)
+    second = run(revisions[1])
+    return embedder, extracted, first, second
+
+
+def test_second_visual_pass_reuses_every_window_embedding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    embedder, extracted, first, second = _cached_discovery(monkeypatch, tmp_path)
+
+    assert len(embedder.calls) == 5
+    assert len(extracted) == 5
+    assert first.embedding_cache_hits == 0
+    assert first.embedding_cache_misses == 5
+    assert second.embedding_cache_hits == 5
+    assert second.embedding_cache_misses == 0
+    assert second.to_dict()["embedding_cache_hits"] == 5
+    assert len(list((tmp_path / "work" / "embeddings").glob("*.json"))) == 5
+    assert not list((tmp_path / "work" / "embeddings").glob("*.tmp"))
+
+
+def test_checkpoint_revision_change_re_embeds_every_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    embedder, _, _, second = _cached_discovery(
+        monkeypatch, tmp_path, revisions=("a" * 40, "b" * 40)
+    )
+
+    assert len(embedder.calls) == 10
+    assert second.embedding_cache_hits == 0
+    assert second.embedding_cache_misses == 5
+
+
+def test_replaced_source_re_embeds_every_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def replace_source(_work: Path) -> None:
+        (tmp_path / "m.mp4").write_bytes(b"different source bytes")
+
+    embedder, _, _, second = _cached_discovery(monkeypatch, tmp_path, between=replace_source)
+
+    assert len(embedder.calls) == 10
+    assert second.embedding_cache_hits == 0
+    assert second.embedding_cache_misses == 5
+
+
+def test_truncated_cache_record_re_embeds_only_that_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def truncate_one(work: Path) -> None:
+        records = sorted((work / "embeddings").glob("*.json"))
+        assert len(records) == 5
+        records[0].write_text('{"schema":', encoding="utf-8")
+
+    embedder, _, _, second = _cached_discovery(monkeypatch, tmp_path, between=truncate_one)
+
+    assert len(embedder.calls) == 6
+    assert second.embedding_cache_hits == 4
+    assert second.embedding_cache_misses == 1
+
+
+def test_cache_record_refuses_boolean_vector_even_with_a_matching_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def insert_boolean(work: Path) -> None:
+        record = sorted((work / "embeddings").glob("*.json"))[0]
+        stored = json.loads(record.read_text(encoding="utf-8"))
+        stored["vector"] = [True, 0.5]
+        body = {key: value for key, value in stored.items() if key != "record_sha256"}
+        canonical = json.dumps(
+            body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        stored["record_sha256"] = hashlib.sha256(canonical).hexdigest()
+        record.write_text(json.dumps(stored), encoding="utf-8")
+
+    embedder, _, _, second = _cached_discovery(monkeypatch, tmp_path, between=insert_boolean)
+
+    assert len(embedder.calls) == 6
+    assert second.embedding_cache_hits == 4
+    assert second.embedding_cache_misses == 1
+
+
+def test_failed_cache_publish_leaves_no_shared_temporary_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "hawedit.visual_pipeline.os.replace",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    monkeypatch.setattr(
+        "hawedit.visual_pipeline.extract_window_frames",
+        lambda source, window, dest, ffmpeg: WindowFrames(
+            window, (dest / "frame.jpg", dest / "frame2.jpg")
+        ),
+    )
+    composer = VisualComposer(
+        CountingEmbedder(),
+        FakeReranker,
+        lambda read, score: FakeReader(read, score, []),
+        keep=5,
+        embedding_revision="a" * 40,
+    )
+
+    with pytest.raises(VisualPipelineError, match="could not publish"):
+        composer.discover(
+            source_file(tmp_path), windows(5), "گرنگ", tmp_path / "work", media_id="m"
+        )
+
+    cache_dir = tmp_path / "work" / "embeddings"
+    assert not list(cache_dir.glob("*.json"))
+    assert not list(cache_dir.glob("*.tmp"))
+
+
+def test_cache_revision_must_be_an_exact_pinned_commit() -> None:
+    with pytest.raises(ValueError, match="40-hex"):
+        VisualComposer(
+            FakeEmbedder(),
+            FakeReranker,
+            lambda read, score: FakeReader(read, score, []),
+            embedding_revision="main",
+        )

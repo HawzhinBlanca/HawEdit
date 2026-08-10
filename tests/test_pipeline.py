@@ -2422,6 +2422,7 @@ def test_the_composer_wires_each_model_to_the_device_section_6_assigns(
     assert seen["embedder"] != seen["reader"], (
         "indexing and the reader on one GPU is the packing that OOM'd on real media"
     )
+    assert composer.embedding_revision == "9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda"
 
 
 # --- D-143: the frame ceiling has to survive the trip from the CLI to the plan ----------------

@@ -16,6 +16,7 @@ fifth collision was actually implemented (M1.7), then failed until the row was p
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 from hawedit.normalize import normalize_sorani
@@ -23,6 +24,7 @@ from hawedit.normalize import normalize_sorani
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 PROGRESS = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
+AUDIT_REPORT = (ROOT / "AUDIT_REPORT.md").read_text(encoding="utf-8")
 
 
 def _ledger_row(task: str) -> str:
@@ -36,6 +38,21 @@ def _ledger_row(task: str) -> str:
 def _status(task: str) -> str:
     cells = [c.strip() for c in _ledger_row(task).split("|")]
     return cells[3]
+
+
+def test_audit_report_names_every_declared_console_script_exactly_once() -> None:
+    start = AUDIT_REPORT.index("- Clean Python 3.12 wheel install:")
+    claim = AUDIT_REPORT[start:].split("\n- ", 1)[0]
+    declared = set(
+        tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
+    )
+    named = re.findall(r"`(hawedit(?:-[a-z0-9]+)*)`", claim)
+
+    assert len(named) == len(set(named)), f"duplicate console script in audit claim: {named}"
+    assert set(named) == declared, (
+        f"AUDIT_REPORT names {sorted(set(named))}; [project.scripts] declares {sorted(declared)}"
+    )
+    assert f"all {_NUMBER_WORDS_REVERSE[len(declared)]}" in claim
 
 
 # --- #10 a DONE mark must be backed by the thing it claims -------------------------------
@@ -644,6 +661,7 @@ _NUMBER_WORDS = {
     "nine": 9,
     "ten": 10,
 }
+_NUMBER_WORDS_REVERSE = {value: word for word, value in _NUMBER_WORDS.items()}
 
 
 def _pinned_repositories() -> int:

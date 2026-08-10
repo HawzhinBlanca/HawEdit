@@ -117,8 +117,13 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
-  `hawedit-editorial-bench` and `hawedit-asr-setup` all start from the installed wheel.
+- Clean Python 3.12 wheel install: `pip check` clean; **all nine** declared console scripts —
+  `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials`,
+  `hawedit-editorial-bench`, `hawedit-fetch-models`, `hawedit-ffmpeg-setup`,
+  `hawedit-release` and `hawedit-wsl-vex` — start from the installed wheel. The hosted release
+  smoke derives the same contract from the wheel, and `tests/test_claims.py` requires this list
+  to equal `[project.scripts]` in both directions so a newly added command cannot drift out of
+  the audit again.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
 - **The wheel build is reproducible as of 2026-08-09** (D-120). It was not: two consecutive
   `pip wheel --no-deps` runs at one unchanged tree produced the same **333,362 bytes** and the
