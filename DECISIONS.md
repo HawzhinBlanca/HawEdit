@@ -7147,3 +7147,86 @@ artifact* is written.
 
 Gate: `VERIFY OK — hawedit gate green`, 1434 tests (floor 1427 → 1434).
 `evidence/delivery-set-not-atomic-against-a-kill.md`.
+
+## D-147
+
+**`--auto-select` accepted a Stage 3 producer that, since D-117, cannot produce.** The rule read
+
+```python
+if args.auto_select and not (args.visual or args.gemini or args.vertex_project):
+    raise ValueError("--auto-select needs at least one Stage 3 producer")
+```
+
+and `--visual` satisfies it. But §3 Stage 2 retrieves against a *query*, and there are exactly two
+sources for one: `--visual-query`, or Path A anchoring one from its best candidate — which needs
+`--gemini`/`--vertex-project`. D-117 removed the third, the whole normalized transcript, because a
+corpus is not a query (it also asked `embed_text` for 40.89 GiB on a 23.99 GiB card). So from D-117
+onward `--visual` alone can never rank a window, never surface a candidate, and never answer
+`--auto-select` — and the guard written to catch exactly that let it through.
+
+**Measured on the real 38-minute `ZAR38MinTest.mp4`**, with the recorded canonical transcript
+standing in for Stage 1 and every §7 visual checkpoint present on this machine:
+
+```
+$ python -m hawedit.pipeline "…/ZAR38MinTest.mp4" --work-dir … --media-id zar38final \
+    --transcript work/zar38-final/transcripts/zar38final.transcript.raw.json \
+    --visual --timelens --auto-select --qc-pass --json          exit 1
+
+work dir created 07:48:33, last write 07:51:23                  → 170 s
+  stage0/audio.wav              74,039,412 bytes   07:49:56
+  stage0/proxy.mp4              51,124,346 bytes   07:50:23     → Stage 0 ≈ 111 s
+  186 sentences · 164 visual windows planned · speech_without_transcription_ms 664
+
+skipped: visual_index, discovery, editorial, boundary, render, delivery
+  visual_index  §3 Stage 2 retrieves against a query and this run has none…
+  discovery     Every enabled discovery path ran and returned no candidates…
+candidates: 0
+```
+
+170 seconds of real work — a 38-minute source demuxed, scene-detected and VAD'd — to reach a
+refusal that `argv` settled before the first byte moved. No checkpoint was ever loaded: the
+composer's embedder is lazy and Stage 2 skipped before the first window, so `embeddings/` was never
+created. The cost is Stage 0, not GPU time, and that is the whole of it.
+
+Reproduced on the 4.2 s fixture in **3.5 s** with the same skip chain and 0 candidates. The control
+discriminates: the same command *with* `--visual-query` takes **14.0 s**, actually loads the
+embedder and runs retrieval, then refuses for a media-specific reason — *"the index holds 3 windows
+and 7 survivors"*. The query is what makes `--visual` a producer.
+
+**Decision: the producer test asks whether a path can produce, not whether a flag is present.**
+
+```python
+stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
+    args.visual and args.visual_query
+)
+```
+
+One expression, read once, in the same argv block as the ten refusals beside it — the block where
+`--visual-query requires --visual` already lives, which is this rule's mirror image.
+
+**`--visual` on its own is still allowed, deliberately.** A run that passes it and nothing else
+gets Stage 0, §4.1, the §2 index, §4.2 segmentation and an honest `visual_index` skip; that is a
+legitimate thing to ask for and the report says exactly what happened. What is refused is
+`--auto-select`, because that flag is a *promise to select*, and the guard exists to refuse when
+nothing can. Rejected refusing `--visual` without a query outright: it would break a run that
+reports itself correctly, and it decides for the user what they wanted.
+
+**Rejected letting the runtime skip carry the whole message.** It already does, and it arrives 170
+seconds late. The condition depends on `argv` alone — D-071's reasoning about the overwrite guard,
+which was knowable "the whole time" and fired after the billed call.
+
+**The runtime message was also wrong, and is corrected here.** `_STAGE_3_DISCOVERY` told the reader
+*"--visual for composed Path B"*. A reader who follows that gets the run above. It now names
+`--visual-query` and says why the query is not optional.
+
+**Mutation audit 6/7, and the survivor is a bad mutation of mine.** Dropping the `args.visual`
+conjunct — `bool(args.visual_query)` alone — changes no reachable behaviour, because
+`--visual-query requires --visual` refuses four lines earlier: measured,
+`--visual-query q --auto-select` exits 2 with that message. So the mutation asserts nothing, which
+is the fourth of mine this session after D-137, D-141 and D-144. It did surface something real
+though: that earlier refusal had **no test of its own**, so the ordering my expression leans on was
+held by nothing. `test_a_query_without_the_visual_path_is_refused_before_the_producer_test` holds it
+now. Six mutations caught, including three controls pulling in opposite directions — a test that
+refuses everything and a test that refuses nothing both go red.
+
+`evidence/auto-select-accepted-a-path-that-could-not-produce.md`. Floor 1434 → 1440.

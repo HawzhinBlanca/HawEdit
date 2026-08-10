@@ -2508,3 +2508,95 @@ def test_a_delivery_missing_one_of_its_files_is_not_a_delivery(tmp_path: Path) -
     _delivery_artifact_paths(work, _clip_id("incomplete", (0,)))[2].unlink()
 
     assert _assert_no_existing_artifacts(work, "incomplete", (0,)), "the set must be redone"
+
+
+# --- D-147: `--auto-select` accepted a Stage 3 producer that could not produce ----------------
+#
+# `--visual` retrieves against a query, and §3 Stage 2 has exactly two sources for one:
+# `--visual-query`, or Path A anchoring one from its best candidate (`--gemini`/
+# `--vertex-project`). D-117 removed the third — the whole transcript — because a corpus is not a
+# query. Since then `--visual` alone cannot rank a window, so it cannot answer `--auto-select`;
+# the guard accepted it anyway. Measured on the real 38-minute ZAR38MinTest.mp4 and reproduced in
+# 3.5 s on the fixture: `visual_index` skipped for want of a query, `discovery` skipped for want
+# of candidates, nothing selected — all of it decidable from argv before Stage 0 ran.
+# =========================================================================================
+
+
+def _cli_exit(argv: list[str], tmp_path: Path) -> tuple[int, str]:
+    """Run `main` and return its exit code with whatever it wrote to stderr."""
+    import contextlib
+    import io
+
+    from hawedit.pipeline import main
+
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
+        code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), *argv])
+    return code, captured.getvalue()
+
+
+def test_auto_select_refuses_visual_without_a_query(tmp_path: Path) -> None:
+    """The artifact of this fix is a Stage 0 that never runs."""
+    code, stderr = _cli_exit(["--transcript", "x.json", "--visual", "--auto-select"], tmp_path)
+    assert code == 2, stderr
+    assert "--visual-query" in stderr, stderr
+    assert not (tmp_path / "work").exists(), "the refusal came after the work directory was made"
+
+
+def test_auto_select_accepts_visual_with_a_query(tmp_path: Path) -> None:
+    """First control: the query is what makes `--visual` a producer, so it must be accepted.
+
+    Stops at the missing transcript file, which is *after* the producer test — so this measures
+    that the producer test passed rather than that some other refusal fired.
+    """
+    code, stderr = _cli_exit(
+        ["--transcript", "x.json", "--visual", "--visual-query", "ڕۆژنامەوان", "--auto-select"],
+        tmp_path,
+    )
+    assert code == 2, stderr
+    assert "--visual-query" not in stderr, f"the producer test still refused: {stderr}"
+    assert "x.json" in stderr, stderr
+
+
+def test_auto_select_accepts_path_a_alone(tmp_path: Path) -> None:
+    """Second control: Path A anchors its own query, so `--gemini` needs no `--visual-query`.
+
+    Reaches the missing Gemini key — a refusal from `GeminiJudge`, past the producer test.
+    """
+    code, stderr = _cli_exit(["--transcript", "x.json", "--gemini", "--auto-select"], tmp_path)
+    assert code == 2, stderr
+    assert "--visual-query" not in stderr, f"the producer test refused Path A: {stderr}"
+
+
+def test_auto_select_still_refuses_when_no_path_is_enabled(tmp_path: Path) -> None:
+    """Third control: the original rule has not been weakened into always passing."""
+    code, stderr = _cli_exit(["--transcript", "x.json", "--auto-select"], tmp_path)
+    assert code == 2, stderr
+    assert "Stage 3 producer" in stderr, stderr
+
+
+def test_the_no_producer_skip_names_the_query_the_visual_path_needs(tmp_path: Path) -> None:
+    """The runtime message told the reader `--visual` was enough, and since D-117 it is not.
+
+    A reader who follows it gets a run that pays for Stage 0 and selects nothing.
+    """
+    from hawedit.pipeline import _STAGE_3_DISCOVERY
+
+    assert "--visual-query" in _STAGE_3_DISCOVERY.reason, _STAGE_3_DISCOVERY.reason
+
+
+def test_a_query_without_the_visual_path_is_refused_before_the_producer_test(
+    tmp_path: Path,
+) -> None:
+    """Why the producer test may say `--visual and --visual-query` rather than just the query.
+
+    Found by mutating the producer test: dropping the `--visual` conjunct left the suite green,
+    because this earlier refusal makes the state unreachable — measured, `--visual-query q
+    --auto-select` exits 2 with `--visual-query requires --visual`. That refusal had no test of
+    its own, so the ordering the producer test leans on was held by nothing.
+    """
+    code, stderr = _cli_exit(
+        ["--transcript", "x.json", "--visual-query", "ڕۆژنامەوان", "--auto-select"], tmp_path
+    )
+    assert code == 2, stderr
+    assert "--visual-query requires --visual" in stderr, stderr

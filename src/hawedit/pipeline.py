@@ -440,7 +440,9 @@ _STAGE_3_DISCOVERY = StageSkipped(
     stage="discovery",
     reason=(
         "no Stage 3 producer was enabled. Select --gemini or --vertex-project for Path A, "
-        "--visual for composed Path B, or both for the two-sided union."
+        "--visual with --visual-query for composed Path B — the query is not optional, since "
+        "§3 Stage 2 retrieves against one and D-117 removed the whole-transcript fallback — or "
+        "both for the two-sided union."
     ),
     blocked_by=("discovery producer not enabled",),
 )
@@ -1773,8 +1775,25 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
             raise ValueError("--visual-query requires --visual")
         if args.qc_pass and not (args.sentences or args.auto_select):
             raise ValueError("--qc-pass requires --sentences or --auto-select")
-        if args.auto_select and not (args.visual or args.gemini or args.vertex_project):
-            raise ValueError("--auto-select needs at least one Stage 3 producer")
+        # `--visual` counts as a producer only when Stage 2 can retrieve, and §3 Stage 2 has
+        # exactly two sources for a query: `--visual-query`, or Path A anchoring one from its
+        # best candidate, which needs `--gemini`/`--vertex-project`. D-117 removed the third —
+        # the whole transcript — because a corpus is not a query. So since D-117 `--visual`
+        # alone cannot rank a window, cannot surface a candidate, and cannot answer
+        # `--auto-select`; this test accepted it anyway. Measured on the real 38-minute
+        # ZAR38MinTest.mp4: the run paid for all of Stage 0, then skipped `visual_index` for
+        # want of a query and `discovery` for want of candidates, and selected nothing — every
+        # bit of it decidable from argv. D-147.
+        stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
+            args.visual and args.visual_query
+        )
+        if args.auto_select and not stage_3_can_produce:
+            raise ValueError(
+                "--auto-select needs a Stage 3 producer that can actually produce: "
+                "--gemini/--vertex-project for Path A, or --visual with --visual-query so §3 "
+                "Stage 2 has something to retrieve against. --visual on its own has no query "
+                "and cannot rank a window (D-117), so nothing would reach the selector."
+            )
         if args.auto_select and not (args.transcript or args.omni_asr):
             raise ValueError("--auto-select requires --transcript or --omni-asr")
         if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
