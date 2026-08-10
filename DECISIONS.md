@@ -6492,3 +6492,67 @@ schema, no retry on 400, the retry ceiling, and the ZDR gate.
 output, real `countTokens` before the billed call, temperature 0, bounded retries on transient
 failures only, the tier ceiling, the ZDR gate — are held by tests that redden when reverted.
 `evidence/adversarial-pass-20-2026-08-10.md`.
+
+## D-138
+
+**Adversarial pass #21, on M3.6 — §2's delivery set.** Nineteen mutations, one per claim the cell
+makes, and **every stated claim held**: the SRT on the clip's timeline, the comma separator, D-114's
+shared wrapper at one width, invariant #2's refusal, both clip-window refusals, the EDL's source
+range in *source* time with record starting at zero, the non-integer-rate refusal and its
+before-the-arithmetic placement, the two events, the degenerate-clip refusals, the sanitised title,
+and D-072's build-all-before-writing-any. So the pass went after what the claims do **not** say.
+
+### Two exported formatters produced plausible nonsense below zero
+
+```
+ms_to_srt_time(       -1) = '-1:59:59,999'
+ms_to_srt_time(     -500) = '-1:59:59,500'
+ms_to_timecode(    -500, 25) = '-1:59:59:13'
+ms_to_timecode(-3600000, 25) = '-1:00:00:00'
+```
+
+`divmod` carries the sign into the **minutes**, not the hours, so the output is not obviously broken
+— it reads as a time nearly two hours before the file starts, in a field an EDL parser accepts. Both
+functions are in `__all__`; `build_srt` and `build_edl` guard their own inputs, so this is the
+D-090 class exactly: a public function silently wrong at an edge with no in-tree caller.
+
+**Decision: refuse negative milliseconds in both.** Arithmetic, not a threshold — SRT and SMPTE
+timecodes are unsigned formats, so there is no value to choose. Zero still formats, which is the
+control.
+
+### And the module's own reader answered "fewer cues" instead of "malformed file"
+
+```
+a cue built from a negative start:
+'1\n-1:59:59,500 --> 00:00:01,000\nhello\n'
+parse_srt_times sees: ()
+```
+
+A one-cue file read back as **zero** cues. `test_pipeline`'s check on the delivered SRT asserts that
+*some* cue parsed and that the ones that did lie inside the clip — a dropped cue satisfies both, and
+nothing anywhere compared the cue count to the sentence count. Computed and discarded: the parser saw
+a timing line it could not read and forgot it.
+
+**Decision: refuse a cue whose timing line does not parse, and read that line by position.** The SRT
+grammar puts the timing on the block's second line, so only that line is examined and a `-->` inside
+caption text is text. Rejected scanning the block for the first line containing `-->`: it behaves
+identically on valid input — measured, that mutation **survived** — and diverges only when line 1 is
+malformed, where it walks past the bad line and parses a *caption* as the cue's timing, inventing a
+cue out of text instead of refusing the file. The control is now that case, not the arrow-in-text
+case, which could not discriminate.
+
+### The new guard masked an older one, and the audit caught it
+
+Adding the negative-timestamp refusal turned *"a sentence starting before the clip is shipped
+anyway"* from RED to **SURVIVED**. `test_a_sentence_before_the_clip_is_refused` matched on
+`"before"`, and the new guard's message contains *"reads as a time **before** the file starts"* — so
+with the specific guard deleted, the sentence's negative offset tripped the downstream guard and the
+test still passed. Two guards raising one exception type have to be told apart by what they say; the
+match now names `"starts before the clip does"`. That is a strengthened check, not a relaxed one.
+
+**Verified on the real delivered artifacts.** Both SRTs on disk from earlier real runs parse
+cue-for-cue under the strict reader — 2 cues against 2 timing lines each, every timestamp
+non-negative — so the guard does not refuse anything this system actually writes.
+
+**Mutation audit 23/23**, after 17/18 and then 22/23: the first survivor was the masking above, the
+second was my own non-discriminating control. `evidence/adversarial-pass-21-2026-08-10.md`.

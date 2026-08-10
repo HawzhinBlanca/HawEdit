@@ -110,7 +110,16 @@ def test_the_kurdish_text_is_the_raw_surface_form() -> None:
 
 
 def test_a_sentence_before_the_clip_is_refused() -> None:
-    with pytest.raises(DeliveryError, match="before"):
+    """`match` names the specific refusal, because a looser one stopped discriminating.
+
+    It was `match="before"`, and D-138's negative-timestamp guard raises the same
+    `DeliveryError` with "…reads as a time **before** the file starts" in it — so once that guard
+    existed, deleting *this* one still produced a passing test: the sentence's negative offset
+    tripped the downstream guard instead. Measured by the audit that added it, where this
+    mutation went from RED to SURVIVED. Two guards that raise one type have to be told apart by
+    what they say.
+    """
+    with pytest.raises(DeliveryError, match="starts before the clip does"):
         build_srt((a_sentence(1_000, 3_000),), clip_in_ms=2_000)
 
 
@@ -340,3 +349,89 @@ def test_a_clip_shorter_than_one_frame_is_refused() -> None:
 def test_a_negative_in_point_is_refused() -> None:
     with pytest.raises(DeliveryError, match="negative"):
         build_edl(clip_in_ms=-1, clip_out_ms=1_000, fps=25)
+
+
+# --- D-138: the edges the claims did not cover ---------------------------------------------
+#
+# Adversarial pass #21 caught all 18 mutations of M3.6's stated claims. These are what the
+# claims did not say: two exported formatters that produced plausible-looking nonsense below
+# zero, and a reader that answered "fewer cues" instead of "this file is malformed".
+
+
+def test_a_negative_srt_timestamp_is_refused_rather_than_formatted() -> None:
+    """Measured before the guard: `-1` formatted as `-1:59:59,999` and `-500` as
+    `-1:59:59,500`. `divmod` carries the sign into the *minutes*, so the result reads as a time
+    nearly two hours before the file starts while looking like an ordinary timestamp.
+    """
+    with pytest.raises(DeliveryError, match="cannot be negative"):
+        ms_to_srt_time(-1)
+    with pytest.raises(DeliveryError, match="cannot be negative"):
+        ms_to_srt_time(-500)
+    # The control: zero is a valid SRT timestamp and must still format, so this is not
+    # measuring "anything at the bottom of the range is refused".
+    assert ms_to_srt_time(0) == "00:00:00,000"
+
+
+def test_a_negative_smpte_timecode_is_refused_rather_than_formatted() -> None:
+    """Same shape one format over: `-500` at 25 fps formatted as `-1:59:59:13`, and an EDL
+    carrying that field conforms from nowhere while parsing cleanly."""
+    with pytest.raises(DeliveryError, match="cannot be negative"):
+        ms_to_timecode(-500, 25)
+    with pytest.raises(DeliveryError, match="cannot be negative"):
+        ms_to_timecode(-3_600_000, 25)
+    assert ms_to_timecode(0, 25) == "00:00:00:00"
+
+
+def test_a_cue_with_an_unreadable_timing_line_is_refused_not_skipped() -> None:
+    """The defect this pass actually found: the reader dropped the cue.
+
+    A one-cue file whose timestamp is malformed read back as **zero** cues, so every caller saw
+    a shorter list rather than an error — and `test_pipeline`'s check on the delivered SRT
+    asserts only that *some* cue parsed and that the ones that did lie inside the clip, both of
+    which a dropped cue satisfies.
+    """
+    malformed = "1\n-1:59:59,500 --> 00:00:01,000\nهەولێر\n"
+    with pytest.raises(DeliveryError, match="unreadable timing line"):
+        parse_srt_times(malformed)
+
+    # The control, and the reason this is not simply "reject anything unusual": a well-formed
+    # file still parses, and every cue in it comes back.
+    good = "1\n00:00:00,000 --> 00:00:01,000\nا\n\n2\n00:00:01,000 --> 00:00:02,000\nب\n"
+    assert parse_srt_times(good) == ((0, 1_000), (1_000, 2_000))
+
+
+def test_an_arrow_inside_caption_text_is_not_mistaken_for_a_timing_line() -> None:
+    """The over-strict direction. The SRT grammar puts the timing on the block's second line, so
+    only that line is examined — a `-->` in the caption body is text, and refusing it would fire
+    on a legitimate file."""
+    with_arrow = "1\n00:00:00,000 --> 00:00:01,000\nهەولێر --> سلێمانی\n"
+    assert parse_srt_times(with_arrow) == ((0, 1_000),)
+
+
+def test_the_reader_takes_the_timing_from_the_grammars_position_not_by_hunting() -> None:
+    """The control the test above could not be: it does not discriminate.
+
+    Reading the timing as "the first line in the block containing `-->`" behaves *identically* on
+    a valid cue, because that line **is** line 1 — measured, that mutation survived. The two
+    readings only diverge when line 1 is malformed: hunting then walks past it and parses a
+    caption line as the cue's timing, inventing a cue out of text instead of refusing the file.
+    """
+    hunted = "1\n00:00:00,000 to 00:00:01,000\n00:00:05,000 --> 00:00:06,000\n"
+    with pytest.raises(DeliveryError, match="unreadable timing line"):
+        parse_srt_times(hunted)
+
+
+def test_every_cue_the_writer_produced_is_read_back(tmp_path: Path) -> None:
+    """The round-trip as a count, which nothing asserted: `build_srt` writes one cue per
+    sentence, and the reader must return exactly that many.
+
+    A parser that silently drops one satisfies "the SRT has no cues" being false and "the cues
+    that parsed lie inside the clip" being true, which is all the pipeline test checked.
+    """
+    sentences = tuple(
+        a_sentence(index * 1_000, index * 1_000 + 900, LONG_SORANI) for index in range(5)
+    )
+    srt = build_srt(sentences, clip_in_ms=0, clip_duration_ms=5_000)
+
+    assert len(parse_srt_times(srt)) == len(sentences)
+    assert srt.count("-->") == len(sentences), "one timing line per cue"
