@@ -8575,3 +8575,54 @@ control mutated together with the state it describes.
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-166
+
+**The delivery block could not catch the exception D-165 introduced one commit earlier.**
+`build_srt` was given `UndeliverableOrder`; the block that calls it catches
+`(DeliveryError, RenderError, OSError)`. Both are `ValueError` subclasses — **siblings**, not
+parent and child — so the new type was not in the tuple.
+
+**Demonstrated against the real tuple, not inferred from names:** raising it at the handler copied
+verbatim from `pipeline.py` gives `ESCAPES -> no cleanup, no named gap`. What escaping costs is
+written in the block's own comments: the `unlink(missing_ok=True)` sweep that keeps the delivery
+set **all-or-none** (D-072's subject — "four fifths of a delivery set that looked whole"), the
+`StageSkipped` that names the blocker, and gracefulness itself.
+
+**Latent, not live, and recorded that way.** `build_ass` runs first on the *same* `selected`
+sentences and its handler catches `ValueError`, so an undeliverable sequence is refused there and
+the delivery block never sees one. No wrong output shipped. But that is an **ordering guarantee,
+not an exception contract** — it holds only while `build_ass` precedes `build_srt` and keeps a
+broad `except ValueError`, and the delivery block's own comment records that these statements were
+reordered once already, for an unrelated reason.
+
+**Decision: name the type, and derive the requirement from the handler itself.**
+`test_the_delivery_handler_catches_everything_its_builders_refuse_with` reads the `except` clause
+out of `pipeline.py` **by AST** — the tuple actually protecting the five writes, not a copy — and
+requires every type the three builders raise for bad input to appear in it. A list written
+elsewhere would be correct and guard nothing.
+
+**Rejected: making `UndeliverableOrder` subclass `DeliveryError`.** It is the tidier hierarchy and
+it is not available: `sentences.py` would have to import from `delivery.py`, which imports
+`sentences`. **Rejected: widening the handler to bare `Exception`.** It would catch this and
+everything else, including bugs this stage should not be swallowing; the block refuses *named*
+failures on purpose.
+
+**Mutation audit — 1/1 on the defect, and two results not claimed.** Restoring the exact bug
+(handler without the type, import removed so nothing lints dirty) reddens the new test and nothing
+else. Two further mutations — dropping `DeliveryError`, widening to bare `Exception` — were
+**lint-dirty**, so those catches partly measure ruff (D-148, D-150) and are recorded as
+contaminated rather than counted. **And the survivor is honest:** the sibling assertion beside the
+test is *documentation, not a control* — deleting it measures nothing, because the state it would
+catch cannot be constructed for the circular-import reason above. Counting it would repeat the
+isolated-mutation mistake this loop keeps finding; the comment now says what it is.
+
+`evidence/an-exception-the-delivery-handler-could-not-catch.md`.
+
+**Also probed this iteration and sound:** `build_edl`. Its guards refuse a negative in-point, a
+zero-or-negative span, a sub-frame duration and a non-integer rate, and
+`test_source_and_record_ranges_use_the_same_quantized_frame_duration` already pins the property an
+EDL lives or dies by. Nothing to fix; the premise was checked and disproved rather than assumed.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.

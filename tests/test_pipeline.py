@@ -2813,3 +2813,67 @@ def test_a_complete_argv_reaches_the_run(tmp_path: Path) -> None:
     assert "no-such.json" in stderr, stderr
     for message in _argv_refusals():
         assert message not in stderr, f"a refusal fired on a legal argv: {message}"
+
+
+# --- D-166: the delivery block's handler enumerates types, and one was missing ---------------
+
+
+def _delivery_handler_types() -> tuple[str, ...]:
+    """The exception names in the delivery block's `except` clause, read from the source.
+
+    Parsed rather than imported because the claim is about *that* handler: a tuple written
+    somewhere else, however correct, would not be the one protecting the five writes.
+    """
+    import ast
+
+    source = (Path(__file__).resolve().parents[1] / "src" / "hawedit" / "pipeline.py").read_text(
+        encoding="utf-8"
+    )
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Try):
+            continue
+        body = ast.dump(node)
+        if "_write_delivery_record" not in body or "build_edl" not in body:
+            continue
+        handlers = [h.type for h in node.handlers if h.type is not None]
+        assert len(handlers) == 1, f"the delivery block has {len(handlers)} except clauses"
+        caught = handlers[0]
+        assert isinstance(caught, ast.Tuple), "the delivery handler no longer catches a tuple"
+        return tuple(element.id for element in caught.elts if isinstance(element, ast.Name))
+    raise AssertionError("could not find the delivery block in pipeline.py")
+
+
+def test_the_delivery_handler_catches_everything_its_builders_refuse_with() -> None:
+    """D-165 added `UndeliverableOrder`, a `ValueError` and **not** a `DeliveryError` — siblings,
+    not parent and child — so it escaped this handler the moment it was introduced.
+
+    Demonstrated against the real tuple: the exception propagates out of a stage written to
+    refuse gracefully, skipping the cleanup that keeps the delivery set all-or-none and the
+    `StageSkipped` that names the gap. It was reachable only through call order — `build_ass`
+    runs first on the same sentences and its handler catches `ValueError` — and an ordering
+    guarantee is not an exception contract.
+
+    Every type the three builders raise for bad input must appear here, so the next one added
+    fails this test rather than escaping in production.
+    """
+    from hawedit.delivery import DeliveryError
+    from hawedit.sentences import UndeliverableOrder
+
+    caught = _delivery_handler_types()
+
+    for refusal in (DeliveryError, UndeliverableOrder):
+        assert refusal.__name__ in caught, (
+            f"{refusal.__name__} is raised by the delivery builders and is not in the handler "
+            f"{caught}; it would propagate instead of leaving a named gap"
+        )
+
+    # Why both must be listed, asserted rather than asserted-about: they are siblings under
+    # ValueError, so neither catches the other.
+    #
+    # Recorded, not pinned: this is documentation, not a control. Its audit mutation SURVIVED,
+    # correctly — deleting it measures nothing, because the state it would catch (one of them
+    # subclassing the other) cannot be built. `sentences.py` cannot import `DeliveryError`
+    # without a cycle, `delivery.py` importing `sentences`. D-166 says so rather than counting
+    # it as a guard.
+    assert not issubclass(UndeliverableOrder, DeliveryError)
+    assert not issubclass(DeliveryError, UndeliverableOrder)

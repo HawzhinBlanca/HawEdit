@@ -71,7 +71,12 @@ from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
 from hawedit.reframe import SubjectTracker
 from hawedit.render import RenderError, RenderResult, frame_rate, render_clip
-from hawedit.sentences import Sentence, anchors_for, segment_sentences
+from hawedit.sentences import (
+    Sentence,
+    UndeliverableOrder,
+    anchors_for,
+    segment_sentences,
+)
 from hawedit.timelens import VisualEvidenceInterval, interval_for_fusion
 from hawedit.transcripts import (
     NormalizedTranscript,
@@ -1484,7 +1489,13 @@ def run_pipeline(
         # five files. A run killed at any point above leaves no record, so the next run treats
         # what is there as an abandoned attempt and redoes it instead of refusing for ever.
         _write_delivery_record(work_dir, clip.clip_id)
-    except (DeliveryError, RenderError, OSError) as exc:
+    # `UndeliverableOrder` is a `ValueError` and **not** a `DeliveryError` (they are siblings),
+    # so it escaped this tuple when D-165 introduced it one commit earlier. Demonstrated, not
+    # inferred: raising it against this exact tuple is not caught, which would skip the cleanup
+    # below and the named gap, and propagate out of a stage designed to refuse gracefully. It was
+    # shielded only by call order — `build_ass` runs first on the same sequence and its handler
+    # catches `ValueError` — and an ordering guarantee is not an exception contract. D-166.
+    except (DeliveryError, UndeliverableOrder, RenderError, OSError) as exc:
         # Building first makes the refusal case leave nothing behind; this covers a write that
         # fails partway through the three — disk full, permissions — so the set is all or none
         # either way. The MP4 and ASS are deliberately kept: Stage 6 genuinely succeeded and
