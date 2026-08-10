@@ -22,7 +22,7 @@ import base64
 import json
 import sys
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import ModuleType
 from typing import Any
 
@@ -38,7 +38,15 @@ from hawedit.gemini import (
     adc_access_token,
     count_tokens,
 )
-from hawedit.judge import InputMode, JudgeFrame, JudgeRequest, RequestTooLarge
+from hawedit.judge import (
+    JUDGE_SHADOW,
+    KURDISH_EDITORIAL_JUDGE,
+    InputMode,
+    JudgeFrame,
+    JudgeRequest,
+    NotRoutable,
+    RequestTooLarge,
+)
 from hawedit.registry import WrongRole
 
 KEY = "test-key-not-real"
@@ -551,10 +559,63 @@ def test_vertex_resource_ids_cannot_inject_a_different_url_path() -> None:
 # --- §7, before anything is billed ---------------------------------------------------------
 
 
+def _concrete_judges() -> dict[str, Callable[[str], GeminiJudge]]:
+    """Every constructible judge, with the minimum dependencies needed to instantiate it."""
+    return {
+        "GeminiJudge": lambda model_id: GeminiJudge(
+            model_id=model_id,
+            api_key=KEY,
+            transport=Api(),
+            sleep=lambda _seconds: None,
+        ),
+        "VertexGeminiJudge": lambda model_id: VertexGeminiJudge(
+            "news-project",
+            model_id=model_id,
+            token_provider=lambda: "adc-token",
+            transport=Api(),
+            sleep=lambda _seconds: None,
+        ),
+    }
+
+
+def _judge_class_names() -> set[str]:
+    """GeminiJudge and every transitive production subclass currently loaded."""
+    seen = {GeminiJudge}
+    frontier = [GeminiJudge]
+    while frontier:
+        for child in frontier.pop().__subclasses__():
+            if child not in seen:
+                seen.add(child)
+                frontier.append(child)
+    return {cls.__name__ for cls in seen}
+
+
+def test_every_constructible_judge_has_a_routing_constructor_here() -> None:
+    """A new subclass fails until its independent §7 constructor path is held."""
+    covered = set(_concrete_judges())
+    actual = _judge_class_names()
+    assert actual == covered, (
+        f"judge classes without routing coverage: {sorted(actual - covered)}; "
+        f"stale constructors: {sorted(covered - actual)}"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_concrete_judges()))
+def test_no_concrete_judge_can_be_built_as_the_shadow(name: str) -> None:
+    with pytest.raises(NotRoutable):
+        _concrete_judges()[name](JUDGE_SHADOW)
+
+
+@pytest.mark.parametrize("name", sorted(_concrete_judges()))
+def test_every_concrete_judge_accepts_the_pinned_incumbent(name: str) -> None:
+    """Control: a constructor that rejected every model would pass the shadow test alone."""
+    judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE)
+    assert judge.model_id == KURDISH_EDITORIAL_JUDGE
+    assert KURDISH_EDITORIAL_JUDGE in judge._url("generateContent")
+
+
 def test_the_shadow_cannot_be_constructed_as_the_judge() -> None:
     """§3 Stage 4: gemini-3.1-pro is "evaluated, not routed"."""
-    from hawedit.judge import NotRoutable
-
     with pytest.raises(NotRoutable):
         a_judge(Api(), model_id="gemini-3.1-pro")
 

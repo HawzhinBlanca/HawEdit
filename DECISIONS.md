@@ -6026,3 +6026,21 @@ ancestry and no file content. This keeps the rule from D-171: semantic equivalen
 before an `ours` history join, never assumed from the strategy name.
 
 `evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-174 - Hold §7 routing for the constructor hierarchy, not one judge class
+
+`VertexGeminiJudge` correctly owns a separate constructor because Vertex uses ADC rather than the
+developer API's key. Consequently its `route(self)` call is copied wiring: the parent constructor's
+routing test does not protect it. Protected main measured that deleting the Vertex call left the
+suite green and made the confidential endpoint constructible for the shadow model.
+
+The suite now declares how every concrete `GeminiJudge` subclass is minimally constructed and
+compares those names bidirectionally with the transitive runtime class hierarchy. Every declared
+constructor must refuse `JUDGE_SHADOW`; a positive control must accept
+`KURDISH_EDITORIAL_JUDGE` and route its URL to that exact model.
+
+Rejected delegating Vertex to `super().__init__`: the parent acquires a Gemini API key, violating
+the ADC route. Rejected one Vertex-only assertion: it closes today's copy but lets the next
+subclass repeat the same unheld wiring.
+
+`evidence/confidential-judge-routing-copy.md`.
