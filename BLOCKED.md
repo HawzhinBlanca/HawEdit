@@ -954,8 +954,8 @@ Sorani sample spans **0..13,000 ms** (22 words). The only Kurdish video in the r
 hawapc01 with ffmpeg 8.1.1-full, extracting judge keyframes from that fixture:
 
 ```
-(0, 4000)     20 frames, timestamps 100, 300, 500, 700, 900, 1100 …
-(0, 13000)    20 frames, timestamps 325, 975, 1625, 2275, 2925, 3575 …   <- from a 4.16 s file
+(0, 4000)     20 frames, timestamps 100, 300, 500, 700, 900, 1100 …   all inside the file
+(0, 13000)     6 frames, timestamps 325, 975, 1625, 2275, 2925, 3575     all inside the file
 (5000, 13000) KeyframeError: ffmpeg failed to extract judge keyframes
 ```
 

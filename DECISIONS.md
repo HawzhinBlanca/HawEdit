@@ -7609,9 +7609,11 @@ honest code. No test asserted the old value — that was the whole problem.
 judge keyframes from it, measured:
 
 ```
-(0, 4000)     20 frames, timestamps 100, 300, 500, 700, 900, 1100 …
-(0, 13000)    20 frames, timestamps 325, 975, 1625, 2275, 2925, 3575 …   <- from a 4.16 s file
+(0, 4000)     20 frames, timestamps 100, 300, 500, 700, 900, 1100 …   all inside the file
+(0, 13000)     6 frames, timestamps 325, 975, 1625, 2275, 2925, 3575     all inside the file
 (5000, 13000) KeyframeError: ffmpeg failed to extract judge keyframes
+
+[corrected 2026-08-10 by D-153: this block first read `20 frames` for the 0..13000 span. It returns 6 — the 20 were leftovers from the previous span, the very defect D-153 fixes, picked up by a probe of mine that reused one output directory.]
 ```
 
 So there is no video here that makes the live check runnable: a shorter one either fails outright
@@ -7646,3 +7648,76 @@ caught by the confirmation test.
 reports billing is solved upstream; the key is not on this machine, and the credential panel is the
 only way it gets here — it reads with `getpass`, writes through `O_NOFOLLOW` at `0600`, rewrites the
 ACL to the owner alone, and refuses any path git tracks. Nothing in this iteration simulated a key.
+
+## D-153
+
+**A judge keyframe could carry a timestamp the video never had, and a run could be handed the
+previous run's frames.** Two defects in `extract_judge_frames`, both found while re-checking a
+number I had published the day before — and the second is why that number was wrong.
+
+**1. The stamps came from how many frames came back, not from where they came from.**
+
+```python
+step_ms = (out_ms - in_ms) / len(paths)
+```
+
+`fps=count/duration_s` is the rate ffmpeg is *told* to sample at, so frame *i* comes from
+`in_ms + (i + 0.5) × (span / count)`. Dividing by `len(paths)` instead only agrees while ffmpeg
+returns exactly `count` frames. When the source runs out before the span does it returns fewer, and
+the survivors are stretched across the whole request. Measured on the 4.162 s fixture, span
+`0..13000 ms`:
+
+```
+before: 6 frames stamped 1083, 3250, 5417, 7583, 9750, 11917   4 past the end, 4 distinct images
+after:  6 frames stamped  325,  975, 1625, 2275, 2925,  3575   0 past the end
+```
+
+The judge was being told a shot came from 9,750 ms of a video that stops at 4,162. Nothing
+downstream could notice: a mis-stamped frame is a valid JPEG of real pixels, and `JudgeRequest`
+checks only that the timestamp falls inside the *candidate span*, which a stretched stamp does.
+
+**2. `glob` could return an earlier run's frames, and the existing guard could not see it.**
+Adversarial pass #15 added `if len(paths) > count: raise` for exactly this, with a test. It catches
+only the leftovers that push the total *over* `count`. ffmpeg overwrites `judge-001.jpg` upward, so
+a run producing **fewer** frames than the last leaves the older, higher-numbered files behind and
+the total is unchanged:
+
+```
+0..4000  count=20  ->  20 files
+0..13000 count=20  ->  6 written, 14 left over, len(paths) == 20, no refusal
+                       the call returned 20 frames, 14 from the previous extraction
+```
+
+The pipeline's Stage 4 directory is named per candidate (`stage4/<candidate_id>`), so re-running a
+candidate is exactly this state.
+
+**Decision: widen the existing refusal rather than replace it.** Pass #15's recorded intent is that
+Stage 4's evidence comes from this extraction alone; the mechanism it chose — refuse — is kept, and
+the check moves *before* ffmpeg writes anything and fires on **any** pre-existing `judge-*.jpg`. The
+`len(paths) > count` check stays as the second net. Its test keeps its assertion, now matching on
+`from an earlier run`.
+
+**Rejected: clearing the stale frames and carrying on.** That is D-146's shape and it is tempting —
+these are scratch files, not deliverables, and refusing wedges a re-run. But pass #15 chose refusal
+deliberately for evidence that reaches a billed judgement, and reversing a recorded decision to save
+one `rm` is not a trade I will make silently. The refusal names the directory and what to do. If the
+wedge ever costs more than the risk, that is a decision to record, not to slip in.
+
+**Rejected: clamping stamps to the source duration.** It would hide the stretch rather than fix it —
+the frames would still be labelled with times they did not come from, just smaller ones. Stamping
+from the rate makes the numbers true by construction, so no clamp and no threshold are needed.
+
+**Mutation audit 5/5:** the defect restored; the stale guard removed; the stale guard reverted to
+its count-only form; stamps at the bucket start instead of its centre; and `max(1, len(paths))`,
+which is the same stretch wearing a guard.
+
+**A number I published yesterday was wrong, and this is the correction.** D-152, `BLOCKED.md` #20,
+`README.md` and `evidence/the-live-check-spent-money-then-refused.md` all said the `0..13000` span
+*"returns 20 frames stamped across the full 13 s"*. It returns **6**. The 20 came from my own probe
+reusing one output directory for three spans — defect 2 above, contaminating the measurement of
+defect 2. All four are corrected in place. The substance of #20 is unchanged and it stays live: the
+built-in sample still spans 13,000 ms, the only Kurdish video here is still 4.162 s, and six frames
+covering the first 3.6 s of a 13 s candidate is still not a live check. What changed is that those
+six are now honestly labelled.
+
+`evidence/frames-stamped-with-times-they-did-not-come-from.md`. Floor 1494 → 1499.

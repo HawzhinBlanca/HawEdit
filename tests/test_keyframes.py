@@ -111,5 +111,83 @@ def test_frames_left_in_the_work_directory_by_an_earlier_run_are_refused(tmp_pat
     leaves that run's extra JPEGs behind for `glob` to find and send."""
     work = tmp_path / "stage4"
     extract_judge_frames(FIXTURE, 100, 4_100, work, count=8)
-    with pytest.raises(KeyframeError, match="produced"):
+    with pytest.raises(KeyframeError, match="from an earlier run"):
         extract_judge_frames(FIXTURE, 100, 4_100, work, count=2)
+
+
+def test_an_earlier_runs_frames_are_refused_even_when_the_count_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    """The hole the `len(paths) > count` form left open, and it is the reachable one.
+
+    ffmpeg overwrites `judge-001.jpg` upward, so a run producing *fewer* frames than the last
+    leaves the older, higher-numbered files behind and the total never exceeds `count`. Measured
+    on this fixture: 20 frames from `0..4000`, then `0..13000` produced 6 and the call returned
+    **20** — 14 of them from the previous extraction, handed to the judge as this candidate's
+    evidence. D-153.
+    """
+    work = tmp_path / "stage4"
+    extract_judge_frames(FIXTURE, 0, 4_000, work, count=20)
+    with pytest.raises(KeyframeError, match="from an earlier run"):
+        extract_judge_frames(FIXTURE, 0, 13_000, work, count=20)
+
+
+# --- D-153: a frame must carry the time it came from -----------------------------------------
+#
+# `step_ms` was `(out_ms - in_ms) / len(paths)` — the number of frames that came back, not the
+# rate ffmpeg was told to sample at. Those differ whenever the source runs out before the span
+# does, and the surviving frames are then stretched across the whole request. Measured on this
+# 4.162 s fixture, a `0..13000 ms` span returned 6 frames stamped 1083, 3250, 5417, 7583, 9750,
+# 11917 — four past the end of the file, and two pairs were the same image.
+# `evidence/frames-stamped-with-times-they-did-not-come-from.md`.
+# =========================================================================================
+
+FIXTURE_DURATION_MS = 4_162
+
+
+def _expected_stamps(in_ms: int, out_ms: int, count: int, produced: int) -> list[int]:
+    """Where the frames ffmpeg produced actually came from, at the rate it was given."""
+    step = (out_ms - in_ms) / count
+    return [round(in_ms + (index + 0.5) * step) for index in range(produced)]
+
+
+@pytest.mark.parametrize(
+    ("in_ms", "out_ms", "count"),
+    [
+        (0, 13_000, 20),  # span runs 8.8 s past the end of the file
+        (0, 4_000, 20),  # the control: a span wholly inside it
+        (100, 4_100, 5),
+    ],
+)
+def test_a_frame_carries_the_time_it_came_from(
+    tmp_path: Path, in_ms: int, out_ms: int, count: int
+) -> None:
+    """Asserted on the decoded frames, because the failure is invisible anywhere else.
+
+    A mis-stamped frame is a valid JPEG of real pixels; `JudgeRequest` checks only that the
+    timestamp lies inside the candidate span, which a stretched stamp does. The judge is simply
+    told the shot is from a moment the video never had.
+    """
+    frames = extract_judge_frames(FIXTURE, in_ms, out_ms, tmp_path / "w", count=count)
+    stamps = [frame.timestamp_ms for frame in frames]
+
+    assert stamps == _expected_stamps(in_ms, out_ms, count, len(frames)), (
+        "stamps were derived from the number of frames returned rather than the sampling rate"
+    )
+    past = [stamp for stamp in stamps if stamp > FIXTURE_DURATION_MS]
+    assert not past, f"frames stamped past the end of a {FIXTURE_DURATION_MS} ms source: {past}"
+
+
+def test_a_span_past_the_source_yields_fewer_frames_rather_than_invented_ones(
+    tmp_path: Path,
+) -> None:
+    """The control that keeps the test above from passing on an empty result.
+
+    Asking for a span three times the file's length must still return real frames from the part
+    that exists — refusing everything, or returning one frame, would satisfy "nothing is stamped
+    past the end" while measuring nothing.
+    """
+    frames = extract_judge_frames(FIXTURE, 0, 13_000, tmp_path / "w", count=20)
+    assert 2 <= len(frames) < 20, f"expected a partial extraction, got {len(frames)}"
+    assert all(frame.data.startswith(b"\xff\xd8") for frame in frames), "not JPEG payloads"
+    assert max(frame.timestamp_ms for frame in frames) <= FIXTURE_DURATION_MS

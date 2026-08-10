@@ -194,8 +194,9 @@ real response, and that the model actually answers in Kurdish.
 real source pixels — text-only visual judging is refused — so the check needs a video of the
 built-in sample, which spans **0..13,000 ms**. The only Kurdish video here,
 `tests/fixtures/kurdish-speech-3cuts.mp4`, is **4.162 s** and does not match it: measured,
-keyframes for `5000..13000 ms` fail outright, and for `0..13000 ms` ffmpeg returns 20 frames
-stamped across the full 13 s from a file that ends at 4.16 s. Until such a recording exists the
+keyframes for `5000..13000 ms` fail outright, and `0..13000 ms` yields only **6** frames — real
+ones covering the first 3.6 s, since D-153 stamps them from the sampling rate — for a candidate
+13 s long. Until such a recording exists the
 live check is not runnable as shipped — `BLOCKED.md` #20. Without `--video` it now refuses at
 **exit 2 before spending anything**; it used to make both Path A calls first (D-152).
 
