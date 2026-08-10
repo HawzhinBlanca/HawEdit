@@ -677,3 +677,74 @@ def test_every_way_of_breaking_the_sidecar_is_actually_exercised() -> None:
         f"{sorted(set(_SIDECAR_BREAKERS) - set(_SIDECAR_STATES))} produced but never exercised; "
         f"{sorted(set(_SIDECAR_STATES) - set(_SIDECAR_BREAKERS))} named but not producible"
     )
+
+
+# --- D-167: a surface form must be one line ------------------------------------------------
+
+# Every break `str.splitlines` recognises, plus the position that a length check would miss.
+# `Word` is the chokepoint: seven construction sites route through `__post_init__`, two of them
+# reading JSON off disk, and one guard here covers all of them.
+_NOT_ONE_LINE = (
+    "a\nb",
+    "a\r\nb",
+    "a\rb",
+    "a\vb",
+    "a\fb",
+    "a\x1cb",
+    "a\x85b",
+    "a\u2028b",
+    "a\u2029b",
+    "a\n\nb",
+    "a\n",  # trailing: `len(splitlines()) == 1` accepts this, and ` `.join still breaks the line
+    "\nb",
+)
+
+
+@pytest.mark.parametrize("surface", _NOT_ONE_LINE)
+def test_a_surface_form_that_is_not_one_line_is_refused(surface: str) -> None:
+    """Measured before this guard, on real ffmpeg 8.1.1 and real libass: a word carrying a
+    break burned a frame **byte-identical** to one rendered with the tail deleted — the text
+    after the break never reached the pixels — while `parse_dialogue_times` returned exactly
+    the times of the intact file and `parse_srt_times` returned the right cue count.
+
+    `evidence/a-word-that-was-not-one-line.md`. D-167.
+    """
+    with pytest.raises(ValueError, match="one line"):
+        Word(w=surface, start_ms=0, end_ms=100, conf=0.9)
+
+
+@pytest.mark.parametrize("surface", ["a b", "a\tb", " a", "a ", "a\xa0b"])
+def test_whitespace_that_does_not_break_a_line_is_still_accepted(surface: str) -> None:
+    """The control for the plausible over-broad fix.
+
+    Refusing *all* whitespace would also catch these, and they lose no text: a tab, a space or
+    a no-break space inside a surface form renders whole in both formats. That is a different
+    complaint — one `Word` covering two spoken words has one timing for both — and refusing it
+    here would reject transcripts over a defect this measurement never demonstrated.
+    """
+    assert Word(w=surface, start_ms=0, end_ms=100, conf=0.9).w == surface
+
+
+def test_a_supplied_transcript_carrying_a_broken_word_is_refused_at_the_door() -> None:
+    """`--transcript FILE` is a documented flag, and `Word(**w)` is how the file becomes words.
+
+    This is the reachable path, so it is not latent: nothing upstream objects. Invariant #5's
+    aligner check passes on `ctc_viterbi`, and the aligned-words-appear-in-`text_ckb` cross-check
+    passes too as soon as the file is internally consistent — which a file written by a tool that
+    wrapped its own output would be.
+    """
+    surface = "دووەم\nسێیەم"
+    payload = json.dumps(
+        {
+            "media_id": "media-001",
+            "text_ckb": f"یەکەم {surface}",
+            "words": [
+                {"w": "یەکەم", "start_ms": 0, "end_ms": 400, "conf": 0.9},
+                {"w": surface, "start_ms": 400, "end_ms": 900, "conf": 0.9},
+            ],
+            "asr": {"canonical": "omniASR_LLM_7B_v2", "aligner": "ctc_viterbi"},
+        },
+        ensure_ascii=False,
+    )
+    with pytest.raises(ValueError, match="one line"):
+        RawTranscript.from_json(payload)

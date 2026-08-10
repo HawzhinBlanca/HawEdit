@@ -76,7 +76,13 @@ _WORD_EDGE_PUNCTUATION = ".,!?;:،؛؟۔…"
 
 @dataclass(frozen=True, slots=True)
 class Word:
-    """One aligned word. Timings come from CTC Viterbi alignment only (invariant #5)."""
+    """One aligned word. Timings come from CTC Viterbi alignment only (invariant #5).
+
+    A surface form must be **one line**. Both subtitle formats this word is delivered in are
+    line-structured — an ASS `Dialogue:` event is one line, an SRT cue block is separated from
+    the next by a blank one — so a break inside a surface form silently truncates the caption
+    at that character, and both readback checks agree with the file it produced. D-167.
+    """
 
     w: str
     start_ms: int
@@ -86,6 +92,16 @@ class Word:
     def __post_init__(self) -> None:
         if not isinstance(self.w, str) or not self.w.strip():
             raise ValueError("word surface form must be a non-empty string")
+        # `splitlines() != [w]` and not `len(splitlines()) == 1`: the latter passes a *trailing*
+        # break, which is just as fatal once ` `.join puts a following word after it.
+        if self.w.splitlines() != [self.w]:
+            raise ValueError(
+                f"word surface form {self.w!r} is not one line. An ASS Dialogue event is a "
+                f"single line and an SRT cue block ends at a blank one, so everything after "
+                f"the break is dropped from the burned captions while the cue times still "
+                f"read back correctly — measured: the rendered frame is byte-identical to one "
+                f"rendered without the tail at all (D-167)."
+            )
         if (
             not isinstance(self.start_ms, int)
             or isinstance(self.start_ms, bool)

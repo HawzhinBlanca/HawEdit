@@ -8626,3 +8626,65 @@ EDL lives or dies by. Nothing to fix; the premise was checked and disproved rath
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-167
+
+**A word was allowed to be more than one line, and the caption lost everything after the
+break.** `Word.__post_init__` validated its surface form as *"a non-empty string"* and nothing
+else. Both formats §2 delivers subtitles in are line-structured: an ASS `Dialogue:` event is one
+line, an SRT cue block ends at a blank one. A break inside a surface form does not wrap the
+caption — it ends it.
+
+**Measured on the artifact, on real ffmpeg 8.1.1-full_build and real libass.** Three renders of
+the same two-word sentence — with the break, truncated *at* the break, and intact:
+
+    broken     sha256 b01fd8a7473cf066…
+    truncated  sha256 b01fd8a7473cf066…     <- byte-identical
+    intact     sha256 41770c2fe65c5681…     <- 8,277 pixel bytes different
+
+The broken render equals the one with the tail **deleted**. The identity is the finding; the
+intact comparison is what stops it being vacuous, since identity would also hold if this machine
+drew nothing at all.
+
+**Both readback checks agreed with the broken file.** The orphaned word sits in `[Events]` as a
+line libass does not recognise, and `parse_dialogue_times` returns *exactly* the intact file's
+times. On the SRT side the cue splits in two while `parse_srt_times` reports one cue — D-138 made
+it refuse an unreadable *timing* line, and nothing looks at the text, so a cue count is not a
+check that the text survived.
+
+**Live, not latent, and not through the models.** `OmniAsrBackend._align` builds every surface
+with `text.split()`, so canonical ASR cannot produce one. The door is `Word(**w)`: seven
+construction sites, two reading JSON off disk, one of those behind the documented
+`python -m hawedit.pipeline VIDEO.mp4 --transcript FILE`. Measured, `RawTranscript.from_json`
+accepted it — invariant #5's aligner check passes on `ctc_viterbi`, and the
+aligned-words-appear-in-`text_ckb` cross-check passes as soon as the file is internally
+consistent, which a file written by a tool that wrapped its own output would be.
+
+**Decision: one guard at the chokepoint, `if self.w.splitlines() != [self.w]`.** `Word` is what
+every construction site routes through, including both JSON readbacks, so this is one guard
+rather than one per writer. `splitlines()` because the definition of a line break is then the
+standard library's rather than a character list I picked; slightly stricter than libass (it also
+covers `\v`, `\f`, `\x1c`, `\x85`, U+2028, U+2029) in the direction of refusing rather than
+shipping. `!= [self.w]` and **not** `len(...) == 1`, because the latter accepts a *trailing*
+break — `"a\n".splitlines() == ["a"]` — which is just as fatal once `" ".join` puts the next word
+after it.
+
+**Rejected: escaping the break into an ASS `\N`.** It renders, and it invents a line break the
+alignment never specified; §4.3.5 is explicit that breaks come from the word alignment. **Rejected:
+refusing all whitespace.** It would also reject a space or a tab inside a surface form, which
+lose no text — a different complaint (one `Word`, two spoken words, one timing) that no
+measurement here demonstrates. **Rejected: checking in `build_ass`/`build_srt`.** Two guards for
+one property, and neither would stop the bad word entering a stored transcript.
+
+**Mutation audit — 3/3, lint-clean, whole suite per mutation, baseline verified green first.**
+Restoring the defect reddens 13 (the 12 parametrised breaks plus the `--transcript` door) and
+nothing else. The two threshold mutations discriminate exactly: `len(splitlines()) != 1` reddens
+**only** the trailing-break case, and refusing all whitespace reddens **only** the four accepted
+cases. The pixel and SRT tests redden under no mutation and are recorded as **premise tests, not
+controls** — they pin what the guard rests on, and their cheapest fix is a re-measurement.
+
+`evidence/a-word-that-was-not-one-line.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent, so the ZAR38MinTest
+end-to-end run stays blocked on it. `HF_TOKEN` is likewise unset (#4).

@@ -41,6 +41,7 @@ from hawedit.captions import (
     compare_golden_render,
     decode_to_rgb,
     find_ffmpeg,
+    parse_dialogue_times,
     render_caption_png,
     subtitle_filter,
     wrap_caption_lines,
@@ -816,4 +817,70 @@ def test_the_burn_verifies_the_font_directory_it_was_handed() -> None:
     assert "assert_fonts_dir_covers_kurdish(fonts_dir)" in _render_clip_source(), (
         "render_clip does not verify the font directory it burns from; §4.3.4's check would "
         "again be a function nothing in the product calls"
+    )
+
+
+# --- D-167: what a break inside a surface form costs, in pixels ------------------------------
+
+_TWO_WORDS = ("یەکەم", "دووەم")
+
+
+def _two_word_sentence() -> Sentence:
+    return Sentence(
+        words=(
+            Word(w=_TWO_WORDS[0], start_ms=0, end_ms=400, conf=0.9),
+            Word(w=_TWO_WORDS[1], start_ms=400, end_ms=900, conf=0.9),
+        ),
+        complete=True,
+    )
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_a_break_inside_a_caption_line_drops_everything_after_it(tmp_path: Path) -> None:
+    """Why `Word` refuses a surface form that is not one line (D-167).
+
+    An ASS `Dialogue:` event is **one line**. Nothing in `[Events]` that does not start with a
+    recognised keyword is rendered, so a break inside the text does not wrap the caption — it
+    ends it, and libass draws the head with no error anywhere.
+
+    The measurement is an **identity**, not a difference: the frame burned from the broken file
+    is byte-for-byte the frame burned from a file whose text was *truncated at the break*. A
+    difference against the intact render would prove only that two files differ, which two
+    renders of anything do; identity against the truncated one proves the tail never arrived.
+    The intact comparison is here to stop that identity being vacuous — it would also hold if
+    this machine rendered nothing at all.
+
+    `Word` now makes the broken state unconstructible, so the file is production's own output
+    with the one character changed: this is the exact text libass received before the guard.
+    """
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    intact_ass = build_ass((_two_word_sentence(),))
+    joined = f"{_TWO_WORDS[0]} {_TWO_WORDS[1]}"
+    assert intact_ass.count(joined) == 1, "the two words are not on one Dialogue line as assumed"
+
+    def burn(ass_text: str, name: str) -> bytes:
+        path = tmp_path / f"{name}.ass"
+        path.write_text(ass_text, encoding="utf-8")
+        png = render_caption_png(ffmpeg, path, FONTS_DIR, tmp_path / f"{name}.png")
+        return decode_to_rgb(ffmpeg, png)
+
+    broken_ass = intact_ass.replace(joined, f"{_TWO_WORDS[0]}\n{_TWO_WORDS[1]}")
+    truncated_ass = intact_ass.replace(joined, _TWO_WORDS[0])
+
+    broken = burn(broken_ass, "broken")
+    truncated = burn(truncated_ass, "truncated")
+    intact = burn(intact_ass, "intact")
+
+    assert broken == truncated, (
+        "the text after the break reached the pixels, so this render does not demonstrate the "
+        "defect D-167's guard exists for — re-measure before relaxing the guard"
+    )
+    assert broken != intact, (
+        f"the intact and truncated renders are identical, so the comparison above measures "
+        f"nothing: {_TWO_WORDS[1]!r} is not being drawn even when whole (missing font?)"
+    )
+    assert parse_dialogue_times(broken_ass) == parse_dialogue_times(intact_ass), (
+        "the cue-time readback disagrees with the intact file, which would have made this "
+        "detectable without looking at pixels — it did not, which is why the guard is upstream"
     )

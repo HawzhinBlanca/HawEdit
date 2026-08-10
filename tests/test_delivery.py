@@ -503,3 +503,44 @@ def test_every_cue_the_writer_produced_is_read_back(tmp_path: Path) -> None:
 
     assert len(parse_srt_times(srt)) == len(sentences)
     assert srt.count("-->") == len(sentences), "one timing line per cue"
+
+
+def test_a_cue_count_is_not_a_check_that_the_cue_text_survived() -> None:
+    """The other half of D-167, in the format that needs no ffmpeg to show it.
+
+    An SRT cue block ends at a **blank line**, so a break inside a surface form does not wrap
+    the cue — it ends it, and the tail becomes a stray region a player has no timing for.
+    `parse_srt_times` reports the right number of cues either way, which is exactly the false
+    comfort that let a broken word through: D-138 made it refuse an unreadable *timing* line and
+    nothing looks at the text.
+
+    `Word` refuses that surface form now, so this is `build_srt`'s own output with the one
+    character changed — the file a player would have received.
+    """
+    first, second = "یەکەم", "دووەم"
+    intact = build_srt(
+        (
+            Sentence(
+                words=(
+                    Word(w=first, start_ms=0, end_ms=400, conf=0.9),
+                    Word(w=second, start_ms=400, end_ms=900, conf=0.9),
+                ),
+                complete=True,
+            ),
+        ),
+        clip_in_ms=0,
+    )
+    joined = f"{first} {second}"
+    assert intact.count(joined) == 1, "the two words are not on one cue text line as assumed"
+    broken = intact.replace(joined, f"{first}\n\n{second}")
+
+    assert parse_srt_times(broken) == parse_srt_times(intact), (
+        "the timing readback disagrees, which would have made this detectable — it does not, "
+        "which is why the guard has to be upstream of the writer"
+    )
+    blocks = broken.strip().split("\n\n")
+    assert len(blocks) == 2, f"expected the cue to split in two, got {len(blocks)}: {blocks!r}"
+    assert second not in blocks[0], "the tail is still inside the cue, so nothing was lost here"
+    assert len(parse_srt_times(broken)) == 1, (
+        "the reader now counts the orphaned region as a cue, so the count would have caught this"
+    )
