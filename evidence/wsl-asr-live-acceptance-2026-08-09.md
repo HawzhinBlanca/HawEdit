@@ -67,3 +67,38 @@ the exact audited inventory has a current explicit disposition, including affect
 entries, bound to this source, dependency locks and model bytes. The policy expires 2026-09-08 and
 must be reviewed again rather than silently reused. Native KenLM/Sox output reproducibility and
 NVIDIA redistribution review remain separate supply-chain gaps.
+
+## Exact-source refresh — 2026-08-10
+
+The acceptance was repeated after the production-readiness branch moved to
+`e80ab9a1081f34cc866e7811cdd3a0129527d010`. Documentation commits do not enter the worker source
+digest; the exact `src/hawedit` snapshot accepted here is
+`a131c2531f83f135fadc693a1e3bb8354066d9173fa8e154d091084a597ece06`.
+
+Provisioning completed in 237.8 seconds and reused generation
+`Ubuntu-a3a875601325fe6bd6497791`. The live receipt revalidated CPython 3.12.0, all 140 exact
+distributions, 43,546,500,168 bytes across the three canonical OmniASR assets, and two CUDA
+devices. Receipt SHA-256:
+`fef9aa333e96c83847eded4799fbadba9462c5e5a667040e17409711df1a4a72`.
+
+The separate live VEX gate completed in 154.5 seconds at `2026-08-10T01:24:32Z` and accepted 12
+findings against 12 matched dispositions. The raw OSV report SHA-256 is
+`2a90ab86207d376e763a733a62ada3f2dab59b49429a948cb058ff5120f0a21e`; the reviewed policy SHA-256
+is `2d498c30f078078b7525bba1402e4044aadad05cb6daa3cf80e4f9d9d9bbb771`; and the 10,382-byte
+write-once evidence JSON SHA-256 is
+`11b0ff5d18b3060469f89680f9cc2cd112818cb3901556cba1501dc2d893f450`.
+
+The exact commands were:
+
+```powershell
+$env:PYTHONPATH='src'
+.venv\Scripts\hawedit-asr-setup.exe --distribution Ubuntu
+.venv\Scripts\python.exe -m hawedit.wsl_vex_gate `
+  --distro Ubuntu `
+  --evidence .gate/wsl-asr-vex-e80ab9a1081f34cc866e7811cdd3a0129527d010.json
+```
+
+This closes current-machine receipt/VEX drift for the stated source snapshot. The protected
+`wsl-asr-security` job remains intentionally unaccepted on this feature-branch dispatch: its policy
+requires an official `push` to `main`, so post-merge hosted execution and artifact upload are still
+required before release promotion.
