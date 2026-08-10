@@ -46,3 +46,19 @@ VERIFY OK — hawedit gate green
 
 A post-merge gate is required separately because the commit identity changes reproducible-wheel
 timestamps even when the tree does not.
+
+## Final protected-main advance
+
+`main` advanced once more during the first push with `7002331`, which fixed the `ANSWERED`
+resolution-vocabulary blind spot. Readiness reproduced that finding, implemented D-172 against
+the stronger claims suite, and passed its focused tests before joining history again.
+
+- readiness parent: `baf11b07f82bc87e1c0cafebe2f5a8ccccdc508b`
+- protected-main parent: `70023318895e240f2d65b39ef43b5b48113f52a3`
+- merge: `81287074d7068692f0e2c3019701f1930d34e079`
+- readiness-parent tree: `ecb193121a6778a2ff2b9f65d643e0a4f29b7d2a`
+- merge tree: `ecb193121a6778a2ff2b9f65d643e0a4f29b7d2a`
+
+Thus all 26 upstream-only commits are ancestors, and the final join again introduced no unreviewed
+file content. The canonical 1,994-test gate is run at the final documentation commit after this
+merge, not inferred from tree equality.

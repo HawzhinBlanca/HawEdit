@@ -172,10 +172,11 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > symmetrically to `BLOCKED.md` #7 and the latter to `hawedit.cli.__all__`.
 > `evidence/readme-quality-bar.md`.
 >
-> **M0.1 amendment (D-171).** The readiness branch now contains protected-main history. All 25
-> upstream-only commits were semantically classified first; missing Stage 2 resume/help behavior
-> landed on the stronger tree, and merge `89a1641` then joined both parents with a tree exactly
-> equal to the verified readiness parent. `evidence/main-semantic-merge-2026-08-10.md`.
+> **M0.1 amendment (D-171/D-173).** The readiness branch now contains protected-main history. All
+> 26 upstream-only commits were semantically classified first; missing behavior landed on the
+> stronger tree, and merges `89a1641` then `8128707` joined the corresponding main parents with
+> trees exactly equal to their readiness first parents.
+> `evidence/main-semantic-merge-2026-08-10.md`.
 >
 > **M0.1 amendment (D-172).** `BLOCKED.md` resolution parsing now recognizes its complete,
 > declared heading vocabulary: `RESOLVED` and `ANSWERED`. The suite refuses an undeclared heading

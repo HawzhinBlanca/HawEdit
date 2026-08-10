@@ -6013,3 +6013,16 @@ obstacle were distinct events, and the ledger records that distinction accuratel
 treating any bold text as a resolution: it would make formatting silently change milestone state.
 
 `evidence/a-blocker-could-resolve-invisibly.md`.
+
+## D-173 - Rejoin main after the final claims delta, without changing the audited tree
+
+`main` advanced from `ba52888` to `7002331` while the readiness branch was being pushed. The only
+new semantic delta was D-172's `ANSWERED` blocker status. It was reproduced, implemented against
+the readiness claims suite, and focused-green before history was joined.
+
+Merge `8128707` has first parent `baf11b0` and protected-main second parent `7002331`. Both its
+tree and the first-parent tree are `ecb193121a6778a2ff2b9f65d643e0a4f29b7d2a`; the merge adds
+ancestry and no file content. This keeps the rule from D-171: semantic equivalence is established
+before an `ours` history join, never assumed from the strategy name.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
