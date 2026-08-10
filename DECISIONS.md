@@ -6104,3 +6104,19 @@ makes a crashed partial delivery invisible and nonblocking and publishes the exa
 one no-replace directory rename.
 
 `evidence/auto-select-query-preflight-2026-08-10.md`.
+
+## D-178 - Join main only after classifying both deltas against the stronger readiness tree
+
+Protected main advanced through `e2c768f` with an interrupted flat-delivery repair and the
+queryless auto-selection finding integrated in D-177. Readiness already superseded the former with
+its hidden exact-set `ArtifactBundle`; importing flat-file recovery would weaken publication
+ownership. Its stricter earlier visual-query preflight already refused the latter's exact
+invocation, while D-177 aligned the adjacent producer model and evidence with that behavior.
+
+The canonical first-parent gate passed 2,008/2,008 tests with zero skipped before the join. Merge
+`ded03cc` has readiness parent `4b63c04` and protected-main parent `e2c768f`; both the first parent
+and merge have tree `03b07a54ce0d40c98e3f3b0de78b2c1a27640264`. The merge therefore records ancestry without
+replaying stale content. Tree equality is not runtime acceptance, so a new canonical gate is still
+required at the final documented merge tip.
+
+`evidence/main-semantic-merge-2026-08-10.md`.

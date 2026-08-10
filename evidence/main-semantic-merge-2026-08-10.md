@@ -79,3 +79,35 @@ the exact floor to 1,999 before joining history.
 All 27 upstream-only commits are now ancestors. As before, tree equality proves only that the
 history join added no content; the full local and hosted gates at the eventual final tip provide
 acceptance.
+
+## Auto-selection and interrupted-delivery advance
+
+Protected main next advanced through `e2c768f` with two findings: `9e8f128` addressed a Ctrl-C
+leaving flat delivery sidecars that wedged a retry, and `e2c768f` measured `--visual
+--auto-select` spending real Stage 0 work despite having no retrieval query.
+
+The delivery finding is semantically superseded, not ignored. Readiness publishes the five files
+as one hidden private `ArtifactBundle` directory, validates the exact set, and performs one
+no-replace directory rename. Its crash regression proves that an abandoned private directory is
+invisible and a clean retry succeeds; its concurrent-publisher regression proves no replacement.
+It deliberately does not claim that SIGKILL removes private scratch space.
+
+The precise auto-selection invocation was already rejected by readiness's stricter
+`--visual without Path A requires --visual-query` preflight. D-177 made the adjacent producer
+predicate structurally query-capable, corrected the structured instruction, and added seven
+behavioral tests spanning both positive routes and every refusal. Focused pipeline, claims and
+evidence acceptance passed 171/171. The clean first parent then passed the canonical gate: Ruff,
+mypy over 129 source files, formatting, 2,008/2,008 tests, zero skipped and accepted JUnit evidence
+in 236.2 seconds.
+
+The histories were joined only after those classifications and acceptance:
+
+- readiness parent: `4b63c044f21236445eb6953c15f438faf93070fc`
+- protected-main parent: `e2c768f0f63482de5d4dac277643408e5780d23b`
+- merge: `ded03cc475b3575cc0429859fc2edca0e3fc9c53`
+- readiness-parent tree: `03b07a54ce0d40c98e3f3b0de78b2c1a27640264`
+- merge tree: `03b07a54ce0d40c98e3f3b0de78b2c1a27640264`
+
+Thus protected main is an ancestor, while tree equality proves the merge imported no stale file
+content. A post-merge canonical gate remains required because the merge changes commit identity
+and therefore reproducible-wheel timestamps even though the tree is equal.
