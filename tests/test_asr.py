@@ -51,7 +51,7 @@ from hawedit.asr_worker import run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
 from hawedit.omni_assets import CANONICAL_CTC_CARD, CANONICAL_LLM_CARD, OmniAssetError
-from hawedit.registry import ModelExcluded, ModelNotInRegistry
+from hawedit.registry import ModelEntry, ModelExcluded, ModelNotInRegistry
 from hawedit.transcripts import RawTranscript, Word
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti", notes="Threadripper 3990X")
@@ -513,10 +513,21 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     worker_calls: list[list[str]] = []
+    path_calls: list[str] = []
     binding_active = False
     stage1 = tmp_path / "stage1"
     validator_dir = tmp_path / "validator"
     validator_dir.mkdir()
+
+    class HostModelStore:
+        @staticmethod
+        def assert_available(_model_id: str) -> Path:
+            pytest.fail("WSL validation must not require the qwen-asr loader on Windows")
+
+        @staticmethod
+        def path_for(entry: ModelEntry) -> Path:
+            path_calls.append(entry.model_id)
+            return validator_dir
 
     @contextmanager
     def verified(_model_id: str, selected: Path) -> Iterator[Path]:
@@ -546,10 +557,9 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    monkeypatch.setattr("hawedit.asr.ModelStore", HostModelStore)
     monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
-    transcript = WslOmniAsrProducer(
-        interpreter="/opt/hawedit/python", validator_model_dir=validator_dir
-    ).transcribe(
+    transcript = WslOmniAsrProducer(interpreter="/opt/hawedit/python").transcribe(
         "episode",
         tmp_path / "audio.wav",
         (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
@@ -557,6 +567,7 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
         ffmpeg=tmp_path / "ffmpeg",
     )
     assert transcript.words[0].start_ms == 1_050
+    assert path_calls == [QwenSoraniValidator.model_id]
     assert len(worker_calls) == 1
     assert worker_calls[0][0] == "wsl.exe"
     assert "/opt/hawedit/python" in worker_calls[0]

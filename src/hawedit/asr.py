@@ -857,11 +857,21 @@ class WslOmniAsrProducer:
     ) -> RawTranscript:
         interpreter, wsl_source = self._runtime()
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
-        validator_model_dir = self.validator_model_dir or ModelStore().assert_available(
-            VALIDATOR_MODEL_ID
-        )
-        if validator_model_dir is None:
-            raise RuntimeError(f"{VALIDATOR_MODEL_ID} did not resolve to a model directory")
+        if self.validator_model_dir is not None:
+            validator_model_dir = self.validator_model_dir
+        else:
+            # `assert_available()` includes loader importability in the *calling* runtime.
+            # That is correct for QwenSoraniValidator's local path, but this producer loads
+            # qwen-asr inside the receipt-verified WSL generation. On Windows the checkpoint
+            # can therefore be exact and runnable in WSL while intentionally not importable
+            # on the host. Resolve only the registered host checkpoint path here; the held
+            # access context below still verifies every byte before the WSL worker sees it.
+            validator_entry = resolve_role(
+                VALIDATOR_MODEL_ID,
+                frozenset({"asr_validator"}),
+                "the WSL ASR validator",
+            )
+            validator_model_dir = ModelStore().path_for(validator_entry)
         # Windows msvcrt locks and Linux fcntl locks do not interoperate on DrvFS. Hold the host
         # shared lease for the complete WSL subprocess so the host fetcher's exclusive publisher
         # cannot rename this checkpoint while the worker independently verifies and constructs it.
