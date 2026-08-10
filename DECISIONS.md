@@ -5995,6 +5995,26 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-183 - Hold Kurdish invariant #3 at every Stage 2 query-reading model
+
+Protected main removed query normalization independently from the Qwen embedder and reranker. Both
+mutations left its full gate green: the score remained in range, the embedding remained a vector,
+and existing calls used already-normalized Sorani. Production was correct; the suite never
+observed what either processor actually read.
+
+The shared stub processor now records complete conversations. One Arabic-keyboard query carries
+kaf/yeh collisions, a ZWNJ-heh fold and Arabic-Indic digits. Each adapter must send the §4.1
+normalized form, omit every raw codepoint and preserve an already-normalized query unchanged. An
+introspection contract binds every production class with a query-taking method to the driver table,
+so another adapter cannot inherit invariant #3 only by assumption.
+
+Rejected checking the returned vector or score: a different alphabet changes relevance slightly,
+not the return type or range. Rejected normalizing only at the caller: the adapters are public
+model-input boundaries and already own the correct implementation. The focused visual slice passes
+95/95 without changing production code.
+
+`evidence/stage2-query-normalization-2026-08-10.md`.
+
 ## D-181 - A prerequisite is held by its own diagnostic, not by a shared exit code
 
 Protected main measured that deleting twelve of fourteen older argv guards left their tests green.

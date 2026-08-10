@@ -452,6 +452,15 @@ everything. Two dominated branches with no CLI-reachable state were removed rath
 through internal-only fixtures. The full pipeline suite passes 143/143.
 `evidence/cli-preflight-boundaries-2026-08-10.md`.
 
+## M5.2 Stage 2 query-normalization amendment (2026-08-10, D-183)
+
+Protected main proved that removing §4.1 normalization from either the Qwen embedder or reranker
+left the full suite green while silently comparing different alphabets. The test processor now
+records the actual conversation for both adapters: raw Arabic kaf/yeh, ZWNJ and Arabic-Indic digits
+must be absent; normalized Sorani and ASCII digits must be present. An idempotence control and a
+bidirectional query-reader class inventory prevent uniform mangling and future untested adapters.
+The focused visual slice passes 95/95. `evidence/stage2-query-normalization-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |
