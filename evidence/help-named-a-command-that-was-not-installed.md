@@ -50,6 +50,21 @@ console scripts (from a freshly built and installed wheel)
 
 Ten of ten name a command that exists.
 
+### The first push was refused by CI, and the fault was in my test
+
+```
+E  AssertionError: hawedit --help says 'C:\\somewhere\\venv\\Scripts\\hawedit'
+E  assert 'C:\\somewher...ipts\\hawedit' == 'hawedit'
+```
+
+The fake `argv[0]` was a `C:\…\Scripts\x.exe` string literal. On POSIX `\` is not a path
+separator, so `Path.stem` returned the whole string and all five parametrised cases failed on the
+Linux runner while passing here. **The rule was right on both platforms** — `/usr/bin/hawedit` and
+`…\Scripts\hawedit.exe` both yield `hawedit` — and only the fixture was Windows-only. Rebuilt
+with `Path(...)` so separators are native, and parametrised over the bare and `.exe` shapes, which is
+strictly more than the original checked. That is the second platform-bound test of mine after
+D-137's `pytest.skip`, so this one exercises both cases rather than assuming one.
+
 ## Proof
 
 ```

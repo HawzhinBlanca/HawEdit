@@ -259,14 +259,23 @@ def _usage_line(module: str, argv0: str) -> str:
 
 
 @pytest.mark.parametrize("module", console_script_modules())
-def test_an_installed_console_script_names_itself(module: str) -> None:
+@pytest.mark.parametrize("suffix", ["", ".exe"], ids=["posix", "windows"])
+def test_an_installed_console_script_names_itself(module: str, suffix: str) -> None:
     """From the wheel, `--help` must name the command that was actually run.
 
     `hawedit --help` printed `usage: hawedit.pipeline …` — a module path, not a command. The
     `.exe` Windows appends is dropped, because `hawedit.exe` is not what anyone types either.
+
+    Both installed shapes, and the fake `argv[0]` is built with `Path` so its separators are the
+    running platform's. The first version wrote a `C:\\…\\Scripts\\x.exe` literal and passed here
+    while failing on the Linux runner: `\\` is not a separator on POSIX, so `Path.stem` returned
+    the whole string. The *rule* was right on both — `/usr/bin/hawedit` and
+    `…\\Scripts\\hawedit.exe` both give `hawedit` — and only the fixture was Windows-only. Second
+    time a test of mine was platform-bound after D-137's skip, so this one names both cases.
     """
     script = _console_script_for(module)
-    usage = _usage_line(module, rf"C:\somewhere\venv\Scripts\{script}.exe")
+    argv0 = str(Path("opt") / "venv" / "bin" / f"{script}{suffix}")
+    usage = _usage_line(module, argv0)
 
     assert usage.split()[0] == script, f"{script} --help says {usage.split()[0]!r}"
 
@@ -297,7 +306,8 @@ def test_the_two_modes_do_not_print_the_same_name(module: str) -> None:
     invocations *are* different commands.
     """
     script = _console_script_for(module)
-    as_script = _usage_line(module, rf"C:\venv\Scripts\{script}.exe").split()[0]
+    # Native separators, for the reason the test above records.
+    as_script = _usage_line(module, str(Path("venv") / "bin" / f"{script}.exe")).split()[0]
     as_module = _usage_line(module, str(ROOT / "src" / module.replace(".", "/")) + ".py")
 
     assert as_script != as_module.split()[0], (
