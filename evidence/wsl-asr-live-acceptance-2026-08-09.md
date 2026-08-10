@@ -127,3 +127,28 @@ The evidence is retained locally at
 machine evidence contains host-specific runtime details. This result is local production-host
 acceptance only. The protected hosted `wsl-asr-security` job still requires an official push to
 `main` and remains a release-promotion prerequisite.
+
+## High-frame-rate delivery source refresh — 2026-08-10
+
+The receipt and live VEX gate were repeated at clean, ratcheted commit
+`c8c83b22f1379fcc6d210f20f9fb8aa7926c6682` after adding 60000/1001 drop-frame delivery. The
+receipt-bound source SHA-256 was
+`7ea0bb130dcca19afcff0c2395e4e4e40917dfa97c8e481b1e2cabd9742fec8c`.
+
+Provisioning completed in 172.3 seconds and revalidated generation
+`Ubuntu-a3a875601325fe6bd6497791`: CPython 3.12.0, 140 exact distributions, all
+43,546,500,168 canonical OmniASR asset bytes, successful OmniASR import, and two visible CUDA
+devices. The published receipt SHA-256 was
+`08c2cc9268c747aa47fc064948c0454e8449937087884e1c1e4f1fbafd14c7b7`.
+
+The isolated live VEX gate completed in 154.6 seconds at `2026-08-10T02:44:49Z` and accepted all
+12 findings against 12 current matched dispositions. The raw OSV report SHA-256 was
+`5059a8dde065f9c0df10fb0f775e1c60a5a9077c2fa8b30e957c78bbe21ad5e9`; the reviewed policy
+SHA-256 was `64d35516bcdc31a593b3d2aab05fd03ea8d1a319afbb008eac84d19896fea9c0`; and the 10,382-byte
+write-once evidence SHA-256 was
+`6b744c49d672168aac5403624d09cb885d809c0ac9e082e12962d8c40dd2ab3e`.
+
+The raw host-specific artifact remains ignored at
+`.gate/wsl-asr-vex-c8c83b22f1379fcc6d210f20f9fb8aa7926c6682.json`. This refresh is local
+production-host acceptance. The main-only hosted `wsl-asr-security` job and its uploaded artifact
+remain a release-promotion prerequisite after merge.
