@@ -802,3 +802,18 @@ def test_the_commit_the_ffmpeg_archive_is_pinned_to_is_published() -> None:
         f"A reader cannot verify a pin they have to read the script to find, and a pin that moves "
         f"silently is the thing D-121 removed."
     )
+
+
+def test_the_readme_live_check_includes_its_required_video_argument() -> None:
+    smoke_source = (ROOT / "src" / "hawedit" / "smoke.py").read_text(encoding="utf-8")
+    requires_video = "Stage 4 needs --video" in smoke_source
+    invocations = [line for line in README.splitlines() if "python -m hawedit.smoke" in line]
+    assert invocations
+    assert all(("--video" in line) == requires_video for line in invocations)
+
+
+def test_every_blocked_entry_cited_by_the_operator_docs_exists() -> None:
+    entries = set(_blocked_entries())
+    for name, document in (("README.md", README), ("PROGRESS.md", PROGRESS)):
+        cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", document))
+        assert cited <= entries, f"{name} cites nonexistent blockers: {sorted(cited - entries)}"

@@ -878,3 +878,22 @@ Acceptance criteria for closing this entry:
 
 Until those facts exist, M2.1 is PARTIAL: the index implementation and runner document shape are
 correct, but claiming it participates in discovery would be false.
+
+---
+
+## #19 · The billed live check needs a matching 13-second sample video
+
+**What is blocked:** `python -m hawedit.smoke --video ...`, the one command that intentionally
+spends money, cannot complete as shipped because no video matches its built-in Sorani sample.
+
+**Why:** Stage 4 requires real source pixels. The sample's timed words span 0..13,000 ms, while the
+only Kurdish fixture is 4.162 seconds and contains different material. Reusing it would either
+fail on later spans or label pixels from a shorter, unrelated recording as evidence for the sample.
+
+**What Hawa must provide:** a real video of the built-in sample being spoken, at least 13 seconds
+long, committed or supplied by path. Then run `python -m hawedit.smoke --video <that file>` with a
+configured Gemini credential.
+
+**What is already fixed:** missing or nonexistent `--video` refuses before confirmation and before
+the billed Path A calls. The sample is not shortened to fit unrelated footage, and synthetic video
+is not accepted as a substitute for the real-pixel check.

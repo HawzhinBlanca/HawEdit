@@ -94,6 +94,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✗ no {GEMINI_API_KEY}. Run `python -m hawedit.credentials` first.", file=sys.stderr)
         return 2
 
+    # Refuse from argv before confirmation and before either billed Path A call.
+    if args.video is None:
+        print(
+            "✗ Stage 4 needs --video: pass a video matching the built-in Sorani sample; "
+            "text-only visual judging is refused.",
+            file=sys.stderr,
+        )
+        return 2
+    video = args.video
+    if not video.is_file():
+        print(f"✗ no sample video at {video}", file=sys.stderr)
+        return 2
+
     normalized = normalize_transcript(SAMPLE)
     print("hawedit live check — §3 Stage 3 Path A, then §3 Stage 4\n")
     print(f"key         {mask(key)}")
@@ -146,15 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     # --- §3 Stage 4 -----------------------------------------------------------------------
     top = candidates[0]
     print("\n==> Stage 4")
-    if args.video is None:
-        print("✗ Stage 4 needs --video; text-only visual judging is refused", file=sys.stderr)
-        return 1
-    if not args.video.is_file():
-        print(f"✗ no sample video at {args.video}", file=sys.stderr)
-        return 2
     try:
         keyframes = extract_judge_frames(
-            args.video,
+            video,
             top.in_ms,
             top.out_ms,
             Path(".gate") / "gemini-smoke-keyframes",

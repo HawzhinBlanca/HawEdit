@@ -477,6 +477,12 @@ must still verify and publish/read.  Production was already correct.  This is
 deletion/corruption detection, not a signature against an actor who can rewrite both files.
 `evidence/invariant-1-digest-evidence-2026-08-10.md`.
 
+## M2.6 billed-smoke preflight amendment (2026-08-10, D-188)
+
+The live Gemini smoke now refuses missing/nonexistent video before confirmation and before either
+billed Path A call. README documents the required flag and the absent matching 13-second recording
+as `BLOCKED.md` #19. `evidence/smoke-video-preflight-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |

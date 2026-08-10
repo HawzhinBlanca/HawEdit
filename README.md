@@ -340,13 +340,19 @@ Once a key is stored, verify the real path end to end — this is the only thing
 that spends money, and it says how much before it does:
 
 ```bash
-.venv/bin/python -m hawedit.smoke     # two real calls, ~$0.003
+.venv/bin/python -m hawedit.smoke --video PATH_TO_A_VIDEO_OF_THE_SAMPLE  # ~$0.003
 ```
 
 It runs §3 Stage 3 Path A over a built-in Sorani sample and §3 Stage 4 on the top candidate,
 then prints the Kurdish title it got back. It checks what offline tests cannot: that
 `gemini-2.5-pro` is enabled on your key's project, that the structured-output schema survives a
 real response, and that the model actually answers in Kurdish.
+
+`--video` is required, and no matching video ships in this repository. The built-in sample spans
+13 seconds; the 4.162-second Kurdish fixture is a different recording and cannot supply honest
+pixels for later candidate spans. Until a matching recording exists (`BLOCKED.md` #19), the live
+check is not runnable as shipped. Missing or nonexistent video now returns exit 2 before the
+confirmation prompt and before either billed Path A call.
 
 **Before the first client job**, §3 Stage 3 requires a decision, not a setting: full-transcript
 discovery sends 100% of every transcript to Google, and for COMMS and KAAE material paid-tier

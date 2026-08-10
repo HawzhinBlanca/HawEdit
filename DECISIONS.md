@@ -5995,6 +5995,21 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-188 - An impossible live smoke refuses before confirmation and billing
+
+The documented live check omitted `--video`, made its billed Path A calls and only then refused
+pixel-grounded Stage 4. Video presence and file existence are now checked immediately after
+credential presence, before the estimate, confirmation prompt, model construction or transport;
+the refusal is exit 2 because nothing ran. Tests prove no billed boundary or confirmation is
+reached, and a legal existing-video control must reach the billed boundary.
+
+The built-in timed sample lasts 13 seconds and no matching video ships. The unrelated 4.162-second
+fixture cannot honestly supply later pixels, so `BLOCKED.md` #19 requests a real recording. The
+text is not shortened to fit another clip and synthetic pixels are not used to make Stage 4 appear
+accepted.
+
+`evidence/smoke-video-preflight-2026-08-10.md`.
+
 ## D-183 - Hold Kurdish invariant #3 at every Stage 2 query-reading model
 
 Protected main removed query normalization independently from the Qwen embedder and reranker. Both
