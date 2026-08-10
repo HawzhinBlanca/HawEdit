@@ -177,6 +177,11 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > landed on the stronger tree, and merge `89a1641` then joined both parents with a tree exactly
 > equal to the verified readiness parent. `evidence/main-semantic-merge-2026-08-10.md`.
 >
+> **M0.1 amendment (D-172).** `BLOCKED.md` resolution parsing now recognizes its complete,
+> declared heading vocabulary: `RESOLVED` and `ANSWERED`. The suite refuses an undeclared heading
+> marker, a declared word unused by the ledger, and the concrete regression where answered #10
+> reads as live. `evidence/a-blocker-could-resolve-invisibly.md`.
+>
 > **M5.4 amendment (D-059).** The whole-episode 256-frame shortfall named in that row is
 > closed: windows are now packed into deterministic ≤256-frame calls. The unmeasured temporal
 > discrimination on real dynamic Sorani footage remains a shortfall.

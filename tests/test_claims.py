@@ -170,6 +170,21 @@ def test_every_ledger_row_marked_partial_names_its_shortfall() -> None:
             assert "Shortfall" in cells[4], f"PARTIAL row names no shortfall:\n{line}"
 
 
+# BLOCKED.md keeps resolved entries as history. These are the complete, deliberately declared
+# heading words that mean an entry no longer needs Hawa; an undeclared synonym must fail rather
+# than silently reading as a live blocker (D-172).
+_BLOCKED_RESOLUTIONS: frozenset[str] = frozenset({"RESOLVED", "ANSWERED"})
+
+
+def _blocked_heading_markers() -> list[tuple[str, str]]:
+    """Return every ``(entry number, bold marker)`` pair in BLOCKED.md headings."""
+    blocked = (ROOT / "BLOCKED.md").read_text(encoding="utf-8")
+    pairs: list[tuple[str, str]] = []
+    for number, rest in re.findall(r"^##\s*#(\d+)([^\n]*)", blocked, re.MULTILINE):
+        pairs.extend((number, marker.strip()) for marker in re.findall(r"\*\*([^*]+)\*\*", rest))
+    return pairs
+
+
 def _blocked_entries() -> dict[str, bool]:
     """Every BLOCKED.md entry number, mapped to whether it is still live.
 
@@ -179,7 +194,8 @@ def _blocked_entries() -> dict[str, bool]:
     blocked = (ROOT / "BLOCKED.md").read_text(encoding="utf-8")
     live: dict[str, bool] = {}
     for number, rest in re.findall(r"^##\s*#(\d+)([^\n]*)", blocked, re.MULTILINE):
-        resolved = "RESOLVED" in rest.upper()
+        upper = rest.upper()
+        resolved = any(word in upper for word in _BLOCKED_RESOLUTIONS)
         live[number] = live.get(number, True) and not resolved
     return live
 
@@ -209,6 +225,41 @@ def test_every_blocked_row_points_at_a_live_blocked_entry() -> None:
                 f"{cells[1]} is marked BLOCKED, but every blocker it cites is resolved "
                 f"(#{sorted(resolved)}). The work is available — re-status the row."
             )
+
+
+def test_every_blocked_heading_marker_is_a_declared_resolution() -> None:
+    """A new heading status must be consciously added to the resolution vocabulary."""
+    undeclared = [
+        (number, marker)
+        for number, marker in _blocked_heading_markers()
+        if not any(marker.upper().startswith(word) for word in _BLOCKED_RESOLUTIONS)
+    ]
+    assert not undeclared, (
+        f"BLOCKED.md headings use undeclared markers: {undeclared}. Decide whether each means "
+        "'no longer needs Hawa', then declare it or reword the heading."
+    )
+
+
+def test_an_answered_entry_is_not_live() -> None:
+    """#10 was answered by Hawa; its surviving obstacle was filed separately as #11."""
+    entries = _blocked_entries()
+    assert "10" in entries, "BLOCKED.md #10 has gone missing"
+    assert not entries["10"], "#10 is marked ANSWERED and still reads as a live blocker"
+    assert entries.get("1"), "#1 has no resolution marker and must still read as live"
+
+
+def test_the_resolution_vocabulary_is_used_by_something() -> None:
+    """Do not predict future status words: every declared word must be in the ledger."""
+    used = {
+        word
+        for _, marker in _blocked_heading_markers()
+        for word in _BLOCKED_RESOLUTIONS
+        if marker.upper().startswith(word)
+    }
+    assert used == _BLOCKED_RESOLUTIONS, (
+        f"declared but unused: {sorted(_BLOCKED_RESOLUTIONS - used)}. Remove the word until an "
+        "entry actually uses it."
+    )
 
 
 # --- #1 the README must not describe a product that does not exist -----------------------

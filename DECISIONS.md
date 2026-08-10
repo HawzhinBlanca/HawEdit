@@ -5994,3 +5994,22 @@ Merge `89a1641` has parents `bc12e13` and `ba52888`. Its tree
 tree. The second parent makes all main commits ancestors without replaying stale implementations.
 
 `evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-172 - Declare every way a blocker stops needing Hawa
+
+`tests/test_claims.py` maps `BLOCKED.md` headings to live or resolved entries so a milestone cannot
+remain blocked behind completed work. The parser recognized only `RESOLVED`, but the ledger also
+uses `ANSWERED` on #10. That entry therefore read as live even though Hawa answered the question;
+the remaining Windows loader problem was filed separately as #11 and later resolved.
+
+The accepted vocabulary is now explicitly `{RESOLVED, ANSWERED}` and enforced in both directions.
+Every bold marker in a numbered heading must start with one of those words, and every declared
+word must be used by at least one heading. The specific #10 regression is pinned alongside an
+unmarked-live control. This turns a future status synonym into a deliberate code review rather
+than an invisible resolution.
+
+Rejected renaming #10 to `RESOLVED`: answering Hawa's repository question and removing the loader
+obstacle were distinct events, and the ledger records that distinction accurately. Rejected
+treating any bold text as a resolution: it would make formatting silently change milestone state.
+
+`evidence/a-blocker-could-resolve-invisibly.md`.
