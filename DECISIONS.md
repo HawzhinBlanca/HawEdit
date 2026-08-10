@@ -6999,3 +6999,62 @@ caught. That is the third such mutation in this session after D-137's retry ceil
 Python's. Re-run without the pipe, `--check` exits **1** with no key configured — so `README.md`'s
 *"exits non-zero if unusable"* holds and there was no finding there.
 `evidence/a-blocker-could-resolve-invisibly.md`.
+
+## D-145
+
+**The §7 check on the confidential route was a copy, and no test held the copy.** `README.md` says
+`judge.py` is *"The judge contract: shadow never routed, 200K tier ceiling, promotion only on
+evidence."* Adversarial pass #22 mutated all three claims one at a time. Eighteen mutations, one
+survivor:
+
+```
+SURVIVED  VertexGeminiJudge stops resolving itself against §7
+```
+
+`VertexGeminiJudge` subclasses `GeminiJudge` but does **not** call `super().__init__` — it
+reimplements it, correctly, because Vertex authenticates with ADC and has no API key to read. So
+the parent's `route(self)` is *copied* into the subclass rather than inherited, and only the
+parent's copy was tested (`test_the_shadow_cannot_be_constructed_as_the_judge`, which builds a
+`GeminiJudge`). Deleting `route(self)` from `VertexGeminiJudge.__init__` left the judge, gemini,
+path_a, editorial_bench and clip suites all green, and the artifact it then produced was a real
+endpoint:
+
+```
+constructed: gemini-3.1-pro
+url: https://aiplatform.googleapis.com/v1/projects/proj/locations/global/
+     publishers/google/models/gemini-3.1-pro:generateContent
+```
+
+That is the *confidential* route — the ZDR path §3 reserves for material that must not train a
+model — pointed at the one model §3 Stage 4 marks "evaluated, not routed", and billed. The guard
+itself was never wrong; nothing would have noticed it going.
+
+**Decision: hold the wiring for the class list, not for the class.** `tests/test_gemini.py` now
+names every constructible judge in `_concrete_judges()` and checks that set **bidirectionally**
+against `GeminiJudge` and its transitive subclasses — a subclass with no constructor fails, and a
+constructor naming a class that no longer exists fails too. Each named judge is then built as the
+shadow and must raise `NotRoutable`, with a control that the same constructor builds the pinned
+incumbent and puts it in the request URL. Five tests, floor 1422 → 1427.
+
+**Rejected: making `VertexGeminiJudge` delegate to `super().__init__`.** It reads like the real
+root fix and is not: the parent's body ends by reading `GEMINI_API_KEY` and raising
+`GeminiUnavailable` when it is absent, which is precisely what the ADC path must not do. Refactoring
+to share the invariant would mean splitting the parent's `__init__` in two for one subclass — an
+abstraction for one product — and it would still leave the *next* subclass free to skip whichever
+half it liked. The class list catches that; a refactor does not.
+
+**Rejected: one more test asserting `VertexGeminiJudge` refuses the shadow.** It closes today's hole
+and none of the others. This is the fifth unheld-wiring finding in this session (D-105, D-133,
+D-135, D-140), and every one of them was a call that existed and was believed rather than asserted.
+A guard that enumerates is worth more than a guard that names.
+
+**What survived, stated plainly.** The other two README claims held under every mutation: the
+ceiling refuses a request at exactly 200,000 tokens and an uncounted one, in `judge.py` and again at
+both real call sites (`gemini.py`'s counted-size check and `path_a.py`'s); promotion refuses an
+empty regression set, a set below the 20-item floor, and a tie above it. So did four claims the row
+does not make: `to_editorial()`'s second refusal, `_is_kurdish` on an English title, D-076's
+check-after-normalization order, and the payoff-inside-the-clip range. **19/19** after the fix,
+including a mutation of the new guard itself — dropping `VertexGeminiJudge` from the class list is
+caught by the bidirectional check.
+
+`evidence/adversarial-pass-22-2026-08-10.md`.

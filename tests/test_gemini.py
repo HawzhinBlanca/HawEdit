@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -34,7 +34,15 @@ from hawedit.gemini import (
     VertexGeminiJudge,
     count_tokens,
 )
-from hawedit.judge import InputMode, JudgeFrame, JudgeRequest, RequestTooLarge
+from hawedit.judge import (
+    JUDGE_SHADOW,
+    KURDISH_EDITORIAL_JUDGE,
+    InputMode,
+    JudgeFrame,
+    JudgeRequest,
+    NotRoutable,
+    RequestTooLarge,
+)
 from hawedit.registry import WrongRole
 
 KEY = "test-key-not-real"
@@ -440,3 +448,71 @@ def test_count_tokens_failure_is_not_silently_zero() -> None:
 
     with pytest.raises(GeminiUnavailable, match="countTokens"):
         count_tokens("text", KEY, transport=failing)
+
+
+# --- §7, held for every judge a caller can build, not only the first one ---------------------
+
+
+def _concrete_judges() -> dict[str, Callable[[str], GeminiJudge]]:
+    """Every judge class a caller can construct, with the least each one needs to exist.
+
+    `VertexGeminiJudge` does not call `super().__init__` — it reimplements it, because Vertex
+    authenticates with ADC and has no API key to read. So `GeminiJudge.__init__`'s §7 check is
+    *copied* into the subclass rather than inherited, and a copy is what a test stops noticing.
+    Measured (adversarial pass #22): deleting `route(self)` from `VertexGeminiJudge.__init__`
+    left this whole suite green, and `VertexGeminiJudge("proj", model_id="gemini-3.1-pro")` then
+    built a judge whose first request would go to
+    `.../projects/proj/locations/global/publishers/google/models/gemini-3.1-pro:generateContent`
+    — the confidential route, billed, using the model §3 Stage 4 marks "evaluated, not routed".
+    """
+    return {
+        "GeminiJudge": lambda model_id: GeminiJudge(
+            model_id=model_id, api_key=KEY, transport=Api(), sleep=lambda _seconds: None
+        ),
+        "VertexGeminiJudge": lambda model_id: VertexGeminiJudge(
+            "news-project",
+            model_id=model_id,
+            token_provider=lambda: "adc-token",
+            transport=Api(),
+            sleep=lambda _seconds: None,
+        ),
+    }
+
+
+def _judge_class_names() -> set[str]:
+    seen = {GeminiJudge}
+    frontier = [GeminiJudge]
+    while frontier:
+        for child in frontier.pop().__subclasses__():
+            if child not in seen:
+                seen.add(child)
+                frontier.append(child)
+    return {cls.__name__ for cls in seen}
+
+
+def test_every_constructible_judge_is_covered_here() -> None:
+    """Bidirectional, so a new subclass fails until someone states how it is built.
+
+    The §7 check lives in each `__init__`. A subclass that forgets it is the whole failure —
+    naming the classes in one place is what makes forgetting visible.
+    """
+    covered = set(_concrete_judges())
+    assert _judge_class_names() == covered, (
+        f"judge classes with no constructor in this suite: "
+        f"{sorted(_judge_class_names() - covered)}; constructors naming a class that no longer "
+        f"exists: {sorted(covered - _judge_class_names())}"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_concrete_judges()))
+def test_no_judge_can_be_built_as_the_shadow(name: str) -> None:
+    with pytest.raises(NotRoutable):
+        _concrete_judges()[name](JUDGE_SHADOW)
+
+
+@pytest.mark.parametrize("name", sorted(_concrete_judges()))
+def test_every_judge_is_built_with_the_pinned_incumbent(name: str) -> None:
+    """The control: a constructor that refused *everything* would pass the test above."""
+    judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE)
+    assert judge.model_id == KURDISH_EDITORIAL_JUDGE
+    assert KURDISH_EDITORIAL_JUDGE in judge._url("generateContent")
