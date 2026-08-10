@@ -41,7 +41,7 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 | §3 Stage | State | What is missing |
 |---|---|---|
 | 0 · Ingest | **runs** | Diarization — Community-1 is a gated repo (`BLOCKED.md` #4). |
-| 1 · Speech | **runs** | `--omni-asr` runs official OmniASR LLM/CTC in parallel, decodes the CTC hypothesis, routes the bottom confidence quartile and material disagreement to rzgar, and CTC-realigns validator corrections. Labelled Sorani accuracy remains external. |
+| 1 · Speech | **runs** | `--omni-asr` runs official OmniASR LLM/CTC in parallel, decodes the CTC hypothesis, routes the bottom confidence quartile and material disagreement to rzgar, and CTC-realigns validator corrections. A source-bound 38.56-minute Sorani run published 5,897 timed words while retaining canonical segments for two explicitly rejected corrections; labelled Sorani accuracy remains external. |
 | 2 · Index | **wired** | `--visual` extracts each scene once, embeds all windows, retrieves top 50, reranks all hits and retains 5–10. Media with fewer scenes than the survivor count is **refused**, not silently shortened — measured on the 3-scene fixture, `evidence/unlisted-modules.md`. |
 | 3 · Discovery | **wired** | Path A and composed Path B union without promoting non-survivor scenes; `--auto-select` anchors complete contiguous sentences. |
 | 4 · Editorial judge | **wired** | Requests carry actual source JPEG bytes. Developer API handles non-confidential work; Vertex uses ADC bearer auth and an attributed ZDR gate. Credentials/billing remain external. |

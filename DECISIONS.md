@@ -6058,3 +6058,26 @@ ancestry and no file content. The complete local and hosted gates remain mandato
 tree equality is not execution evidence.
 
 `evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-176 - A rejected validator correction is evidence, not an episode failure or a gap
+
+The first source-current full Sorani run closed the Windows/WSL loader ownership defect and then
+measured a second blast radius after 34.9 minutes: canonical OmniASR had aligned a segment, rzgar
+proposed a correction, and the correction needed 22 CTC frames where only 15 existed. That
+`AlignmentInfeasible` escaped the per-segment boundary and discarded all 547 regions. D-135 had
+made initial canonical failures survivable but did not cover validator re-alignment.
+
+Dropping the segment would throw away admissible timed speech. Keeping it silently would make a
+failed validation attempt look successful. Calling it `UnalignedSpeech` would also lie, because
+canonical timed words remain. The chosen artifact is `RejectedValidatorCorrection`: media bounds,
+the registered validator and a bounded reason. The canonical segment remains, the correction is
+visible in raw JSON and the run report, and `asr.validated_by` names rzgar only if at least one
+correction was actually accepted.
+
+After the fix, the exact receipt-bound source completed the same 2,313.8-second episode in 45.7
+minutes. Worker output and the immutable host artifact were equal; the raw sidecar authenticated
+5,897 words; two genuinely unaligned regions totalled 664 ms; and two rejected corrections were
+reported without becoming transcript gaps. This closes executable M1.4. It does not create a
+labelled accuracy score: M0.13/M7.2 remain external corpus requirements.
+
+`evidence/full-sorani-stage1-acceptance-2026-08-10.md`.
