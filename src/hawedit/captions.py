@@ -553,14 +553,25 @@ def render_caption_png(
 
     `shaping` is a parameter only so a test can render the **wrong** way and prove the right
     way differs. Production always goes through `subtitle_filter`, which hard-codes `complex`.
+
+    The filter comes **from** `subtitle_filter` rather than being rebuilt here. Both spellings
+    were maintained side by side until D-164 — identical character for character, and nothing
+    required them to stay so, which meant §4.3.6's pixel safeguard was comparing renders of a
+    string production does not use. A fourth element added to the burn would have gone
+    unrendered by the only test that looks at pixels.
     """
     import subprocess
 
-    filter_string = (
-        f"ass={_escape_filter_path(ass_path)}"
-        f":shaping={shaping}"
-        f":fontsdir={_escape_filter_path(fonts_dir)}"
-    )
+    filter_string = subtitle_filter(ass_path, fonts_dir)
+    if shaping != "complex":
+        wrong = filter_string.replace("shaping=complex", f"shaping={shaping}", 1)
+        if wrong == filter_string:
+            raise ValueError(
+                f"could not render with shaping={shaping!r}: {filter_string!r} carries no "
+                f"`shaping=complex` to replace, so this would silently render the right way "
+                f"and the negative control would be measuring nothing"
+            )
+        filter_string = wrong
     subprocess.run(
         [
             str(ffmpeg),

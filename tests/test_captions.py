@@ -92,6 +92,63 @@ def _render_clip_source() -> str:
     return body if following == -1 else body[:following]
 
 
+def _render_caption_png_source() -> str:
+    """`render_caption_png`'s body, for the claim that it burns production's own filter."""
+    captions_py = FONT.resolve().parents[2] / "src" / "hawedit" / "captions.py"
+    source = captions_py.read_text(encoding="utf-8")
+    body = source[source.index("def render_caption_png(") :]
+    following = body.find("\ndef ")
+    return body if following == -1 else body[:following]
+
+
+def test_the_golden_render_burns_productions_own_filter_string() -> None:
+    """§4.3.6 compares pixels, and those pixels have to come from the filter production burns.
+
+    `render_caption_png` spelled out its own `ass=…:shaping=…:fontsdir=…` until D-164 —
+    identical to `subtitle_filter`'s output character for character, and nothing required it to
+    stay so. A fourth element added to the burn would have gone unrendered by the only test that
+    looks at pixels, which is §4.3.6's whole point ("the option flag is not" the safeguard).
+
+    Wiring, so the claim is where the call is — D-105's lesson, and the same shape as
+    `test_the_burn_verifies_the_rtl_stack_it_shapes_with` above.
+    """
+    body = _render_caption_png_source()
+    assert "subtitle_filter(" in body, (
+        "the golden render no longer derives its filter from subtitle_filter, so §4.3.6 is "
+        "comparing pixels rendered from a string production does not use"
+    )
+    # The control: deriving it and then rebuilding it inline beside the call would satisfy the
+    # assertion above while changing nothing.
+    assert 'f"ass=' not in body, (
+        "render_caption_png builds an `ass=…` filter of its own again; production's string is "
+        "the one whose pixels §4.3.6 must compare"
+    )
+
+
+def test_rendering_the_wrong_way_refuses_rather_than_rendering_the_right_way(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The negative control's own control, and the price of deriving the filter.
+
+    `render_caption_png` now reaches `shaping=simple` by replacing production's
+    `shaping=complex`. If production ever stopped emitting that substring, the replacement would
+    quietly no-op: `test_simple_shaping_fails_the_golden_test` would render the **right** way,
+    find it equal to the reference, and fail — reading as a shaping regression when the truth is
+    a broken test. It refuses instead, naming the string it could not find.
+    """
+    import hawedit.captions as captions
+
+    monkeypatch.setattr(captions, "subtitle_filter", lambda ass, fonts: "ass=x:fontsdir=y")
+    with pytest.raises(ValueError, match="carries no"):
+        captions.render_caption_png(
+            Path("ffmpeg-never-runs"),
+            tmp_path / "captions.ass",
+            tmp_path,
+            tmp_path / "out.png",
+            shaping="simple",
+        )
+
+
 def test_a_complete_build_passes() -> None:
     report = assert_rtl_stack(FULL_BUILDCONF, LDD_OUTPUT)
     assert report.libass and report.harfbuzz and report.fribidi

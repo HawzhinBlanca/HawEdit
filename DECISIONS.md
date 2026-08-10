@@ -8475,3 +8475,54 @@ repacks against each other, the control became demonstrable and the audit went 4
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-164
+
+**§4.3.6's pixel safeguard rendered a filter string production does not use.** D-163 recorded this
+as remaining debt: `subtitle_filter` (production) and `render_caption_png` (the golden render) each
+built `ass=…:shaping=…:fontsdir=…` independently — identical character for character, and nothing
+required them to stay so. The one test that looks at pixels was therefore comparing renders of a
+copy.
+
+**Decision: derive, do not duplicate.** `render_caption_png` now calls `subtitle_filter` and, for
+the negative control only, replaces `shaping=complex` with the wrong value — **refusing** if that
+substring is absent, because a silent no-op would make
+`test_simple_shaping_fails_the_golden_test` render the *right* way, find it equal to the reference,
+and fail in a way that reads as a shaping regression rather than a broken test.
+
+**Measured, both ways.** The same production regression — `fontsdir` pointed at the wrong
+directory, which is §4.3.4's whole subject — against the pixel tests alone: **coupled it is
+caught** (`test_the_render_matches_the_golden_reference` red); **with the independent copy it is
+missed**, pixel tests green.
+
+**And measured honestly: this was never an uncovered hole.** With D-164's own two tests removed and
+the coupling reverted, the whole suite still reddens — on **exactly one** pre-existing test,
+`test_a_windows_path_is_escaped_for_both_unescaping_passes`, a string test that happens to assert
+the escaped `fontsdir` path. So this is **defence in depth, not a closed gap**, and claiming
+otherwise would be the overclaim D-163 was careful to avoid. What it adds is that the pixel
+safeguard now sees production's string at all, so an element the string tests do not happen to
+assert is rendered and compared — the case a fixed list of string assertions cannot be enumerated
+against in advance.
+
+**Rejected: giving `subtitle_filter` a `shaping` parameter.** One shared builder would be tidier,
+and it would put a knob on production whose only purpose is letting a test ask for the wrong
+answer. §4.3.1's requirement is that production *never* relies on anything but `complex`; a
+parameter invites exactly the call the requirement forbids. The replacement lives in the
+test-facing helper, where it belongs, and refuses rather than degrading.
+
+**Rejected: asserting the two strings equal in a test instead of unifying them.** That pins today's
+agreement without making the pixels come from production's string, which is the property §4.3.6
+needs — the render is the evidence, not the comparison of two literals.
+
+**Mutation audit 5/5**, including the wiring test's plausible dodge (call `subtitle_filter` and
+throw the result away — caught by the `f"ass=` control beside the call, not by the call assertion)
+and the new refusal, reached through a monkeypatched `subtitle_filter` so it is exercised rather
+than merely present. **One correction to the sweep:** mutation 1's self-check asserted
+`"subtitle_filter(ass_path" not in out`, which is also that function's own `def` line, so it fired
+on the definition and reported a mutation that had applied. Narrowed to
+`"filter_string = subtitle_filter("`.
+
+`evidence/the-golden-render-burned-a-filter-production-does-not-use.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
