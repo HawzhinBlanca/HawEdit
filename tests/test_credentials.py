@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from hawedit.credentials import (
+    _PINNED_JUDGE,
     GEMINI_API_KEY,
     REPO_ROOT,
     CredentialError,
@@ -32,6 +33,7 @@ from hawedit.credentials import (
     validate_gemini_key,
     write_credential,
 )
+from hawedit.credentials import main as credentials_main
 
 FAKE_KEY = "AIzaSy-not-a-real-key-0000-abcd"
 
@@ -72,15 +74,27 @@ def test_writing_to_a_tracked_path_is_refused(tmp_path: Path) -> None:
     # `.gitignore` patterns rather than from the filesystem, so a path that does not exist is
     # just as un-ignored — and if the guard ever fails open, the worst case is one stray file
     # instead of a deleted test. D-113.
+    # Cleaned up in `finally`, because D-113 stopped one failure from deleting a test and left it
+    # able to poison every later run instead: the pre-existence assertion below fails for any
+    # subsequent invocation once the file is on disk, so a single fail-open turned into an
+    # indefinitely red suite that only a manual `rm` of a real-looking credential file could
+    # clear. Measured 2026-08-10 while auditing this very guard — the stray file made 16 of 20
+    # mutations report RED for the wrong reason. The check is unchanged; it now heals. D-137.
     not_ignored = REPO_ROOT / "a-credential-must-never-be-written-here.env"
-    assert not not_ignored.exists(), "the probe path must not exist before the call"
-
-    with pytest.raises(CredentialError, match="not ignored by git"):
-        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=not_ignored)
-
     assert not not_ignored.exists(), (
-        "the refusal has to happen before the write, or a rejected credential is on disk anyway"
+        f"the probe path must not exist before the call. If it does, an earlier run of this test "
+        f"wrote a credential there and the guard failed open — inspect and delete {not_ignored}"
     )
+
+    try:
+        with pytest.raises(CredentialError, match="not ignored by git"):
+            write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=not_ignored)
+
+        assert not not_ignored.exists(), (
+            "the refusal has to happen before the write, or a rejected credential is on disk anyway"
+        )
+    finally:
+        not_ignored.unlink(missing_ok=True)
 
 
 def test_the_default_credential_file_is_outside_the_checkout() -> None:
@@ -134,6 +148,52 @@ def test_an_existing_permissive_file_is_tightened(tmp_path: Path) -> None:
         env_file.chmod(0o644)
     write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
     assert_owner_only(env_file)
+
+
+def test_the_opened_env_must_be_the_file_the_symlink_check_looked_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found SURVIVED by adversarial pass #20, on the platform where it is load-bearing.
+
+    Where the kernel has no `O_NOFOLLOW` — `_O_NOFOLLOW` is measured at **0** on this Windows
+    host — the guarantee is rebuilt from two halves: refuse a symlink *before* the open, then
+    prove *after* the open that the handle is the same file that was checked. The second half is
+    what closes the window the first half opens, and deleting it left the whole suite green: the
+    symlink test covers the pre-check, and nothing covered the identity test.
+
+    The race is forced rather than waited for. `os.lstat` is made to answer about a *different*
+    file, which is exactly what an attacker replacing `.env` between the two calls achieves, and
+    the write must refuse rather than put a key into whatever now sits at that path.
+    """
+    from hawedit.credentials import _O_NOFOLLOW
+
+    if _O_NOFOLLOW:
+        pytest.skip("the kernel enforces O_NOFOLLOW; the reconstruction does not run here")
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("OTHER=1\n", encoding="utf-8")
+    decoy = tmp_path / "decoy"
+    decoy.write_text("decoy\n", encoding="utf-8")
+    real_lstat = os.lstat
+
+    def lstat_of_another_file(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        if str(path) == str(env_file):
+            return real_lstat(decoy)  # the identity the check will remember
+        return real_lstat(path)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("hawedit.credentials.os.lstat", lstat_of_another_file)
+
+    with pytest.raises(CredentialError, match="identity changed"):
+        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
+
+    assert env_file.read_text(encoding="utf-8") == "OTHER=1\n", (
+        "the key was written into a file whose identity had changed under the check"
+    )
+    # The control: with `os.lstat` telling the truth the same call succeeds, so this measures the
+    # identity test and not merely that some patched syscall breaks the write.
+    monkeypatch.setattr("hawedit.credentials.os.lstat", real_lstat)
+    write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
+    assert GEMINI_API_KEY in env_file.read_text(encoding="utf-8")
 
 
 # --- refusal 2: never store a key that has not been verified ------------------------------
@@ -278,3 +338,114 @@ def test_status_validates_a_configured_key(tmp_path: Path, monkeypatch: pytest.M
     assert check == KeyCheck(
         True, "key accepted; 2 model(s) visible", ("gemini-2.5-pro", "gemini-2.5-flash")
     )
+
+
+# --- D-137: the panel's own ordering, which no test drove -----------------------------------
+#
+# M2.8 leads with "`python -m hawedit.credentials` verifies a key against Google before storing
+# it". That decision lives entirely in `main()`, and adversarial pass #20 found **no test drove
+# `main()` at all**: storing a rejected key, and storing before validating, both survived.
+
+
+def _drive_main(
+    monkeypatch: pytest.MonkeyPatch,
+    entered: str,
+    check: KeyCheck,
+    capsys: pytest.CaptureFixture[str],
+) -> tuple[int, list[str], list[tuple[str, str]], str]:
+    """Run the panel with the network and the writer replaced, recording the order of both.
+
+    `write_credential` is stubbed rather than pointed at a temporary file: its default
+    `env_file` is bound at definition time, so a test that redirected `ENV_FILE` would still
+    write to the real user config. The claim under test is the *decision and its order*, and
+    that is what is recorded.
+    """
+    order: list[str] = []
+    written: list[tuple[str, str]] = []
+
+    def fake_validate(key: str, transport: object = None) -> KeyCheck:
+        order.append("validate")
+        return check
+
+    def fake_write(name: str, value: str, *args: object, **kwargs: object) -> Path:
+        order.append("write")
+        written.append((name, value))
+        return Path("/tmp/does-not-matter.env")
+
+    monkeypatch.setattr("hawedit.credentials.validate_gemini_key", fake_validate)
+    monkeypatch.setattr("hawedit.credentials.write_credential", fake_write)
+    monkeypatch.setattr("hawedit.credentials.getpass", lambda _prompt: entered, raising=False)
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": entered)
+    monkeypatch.delenv(GEMINI_API_KEY, raising=False)
+    monkeypatch.setattr("hawedit.credentials.read_credential", lambda *a, **k: None)
+
+    code = credentials_main([])
+    captured = capsys.readouterr()
+    return code, order, written, captured.out + captured.err
+
+
+def test_a_key_google_rejects_is_never_written(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A key that does not work is worse than no key: it turns a clear "not configured" into a
+    failure inside the first client job — and the module says so in that branch's comment.
+
+    Survived pass #20: deleting the `if not verified.valid` guard left the whole suite green.
+    """
+    code, order, written, output = _drive_main(
+        monkeypatch, FAKE_KEY, KeyCheck(False, "the API rejected this key (HTTP 400)"), capsys
+    )
+
+    assert written == [], f"a rejected key was stored: {written}"
+    assert order == ["validate"], order
+    assert code == 1
+    assert "nothing was written" in output
+
+
+def test_the_key_is_validated_before_it_is_stored(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ordering, not just the outcome. Also survived pass #20: moving the write above the
+    validation left every test green, because the accepted path stores either way.
+
+    The control is the assertion on `order` — asserting only that the key *was* stored is
+    satisfied by a panel that stores first and validates afterwards, which is the defect.
+    """
+    code, order, written, _ = _drive_main(
+        monkeypatch, FAKE_KEY, KeyCheck(True, "key works", (_PINNED_JUDGE,)), capsys
+    )
+
+    assert written == [(GEMINI_API_KEY, FAKE_KEY)]
+    assert order == ["validate", "write"], f"stored before verifying: {order}"
+    assert code == 0
+
+
+def test_the_panel_prints_the_mask_and_never_the_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ "never prints it" covers the success path too, where the key has just been accepted and
+    is the most tempting thing to echo back as confirmation."""
+    _, _, _, accepted = _drive_main(
+        monkeypatch, FAKE_KEY, KeyCheck(True, "key works", (_PINNED_JUDGE,)), capsys
+    )
+    assert FAKE_KEY not in accepted
+    assert mask(FAKE_KEY) in accepted
+
+    _, _, _, rejected = _drive_main(monkeypatch, FAKE_KEY, KeyCheck(False, "no"), capsys)
+    assert FAKE_KEY not in rejected
+
+
+def test_a_blank_entry_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The control for both tests above: with nothing entered the panel must neither validate a
+    new key nor write one, so "no key was stored" cannot be reached by a panel that simply never
+    stores anything."""
+    code, order, written, output = _drive_main(
+        monkeypatch, "   ", KeyCheck(True, "key works"), capsys
+    )
+
+    assert written == []
+    assert order == [], f"a blank entry reached the API or the writer: {order}"
+    assert "no change" in output
+    assert code == 1  # no working key is configured

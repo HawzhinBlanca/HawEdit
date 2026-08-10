@@ -6393,3 +6393,84 @@ independently gives the same value.
 **Mutation audit 11/11,** after **10/11**. The survivor was the foreign-output check: dropping the
 media_id comparison left every suite green because no test had ever put another episode's output in
 the way. `evidence/stage-1-was-re-run-every-time.md`.
+
+## D-137
+
+**Adversarial pass #20, on M2.8 — the credential panel and the billed Stage 4 judge.** One mutation
+per claim the cell makes. Two of the cell's claims did not hold, one guard was untested on the
+platform where it is load-bearing, and the audit's own first run was contaminated by the guard it
+was auditing.
+
+### The claim the cell leads with had no test at all
+
+*"`python -m hawedit.credentials` verifies a key against Google before storing it."* That decision
+lives entirely in `main()`, and **nothing drove `main()`**. Two mutations survived:
+
+* deleting `if not verified.valid: … return 1` — a key Google rejected is stored anyway;
+* moving `write_credential` above `validate_gemini_key` — stored first, verified after.
+
+Both leave the whole suite green. `tests/test_credentials.py` had thorough tests for
+`validate_gemini_key`, `write_credential` and `mask` **separately**, and none for the panel that
+sequences them — the gap is precisely between the units. Four tests now drive `main()` with the
+network and the writer replaced by recorders: a rejected key writes nothing and exits 1; an accepted
+key records `["validate", "write"]` **in that order**; neither path prints the key, only its mask;
+and a blank entry reaches neither the API nor the writer, which is the control that stops "no key
+was stored" being satisfied by a panel that never stores anything.
+
+`write_credential` is stubbed rather than pointed at a temporary file, deliberately: its `env_file`
+default is bound at definition time, so a test that redirected `ENV_FILE` would still write to the
+real user config. The claim under test is the decision and its order, and that is what is recorded.
+
+### The TOCTOU half of the O_NOFOLLOW reconstruction was untested
+
+`_O_NOFOLLOW` is measured at **0** on this Windows host, so the guarantee is rebuilt from two
+halves: refuse a symlink *before* the open, then prove *after* the open that the handle is the same
+file that was checked. The pre-open half had a test. Deleting the identity comparison left the suite
+green — on the one platform where that comparison actually runs. The race is now forced rather than
+waited for: `os.lstat` is made to answer about a different file, which is what an attacker replacing
+`.env` between the two calls achieves, and the write must refuse. With `os.lstat` telling the truth
+the same call succeeds, which is the control.
+
+### Two mutations were measured unobservable here and dropped rather than reported as gaps
+
+* removing `_O_NOFOLLOW` from the open flags — it is `0` on Windows, so the edit is a **no-op**;
+  the property it stands for is held by the pre-open refusal, whose mutation is caught.
+* creating the file at `0o666` instead of `0o600` — measured, both report `0o666` on Windows;
+  `restrict_to_owner` rewrites the ACL and `assert_owner_only` reads it back, and that is the
+  property that exists on this platform.
+
+Reporting either as a hole would have been a platform artefact dressed as a finding.
+
+### And one of my mutations was simply wrong
+
+`if attempt < self._max_attempts:` → `if True:` was labelled "retries are unbounded". It is not:
+`for attempt in range(1, self._max_attempts + 1)` bounds the loop and that line only skips the final
+sleep. The bound *is* tested — `test_a_rate_limit_is_retried_and_then_given_up_on` asserts exactly 3
+`generateContent` calls. Replaced with a mutation that raises the ceiling, which is caught. A
+survivor is a claim about the tests; a bad mutation is a claim about nothing.
+
+### The audit was contaminated by the guard it was auditing, and that is its own finding
+
+The first run reported 18/20 with sixteen REDs all naming `test_writing_to_a_tracked_path_is_refused`
+— every mutation after the git-ignore one. Cause: that mutation made the guard fail open, the test
+wrote `a-credential-must-never-be-written-here.env` into the repo root, and the test's **first**
+assertion is that the probe path does not exist. So one fail-open turned into an indefinitely red
+suite that only a manual `rm` of a real-looking credential file could clear, and every later result
+was red for the wrong reason.
+
+D-113 chose "one stray file instead of a deleted test" and that trade was right. It did not make the
+stray file self-healing. The probe is now removed in `finally` and the pre-existence message says
+what to inspect and delete. **The check is unchanged; it heals.** Verified by re-running the audit:
+no contamination line, `restored and green: True`.
+
+**Mutation audit 18/18** after the corrections, across
+`credentials.py`, `gemini.py` and `judge.py`: verify-before-store both ways, header-not-URL
+authentication, non-200 rejection, the git-ignore refusal and its fail-closed default, masking, the
+pre-open symlink refusal, the identity test, the hardlink refusal, the deliberate absence of
+`O_TRUNC`, `countTokens` before the billed call, the tier ceiling, temperature 0, the response
+schema, no retry on 400, the retry ceiling, and the ZDR gate.
+
+**What survived the pass:** everything in `gemini.py`. All seven judge claims — schema-enforced
+output, real `countTokens` before the billed call, temperature 0, bounded retries on transient
+failures only, the tier ceiling, the ZDR gate — are held by tests that redden when reverted.
+`evidence/adversarial-pass-20-2026-08-10.md`.
