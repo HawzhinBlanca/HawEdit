@@ -499,6 +499,11 @@ guard outcomes and binds the live audit text to them. A second derived check req
 `D-NNN` citation in each root document to resolve in `DECISIONS.md`.
 `evidence/main-delivery-audit-adaptation-2026-08-10.md`.
 
+The protected-main history is now joined by merge `5a9099a` (D-191). Its first-parent tree and
+merge tree are both `ef2a73250462f8835b5d2a65f617753bb73ebd7c`; the final post-join gate is
+still required because identity of Git trees does not execute the program.
+`evidence/main-delivery-audit-merge-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |

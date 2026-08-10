@@ -6011,6 +6011,19 @@ publisher or colliding with main's unrelated D-154 number.
 
 `evidence/main-delivery-audit-adaptation-2026-08-10.md`.
 
+## D-191 - Join main's delivery-audit history without replaying the flat publisher
+
+The adapted first parent `e8a411edd2da296dec4a2f6f87f8dbfce7fc9e3b` passed the focused
+claims/pipeline suite before the join. Merge `5a9099abe6d2ff7ac3342c291bd27695f9fac987`
+records protected-main parent `5eba372931eb6aa97edfca70cce6fbcc0718d8e3`. Both the merge and
+first parent have tree `ef2a73250462f8835b5d2a65f617753bb73ebd7c`, proving that the join
+added ancestry without replacing the newer atomic publisher or its adapted audit tests.
+
+Tree equality is not runtime evidence. The canonical gate must pass again at the documented tip,
+and only that post-join result is promotion evidence.
+
+`evidence/main-delivery-audit-merge-2026-08-10.md`.
+
 ## D-188 - An impossible live smoke refuses before confirmation and billing
 
 The documented live check omitted `--video`, made its billed Path A calls and only then refused
