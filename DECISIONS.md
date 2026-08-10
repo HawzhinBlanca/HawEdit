@@ -8028,3 +8028,80 @@ rather than escaping it reddens.
 `evidence/two-ledger-rows-had-five-columns.md`. Floor 1507 → 1509.
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, exit **1**.
+
+## D-158
+
+**M0.8's aggregation rule was stated in three places and measured in none.** Adversarial pass 25
+took M0.8 — DONE since D-131, never audited — and disabled its six claims one at a time. Five held.
+The survivor was the one the row argues hardest for: `ModelReport.alignment` weighting by
+**matched words**. Replacing `sum(x * w) / sum(w)` with `sum(x) / len(x)` left the whole suite
+green.
+
+The claim is in the docstring ("a two-word item and a sixty-word one are not equal evidence about
+timing"), in the M0.8 cell, and in D-131. Nothing tested it, and the reason is arithmetic:
+`_TimedAdapter` shifts **every** item by the same `shift_ms`, and every item in `_timed_corpus()`
+carries the same two reference words. Uniform weight and uniform error make a weighted mean and a
+mean of per-item means the same number — measured, `30.0000` against `30.0000`. Every existing
+alignment assertion passes under either implementation, which is this loop's own definition of a
+test that measures nothing.
+
+**The code was right; only the claim was untested.** On unequal items the emitted JSON tracks the
+weighted formula exactly. This shipped no wrong output — but any refactor of that expression would
+have put a §8.1 error figure 6.5x too large into a delivered report with a green gate, and §8.1's
+last metric is precisely the number D-131 exists because nobody was checking.
+
+**Decision: fix the fixture, not the formula.** The shortest diff that holds is one test whose
+corpus can tell the formulas apart, driving the real `run_benchmark` path and asserting on
+`to_dict()` — the emitted document, not the property.
+
+**The first fixture excluded only one of the two wrong answers, and the audit caught that too.**
+With a 2-word item 200 ms out and a fully-covered 20-word item 10 ms out, per-item averaging
+reddens but **weighting by reference words** survived 5/6. Not a bad mutation: it changes the
+number whenever coverage is below 1, and at coverage 1 `matched_words == reference_words`, so the
+two weightings are the same arithmetic. The same blindness as the defect, one level down, inside
+the fixture I had just written to expose it.
+
+**Decision: the long item returns 10 of its 20 words**, so coverage is 12/22 and the three
+candidate weightings give three different answers, all asserted or excluded:
+
+| weighted by | onset error | within tolerance |
+|---|---|---|
+| matched words (asserted) | 41.6667 ms | 0.8333 |
+| reference words (excluded) | 27.2727 ms | 0.9091 |
+| nothing, a mean of means (excluded) | 105.0000 ms | 0.5000 |
+
+Matched words is the correct weight because each item's figure is a mean *over matched words*.
+Weighting by reference words would give a barely-transcribed item the full say its length suggests
+— the failure `coverage` is reported beside the errors to expose, per `AlignmentAccuracy`.
+
+**Rejected: asserting the weighted value alone.** It passes under reference-word weighting on any
+fully-covered corpus, which is how this survived D-131's 5/5 in the first place. Both wrong
+answers are now asserted *against* by name.
+
+**Rejected: changing `_TimedAdapter` to vary its shift.** Five other tests depend on its uniform
+30 ms — `matched 2/2, onset 30.0, offset 30.0, within 1.00` is quoted in the M0.8 cell as the
+measurement that found D-131. A separate corpus costs 40 lines and leaves that record intact.
+
+**Mutation audit 7/7**, after 5/6 and a 5/5 that refused a stale anchor. Three of the seven are
+controls on the *fixture* — same-length items, equally-mistimed items, a fully-covered long item —
+each collapsing the corpus back to a shape where two formulas agree, and each reddening.
+
+**The baseline check earned its keep.** The 5/6 run's first attempt reported `baseline not green`,
+naming `test_nested_full_gate_refuses_instead_of_recursing` and
+`test_nested_fast_run_is_still_allowed`. Neither was a regression: both run the real gate as a
+subprocess, and my new helper's docstring was 101 characters, so `ruff` failed *inside* them with
+`E501`. Without the green-first rule, seven mutations would have reported CAUGHT against a suite
+that was already red — the false result mutation auditing exists to prevent, arriving through the
+same lint-contamination door as D-148 and D-150.
+
+**And one mutation refused to run rather than report.** `ANCHOR?(0)`: a fixture control still
+quoted `{"short": 200, "long": 10}` after the adapter had moved to `(shift_ms, words_returned)`
+tuples. The probe skipped it and reported `5/5` over what it actually measured, rather than a
+fabricated catch — the behaviour D-157's `ANCHOR?(2)` established. Re-run with the anchor
+corrected: 7/7.
+
+`evidence/the-alignment-aggregates-weighting-was-claimed-and-never-measured.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, and
+`~/.hawedit/credentials.json` does not exist — nothing has been entered in the credential panel,
+so the ZAR38MinTest end-to-end run remains blocked on it.

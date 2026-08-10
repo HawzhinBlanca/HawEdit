@@ -644,6 +644,19 @@ def _timed_hypothesis(shift_ms: int) -> tuple[Word, ...]:
     )
 
 
+def _a_reference_of(count: int) -> tuple[Word, ...]:
+    """`count` timed reference words, alternating so the matcher has real text to key on."""
+    return tuple(
+        Word(
+            w=_REF_WORDS[index % len(_REF_WORDS)].w,
+            start_ms=index * 800,
+            end_ms=index * 800 + 800,
+            conf=0.95,
+        )
+        for index in range(count)
+    )
+
+
 class _TimedAdapter:
     """Returns word timings, which is what makes alignment scorable at all."""
 
@@ -679,6 +692,58 @@ def _timed_report(shift_ms: int = 30) -> ModelReport:
     return report.models[INCUMBENT]
 
 
+# Every item above carries the same two words shifted by the same `shift_ms`, so a weighted mean
+# and a per-item mean are arithmetically identical on it — which is why every assertion above
+# passes whichever way `ModelReport.alignment` aggregates. These two items are unequal in both
+# weight and error, so the two formulas disagree: 27.3 ms against 105.0 ms.
+
+_UNEVEN_REFERENCES = {
+    "short": _a_reference_of(2),
+    "long": _a_reference_of(20),
+}
+
+
+class _UnevenlyTimedAdapter:
+    """Times each item differently and misses words on some, so the weighting becomes observable.
+
+    `plan` maps an item to `(shift_ms, words_returned)`. Returning fewer words than the reference
+    drives that item's coverage below 1, which is what separates weighting by **matched** words
+    from weighting by **reference** words — on a fully covered item the two are the same number.
+    """
+
+    def __init__(self, model_id: str, plan: dict[str, tuple[int, int]]) -> None:
+        self.model_id = model_id
+        self._plan = plan
+
+    def transcribe(self, audio_path: Path, duration_s: float) -> ASRResult:
+        stem = Path(audio_path).stem
+        shift, kept = self._plan[stem]
+        words = _UNEVEN_REFERENCES[stem][:kept]
+        return ASRResult(
+            text_raw=" ".join(w.w for w in words),
+            words=tuple(
+                Word(w=w.w, start_ms=w.start_ms + shift, end_ms=w.end_ms + shift, conf=0.9)
+                for w in words
+            ),
+        )
+
+
+def _unevenly_timed_corpus() -> Corpus:
+    items = tuple(
+        CorpusItem(
+            item_id=stem,
+            audio_path=f"{stem}.wav",
+            reference_ckb=" ".join(w.w for w in _UNEVEN_REFERENCES[stem]),
+            dialect=dialect,
+            conditions=frozenset({Condition.FORMAL_NEWS}),
+            duration_s=60.0,
+            reference_words=_UNEVEN_REFERENCES[stem],
+        )
+        for stem, dialect in (("short", Dialect.HEWLER), ("long", Dialect.SLEMANI))
+    )
+    return Corpus(items=items, provenance=TWO_DIALECT_CORPUS.provenance)
+
+
 def _emitted_alignment(report: ModelReport) -> dict[str, float | int]:
     """The aggregate as the JSON carries it. `to_dict` is `dict[str, object]`, so narrow once."""
     alignment = report.to_dict()["alignment"]
@@ -709,6 +774,51 @@ def test_the_alignment_aggregate_reports_coverage_beside_its_errors() -> None:
     assert alignment["coverage"] == pytest.approx(1.0)
     assert alignment["reference_words"] == 12
     assert alignment["scored_items"] == 6
+
+
+def test_the_alignment_aggregate_weights_by_matched_words_not_by_item() -> None:
+    """The docstring's claim, which nothing measured: "a two-word item and a sixty-word one are
+    not equal evidence about timing."
+
+    Every other alignment test shifts every item by the same amount over items of the same
+    length, so a weighted mean and a mean of per-item means are arithmetically the same number
+    and both formulas pass. Here a 2-word item is 200 ms out, and a 20-word item is 10 ms out
+    with only 10 of its words returned — so the three candidate weightings give three different
+    answers and only one of them can be asserted:
+
+    | weighted by     | onset error | within tolerance |
+    |-----------------|-------------|------------------|
+    | matched words   | 41.67 ms    | 0.83             |
+    | reference words | 27.27 ms    | 0.91             |
+    | nothing (mean)  | 105.00 ms   | 0.50             |
+
+    Matched words is the right weight because the per-item mean is a mean *over matched words*;
+    weighting by reference words would give a barely-transcribed item the full say its length
+    suggests, which is the failure `coverage` is reported to expose.
+    """
+    times = iter([float(i) * 6.0 for i in range(200)])
+    session = MeasurementSession(hardware=HAWAPC01, clock=lambda: next(times))
+    report = run_benchmark(
+        _unevenly_timed_corpus(),
+        [_UnevenlyTimedAdapter(INCUMBENT, {"short": (200, 2), "long": (10, 10)})],
+        session,
+    )
+    alignment = _emitted_alignment(report.models[INCUMBENT])
+
+    assert alignment["scored_items"] == 2
+    assert alignment["matched_words"] == 12
+    assert alignment["reference_words"] == 22
+    assert alignment["coverage"] == pytest.approx(12 / 22)
+    assert alignment["mean_onset_abs_error_ms"] == pytest.approx((200 * 2 + 10 * 10) / 12)
+    assert alignment["mean_offset_abs_error_ms"] == pytest.approx((200 * 2 + 10 * 10) / 12)
+    assert alignment["within_tolerance_rate"] == pytest.approx(10 / 12)
+
+    # The controls. Both rows below are numbers this report would carry under a plausible wrong
+    # weighting, and a test that did not exclude them would pass on those implementations too.
+    assert alignment["mean_onset_abs_error_ms"] != pytest.approx((200 * 2 + 10 * 20) / 22)
+    assert alignment["within_tolerance_rate"] != pytest.approx(20 / 22)
+    assert alignment["mean_onset_abs_error_ms"] != pytest.approx((200 + 10) / 2)
+    assert alignment["within_tolerance_rate"] != pytest.approx((0.0 + 1.0) / 2)
 
 
 def test_an_unmeasured_alignment_is_none_in_the_report_not_zero() -> None:
