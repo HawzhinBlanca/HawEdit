@@ -102,3 +102,28 @@ This closes current-machine receipt/VEX drift for the stated source snapshot. Th
 `wsl-asr-security` job remains intentionally unaccepted on this feature-branch dispatch: its policy
 requires an official `push` to `main`, so post-merge hosted execution and artifact upload are still
 required before release promotion.
+
+## Delivery-integrity source refresh — 2026-08-10
+
+The live acceptance was repeated at clean, ratcheted commit
+`7257d5bba69ae6ab0e8e0c7b75b4cd0f64b7bbe8`, after hardening the SRT delivery boundary. The exact
+receipt-bound `src/hawedit` SHA-256 was
+`2250be4048e48fd7528660dcca1602dc5fa41b3f7a032fb1eee22ef26c4b83cc`.
+
+`hawedit-asr-setup --distribution Ubuntu` completed in 165.7 seconds, reused generation
+`Ubuntu-a3a875601325fe6bd6497791`, and revalidated CPython 3.12.0, all 140 distributions, all
+43,546,500,168 OmniASR asset bytes, and two CUDA devices. The published receipt SHA-256 was
+`7b926378d60af58bb7d59e3e1e0c08f7e5e9df7639b94a2a2586a2dc2681cfdb`.
+
+The hash-locked live VEX gate then completed in 154 seconds and accepted 12 findings against 12
+current matched dispositions at `2026-08-10T02:03:47Z`. The raw OSV report SHA-256 was
+`126d97f8343cf9f84d772658e7d5ca70137711d205671fd7314714cdb6cf187f`; the reviewed policy SHA-256
+was `0ab76e4d3a8aa927f9330246407d6e844a990048e049ad2b8281b8e7705da17e`; and the 10,382-byte
+write-once evidence JSON SHA-256 was
+`3b1231d44ad26080ab5d90020bdd7ee27a42c6931b5755d7f5c205a59e2533e5`.
+
+The evidence is retained locally at
+`.gate/wsl-asr-vex-7257d5bba69ae6ab0e8e0c7b75b4cd0f64b7bbe8.json`; `.gate` remains ignored because raw
+machine evidence contains host-specific runtime details. This result is local production-host
+acceptance only. The protected hosted `wsl-asr-security` job still requires an official push to
+`main` and remains a release-promotion prerequisite.
