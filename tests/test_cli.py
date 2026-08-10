@@ -113,6 +113,64 @@ def test_the_helper_leaves_a_substituted_stream_alone() -> None:
         sys.stdout, sys.stderr = original_out, original_err
 
 
+def _console_script_for(module: str) -> str:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    matches = [
+        str(name)
+        for name, target in config["project"]["scripts"].items()
+        if str(target).split(":", 1)[0] == module
+    ]
+    assert len(matches) == 1, f"expected one console script for {module}, got {matches}"
+    return matches[0]
+
+
+def _usage_line(module: str, argv0: str) -> str:
+    import importlib
+    import io
+    from contextlib import redirect_stdout
+
+    imported = importlib.import_module(module)
+    captured = io.StringIO()
+    saved = sys.argv
+    sys.argv = [argv0, "--help"]
+    try:
+        with redirect_stdout(captured), pytest.raises(SystemExit) as exit_info:
+            imported.main(["--help"])
+    finally:
+        sys.argv = saved
+    assert exit_info.value.code == 0
+    first = captured.getvalue().splitlines()[0]
+    assert first.startswith("usage: "), first
+    return first.removeprefix("usage: ")
+
+
+@pytest.mark.parametrize("module", console_script_modules())
+@pytest.mark.parametrize("suffix", ("", ".exe"), ids=("posix-launcher", "windows-launcher"))
+def test_console_script_help_names_the_command_a_user_ran(module: str, suffix: str) -> None:
+    script = _console_script_for(module)
+    argv0 = str(Path("opt") / "hawedit-venv" / "bin" / f"{script}{suffix}")
+
+    assert _usage_line(module, argv0).split()[0] == script
+
+
+@pytest.mark.parametrize("module", console_script_modules())
+def test_python_dash_m_help_names_the_pasteable_module_command(module: str) -> None:
+    argv0 = str(ROOT / "src" / module.replace(".", "/")) + ".py"
+
+    assert _usage_line(module, argv0).startswith(f"python -m {module} ")
+
+
+def test_program_name_falls_back_to_the_module_when_argv0_is_empty() -> None:
+    from hawedit.cli import program_name
+
+    saved = sys.argv
+    sys.argv = [""]
+    try:
+        assert program_name("hawedit.pipeline") == "python -m hawedit.pipeline"
+    finally:
+        sys.argv = saved
+
+
 # =========================================================================================
 # D-119 — a document on stdout, and a library that prints to it
 # =========================================================================================

@@ -53,7 +53,7 @@ from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import CaptionStyle, build_ass
-from hawedit.cli import machine_readable_stdout, use_utf8_streams
+from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
@@ -1725,7 +1725,8 @@ def build_parser() -> argparse.ArgumentParser:
     the blueprint — D-137's test asserts on the parsed values, not on a comment.
     """
     parser = argparse.ArgumentParser(
-        prog="hawedit.pipeline", description="Run §3 over one media file, as far as it can go."
+        prog=program_name("hawedit.pipeline"),
+        description="Run §3 over one media file, as far as it can go.",
     )
     parser.add_argument("source", type=Path)
     parser.add_argument("--work-dir", type=Path, default=Path("work"))

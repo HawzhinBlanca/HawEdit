@@ -29,7 +29,7 @@ from types import ModuleType
 from typing import Final, Protocol, cast
 
 from hawedit import windows_security as _windows_security
-from hawedit.cli import use_utf8_streams
+from hawedit.cli import program_name, use_utf8_streams
 from hawedit.environment import EnvironmentAuditError, audit_installed_profile
 from hawedit.models import (
     CheckpointIntegrityError,
@@ -558,7 +558,7 @@ def _download_client() -> Download:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="hawedit-fetch-models",
+        prog=program_name("hawedit.model_fetch"),
         description="Fetch exact §7 checkpoints through verified atomic publication.",
     )
     parser.add_argument("model_id", nargs="?", help="fetch only one §7 checkpoint")

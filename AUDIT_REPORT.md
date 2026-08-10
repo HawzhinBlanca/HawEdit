@@ -123,7 +123,8 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   `hawedit-release` and `hawedit-wsl-vex` — start from the installed wheel. The hosted release
   smoke derives the same contract from the wheel, and `tests/test_claims.py` requires this list
   to equal `[project.scripts]` in both directions so a newly added command cannot drift out of
-  the audit again.
+  the audit again. Their help is invocation-aware: a generated launcher names the installed
+  command, while module execution names the pasteable `python -m hawedit.<module>` form.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
 - **The wheel build is reproducible as of 2026-08-09** (D-120). It was not: two consecutive
   `pip wheel --no-deps` runs at one unchanged tree produced the same **333,362 bytes** and the

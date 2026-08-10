@@ -161,6 +161,12 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > cache records were byte- and mtime-identical after the second pass.
 > `evidence/stage-2-embedding-resume.md`.
 >
+> **M0.1 amendment (D-169).** All nine `[project.scripts]` entry points now derive argparse's
+> program name from the actual invocation. Installed launchers (including Windows `.exe`) print
+> the command a user ran; `python -m` prints the pasteable module form. The tests derive the
+> module/script mapping from `pyproject.toml` and exercise both launcher suffixes plus module mode
+> for every declaration. `evidence/help-names-the-invoked-command.md`.
+>
 > **M5.4 amendment (D-059).** The whole-episode 256-frame shortfall named in that row is
 > closed: windows are now packed into deterministic ≤256-frame calls. The unmeasured temporal
 > discrimination on real dynamic Sorani footage remains a shortfall.

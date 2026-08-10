@@ -5939,3 +5939,23 @@ All five record SHA-256s and mtimes were unchanged. The remaining time is verifi
 and query embedding, not repeated scene work.
 
 `evidence/stage-2-embedding-resume.md`.
+
+## D-169 - Help names the command that can actually be invoked
+
+Argparse previously exposed two incompatible accidents. `hawedit --help` and
+`hawedit-credentials --help` hard-coded Python module names that are not installed commands, while
+parsers without `prog=` showed a source filename under `python -m`. A fixed string cannot be right
+for both entry modes.
+
+`cli.program_name` now uses Python's invocation contract: under `python -m`, `sys.argv[0]` is the
+module's `.py` file and help names `python -m <module>`; generated launchers name their own stem,
+dropping Windows' `.exe`. Empty `argv[0]` falls back to the module form. Every parser declared in
+the current nine-entry `[project.scripts]` table uses the helper, including model fetch, FFmpeg
+setup, release and the WSL VEX gate that did not exist in upstream's five-entry measurement.
+
+The regression derives module-to-launcher names from `pyproject.toml`, drives every real `main`
+through help under both suffixless and `.exe` launchers, and separately drives module mode using
+the native platform's path separators. The existing Linux/Python 3.12 gate supplies the other
+host, so a Windows-only path literal cannot certify the rule.
+
+`evidence/help-names-the-invoked-command.md`.

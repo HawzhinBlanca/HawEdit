@@ -25,9 +25,23 @@ from __future__ import annotations
 import contextlib
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TextIO
 
-__all__ = ["machine_readable_stdout", "use_utf8_streams"]
+__all__ = ["machine_readable_stdout", "program_name", "use_utf8_streams"]
+
+
+def program_name(module: str) -> str:
+    """Return a pasteable usage name for console-script and ``python -m`` invocation.
+
+    Python makes ``sys.argv[0]`` the module's ``.py`` file under ``-m`` and the generated
+    launcher otherwise.  A fixed argparse ``prog`` is therefore wrong in one of the two modes.
+    Windows' generated ``.exe`` suffix is an implementation detail and is removed.
+    """
+    invoked = Path(sys.argv[0] or "")
+    if invoked.suffix.lower() == ".py":
+        return f"python -m {module}"
+    return invoked.stem or f"python -m {module}"
 
 
 def use_utf8_streams() -> None:

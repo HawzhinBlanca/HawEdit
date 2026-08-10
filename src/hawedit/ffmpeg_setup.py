@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Final
 
 from hawedit.captions import MissingRtlStack, assert_rtl_stack, ffprobe_for, find_ffmpeg
-from hawedit.cli import use_utf8_streams
+from hawedit.cli import program_name, use_utf8_streams
 from hawedit.environment import EnvironmentAuditError, resolve_installed_hawedit_data
 
 __all__ = ["FfmpegSetupError", "default_ffmpeg_dir", "main"]
@@ -146,7 +146,7 @@ def _run_provisioner(script: Path, install_dir: Path) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="hawedit-ffmpeg-setup",
+        prog=program_name("hawedit.ffmpeg_setup"),
         description="Verify or provision HawEdit's Kurdish-capable FFmpeg runtime.",
     )
     parser.add_argument(

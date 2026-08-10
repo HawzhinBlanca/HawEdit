@@ -34,7 +34,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from hawedit.atomic_fs import rename_directory_noreplace
-from hawedit.cli import machine_readable_stdout, use_utf8_streams
+from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 
 __all__ = [
     "LocalWheelArtifact",
@@ -1208,10 +1208,11 @@ def build_reproducible_wheel(
 def main(argv: list[str] | None = None) -> int:
     use_utf8_streams()
     parser = argparse.ArgumentParser(
+        prog=program_name("hawedit.release"),
         description=(
             "verify an exact successful main-branch gate run, then build HawEdit twice and "
             "publish only a byte-reproducible wheel"
-        )
+        ),
     )
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--output-dir", type=Path)

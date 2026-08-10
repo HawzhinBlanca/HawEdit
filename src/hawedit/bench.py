@@ -45,7 +45,7 @@ from hawedit.asr import (
     long_audio_failure_rate,
     validate_adapter,
 )
-from hawedit.cli import use_utf8_streams
+from hawedit.cli import program_name, use_utf8_streams
 from hawedit.corpus import Corpus, CorpusItem, Coverage, Dialect, Provenance
 from hawedit.metrics import (
     code_switch_error_rate,
@@ -483,7 +483,10 @@ def decide_canonical(
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the canonical model on a complete real Sorani corpus manifest."""
     use_utf8_streams()
-    parser = argparse.ArgumentParser(description="Run HawEdit's real §8.1 Sorani ASR benchmark")
+    parser = argparse.ArgumentParser(
+        prog=program_name("hawedit.bench"),
+        description="Run HawEdit's real §8.1 Sorani ASR benchmark",
+    )
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--audio-root", type=Path, required=True)
     parser.add_argument("--host", required=True, help="machine on which RTF is measured")

@@ -12,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.cli import machine_readable_stdout, use_utf8_streams
+from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.corpus import Dialect
 from hawedit.judge import (
     JUDGE_SHADOW,
@@ -190,7 +190,8 @@ class EditorialRegressionSet:
 def main(argv: Sequence[str] | None = None) -> int:
     use_utf8_streams()
     parser = argparse.ArgumentParser(
-        description="Validate and score a real human-labelled Sorani editorial regression set"
+        prog=program_name("hawedit.editorial_bench"),
+        description="Validate and score a real human-labelled Sorani editorial regression set",
     )
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--media-root", type=Path, default=Path("."))
