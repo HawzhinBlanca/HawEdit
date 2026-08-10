@@ -56,6 +56,46 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _git_bytes(root: Path, *args: str) -> bytes:
+    result = subprocess.run(["git", *args], cwd=root, capture_output=True, check=True)
+    return result.stdout
+
+
+def test_git_archive_preserves_authenticated_text_member_bytes(tmp_path: Path) -> None:
+    """Windows archive export must not rewrite committed lock or license bytes."""
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "*.txt text eol=lf" in attributes
+
+    tracked = tuple(
+        path for path in _git_bytes(ROOT, "ls-files", "-z", "*.txt").split(b"\0") if path
+    )
+    assert tracked
+    archive_path = tmp_path / "source.tar"
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.autocrlf=true",
+            "archive",
+            "--worktree-attributes",
+            "--format=tar",
+            f"--output={archive_path}",
+            "HEAD",
+            "--",
+            *(path.decode("utf-8") for path in tracked),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+    with tarfile.open(archive_path, mode="r:") as archive:
+        for encoded_path in tracked:
+            path = encoded_path.decode("utf-8")
+            member = archive.extractfile(path)
+            assert member is not None, f"Git archive omitted {path}"
+            blob = _git_bytes(ROOT, "show", f"HEAD:{path}")
+            assert member.read() == blob, f"Git archive rewrote committed bytes for {path}"
+
+
 def _release_source(root: Path) -> Path:
     """A tiny clean Git package with HawEdit's release-critical wheel members."""
     project = root / "project"

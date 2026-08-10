@@ -2,11 +2,16 @@
 # core.autocrlf=true. Without this, `scripts/verify.sh` is checked out with CRLF and bash
 # dies on line 7 — `set -euo pipefail\r` is not an option name. A gate that cannot start
 # cannot refuse anything, so the line endings of the gate are a correctness property.
+.gitattributes text eol=lf
 *.sh text eol=lf
 *.py text eol=lf
 *.toml text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
+# `git archive` is a release input.  On Windows with core.autocrlf=true, an unpinned
+# text member is exported with CRLF even when the committed blob is LF.  Dependency
+# locks are authenticated by their committed SHA-256, so byte identity is mandatory.
+*.txt text eol=lf
 # models/sources.json is tracked (see .gitignore) and read on both platforms; §5's clip
 # documents and every fixture are JSON too. One line ending, so a checkout on Windows and a
 # checkout on the CI runner hash the same bytes.
