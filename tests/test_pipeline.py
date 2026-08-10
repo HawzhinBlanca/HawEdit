@@ -2548,92 +2548,95 @@ def _query_preflight_exit(argv: list[str], tmp_path: Path) -> tuple[int, str]:
     return code, captured.getvalue()
 
 
+_CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    (
+        "two Stage 1 sources",
+        ("--transcript", "missing.json", "--omni-asr"),
+        "mutually exclusive Stage 1",
+    ),
+    ("runtime without OmniASR", ("--omni-asr-runtime", "wsl"), "require --omni-asr"),
+    ("distro without OmniASR", ("--wsl-distro", "Ubuntu"), "require --omni-asr"),
+    (
+        "two cloud routes",
+        ("--gemini", "--vertex-project", "project"),
+        "mutually exclusive cloud routes",
+    ),
+    (
+        "live cloud and stored verdict",
+        ("--gemini", "--verdict", "missing.json"),
+        "mutually exclusive Stage 4 sources",
+    ),
+    ("Gemini without Stage 1", ("--gemini",), "cloud discovery requires"),
+    (
+        "Vertex without Stage 1",
+        ("--vertex-project", "project"),
+        "cloud discovery requires",
+    ),
+    ("selection without Stage 1", ("--sentences", "0"), "--sentences requires"),
+    ("verdict without Stage 1", ("--verdict", "missing.json"), "--verdict requires"),
+    (
+        "verdict without selection",
+        ("--transcript", "missing.json", "--verdict", "missing-verdict.json"),
+        "--verdict requires",
+    ),
+    (
+        "visual without Stage 1",
+        ("--visual", "--visual-query", "پرسیار"),
+        "--visual requires",
+    ),
+    (
+        "query without visual",
+        ("--transcript", "missing.json", "--visual-query", "پرسیار"),
+        "--visual-query requires --visual",
+    ),
+    (
+        "blank visual query",
+        ("--transcript", "missing.json", "--visual", "--visual-query", "   "),
+        "non-whitespace Sorani retrieval text",
+    ),
+    (
+        "visual without a query source",
+        ("--transcript", "missing.json", "--visual"),
+        "--visual without Path A",
+    ),
+    ("QC without selection", ("--qc-pass",), "--qc-pass requires"),
+    (
+        "auto-selection without discovery",
+        ("--transcript", "missing.json", "--auto-select"),
+        "Stage 3 producer that can actually produce",
+    ),
+    (
+        "TimeLens without selection",
+        ("--timelens",),
+        "--timelens and --face-reframe require",
+    ),
+    (
+        "reframing without selection",
+        ("--face-reframe",),
+        "--timelens and --face-reframe require",
+    ),
+    (
+        "confidential without cloud",
+        ("--confidential",),
+        "governance flags apply only",
+    ),
+    (
+        "ZDR without cloud",
+        ("--zero-data-retention",),
+        "governance flags apply only",
+    ),
+    (
+        "ZDR attribution without cloud",
+        ("--zdr-confirmed-by", "Hawa"),
+        "governance flags apply only",
+    ),
+)
+
+
 @pytest.mark.parametrize(
     ("label", "flags", "expected"),
-    [
-        (
-            "two Stage 1 sources",
-            ("--transcript", "missing.json", "--omni-asr"),
-            "mutually exclusive Stage 1",
-        ),
-        ("runtime without OmniASR", ("--omni-asr-runtime", "wsl"), "require --omni-asr"),
-        ("distro without OmniASR", ("--wsl-distro", "Ubuntu"), "require --omni-asr"),
-        (
-            "two cloud routes",
-            ("--gemini", "--vertex-project", "project"),
-            "mutually exclusive cloud routes",
-        ),
-        (
-            "live cloud and stored verdict",
-            ("--gemini", "--verdict", "missing.json"),
-            "mutually exclusive Stage 4 sources",
-        ),
-        ("Gemini without Stage 1", ("--gemini",), "cloud discovery requires"),
-        (
-            "Vertex without Stage 1",
-            ("--vertex-project", "project"),
-            "cloud discovery requires",
-        ),
-        ("selection without Stage 1", ("--sentences", "0"), "--sentences requires"),
-        ("verdict without Stage 1", ("--verdict", "missing.json"), "--verdict requires"),
-        (
-            "verdict without selection",
-            ("--transcript", "missing.json", "--verdict", "missing-verdict.json"),
-            "--verdict requires",
-        ),
-        (
-            "visual without Stage 1",
-            ("--visual", "--visual-query", "پرسیار"),
-            "--visual requires",
-        ),
-        (
-            "query without visual",
-            ("--transcript", "missing.json", "--visual-query", "پرسیار"),
-            "--visual-query requires --visual",
-        ),
-        (
-            "blank visual query",
-            ("--transcript", "missing.json", "--visual", "--visual-query", "   "),
-            "non-whitespace Sorani retrieval text",
-        ),
-        (
-            "visual without a query source",
-            ("--transcript", "missing.json", "--visual"),
-            "--visual without Path A",
-        ),
-        ("QC without selection", ("--qc-pass",), "--qc-pass requires"),
-        (
-            "auto-selection without discovery",
-            ("--transcript", "missing.json", "--auto-select"),
-            "Stage 3 producer that can actually produce",
-        ),
-        (
-            "TimeLens without selection",
-            ("--timelens",),
-            "--timelens and --face-reframe require",
-        ),
-        (
-            "reframing without selection",
-            ("--face-reframe",),
-            "--timelens and --face-reframe require",
-        ),
-        (
-            "confidential without cloud",
-            ("--confidential",),
-            "governance flags apply only",
-        ),
-        (
-            "ZDR without cloud",
-            ("--zero-data-retention",),
-            "governance flags apply only",
-        ),
-        (
-            "ZDR attribution without cloud",
-            ("--zdr-confirmed-by", "Hawa"),
-            "governance flags apply only",
-        ),
-    ],
-    ids=lambda value: value if isinstance(value, str) else None,
+    _CLI_PREFLIGHT_CASES,
+    ids=[label for label, _flags, _expected in _CLI_PREFLIGHT_CASES],
 )
 def test_every_reachable_cli_prerequisite_refuses_at_its_own_boundary(
     tmp_path: Path, label: str, flags: tuple[str, ...], expected: str
@@ -2644,6 +2647,71 @@ def test_every_reachable_cli_prerequisite_refuses_at_its_own_boundary(
     assert code == 2, label
     assert expected in stderr, f"{label}: {stderr}"
     assert not (tmp_path / "work").exists(), label
+
+
+def _preflight_value_error_messages() -> tuple[str, ...]:
+    """Read the direct pre-input refusals so a future guard cannot arrive uncovered."""
+    import ast
+
+    source = (ROOT / "src" / "hawedit" / "pipeline.py").read_text(encoding="utf-8")
+    function = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_from_args"
+    )
+    input_boundary = min(
+        node.lineno
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "transcript" for target in node.targets
+        )
+    )
+    messages: list[str] = []
+    for node in ast.walk(function):
+        if not (
+            isinstance(node, ast.Raise)
+            and node.lineno < input_boundary
+            and isinstance(node.exc, ast.Call)
+            and getattr(node.exc.func, "id", None) == "ValueError"
+            and node.exc.args
+        ):
+            continue
+        argument = node.exc.args[0]
+        if not (isinstance(argument, ast.Constant) and isinstance(argument.value, str)):
+            raise AssertionError(f"preflight refusal at line {node.lineno} has a dynamic message")
+        messages.append(argument.value)
+    return tuple(messages)
+
+
+def test_the_case_table_is_bound_bidirectionally_to_every_preflight_refusal() -> None:
+    """A new guard needs a case; a removed guard cannot leave a decorative stale case."""
+    messages = _preflight_value_error_messages()
+    fragments = {expected for _label, _flags, expected in _CLI_PREFLIGHT_CASES}
+    matches = {
+        message: sorted(fragment for fragment in fragments if fragment in message)
+        for message in messages
+    }
+
+    assert all(len(found) == 1 for found in matches.values()), (
+        f"preflight refusals need exactly one case fragment: {matches}"
+    )
+    orphaned = sorted(
+        fragment for fragment in fragments if not any(fragment in message for message in messages)
+    )
+    assert orphaned == [], f"cases naming no live preflight refusal: {orphaned}"
+
+
+def test_a_legal_argv_gets_past_every_preflight_refusal(tmp_path: Path) -> None:
+    """Control: an implementation that refused every invocation passes negative cases alone."""
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--sentences", "0", "--qc-pass"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "missing.json" in stderr
+    for message in _preflight_value_error_messages():
+        assert message not in stderr, f"legal argv hit preflight refusal: {message}"
 
 
 def test_auto_select_refuses_visual_without_a_query_before_stage_zero(tmp_path: Path) -> None:
