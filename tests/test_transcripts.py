@@ -31,6 +31,7 @@ from hawedit.transcripts import (
     RawTranscript,
     RawTranscriptImmutable,
     RawTranscriptTampered,
+    RejectedValidatorCorrection,
     SegmentConfidence,
     StaleNormalizedTranscript,
     TranscriptStore,
@@ -708,6 +709,28 @@ def test_a_real_reason_and_span_are_accepted() -> None:
     )
     assert gap.end_ms - gap.start_ms == 316
     assert "15 tokens" in gap.reason
+
+
+def test_rejected_validator_correction_round_trips_without_becoming_a_gap() -> None:
+    rejected = RejectedValidatorCorrection(
+        start_ms=1_000,
+        end_ms=1_316,
+        validator="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+        reason="AlignmentInfeasible: 15 frames cannot emit 21 validator tokens",
+    )
+    raw = RawTranscript(
+        media_id="validator-fallback",
+        text_ckb="canonical words remain",
+        words=(),
+        asr=CANONICAL,
+        rejected_validator_corrections=(rejected,),
+    )
+
+    restored = RawTranscript.from_json(raw.to_json())
+
+    assert restored == raw
+    assert restored.unaligned == ()
+    assert restored.rejected_validator_corrections == (rejected,)
 
 
 # --- D-139: the raw file's own write-once layer was never reached by a test ------------------

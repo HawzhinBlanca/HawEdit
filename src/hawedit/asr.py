@@ -53,6 +53,7 @@ from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import (
     AsrProvenance,
     RawTranscript,
+    RejectedValidatorCorrection,
     SegmentConfidence,
     UnalignedSpeech,
     Word,
@@ -545,9 +546,15 @@ class OmniAsrProducer:
     ) -> RawTranscript:
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         initial, unaligned = transcribe_prepared_segments(self.backend, prepared)
-        results, validated_by = _validate_hard_segments(initial, self.backend, self._validator)
+        results, validated_by, rejected_corrections = _validate_hard_segments(
+            initial, self.backend, self._validator
+        )
         return _assemble_canonical_transcript(
-            media_id, results, unaligned, validated_by=validated_by
+            media_id,
+            results,
+            unaligned,
+            validated_by=validated_by,
+            rejected_validator_corrections=rejected_corrections,
         )
 
 
@@ -680,7 +687,7 @@ def transcribe_prepared_segments(
                 UnalignedSpeech(
                     start_ms=segment.start_ms,
                     end_ms=segment.end_ms,
-                    reason=f"{type(exc).__name__}: {exc}",
+                    reason=_failure_reason(exc),
                 )
             )
             continue
@@ -694,6 +701,7 @@ def _assemble_canonical_transcript(
     unaligned: Sequence[UnalignedSpeech] = (),
     *,
     validated_by: str | None = None,
+    rejected_validator_corrections: Sequence[RejectedValidatorCorrection] = (),
 ) -> RawTranscript:
     if not results:
         raise RuntimeError(
@@ -745,14 +753,27 @@ def _assemble_canonical_transcript(
         ),
         unaligned=tuple(unaligned),
         segment_confidence=tuple(confidences),
+        rejected_validator_corrections=tuple(rejected_validator_corrections),
     )
+
+
+def _failure_reason(exc: Exception, *, limit: int = 1_024) -> str:
+    """Bound one model failure for an immutable client-facing transcript."""
+    raw = f"{type(exc).__name__}: {exc}"
+    printable = "".join(character if character.isprintable() else " " for character in raw)
+    one_line = " ".join(printable.split()) or type(exc).__name__
+    return one_line if len(one_line) <= limit else one_line[: limit - 1] + "…"
 
 
 def _validate_hard_segments(
     results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
     backend: OmniSegmentBackend,
     validator_factory: Callable[[], SoraniValidator],
-) -> tuple[tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...], str | None]:
+) -> tuple[
+    tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
+    str | None,
+    tuple[RejectedValidatorCorrection, ...],
+]:
     """Apply §3's confidence/disagreement router and realign only corrected segments."""
     scores = tuple(
         SegmentScore(
@@ -766,19 +787,40 @@ def _validate_hard_segments(
     )
     decisions = select_for_validation(scores)
     if not any(decision.escalate for decision in decisions):
-        return tuple(results), None
+        return tuple(results), None, ()
 
     validator = validator_factory()
     resolve_role(validator.model_id, frozenset({"asr_validator"}), "the ASR validator")
     routed: list[tuple[_PreparedSpeechSegment, SegmentTranscript]] = []
+    rejected: list[RejectedValidatorCorrection] = []
+    accepted_correction = False
     for (segment, item), decision in zip(results, decisions, strict=True):
         if not decision.escalate:
             routed.append((segment, item))
             continue
-        corrected = validator.transcribe_segment(segment.path, segment.duration_s)
-        aligned = backend.align_segment(segment.path, segment.duration_s, corrected)
+        try:
+            corrected = validator.transcribe_segment(segment.path, segment.duration_s)
+            aligned = backend.align_segment(segment.path, segment.duration_s, corrected)
+        except Exception as exc:
+            # A rejected correction cannot erase an already admissible canonical alignment.
+            # Preserve that alignment and make the failed escalation explicit in the artifact.
+            routed.append((segment, item))
+            rejected.append(
+                RejectedValidatorCorrection(
+                    start_ms=segment.start_ms,
+                    end_ms=segment.end_ms,
+                    validator=validator.model_id,
+                    reason=_failure_reason(exc),
+                )
+            )
+            continue
+        accepted_correction = True
         routed.append((segment, aligned))
-    return tuple(routed), validator.model_id
+    return (
+        tuple(routed),
+        validator.model_id if accepted_correction else None,
+        tuple(rejected),
+    )
 
 
 class WslOmniAsrProducer:

@@ -80,6 +80,7 @@ from hawedit.transcripts import (
     NormalizedTranscript,
     RawTranscript,
     RawTranscriptImmutable,
+    RejectedValidatorCorrection,
     TranscriptStore,
     UnalignedSpeech,
     Word,
@@ -184,6 +185,9 @@ class PipelineRun:
     # about it here. Measured on the real 38-minute run: 2 of 547 regions, 664 ms of Kurdish, and
     # the emitted report mentioned neither. §1 of this module: fail visible, not silent. D-145.
     transcript_gaps: tuple[UnalignedSpeech, ...] = ()
+    # Validator corrections that were rejected while the canonical timed segment was retained.
+    # They are not speech gaps, but they are still material Stage 1 fallback evidence.
+    rejected_validator_corrections: tuple[RejectedValidatorCorrection, ...] = ()
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
     # §3 Stage 2's visual half splits into a part that needs weights and a part that does not.
@@ -317,6 +321,16 @@ class PipelineRun:
             "speech_without_transcription_ms": sum(
                 gap.end_ms - gap.start_ms for gap in self.transcript_gaps
             ),
+            "rejected_validator_corrections": [
+                {
+                    "start_ms": item.start_ms,
+                    "end_ms": item.end_ms,
+                    "duration_ms": item.end_ms - item.start_ms,
+                    "validator": item.validator,
+                    "reason": item.reason,
+                }
+                for item in self.rejected_validator_corrections
+            ],
             "transcript": (
                 self.transcript.to_dict()
                 if isinstance(self.transcript, StageSkipped)
@@ -1111,7 +1125,11 @@ def run_pipeline(
             ) from None
         transcript = stored
     store.verify_raw_integrity(identifier)
-    run = replace(run, transcript_gaps=transcript.unaligned)
+    run = replace(
+        run,
+        transcript_gaps=transcript.unaligned,
+        rejected_validator_corrections=transcript.rejected_validator_corrections,
+    )
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
 

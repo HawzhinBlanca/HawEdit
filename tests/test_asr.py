@@ -52,7 +52,7 @@ from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
 from hawedit.omni_assets import CANONICAL_CTC_CARD, CANONICAL_LLM_CARD, OmniAssetError
 from hawedit.registry import ModelEntry, ModelExcluded, ModelNotInRegistry
-from hawedit.transcripts import RawTranscript, Word
+from hawedit.transcripts import RawTranscript, RejectedValidatorCorrection, Word
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti", notes="Threadripper 3990X")
 AN_A100 = Hardware(host="a100-box", accelerator="A100")
@@ -753,6 +753,51 @@ def test_wsl_worker_applies_the_same_validator_routing_contract(tmp_path: Path) 
     assert transcript.text_ckb == "ڕاستکراوە."
     assert transcript.words[0].start_ms == 2_010
     assert transcript.asr.validated_by == validator.model_id
+
+
+def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_infeasible(
+    tmp_path: Path,
+) -> None:
+    """One rejected correction must not discard a finished 547-region episode."""
+
+    class RefusingCorrectionAlignment(RoutingBackend):
+        def align_segment(
+            self, audio_path: Path, duration_s: float, text: str
+        ) -> SegmentTranscript:
+            raise AlignmentInfeasible("15 frames cannot emit 21 validator tokens")
+
+    segment = tmp_path / "speech-0000.wav"
+    _write_pcm(segment)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "media_id": "episode",
+                "validator_model_dir": "unused-with-injected-validator",
+                "segments": [{"path": segment.name, "start_ms": 2_000, "end_ms": 3_000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    backend = RefusingCorrectionAlignment((-0.1,), disagree_at=0)
+    validator = FakeValidator()
+
+    transcript = run_request(request, tmp_path / "output.json", backend, validator)
+
+    assert transcript.words[0].start_ms == 2_000, "the original canonical alignment was lost"
+    assert transcript.asr.validated_by is None, "a rejected correction did not produce text"
+    assert transcript.unaligned == (), "canonical timed words exist, so this is not a speech gap"
+    assert transcript.rejected_validator_corrections == (
+        RejectedValidatorCorrection(
+            start_ms=2_000,
+            end_ms=3_000,
+            validator=validator.model_id,
+            reason="AlignmentInfeasible: 15 frames cannot emit 21 validator tokens",
+        ),
+    )
+    persisted = RawTranscript.from_json((tmp_path / "output.json").read_text(encoding="utf-8"))
+    assert persisted == transcript
 
 
 def test_stage1_does_not_load_validator_weights_when_no_segment_is_selected(

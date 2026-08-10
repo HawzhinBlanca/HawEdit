@@ -97,9 +97,15 @@ def run_request(
             selected_validator = QwenSoraniValidator(model_dir)
         return selected_validator
 
-    results, validated_by = _validate_hard_segments(initial, model, validator_factory)
+    results, validated_by, rejected_corrections = _validate_hard_segments(
+        initial, model, validator_factory
+    )
     transcript = _assemble_canonical_transcript(
-        media_id, results, unaligned, validated_by=validated_by
+        media_id,
+        results,
+        unaligned,
+        validated_by=validated_by,
+        rejected_validator_corrections=rejected_corrections,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("x", encoding="utf-8", newline="\n") as stream:

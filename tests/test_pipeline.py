@@ -47,7 +47,13 @@ from hawedit.pipeline import (
     main,
     run_pipeline,
 )
-from hawedit.transcripts import AsrProvenance, RawTranscript, UnalignedSpeech, Word
+from hawedit.transcripts import (
+    AsrProvenance,
+    RawTranscript,
+    RejectedValidatorCorrection,
+    UnalignedSpeech,
+    Word,
+)
 from hawedit.visual_index import MAX_FRAMES_PER_WINDOW
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2513,6 +2519,14 @@ def test_the_report_says_which_speech_has_no_transcription(tmp_path: Path) -> No
                 reason="AlignmentInfeasible: 17 frames cannot emit 16 tokens",
             ),
         ),
+        rejected_validator_corrections=(
+            RejectedValidatorCorrection(
+                start_ms=500_000,
+                end_ms=501_000,
+                validator="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+                reason="AlignmentInfeasible: correction exceeded available CTC frames",
+            ),
+        ),
     )
     run = run_pipeline(FIXTURE, tmp_path / "work", media_id="fixture", transcript=with_gaps)
 
@@ -2526,6 +2540,15 @@ def test_the_report_says_which_speech_has_no_transcription(tmp_path: Path) -> No
     assert "AlignmentInfeasible" in payload["transcript_gaps"][0]["reason"], (
         "a gap with no reason is indistinguishable from silence that was never there"
     )
+    assert payload["rejected_validator_corrections"] == [
+        {
+            "start_ms": 500_000,
+            "end_ms": 501_000,
+            "duration_ms": 1_000,
+            "validator": "rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+            "reason": "AlignmentInfeasible: correction exceeded available CTC frames",
+        }
+    ]
 
 
 @needs_ffmpeg
@@ -2542,6 +2565,7 @@ def test_a_run_with_nothing_missing_reports_zero_rather_than_omitting_the_key(
     payload = run.to_dict()
     assert payload["transcript_gaps"] == []
     assert payload["speech_without_transcription_ms"] == 0
+    assert payload["rejected_validator_corrections"] == []
     assert run.transcript_gaps == ()
 
 

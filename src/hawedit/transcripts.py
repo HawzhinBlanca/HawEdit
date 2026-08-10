@@ -56,6 +56,7 @@ __all__ = [
     "RawTranscript",
     "RawTranscriptImmutable",
     "RawTranscriptTampered",
+    "RejectedValidatorCorrection",
     "SegmentConfidence",
     "StaleNormalizedTranscript",
     "TranscriptStore",
@@ -331,6 +332,30 @@ class UnalignedSpeech:
 
 
 @dataclass(frozen=True, slots=True)
+class RejectedValidatorCorrection:
+    """One hard segment whose validator correction was not safe to use.
+
+    The canonical OmniASR alignment remains in the transcript. This record prevents that
+    fallback from looking like a successful validator pass while also avoiding the opposite
+    error: dropping speech that already had admissible timed words.
+    """
+
+    start_ms: int
+    end_ms: int
+    validator: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.end_ms <= self.start_ms:
+            raise ValueError(
+                "rejected validator correction must span a positive-duration speech region"
+            )
+        resolve_role(self.validator, frozenset({"asr_validator"}), "the ASR validator")
+        if not self.reason.strip():
+            raise ValueError("rejected validator correction needs a reason")
+
+
+@dataclass(frozen=True, slots=True)
 class SegmentConfidence:
     """One Stage 0 speech region's own mean log-probability, on the media clock.
 
@@ -406,6 +431,9 @@ class RawTranscript:
     # segments and `asr.mean_logprob` is their average. 547 values became one on the real run.
     # D-144.
     segment_confidence: tuple[SegmentConfidence, ...] = ()
+    # Hard segments whose canonical timed words were retained because a validator correction
+    # could not itself be aligned. These are not transcript gaps: speech remains represented.
+    rejected_validator_corrections: tuple[RejectedValidatorCorrection, ...] = ()
 
     def __post_init__(self) -> None:
         validate_media_id(self.media_id)
@@ -435,6 +463,13 @@ class RawTranscript:
             if not isinstance(scored, SegmentConfidence):
                 raise ValueError(
                     f"raw transcript segment_confidence[{position}] is not a SegmentConfidence"
+                )
+
+        for position, rejected in enumerate(self.rejected_validator_corrections):
+            if not isinstance(rejected, RejectedValidatorCorrection):
+                raise ValueError(
+                    "raw transcript rejected_validator_corrections"
+                    f"[{position}] is not a RejectedValidatorCorrection"
                 )
 
         previous: Word | None = None
@@ -485,6 +520,10 @@ class RawTranscript:
             unaligned=tuple(UnalignedSpeech(**u) for u in data.get("unaligned", ())),
             segment_confidence=tuple(
                 SegmentConfidence(**c) for c in data.get("segment_confidence", ())
+            ),
+            rejected_validator_corrections=tuple(
+                RejectedValidatorCorrection(**item)
+                for item in data.get("rejected_validator_corrections", ())
             ),
         )
 
