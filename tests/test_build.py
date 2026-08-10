@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import re
 import shutil
 import subprocess
 import zipfile
@@ -93,3 +94,56 @@ def test_every_entry_carries_the_commits_timestamp_not_the_clock(tmp_path: Path)
     with zipfile.ZipFile(build(tmp_path / "c")) as archive:
         stamps = {info.date_time for info in archive.infolist()}
     assert stamps == {expected}, f"{sorted(stamps)} != {expected}"
+
+
+# --- D-169: the report says "the wheel contains", and only the tree was ever checked ---------
+
+
+def _wheel_contents_claim() -> str:
+    """AUDIT_REPORT's wheel-contents bullet, on its own."""
+    section = (ROOT / "AUDIT_REPORT.md").read_text(encoding="utf-8")
+    section = section.split("## Verification evidence")[1]
+    bullet = next(b for b in section.split("\n- ") if b.startswith("Wheel contains"))
+    return bullet.split("\n- ")[0]
+
+
+def _paths_the_report_claims() -> set[str]:
+    """The files that bullet names, read out of the claim rather than copied beside it."""
+    return set(re.findall(r"`([\w./-]+\.[A-Za-z0-9]+)`", _wheel_contents_claim()))
+
+
+@needs_build
+def test_the_wheel_contains_every_file_the_audit_report_says_it_does(tmp_path: Path) -> None:
+    """ "Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup
+    module … verified by listing the archive."
+
+    `test_claims.py` checks those paths exist **in the tree**, which its own docstring says: a
+    claim about a wheel nobody can build from here. The tree is not the wheel. `assets/` and
+    `models/` are not packages — they reach the wheel only through
+    `[tool.setuptools.data-files]`, so deleting four lines of pyproject leaves every existing
+    test green and ships a wheel with no font, no OFL licence and no pinned revisions.
+
+    Measured on the real artifact: 55 entries, and the four data files land under
+    `hawedit-0.1.0.data/data/share/hawedit/…`, so the match is on the path's tail — the claim is
+    that the file ships, not where a wheel chooses to put it.
+    """
+    claimed = _paths_the_report_claims()
+    # Non-vacuity from a different file than the one being parsed: OFL-1.1 requires the licence
+    # to accompany the font, `registry.SHIPPED_ASSETS` records that obligation with the path,
+    # and the thing that actually ships is this archive. A reworded bullet that stopped naming
+    # it would fail here rather than quietly checking nothing.
+    from hawedit.registry import SHIPPED_ASSETS
+
+    obliged = {asset.licence_file for asset in SHIPPED_ASSETS if asset.licence_file}
+    assert obliged and obliged <= claimed, (
+        f"the wheel-contents claim no longer names the licence files this project is obliged "
+        f"to ship: {sorted(obliged - claimed)}"
+    )
+
+    with zipfile.ZipFile(build(tmp_path / "contents")) as archive:
+        names = archive.namelist()
+    missing = [path for path in sorted(claimed) if not any(n.endswith(path) for n in names)]
+    assert not missing, (
+        f"AUDIT_REPORT says the wheel contains these and it does not: {missing}. The files are "
+        f"in the tree — check [tool.setuptools.data-files] in pyproject.toml."
+    )

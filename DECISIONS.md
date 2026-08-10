@@ -8752,3 +8752,62 @@ No production behaviour changed: one data table and five tests. Floor 1547 → 1
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-169
+
+**`AUDIT_REPORT.md` says "the wheel contains", and the test holding it looked at the tree.** Its
+own docstring says so: *"The files it now names must exist in the tree that builds the wheel."*
+`assets/` and `models/` are not Python packages — they reach the archive only through
+`[tool.setuptools.data-files]` — so the tree is not the wheel.
+
+**Premise checked on the artifact first, and the claim is true.** Built from `bed2176` and
+listed: **352,754 bytes, 55 entries**, all six named paths present, the four data files under
+`hawedit-0.1.0.data/data/share/hawedit/…`. Nothing to repair. The byte count has moved from the
+**346,694** D-141 recorded, which is a dated measurement behaving as this report's first bullet
+says dated measurements do.
+
+**What was already held, and what was not.** `test_every_data_file_the_wheel_ships_is_tracked_by_git`
+reads the same stanza and requires its paths to be git-tracked, so it catches the stanza being
+*emptied*. It looks at no archive and says nothing about *which* files belong. Measured: deleting
+the single line `"assets/fonts/OFL.txt",` shipped every wheel **without the licence OFL-1.1
+requires to accompany the font**, with the whole suite green — the stanza test still passes
+because what remains is tracked, and both tree-level tests still pass because **the file is still
+in the tree**. `registry.SHIPPED_ASSETS` records that obligation with the path; the thing that
+ships is the archive.
+
+**Decision: assert on the built archive, with the path list read out of the claim.**
+`tests/test_build.py` already builds wheels for D-120's reproducibility pair, so the cost is a
+build it knows how to do. The list is parsed from the report's own bullet rather than copied
+beside it, so the test cannot drift from the sentence it holds. **Non-vacuity is taken from a
+different file than the one parsed:** the licence files in `registry.SHIPPED_ASSETS` must appear
+among the claimed paths, so a reworded bullet fails rather than checking nothing — and the third
+mutation proves that binding is live.
+
+**Rejected: extending the existing tree-level test.** It would have to build a wheel, which is
+what `test_build.py` is for, and its stated job — the claim names paths that exist here — is a
+different and still useful one. **Rejected: pinning the byte count or the entry count.** 55 is
+true today and is a fact about setuptools' layout, not about this project's obligations; a test
+on it would fail on an unrelated packaging change and teach people to edit the number.
+
+**Mutation audit — 3/3, lint-clean, whole suite each, baseline verified green first.** The
+load-bearing one is dropping *only* the OFL licence, which reddens the new test and nothing else.
+**The first mutation is caught two ways and one of them is pre-existing**, so it is reported as
+measured rather than claimed as this guard's win. **A fourth mutation was attempted and
+discarded:** pairing "stanza deleted" with "the check reads the tree", to demonstrate the archive
+read is load-bearing, came back **lint dirty** and therefore measured ruff (D-148, D-150). It was
+also unnecessary — mutation 2 leaves the file in the tree untouched, so a tree-reading check
+cannot see it by construction.
+
+**Also probed this iteration and disproved, rather than assumed:** `Clip.from_dict` has **no
+caller anywhere**, so §5's readback door is not reachable and hardening `ClipTranscript` would
+guard nothing; `JudgeVerdict.__post_init__` already refuses out-of-range scores, a payoff outside
+the clip, an unlisted narrative role and non-Kurdish title/description/hashtags, and role-checks
+its judge; and D-146's delivery record is genuinely written last, after all five artifacts, with
+three call sites and tests for the done, partial, torn and incomplete states.
+
+No production code changed: one test. Floor 1552 → 1553.
+`evidence/the-wheel-contents-claim-checked-the-tree.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.
