@@ -12,9 +12,18 @@ pair of index entries that would never have matched each other.
 
 from __future__ import annotations
 
+import re
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from hawedit.collisions import COLLISIONS, measure_collisions
+
+ROOT = Path(__file__).resolve().parents[1]
+MEASURE = ROOT / "scripts" / "measure_collisions.py"
+EVIDENCE = ROOT / "evidence" / "collision-incidence.md"
 
 
 def test_a_corpus_with_no_collisions_reports_none() -> None:
@@ -111,3 +120,108 @@ def test_heh_doachashmee_is_not_normalized_in_isolation() -> None:
     from hawedit.normalize import normalize_sorani
 
     assert normalize_sorani("ھ") == "ھ"
+
+
+# --- D-160: M0.15's numbers are only worth having if the one step that produces them runs ----
+
+
+def _measured() -> str:
+    """`scripts/measure_collisions.py` over the bundled lexicon, as its own docstring documents.
+
+    Run as a subprocess rather than imported, because two of the three things that were broken
+    are only reachable that way: the module-level path resolution, and stdout's encoding.
+    """
+    result = subprocess.run(
+        [sys.executable, str(MEASURE)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"M0.15's reproduce command exits {result.returncode}. Its evidence file's figures "
+        f"cannot be re-derived by the step that documents them.\n{result.stderr[-800:]}"
+    )
+    return result.stdout
+
+
+def _figure(pattern: str, summary: str) -> str:
+    """One captured figure from the script's summary line, or a failure naming what was missing.
+
+    The summary is the artifact being read, so a pattern that stops matching means the script's
+    output shape changed — which must fail loudly here rather than raise `AttributeError` on a
+    `None` match somewhere further down.
+    """
+    match = re.search(pattern, summary)
+    assert match is not None, f"{pattern!r} matched nothing in the measured summary: {summary!r}"
+    return match.group(1)
+
+
+def test_the_reproduce_command_for_m0_15_actually_runs() -> None:
+    """It did not, on this platform, for four days.
+
+    `KLPT_DIC` was assembled as `.venv/lib/python3.11/site-packages/…` — a POSIX venv layout
+    with a version segment Windows does not use — so the script died with `FileNotFoundError`
+    before measuring anything. Asking the installed package (`klpt.__file__`) is what
+    `tests/test_waw.py` already did. D-160.
+    """
+    stdout = _measured()
+    assert "24894 items" in stdout, stdout[:400]
+    # The Kurdish merge groups are the finding, and printing them is where it failed second:
+    # a script gets cp1252 stdout on Windows, so the summary line went out and the word pairs
+    # raised `UnicodeEncodeError` — exit 1 with the headline already printed, which reads like
+    # success to anything checking only the first line.
+    assert "بەرهەم | بەرھەم" in stdout, "the merged groups did not survive stdout's encoding"
+
+
+def test_the_evidence_file_still_states_what_the_script_measures() -> None:
+    """The numbers M0.15 is DONE on, bound to the code that produces them.
+
+    Parsed from `evidence/collision-incidence.md` rather than written here, so the evidence file
+    is what goes stale-or-red: a KLPT update or a `normalize_sorani` change moves the measurement
+    and this fails naming both figures, instead of the document quietly describing a run nobody
+    can repeat.
+    """
+    stdout = _measured()
+    summary = next(line for line in stdout.splitlines() if "items," in line)
+    evidence = EVIDENCE.read_text(encoding="utf-8")
+
+    measured = {
+        "items": int(_figure(r"(\d+) items,", summary)),
+        "changed_rate": _figure(r"([\d.]+)% altered", summary),
+        "distinct_raw": int(_figure(r"(\d+) distinct raw forms", summary)),
+        "distinct_normalized": int(_figure(r"-> (\d+) normalized", summary)),
+        "collision_rate": _figure(r"\(([\d.]+)% would have failed", summary),
+    }
+
+    assert f"**{measured['items']:,} entries" in evidence, (
+        f"the corpus is {measured['items']:,} entries; the evidence file says otherwise"
+    )
+    assert f"| {measured['distinct_raw']:,} |" in evidence
+    assert f"| {measured['distinct_normalized']:,} |" in evidence
+    assert f"**{measured['collision_rate']}%**" in evidence
+    assert f"**{measured['changed_rate']}%**" in evidence
+
+    # The control: the headline figure must be the one the script emits, not merely *a* number
+    # present in the document. 0.21% and 0.84% both appear in that file, so a check that only
+    # asked "is this percentage mentioned" would pass with the two swapped.
+    collision_row = next(
+        line for line in evidence.splitlines() if "failed to match" in line and "|" in line
+    )
+    assert f"**{measured['collision_rate']}%**" in collision_row, collision_row
+    assert f"{measured['changed_rate']}%" not in collision_row, (
+        f"the altered-items rate is standing in the collision row: {collision_row}"
+    )
+
+
+def test_every_merge_the_evidence_quotes_is_still_produced() -> None:
+    """The finding is the word pairs, not the percentage — `دهۆک`/`دھۆک` is *Duhok*.
+
+    A control on the test above: the figures could match while the merges changed entirely.
+    """
+    stdout = _measured()
+    quoted = re.findall(r"([؀-ۿ‌]+)\s*\|\s*([؀-ۿ‌]+)", EVIDENCE.read_text(encoding="utf-8"))
+    assert len(quoted) >= 6, f"the evidence file quotes {len(quoted)} pairs; it listed six"
+    missing = [f"{a} | {b}" for a, b in quoted if f"{a} | {b}" not in stdout]
+    assert not missing, f"the evidence quotes merges the script no longer produces: {missing}"

@@ -8178,3 +8178,99 @@ last removes the only real thing that rule describes.
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-160
+
+**M0.15's numbers were reproducible in principle and not on this machine.** The row is DONE on a
+measurement — *24,894 real entries; 0.21% of distinct forms would have failed to match* — and its
+evidence file names the command that produces it. `scripts/measure_collisions.py`'s own docstring
+says the numbers *"are only worth having if they are reproducible"*. They were not: the script
+failed twice here, for two unrelated reasons, and no test ran it.
+
+**First, a venv layout instead of the installed package.** `KLPT_DIC` was built as
+`ROOT / ".venv/lib/python3.11/site-packages/klpt/data/ckb-Arab.dic"`, which exists on POSIX.
+Windows uses `.venv/Lib/site-packages/…` — capital `L`, no version segment — so the script died
+with `FileNotFoundError` before measuring anything, **exit 1**. Nothing was missing: the file is
+at `.venv/Lib/site-packages/klpt/data/ckb-Arab.dic`, 946,155 bytes. The path was *assembled*
+rather than asked for, and `tests/test_waw.py:45` already did it correctly with
+`Path(klpt.__file__).parent / "data" / "ckb-Arab.dic"` — the right idiom was in the repository the
+whole time and this one script guessed.
+
+**Second, the finding did not survive stdout.** With the path fixed it still exited 1, on
+`UnicodeEncodeError`: a script gets cp1252 stdout on Windows, so the summary line went out and the
+Kurdish word pairs — *the finding itself* — died. That is the worse failure of the two, because it
+is **exit 1 with the headline already printed**, which reads as success to anything checking only
+the first line. `cli.use_utf8_streams` exists for this and calls itself *"the first statement of
+every `main()`"*; all six argument parsers call it and this script never did.
+
+**The claim was true.** With both fixed, `exit=0`, and every figure reproduces four days on:
+24894 items, 0.84% altered, 24051 distinct raw forms → 24000 normalized, 0.21% would have failed
+to match, `heh_doachashmee=204`, `arabic_kaf=1` — and all six word pairs the evidence file quotes
+come back unchanged. So the fix is to the reproduce path, not to the number. Recorded because
+"never mark DONE by judgment" cuts both ways: a row resting on a measurement nobody can re-run is
+resting on judgment, whatever the number turns out to be.
+
+**Decision: bind the document to the run, not to a literal.** Three tests execute the script as a
+**subprocess** — an import would reach neither the module-level path resolution nor stdout's
+encoding — require exit 0, and compare `evidence/collision-incidence.md` against what came out.
+The figures are **parsed from the evidence file**, so a KLPT update or a `normalize_sorani` change
+fails naming both numbers instead of leaving the document describing a run nobody can repeat.
+
+**The control is that `0.21%` and `0.84%` both appear in that file.** A check asking only *"is
+this percentage mentioned"* passes with the two swapped, so the collision rate is asserted **in
+its own table row** and the altered-items rate asserted absent from it. A second control requires
+the quoted merges themselves, because the percentages could match while the merges changed
+entirely.
+
+**Rejected: hardcoding 24,894 in the test.** That is the stale number one layer down — it would
+pass while the evidence file said something else, which is the failure being fixed. **Rejected:
+skipping the test when KLPT is absent.** `klpt==0.1.7` is a core dependency in the hashed lock,
+not an extra; a skip here would retire the guard on exactly the platform where it fired.
+**Rejected: `importlib.resources`.** `klpt.__file__` is what the neighbouring test already uses,
+and matching it costs nothing.
+
+**Mutation audit 7/7**, after a 7/7 that was not trustworthy. The first sweep flagged both
+restored defects `[lint dirty]` — removing each line orphaned its import (F401), the contamination
+of D-148 and D-150. Redone removing import alongside use: still caught, red lists unchanged, but
+not *measured* to hold until the mutations were clean. **And the lint check itself was
+over-broad**, running `ruff` over `scripts/measure_collisions.py`. `verify.sh` lints
+`ruff check src tests` and mypy declares `files = ["src", "tests"]`: **`scripts/` is outside the
+gate's lint and typecheck entirely**, so an error there cannot redden anything and flagging it
+marks honest catches as contaminated.
+
+**That scope gap is named, not fixed here.** The change in this commit lives in a file the gate
+neither lints nor typechecks, and the only thing behind it is the subprocess test added beside it.
+Widening `LINT_CMD` to `scripts` would have to survive every other script in that directory first,
+which is its own increment.
+
+**A third pass, because mutation 1 was not restoring the defect it named.** `ROOT` went away with
+the fix — nothing else in the script used it — so replacing only the path line left `ROOT`
+undefined, and the script died on `NameError` at import instead of `FileNotFoundError` at the read.
+The test caught it either way, since it requires exit 0; but the label claimed one failure and the
+run produced another, which is the same fault as a number without its provenance. Reinstating the
+`ROOT` assignment alongside the old path makes it the original defect and nothing else: still 7/7,
+same red lists. **Eighth bad mutation of mine** after D-137, D-141, D-144, D-147, D-149, D-155 and
+D-156, and the second found by reading the committed diff rather than the sweep's own output.
+
+**Both restored defects are platform-specific**, so this 7/7 is measured on hawapc01 (Windows).
+The fix is not: asking the installed package and pinning UTF-8 are right on both platforms and CI
+runs the same three tests. What a Linux runner cannot reproduce is the *failure* — which is
+exactly why it survived four days. Third platform-bound finding after D-137's skip and D-142's
+Windows-only fixture, and the first where the platform hid a defect rather than a test.
+
+**And the decision log's own guard caught this entry on the way in.** The first gate after writing
+it went red on `test_every_value_the_decision_log_states_is_the_value_the_code_holds`: D-098's
+convention is that a `` `<NAME> = <value>` `` span in a decision is a **live claim** about a module
+constant, and this entry quoted the *removed* line in exactly that form — so the guard reported
+that "D-160 states `KLPT_DIC` … and no module defines KLPT_DIC", which is true twice over, since
+the value is historical *and* `scripts/` is not a module. Split into two spans: the name, then the
+expression it used to hold. Fifth time this session a new record has failed on the text announcing
+it (D-152, D-154, D-157, D-159's neighbours), and the cheapest possible proof the check runs.
+**Then it caught the sentence you are reading**, because that sentence quoted the pattern itself
+as a literal example; written with angle-bracket placeholders now, which the pattern cannot match.
+A guard that fires twice on one paragraph is not noise — a decision log is code to these tests.
+
+`evidence/m0-15s-reproduce-command-could-not-run.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
