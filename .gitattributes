@@ -8,6 +8,7 @@
 *.toml text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
+scripts/test-count.floor text eol=lf
 # `git archive` is a release input.  On Windows with core.autocrlf=true, an unpinned
 # text member is exported with CRLF even when the committed blob is LF.  Dependency
 # locks are authenticated by their committed SHA-256, so byte identity is mandatory.

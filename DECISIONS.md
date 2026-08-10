@@ -6030,6 +6030,27 @@ versions. The merged identity still requires local and hosted acceptance.
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-185 - Git archive bytes are part of the authenticated release input
+
+The source and hosted gates at `fb17959` were green, yet a clean installed wheel refused its own
+packaged base lock.  Windows `core.autocrlf=true` had converted the unclassified `.txt` member
+from the committed LF bytes to CRLF during `git archive`; the code-bound SHA-256 correctly detected
+the mismatch.  A reproducible wheel can therefore be reproducibly wrong when archive conversion
+changes authenticated data before both builds.
+
+Every tracked `.txt` is now `text eol=lf`, including dependency locks, the release-builder lock
+and the font license.  The regression forces the Windows autocrlf setting and compares every
+archived text member with its Git blob, rather than merely inspecting the working tree.  The exact
+`9322f28` wheel then built twice identically and passed fresh installed-wheel proofs on CPython
+3.11.15 and 3.12.10: hash-only dependency install, `pip check`, exact environment audit, seven
+installed data members and all nine CLIs.
+
+Rejected updating trusted hashes to the CRLF wheel bytes: Linux would then disagree and the digest
+would authenticate a platform conversion rather than the committed lock.  Rejected normalizing
+on read: the raw wheel member, RECORD and provenance must identify the same reviewed bytes.
+
+`evidence/release-text-byte-integrity-2026-08-10.md`.
+
 ## D-181 - A prerequisite is held by its own diagnostic, not by a shared exit code
 
 Protected main measured that deleting twelve of fourteen older argv guards left their tests green.

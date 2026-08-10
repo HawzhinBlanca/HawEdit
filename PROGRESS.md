@@ -292,6 +292,13 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > fields to provenance before OIDC attestation. This closes artifact-identity substitution; a
 > version/tag policy and durable GitHub Release remain open. `evidence/release-identity-binding.md`.
 
+> **M3.7 archive-byte amendment (D-185).** Windows `git archive` no longer rewrites packaged text
+> data: every tracked `.txt` is pinned to LF, and a forced-autocrlf regression compares all 15
+> archive members to their committed blobs.  The exact `9322f28` wheel built twice identically and
+> passed fresh CPython 3.11/3.12 hash-only installs, `pip check`, exact environment audit, seven
+> installed data probes and all nine CLI helps.  Hosted attestation still depends on protected
+> main. `evidence/release-text-byte-integrity-2026-08-10.md`.
+
 | M1.8 | Windows private checkpoint staging and hard-crash resume | DONE | `src/hawedit/windows_security.py` + `src/hawedit/model_fetch.py` + `tests/test_model_fetch.py`. Fresh directories receive protected native DACLs at creation; root/member owner and ACEs are revalidated, `Everyone:F` is refused, and one revision-specific private tree survives hard process death. `evidence/checkpoint-provisioning.md`, D-124. |
 | M3.10 | Code-bound host dependency locks | DONE | `src/hawedit/host_lock_hashes.py` + `src/hawedit/environment.py` + twelve `requirements/host-*.txt` locks + `tests/test_host_dependencies.py`. CPU base, gate and model-fetch environments are exact wheel-hash graphs for Linux/Windows Python 3.11/3.12. `evidence/host-dependency-locks.md`, D-122. |
 | M3.8 | Package-managed OmniASR model/tokenizer byte and card-policy integrity | DONE | `src/hawedit/omni_assets.py` + `tests/test_omni_assets.py`, integrated by `asr.py` and `wsl_setup.py`. Exact identities, atomic verified first download, no-follow full rehash, descriptor-bound real model loading, private empty card sources, effective metadata equality and atomic ready-worker identity are enforced. `evidence/omniasr-asset-integrity.md`, D-101. |
