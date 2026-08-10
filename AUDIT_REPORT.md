@@ -98,9 +98,19 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.12 wheel install: `pip check` clean; `hawedit`, `hawedit-asr-bench`,
-  `hawedit-editorial-bench` and `hawedit-asr-setup` all start from the installed wheel.
+- Clean Python 3.12 wheel install: `pip check` clean; **all five** console scripts —
+  `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials` and
+  `hawedit-editorial-bench` — start from the installed wheel. **Corrected 2026-08-10 (D-141):**
+  this named **four**, omitting `hawedit-credentials`, which is the entry point that handles the
+  API key. `[project.scripts]` has declared five since M2.8 landed, and nothing tied this list to
+  it — the same uncounted-list failure as D-127's *five repositories* and D-129's *four blocked
+  stages*. Re-measured against a real wheel on 2026-08-10: 5 declared, 5 console scripts present,
+  all 5 exit 0 on `--help`, `pip check` clean on 3.12.13.
+  `tests/test_claims.py` now asserts this list equals `[project.scripts]` in both directions.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
+  Verified 2026-08-10 by listing the archive: `assets/fonts/NotoNaskhArabic-Regular.ttf`,
+  `assets/fonts/OFL.txt`, `models/revisions.json` + `models/sources.json`, `hawedit/asr_worker.py`
+  and `hawedit/wsl_setup.py`, in a 346,694-byte wheel of 55 entries.
 - **The wheel build is reproducible as of 2026-08-09** (D-120). It was not: two consecutive
   `pip wheel --no-deps` runs at one unchanged tree produced the same **333,362 bytes** and the
   hashes `a7c3b2f1c280aff4…` and `38d1d2475c46e120…`, because nothing set `SOURCE_DATE_EPOCH` and

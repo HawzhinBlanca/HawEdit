@@ -834,3 +834,94 @@ def test_the_lock_does_not_pin_the_project_itself() -> None:
     `--require-hashes` would demand a checksum for the working tree."""
     locked = {name.lower() for name, _ in _PIN.findall(GATE_LOCK.read_text("utf-8"))}
     assert "hawedit" not in locked
+
+
+# --- D-141: AUDIT_REPORT's verification evidence, bound to the thing it describes -----------
+
+
+def _audit_report() -> str:
+    return (ROOT / "AUDIT_REPORT.md").read_text(encoding="utf-8")
+
+
+def _declared_console_scripts() -> set[str]:
+    import tomllib
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    return set(project["scripts"])
+
+
+def _claimed_console_scripts_text() -> str:
+    """The sentence that lists the console scripts, without the correction note beside it.
+
+    `**Corrected …**` records that this list once said four; it therefore *names* the entry point
+    it omitted, and a check over the whole bullet reads that name as though the list still had it.
+    """
+    section = _audit_report().split("## Verification evidence")[1]
+    bullet = section.split("- Clean Python 3.12 wheel install:")[1]
+    return bullet.split("**Corrected")[0]
+
+
+def test_the_audit_report_names_every_console_script_and_no_others() -> None:
+    """Set equality both ways, the discipline §7 and §4.1 already get.
+
+    AUDIT_REPORT claimed *"`hawedit`, `hawedit-asr-bench`, `hawedit-editorial-bench` and
+    `hawedit-asr-setup` all start from the installed wheel"* — **four**, while
+    `[project.scripts]` has declared **five** since M2.8 added `hawedit-credentials`, the entry
+    point that handles the API key. Nothing tied the sentence to the table, so it aged silently:
+    the same failure as D-127's *five repositories* and D-129's *four blocked stages*.
+
+    Both directions, because either alone is satisfiable while the claim is wrong: a list missing
+    an entry point overstates nothing but proves less than it says, and a list naming one that
+    does not exist tells a reader to run a command that is not there.
+    """
+    declared = _declared_console_scripts()
+    # The *claim*, not its history. The correction note in the same bullet names the entry point
+    # that was once omitted, so a test reading the whole section finds `hawedit-credentials` in
+    # the explanation even after the list drops it again — measured, that mutation SURVIVED. This
+    # is D-121's prose-grep trap for the third time in this repo, after `fetch-ffmpeg.sh`'s
+    # `--fail` comment and the gate workflow's quoted old command.
+    claim = _claimed_console_scripts_text()
+    # Console-script *shape*, so the comparison is honest in both directions: `hawedit` or
+    # `hawedit-word`, and nothing else. Filtering by "is it declared" would make the missing-name
+    # direction unfalsifiable, and a loose `hawedit[\w-]*` would swallow the wheel-contents
+    # paths (`hawedit/asr_worker.py`) that the same section legitimately names.
+    named = set(re.findall(r"`(hawedit(?:-[a-z]+)*)`(?![\w./-])", claim))
+
+    assert named == declared, (
+        f"AUDIT_REPORT's verification evidence names {sorted(named)}; [project.scripts] declares "
+        f"{sorted(declared)}. Every console script the wheel installs has to appear, and nothing "
+        f"that is not one."
+    )
+
+
+def test_the_audit_report_states_how_many_console_scripts_there_are() -> None:
+    """The count, separately from the list. D-127's lesson: a list can be right while the number
+    beside it is stale, and a reader takes the number.
+    """
+    declared = _declared_console_scripts()
+    section = _audit_report().split("## Verification evidence")[1]
+    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}
+    stated = words[len(declared)]
+    assert f"**all {stated}** console scripts" in section, (
+        f"the report does not say there are {stated} console scripts, and there are "
+        f"{len(declared)}: {sorted(declared)}"
+    )
+
+
+def test_the_audit_reports_wheel_contents_claim_names_real_paths() -> None:
+    """ "Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module"
+    was true and unverifiable from the text. The files it now names must exist in the tree that
+    builds the wheel, or the claim is about a wheel nobody can build from here.
+    """
+    section = _audit_report().split("## Verification evidence")[1]
+    for relative in (
+        "assets/fonts/NotoNaskhArabic-Regular.ttf",
+        "assets/fonts/OFL.txt",
+        "models/revisions.json",
+        "models/sources.json",
+    ):
+        assert relative in section, f"the wheel-contents claim no longer names {relative}"
+        assert (ROOT / relative).is_file(), f"{relative} is claimed for the wheel and absent"
+    for module in ("hawedit/asr_worker.py", "hawedit/wsl_setup.py"):
+        assert module in section, f"the wheel-contents claim no longer names {module}"
+        assert (ROOT / "src" / module).is_file(), f"{module} is claimed for the wheel and absent"

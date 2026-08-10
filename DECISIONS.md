@@ -6699,3 +6699,88 @@ passed a path that never existed and now create a stub file.
 no test that made a write fail, and the runner's `embedding_revision=` argument could be dropped
 with everything green — D-105, D-133 and D-135's unheld-wiring finding for the fourth time.
 `evidence/stage-2-re-embedded-641-windows-every-run.md`.
+
+## D-141
+
+**AUDIT_REPORT.md's verification evidence named four of five console scripts, and the omitted one
+handles the API key.** The loop's step 1(b) names AUDIT_REPORT as a place claims can drift, and this
+one had never been checked. Reproduced:
+
+```
+[project.scripts] declares 5 entry points:
+  hawedit                    -> hawedit.pipeline:main
+  hawedit-asr-bench          -> hawedit.bench:main
+  hawedit-asr-setup          -> hawedit.wsl_setup:main
+  hawedit-credentials        -> hawedit.credentials:main
+  hawedit-editorial-bench    -> hawedit.editorial_bench:main
+
+AUDIT_REPORT names: 4
+declared but NOT named in AUDIT_REPORT: ['hawedit-credentials']
+```
+
+`hawedit-credentials` arrived with M2.8 and the sentence was never re-derived — the same
+uncounted-list failure as D-127's *five repositories* and D-129's *four blocked stages*, and the
+third time a count in this repo aged because nothing tied it to its source of truth.
+
+**The claims themselves are true; only the list was short.** Verified against a real wheel built
+from this tree, installed into a fresh CPython 3.12.13 environment:
+
+```
+starting each one from the installed wheel (--help):
+  OK   hawedit                    exit 0
+  OK   hawedit-asr-bench          exit 0
+  OK   hawedit-asr-setup          exit 0
+  OK   hawedit-credentials        exit 0
+  OK   hawedit-editorial-bench    exit 0
+
+uv pip check -> All installed packages are compatible
+wheel: hawedit-0.1.0-py3-none-any.whl, 346,694 bytes, 55 entries
+  OK   the Kurdish font        assets/fonts/NotoNaskhArabic-Regular.ttf
+  OK   its OFL licence         assets/fonts/OFL.txt
+  OK   model-source manifest   models/revisions.json + models/sources.json
+  OK   the WSL worker          hawedit/asr_worker.py
+  OK   the setup module        hawedit/wsl_setup.py
+```
+
+**Decision: bind the sentence to `[project.scripts]`, set equality both ways.** The §7 registry and
+§4.1's collision probes already get this discipline; the report did not. Both directions, because
+either alone is satisfiable while the claim is wrong: a short list proves less than it says, and a
+list naming a script that does not exist tells a reader to run a command that is not there. The
+*count* is asserted separately, because D-127's lesson is that a list can be right while the number
+beside it is stale — and a reader takes the number.
+
+**The wheel-contents claim now names paths instead of categories.** *"Kurdish font/OFL,
+model-source manifest, WSL worker and setup module"* was true and unverifiable from the text; the
+files it names must exist in the tree that builds the wheel, or the claim is about a wheel nobody
+can build from here.
+
+**Rejected: asserting the wheel's own contents in the test.** That means building a wheel in the
+gate — `tests/test_build.py` already does it for reproducibility, and doing it again to re-list the
+same members costs a build per run to check what `MANIFEST`/`pyproject` already determine. The
+tree-level assertion catches the realistic drift: a file renamed or removed while the report still
+names it.
+
+**Mutation audit 6/6,** after 4/6.
+
+**The primary defect's own mutation survived the first pass, and the cause is now three for three.**
+Dropping `hawedit-credentials` from the list left the suite green, because the correction note in the
+same bullet *names* the entry point it records as once-omitted — so a check over the whole section
+read it from the explanation. That is D-121's prose-grep trap for the third time in this repo, after
+`fetch-ffmpeg.sh` explaining `--fail` in a comment (D-121) and the gate workflow quoting the command
+it replaced (D-139). This project's convention is to quote the wrong thing while correcting it, so
+every check over documentation has to read the *claim* and not its history. The test now takes the
+bullet up to `**Corrected`.
+
+**And one of my mutations was measuring nothing.** *"the wheel-contents claim names a file that is
+not in the tree"* replaced the first `` `models/revisions.json` `` in the file — and there are two,
+the other in "Secondary debt" (D-073). It changed the one the test does not read. Re-anchored on
+text unique to the section, and caught. Same class as D-137's retry mutation: a survivor is a claim
+about the tests, a bad mutation is a claim about nothing.
+
+**Found in passing, measured, not fixed here.** `hawedit --help` prints
+`usage: hawedit.pipeline …` and `hawedit-credentials --help` prints `usage: hawedit.credentials …`
+— both set `prog=` to the module path, so the wheel's own help text names a command the user cannot
+run. `smoke.py` does the same and is *not* a console script, so there its prog is right. The honest
+fix derives the name from how the process was invoked (`__main__.py` in `argv[0]` means `-m`), which
+belongs in `cli.py` beside `use_utf8_streams` and needs its own decision about the rule.
+`evidence/four-of-five-entry-points.md`.
