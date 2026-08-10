@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import stat
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -549,3 +550,130 @@ def test_a_missing_transcript_is_not_reused_even_with_a_sidecar(tmp_path: Path) 
     )
 
     assert store.reusable_raw("media-001", "abc123", "pkg.Real") is None
+
+
+# --- D-151: invariant #1's tamper evidence, held in the state that removes it -----------------
+#
+# `verify_raw_integrity` has two refusals. The mismatch half — the file no longer hashes to the
+# recorded digest — has three tests. The *missing digest* half had none: every one of those tests
+# reaches the check by editing the transcript, never by touching the sidecar. Measured, with that
+# branch neutered: delete the sidecar, rewrite the canonical transcript, and
+# `verify_raw_integrity` returns cleanly while `read_raw` hands back
+# `'ئەمە دەقێکی جیاوازە — TAMPERED'` — with all 1,471 tests green.
+# `evidence/invariant-1-had-no-digest-no-problem.md`.
+# =========================================================================================
+
+
+def _delete(sidecar: Path) -> None:
+    sidecar.unlink()
+
+
+def _empty(sidecar: Path) -> None:
+    sidecar.write_text("", encoding="ascii")
+
+
+def _whitespace(sidecar: Path) -> None:
+    sidecar.write_text("   \n", encoding="ascii")
+
+
+def _not_ascii(sidecar: Path) -> None:
+    sidecar.write_bytes(b"\xff\xfe not a digest")
+
+
+def _a_directory(sidecar: Path) -> None:
+    sidecar.unlink()
+    sidecar.mkdir()
+
+
+# Every way the recorded digest can stop being a readable digest. *Which* states belong here is a
+# judgment — nothing can derive it — so it is written once and the parametrisation is derived from
+# it, because the failure a test cannot catch is the two drifting apart. Found by mutation: with
+# the state list spelled out separately, dropping "deleted" from it left the suite green while the
+# code that produces that state sat there unused.
+_SIDECAR_BREAKERS: dict[str, Callable[[Path], None]] = {
+    "deleted": _delete,
+    "empty": _empty,
+    "whitespace only": _whitespace,
+    "not ASCII": _not_ascii,
+    "a directory": _a_directory,
+}
+_SIDECAR_STATES = tuple(_SIDECAR_BREAKERS)
+
+
+def _break_the_sidecar(sidecar: Path, how: str) -> None:
+    _SIDECAR_BREAKERS[how](sidecar)
+
+
+@pytest.mark.parametrize("how", _SIDECAR_STATES)
+@pytest.mark.parametrize("entry_point", ["verify_raw_integrity", "reusable_raw"])
+def test_a_transcript_whose_digest_is_gone_cannot_be_verified(
+    tmp_path: Path, how: str, entry_point: str
+) -> None:
+    """Both paths that claim to check invariant #1, in every state that removes the evidence.
+
+    Asserted on both because they are different doors: the pipeline calls
+    `verify_raw_integrity` directly, and Stage 1 reuse goes through `reusable_raw`. A guard
+    correct only on the door its one caller happens to use is one the next caller walks past.
+    """
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.Real")
+    _break_the_sidecar(store._digest_path("media-001"), how)
+
+    with pytest.raises(RawTranscriptTampered):
+        if entry_point == "verify_raw_integrity":
+            store.verify_raw_integrity("media-001")
+        else:
+            store.reusable_raw("media-001", "abc123", "pkg.Real")
+
+
+@pytest.mark.parametrize("how", _SIDECAR_STATES)
+def test_a_tampered_transcript_is_still_refused_once_its_digest_is_gone(
+    tmp_path: Path, how: str
+) -> None:
+    """The state this actually protects against, asserted on the text that would ship.
+
+    Deleting the sidecar is the cheapest way to erase tamper evidence — the file it would have
+    contradicted is right there. Measured with the refusal removed: the edited Sorani comes back
+    from `read_raw` as the canonical transcript.
+    """
+    store = TranscriptStore(tmp_path)
+    path = store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.Real")
+    path.chmod(0o644)
+    path.write_text(a_raw(text="ئەمە دەقێکی جیاوازە — TAMPERED").to_json(), encoding="utf-8")
+    _break_the_sidecar(store._digest_path("media-001"), how)
+
+    with pytest.raises(RawTranscriptTampered):
+        store.verify_raw_integrity("media-001")
+    # The door a real Stage 1 run takes. It must refuse rather than hand the edited text back.
+    with pytest.raises(RawTranscriptTampered):
+        store.reusable_raw("media-001", "abc123", "pkg.Real")
+
+
+def test_an_intact_digest_still_verifies_and_still_reuses(tmp_path: Path) -> None:
+    """The control, and the table above needs one: a `verify_raw_integrity` that raised
+    unconditionally — or a `reusable_raw` that never returned anything — passes every case above.
+
+    So this requires the untouched pair to verify *and* to come back through the reuse door with
+    the text that was written.
+    """
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.Real")
+
+    store.verify_raw_integrity("media-001")  # must not raise
+    reused = store.reusable_raw("media-001", "abc123", "pkg.Real")
+    assert reused is not None, "an intact transcript was not offered for reuse"
+    assert reused.text_ckb == a_raw().text_ckb
+
+
+def test_every_way_of_breaking_the_sidecar_is_actually_exercised() -> None:
+    """The parametrisation is derived from the breakers; this pins that it still is.
+
+    It cannot check the *judgment* — nothing can derive which states belong in the table — but it
+    can check that the two halves have not drifted, which is the failure mutation found: a state
+    list edited down while the code producing that state stays behind, unused and unrun.
+    """
+    assert set(_SIDECAR_STATES) == set(_SIDECAR_BREAKERS), (
+        f"the parametrisation no longer covers every sidecar state: "
+        f"{sorted(set(_SIDECAR_BREAKERS) - set(_SIDECAR_STATES))} produced but never exercised; "
+        f"{sorted(set(_SIDECAR_STATES) - set(_SIDECAR_BREAKERS))} named but not producible"
+    )

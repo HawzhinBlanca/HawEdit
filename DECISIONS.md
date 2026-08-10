@@ -7510,3 +7510,69 @@ The probe printed `[lint dirty]` beside it and the audit now strips the import w
 orphans it. Same shape as D-148's SIM223 contamination.
 
 `evidence/adversarial-pass-23-2026-08-10.md`. Floor 1466 → 1471.
+
+## D-151
+
+**Kurdish invariant #1's tamper evidence had two refusals and only one of them was held.**
+`verify_raw_integrity` reads the SHA-256 recorded when the canonical transcript was written and
+compares it. It refuses twice: once when the digest cannot be read at all, once when it does not
+match. Each neutered in turn against a baseline verified green first, whole gate suite each time:
+
+```
+baseline green: True
+UNHELD  a missing or unreadable digest is treated as verified
+held    a digest mismatch is treated as verified (the half with three tests)
+          red: test_byte_only_tampering_with_raw_is_detected, …
+```
+
+All three existing tamper tests reach the check by **editing the transcript**. None touches the
+sidecar. So the state that removes the evidence entirely — delete one file — was the state nothing
+checked.
+
+**The artifact.** With that branch neutered: write the canonical transcript, rewrite it, delete the
+sidecar, and ask the two questions a run asks:
+
+```
+as written          : 'ئه‌مه‌ زۆر باشه‌'
+verify_raw_integrity returned cleanly with NO sidecar and a tampered file
+what a run gets back: 'ئەمە دەقێکی جیاوازە — TAMPERED'
+```
+
+Invariant #1 — *"raw is written once and never mutated"* — defeated by deleting one file, with all
+1,471 tests green.
+
+**Decision: enumerate the states that remove the evidence, and check both doors.** Five states —
+deleted, empty, whitespace only, not ASCII, a directory — each asserted against both
+`verify_raw_integrity` (which `pipeline.py` calls directly) and `reusable_raw` (which Stage 1 reuse
+goes through). Two doors, because a guard correct only on the one its current caller happens to use
+is the defect D-148 found in `generate_json`.
+
+**Which states belong is a judgment, and it is recorded as one.** Nothing can derive the list —
+there is no oracle for "ways a digest can stop being a digest". So it is written once as
+`_SIDECAR_BREAKERS`, the parametrisation is *derived* from it, and a test pins that derivation.
+Found by mutation: with the state list spelled out separately, dropping `"deleted"` from it left
+the suite green while the code producing that state sat behind, unused and unrun. The derivation
+check cannot validate the judgment, and says so in its own docstring; what it stops is the two
+halves drifting apart.
+
+**Rejected: making `read_raw` verify.** It is the obvious-looking root fix and it is wrong here.
+`test_byte_only_tampering_with_raw_is_detected` asserts `store.read_raw(...) == a_raw()` on a
+*tampered* file, on purpose — its point is that parsing and re-serializing would erase the edit, so
+the byte digest is the only thing that sees it. `read_raw` is deliberately the unverified read and
+verification is an explicit, separate step; both real callers take it.
+
+**Rejected: treating a rewritten sidecar as a defect to fix here.** An edit that updates the
+transcript *and* recomputes the sidecar passes, and no unkeyed digest can prevent that — it would
+need a signature or a MAC with a key this project does not have. Named rather than quietly implied
+by a test that would suggest otherwise.
+
+**Mutation audit 6/7.** Caught: the defect restored; refusing only `FileNotFoundError`; refusing
+only `UnicodeError`; the reuse door skipping verification; the comparison replaced by `actual =
+recorded`; and the parametrisation dropping a state. The survivor is a bad mutation of mine —
+reading the sidecar as UTF-8 with `errors="replace"` still refuses, because the garbage it decodes
+to fails the *mismatch* branch instead. That is worth stating rather than hiding: the two refusals
+back each other up for a sidecar that is present but wrong, and only **total absence** ever had a
+single line of defence. It also printed `[lint dirty]` (my mutation ran past 100 columns), so the
+run would not have counted either way.
+
+`evidence/invariant-1-had-no-digest-no-problem.md`. Floor 1471 → 1488.
