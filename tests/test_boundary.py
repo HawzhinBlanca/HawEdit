@@ -459,3 +459,52 @@ def test_timelens_never_moves_the_in_point() -> None:
     # that ignored TimeLens entirely.
     assert boundary.final_out_ms == ANCHOR_OUT + 5_000
     assert boundary.out_extended_by == "timelens_interval_end"
+
+
+# --- adversarial pass #24: which cut, not just whether the invariant survives -----------------
+#
+# M6.2's claim is an invariant sweep — 78,125 combinations asserting Kurdish invariant #2. Every
+# mutation below keeps that invariant true and changes the cut anyway, because §3's SOFT rule is
+# made of a *choice* as well as a bound, and an invariant cannot see a choice. Measured: with
+# `min(preceding_cuts)` replaced by `max`, and `max(following_cuts)` by `min`, the whole gate
+# suite stayed green — every existing shot-cut test supplies exactly one cut, the one input where
+# the selection is invisible. `evidence/adversarial-pass-24-2026-08-10.md`.
+# =========================================================================================
+
+
+def test_the_earliest_preceding_cut_wins_when_several_are_in_the_window() -> None:
+    """§3: `final_in = earliest of { …, preceding shot_cut within 400 ms, … }`.
+
+    Three cuts all inside the window. Taking the nearest instead of the earliest keeps the
+    invariant — the in point still only moves outward — and hands the client a clip that starts
+    300 ms late, mid-shot.
+    """
+    boundary = fuse_boundary(
+        inputs(shot_cuts_ms=(ANCHOR_IN - 350, ANCHOR_IN - 200, ANCHOR_IN - 50))
+    )
+    assert boundary.final_in_ms == ANCHOR_IN - 350, "the nearest cut won, not the earliest"
+    assert boundary.in_extended_by == "shot_cut"
+
+    # The control: with only the nearest cut present the answer *is* the nearest, so the test
+    # above is measuring the selection rather than a constant.
+    only_nearest = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_IN - 50,)))
+    assert only_nearest.final_in_ms == ANCHOR_IN - 50
+
+
+def test_the_latest_following_cut_wins_when_several_are_in_the_window() -> None:
+    """§3: `final_out = latest of { anchor_out + 200 ms tail, …, following shot_cut … }`.
+
+    Taking the nearest following cut leaves the 200 ms tail as the winner instead, so the clip
+    ends 150 ms early — invariant intact, punchline clipped.
+    """
+    boundary = fuse_boundary(
+        inputs(shot_cuts_ms=(ANCHOR_OUT + 50, ANCHOR_OUT + 200, ANCHOR_OUT + 350))
+    )
+    assert boundary.final_out_ms == ANCHOR_OUT + 350, "the nearest cut won, not the latest"
+    assert boundary.out_extended_by == "shot_cut"
+
+    # The control, and it discriminates: a single cut closer than the tail must lose *to* the
+    # tail, so this pair cannot both pass if the out point stopped reading the candidates.
+    only_nearest = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_OUT + 50,)))
+    assert only_nearest.final_out_ms == ANCHOR_OUT + 200
+    assert only_nearest.out_extended_by == "tail"
