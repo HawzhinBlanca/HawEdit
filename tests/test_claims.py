@@ -851,29 +851,126 @@ def test_ci_installs_from_the_lock_with_require_hashes() -> None:
     )
 
 
+_EXACT_PIN = re.compile(r"([A-Za-z0-9._-]+)==([^\s;]+)")
+
+
+def _canonical(name: str) -> str:
+    return name.lower().replace("_", "-")
+
+
+def _gate_dependency_specs() -> list[str]:
+    """Every requirement the lock is compiled from: the core dependencies plus `dev` and `media`.
+
+    `scripts/lock-gate-deps.sh` passes exactly those two extras, so this list and the lock cover
+    the same set by construction — which is what makes comparing them mean anything.
+    """
+    import tomllib
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    specs = list(project["dependencies"])
+    for extra in ("dev", "media"):
+        specs += project["optional-dependencies"][extra]
+    return specs
+
+
+def _locked_versions() -> dict[str, str]:
+    pins = _PIN.findall(GATE_LOCK.read_text("utf-8"))
+    return {_canonical(name): version for name, version in pins}
+
+
+def _lock_satisfies(declared: str, locked: str | None) -> bool:
+    """PEP 440's rule for `==` with no local segment: the candidate's local version is ignored.
+
+    Not a courtesy — it is what lets `torch==2.13.0` be served by the lock's `2.13.0+cpu`, which
+    is the build §6 wants on the runner (Stage 0 is CPU by design, and the CUDA wheel is ~2 GB of
+    kernels nothing in the gate calls). A declared local segment is compared exactly, because at
+    that point the caller has named a specific build. D-159.
+    """
+    if locked is None:
+        return False
+    if "+" in declared:
+        return locked == declared
+    return locked.split("+", 1)[0] == declared
+
+
 def test_every_pyproject_dependency_the_gate_needs_is_in_the_lock() -> None:
     """The lock is compiled from `pyproject.toml`, so a dependency added to `dev` or `media`
     without recompiling would be installed by neither command — pip would fail on the import,
     but only after a maintainer wondered why. This says so at the source.
     """
-    import tomllib
-
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    needed = list(project["dependencies"])
-    for extra in ("dev", "media"):
-        needed += project["optional-dependencies"][extra]
-
-    locked = {
-        name.lower().replace("_", "-") for name, _ in _PIN.findall(GATE_LOCK.read_text("utf-8"))
-    }
+    locked = set(_locked_versions())
     missing = []
-    for spec in needed:
-        name = re.split(r"[<>=!;\[ ]", spec.strip())[0].lower().replace("_", "-")
+    for spec in _gate_dependency_specs():
+        name = _canonical(re.split(r"[<>=!;\[ ]", spec.strip())[0])
         if name not in locked:
             missing.append(name)
     assert not missing, (
         f"declared for the gate but absent from the lock: {missing}. Run "
         f"`bash scripts/lock-gate-deps.sh` and commit the result."
+    )
+
+
+def test_the_lock_carries_the_versions_pyproject_declares() -> None:
+    """Present is not the same as *the same version*, and the test above only checked present.
+
+    CI installs the lock under `--require-hashes` and then `-e . --no-deps`, so the runner never
+    resolves `pyproject.toml` at all: whatever the lock says **is** the program the gate of record
+    runs on. Measured (D-159) — `ruff==0.9.6` bumped to `0.12.0` in `pyproject.toml` with the lock
+    untouched left all 1510 tests green, and CI would have gone on linting with 0.9.6 while the
+    file every reader consults said otherwise.
+    """
+    locked = _locked_versions()
+    drifted = []
+    for spec in _gate_dependency_specs():
+        match = _EXACT_PIN.fullmatch(spec.split(";")[0].strip())
+        if match is None:
+            continue  # ranges are the next test's business
+        name, declared = _canonical(match.group(1)), match.group(2)
+        if not _lock_satisfies(declared, locked.get(name)):
+            drifted.append(f"{name}: pyproject says {declared}, the lock says {locked.get(name)}")
+    assert not drifted, (
+        f"the gate would install a version nobody declared: {drifted}. Recompile with "
+        f"`bash scripts/lock-gate-deps.sh` and commit it in the same change."
+    )
+
+
+def test_every_gate_dependency_is_an_exact_pin_so_the_lock_can_be_compared_to_it() -> None:
+    """A range in `dev` or `media` would make the check above silently skip that distribution.
+
+    The `gpu`, `cloud` and `asr` extras keep their ranges — they are not what the gate installs,
+    and pinning a CUDA stack this machine cannot resolve for Linux would be a guess. These two
+    are pinned exactly today, so a future range fails here and forces the decision instead of
+    quietly shrinking what is verified. D-159.
+    """
+    ranged = [
+        spec
+        for spec in _gate_dependency_specs()
+        if _EXACT_PIN.fullmatch(spec.split(";")[0].strip()) is None
+    ]
+    assert not ranged, (
+        f"these gate dependencies are not exact pins, so nothing compares them to the lock: "
+        f"{ranged}"
+    )
+
+
+def test_the_local_version_rule_accepts_the_cpu_wheel_and_nothing_looser() -> None:
+    """The control. `_lock_satisfies` exists to accept exactly one difference, and a rule that
+    accepted more would let a real bump through wearing a local tag.
+    """
+    assert _lock_satisfies("2.13.0", "2.13.0+cpu"), "the CPU wheel must satisfy its own pin"
+    assert _lock_satisfies("0.9.6", "0.9.6")
+    assert not _lock_satisfies("2.13.0", "2.9.0+cpu"), "a bump hiding behind a local tag"
+    assert not _lock_satisfies("2.13.0", "2.13.1")
+    assert not _lock_satisfies("2.13.0", "2.13.0.post1")
+    assert not _lock_satisfies("2.13.0", None), "absent from the lock is not satisfied"
+    assert not _lock_satisfies("2.13.0+cpu", "2.13.0"), "a declared local segment is exact"
+
+    # And the rule has to still be *reached*: if the lock stopped carrying a local version, the
+    # first assertion would keep passing while describing nothing this repository does.
+    torch = _locked_versions()["torch"]
+    assert "+" in torch, (
+        f"torch is locked as {torch} with no local segment, so the CPU-wheel rule above is now "
+        f"exercised by nothing real — check `scripts/lock-gate-deps.sh` still uses the CPU index"
     )
 
 

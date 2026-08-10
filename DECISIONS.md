@@ -8105,3 +8105,76 @@ corrected: 7/7.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, and
 `~/.hawedit/credentials.json` does not exist — nothing has been entered in the credential panel,
 so the ZAR38MinTest end-to-end run remains blocked on it.
+
+## D-159
+
+**The gate's dependency lock was checked for names and never for versions.** D-139 gave the gate a
+hashed lock and three guards — every distribution pinned *and* hashed, CI installing it under
+`--require-hashes`, and every `pyproject.toml` dependency present in the lock. The third compares
+names. Nothing compared what version arrives.
+
+That gap is wider here than in most repositories, because CI does not install `pyproject.toml` at
+all:
+
+```
+pip install --require-hashes -r requirements/gate-linux-py311.txt
+pip install -e . --no-deps
+```
+
+`--no-deps` means the runner never resolves the project's dependency table. Whatever the lock says
+**is** the program the gate of record runs on, so a pin bumped in `pyproject.toml` and not
+recompiled does not fail, conflict or warn — the two files simply disagree, and the one every
+reader consults is the one that loses.
+
+**Measured.** 11 exact pins declared for the gate's closure, all matching the lock today except
+`torch`, which is not drift (below). The hole itself reproduces exactly: `ruff==0.9.6` bumped to
+`0.12.0` in `pyproject.toml` with the lock untouched left **all 1510 tests green**, and CI would
+have gone on linting with 0.9.6 — the gate's own linter, at a version nobody declared. Never
+computed, rather than computed and discarded.
+
+**Decision: compare versions, and accept exactly one difference.** `torch==2.13.0` is satisfied by
+the lock's `2.13.0+cpu`. That is PEP 440 — an `==` specifier carrying no local segment ignores the
+candidate's — and it is deliberate here: §6 puts Stage 0 on CPU, and `scripts/lock-gate-deps.sh`
+resolves against `download.pytorch.org/whl/cpu` because the CUDA build is ~2 GB of runner disk for
+kernels the gate never calls. `_lock_satisfies` implements that one rule and nothing looser:
+
+| declared | lock | satisfied | why |
+|---|---|---|---|
+| `2.13.0` | `2.13.0+cpu` | yes | PEP 440 local segment, the CPU wheel |
+| `2.13.0` | `2.9.0+cpu` | no | a real bump wearing a local tag |
+| `2.13.0` | `2.13.1` | no | a different upstream version |
+| `2.13.0` | `2.13.0.post1` | no | a post-release is not a local segment |
+| `2.13.0` | absent | no | nothing to satisfy it |
+| `2.13.0+cpu` | `2.13.0` | no | a declared local segment names a build, so it is exact |
+
+**The control is that the rule stays connected to something real.** The last assertion requires the
+lock to still carry `+cpu` at all. Without it the first row keeps passing while describing nothing
+this repository does — a rule exercised only by its own unit test is a rule that can quietly stop
+applying, which is the same shape as D-158's fixture that could not tell two formulas apart.
+
+**Decision: gate dependencies stay exact pins.** A `>=` spec in `dev` or `media` would make the
+version comparison skip that distribution *in silence* — the same failure one level up — so a
+third test requires them all to remain exact, and a future range fails loudly and forces the
+decision. **Rejected: comparing ranges properly.** That needs a PEP 440 version comparator, which
+means either a new runtime dependency in a project that pins its supply chain deliberately, or a
+hand-rolled parser whose own edge cases nothing here measures. Refusing the range is smaller and
+cannot be subtly wrong.
+
+**The `gpu`, `cloud` and `asr` extras keep their ranges** (`accelerate>=1.0`, `pillow>=10`,
+`torchvision>=0.28`, `google-auth>=2.40,<3`). They are not what the gate installs, and pinning a
+CUDA stack for Linux from this Windows host would be guessing versions I cannot resolve — the
+never-guess rule applies to a wheel as much as to a threshold. Named here so the omission is a
+decision rather than an oversight.
+
+**Rejected: asserting the lock's own header command.** The generated header records the `uv pip
+compile` line, and matching it would pin the *recipe* rather than the result — it stays correct
+while the file beneath it goes stale, which is the failure this entry is about.
+
+**Mutation audit 7/7**, every mutation lint-clean. Two are the drift itself from either side, one
+is the range that would make the comparison skip, three attack the local-version rule, and the
+last removes the only real thing that rule describes.
+
+`evidence/the-lock-was-checked-for-names-and-never-for-versions.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
