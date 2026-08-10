@@ -347,5 +347,8 @@ incomplete set never looks unqualified.
 These must appear in shipped product documentation. `registry.attribution_notices()` generates
 the list, and `tests/test_claims.py` asserts this section matches it **in both directions** —
 this list had already drifted from its generator in both, which is what §10 calls a known risk
-with a stated mitigation. Models come from §7's registry; the font comes from
+with a stated mitigation. Until D-168 the comparison was on the *subjects* only, so a bullet
+could state a licence its subject does not have; the licence each notice carries, and its
+share-alike claim, are now checked against the whole bullet, and each registry licence against
+BLUEPRINT §7's own Licence column. Models come from §7's registry; the font comes from
 `registry.SHIPPED_ASSETS`, because a font is not a model and §7's table is not ours to widen.

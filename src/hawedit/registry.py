@@ -15,9 +15,14 @@ Two rules from the operating gates are enforced here rather than remembered:
 blueprint itself flags as "vendor- or author-reported and not independently replicated". A
 licence is only restated here in a more precise form once it has been read from the shipped
 package metadata and recorded in `DECISIONS.md` — so far that is KLPT (D-002: the wheel
-metadata says CC BY-SA 4.0, which is narrower than §7's "open"). Models excluded for
-non-licence reasons are marked `NOT_ASSESSED`, which is default-deny: we have not cleared
-them for commercial use, and saying so is not the same as claiming they are restricted.
+metadata says CC BY-SA 4.0, which is narrower than §7's "open"). Every such restatement is
+listed in `LICENCE_DIVERGENCES` and pinned there by value; `tests/test_registry.py` compares
+the rest against §7's Licence column. That mirroring was claimed here and enforced by nothing
+until D-168 — the set-equality tests read §7's *Model* column and never its *Licence* column,
+so a recorded licence could be changed to any other with the suite green, which is the one
+datum the NonCommercial hard reject keys off. Models excluded for non-licence reasons are
+marked `NOT_ASSESSED`, which is default-deny: we have not cleared them for commercial use, and
+saying so is not the same as claiming they are restricted.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ __all__ = [
     "ASR_ROLES",
     "BENCHMARK_CONTROLS",
     "EXCLUDED",
+    "LICENCE_DIVERGENCES",
     "REGISTRY",
     "SHIPPED_ASSETS",
     "ExcludedEntry",
@@ -75,6 +81,21 @@ LGPL_GPL: Final = Licence("LGPL/GPL", commercial_use=True, attribution_required=
 OFL_1_1: Final = Licence("OFL-1.1", commercial_use=True, attribution_required=True)
 IN_HOUSE: Final = Licence("in-house", commercial_use=True)
 NOT_ASSESSED: Final = Licence("not assessed (excluded for a non-licence reason)", False)
+
+# The only entries whose recorded licence is *not* §7's Licence column, each pinned by value so
+# a narrowing cannot be quietly widened back. `tests/test_registry.py` requires every other
+# entry to agree with §7 and requires each of these to actually diverge — a model listed here
+# that agrees with the blueprint is an exemption doing nothing, which is how a real divergence
+# would later hide behind a stale row. D-168.
+LICENCE_DIVERGENCES: Final[Mapping[str, tuple[str, str]]] = MappingProxyType(
+    {
+        "KLPT": (
+            "CC-BY-SA-4.0",
+            "D-002: the shipped wheel metadata says CC BY-SA 4.0, narrower than §7's 'open'. "
+            "Read from the package, not assumed.",
+        )
+    }
+)
 
 
 class Provisioning(Enum):

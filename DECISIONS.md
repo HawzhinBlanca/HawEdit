@@ -8688,3 +8688,67 @@ controls** — they pin what the guard rests on, and their cheapest fix is a re-
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent, so the ZAR38MinTest
 end-to-end run stays blocked on it. `HF_TOKEN` is likewise unset (#4).
+
+## D-168
+
+**§7 has a Licence column and nothing ever read it.** Adversarial pass 27 took M0.2 — *"§7 model
+registry in code; model outside §7 rejected; NC licence hard-rejected"* — and went after the
+datum the second half rests on. `tests/test_registry.py` parses §7 out of the frozen blueprint and
+asserts exact set equality, which is real; it reads the **Model** column. `assert_commercially_usable`
+"keys off the licence, not off those two names", so the licence is the input to the whole
+NonCommercial policy, and it was accountable to nothing.
+
+**Premise checked before it was fixed, and the data is right.** All 15 §7 rows against all 15 code
+entries: the only two divergences are the ones the module docstring already accounts for —
+PySceneDetect restating §7's "open" more precisely, and KLPT's D-002 narrowing read out of the
+shipped wheel metadata. Nothing was wrong; it was simply unheld.
+
+**Measured, 1/4.** Four licences changed one at a time, whole suite each, baseline green first:
+`omniASR_CTC_3B_v2` Apache-2.0 → MIT **survived**; KLPT CC-BY-SA-4.0 → CC-BY-4.0, which deletes
+share-alike from the shipped attribution notice, **survived**; Community-1 CC-BY-4.0 →
+CC-BY-SA-4.0, which invents an obligation that licence does not impose, **survived**. Only
+LGPL/GPL → Apache-2.0 was caught, and for an unrelated reason: Apache requires no attribution, so
+the libass *subject* vanished and the README's both-directions bookkeeping missed a bullet. A
+catch for the wrong reason reads as protection that is not there (D-082's own lesson).
+
+**And the same hole from the other side.** The README's Attribution section is the mitigation
+§10 names for this risk and says the test asserts it "in both directions" — it compares
+**subjects**, the text before the em dash. Editing the bullet to *"KLPT — Sina Ahmadi, MIT, no
+attribution required"* left 73 tests passing: shipped product documentation making a false
+statement about a third party's licence. KLPT's share-alike clause is on the bullet's second
+line, which a line-by-line read never looked at either.
+
+**Decision: bind the licence in all three places it is stated.** §7's cell and the code state the
+same licence at different widths in **both** directions — `CC-BY-4.0` vs `CC-BY-4.0 (attribution
+required, gated repo)`, and `open` vs `open (§7, not independently verified)` — so the rule is
+that one's words must be a **contiguous run** of the other's, after normalising `Apache 2.0` and
+`Apache-2.0` to the same tokens. `CC-BY-SA-4.0` is not a run of `CC-BY-4.0 …`, which is what makes
+the invented-obligation case fail. Recorded restatements live in `LICENCE_DIVERGENCES` **pinned
+by value**, with a control requiring each to actually diverge and to cite a `D-0NN`; the README
+side is bound by comparing the licence each notice states — and its share-alike claim — against
+the whole bullet, continuation lines joined.
+
+**Rejected: requiring §7's cell and the code to be equal.** It would reject PySceneDetect and
+Community-1, whose wider and narrower statements of one licence are both correct and useful.
+**Rejected: exempting a model from the check by name.** An exemption that does not pin the value
+is a licence-shaped hole — measured: with KLPT merely exempted, its licence could still become
+anything. **Rejected: keying the NC exclusion check on `commercial_use`.** The first spelling did,
+and failed on `CLIP as primary retrieval`: seven of §7's nine exclusions are `NOT_ASSESSED`, which
+is `commercial_use=False` **by design** — default-deny, "we have not cleared them", which this
+module's docstring is explicit is not the same claim as NonCommercial. Keyed on the licence name,
+both directions, so the code cannot assert a restriction on someone else's work that the frozen
+blueprint does not.
+
+**Mutation audit — 8/8, lint-clean.** All four survivors, plus a paired control for each new
+guard. The two exemption controls are the pair that matters: removing KLPT's row while its
+licence still diverges reddens the §7 check, and adding a row for an entry that *agrees* with §7
+reddens the staleness check. **The baseline check earned its keep again** — the first run reported
+`BASELINE NOT GREEN` on `RUF022`, my own `__all__` entry out of order, which had reddened three
+gate-as-subprocess tests; without it, eight catches would all have been ruff.
+
+No production behaviour changed: one data table and five tests. Floor 1547 → 1552.
+`evidence/adversarial-pass-27-m0-2-the-licence-column.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

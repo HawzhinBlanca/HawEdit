@@ -16,6 +16,7 @@ import pytest
 
 from hawedit.registry import (
     EXCLUDED,
+    LICENCE_DIVERGENCES,
     REGISTRY,
     ModelExcluded,
     ModelNotInRegistry,
@@ -95,6 +96,103 @@ def test_exclusions_match_section_7_exactly() -> None:
 def test_every_exclusion_records_the_blueprint_reason() -> None:
     for entry in EXCLUDED.values():
         assert entry.reason.strip(), f"{entry.model_id} excluded without a reason"
+
+
+# --- D-168: §7 has a Licence column too, and nothing read it --------------------------
+
+
+def blueprint_licence_cells() -> dict[str, str]:
+    """§7's registry table as `{Model cell: Licence cell}`.
+
+    The set-equality tests above read `r[1]`. `r[2]` is the Licence column, and adversarial
+    pass 27 measured what that costs: three licences changed in code — Apache-2.0 to MIT,
+    KLPT's share-alike dropped, a share-alike invented for Community-1 — all with the whole
+    suite green. The licence is the datum `assert_commercially_usable` keys off.
+    """
+    block = _section_7().split("**Excluded, with reasons:**")[0]
+    rows = _table_rows(block)
+    assert rows[0][2] == "Licence", f"§7's third column is no longer Licence: {rows[0]}"
+    return {r[1]: r[2] for r in rows[1:]}
+
+
+def _tokens(licence: str) -> list[str]:
+    """A licence string as comparable words: `Apache 2.0` and `Apache-2.0` must agree."""
+    return re.sub(r"[^0-9a-z]+", " ", licence.lower()).split()
+
+
+def _one_states_the_other(a: str, b: str) -> bool:
+    """True when one string's words are a contiguous run of the other's.
+
+    §7 and the code state the same licence at different widths in both directions —
+    `CC-BY-4.0` against `CC-BY-4.0 (attribution required, gated repo)`, and `open` against
+    `open (§7, not independently verified)` — so this accepts either being the wider one and
+    nothing else. `CC-BY-SA-4.0` is not a run of `CC-BY-4.0 …`, which is the point.
+    """
+    first, second = _tokens(a), _tokens(b)
+    if len(first) > len(second):
+        first, second = second, first
+    return any(second[i : i + len(first)] == first for i in range(len(second) - len(first) + 1))
+
+
+def test_every_registered_licence_is_the_one_section_7_states() -> None:
+    stated = blueprint_licence_cells()
+    for entry in REGISTRY.values():
+        if entry.model_id in LICENCE_DIVERGENCES:
+            continue
+        cell = stated[entry.blueprint_model_cell]
+        assert _one_states_the_other(entry.licence.name, cell), (
+            f"{entry.model_id} records {entry.licence.name!r} but BLUEPRINT §7 states "
+            f"{cell!r}. §7 is frozen: record the divergence in LICENCE_DIVERGENCES with the "
+            f"DECISIONS entry that read the real licence, or correct the code."
+        )
+
+
+def test_every_recorded_divergence_actually_diverges() -> None:
+    """The control. An exemption that exempts nothing is where a real divergence hides later.
+
+    It also pins the divergent value: without this, listing KLPT would let its licence become
+    anything at all, which is exactly the hole the test above closes for everyone else.
+    """
+    stated = blueprint_licence_cells()
+    for model_id, (pinned, reason) in LICENCE_DIVERGENCES.items():
+        entry = REGISTRY.get(model_id)
+        assert entry is not None, f"LICENCE_DIVERGENCES names {model_id!r}, which is not in §7"
+        assert entry.licence.name == pinned, (
+            f"{model_id} is recorded as diverging from §7 with licence {pinned!r}, but the "
+            f"registry now says {entry.licence.name!r}"
+        )
+        cell = stated[entry.blueprint_model_cell]
+        assert not _one_states_the_other(pinned, cell), (
+            f"{model_id} is listed as diverging from §7, but {pinned!r} and §7's {cell!r} say "
+            f"the same thing — a stale exemption that would hide a real divergence"
+        )
+        assert re.search(r"D-\d{3}", reason), (
+            f"{model_id}'s divergence cites no DECISIONS entry: {reason!r}. A licence restated "
+            f"more narrowly than the frozen blueprint has to say where the narrower one was read"
+        )
+
+
+def test_every_noncommercial_exclusion_is_noncommercial_in_code() -> None:
+    """The NC hard reject keys off the licence, so §7's own words have to reach it.
+
+    §7 excludes two models on CC-BY-NC-4.0 grounds. Both directions, keyed on the licence
+    *name*: a reason naming NC must be recorded CC-BY-NC-4.0, and an entry recorded
+    CC-BY-NC-4.0 must have §7 say so — otherwise this project would be asserting a restriction
+    on someone else's work that the frozen blueprint does not.
+
+    Deliberately **not** keyed on `commercial_use`. The other seven exclusions are
+    `NOT_ASSESSED`, which is `commercial_use=False` by design — default-deny, "we have not
+    cleared them", which the module docstring is explicit is not the same claim as NC. The
+    first spelling of this test asserted on that flag and failed on CLIP, correctly.
+    """
+    excluded_block = _section_7().split("**Excluded, with reasons:**")[1]
+    reasons = {r[0]: r[1] for r in _table_rows(excluded_block)[1:]}
+    for model_id, reason in reasons.items():
+        entry = next(e for e in EXCLUDED.values() if e.blueprint_model_cell == model_id)
+        assert ("NC-4.0" in reason) is (entry.licence.name == "CC-BY-NC-4.0"), (
+            f"{model_id}: §7's reason {'names' if 'NC-4.0' in reason else 'does not name'} "
+            f"CC-BY-NC-4.0, but the code records {entry.licence.name!r}"
+        )
 
 
 # --- licence policy: NC is a hard reject ----------------------------------------------

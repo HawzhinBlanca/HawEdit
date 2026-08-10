@@ -351,6 +351,71 @@ def _attribution_subject(notice: str) -> str:
     return notice.split("—")[0].strip(" `")
 
 
+def _readme_attribution_bullets() -> dict[str, str]:
+    """Each README attribution bullet as `{subject: whole bullet}`, continuation lines joined.
+
+    Two of the four bullets wrap, and the share-alike clause lives on KLPT's second line, so a
+    line-by-line read cannot see the obligation it is supposed to be checking.
+    """
+    section = README.split("## Attribution")[1].split("\n##")[0]
+    bullets: dict[str, str] = {}
+    for chunk in section.split("\n- ")[1:]:
+        bullet = " ".join(chunk.split("\n\n")[0].split())
+        bullets[bullet.split("—")[0].strip(" -`")] = bullet
+    return bullets
+
+
+def test_the_readme_states_the_same_licence_the_notice_does() -> None:
+    """The two tests above compare **subjects**, and the README says "in both directions".
+
+    Adversarial pass 27 measured what that misses. The bullet for KLPT was edited to read
+    "MIT, no attribution required" against a generator emitting CC-BY-SA-4.0, and the whole
+    suite stayed green — shipped product documentation making a false statement about a third
+    party's licence, which is what §10 names as the risk this section exists to mitigate.
+    Changing the licence in `registry.py` instead is now caught upstream by D-168's §7 check;
+    this closes the other side, where the README alone is edited.
+    """
+    from hawedit.registry import attribution_notices
+
+    bullets = _readme_attribution_bullets()
+    for notice in attribution_notices():
+        subject = _attribution_subject(notice)
+        bullet = bullets.get(subject)
+        assert bullet is not None, f"no README bullet for {subject!r}"
+        licence = notice.split("licensed ")[-1].split(" (")[0].rstrip(".")
+        assert licence in bullet, (
+            f"the README bullet for {subject!r} does not state {licence!r}, which is the "
+            f"licence the generated notice carries: {bullet!r}"
+        )
+        # The obligation, not just the name: share-alike is the part a reader acts on.
+        if "share-alike applies" in notice:
+            assert "share-alike" in bullet, (
+                f"{subject} is share-alike in the registry and the README bullet does not say "
+                f"so: {bullet!r}"
+            )
+
+
+def test_no_readme_attribution_bullet_claims_an_obligation_the_registry_does_not() -> None:
+    """The control, and the reverse of the test above.
+
+    Without it, the check passes for a README that says share-alike about everything — and a
+    share-alike notice attached to a licence that does not impose one is a claim about someone
+    else's work that this project has no basis for.
+    """
+    from hawedit.registry import attribution_notices
+
+    bullets = _readme_attribution_bullets()
+    share_alike = {
+        _attribution_subject(n) for n in attribution_notices() if "share-alike applies" in n
+    }
+    for subject, bullet in bullets.items():
+        if "share-alike" in bullet:
+            assert subject in share_alike, (
+                f"the README bullet for {subject!r} claims share-alike, which the registry's "
+                f"licence for it does not impose: {bullet!r}"
+            )
+
+
 def test_the_shipped_font_carries_its_licence_beside_it() -> None:
     """OFL-1.1 requires the licence to accompany the font. A missing OFL.txt is a licence
     violation in every build that ships the .ttf."""
