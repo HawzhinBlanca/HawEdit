@@ -418,6 +418,19 @@ pyannote access, or real-speaker reframing.
 - **Ledger / D-128/D-129:** unenforced per-file test counts were removed as claims, and promotion
   evidence distinguishes real reviewed checkpoints from test stubs.
 
+## M2.7 query-capable auto-selection amendment (2026-08-10, D-177)
+
+Protected main measured a real 38-minute `--visual --auto-select` run spending about 170 seconds
+before reporting that Path B had no retrieval query. Readiness's stricter earlier CLI contract
+already refused that exact invocation before Stage 0; the auto-selection predicate and structured
+skip now encode the same capability directly. Path A can produce alone, while Path B requires
+`--visual` plus a normalized nonempty `--visual-query`. Seven behavioral tests cover both positive
+routes and every refusal.
+
+The concurrent interrupted-delivery delta is semantically superseded by the hidden, exact-set,
+one-rename `ArtifactBundle`, whose crash-retry and concurrent-publisher tests remain green.
+`evidence/auto-select-query-preflight-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |

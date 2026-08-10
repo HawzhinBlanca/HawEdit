@@ -6081,3 +6081,26 @@ reported without becoming transcript gaps. This closes executable M1.4. It does 
 labelled accuracy score: M0.13/M7.2 remain external corpus requirements.
 
 `evidence/full-sorani-stage1-acceptance-2026-08-10.md`.
+
+## D-177 - Auto-selection requires a query-capable producer, not a producer-shaped flag
+
+Protected main measured `--visual --auto-select` without a query spending about 170 seconds on the
+real 38-minute Sorani episode before Stage 2 admitted it could not retrieve. The readiness parent
+already refused that exact invocation before Stage 0 through its stricter `--visual without Path A
+requires --visual-query` contract, so replaying main's implementation was neither necessary nor
+safe.
+
+The adjacent auto-selection guard still counted `--visual` by presence, however, and the generic
+Stage 3 skip still instructed operators that `--visual` alone enabled Path B. The rule is now
+expressed once in capability terms: Path A can produce directly; Path B can produce only when
+`--visual` and a normalized nonempty `--visual-query` are both present. Seven behavioral tests
+hold the refusal, both positive producer paths, the no-producer case, whitespace, flag dependency
+and the structured instruction.
+
+Rejected using the whole transcript as an implicit query: it is the retrieval corpus and D-117
+measured the resulting unbounded GPU demand. Rejected copying protected main wholesale: its other
+delta repairs an older flat-file publisher, while readiness's hidden `ArtifactBundle` already
+makes a crashed partial delivery invisible and nonblocking and publishes the exact five files with
+one no-replace directory rename.
+
+`evidence/auto-select-query-preflight-2026-08-10.md`.
