@@ -6463,6 +6463,24 @@ stray file self-healing. The probe is now removed in `finally` and the pre-exist
 what to inspect and delete. **The check is unchanged; it heals.** Verified by re-running the audit:
 no contamination line, `restored and green: True`.
 
+### The first push was refused by the gate, for the right reason
+
+The identity test was written with `pytest.skip` where the kernel has `O_NOFOLLOW` — true on the
+Linux runner, false here. CI refused the commit:
+
+```
+REFUSED: only 1372 tests passed against a floor of 1373 (1 skipped of 1373 collected). Either 1
+test(s) disappeared, or a skip condition is creeping. … a shrinking suite must be a visible edit,
+not a quieter green run.
+```
+
+It was right, and not only about the count: a guard only Windows exercises is a guard CI never
+checks, which is the same "runs on one machine" defect the floor exists to surface. `_O_NOFOLLOW` is
+patched to **0** instead, so the reconstruction branch is reached on both platforms — the constant is
+the branch's own condition, so patching it is exercising the code rather than working around it.
+Verified after the change: 26 tests in the file, **no skips**, and removing the identity comparison
+still reddens `test_the_opened_env_must_be_the_file_the_symlink_check_looked_at`.
+
 **Mutation audit 18/18** after the corrections, across
 `credentials.py`, `gemini.py` and `judge.py`: verify-before-store both ways, header-not-URL
 authentication, non-200 rejection, the git-ignore refusal and its fail-closed default, masking, the

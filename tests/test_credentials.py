@@ -164,11 +164,14 @@ def test_the_opened_env_must_be_the_file_the_symlink_check_looked_at(
     The race is forced rather than waited for. `os.lstat` is made to answer about a *different*
     file, which is exactly what an attacker replacing `.env` between the two calls achieves, and
     the write must refuse rather than put a key into whatever now sits at that path.
-    """
-    from hawedit.credentials import _O_NOFOLLOW
 
-    if _O_NOFOLLOW:
-        pytest.skip("the kernel enforces O_NOFOLLOW; the reconstruction does not run here")
+    `_O_NOFOLLOW` is patched to 0 rather than the test being skipped where the kernel has the
+    flag. The first version skipped on POSIX, and the gate refused the commit: *"only 1372 tests
+    passed against a floor of 1373 … a skip condition is creeping."* It was right — a guard that
+    only Windows exercises is a guard CI never checks. Patching the constant is how the branch is
+    reached anywhere, and it is the same condition the branch itself tests.
+    """
+    monkeypatch.setattr("hawedit.credentials._O_NOFOLLOW", 0)
 
     env_file = tmp_path / ".env"
     env_file.write_text("OTHER=1\n", encoding="utf-8")
