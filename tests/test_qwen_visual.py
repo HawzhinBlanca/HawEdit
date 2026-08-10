@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from hawedit.normalize import normalize_sorani
 from hawedit.qwen_visual import (
     EMBEDDING_MODEL_ID,
     BinaryScoreTokens,
@@ -631,12 +632,14 @@ class StubProcessor:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.conversations: list[Any] = []
         self.text = ""
 
     def apply_chat_template(self, conversation: Any, **kwargs: Any) -> dict[str, Any]:
         import torch
 
         self.calls.append(kwargs)
+        self.conversations.append(conversation)
         metadata = kwargs.get("video_metadata")
         if metadata:
             duration = float(metadata[0]["duration"])
@@ -770,3 +773,98 @@ def test_the_reranker_asks_for_the_answer_position(
     assert processor.calls[0]["add_generation_prompt"] is True
     assert processor.calls[0]["video_metadata"] == EXPECTED_METADATA
     assert model.forward_kwargs["output_hidden_states"] is True
+
+
+# --- D-183: Kurdish invariant #3 on every Stage 2 query reader -------------------------------
+
+
+_ARABIC_KEYBOARD_QUERY = "كوردي ٢٠٢٦ ده\u200cست"
+_STAGE_2_QUERY_READERS = ("QwenVisualEmbedder", "QwenVisualReranker")
+
+
+def _all_conversation_text(value: Any) -> str:
+    """Join every string regardless of the adapters' different conversation nesting."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_all_conversation_text(item) for item in value.values())
+    if isinstance(value, list | tuple):
+        return " ".join(_all_conversation_text(item) for item in value)
+    return ""
+
+
+def _a_query_reader(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[StubProcessor, Any]:
+    """Build one real adapter around tiny processor/model stubs and return its query call."""
+    import torch
+
+    if name == "QwenVisualEmbedder":
+        embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2), device="cpu")
+        processor, _model = stubbed(embedder, monkeypatch, torch.zeros(1, 1, 2) + 0.5, torch.eye(2))
+        return processor, embedder.embed_text
+    reranker = QwenVisualReranker(
+        a_reranker_checkpoint(tmp_path),
+        read_frames=lambda window: WindowFrames(window=window, paths=(Path("f0.jpg"),)),
+        device="cpu",
+    )
+    processor, _model = stubbed(reranker, monkeypatch, torch.zeros(1, 1, 2), torch.zeros(9694, 2))
+    return processor, lambda query: reranker.score(query, two_frames())
+
+
+def _classes_taking_a_query() -> set[str]:
+    """Every production class with a query-taking method; bound to the driver table below."""
+    import inspect
+
+    import hawedit.qwen_visual as module
+
+    found: set[str] = set()
+    for name, value in vars(module).items():
+        if not inspect.isclass(value) or value.__module__ != module.__name__:
+            continue
+        if any(
+            "query" in inspect.signature(method).parameters
+            for _method_name, method in inspect.getmembers(value, inspect.isfunction)
+        ):
+            found.add(name)
+    return found
+
+
+def test_every_stage_2_adapter_that_takes_a_query_is_covered_here() -> None:
+    expected = set(_STAGE_2_QUERY_READERS)
+    actual = _classes_taking_a_query()
+    assert actual == expected, (
+        f"query readers without normalization coverage: {sorted(actual - expected)}; "
+        f"stale drivers: {sorted(expected - actual)}"
+    )
+
+
+@pytest.mark.parametrize("name", _STAGE_2_QUERY_READERS)
+def test_the_query_reaches_the_model_normalized(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Assert invariant #3 on the actual conversation, not a plausible vector or score."""
+    processor, send = _a_query_reader(name, tmp_path, monkeypatch)
+    send(_ARABIC_KEYBOARD_QUERY)
+
+    seen = _all_conversation_text(processor.conversations)
+    normalized = normalize_sorani(_ARABIC_KEYBOARD_QUERY)
+    assert normalized in seen, f"{name} did not normalize the query before model input: {seen!r}"
+    assert _ARABIC_KEYBOARD_QUERY not in seen, f"{name} also sent the raw query: {seen!r}"
+    assert "\u0643" not in seen and "\u064a" not in seen, "Arabic kaf/yeh reached the model"
+    assert "\u200c" not in seen, "a ZWNJ reached the model"
+    assert "٢٠٢٦" not in seen and "2026" in seen, "Arabic-Indic digits reached the model"
+
+
+@pytest.mark.parametrize("name", _STAGE_2_QUERY_READERS)
+def test_an_already_normalized_query_reaches_the_model_unchanged(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control: dropping or mangling every query would satisfy negative assertions alone."""
+    normalized = normalize_sorani(_ARABIC_KEYBOARD_QUERY)
+    processor, send = _a_query_reader(name, tmp_path, monkeypatch)
+    send(normalized)
+
+    assert normalized in _all_conversation_text(processor.conversations), (
+        f"{name} altered an already-normalized query"
+    )
