@@ -6029,6 +6029,10 @@ receipt/VEX source identity again and requires new live acceptance.
 
 `evidence/keyframe-timestamp-cadence-2026-08-10.md`.
 
+The rotated `59a1e500…` WSL receipt and live VEX gate are accepted: 140 packages, two GPUs, three
+authenticated assets totaling 43,546,500,168 bytes, and 12/12 explicit dispositions. This records
+affected/mitigated state; it does not re-label findings as absent.
+
 ## D-183 - Hold Kurdish invariant #3 at every Stage 2 query-reading model
 
 Protected main removed query normalization independently from the Qwen embedder and reranker. Both

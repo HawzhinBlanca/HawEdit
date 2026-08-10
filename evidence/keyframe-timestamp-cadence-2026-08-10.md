@@ -14,3 +14,8 @@ main's weaker shared-directory refusal was not imported.
 The resulting receipt/VEX source identity is
 `59a1e500b32b21f388fa0d1f09b39a1daadb106dda8747c203872d58bfa17665`; the prior live receipt is
 stale until setup and the live VEX gate accept this exact snapshot.
+
+Live acceptance completed: CPython 3.12.0, 140 exact distributions, two CUDA devices, and three
+authenticated Omni assets totaling 43,546,500,168 bytes. All 12 OSV findings matched 12 reviewed,
+unexpired dispositions. Artifact `.gate/wsl-vex-59a1e500-20260810.json` has SHA-256
+`9da35a795c6ccad6bfa20ee48d02823cbdf66bbf38e576dc162a0f6160823fd4`.
