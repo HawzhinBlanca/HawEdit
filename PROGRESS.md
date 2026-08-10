@@ -172,6 +172,11 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 > symmetrically to `BLOCKED.md` #7 and the latter to `hawedit.cli.__all__`.
 > `evidence/readme-quality-bar.md`.
 >
+> **M0.1 amendment (D-171).** The readiness branch now contains protected-main history. All 25
+> upstream-only commits were semantically classified first; missing Stage 2 resume/help behavior
+> landed on the stronger tree, and merge `89a1641` then joined both parents with a tree exactly
+> equal to the verified readiness parent. `evidence/main-semantic-merge-2026-08-10.md`.
+>
 > **M5.4 amendment (D-059).** The whole-episode 256-frame shortfall named in that row is
 > closed: windows are now packed into deterministic ≤256-frame calls. The unmeasured temporal
 > discrimination on real dynamic Sorani footage remains a shortfall.

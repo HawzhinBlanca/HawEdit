@@ -5975,3 +5975,22 @@ deliberately scoped to the module whose purpose is shared entry-point behavior; 
 lists on every prose module-map row would make the documentation less useful.
 
 `evidence/readme-quality-bar.md`.
+
+## D-171 - Join main only after semantic equivalence, preserving the verified tree
+
+`origin/main` and the readiness branch independently implemented the same audit findings after
+their common base, producing 35 textual conflicts across older pipeline, tests and append-only
+ledgers. Resolving those conflicts file-by-file with whole-side choices would either discard later
+hardening or reintroduce older implementations. Before joining history, every one of main's 25
+commits was classified against the readiness tree. The two findings not already present—Stage 2
+embedding resume and invocation-aware help—were implemented against the newer composition, then
+measured and passed clean canonical gates. README's latest claim was likewise bound to current
+contracts.
+
+The histories were joined with Git's `ours` merge strategy intentionally. This is not a claim that
+main did nothing; it says its semantic effects are already in the first parent's stronger tree.
+Merge `89a1641` has parents `bc12e13` and `ba52888`. Its tree
+`6b1963dc27a1e0997c7e7bfa091bcf29c25c72ae` is byte-identical to the verified readiness parent's
+tree. The second parent makes all main commits ancestors without replaying stale implementations.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
