@@ -5995,6 +5995,29 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-181 - A prerequisite is held by its own diagnostic, not by a shared exit code
+
+Protected main measured that deleting twelve of fourteen older argv guards left their tests green.
+The test asserted only exit 2, which every caught setup failure returns, so a later unrelated error
+could impersonate the intended refusal. Readiness's newer surface had 17 condition blocks: 15
+reachable guards and two dominated branches that no CLI invocation could reach.
+
+The dead raw blank-query check was already preceded by the stronger normalized Sorani check. The
+dead auto-selection source check followed the query-capable producer check, while every possible
+producer's own source guard fires earlier. Both were removed instead of inventing direct-internal
+tests for behavior an operator cannot observe.
+
+Twenty-one real-CLI cases now cover every reachable guard and both sides of compound rules. Each
+asserts the target diagnostic and that no work directory exists, in addition to exit 2. A guard
+deleted or reordered behind filesystem work therefore fails for the reason the boundary exists.
+The focused pipeline suite passes 141/141.
+
+Rejected a generic traceback assertion: it still cannot tell which boundary ran. Rejected keeping
+unreachable messages as defensive duplication: duplicated policy drifts, cannot be behaviorally
+held, and misleads operators about which prerequisite owns the refusal.
+
+`evidence/cli-preflight-boundaries-2026-08-10.md`.
+
 ## D-179 - Confidential ZDR is a property of the constructible judge class set
 
 Protected main neutered the two §3 governance gates independently. Developer-API upload tests
