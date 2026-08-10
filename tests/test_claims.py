@@ -158,6 +158,25 @@ def test_every_ledger_row_marked_partial_names_its_shortfall() -> None:
             assert "Shortfall" in cells[4], f"PARTIAL row names no shortfall:\n{line}"
 
 
+# The words a BLOCKED.md heading may use to say it no longer needs Hawa. Declared, so a new one
+# is a deliberate edit rather than a silent hole: this rule read only `RESOLVED`, and #10 has been
+# marked `**ANSWERED 2026-08-08**` since — invisible to the one test that consumes resolutions.
+#
+# `ANSWERED` counts because `README.md` defines this file as "What needs Hawa", and #10's question
+# was answered *by* Hawa; the obstacle that survived the answer was filed separately as #11, which
+# is itself resolved. An answered question needs nothing further. D-144.
+_BLOCKED_RESOLUTIONS: frozenset[str] = frozenset({"RESOLVED", "ANSWERED"})
+
+
+def _blocked_heading_markers() -> list[tuple[str, str]]:
+    """Every `(entry number, bold marker)` pair in BLOCKED.md's headings."""
+    blocked = (ROOT / "BLOCKED.md").read_text(encoding="utf-8")
+    pairs: list[tuple[str, str]] = []
+    for number, rest in re.findall(r"^##\s*#(\d+)([^\n]*)", blocked, re.MULTILINE):
+        pairs.extend((number, marker.strip()) for marker in re.findall(r"\*\*([^*]+)\*\*", rest))
+    return pairs
+
+
 def _blocked_entries() -> dict[str, bool]:
     """Every BLOCKED.md entry number, mapped to whether it is still live.
 
@@ -167,7 +186,8 @@ def _blocked_entries() -> dict[str, bool]:
     blocked = (ROOT / "BLOCKED.md").read_text(encoding="utf-8")
     live: dict[str, bool] = {}
     for number, rest in re.findall(r"^##\s*#(\d+)([^\n]*)", blocked, re.MULTILINE):
-        resolved = "RESOLVED" in rest.upper()
+        upper = rest.upper()
+        resolved = any(word in upper for word in _BLOCKED_RESOLUTIONS)
         live[number] = live.get(number, True) and not resolved
     return live
 
@@ -1013,4 +1033,62 @@ def test_the_module_map_row_for_cli_names_everything_cli_exports() -> None:
     assert not missing, (
         f"cli.py exports {sorted(cli.__all__)} and its README row does not name {missing}. A "
         f"module whose job is 'what every entry point does' has to list all of them."
+    )
+
+
+# --- D-144: a blocker cannot resolve in a form the guard cannot see --------------------------
+
+
+def test_every_blocked_heading_marker_is_a_declared_resolution() -> None:
+    """`_blocked_entries` decides "still live" from the heading, so the words it accepts have to
+    be the words the file uses — all of them.
+
+    Measured: two markers are in use, `RESOLVED` on six entries and `ANSWERED` on #10, and the
+    rule read only the first. #10 has been marked `**ANSWERED 2026-08-08**` since that date, so
+    the one test that consumes resolutions has read it as live ever since — it happens to be cited
+    by nobody, which is luck rather than a guard.
+
+    An undeclared marker is refused rather than guessed at, so adding one is a deliberate edit.
+    """
+    undeclared = [
+        (number, marker)
+        for number, marker in _blocked_heading_markers()
+        if not any(marker.upper().startswith(word) for word in _BLOCKED_RESOLUTIONS)
+    ]
+    assert not undeclared, (
+        f"BLOCKED.md headings use markers this suite does not recognise: {undeclared}. Either add "
+        f"the word to _BLOCKED_RESOLUTIONS — deciding, in a diff, that it means 'no longer needs "
+        f"Hawa' — or reword the heading."
+    )
+
+
+def test_an_answered_entry_is_not_live() -> None:
+    """The specific case, pinned so the vocabulary change cannot be reverted quietly.
+
+    #10's question was answered by Hawa — `sources.json` carries the repository ids — and the
+    obstacle that survived the answer was filed as #11, which is itself resolved. So #10 needs
+    nothing from Hawa and must not read as a live blocker.
+    """
+    entries = _blocked_entries()
+    assert "10" in entries, "BLOCKED.md #10 has gone missing"
+    assert not entries["10"], "#10 is marked ANSWERED and still reads as a live blocker"
+
+    # The control: an entry with no marker is still live, so this is not measuring "everything is
+    # resolved". #1 is the labelled Sorani corpus and it is emphatically Hawa's.
+    assert entries.get("1"), "#1 has no resolution marker and must read as live"
+
+
+def test_the_resolution_vocabulary_is_used_by_something() -> None:
+    """A declared word nobody uses is a guess about the future, and this project does not keep
+    those. Every accepted word must appear on at least one heading.
+    """
+    used = {
+        word
+        for _, marker in _blocked_heading_markers()
+        for word in _BLOCKED_RESOLUTIONS
+        if marker.upper().startswith(word)
+    }
+    assert used == _BLOCKED_RESOLUTIONS, (
+        f"declared but unused: {sorted(_BLOCKED_RESOLUTIONS - used)}. Remove the word until an "
+        f"entry needs it, so the list stays a description of this file rather than a prediction."
     )

@@ -6931,3 +6931,71 @@ PROGRESS put them mid-bullet *after* the claim. It cuts each paragraph at the ma
 #7 while the README still claimed the check was in place left the suite green, because the test
 returned early on a live entry instead of asserting the opposite.
 `evidence/the-readme-understated-its-own-bar.md`.
+
+## D-144
+
+**A blocker could resolve in a form the guard cannot see.** `tests/test_claims.py` decides whether a
+`BLOCKED.md` entry is still live by looking for the word `RESOLVED` in its heading. Measured across
+the whole file:
+
+```
+19 entries; the current rule calls these live:
+  [1, 3, 4, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19]
+
+bold markers used in headings, and which entries use them:
+  ANSWERED   [10]                <- NOT recognised as a resolution
+  RESOLVED   [2, 5, 6, 7, 8, 11] <- RESOLVED
+```
+
+#10 has been marked `**ANSWERED 2026-08-08**` since that date, so the one test that consumes
+resolutions —
+`test_every_blocked_row_points_at_a_live_blocked_entry` — has read it as live ever since. It is
+cited by nobody in `PROGRESS.md`, which is luck rather than a guard: a `BLOCKED` row pointing at
+#10 would have passed, and that test exists precisely because M2.4 once sat behind a resolved #5
+for two days.
+
+**Decision: declare the vocabulary and refuse anything outside it.** `_BLOCKED_RESOLUTIONS` is
+`{RESOLVED, ANSWERED}`, a heading marker outside it is a test failure, and a declared word no
+heading uses is also a failure — so the set stays a description of this file rather than a
+prediction about it. Adding a third word is then a deliberate edit in a diff, which is the same
+inversion `scripts/verify.sh` uses for its steps: no blacklist of ways to resolve invisibly can be
+complete, so the allowed forms are named instead.
+
+**`ANSWERED` means not-live, and that is a judgment call.** `README.md` defines this file as *"What
+needs Hawa"*. #10's question — which repository holds §7's two omniASR checkpoints — was answered
+*by* Hawa, the answer is in `models/sources.json`, and the obstacle that survived the answer was
+filed separately as **#11** (`fairseq2n` has no Windows wheel), which is itself resolved. So #10
+needs nothing further from Hawa. Recorded here rather than assumed, because the alternative reading
+— "answered but still blocking" — would be true for a differently written entry, and the file says
+plainly that this one's blocker moved.
+
+**Rejected: renaming #10's marker to `RESOLVED`.** One character of diff and it destroys a
+distinction the record makes on purpose: Hawa *answered a question*, which is not the same event as
+an obstacle going away, and #10's own text depends on the difference to explain why #11 exists.
+
+**Rejected: treating any bold marker as a resolution.** It would have swallowed this bug and every
+future one, which is the property that made the old rule wrong.
+
+**Also re-measured this iteration, and still blocked — stated plainly rather than left implied:**
+
+```
+#3  GEMINI_API_KEY: not set                      (hawedit-credentials --check, exit 1)
+#4  HF_TOKEN present: False
+    metadata HTTP 200 | gated: auto
+    download HEAD 401 -> still gated
+```
+
+Both are Hawa's and neither is closable here. The remaining live entries are #1, #3, #4, #9, #12,
+#13, #14, #15, #16, #17, #18 and #19 — twelve after #10 stops counting.
+
+**Mutation audit 6/6,** after 5/6. The survivor was a bad mutation of mine: it made a `PROGRESS.md`
+row cite the answered #10, but anchored inside **M5.5**, whose status is `PARTIAL` — a row that test
+does not examine — so it measured nothing. Re-anchored inside **M0.12**, which is `BLOCKED`, and
+caught. That is the third such mutation in this session after D-137's retry ceiling and D-141's
+`revisions.json`; a survivor is a claim about the tests, a bad mutation is a claim about nothing.
+
+**A measurement of mine was wrong in the same iteration and is corrected here.** Checking #3 I ran
+`… --check 2>&1 | tail -6; echo "exit=$?"` and read `exit=0`, which is **`tail`'s** status, not
+Python's. Re-run without the pipe, `--check` exits **1** with no key configured — so `README.md`'s
+*"exits non-zero if unusable"* holds and there was no finding there.
+`evidence/a-blocker-could-resolve-invisibly.md`.
