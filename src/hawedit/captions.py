@@ -34,7 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
-from hawedit.sentences import Sentence
+from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.transcripts import Word
 
 __all__ = [
@@ -425,6 +425,9 @@ def build_ass(
     """
     if not sentences:
         raise ValueError("no sentences to caption")
+    # The same sequence `pipeline.py` hands to `build_srt`, so the same refusal applies: an
+    # overlapping or reversed pair burns two captions over each other, or none. D-165.
+    assert_deliverable_order(sentences)
     for sentence in sentences:
         if not sentence.complete:
             raise ValueError(

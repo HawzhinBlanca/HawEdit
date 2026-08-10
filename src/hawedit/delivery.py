@@ -36,7 +36,7 @@ from collections.abc import Sequence
 from typing import Final
 
 from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, wrap_caption_lines
-from hawedit.sentences import Sentence
+from hawedit.sentences import Sentence, assert_deliverable_order
 
 __all__ = [
     "DeliveryError",
@@ -135,11 +135,14 @@ def build_srt(
 
     Raises:
         DeliveryError: no sentences, a sentence that never closed, or one outside the clip.
+        UndeliverableOrder: cues that overlap, run backwards, or end before they start —
+            checked before any cue is written, because SRT is read in order (D-165).
     """
     if not sentences:
         raise DeliveryError(
             "no sentences to write: an empty SRT is a valid file that delivers no subtitles"
         )
+    assert_deliverable_order(sentences)
     cues: list[str] = []
     for index, sentence in enumerate(sentences, start=1):
         if not sentence.complete:

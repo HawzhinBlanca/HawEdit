@@ -8526,3 +8526,52 @@ on the definition and reported a mutation that had applied. Narrowed to
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-165
+
+**The SRT sidecar shipped cues no player can read in order.** `build_srt` refused an incomplete
+sentence (invariant #2), one starting before the clip, and one ending after it — every check about
+a sentence *on its own*. Nothing checked the sequence, and SRT is read sequentially.
+
+**Measured**, driving the real writer and reading the file back with `parse_srt_times`: cues out of
+order shipped (`(1000, 1400)` then `(0, 400)`), overlapping cues shipped (`(0, 1200)` beside
+`(800, 1400)`), and — the sharpest — **`00:00:00,900 --> 00:00:00,400`**, a cue whose end precedes
+its start, assembled entirely from words that are individually valid. `ms_to_srt_time`'s docstring
+already warns about a "plausible-looking timestamp" for negative input (D-138); this one needs no
+negative number.
+
+**Why `Word` does not cover it.** `Word.__post_init__` refuses `end_ms <= start_ms`, so no single
+word runs backwards and a zero-length cue is unreachable. But `Sentence.start_ms` is
+`words[0].start_ms` and `end_ms` is `words[-1].end_ms`, with nothing requiring the tuple sorted —
+and nothing at all constrains two sentences relative to each other. Never computed, not computed
+and discarded.
+
+**Reachability, stated rather than implied.** `segment_sentences` emits ordered sentences from
+ordered words, so the pipeline does not produce these today. Both `build_srt` and `build_ass` are
+exported and take any `Sequence[Sentence]`, and `pipeline.py` hands **the same sequence** to both —
+so a guard on one only would burn an overlap into the video while the sidecar refused it.
+`assert_deliverable_order` lives in `sentences.py` and both writers call it: one implementation,
+two call sites, which is the rule's meaning rather than a check per writer.
+
+**Decision: touching exactly is allowed.** `later.start_ms == earlier.end_ms` is ordinary
+consecutive speech; refusing it would reject honest output, and that boundary is what two of the
+new tests control for. The comparison is `<`, deliberately.
+
+**Rejected: sorting the sentences instead of refusing them.** A writer that quietly reorders its
+input converts a producer bug into a silent correction, and the next reader cannot tell it was
+handed something wrong. §4.3's warning is about failures that "do not appear and nothing says so" —
+sorting is one of them. **Rejected: putting the check in `Sentence.__post_init__`.** A sentence
+with unsorted words is a legitimate intermediate for code that has not sorted yet; the property
+that matters is at the point of delivery, which is where the guard is.
+
+**Mutation audit 6/6.** Each half of the check and each call site mutated separately, so none is
+carried by another. **Two catches were re-run because the first pass was contaminated:** removing
+the call orphans its import, so ruff reddened the gate-as-subprocess tests and the result partly
+measured ruff (D-148, D-150). Redone with the import removed alongside the call, both are caught
+lint-clean by exactly the tests written for them. The over-strictness pair follows D-162's rule —
+control mutated together with the state it describes.
+
+`evidence/the-sidecar-shipped-cues-a-player-reads-in-order.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.

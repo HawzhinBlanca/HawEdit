@@ -32,7 +32,9 @@ __all__ = [
     "DEFAULT_PAUSE_MS",
     "KURDISH_SENTENCE_FINAL",
     "Sentence",
+    "UndeliverableOrder",
     "anchors_for",
+    "assert_deliverable_order",
     "segment_sentences",
 ]
 
@@ -66,6 +68,48 @@ class Sentence:
     def text(self) -> str:
         """The raw surface forms, joined. Not normalized — invariant #1 governs from here."""
         return " ".join(word.w for word in self.words)
+
+
+class UndeliverableOrder(ValueError):
+    """A sentence sequence no time-ordered subtitle file can represent honestly."""
+
+
+def assert_deliverable_order(sentences: Sequence[Sentence]) -> None:
+    """Refuse a sequence a subtitle sidecar cannot state truthfully.
+
+    `Word` already refuses `end_ms <= start_ms`, so no single word runs backwards. It says
+    nothing about a *sentence*, whose `start_ms` is `words[0].start_ms` and `end_ms` is
+    `words[-1].end_ms` with nothing requiring the tuple to be sorted, and nothing at all about
+    two sentences relative to each other. Measured before this guard, `build_srt` shipped all
+    three (D-165):
+
+        00:00:01,000 --> 00:00:01,400     cue 1
+        00:00:00,000 --> 00:00:00,400     cue 2, earlier than the one before it
+        00:00:00,900 --> 00:00:00,400     a cue whose end precedes its start
+
+    `segment_sentences` produces none of these, but both `build_srt` and `build_ass` are
+    exported and take any `Sequence[Sentence]`, and §4.3's own warning is the one that applies:
+    the failure "does not appear and nothing says so".
+
+    Raises:
+        UndeliverableOrder: a sentence that ends before it starts, or a pair that overlaps or
+            goes backwards. Exactly touching (`later.start_ms == earlier.end_ms`) is allowed —
+            that is ordinary consecutive speech, not an overlap.
+    """
+    for sentence in sentences:
+        if sentence.end_ms <= sentence.start_ms:
+            raise UndeliverableOrder(
+                f"sentence {sentence.text!r} runs {sentence.start_ms} -> {sentence.end_ms} ms, "
+                f"which ends before it starts. Its words are not in time order, and a cue like "
+                f"that is displayed by nothing and reported by nothing."
+            )
+    for earlier, later in pairwise(sentences):
+        if later.start_ms < earlier.end_ms:
+            raise UndeliverableOrder(
+                f"sentence at {later.start_ms} ms starts before the previous one ends "
+                f"({earlier.end_ms} ms). A subtitle file is read in order: overlapping or "
+                f"reversed cues render two captions at once, or none."
+            )
 
 
 def _ends_with_sentence_punctuation(word: Word) -> bool:

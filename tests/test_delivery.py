@@ -39,7 +39,7 @@ from hawedit.delivery import (
     ms_to_timecode,
     parse_srt_times,
 )
-from hawedit.sentences import Sentence
+from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.transcripts import Word
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
@@ -419,6 +419,74 @@ def test_the_reader_takes_the_timing_from_the_grammars_position_not_by_hunting()
     hunted = "1\n00:00:00,000 to 00:00:01,000\n00:00:05,000 --> 00:00:06,000\n"
     with pytest.raises(DeliveryError, match="unreadable timing line"):
         parse_srt_times(hunted)
+
+
+# --- D-165: a sidecar is read in order, and nothing required the cues to be in one ----------
+
+
+def test_cues_that_go_backwards_are_refused_rather_than_written() -> None:
+    """Measured before the guard: `build_srt` shipped `00:00:01,000 --> 00:00:01,400` followed
+    by `00:00:00,000 --> 00:00:00,400`.
+
+    `build_srt` refused an incomplete sentence, one starting before the clip and one ending
+    after it — every check about a sentence on its own, none about the sequence. SRT is read
+    sequentially, so §4.3's own warning applies: the subtitles "do not appear and nothing says
+    so".
+    """
+    forwards = (a_sentence(0, 400), a_sentence(1_000, 1_400))
+    backwards = (a_sentence(1_000, 1_400), a_sentence(0, 400))
+
+    # The control: the very same two sentences in order are written without complaint, so this
+    # measures the ordering and not something else about the pair.
+    assert parse_srt_times(build_srt(forwards, clip_in_ms=0, clip_duration_ms=5_000)) == (
+        (0, 400),
+        (1_000, 1_400),
+    )
+    with pytest.raises(UndeliverableOrder, match="starts before the previous one ends"):
+        build_srt(backwards, clip_in_ms=0, clip_duration_ms=5_000)
+
+
+def test_overlapping_cues_are_refused_rather_than_written() -> None:
+    """Two captions on screen at once. Measured before the guard: `0 --> 1200` shipped beside
+    `800 --> 1400`, overlapping by 400 ms."""
+    with pytest.raises(UndeliverableOrder, match="starts before the previous one ends"):
+        build_srt(
+            (a_sentence(0, 1_200), a_sentence(800, 1_400)), clip_in_ms=0, clip_duration_ms=5_000
+        )
+
+    # The control: touching exactly is ordinary consecutive speech and must still be written.
+    touching = (a_sentence(0, 1_000), a_sentence(1_000, 1_400))
+    assert len(parse_srt_times(build_srt(touching, clip_in_ms=0, clip_duration_ms=5_000))) == 2
+
+
+def test_a_sentence_whose_words_are_unordered_is_refused() -> None:
+    """`Word` refuses `end_ms <= start_ms`, so no single word runs backwards — and says nothing
+    about a sentence, whose bounds are `words[0].start_ms` and `words[-1].end_ms`.
+
+    Measured before the guard, this shipped `00:00:00,900 --> 00:00:00,400`: a cue whose end
+    precedes its start, built entirely from words that are individually valid.
+    """
+    unordered = Sentence(
+        words=(
+            Word(w="باشە", start_ms=900, end_ms=1_400, conf=0.9),
+            Word(w="ئەمە", start_ms=0, end_ms=400, conf=0.9),
+        ),
+        complete=True,
+    )
+    with pytest.raises(UndeliverableOrder, match="ends before it starts"):
+        build_srt((unordered,), clip_in_ms=0, clip_duration_ms=5_000)
+
+
+def test_the_burned_in_captions_refuse_the_same_sequence_the_sidecar_does() -> None:
+    """`pipeline.py` hands the *same* sentences to `build_ass` and `build_srt`, so a guard on
+    one and not the other would burn the overlap into the video while the sidecar refused it."""
+    overlapping = (a_sentence(0, 1_200), a_sentence(800, 1_400))
+    with pytest.raises(UndeliverableOrder, match="starts before the previous one ends"):
+        build_ass(overlapping)
+
+    # The control: the ordered pair still renders, so this is the ordering and not build_ass
+    # rejecting the fixture for some other reason.
+    assert build_ass((a_sentence(0, 1_000), a_sentence(1_000, 1_400))).count("Dialogue:") == 2
 
 
 def test_every_cue_the_writer_produced_is_read_back(tmp_path: Path) -> None:
