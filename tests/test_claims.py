@@ -25,6 +25,19 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 PROGRESS = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
 
 
+# A `|` inside a table cell splits it in GFM even within backticks, so the ledger escapes those
+# as `\|`. A naive `split("|")` splits on the escape too, shifting every column after it —
+# measured, `M0.1` and `M2.7` each carry one (`\| tail`, `StageSkipped \| None`) and read as five
+# columns, so a parser taking the evidence cell sees only the text before the pipe. That is how a
+# scan of mine reported M0.1 as never audited while its own cell recorded the audit. D-157.
+_TABLE_CELL = re.compile(r"(?<!\\)\|")
+
+
+def row_cells(line: str) -> list[str]:
+    r"""A Markdown table row's cells, respecting `\|` escapes."""
+    return [cell.strip() for cell in _TABLE_CELL.split(line.strip("|"))]
+
+
 def claims_only(document: str) -> str:
     """`document` with every `**Corrected …**` span removed, so checks read claims not history.
 
@@ -58,8 +71,10 @@ def _ledger_row(task: str) -> str:
 
 
 def _status(task: str) -> str:
-    cells = [c.strip() for c in _ledger_row(task).split("|")]
-    return cells[3]
+    # Through `row_cells` for the same reason the BLOCKED check is: a naive split shifts every
+    # column after an escaped pipe, and the status column is only safe today because both escaped
+    # pipes happen to sit in the evidence cell, which is last. That is luck, not a rule. D-157.
+    return row_cells(_ledger_row(task))[2]
 
 
 # --- #10 a DONE mark must be backed by the thing it claims -------------------------------
@@ -153,9 +168,9 @@ def test_the_diarization_benchmark_is_not_marked_done_without_a_benchmark() -> N
 def test_every_ledger_row_marked_partial_names_its_shortfall() -> None:
     """PARTIAL without a named shortfall is DONE with extra steps."""
     for line in PROGRESS.splitlines():
-        cells = [c.strip() for c in line.split("|")]
-        if len(cells) > 4 and cells[3] == "PARTIAL":
-            assert "Shortfall" in cells[4], f"PARTIAL row names no shortfall:\n{line}"
+        cells = row_cells(line)
+        if len(cells) > 3 and cells[2] == "PARTIAL":
+            assert "Shortfall" in cells[3], f"PARTIAL row names no shortfall:\n{line}"
 
 
 # The words a BLOCKED.md heading may use to say it no longer needs Hawa. Declared, so a new one
@@ -203,18 +218,18 @@ def test_every_blocked_row_points_at_a_live_blocked_entry() -> None:
     """
     entries = _blocked_entries()
     for line in PROGRESS.splitlines():
-        cells = [c.strip() for c in line.split("|")]
-        if len(cells) > 4 and cells[3] == "BLOCKED":
-            cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", cells[4]))
+        cells = row_cells(line)
+        if len(cells) > 3 and cells[2] == "BLOCKED":
+            cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", cells[3]))
             assert cited, f"BLOCKED row cites no entry:\n{line}"
             missing = cited - entries.keys()
             assert not missing, (
-                f"{cells[1]} cites BLOCKED.md #{sorted(missing)}, which does not exist. "
+                f"{cells[0]} cites BLOCKED.md #{sorted(missing)}, which does not exist. "
                 f"Entries present: {sorted(entries)}"
             )
             resolved = {n for n in cited if not entries[n]}
             assert resolved != cited, (
-                f"{cells[1]} is marked BLOCKED, but every blocker it cites is resolved "
+                f"{cells[0]} is marked BLOCKED, but every blocker it cites is resolved "
                 f"(#{sorted(resolved)}). The work is available — re-status the row."
             )
 
@@ -444,8 +459,10 @@ def _ledger_rows() -> list[list[str]]:
     for line in PROGRESS.splitlines():
         if not re.match(r"^\| M\d+\.\d+ \|", line):
             continue
-        cells = [c.strip() for c in line.split("|")]
-        if len(cells) > 4 and cells[3] in marks:
+        # `row_cells` for the third time: this one survived an escaped pipe only because it
+        # rejoins `cells[4:]`, which happened to undo the split it did not know about. D-157.
+        cells = row_cells(line)
+        if len(cells) > 3 and cells[2] in marks:
             rows.append(cells)
     return rows
 
@@ -459,7 +476,7 @@ def test_the_ledger_accounts_for_every_module() -> None:
     """
     claimed: set[str] = set()
     for cells in _ledger_rows():
-        claimed |= set(re.findall(r"(\w+\.py)", " ".join(cells[4:])))
+        claimed |= set(re.findall(r"(\w+\.py)", " ".join(cells[3:])))
     on_disk = {p.name for p in (ROOT / "src" / "hawedit").glob("*.py")} - {"__init__.py"}
     assert on_disk <= claimed, (
         f"modules with no status in any PROGRESS.md ledger row: {sorted(on_disk - claimed)}. "
@@ -1212,3 +1229,41 @@ def test_every_decision_the_docs_cite_exists() -> None:
         cited = set(re.findall(r"\b(D-\d{3})\b", path.read_text(encoding="utf-8")))
         missing = sorted(cited - recorded)
         assert not missing, f"{path.name} cites decisions that do not exist: {missing}"
+
+
+def test_every_milestone_row_has_exactly_four_columns() -> None:
+    """The ledger is a table, and a stray `|` silently re-shapes a row.
+
+    Four columns: id, title, status, evidence. An unescaped pipe in the evidence — the column
+    that quotes shell and type signatures, so the one where a pipe actually turns up — pushes
+    the rest into a fifth, and every consumer that indexes by column reads the wrong thing.
+    `test_every_blocked_row_points_at_a_live_blocked_entry` reads the status and the evidence by
+    index, so a BLOCKED row with a stray pipe would have its citations searched in the wrong
+    half of its own cell.
+    """
+    shifted = [
+        (row_cells(line)[0], len(row_cells(line)))
+        for line in PROGRESS.splitlines()
+        if re.match(r"\|\s*M\d+\.\d+\s*\|", line) and len(row_cells(line)) != 4
+    ]
+    assert not shifted, (
+        f"milestone rows whose columns are shifted by an unescaped `|`: {shifted}. "
+        f"Escape it as `\\|` — inside backticks too, which GFM does not exempt."
+    )
+
+
+def test_the_ledger_still_escapes_the_pipes_it_needs_to() -> None:
+    """The control. A PROGRESS.md with no pipes left in any cell passes the test above by having
+    nothing to escape, which would make it a check about an empty set.
+
+    Both known cases quote something that genuinely contains a pipe — a shell pipeline and a
+    type union — so they must still be there, escaped.
+    """
+    # With their surrounding words, because the bare quotes now appear twice each — D-157's own
+    # note cites them — and a check for the bare string passes while the original is deleted.
+    # Found by mutation: removing the D-144 quote left the suite green.
+    for quoted in (
+        "exit through `\\| tail` reported",
+        "typed `StageSkipped \\| None` and success",
+    ):
+        assert quoted in PROGRESS, f"{quoted!r} is no longer in the ledger, escaped or otherwise"

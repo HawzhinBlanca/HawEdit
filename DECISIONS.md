@@ -7943,3 +7943,88 @@ mutation above.
 `evidence/the-gate-guard-that-only-matters-when-the-floor-is-zero.md`. Floor 1503 → 1507.
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, exit **1**.
+
+## D-157
+
+**Two ledger rows had an unescaped `|` in a table cell, so every column after it shifted — and it
+made a measurement of mine wrong before I noticed the cause.** Looking for DONE rows never touched
+by an adversarial pass, my scan reported **M0.1** as unaudited. Its own cell says
+`**Audited 2026-08-10 (D-156)**`. The scan read the evidence column as `cells[3]` after splitting
+on `|`, and M0.1's evidence contains one:
+
+```
+M0.1   …`--check`'s exit through `| tail` reported…
+M2.7   …`discovery` and `editorial` are typed `StageSkipped | None` and success…
+```
+
+A `|` inside a table cell splits it in GFM **even inside backticks** — there is no code-span
+exemption — so both rows render with a fifth column and read as five cells to any parser. Measured:
+2 of 50 milestone rows. Mine, both: the `| tail` quote is from D-144 and the `StageSkipped | None`
+from D-111, each quoting something that genuinely contains a pipe.
+
+**Decision: escape for the renderer, and make the parser respect the escape.** These are two
+different fixes and only doing one leaves the other broken:
+
+* `\|` fixes the rendering. It does **not** fix `split("|")`, which splits on the backslash's
+  pipe just the same — measured, still 2 of 50 shifted after escaping.
+* `row_cells()` splits on `(?<!\\)\|`, so the parser agrees with Markdown. After both, 0 of 50.
+
+`test_every_blocked_row_points_at_a_live_blocked_entry` and `_status()` both index by column, and
+both now go through it. Neither was *broken* today — both escaped pipes happen to sit in the
+evidence cell, which is last, so the status column was safe by luck rather than by rule.
+
+**The latent hole this closes.** A BLOCKED row with a stray pipe ahead of its `BLOCKED.md #N`
+would have its citation searched in the wrong half of its own cell — the guard would find no
+citation, or find one and miss another, and D-144's *"a blocker could resolve invisibly"* returns
+by a different door. The audit reaches that state directly: injecting a pipe into a BLOCKED row's
+evidence reddens both that guard and the new column check.
+
+**Rejected: forbidding pipes in cells altogether.** The evidence column is where this project
+quotes shell pipelines and type signatures; a rule against the character would push writers to
+paraphrase what they measured, and the whole point of the column is to hold the literal thing.
+Escaping costs one backslash.
+
+**Rejected: parsing the ledger with a Markdown library.** A dependency to read four columns, when
+one lookbehind does it and matches the renderer's own rule.
+
+**Mutation audit 6/6, and it took three passes to get an honest one.**
+
+* **5/6 first.** The survivor was mine: I neutered the column guard *alone*, with the ledger
+  intact — and a guard for malformed rows measures nothing when no row is malformed. Replaced by a
+  stray pipe injected into a clean DONE row, which neither the escape-control nor the BLOCKED check
+  names, so only the column guard can see it. Second time this session I mutated a test in isolation
+  and learned only that it is redundant today; D-149 was the first.
+* **Then the anchors went ambiguous.** Two mutations reported `ANCHOR?(2)` because *this very
+  decision's note* quotes both escaped forms, so `` `\| tail` `` now appears twice in the ledger.
+  The probe refused to mutate rather than pick one, which is the behaviour that stops a sweep
+  reporting a result it did not measure. Re-anchored on the surrounding words.
+* **5/6 again, and the survivor was the control.** With two copies of the quote in the file,
+  `"`\| tail`" in PROGRESS` passes while the *original* is deleted. The control now matches the
+  full phrase — `exit through `\| tail` reported` — which is unique to the row that needs it.
+
+**And the guard caught its own record on the way in.** The first run of the gate after writing this
+entry failed on `test_every_milestone_row_has_exactly_four_columns`: my note contained
+``an unescaped `|` `` and ``` `split("|")` ``` — two more unescaped pipes, in the paragraph
+explaining unescaped pipes. That is the third time this session a new check has failed on the text
+announcing it (D-152's BLOCKED citation, D-154's `['D-154']`), and it is the cheapest possible
+proof that the check runs.
+
+**Repairing that damaged the row a second way, and the ledger's own tests caught that too.** My
+first repair rebuilt the line and left `| M0.1  |` with two spaces; `_ledger_rows` matches
+`^\| M\d+\.\d+ \|` with exactly one, so the row stopped matching and `gate.py` lost its only
+recorded status — `test_the_ledger_accounts_for_every_module` went red naming it. Re-padded to the
+canonical `| id | title | status | evidence |`, and only the two intended rows differ.
+
+**A fourth parser turned up while fixing the third.** `_ledger_rows` and the PARTIAL-shortfall check
+both split naively too. `_ledger_rows` survived an escaped pipe only by accident — it rejoins
+`cells[4:]`, which happened to undo a split it did not know about. All four now go through
+`row_cells`.
+
+**The control is the half that keeps it honest.** A `PROGRESS.md` with no pipes left anywhere would
+pass the column guard by having nothing to escape, so a second test requires both quoted forms —
+`` `\| tail` `` and `` `StageSkipped \| None` `` — to still be there, escaped. Deleting the quote
+rather than escaping it reddens.
+
+`evidence/two-ledger-rows-had-five-columns.md`. Floor 1507 → 1509.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, exit **1**.
