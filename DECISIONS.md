@@ -5995,6 +5995,28 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-179 - Confidential ZDR is a property of the constructible judge class set
+
+Protected main neutered the two §3 governance gates independently. Developer-API upload tests
+reddened, but removing `assert_permits_vertex` left its suite green. Under that mutation a
+confidential Vertex judge made both `countTokens` and `generateContent` calls carrying the client's
+Kurdish transcript and real JPEG bytes. Production was correct; coverage had silently proved only
+the other route.
+
+Readiness's D-174 constructor inventory already names every concrete `GeminiJudge` subclass
+bidirectionally. That same inventory now builds every judge under each forbidden confidential
+state with a recording transport. The suite asserts zero URLs, not merely an exception, and holds
+`judge`, `count_parts` and `generate_json` independently. A separating case proves attribution
+cannot substitute for configured ZDR; positive controls prove the transport and allowed route
+still work. Thirteen new cases make the focused Gemini suite 78/78.
+
+Rejected one Vertex-only test: it closes today's copy while letting the next subclass repeat it.
+Rejected relying on `judge()` calling `count_parts` before `generate_json`: a public boundary that
+is safe only in its current caller order is not a boundary. No production code changed because the
+gates were already correct.
+
+`evidence/confidential-zdr-class-set-2026-08-10.md`.
+
 ## D-172 - Declare every way a blocker stops needing Hawa
 
 `tests/test_claims.py` maps `BLOCKED.md` headings to live or resolved entries so a milestone cannot

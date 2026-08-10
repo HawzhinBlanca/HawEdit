@@ -431,6 +431,16 @@ The concurrent interrupted-delivery delta is semantically superseded by the hidd
 one-rename `ArtifactBundle`, whose crash-retry and concurrent-publisher tests remain green.
 `evidence/auto-select-query-preflight-2026-08-10.md`.
 
+## M2.8 confidential-ZDR class-set amendment (2026-08-10, D-179)
+
+Protected main proved that disabling Vertex's confidential ZDR gate reddened nothing and, under
+that mutation, recorded both billed endpoints receiving the client's transcript and real source
+pixels. Production was already correct. The coverage now constructs every concrete judge under
+all forbidden confidential states, asserts zero transport, separates ZDR configuration from
+attribution, and holds `count_parts` plus `generate_json` independently. Positive controls keep
+the matrix from passing by refusing everything. Thirteen new cases pass in the 78-test Gemini
+suite. `evidence/confidential-zdr-class-set-2026-08-10.md`.
+
 ## Deferred with reason
 
 | Item | Deferred to | Reason |
