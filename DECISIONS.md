@@ -7869,3 +7869,77 @@ No production code changed. **9/9 after.**
 `evidence/adversarial-pass-24-2026-08-10.md`. Floor 1501 → 1503.
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, exit **1**.
+
+## D-156
+
+**The gate's own refusals, swept — 7 of 9, and the one real gap was the guard that only matters
+when the floor cannot help.** M0.1 is the largest DONE row never attacked as a whole (12,279
+characters), and it is the row everything else rests on: if the gate can be fooled, every other
+claim in this project is a claim about nothing. Each of its nine refusals disabled in turn against
+a baseline verified green first, whole suite each time.
+
+```
+CAUGHT    a missing report is accepted
+CAUGHT    a stale report from an earlier run is accepted
+CAUGHT    a report collecting 0 tests is accepted
+CAUGHT    failures are only refused when there are errors too
+SURVIVED  a suite that skipped every test is accepted
+CAUGHT    a count below the committed floor is accepted
+CAUGHT    the floor stops ratcheting, so growth is never recorded
+CAUGHT    a tool from outside this interpreter's environment is accepted
+SURVIVED  a report with no testsuite element is accepted as evidence
+
+7/9
+```
+
+**The real gap.** `if evidence.passed == 0` exists because a report of *700 collected, 700
+skipped* once cleared every other check and `verify.sh` printed VERIFY OK with no test bodies
+executed — the comment above it says so, and credits the independent review. Replacing it with
+`passed < 0` left the entire suite green, because **every existing test supplies a non-zero
+floor**, and at a non-zero floor the *floor* check refuses first. The one state where this guard
+is the only refusal left is a floor of **0**, which `read_floor` returns for a missing or empty
+file. Nothing paired the two. Measured, with the guard neutered:
+
+```
+floor missing (0)    ACCEPTED — collected 700, skipped 700, passed 0
+floor = 1503         refused by the floor
+```
+
+So the guard that exists precisely for "the suite skipped itself" was held by the floor everywhere
+the tests looked, and by nothing where it counts. Three states now pin it — floor file missing,
+empty, and whitespace-only, all of which `read_floor` reads as 0 — with an assertion that the
+premise holds (`read_floor(floor) == 0`) so the test cannot pass because the floor quietly refused
+instead.
+
+**The control is the half that keeps it honest.** A gate that refused every zero-floor run, or
+every report containing any skip, would pass all three cases above. So a healthy report — 700
+collected with **one** legitimate skip — must be accepted at a zero floor *and* ratchet the floor
+to **699**, the number that actually ran. That also re-pins D-095's collected-versus-passed
+distinction from the other direction.
+
+**The second survivor is a bad mutation of mine, and it is recorded rather than pinned.** Removing
+the `if not suites:` refusal does not accept anything: `total()` then sums an empty list, `collected`
+is 0, and the very next guard refuses. Measured — the gate still raises, with
+*"check testpaths, a stray `-k` filter, or a collection error"* instead of the testsuite message.
+Only the wording changes, and pinning a message would fail on an intentional rewording while
+catching nothing. Seventh bad mutation of mine this session (D-137, D-141, D-144, D-147, D-149,
+D-155).
+
+**Rejected: making `read_floor` refuse a missing or empty file.** It is the tempting fix — a floor
+that reads as 0 protects nothing — and it is wrong here for two reasons. A genuinely new checkout
+has no floor until the first green run writes one, so refusing would make the gate unable to
+bootstrap; and the floor is not the mechanism that should catch a self-skipping suite, which is
+what the `passed == 0` guard is *for*. Two guards, two jobs, and the failure was that only one of
+them was ever exercised. If the floor's own absence should be an error, that is a separate decision
+with its own bootstrap answer, not a side effect of this one.
+
+**Rejected: asserting the exact refusal messages.** D-072's rule — a test that pins wording fails on
+a rewrite and catches nothing. Each new case matches on the phrase that identifies *which* guard
+fired (`nothing actually ran`), which is the minimum needed to tell the guards apart.
+
+No production code changed — `gate.py` is byte-identical. **8/9 after**, the ninth being the bad
+mutation above.
+
+`evidence/the-gate-guard-that-only-matters-when-the-floor-is-zero.md`. Floor 1503 → 1507.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, exit **1**.

@@ -164,3 +164,49 @@ def test_the_floor_still_reaches_the_full_count_when_nothing_skips(tmp_path: Pat
     floor = tmp_path / "floor"
     check_test_evidence(_report(tmp_path / "r.xml", tests=1164), floor_path=floor)
     assert read_floor(floor) == 1164
+
+
+# --- M0.1 audit: the zero-passed guard is load-bearing only where nothing tested it -----------
+#
+# `if evidence.passed == 0` exists because a report of "700 collected, 700 skipped" cleared every
+# other check and `verify.sh` printed VERIFY OK with no test bodies executed. Measured: replacing
+# it with `passed < 0` left the whole gate suite green, because every existing test supplies a
+# non-zero floor — and at a non-zero floor the *floor* check refuses first. The one state where
+# this guard is the only thing standing is a floor of 0, which `read_floor` returns for a missing
+# or empty file, and no test paired the two. With the guard neutered and the floor absent:
+#
+#     ACCEPTED — collected 700, skipped 700, passed 0
+#
+# `evidence/the-gate-guard-that-only-matters-when-the-floor-is-zero.md`.
+# =========================================================================================
+
+
+@pytest.mark.parametrize("floor_state", ["missing", "empty", "whitespace"])
+def test_a_wholly_skipped_run_is_refused_even_with_no_floor_to_lean_on(
+    tmp_path: Path, floor_state: str
+) -> None:
+    """The floor cannot help here — it reads as 0 — so this guard is the only refusal left."""
+    floor = tmp_path / "floor"
+    if floor_state == "empty":
+        floor.write_text("", encoding="utf-8")
+    elif floor_state == "whitespace":
+        floor.write_text("  \n", encoding="utf-8")
+    assert read_floor(floor) == 0, "this test's premise is a floor that cannot refuse anything"
+
+    report = _report(tmp_path / "r.xml", tests=700, skipped=700)
+    with pytest.raises(NoTestEvidence, match="nothing actually ran"):
+        check_test_evidence(report, floor_path=floor)
+
+
+def test_a_healthy_run_is_still_accepted_with_no_floor(tmp_path: Path) -> None:
+    """The control, and the table above needs one: a gate that refused every zero-floor run —
+    or refused every report with any skip in it — would pass all three cases above.
+
+    One skip out of 700 is a legitimate run, and it must ratchet the floor to what actually ran.
+    """
+    floor = tmp_path / "floor"
+    evidence = check_test_evidence(
+        _report(tmp_path / "r.xml", tests=700, skipped=1), floor_path=floor
+    )
+    assert (evidence.collected, evidence.skipped, evidence.passed) == (700, 1, 699)
+    assert read_floor(floor) == 699, "the floor must ratchet on what ran, not on what was collected"
