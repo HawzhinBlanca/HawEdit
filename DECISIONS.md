@@ -6014,7 +6014,7 @@ treating any bold text as a resolution: it would make formatting silently change
 
 `evidence/a-blocker-could-resolve-invisibly.md`.
 
-## D-173 - Rejoin main after the final claims delta, without changing the audited tree
+## D-173 - Rejoin main after the claims delta, without changing the audited tree
 
 `main` advanced from `ba52888` to `7002331` while the readiness branch was being pushed. The only
 new semantic delta was D-172's `ANSWERED` blocker status. It was reproduced, implemented against
@@ -6044,3 +6044,17 @@ the ADC route. Rejected one Vertex-only assertion: it closes today's copy but le
 subclass repeat the same unheld wiring.
 
 `evidence/confidential-judge-routing-copy.md`.
+
+## D-175 - Rejoin main after the confidential-route finding, preserving the audited tree
+
+Protected main advanced to `b24ce15` after the previous exact-SHA hosted gate. Its semantic delta
+was D-174's confidential Vertex routing coverage. Readiness integrated that finding against the
+newer Gemini transport, passed its 65-test focused suite, and ratcheted the floor before joining
+history.
+
+Merge `ccb11a3` has first parent `42aa923` and protected-main second parent `b24ce15`. Both the
+merge and first parent have tree `a332a67e40983efbac9f5cf296b45577f54cca56`, so the join added
+ancestry and no file content. The complete local and hosted gates remain mandatory because Git
+tree equality is not execution evidence.
+
+`evidence/main-semantic-merge-2026-08-10.md`.

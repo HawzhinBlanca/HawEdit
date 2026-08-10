@@ -47,7 +47,7 @@ VERIFY OK — hawedit gate green
 A post-merge gate is required separately because the commit identity changes reproducible-wheel
 timestamps even when the tree does not.
 
-## Final protected-main advance
+## First protected-main advance after the initial join
 
 `main` advanced once more during the first push with `7002331`, which fixed the `ANSWERED`
 resolution-vocabulary blind spot. Readiness reproduced that finding, implemented D-172 against
@@ -59,6 +59,23 @@ the stronger claims suite, and passed its focused tests before joining history a
 - readiness-parent tree: `ecb193121a6778a2ff2b9f65d643e0a4f29b7d2a`
 - merge tree: `ecb193121a6778a2ff2b9f65d643e0a4f29b7d2a`
 
-Thus all 26 upstream-only commits are ancestors, and the final join again introduced no unreviewed
-file content. The canonical 1,994-test gate is run at the final documentation commit after this
-merge, not inferred from tree equality.
+Thus all 26 upstream-only commits at that point were ancestors, and the join again introduced no
+unreviewed file content. The canonical 1,994-test gate was run after this merge rather than
+inferred from tree equality.
+
+## Confidential-route advance
+
+After that exact-SHA hosted gate completed, protected main advanced to `b24ce15` with the finding
+that Vertex's separate constructor had unheld §7 routing. Readiness integrated the finding as
+D-174, added the bidirectional constructor-hierarchy matrix, passed 65/65 Gemini tests, and raised
+the exact floor to 1,999 before joining history.
+
+- readiness parent: `42aa923b725e03f718a6b1ca0479920fab73a8f5`
+- protected-main parent: `b24ce15f451d60d9e5908746c59e5626ddf696f7`
+- merge: `ccb11a350d6c1bcb56bc22537babb7ffdd5c7ab0`
+- readiness-parent tree: `a332a67e40983efbac9f5cf296b45577f54cca56`
+- merge tree: `a332a67e40983efbac9f5cf296b45577f54cca56`
+
+All 27 upstream-only commits are now ancestors. As before, tree equality proves only that the
+history join added no content; the full local and hosted gates at the eventual final tip provide
+acceptance.
