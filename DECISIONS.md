@@ -7431,3 +7431,82 @@ pattern is worth naming: mutating a *test* in isolation asks whether the test is
 not whether it is load-bearing — the useful question needs the defect present too.
 
 `evidence/twelve-refusals-nothing-held.md`. Floor 1453 → 1466.
+
+## D-150
+
+**Adversarial pass #23, on M5.2 (`qwen_visual.py`, DONE). The row's own claims survived; Kurdish
+invariant #3 did not.** Both Stage 2 adapters normalize the query before the model reads it, and
+both docstrings say why — the window embeddings were built from §4.1-normalized text, so a raw
+query *"is comparing two different alphabets, and the failure is not an error, it is a slightly
+wrong score"*. Each call removed in turn against a baseline verified green first, whole gate suite
+each time:
+
+```
+baseline green: True
+UNHELD  the embedder stops normalizing the query (invariant #3)
+UNHELD  the reranker stops normalizing the query (invariant #3)
+```
+
+`tests/test_qwen_visual.py` did not mention normalization anywhere. `embed_text` was called by **no
+test at all**, and the two tests that call `score` pass `"ڕۆژنامەوانی"` — already §4.1-normalized, so
+the call under test was a no-op in the only place it ran. An invariant the hard rules call
+non-negotiable was enforced in exactly two lines and asserted by nothing.
+
+**What it costs, measured on the codepoints rather than argued.** §4.1's collisions are what an
+Arabic keyboard produces:
+
+```
+'كوردي'  ->  'کوردی'     0x643 -> 0x6a9   (Arabic kaf -> Kurdish kaf)
+                          0x64a -> 0x6cc   (Arabic yeh -> Kurdish yeh)
+'ده\u200cست' -> 'دەست'    ZWNJ dropped, 0x647 -> 0x6d5
+'٢٠٢٦'  ->  '2026'       Arabic-Indic -> ASCII
+```
+
+None of these is an error at any layer. The query embeds, the reranker scores, every number stays
+in range, and the retrieval is quietly against a different alphabet from the corpus.
+
+**Decision: assert on what the model was asked to read, and enumerate the adapters.**
+`StubProcessor` now records the conversation as well as the kwargs, because invariant #3 is a claim
+about that text and nothing else — the return value cannot show it, since a wrong-alphabet query
+still yields a vector and still yields a score in [0, 1]. `_STAGE_2_QUERY_READERS` names both
+adapters and `_classes_taking_a_query()` reads the module for every class with a method taking a
+`query`, compared bidirectionally: a third adapter fails until someone says how to drive it. D-145's
+shape, and the third time this session it has been the right one.
+
+**The query used is one string carrying four collisions at once,** and the assertions name the
+codepoints — `0x643`, `0x64a`, ZWNJ, Arabic-Indic digits must all be absent from what reached the
+model, and the normalized form must be present. A mutation that merely *changed* the query cannot
+satisfy that.
+
+**The control is idempotence.** An already-normalized query must arrive byte-identical, so an
+adapter that mangled or dropped every query — which would pass the first test — fails. Both
+drop-the-query mutations are caught by it.
+
+**Rejected: asserting the returned vector instead.** It is the artifact one layer too far: with the
+real checkpoint the difference between a normalized and a raw query is a small change in a
+unit-norm vector, which is exactly the "slightly wrong score" that hides. The text is where the
+defect is legible, and the test runs without 4 GB of weights, on CI, where `models/` does not exist.
+
+**Rejected: normalizing at the caller instead.** `visual_pipeline` is not the only caller a query
+can arrive from, and both docstrings already argue for doing it inside — *"doing it inside means a
+caller cannot forget"*. The defect was never the placement; it was that nothing checked.
+
+**What survived the pass.** M5.2's stated claims all hold: the three cited evidence files exist
+(`m5-2-embedder.md`, `m5-2-reranker.md`, `m5-2-frames-reaching-the-model.md`), and README's three
+claims for this module — pooling read from the checkpoint, §7 role checked before the weights load,
+no silent CPU fallback — each still have a test that reddens (`does not state how`, `cannot be used
+as the visual embedding model`, `reports no CUDA`). The row was not overclaiming; it simply never
+claimed the invariant, and the invariant was the unheld thing.
+
+**Mutation audit 8/8**, including both defects restored, both adapters sending the raw query
+*beside* the normalized one (caught by the raw-absent assertion), both dropping the query entirely
+(caught by the idempotence control), and both directions of removing an adapter from the
+enumeration.
+
+**One methodological note, because it bit me twice this session.** A third mutation — removing both
+calls at once — reported `held`, and it is not a result: with `normalize_sorani` no longer used the
+import is dead, ruff raises F401, and the nested-gate test fails on lint rather than on the tests.
+The probe printed `[lint dirty]` beside it and the audit now strips the import when a mutation
+orphans it. Same shape as D-148's SIM223 contamination.
+
+`evidence/adversarial-pass-23-2026-08-10.md`. Floor 1466 → 1471.

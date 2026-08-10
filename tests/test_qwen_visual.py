@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from hawedit.normalize import normalize_sorani
 from hawedit.qwen_visual import (
     EMBEDDING_MODEL_ID,
     EmbedderUnavailable,
@@ -317,12 +318,16 @@ class StubProcessor:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        # What the model was actually asked to read. Kurdish invariant #3 is a claim about this
+        # and nothing else, so it has to be recorded rather than inferred from the kwargs. D-150.
+        self.conversations: list[Any] = []
         self.text = ""
 
     def apply_chat_template(self, conversation: Any, **kwargs: Any) -> dict[str, Any]:
         import torch
 
         self.calls.append(kwargs)
+        self.conversations.append(conversation)
         metadata = kwargs.get("video_metadata")
         if metadata:
             duration = float(metadata[0]["duration"])
@@ -455,3 +460,131 @@ def test_the_reranker_asks_for_the_answer_position(
     assert processor.calls[0]["add_generation_prompt"] is True
     assert processor.calls[0]["video_metadata"] == EXPECTED_METADATA
     assert model.forward_kwargs["output_hidden_states"] is True
+
+
+# --- D-150: Kurdish invariant #3 on the Stage 2 query, held instead of believed ---------------
+#
+# `embed_text` and `score` both normalize the query before the model sees it, and both docstrings
+# say why: the window embeddings were built from §4.1-normalized text, so a raw query "is
+# comparing two different alphabets — and the failure is not an error, it is a slightly wrong
+# score". Measured (adversarial pass #23): removing `normalize_sorani` from either call left the
+# whole gate suite green, and no test in this file mentioned normalization at all — the two that
+# call `score` pass a query that is already normalized, so the call was a no-op in every test that
+# reached it. `evidence/adversarial-pass-23-2026-08-10.md`.
+# =========================================================================================
+
+
+# One string carrying four of §4.1's collisions, with the codepoints that make them collisions:
+# Arabic kaf U+0643 (Kurdish uses U+06A9), Arabic yeh U+064A (U+06CC), a ZWNJ before heh U+0647
+# (which §4.1 folds to ae U+06D5), and Arabic-Indic digits. This is what an Arabic keyboard
+# produces, which is why §4.1 exists.
+_A_QUERY_FROM_AN_ARABIC_KEYBOARD = "كوردي ٢٠٢٦ ده\u200cست"
+_STAGE_2_QUERY_READERS = ("QwenVisualEmbedder", "QwenVisualReranker")
+
+
+def _all_text(value: Any) -> str:
+    """Every string anywhere in a conversation structure, joined.
+
+    The two adapters nest the query differently — one wraps it in a content part, the other in a
+    `<Query>:` line — and the invariant is about what reaches the model, not about the shape it
+    travelled in.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_all_text(item) for item in value.values())
+    if isinstance(value, list | tuple):
+        return " ".join(_all_text(item) for item in value)
+    return ""
+
+
+def _a_query_reader(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[StubProcessor, Any]:
+    """The adapter under `name`, stubbed, with a callable that sends it one query."""
+    import torch
+
+    if name == "QwenVisualEmbedder":
+        embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, dimension=2), device="cpu")
+        processor, _model = stubbed(embedder, monkeypatch, torch.zeros(1, 1, 2) + 0.5, torch.eye(2))
+        return processor, embedder.embed_text
+    reranker = QwenVisualReranker(
+        a_reranker_checkpoint(tmp_path),
+        read_frames=lambda w: WindowFrames(window=w, paths=(Path("f0.jpg"),)),
+        device="cpu",
+    )
+    processor, _model = stubbed(reranker, monkeypatch, torch.zeros(1, 1, 2), torch.zeros(9694, 2))
+    return processor, lambda query: reranker.score(query, two_frames())
+
+
+def _classes_taking_a_query() -> set[str]:
+    """Every class in this module with a method that takes a `query`.
+
+    Read from the module rather than listed, so a third Stage 2 adapter is covered the day it is
+    added — D-145's shape, and the reason that one exists.
+    """
+    import inspect
+
+    import hawedit.qwen_visual as module
+
+    found: set[str] = set()
+    for name, value in vars(module).items():
+        if not inspect.isclass(value) or value.__module__ != module.__name__:
+            continue
+        for _method_name, method in inspect.getmembers(value, inspect.isfunction):
+            if "query" in inspect.signature(method).parameters:
+                found.add(name)
+                break
+    return found
+
+
+def test_every_stage_2_adapter_that_takes_a_query_is_covered_here() -> None:
+    """Bidirectional: a new adapter fails until someone says how to drive it."""
+    assert _classes_taking_a_query() == set(_STAGE_2_QUERY_READERS), (
+        f"adapters taking a query with no case here: "
+        f"{sorted(_classes_taking_a_query() - set(_STAGE_2_QUERY_READERS))}; cases naming a class "
+        f"that no longer takes one: "
+        f"{sorted(set(_STAGE_2_QUERY_READERS) - _classes_taking_a_query())}"
+    )
+
+
+@pytest.mark.parametrize("name", _STAGE_2_QUERY_READERS)
+def test_the_query_reaches_the_model_normalized(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kurdish invariant #3, asserted on what the model was asked to read.
+
+    Not on the return value: a wrong-alphabet query still produces a vector and still produces a
+    score in [0, 1]. The only place the defect is visible is the text itself.
+    """
+    processor, send = _a_query_reader(name, tmp_path, monkeypatch)
+    send(_A_QUERY_FROM_AN_ARABIC_KEYBOARD)
+
+    seen = _all_text(processor.conversations)
+    assert normalize_sorani(_A_QUERY_FROM_AN_ARABIC_KEYBOARD) in seen, (
+        f"{name} did not §4.1-normalize the query before the model read it: {seen!r}"
+    )
+    assert _A_QUERY_FROM_AN_ARABIC_KEYBOARD not in seen, (
+        f"{name} sent the raw query as well as the normalized one: {seen!r}"
+    )
+    # The specific collisions, so the assertion cannot pass on a query that merely changed.
+    assert "\u0643" not in seen and "\u064a" not in seen, "Arabic kaf/yeh reached the model"
+    assert "\u200c" not in seen, "a ZWNJ reached the model"
+    assert "٢٠٢٦" not in seen and "2026" in seen, "Arabic-Indic digits reached the model"
+
+
+@pytest.mark.parametrize("name", _STAGE_2_QUERY_READERS)
+def test_a_query_that_is_already_normalized_is_sent_unchanged(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control. An adapter that mangled or dropped every query would pass the test above.
+
+    §4.1 is idempotent, so the corpus's own spelling has to survive the trip untouched — that is
+    what makes the query and the window embeddings comparable at all.
+    """
+    already = normalize_sorani(_A_QUERY_FROM_AN_ARABIC_KEYBOARD)
+    processor, send = _a_query_reader(name, tmp_path, monkeypatch)
+    send(already)
+    assert already in _all_text(processor.conversations), (
+        f"{name} altered a query that was already §4.1-normalized"
+    )
