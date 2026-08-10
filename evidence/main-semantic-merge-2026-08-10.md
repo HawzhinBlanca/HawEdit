@@ -165,3 +165,32 @@ skipped and accepted JUnit evidence in 257.2 seconds. The histories were then jo
 
 Protected main is again an ancestor and no older content entered the tree. The final commit identity
 still requires its own canonical and hosted gates.
+
+## Stage 2 query-normalization coverage advance
+
+Protected main next advanced to `ba2a445` after measuring that removing query normalization from
+either the Qwen visual embedder or reranker left its full suite green. Production code was already
+correct; model-input coverage was absent.
+
+D-183 adapted the finding to readiness's newer verified-load and lifecycle tests. The processor
+stub now records actual conversations for both adapters; raw Arabic kaf/yeh, ZWNJ and Arabic-Indic
+digits must be absent, while normalized Sorani and ASCII digits must be present. An idempotence
+control and a bidirectional inventory of query-reading production classes hold both future and
+uniform-failure cases. The focused Qwen/visual/Path-B slice passed 95/95 and the combined
+Qwen/claims/evidence slice passed 91/91.
+
+The exact collector rose to 2,044. Package source remained
+`3994b043398d95c0f2c01a0d8aac52fd18465b72900f865553738846dfdc05e6`, so the accepted WSL
+receipt and VEX artifact remained current. The clean first parent passed Ruff, mypy over 129 source
+files, formatting, 2,044/2,044 tests, zero skipped and accepted JUnit evidence in 299.9 seconds.
+
+The histories were then joined:
+
+- readiness parent: `8ee40e9bc2a5522b360b94185fcb794807059f5f`
+- protected-main parent: `ba2a445bdda76c237f48a2968ac8ac26e66965bd`
+- merge: `b663cd3072c5fe424bcaf9281b544c8eb4e4f5eb`
+- readiness-parent tree: `64fd3068d0b4b6374b8a7d3ef6b60cc0e5b05634`
+- merge tree: `64fd3068d0b4b6374b8a7d3ef6b60cc0e5b05634`
+
+Protected main is an ancestor and the join imported no older file content. Post-merge local and
+hosted gates remain required for the final identity.

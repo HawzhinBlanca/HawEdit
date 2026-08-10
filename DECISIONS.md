@@ -6015,6 +6015,21 @@ model-input boundaries and already own the correct implementation. The focused v
 
 `evidence/stage2-query-normalization-2026-08-10.md`.
 
+## D-184 - Join main after adapting its Stage 2 invariant test to the newer loaders
+
+Protected main `ba2a445` contained the D-183 finding and tests but no production-code change.
+Readiness adapted the processor-conversation assertions, raw-codepoint checks, idempotence control
+and query-reader class inventory against its newer verified-checkpoint and GPU-lifecycle code. The
+focused visual slice passed 95/95, the exact floor rose to 2,044, and the canonical gate passed
+before histories were joined.
+
+Merge `b663cd3` has readiness parent `8ee40e9` and protected-main parent `ba2a445`. Both its tree
+and the first-parent tree are `64fd3068d0b4b6374b8a7d3ef6b60cc0e5b05634`; protected main's
+older tests, evidence, decision numbering and floor therefore cannot replace the audited readiness
+versions. The merged identity still requires local and hosted acceptance.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
 ## D-181 - A prerequisite is held by its own diagnostic, not by a shared exit code
 
 Protected main measured that deleting twelve of fourteen older argv guards left their tests green.
