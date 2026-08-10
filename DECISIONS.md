@@ -8274,3 +8274,66 @@ A guard that fires twice on one paragraph is not noise — a decision log is cod
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-161
+
+**The gate ran the right programs over only part of the repository.** `tests/test_gate.py` already
+asked *which programs* the gate runs, and refuses one whose provenance is unchecked (D-093).
+Nothing asked **what they read**. Measured: the lint and format steps passed `src tests`, mypy
+declared two directories, and `scripts/` therefore appeared in none of them — linted by nothing,
+typechecked by nothing, while `README.md` calls the step *"lint + typecheck + format + tests —
+this decides DONE"* without qualification. D-160's defect lived there for four days.
+
+**Decision: widen to `src tests scripts`, in all three places.** It costs nothing — both tools
+already pass on the wider scope, and mypy's file count goes 98 → 99. There is exactly one Python
+file under `scripts/`; the other seven entries are shell and PowerShell.
+
+**What it does not buy, measured rather than assumed.** The tempting claim is that this would have
+caught D-160. It would not. Both of that iteration's defects, written the way an author who meant
+them would leave the file, pass `ruff` and `mypy` at `rc=0`: a wrong path string is neither a lint
+error nor a type error. A first pass appeared to catch both, but each of those edits had left an
+orphaned import behind and `F401` fired on the *edit shape*. What protects that class is D-160's
+subprocess test. What the widening does reach, on the same file: an undefined name (`F821` and
+mypy — the shape of my own bad mutation last iteration), a wrong return annotation (mypy), an
+unused import (`F401`). Worth having, and worth stating precisely rather than overclaiming.
+
+**`models/` is not repository content, and git is the authority on that.** The new scope test
+failed first on eleven files — `modeling_videochat3.py`, `qwen3_vl_reranker.py` and siblings —
+which are downloaded checkpoint code. `.gitignore:27` matches `models/*`, and the only tracked
+files under it are `revisions.json` and `sources.json`; tracked `.py` there: **0**. So the
+enumeration asks `git ls-files`, not the filesystem. **Rejected: excluding `models/` by name.**
+A blocklist goes stale the next time a checkpoint lands, and it would answer a different question
+than the one that matters — what the repository *contains*. The 99 tracked Python files are
+exactly the 99 mypy now reports, which is the check on the check.
+
+**Two guards, because scope has two failure modes.**
+`test_the_gates_three_python_steps_read_the_same_paths` requires lint, format and typecheck to name
+the same roots: mypy's list lives in `pyproject.toml` and the other two in `verify.sh`, so nothing
+else keeps them equal, and a file linted but not typechecked is checked less than it looks.
+`test_the_gate_reads_every_python_file_in_the_repository` derives the requirement from the
+repository rather than from a list, so the next top-level package fails until both files name it —
+membership against a hard-coded list is precisely the state `scripts/` was already in.
+
+**Rejected: adding `shellcheck`.** Six shell scripts here are unlinted, including `verify.sh`
+itself and the checksummed fetchers — a larger surface than the one Python file. It needs a tool
+neither the lock nor the venv carries, and pinning one into the gate of record is its own
+increment with its own supply-chain question. Named as remaining debt rather than half-done.
+
+**Mutation audit 7/7, after 6/7.** Mutation 4 is the one worth naming: it writes
+`tools_for_this_audit/helper.py` and `git add -N`s it, so the repository genuinely contains a
+tracked Python file outside every root — the state reached, not simulated. **The survivor was
+mine, of the kind I keep repeating** (D-149, D-155, D-156, D-157): neutering the empty-scope
+control while no scope is empty measures nothing. Paired with the state it describes — all three
+steps naming whitespace, where set equality is satisfied by three empty sets — the same-paths test
+goes **green without the control** and red with it. Its sibling still reddens, since 99 tracked
+files fall outside an empty root list; that is defence in depth, not a reason to drop the control.
+
+**And one detail cost a run:** whitespace, not emptiness, is the shape that reaches that control.
+With a single space the pattern's own trailing space consumes it, `([^}]+)` matches nothing, and
+`_gate_scope` fails earlier with a different message. A control can be unreachable by the shape
+you happen to try and load-bearing for the one you did not.
+
+`evidence/the-gate-checked-none-of-the-scripts-directory.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.

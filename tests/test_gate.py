@@ -489,3 +489,90 @@ def test_every_gate_step_program_is_covered_by_the_provenance_rule() -> None:
         assert invoked in GATE_TOOLS, (
             f"verify.sh runs `-m {invoked}` but GATE_TOOLS does not check where it came from"
         )
+
+
+# --- D-161: a tool the gate runs over only part of the repository ---------------------------
+#
+# The rule above asks *which programs* run. It says nothing about *what they read*. Measured
+# before this: `LINT_CMD` and `FORMAT_CMD` passed `src tests` and mypy declared
+# `files = ["src", "tests"]`, so every Python file under `scripts/` was linted by nothing and
+# typechecked by nothing — while `README.md` calls the step "lint + typecheck + format + tests".
+# That is where D-160's defect lived unnoticed for four days.
+
+
+def _gate_scope(pattern: str) -> tuple[str, ...]:
+    """The path arguments one `verify.sh` step passes to its tool, in order."""
+    text = (ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8")
+    match = re.search(pattern, text)
+    assert match is not None, f"{pattern!r} matched nothing in verify.sh — has the step moved?"
+    return tuple(match.group(1).split())
+
+
+def _tracked_python_files() -> list[str]:
+    """Every `.py` file this repository *contains*, asked of git rather than of the filesystem.
+
+    A directory walk answers a different question. It found eleven files under `models/` —
+    `modeling_videochat3.py`, `qwen3_vl_reranker.py` and their siblings — which are **downloaded
+    checkpoint code**, matched by `.gitignore:27` (`models/*`) with only `revisions.json` and
+    `sources.json` tracked. Linting a vendored checkpoint would be a demand on someone else's
+    source, and excluding it by name would need a blocklist that goes stale the next time a
+    model lands. `.gitignore` already draws that line and is the authority on it.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "*.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return [line for line in listed.stdout.splitlines() if line.strip()]
+
+
+def test_the_gates_three_python_steps_read_the_same_paths() -> None:
+    """Lint, format and typecheck disagreeing on scope is the same hole three-quarters closed.
+
+    mypy's list lives in `pyproject.toml` and the other two in `verify.sh`, so nothing but this
+    keeps them equal — and a file linted but not typechecked is checked less than it looks.
+    """
+    import tomllib
+
+    lint = _gate_scope(r"LINT_CMD=\"\$\{LINT_CMD-\$PY -m ruff check ([^}]+)\}\"")
+    fmt = _gate_scope(r"FORMAT_CMD=\"\$\{FORMAT_CMD-\$PY -m ruff format --check ([^}]+)\}\"")
+    mypy_files = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    typecheck = tuple(mypy_files["tool"]["mypy"]["files"])
+
+    assert set(lint) == set(fmt) == set(typecheck), (
+        f"the gate's Python steps read different paths — lint {lint}, format {fmt}, "
+        f"typecheck {typecheck}"
+    )
+    # The control: an empty intersection satisfies equality. These must be real directories.
+    assert lint, "verify.sh's lint step names no paths at all"
+    for root in lint:
+        assert (ROOT / root).is_dir(), f"the gate lints {root!r}, which is not a directory"
+
+
+def test_the_gate_reads_every_python_file_in_the_repository() -> None:
+    """The scope, derived from the repository rather than from the list.
+
+    Membership against a hard-coded list would pass while a new top-level package sat outside
+    all three steps — which is exactly the state `scripts/` was in. This enumerates what the
+    repository actually tracks, so the next directory of Python fails here until `verify.sh`
+    and `pyproject.toml` both name it.
+    """
+    roots = _gate_scope(r"LINT_CMD=\"\$\{LINT_CMD-\$PY -m ruff check ([^}]+)\}\"")
+    tracked = _tracked_python_files()
+
+    # The control: an enumeration that finds nothing satisfies the assertion below vacuously,
+    # and `git ls-files` returns empty rather than failing outside a checkout.
+    assert len(tracked) > 50, (
+        f"git listed {len(tracked)} tracked Python files, which cannot be right — this test "
+        f"measures nothing unless the enumeration reaches src/"
+    )
+
+    unchecked = sorted(
+        path for path in tracked if not any(path.startswith(f"{root}/") for root in roots)
+    )
+    assert not unchecked, (
+        f"these Python files are linted and typechecked by nothing: {unchecked}. Add their "
+        f"directory to verify.sh's LINT_CMD/FORMAT_CMD and to pyproject.toml's mypy files."
+    )

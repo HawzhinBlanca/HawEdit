@@ -71,8 +71,13 @@ for _var in LINT_CMD FORMAT_CMD TYPECHECK_CMD TEST_CMD; do
   if [[ -n "${!_var+set}" ]]; then _overridden+=("$_var"); fi
 done
 
-LINT_CMD="${LINT_CMD-$PY -m ruff check src tests}"
-FORMAT_CMD="${FORMAT_CMD-$PY -m ruff format --check src tests}"
+# `scripts` joined `src tests` in D-161. It had been checked by nothing: measured, `ruff` and
+# `mypy` both saw 0 of the directory's Python while `README.md` calls this step "lint +
+# typecheck + format + tests" without qualification. Adding it cost nothing — both pass on the
+# wider scope today — and `tests/test_gate.py` now derives the scope from this line, so a
+# directory of Python that no step reads fails rather than going quietly unchecked.
+LINT_CMD="${LINT_CMD-$PY -m ruff check src tests scripts}"
+FORMAT_CMD="${FORMAT_CMD-$PY -m ruff format --check src tests scripts}"
 TYPECHECK_CMD="${TYPECHECK_CMD-$PY -m mypy}"
 TEST_CMD="${TEST_CMD-$PY -m pytest --junitxml=$TEST_REPORT}"
 

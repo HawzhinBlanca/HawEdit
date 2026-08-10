@@ -112,7 +112,9 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src", "tests"]
+# Must stay equal to verify.sh's LINT_CMD/FORMAT_CMD path list; tests/test_gate.py asserts it
+# both ways, and that every .py file in the repository falls under one of these roots. D-161.
+files = ["src", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 module = [
