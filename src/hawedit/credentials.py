@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from hawedit.cli import use_utf8_streams
+from hawedit.cli import program_name, use_utf8_streams
 
 __all__ = [
     "ENV_FILE",
@@ -372,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     from getpass import getpass
 
     parser = argparse.ArgumentParser(
-        prog="hawedit.credentials",
+        prog=program_name("hawedit.credentials"),
         description="Store and verify the Gemini API key §3 Stage 4 routes through.",
     )
     parser.add_argument("--check", action="store_true", help="report status and exit")

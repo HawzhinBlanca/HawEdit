@@ -24,6 +24,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from hawedit.cli import program_name
 from hawedit.credentials import GEMINI_API_KEY, mask, read_credential
 from hawedit.gemini import GeminiJudge, GeminiUnavailable, JudgeUnusable
 from hawedit.judge import InputMode, JudgeRequest, estimate_cost_usd
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="hawedit.smoke",
+        prog=program_name("hawedit.smoke"),
         description="Live check against the real Gemini API. Spends a fraction of a cent.",
     )
     parser.add_argument(

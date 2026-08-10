@@ -6784,3 +6784,56 @@ run. `smoke.py` does the same and is *not* a console script, so there its prog i
 fix derives the name from how the process was invoked (`__main__.py` in `argv[0]` means `-m`), which
 belongs in `cli.py` beside `use_utf8_streams` and needs its own decision about the rule.
 `evidence/four-of-five-entry-points.md`.
+
+## D-142
+
+**Every entry point's `--help` named something the reader cannot type, in one of its two invocation
+modes.** D-141 noticed two of them in passing and recorded the finding; measured properly, all five
+are affected. From the real wheel and from `python -m`, before changing anything:
+
+```
+                          console script            python -m
+  hawedit                   hawedit.pipeline  ✗       hawedit.pipeline
+  hawedit-asr-bench         hawedit-asr-bench         bench.py  ✗
+  hawedit-asr-setup         hawedit-asr-setup         wsl_setup.py  ✗
+  hawedit-credentials       hawedit.credentials  ✗    hawedit.credentials
+  hawedit-editorial-bench   hawedit-editorial-bench   editorial_bench.py  ✗
+```
+
+Two set `prog=` to a module path, which is right under `-m` and not a command from the wheel. The
+other three set nothing, so argparse used `basename(sys.argv[0])` — right from the wheel and, under
+`-m`, a bare source filename. **Five for five wrong in one mode**, and the failure is user-facing:
+`hawedit --help` told an operator to run `hawedit.pipeline`, and `python -m hawedit.bench --help`
+told them to run `bench.py`. Both appear in error messages too, which is where a wrong command name
+costs the most.
+
+**Decision: derive it from `sys.argv[0]`, in `cli.py`.** Python sets `argv[0]` to the module's
+*file* under `-m` and to the script itself otherwise, so a `.py` suffix distinguishes the two with
+nothing guessed. Each branch returns something paste-able: `python -m hawedit.pipeline` — the form
+this repo's own documentation uses — or `hawedit`, the console script's name with the `.exe` Windows
+appends removed. `cli.py` is where it belongs: it already holds `use_utf8_streams` and
+`machine_readable_stdout` for exactly this "what every entry point does" reason (D-115, D-119).
+
+**All six parsers use it, including `smoke.py`.** `smoke` has no console script, so its old fixed
+`prog` was already right for `-m` — it goes through the shared helper anyway, because the next
+module to gain a console script must not have to remember this.
+
+**An empty `argv[0]` falls back to the module path.** An embedded interpreter can leave it empty and
+`Path("").stem` is `""`, which would print `usage:` naming nothing at all.
+
+**Rejected: `sys.executable -m …`.** Literally correct and unreadable — an absolute interpreter path
+in a usage line, different on every machine. Every document in this repo writes `python -m`, so the
+usage line writes it too.
+
+**Rejected: leaving `prog` unset everywhere.** It is right from the wheel and wrong under `-m`, which
+is half the problem and the half the repo's own docs use.
+
+**Mutation audit 9/9.** Each of the five modules reverted to its old form individually, plus the
+rule inverted, the `python -m` prefix dropped, the `.exe` kept, and the empty-`argv[0]` fallback
+removed.
+
+**The tests drive both modes through the real parsers,** reading the text argparse emits rather than
+the `prog=` argument echoed back, and they enumerate `[project.scripts]` the way D-119's do — so a
+sixth entry point is covered the day it is declared. The control is that the two modes must print
+*different* names: a fixed `prog` satisfies one of the two assertions, so asserting only one would be
+satisfied by exactly the defect. `evidence/help-named-a-command-that-was-not-installed.md`.

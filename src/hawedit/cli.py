@@ -25,9 +25,43 @@ from __future__ import annotations
 import contextlib
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TextIO
 
-__all__ = ["machine_readable_stdout", "use_utf8_streams"]
+__all__ = ["machine_readable_stdout", "program_name", "use_utf8_streams"]
+
+
+def program_name(module: str) -> str:
+    """What `--help` should call this program, from how it was actually started.
+
+    Every entry point here has **two** ways in — an installed console script and `python -m` —
+    and a fixed `prog=` is wrong in one of them. Measured across all five on 2026-08-10, from
+    the real wheel and from `-m`:
+
+    ```
+    console script            python -m
+      hawedit.pipeline  ✗       hawedit.pipeline
+      hawedit-asr-bench         bench.py  ✗
+      hawedit-asr-setup         wsl_setup.py  ✗
+      hawedit.credentials  ✗    hawedit.credentials
+      hawedit-editorial-bench   editorial_bench.py  ✗
+    ```
+
+    Two named a module path the shell cannot run; the other three fell back to argparse's
+    default, `basename(sys.argv[0])`, which under `-m` is a bare source filename — also not a
+    command. So each of the five printed something untypeable in one mode. D-142.
+
+    The rule needs no guessing. Python sets `sys.argv[0]` to the module's *file* under `-m` and
+    to the script itself otherwise, so a `.py` suffix distinguishes them, and each branch returns
+    something a reader can paste:
+
+    * `python -m hawedit.pipeline` — the form this repo's own documentation uses;
+    * `hawedit` — the console script's own name, without the `.exe` Windows adds.
+    """
+    argv0 = Path(sys.argv[0] or "")
+    if argv0.suffix.lower() == ".py":
+        return f"python -m {module}"
+    return argv0.stem or f"python -m {module}"
 
 
 def use_utf8_streams() -> None:

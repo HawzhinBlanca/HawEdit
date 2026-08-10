@@ -204,3 +204,115 @@ def test_no_document_is_printed_to_a_shared_stdout() -> None:
         + ". Hold the stream with `machine_readable_stdout()` and pass `file=`, or a library "
         "that prints — `transformers/utils/auto_docstring.py` does — corrupts the document."
     )
+
+
+# =========================================================================================
+# D-142: `--help` must name something the reader can type, in both invocation modes
+#
+# Measured 2026-08-10 across all five, from the real wheel and from `python -m`:
+#
+#     console script            python -m
+#       hawedit.pipeline  X       hawedit.pipeline
+#       hawedit-asr-bench         bench.py  X
+#       hawedit-asr-setup         wsl_setup.py  X
+#       hawedit.credentials  X    hawedit.credentials
+#       hawedit-editorial-bench   editorial_bench.py  X
+#
+# Two set `prog=` to a module path the shell cannot run; the other three took argparse's default,
+# `basename(sys.argv[0])`, which under `-m` is a bare source filename. Each of the five printed
+# something untypeable in one of its two modes.
+# =========================================================================================
+
+
+def _console_script_for(module: str) -> str:
+    """The `[project.scripts]` name that points at `module`."""
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    for name, target in config["project"]["scripts"].items():
+        if str(target).split(":")[0] == module:
+            return str(name)
+    raise AssertionError(f"no console script declared for {module}")
+
+
+def _usage_line(module: str, argv0: str) -> str:
+    """The first line `--help` prints, with `sys.argv[0]` set to `argv0`.
+
+    Driven in-process through the module's real `main`, so this reads the text argparse actually
+    emits rather than the `prog=` argument echoed back.
+    """
+    import importlib
+    import io
+    from contextlib import redirect_stdout
+
+    imported = importlib.import_module(module)
+    captured = io.StringIO()
+    saved = sys.argv
+    sys.argv = [argv0, "--help"]
+    try:
+        with redirect_stdout(captured), pytest.raises(SystemExit) as exit_info:
+            imported.main(["--help"])
+    finally:
+        sys.argv = saved
+    assert exit_info.value.code == 0
+    first = captured.getvalue().splitlines()[0]
+    assert first.startswith("usage: "), first
+    return first.removeprefix("usage: ")
+
+
+@pytest.mark.parametrize("module", console_script_modules())
+def test_an_installed_console_script_names_itself(module: str) -> None:
+    """From the wheel, `--help` must name the command that was actually run.
+
+    `hawedit --help` printed `usage: hawedit.pipeline …` — a module path, not a command. The
+    `.exe` Windows appends is dropped, because `hawedit.exe` is not what anyone types either.
+    """
+    script = _console_script_for(module)
+    usage = _usage_line(module, rf"C:\somewhere\venv\Scripts\{script}.exe")
+
+    assert usage.split()[0] == script, f"{script} --help says {usage.split()[0]!r}"
+
+
+@pytest.mark.parametrize("module", console_script_modules())
+def test_python_dash_m_names_the_module_it_was_given(module: str) -> None:
+    """The other half, which the three unset parsers got wrong: under `-m`, argparse's default is
+    `basename(sys.argv[0])` — the module's *source filename*, e.g. `bench.py`.
+
+    `python -m hawedit.bench` is the form this repo's own documentation uses, so it is the form
+    the usage line takes.
+    """
+    argv0 = str(ROOT / "src" / module.replace(".", "/")) + ".py"
+    usage = _usage_line(module, argv0)
+
+    assert usage.startswith(f"python -m {module} "), usage
+    assert not usage.startswith(f"{module.rsplit('.', 1)[-1]}.py"), (
+        "the usage line is a bare source filename, which is not a command"
+    )
+
+
+@pytest.mark.parametrize("module", console_script_modules())
+def test_the_two_modes_do_not_print_the_same_name(module: str) -> None:
+    """The control, and the whole reason a fixed `prog=` is wrong.
+
+    A hard-coded name passes one of the two tests above and fails the other, so asserting only
+    one of them would be satisfied by exactly the defect. These must differ, because the two
+    invocations *are* different commands.
+    """
+    script = _console_script_for(module)
+    as_script = _usage_line(module, rf"C:\venv\Scripts\{script}.exe").split()[0]
+    as_module = _usage_line(module, str(ROOT / "src" / module.replace(".", "/")) + ".py")
+
+    assert as_script != as_module.split()[0], (
+        f"{module} prints {as_script!r} whichever way it is started, so one of the two is wrong"
+    )
+
+
+def test_program_name_falls_back_to_the_module_when_argv_is_empty() -> None:
+    """An embedded interpreter can leave `sys.argv[0]` empty, and `Path("").stem` is `""` — an
+    empty usage line names nothing at all. The module path is the honest answer there."""
+    from hawedit.cli import program_name
+
+    saved = sys.argv
+    sys.argv = [""]
+    try:
+        assert program_name("hawedit.pipeline") == "python -m hawedit.pipeline"
+    finally:
+        sys.argv = saved
