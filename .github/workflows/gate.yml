@@ -20,6 +20,19 @@ jobs:
         with:
           python-version: "3.11"   # pyproject requires-python = ">=3.11"
 
+      # `verify.sh` lints `src tests scripts` with ruff, which reads Python and ignores the seven
+      # shell scripts beside it — including this gate's own script, and the fetchers that
+      # download, checksum, unzip, chmod +x and execute a 140 MB binary. Not added to `verify.sh`:
+      # `shellcheck-py` ships a **binary and no importable module**, so a `$PY -m` step could not
+      # be covered by `assert_tools_are_from_this_environment`, and a gate step whose program the
+      # provenance rule cannot check is the hole D-093 closed. ubuntu-latest carries shellcheck,
+      # so the gate of record enforces it here instead. `--version` first: a missing tool must
+      # fail the step rather than lint nothing and pass. D-162.
+      - name: the shell scripts must lint
+        run: |
+          shellcheck --version
+          shellcheck scripts/*.sh
+
       - name: install
         run: |
           python -m venv .venv

@@ -16,6 +16,7 @@ fifth collision was actually implemented (M1.7), then failed until the row was p
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from hawedit.normalize import normalize_sorani
@@ -793,6 +794,48 @@ def _workflow_commands() -> str:
     """
     text = (ROOT / ".github" / "workflows" / "gate.yml").read_text(encoding="utf-8")
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+# --- D-162: the shell half of the repository, which ruff does not read -----------------------
+
+
+def _tracked(pattern: str) -> list[str]:
+    """Paths this repository tracks, asked of git rather than of the filesystem."""
+    listed = subprocess.run(
+        ["git", "ls-files", pattern], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    return [line for line in listed.stdout.splitlines() if line.strip()]
+
+
+def test_ci_lints_every_shell_script_this_repository_tracks() -> None:
+    """D-161 widened `verify.sh` to `src tests scripts`; ruff reads the Python there and nothing
+    reads the shell — this gate's own script, and the fetchers that download, checksum, unzip and
+    execute a 140 MB binary.
+
+    Enforced in CI rather than in `verify.sh` because `shellcheck-py` ships a binary and no
+    importable module, so `assert_tools_are_from_this_environment` could not vouch for it and the
+    gate would run a program its own provenance rule cannot check (D-093). Measured when added:
+    **0 findings** across all seven scripts at shellcheck's default severity.
+    """
+    workflow = _workflow_commands()
+    assert "shellcheck scripts/*.sh" in workflow, "CI no longer lints the shell scripts"
+
+    # The control: a step that runs a missing tool would lint nothing and exit 0 on some shells.
+    # Printing the version first makes an absent shellcheck fail the step instead.
+    assert "shellcheck --version" in workflow, (
+        "the shellcheck step does not prove the tool is present, so it could pass having linted "
+        "nothing"
+    )
+
+    # The scope, derived from the repository: the glob above covers `scripts/` only, so a shell
+    # script anywhere else would be linted by nothing and this must say so.
+    scripts = _tracked("*.sh")
+    assert len(scripts) >= 5, f"git listed {len(scripts)} shell scripts, which cannot be right"
+    outside = sorted(path for path in scripts if not path.startswith("scripts/"))
+    assert not outside, (
+        f"these shell scripts are outside the glob CI lints: {outside}. Widen the shellcheck "
+        f"step in .github/workflows/gate.yml or move them under scripts/."
+    )
 
 
 def test_the_gate_lock_is_committed_and_pins_every_distribution_with_a_hash() -> None:

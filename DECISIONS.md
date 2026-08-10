@@ -8337,3 +8337,77 @@ you happen to try and load-bearing for the one you did not.
 
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
 `~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
+
+## D-162
+
+**Seven shell scripts, including the gate's own, were read by no linter.** D-161 widened
+`verify.sh` to `ruff check src tests scripts`; ruff reads Python. The shell beside it — this
+gate's script, and the fetchers that download, checksum, unzip, `chmod +x` and execute a 140 MB
+binary — was checked by nothing, and D-161 named that as remaining debt.
+
+**Measured: shellcheck finds nothing.** 0 findings across all seven at default severity. Recorded
+**with a control**, because a clean result and a result that read no files are the same output: a
+deliberately bad script (`ls $file`, `cat foo | grep bar`, `[ $x == 1 ]`) draws SC2148, SC2154 and
+SC2086, so the tool works and the scripts are clean. **This is a ratchet, not a repair**, and
+saying otherwise would be the overclaim D-161 was careful to avoid.
+
+**The optional checks were read, not waved through.** `--enable=all` reports 131: **122 SC2250**
+(prefer `${var}` over `$var` — pure style), **6 SC2310** (a function invoked in a condition, so
+`set -e` is disabled inside it), **3 SC2312** (a substitution whose return value is masked).
+SC2312 is the shape of D-144's real defect — `\| tail` reported `tail`'s status — so all three
+were opened: each is `$(...)` inside a `[[ ]]` test that already handles failure, e.g.
+`[[ "$(uname -s)" != Linux* ]]`, which refuses when `uname` fails. The six SC2310 are `verify_rtl`
+called as `if verify_rtl …`, and that function decides whether an ffmpeg can shape Arabic script —
+§4.3's failure is *"invisible until a client sees the burned-in captions"* — so it was read line by
+line. Every failure path is explicit (`|| return 1`, `|| missing+=(…)`), so it never relied on
+`set -e` and disabling it changes nothing.
+
+**Decision: default severity, not `--enable=all`.** Turning on 122 brace-style notes to reach
+three benign ones makes the step noise, and a noisy check is one people learn to ignore.
+
+**Decision: CI, not `verify.sh` — and this is the interesting part.** `shellcheck-py` on PyPI
+ships **a binary and no importable module**. `verify.sh` runs its steps as `$PY -m <tool>` and
+`assert_tools_are_from_this_environment` vouches for each by importing it
+(`GATE_TOOLS = ("pytest", "ruff", "mypy")`, D-093). A binary cannot be checked that way, so adding
+it as a gate step would put a program into the gate that the gate's own provenance rule cannot
+see — and `tests/test_gate.py` already states the objection: *"a tool the gate runs but does not
+check is a hole the shape of the one just closed."* ubuntu-latest carries shellcheck and CI **is**
+the gate of record, so the step lives there. **The honest limitation:** `bash scripts/verify.sh` on
+a developer machine does not run it. Recorded rather than papered over.
+
+**Rejected: adding `shellcheck-py` to the lock anyway** and running the binary from
+`.venv/Scripts/`. It would put an unvouched-for program in the gate to save a round trip, trading
+a D-093 guarantee for convenience. **Rejected: extending `GATE_TOOLS` to vouch for binaries.** A
+real option, and a larger one — provenance for a binary means hashing it or trusting its path, and
+that is its own decision with its own supply-chain question, not a side effect of adding a linter.
+
+**The control is that the step proves its tool ran.** `shellcheck --version` runs first, so an
+absent shellcheck fails the step instead of matching no files and exiting 0.
+
+**Mutation audit 6/6, after 5/6 — and both bad results were mine.** One mutation writes
+`tools_for_this_audit/helper.sh` and `git add -N`s it, so the repository genuinely holds a tracked
+script the glob cannot reach. Of the two faults: one mutation was **lint-dirty** (replacing the
+`git ls-files` argv orphaned the helper's `pattern`, so ruff reddened the gate-as-subprocess tests
+and the catch partly measured ruff — redone at the call site); and the survivor was the
+**isolated-mutation trap again** — neutering the empty-listing control while the listing is full is
+a guard with nothing to see. Paired with an empty listing, the test goes **green** without the
+control and red with it: no tracked scripts means none outside the glob, so the real assertion
+passes vacuously. Sixth time after D-149, D-155, D-156, D-157 and D-161; the lesson is not
+learning, so it is written here as a rule — **a control must be mutated together with the state it
+describes, never alone.**
+
+`evidence/the-shell-half-of-the-repository-was-read-by-no-linter.md`.
+
+**Also measured this iteration, and not a defect:** CI's wall clock went 2m33s to 9m23s across the
+previous commit, which looked like a regression I had caused by widening mypy. The step timings
+say otherwise — **install** went 43s to **7m09s** (a 140 MB download on a shared runner) while the
+**gate** step went 1m28s to **1m50s**. D-161 cost ~22 seconds, not six minutes. Recorded because a
+number read off a summary line is not a measurement.
+
+**And a scan that found nothing:** 1,422 test functions, **6** with no `assert` and no
+`pytest.raises`. All six are the must-not-raise half of a raise/no-raise pair — an identical
+golden render that must compare clean, a wordless transcript that must construct, a substituted
+stream `use_utf8_streams` must leave alone. The absence of an exception is the assertion.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set` and
+`~/.hawedit/credentials.json` absent, so the ZAR38MinTest end-to-end run stays blocked on it.
