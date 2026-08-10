@@ -7329,3 +7329,105 @@ finding. Redone by deleting each statement whole by its AST line span, with the 
 beside each result so the next contaminated run says so itself.
 
 `evidence/the-confidential-routes-zdr-gate-reddened-nothing.md`. Floor 1440 → 1453.
+
+## D-149
+
+**Twelve of the CLI's fourteen argv refusals were held by nothing, and the test that looked like
+coverage for three of them passed either way.** `_run_from_args` opens with fourteen
+`if …: raise ValueError(…)` refusals for flag combinations that cannot work. Each was deleted
+whole — by its AST line span, so the file still lints and typechecks — against a baseline verified
+green first, whole gate suite each time:
+
+```
+held: 2   unheld: 12
+  UNHELD  --transcript and --omni-asr are mutually exclusive Stage 1 sources
+  UNHELD  --omni-asr-runtime and --wsl-distro require --omni-asr
+  UNHELD  --gemini and --vertex-project are mutually exclusive cloud routes
+  UNHELD  cloud judging and --verdict are mutually exclusive Stage 4 sources
+  UNHELD  cloud discovery requires --transcript or --omni-asr
+  UNHELD  --sentences requires --transcript or --omni-asr
+  UNHELD  --verdict requires a Stage 1 source and --sentences
+  UNHELD  --visual requires --transcript or --omni-asr
+  UNHELD  --qc-pass requires --sentences or --auto-select
+  UNHELD  --auto-select requires --transcript or --omni-asr
+  UNHELD  --timelens and --face-reframe require --sentences or --auto-select
+  UNHELD  governance flags apply only with a Gemini or Vertex route
+```
+
+The two that held are `--visual-query requires --visual` and the `--auto-select` producer test,
+both given tests by D-147 and D-148 this session.
+
+**The test that looked like coverage.** `test_the_cli_refuses_flags_whose_prerequisites_are_absent`
+ran three of these combinations and asserted `main([source, *flags]) == 2`. Exit 2 is the code for
+*every* exception `_run_from_args` catches. Measured, with
+`--sentences requires --transcript or --omni-asr` deleted outright:
+
+```
+exit code with the guard DELETED: 2
+what it actually said: ✗ ffmpeg.EXE failed (3199971767): [in#0] moov atom not found
+                         [in#0] Error opening input: Invalid data found when processing input
+```
+
+It was asserting that an empty `touch()`ed `source.mp4` breaks Stage 0 — and paying for an ffmpeg
+subprocess to do it. A test that passes for the right answer and the wrong one measures nothing.
+
+**Decision: assert *which* refusal fired, and bind the set to the source.** `_REFUSAL_CASES` gives
+one argv per refusal; each case asserts exit 2, the refusal's own message in stderr, and that **no
+work directory exists** — the refusal is about argv, so it must land before any work. Because the
+block is ordered and the first match wins, every case also pins the ordering it depends on.
+
+`_argv_refusals()` reads the messages out of `_run_from_args`'s **AST** rather than listing them
+here, and `test_every_refusal_in_the_source_has_a_case` compares the two sets **both ways**. A
+fifteenth refusal is covered the day it is added, not the day someone remembers. That the set is
+well defined is a fact about this function, stated rather than hoped: every `ValueError` it raises
+directly is an argv refusal, and nothing later in it raises that type.
+
+**One refusal is unreachable, and is recorded as such rather than deleted.**
+`--auto-select requires --transcript or --omni-asr` cannot fire: `--auto-select` needs a producer
+that can produce, and both producers need a Stage 1 source of their own — `--gemini`/
+`--vertex-project` hit *"cloud discovery requires --transcript or --omni-asr"* and
+`--visual --visual-query` hits *"--visual requires --transcript or --omni-asr"* — so anything
+reaching it already has one. `_PRE_EMPTED_REFUSALS` names it with the guard that pre-empts it, and
+a test proves the pre-emption by running the argv that would reach it. Rejected deleting it: the
+unreachability is a property of the block's *order*, not of the rule, and if that order changes the
+test is where it shows.
+
+**What each assertion actually buys, measured rather than assumed.** My first differential
+predicted that the message assertion was what caught a deleted guard. It is not:
+
+```
+guard deleted, message assertion present: red
+guard deleted, message assertion removed: red   <- still red
+    the only failure: test_every_refusal_in_the_source_has_a_case
+```
+
+The **binding** catches a deleted guard, because the case then names a refusal the source no longer
+raises. What the message assertion catches is a guard whose *condition* is wrong rather than absent
+— inverting `--qc-pass`'s condition:
+
+```
+condition inverted, message assertion present: test_the_cli_refuses_a_combination_that_cannot_work
+                                               [passing QC on nothing] FAILED
+condition inverted, message assertion removed: that failure disappears
+```
+
+Two independent nets for two different failure modes. Recorded this way because the prediction was
+wrong and the measurement is the finding.
+
+**Mutation audit 17/17,** after 15/18. The three survivors were:
+
+* **A real gap.** `_PRE_EMPTED_REFUSALS` could absorb a *reachable* refusal and excuse it from
+  needing a case — one line, and a live guard drops out of coverage. The two lists are now asserted
+  disjoint.
+* **Two bad mutations of mine.** Removing the message assertion, and removing the work-directory
+  assertion, each *alone*, with the source intact. Neither changes behaviour on an unmutated
+  source, so neither measures anything — a test's discriminating power only shows against a defect.
+  Replaced by the differential above, and by a source mutation only the work-directory assertion
+  can catch: making the runner `mkdir` the work directory before validating argv, so every refusal
+  still fires with its own message and the run has already prepared state. That one reddens.
+
+That is the fifth bad mutation of mine this session, after D-137, D-141, D-144 and D-147. The
+pattern is worth naming: mutating a *test* in isolation asks whether the test is redundant today,
+not whether it is load-bearing — the useful question needs the defect present too.
+
+`evidence/twelve-refusals-nothing-held.md`. Floor 1453 → 1466.

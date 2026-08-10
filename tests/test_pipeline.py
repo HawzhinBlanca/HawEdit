@@ -491,22 +491,13 @@ def test_the_cli_reports_malformed_transcript_json_without_a_traceback(tmp_path:
     assert main([str(source), "--transcript", str(transcript)]) == 2
 
 
-@pytest.mark.parametrize(
-    "flags",
-    [
-        ("--sentences", "0"),
-        ("--qc-pass",),
-        ("--confidential",),
-    ],
-)
-def test_the_cli_refuses_flags_whose_prerequisites_are_absent(
-    tmp_path: Path, flags: tuple[str, ...]
-) -> None:
-    from hawedit.pipeline import main
-
-    source = tmp_path / "source.mp4"
-    source.touch()
-    assert main([str(source), *flags]) == 2
+# `test_the_cli_refuses_flags_whose_prerequisites_are_absent` stood here and asserted
+# `main([source, *flags]) == 2` for three flag combinations. Exit 2 is the code for *every*
+# exception `_run_from_args` catches, so it passed whether the refusal fired or not: measured,
+# with `--sentences requires --transcript or --omni-asr` deleted outright, the same call still
+# returned 2 — because `source.mp4` was an empty `touch()`ed file and ffmpeg said *"moov atom not
+# found"*. It was asserting that an empty MP4 breaks Stage 0. Replaced below by a table that
+# asserts *which* refusal fired, covering those three and ten more. D-149.
 
 
 def test_the_cli_can_load_the_documented_stage_4_verdict(
@@ -2600,3 +2591,225 @@ def test_a_query_without_the_visual_path_is_refused_before_the_producer_test(
     )
     assert code == 2, stderr
     assert "--visual-query requires --visual" in stderr, stderr
+
+
+# --- D-149: the CLI's refusal surface, held as a set rather than one flag at a time -----------
+#
+# `_run_from_args` opens with fourteen refusals for flag combinations that cannot work. D-147
+# found one of them *wrong* — `--auto-select` accepted `--visual`, which since D-117 cannot
+# produce — and found it had no test. Measured across the whole gate suite, turning each
+# refusal off one at a time: 12 of the 14 were unheld. `evidence/twelve-refusals-nothing-held.md`.
+# =========================================================================================
+
+
+def _argv_refusals() -> tuple[str, ...]:
+    """Every combination `_run_from_args` refuses, read out of its own source.
+
+    Taken from the AST rather than listed here, so a fifteenth refusal is covered the day it is
+    added instead of the day someone remembers to add a case. Every `ValueError` this function
+    raises *directly* is an argv refusal — nothing later in it raises that type — which is what
+    makes the set well defined rather than a hopeful filter.
+    """
+    import ast
+
+    source = (ROOT / "src" / "hawedit" / "pipeline.py").read_text(encoding="utf-8")
+    function = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_from_args"
+    )
+    messages: list[str] = []
+    for node in ast.walk(function):
+        if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
+            continue
+        if getattr(node.exc.func, "id", None) != "ValueError" or not node.exc.args:
+            continue
+        argument = node.exc.args[0]
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            messages.append(argument.value)
+        elif isinstance(argument, ast.JoinedStr):
+            messages.append(
+                "".join(
+                    part.value
+                    for part in argument.values
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                )
+            )
+    return tuple(messages)
+
+
+# One argv per refusal, each reaching *that* one: the block is ordered and the first match wins,
+# so every case here also asserts the ordering it depends on.
+_REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
+    (
+        "two Stage 1 sources",
+        ["--transcript", "x.json", "--omni-asr"],
+        "--transcript and --omni-asr are mutually exclusive Stage 1 sources",
+    ),
+    (
+        "an OmniASR runtime flag without the runtime",
+        ["--wsl-distro", "Ubuntu"],
+        "--omni-asr-runtime and --wsl-distro require --omni-asr",
+    ),
+    (
+        "both cloud routes",
+        ["--transcript", "x.json", "--gemini", "--vertex-project", "p"],
+        "--gemini and --vertex-project are mutually exclusive cloud routes",
+    ),
+    (
+        "two Stage 4 sources",
+        ["--transcript", "x.json", "--sentences", "0", "--gemini", "--verdict", "v.json"],
+        "cloud judging and --verdict are mutually exclusive Stage 4 sources",
+    ),
+    (
+        "cloud discovery with nothing to discover in",
+        ["--gemini"],
+        "cloud discovery requires --transcript or --omni-asr",
+    ),
+    (
+        "a selection with no transcript to select from",
+        ["--sentences", "0"],
+        "--sentences requires --transcript or --omni-asr",
+    ),
+    (
+        "a verdict with no selection to attach it to",
+        ["--transcript", "x.json", "--verdict", "v.json"],
+        "--verdict requires a Stage 1 source and --sentences",
+    ),
+    (
+        "Path B with no transcript",
+        ["--visual"],
+        "--visual requires --transcript or --omni-asr",
+    ),
+    (
+        "a retrieval query with no retrieval",
+        ["--transcript", "x.json", "--visual-query", "ڕۆژنامەوان"],
+        "--visual-query requires --visual",
+    ),
+    (
+        "passing QC on nothing",
+        ["--transcript", "x.json", "--qc-pass"],
+        "--qc-pass requires --sentences or --auto-select",
+    ),
+    (
+        "auto-select with no producer that can produce",
+        ["--transcript", "x.json", "--auto-select"],
+        "--auto-select needs a Stage 3 producer that can actually produce",
+    ),
+    (
+        "Stage 5 and reframing with nothing selected",
+        ["--transcript", "x.json", "--timelens"],
+        "--timelens and --face-reframe require --sentences or --auto-select",
+    ),
+    (
+        "claiming ZDR governance with nothing being sent anywhere",
+        ["--transcript", "x.json", "--sentences", "0", "--zero-data-retention"],
+        "governance flags apply only with a Gemini or Vertex route",
+    ),
+)
+
+# Refused for a reason that a *different* refusal always reaches first, so no argv can trigger it
+# and no test can hold it. Named here with the guard that pre-empts it rather than deleted: the
+# unreachability is a property of the block's order, and this is where that gets checked.
+_PRE_EMPTED_REFUSALS: tuple[tuple[str, str], ...] = (
+    (
+        "--auto-select requires --transcript or --omni-asr",
+        # `--auto-select` needs a producer that can produce, and both producers need a Stage 1
+        # source of their own: `--gemini`/`--vertex-project` hit "cloud discovery requires
+        # --transcript or --omni-asr", and `--visual --visual-query` hits "--visual requires
+        # --transcript or --omni-asr". So a run reaching here always has one.
+        "--visual requires --transcript or --omni-asr",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "argv", "expected"),
+    [(label, argv, expected) for label, argv, expected in _REFUSAL_CASES],
+    ids=[label for label, _argv, _expected in _REFUSAL_CASES],
+)
+def test_the_cli_refuses_a_combination_that_cannot_work(
+    label: str, argv: list[str], expected: str, tmp_path: Path
+) -> None:
+    code, stderr = _cli_exit(argv, tmp_path)
+    assert code == 2, f"{label}: exit {code}, stderr {stderr!r}"
+    assert expected in stderr, f"{label}: {stderr!r}"
+    # The refusal is about argv, so it must land before any work: no work directory, no Stage 0.
+    assert not (tmp_path / "work").exists(), f"{label}: the run had already started"
+
+
+def test_every_refusal_in_the_source_has_a_case(tmp_path: Path) -> None:
+    """Bidirectional, so the set stays a description of the block rather than a snapshot.
+
+    A refusal with no case fails here; a case naming a message the source no longer raises fails
+    too. Either way it is a line in a diff instead of a guard nothing exercises — which is what
+    twelve of these fourteen were before D-149.
+    """
+    refusals = _argv_refusals()
+    covered = {expected for _label, _argv, expected in _REFUSAL_CASES}
+    pre_empted = {message for message, _by in _PRE_EMPTED_REFUSALS}
+
+    unmatched = [
+        message
+        for message in refusals
+        if message not in pre_empted and not any(fragment in message for fragment in covered)
+    ]
+    assert not unmatched, f"argv refusals with no case: {unmatched}"
+
+    orphaned = [
+        fragment for fragment in covered if not any(fragment in message for message in refusals)
+    ]
+    assert not orphaned, f"cases naming a refusal the source no longer raises: {orphaned}"
+
+    missing = [message for message in pre_empted if message not in refusals]
+    assert not missing, f"pre-empted refusals that no longer exist: {missing}"
+
+    # The two lists are alternatives, not overlapping labels: "unreachable" is an escape from
+    # needing a case, so a refusal that has one cannot also claim it. Found by mutation —
+    # adding a reachable refusal to `_PRE_EMPTED_REFUSALS` left the suite green, because
+    # `unmatched` above simply skips anything listed there. That is how a live guard would get
+    # excused from coverage by one line, which is the whole failure this file exists to stop.
+    both = sorted(
+        message for message in pre_empted if any(fragment in message for fragment in covered)
+    )
+    assert not both, (
+        f"refusals claimed unreachable that also have a case: {both}. A refusal an argv can "
+        f"trigger is not pre-empted — remove it from _PRE_EMPTED_REFUSALS."
+    )
+
+
+@pytest.mark.parametrize(
+    ("refusal", "pre_empted_by"),
+    _PRE_EMPTED_REFUSALS,
+    ids=[refusal.split()[0] for refusal, _by in _PRE_EMPTED_REFUSALS],
+)
+def test_a_pre_empted_refusal_really_is_unreachable(
+    refusal: str, pre_empted_by: str, tmp_path: Path
+) -> None:
+    """`--auto-select requires --transcript or --omni-asr` cannot fire, and this says why.
+
+    Both producers need a Stage 1 source of their own, so every argv that would reach it is
+    refused earlier. Asserted rather than deleted: the unreachability is a property of the
+    block's *order*, and if that order changes this test is where it shows.
+    """
+    code, stderr = _cli_exit(
+        ["--visual", "--visual-query", "ڕۆژنامەوان", "--auto-select"], tmp_path
+    )
+    assert code == 2, stderr
+    assert pre_empted_by in stderr, stderr
+    assert refusal not in stderr, f"{refusal!r} fired after all: {stderr!r}"
+
+
+def test_a_complete_argv_reaches_the_run(tmp_path: Path) -> None:
+    """The control. Every test above passes for a `_run_from_args` that refuses *everything*.
+
+    This argv breaks none of the fourteen rules, so it must get past them — and it does, far
+    enough to fail on the transcript file it names, which is read after the last refusal.
+    """
+    code, stderr = _cli_exit(
+        ["--transcript", "no-such.json", "--sentences", "0", "--qc-pass"], tmp_path
+    )
+    assert code == 2, stderr
+    assert "no-such.json" in stderr, stderr
+    for message in _argv_refusals():
+        assert message not in stderr, f"a refusal fired on a legal argv: {message}"
