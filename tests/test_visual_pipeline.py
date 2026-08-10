@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -136,6 +137,49 @@ def test_only_reranked_survivors_reach_videochat(
     assert {candidate.candidate_id for candidate in result.candidates} == {
         hit.window.window_id for hit in result.survivors
     }
+
+
+def test_composed_visual_run_deletes_every_cached_source_frame(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    private_dirs: list[Path] = []
+
+    def fake_extract(
+        source: Path, window: SceneWindow, dest: Path, ffmpeg: Path | None
+    ) -> WindowFrames:
+        owner = dest / ".owned-attempt"
+        owner.mkdir(parents=True)
+        paths = (owner / "frame-0.jpg", owner / "frame-1.jpg")
+        for path in paths:
+            path.write_bytes(b"private source pixel")
+        identity = os.lstat(owner)
+        private_dirs.append(owner)
+        return WindowFrames(
+            window,
+            paths,
+            _owner_dir=owner,
+            _owner_identity=(identity.st_dev, identity.st_ino),
+        )
+
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", fake_extract)
+    composer = VisualComposer(
+        FakeEmbedder(),
+        FakeReranker,
+        lambda read, score: FakeReader(read, score, []),
+        keep=5,
+    )
+
+    result = composer.discover(
+        tmp_path / "m.mp4",
+        windows(5),
+        "\u06af\u0631\u0646\u06af",
+        tmp_path / "work",
+        media_id="m",
+    )
+
+    assert len(result.candidates) == 5
+    assert len(private_dirs) == 5
+    assert all(not path.exists() for path in private_dirs)
 
 
 def test_short_media_is_refused_instead_of_mislabeling_a_partial_top_five(

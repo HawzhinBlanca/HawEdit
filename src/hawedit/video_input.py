@@ -36,12 +36,14 @@ model into fusion is off by the window's start. See D-049.
 
 from __future__ import annotations
 
+import os
 import re
-import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
@@ -76,6 +78,8 @@ PRINTED_PRECISION_S: Final = 0.05
 # The rate a Qwen3-VL processor falls back to when it is told nothing — the defect D-049 is
 # about. Kept as a constant so the guard's message can name the counterfactual it is refusing.
 _ASSUMED_FPS: Final = 24.0
+_REPARSE_FLAG: Final = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+_DirectoryIdentity = tuple[int, int]
 
 
 def _last_stamp_floor(frames: WindowFrames) -> float:
@@ -118,6 +122,49 @@ class TimestampsOutsideWindow(VideoInputError):
     """The prompt places the window's frames somewhere the window is not."""
 
 
+def _owned_directory_identity(path: Path) -> _DirectoryIdentity:
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise VideoInputError(f"could not inspect private frame directory {path}: {exc}") from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or bool(getattr(metadata, "st_file_attributes", 0) & _REPARSE_FLAG)
+    ):
+        raise VideoInputError(f"private frame directory is a link or reparse point: {path}")
+    return metadata.st_dev, metadata.st_ino
+
+
+def _remove_private_frames(path: Path, identity: _DirectoryIdentity) -> bool:
+    """Remove only one extraction directory still owned by this call."""
+    active_error = sys.exception()
+    try:
+        if _owned_directory_identity(path) != identity:
+            raise VideoInputError(f"private frame directory identity changed: {path}")
+        children = tuple(path.iterdir())
+        for child in children:
+            metadata = os.lstat(child)
+            if stat.S_ISDIR(metadata.st_mode) or bool(
+                getattr(metadata, "st_file_attributes", 0) & _REPARSE_FLAG
+            ):
+                raise VideoInputError(
+                    f"refusing to recursively remove unexpected frame content: {child}"
+                )
+        for child in children:
+            child.unlink()
+        path.rmdir()
+        return True
+    except (OSError, VideoInputError) as cleanup_error:
+        message = f"private visual frame cleanup failed for {path}: {cleanup_error}"
+        if active_error is not None:
+            active_error.add_note(message)
+            return False
+        raise VideoInputError(message) from cleanup_error
+
+
 @dataclass(frozen=True, slots=True)
 class WindowFrames:
     """The frames actually extracted for one window, and how many there really are.
@@ -138,6 +185,9 @@ class WindowFrames:
 
     window: SceneWindow
     paths: tuple[Path, ...]
+    _owner_dir: Path | None = None
+    _owner_identity: _DirectoryIdentity | None = None
+    _cleaned: bool = field(default=False, init=False, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         if not self.paths:
@@ -145,11 +195,24 @@ class WindowFrames:
                 f"no frames were extracted for {self.window.window_id}. An empty window "
                 f"embeds to nothing, and 'nothing' is not a description of that footage."
             )
+        if (self._owner_dir is None) != (self._owner_identity is None):
+            raise ValueError("owned WindowFrames need both a directory and its identity")
 
     @property
     def count(self) -> int:
         """Frames that exist on disk — not `window.frame_count`, which is the plan."""
         return len(self.paths)
+
+    def cleanup(self) -> None:
+        """Delete extracted source pixels when this value owns them; injected frames are inert."""
+        if self._cleaned:
+            return
+        if (
+            self._owner_dir is not None
+            and self._owner_identity is not None
+            and _remove_private_frames(self._owner_dir, self._owner_identity)
+        ):
+            object.__setattr__(self, "_cleaned", True)
 
 
 def extract_window_frames(
@@ -176,8 +239,14 @@ def extract_window_frames(
     if binary is None:
         raise VideoInputError("no ffmpeg available — run hawedit-ffmpeg-setup")
 
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    extraction_dir = Path(tempfile.mkdtemp(prefix=f".{window.window_index:03d}-", dir=dest_dir))
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        extraction_dir = Path(tempfile.mkdtemp(prefix=f".{window.window_index:03d}-", dir=dest_dir))
+        extraction_identity = _owned_directory_identity(extraction_dir)
+    except (OSError, VideoInputError) as exc:
+        raise VideoInputError(
+            f"could not create a private frame directory under {dest_dir}: {exc}"
+        ) from exc
     succeeded = False
     try:
         pattern = extraction_dir / f"{window.window_index:03d}_%04d.jpg"
@@ -237,7 +306,12 @@ def extract_window_frames(
         paths = extracted
         if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
             paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
-        frames = WindowFrames(window=window, paths=paths)
+        frames = WindowFrames(
+            window=window,
+            paths=paths,
+            _owner_dir=extraction_dir,
+            _owner_identity=extraction_identity,
+        )
         # A window the plan says is temporal, arriving as a single still, is the exact failure
         # §7 excludes CLIP for — "frame-averaging loses temporal structure" — reached from the
         # other direction: there is no structure left to lose. It is also invisible downstream,
@@ -260,7 +334,7 @@ def extract_window_frames(
         if not succeeded:
             # The unique directory is this call's ownership boundary. Cleanup cannot consume a
             # prior call's valid frames or caller-owned files with a matching name.
-            shutil.rmtree(extraction_dir, ignore_errors=True)
+            _remove_private_frames(extraction_dir, extraction_identity)
 
 
 def window_video_metadata(frames: WindowFrames) -> dict[str, Any]:

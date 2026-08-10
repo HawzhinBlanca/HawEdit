@@ -482,7 +482,10 @@ class QwenVisualEmbedder:
         frames = extract_window_frames(
             video, window, work_dir / window.window_id.replace(":", "_"), ffmpeg
         )
-        return self.embed_frames(frames)
+        try:
+            return self.embed_frames(frames)
+        finally:
+            frames.cleanup()
 
     def embed_text(self, query: str) -> tuple[float, ...]:
         try:

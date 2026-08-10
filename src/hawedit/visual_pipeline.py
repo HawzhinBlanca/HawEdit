@@ -158,6 +158,17 @@ class _FrameCache:
         self._frames[window.window_id] = frames
         return frames
 
+    def close(self) -> None:
+        failures: list[str] = []
+        for window_id, frames in reversed(tuple(self._frames.items())):
+            try:
+                frames.cleanup()
+            except VideoInputError as exc:
+                failures.append(f"{window_id}: {type(exc).__name__}: {exc}")
+        self._frames.clear()
+        if failures:
+            raise VideoInputError("; ".join(failures))
+
 
 class VisualComposer:
     """Compose Qwen retrieval/reranking with VideoChat3 over the survivor set only."""
@@ -224,6 +235,16 @@ class VisualComposer:
             return VisualDiscoveryResult(media_id, query, 0, 0, (), ())
 
         read_frames = _FrameCache(source, work_dir / "frames", ffmpeg)
+        with _release_after(read_frames, "visual frame cache"):
+            return self._discover_with_frames(windows, query, media_id, read_frames)
+
+    def _discover_with_frames(
+        self,
+        windows: Sequence[SceneWindow],
+        query: str,
+        media_id: str,
+        read_frames: _FrameCache,
+    ) -> VisualDiscoveryResult:
         index = VisualIndex(media_id)
         with _release_after(self.embedder, "visual embedder"):
             index.add_all(self.embedder.embed_frames(read_frames(window)) for window in windows)

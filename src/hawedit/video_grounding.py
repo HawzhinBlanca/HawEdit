@@ -197,10 +197,13 @@ class TimeLens2Grounder:
         except (GroundingError, EmbedderUnavailable, VideoInputError):
             raise
         except (ImportError, OSError, RuntimeError) as exc:
-            raise GroundingError(
+            failure = GroundingError(
                 f"{self.model_id} failed while grounding {window.window_id}: "
                 f"{type(exc).__name__}: {exc}"
-            ) from exc
+            )
+            for note in getattr(exc, "__notes__", ()):
+                failure.add_note(note)
+            raise failure from exc
 
     def _ground(self, window: SceneWindow, query: str) -> tuple[VisualEvidenceInterval, ...]:
         import torch
@@ -212,30 +215,38 @@ class TimeLens2Grounder:
             )
         processor, model = self._load()
         frames: WindowFrames = self.read_frames(window)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    video_content(load_window_images(frames, processor)),
-                    {"type": "text", "text": GROUNDING_PROMPT.format(query=query)},
-                ],
+        try:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        video_content(load_window_images(frames, processor)),
+                        {"type": "text", "text": GROUNDING_PROMPT.format(query=query)},
+                    ],
+                }
+            ]
+            batch = window_batch(processor, messages, frames, add_generation_prompt=True)
+            placed = {
+                key: (value.to(self.device) if hasattr(value, "to") else value)
+                for key, value in dict(batch).items()
             }
-        ]
-        batch = window_batch(processor, messages, frames, add_generation_prompt=True)
-        placed = {k: (v.to(self.device) if hasattr(v, "to") else v) for k, v in dict(batch).items()}
-        with torch.no_grad():
-            # Greedy, for the reason `rerank` breaks ties deterministically: §8.2 counts on this
-            # output, and a boundary that moves between runs is not a measurement. The card's
-            # `temperature=0.01, top_k=1` is greedy by a longer route.
-            generated = model.generate(**placed, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
-        answer = processor.tokenizer.decode(
-            generated[0][batch["input_ids"].shape[1] :], skip_special_tokens=True
-        )
-        claim = f"evidence for: {query}"
-        return tuple(
-            VisualEvidenceInterval.from_window(window, start, end, claim, model_id=self.model_id)
-            for start, end in parse_spans(answer)
-        )
+            with torch.no_grad():
+                # Greedy, for the reason `rerank` breaks ties deterministically: §8.2 counts on
+                # this output, and a boundary that moves between runs is not a measurement. The
+                # card's `temperature=0.01, top_k=1` is greedy by a longer route.
+                generated = model.generate(**placed, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
+            answer = processor.tokenizer.decode(
+                generated[0][batch["input_ids"].shape[1] :], skip_special_tokens=True
+            )
+            claim = f"evidence for: {query}"
+            return tuple(
+                VisualEvidenceInterval.from_window(
+                    window, start, end, claim, model_id=self.model_id
+                )
+                for start, end in parse_spans(answer)
+            )
+        finally:
+            frames.cleanup()
 
     def ground_all(
         self, windows: Sequence[SceneWindow], query: str

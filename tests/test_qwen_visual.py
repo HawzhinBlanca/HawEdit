@@ -34,7 +34,7 @@ from hawedit.qwen_visual import (
 )
 from hawedit.registry import WrongRole
 from hawedit.video_input import TimestampsOutsideWindow, WindowFrames
-from hawedit.visual_index import SceneWindow, VisualHit, rerank_and_keep
+from hawedit.visual_index import SceneWindow, VisualEmbedding, VisualHit, rerank_and_keep
 
 
 def a_checkpoint(
@@ -368,6 +368,38 @@ def test_embedder_backend_failures_become_domain_refusals(
     with pytest.raises(EmbedderUnavailable, match="CUDA out of memory") as caught:
         embedder.embed_frames(WindowFrames(window, (Path("f0.jpg"), Path("f1.jpg"))))
     assert caught.value.__cause__ is failure
+
+
+def test_embed_window_deletes_extracted_source_pixels_after_embedding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = a_window(0, 0)
+    private = tmp_path / "private-frames"
+    private.mkdir()
+    paths = (private / "f0.jpg", private / "f1.jpg")
+    for path in paths:
+        path.write_bytes(b"source pixel")
+    metadata = private.stat()
+    frames = WindowFrames(
+        window,
+        paths,
+        _owner_dir=private,
+        _owner_identity=(metadata.st_dev, metadata.st_ino),
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    embedder = QwenVisualEmbedder(a_checkpoint(checkpoint), device="cpu")
+    monkeypatch.setattr("hawedit.qwen_visual.extract_window_frames", lambda *_args: frames)
+    monkeypatch.setattr(
+        embedder,
+        "embed_frames",
+        lambda value: VisualEmbedding(value.window, (1.0, 0.0), EMBEDDING_MODEL_ID),
+    )
+
+    result = embedder.embed_window(tmp_path / "source.mp4", window, tmp_path / "work")
+
+    assert result.window == window
+    assert not private.exists()
 
 
 # =========================================================================================

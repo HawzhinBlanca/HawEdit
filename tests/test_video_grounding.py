@@ -11,6 +11,7 @@ reachable without weights and nothing covered the path through the model.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, ClassVar
@@ -266,6 +267,28 @@ def test_grounding_returns_intervals_on_the_medias_clock(tmp_path: Path) -> None
     assert intervals[0].claim == "evidence for: a red number 2 on a blue background"
 
 
+def test_grounding_deletes_extracted_source_pixels_after_model_use(tmp_path: Path) -> None:
+    private = tmp_path / "private-frames"
+    private.mkdir()
+    paths = tuple(private / f"f{index}.jpg" for index in range(4))
+    for path in paths:
+        path.write_bytes(b"source pixel")
+    identity = os.lstat(private)
+    frames = WindowFrames(
+        a_window(),
+        paths,
+        _owner_dir=private,
+        _owner_identity=(identity.st_dev, identity.st_ino),
+    )
+    grounder, _, _ = a_grounder(tmp_path)
+    grounder.read_frames = lambda _window: frames
+
+    intervals = grounder.ground(a_window(), "a speaker gestures")
+
+    assert intervals
+    assert not private.exists()
+
+
 def test_a_found_nothing_answer_yields_no_intervals(tmp_path: Path) -> None:
     grounder, _, _ = a_grounder(tmp_path, answer="[]")
     assert grounder.ground(a_window(), "a speaker gestures") == ()
@@ -326,6 +349,42 @@ def test_model_operational_failures_are_normalized_at_the_grounder_boundary(
         grounder.ground(a_window(), "a speaker gestures")
 
     assert caught.value.__cause__ is failure
+
+
+def test_cleanup_privacy_note_survives_grounder_error_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private = tmp_path / "private-frames"
+    private.mkdir()
+    paths = tuple(private / f"f{index}.jpg" for index in range(4))
+    for path in paths:
+        path.write_bytes(b"source pixel")
+    identity = os.lstat(private)
+    frames = WindowFrames(
+        a_window(),
+        paths,
+        _owner_dir=private,
+        _owner_identity=(identity.st_dev, identity.st_ino),
+    )
+    grounder, _, model = a_grounder(tmp_path)
+    grounder.read_frames = lambda _window: frames
+    primary = RuntimeError("CUDA allocation failed")
+    model.generate = lambda **_kwargs: (_ for _ in ()).throw(primary)
+    real_unlink = Path.unlink
+
+    def refuse_private_frame(path: Path, missing_ok: bool = False) -> None:
+        if path.parent == private:
+            raise PermissionError("scanner holds the pixel")
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_private_frame)
+    with pytest.raises(GroundingError, match="CUDA allocation failed") as caught:
+        grounder.ground(a_window(), "a speaker gestures")
+
+    assert caught.value.__cause__ is primary
+    assert any("private visual frame cleanup failed" in note for note in caught.value.__notes__)
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    frames.cleanup()
 
 
 def test_programmer_exception_from_grounding_model_is_not_normalized(tmp_path: Path) -> None:

@@ -594,6 +594,95 @@ def _ffmpeg_writing(count: int) -> object:
     return run
 
 
+def test_extracted_frames_are_deleted_when_the_owner_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+
+    frames.cleanup()
+    frames.cleanup()
+
+    assert not private.exists()
+
+
+def test_cleanup_refuses_a_replaced_private_directory_without_deleting_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+    original = tmp_path / "original-private"
+    private.rename(original)
+    private.mkdir()
+    replacement = private / "replacement-owned-by-someone-else"
+    replacement.write_bytes(b"do not delete")
+
+    with pytest.raises(VideoInputError, match="identity changed"):
+        frames.cleanup()
+
+    assert replacement.read_bytes() == b"do not delete"
+    assert len(tuple(original.glob("000_*.jpg"))) == 4
+
+
+def test_cleanup_refuses_a_missing_owner_on_its_first_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+    moved = tmp_path / "moved-private"
+    private.rename(moved)
+
+    with pytest.raises(VideoInputError, match="cleanup failed"):
+        frames.cleanup()
+
+    assert len(tuple(moved.glob("000_*.jpg"))) == 4
+
+
+def test_cleanup_failure_is_attached_without_masking_the_primary_model_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+    real_unlink = Path.unlink
+
+    def refuse_private_frame(path: Path, missing_ok: bool = False) -> None:
+        if path.parent == private:
+            raise PermissionError("scanner holds the pixel")
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_private_frame)
+    primary = FrameCountMismatch("model rejected the frame count")
+    with pytest.raises(FrameCountMismatch) as caught:
+        try:
+            raise primary
+        finally:
+            frames.cleanup()
+
+    assert caught.value is primary
+    assert any("private visual frame cleanup failed" in note for note in primary.__notes__)
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    frames.cleanup()
+    assert not private.exists()
+
+
+def test_private_directory_creation_failure_is_a_video_input_error(tmp_path: Path) -> None:
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_bytes(b"file")
+
+    with pytest.raises(VideoInputError, match="private frame directory") as caught:
+        extract_window_frames(FIXTURE, a_window(), blocked, ffmpeg=Path("ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, OSError)
+
+
 def test_one_tail_frame_short_is_accepted_and_kept_even(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
