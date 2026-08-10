@@ -7230,3 +7230,102 @@ now. Six mutations caught, including three controls pulling in opposite directio
 refuses everything and a test that refuses nothing both go red.
 
 `evidence/auto-select-accepted-a-path-that-could-not-produce.md`. Floor 1434 → 1440.
+
+## D-148
+
+**§3's governance box has two gates, and only one of them reddened anything.** `Governance`
+carries `assert_permits_upload` for the Gemini Developer API and `assert_permits_vertex` for the
+*confidential* Vertex route — the paid, ZDR route §3 Stage 3 reserves for COMMS and KAAE material
+and calls "mandatory, not advisory". Each was neutered in turn (body replaced by `return`) against
+a baseline verified green first, and the whole gate suite run:
+
+```
+baseline green: True
+held    the Developer API gate stops refusing (assert_permits_upload)
+          red: test_confidential_material_without_zero_data_retention_is_refused,
+               test_claimed_zero_data_retention_must_name_who_confirmed_it,
+               test_flags_cannot_turn_the_developer_api_into_a_confidential_vertex_route,
+               test_counting_tokens_cannot_send_confidential_text_before_the_zdr_gate
+UNHELD  the confidential Vertex gate stops refusing (assert_permits_vertex)
+```
+
+**The artifact, with the Vertex gate neutered.** A `VertexGeminiJudge` built with
+`Governance(confidential=True)` — ZDR not configured, nobody attributed — made **two** HTTPS calls
+and came back with a verdict:
+
+```
+projects/client-project/locations/global/publishers/google/models/gemini-2.5-pro:countTokens
+projects/client-project/locations/global/publishers/google/models/gemini-2.5-pro:generateContent
+    confidential transcript present in the prompt: True
+    source JPEG bytes present: True
+```
+
+100% of a client's Kurdish transcript plus the real source pixels, on the route whose entire reason
+for existing is that this must not happen, and 1,440 tests stayed green.
+
+**Why it was invisible.** All four §3-governance tests build a `GeminiJudge` through `a_judge()`,
+which routes to `assert_permits_upload`. The only `VertexGeminiJudge` ever given a `Governance` is
+`test_confidential_vertex_route_uses_adc_bearer_and_multimodal_payload`, and it supplies the fully
+permitted triple and asserts the call *succeeds* — green whether or not the gate exists. Measured:
+`grep -rn "assert_permits_vertex" tests/` returns **0 hits**.
+
+**This corrects a recorded claim.** `PROGRESS.md` M2.8 says, from adversarial pass #20:
+*"Everything in `gemini.py` survived the pass … and the ZDR gate all redden when reverted."* True
+of one gate, false of the one that carries confidential material. The pass reverted the gate it
+could see. Recorded as a correction in the cell rather than as prose after the table, and the M2.8
+row keeps its status: the code was right, the coverage was not.
+
+**Decision: hold governance as a property of the class *set*, the way §7 identity already is.**
+D-145 built `_concrete_judges()` — every constructible judge, checked bidirectionally against
+`GeminiJudge`'s transitive subclasses — to hold the §7 model-identity check. Its builders now take
+an optional `governance` and `transport`, so the same enumeration is built under every confidential
+state §3 forbids, with a recording transport. A future subclass inherits both checks the day it is
+added, which is the only version of this that stays true.
+
+**Asserted on the transport, not on the exception.** `pytest.raises(GeminiUnavailable)` alone is
+satisfied by a gate that raises *after* the upload — the failure mode is the bytes, not the
+traceback — so every case asserts `api.urls == []`. The mutation that moves the check after the
+billed call is caught by exactly that assertion.
+
+**Rejected: one test for `VertexGeminiJudge`.** It closes this hole and none of the others; the same
+reasoning as D-145, and this finding is the proof that D-145's own enumeration needed extending
+rather than copying.
+
+**Rejected: making `Governance` refuse in `__post_init__`.** A `Governance` describing a state that
+is legal for one route and illegal for another is not itself invalid — `confidential=True` with no
+ZDR is exactly right for a run that will never touch a cloud route. The refusal belongs at the
+upload boundary, which is where both gates already are.
+
+**Mutation audit 10/10, after 6/8. Both survivors were real gaps in my own table, not bad
+mutations:**
+
+* Deleting the zero-data-retention rule *entirely* left everything green, because every forbidden
+  state I had listed also lacked an attribution — so rule two caught them all. The state that
+  separates them is `confidential=True, zero_data_retention=False, confirmed_by="Hawa"`: somebody
+  is recorded as having approved, and ZDR is still not configured. Now its own test.
+* Deleting `generate_json`'s own governance check left everything green, because its only caller in
+  `src/` (`path_a.py`) calls `count_parts` first and *that* refuses. A guard that is only correct
+  because of the order its one caller happens to use is a guard the next caller walks past. Both
+  public entry points are now gated on their own, for both judge classes.
+
+Ten mutations caught, including one that deletes `VertexGeminiJudge` from the enumeration (caught by
+D-145's bidirectional check) and one that stops the subclass overriding `_assert_governance` at all
+(caught by the permitted-route control, which must keep succeeding).
+
+**Also measured this iteration, and not fixed here.** Twelve of the CLI's fourteen argv refusals in
+`_run_from_args` are unheld — deleting the `if`/`raise` outright leaves all 1,440 tests green. Only
+`--visual-query requires --visual` and the `--auto-select` producer test redden, both added by
+D-147/D-148 this session. `tests/test_pipeline.py::test_the_cli_refuses_flags_whose_prerequisites_are_absent`
+looks like coverage for three of them and asserts only `main(...) == 2` — the exit code for *every*
+caught exception, so it passes whether the refusal fires or the run merely dies later on an empty
+`source.mp4`. A test that passes for both answers measures nothing. That is the next increment, not
+this one.
+
+**A measurement of mine was wrong first and is recorded rather than quietly replaced.** The first
+sweep appended ` and False` to each condition; `ruff` flags that as **SIM223**, so every mutation
+broke the lint step, the nested-gate test saw a non-4 exit, and all fourteen guards reported "held"
+naming one unrelated test. A uniform result across unrelated mutations is an artifact, not a
+finding. Redone by deleting each statement whole by its AST line span, with the lint status printed
+beside each result so the next contaminated run says so itself.
+
+`evidence/the-confidential-routes-zdr-gate-reddened-nothing.md`. Floor 1440 → 1453.

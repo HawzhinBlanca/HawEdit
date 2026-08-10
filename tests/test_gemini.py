@@ -453,8 +453,14 @@ def test_count_tokens_failure_is_not_silently_zero() -> None:
 # --- §7, held for every judge a caller can build, not only the first one ---------------------
 
 
-def _concrete_judges() -> dict[str, Callable[[str], GeminiJudge]]:
+def _concrete_judges() -> dict[str, Callable[..., GeminiJudge]]:
     """Every judge class a caller can construct, with the least each one needs to exist.
+
+    `governance` and `transport` are optional so the same enumeration can be built under a
+    confidential configuration §3 forbids, with a transport that records what reached the wire.
+    §3's governance box has *two* gates — `assert_permits_upload` for the Developer API and
+    `assert_permits_vertex` for the confidential Vertex route — and only the first had refusal
+    tests, because the only Vertex judge ever given a `Governance` was the permitted one. D-148.
 
     `VertexGeminiJudge` does not call `super().__init__` — it reimplements it, because Vertex
     authenticates with ADC and has no API key to read. So `GeminiJudge.__init__`'s §7 check is
@@ -465,17 +471,33 @@ def _concrete_judges() -> dict[str, Callable[[str], GeminiJudge]]:
     `.../projects/proj/locations/global/publishers/google/models/gemini-3.1-pro:generateContent`
     — the confidential route, billed, using the model §3 Stage 4 marks "evaluated, not routed".
     """
-    return {
-        "GeminiJudge": lambda model_id: GeminiJudge(
-            model_id=model_id, api_key=KEY, transport=Api(), sleep=lambda _seconds: None
-        ),
-        "VertexGeminiJudge": lambda model_id: VertexGeminiJudge(
+
+    def gemini(
+        model_id: str, governance: Governance | None = None, transport: Any = None
+    ) -> GeminiJudge:
+        return GeminiJudge(
+            model_id=model_id,
+            api_key=KEY,
+            governance=governance,
+            transport=transport if transport is not None else Api(),
+            sleep=lambda _seconds: None,
+        )
+
+    def vertex(
+        model_id: str, governance: Governance | None = None, transport: Any = None
+    ) -> GeminiJudge:
+        return VertexGeminiJudge(
             "news-project",
             model_id=model_id,
+            governance=governance,
             token_provider=lambda: "adc-token",
-            transport=Api(),
+            transport=transport if transport is not None else Api(),
             sleep=lambda _seconds: None,
-        ),
+        )
+
+    return {
+        "GeminiJudge": gemini,
+        "VertexGeminiJudge": vertex,
     }
 
 
@@ -516,3 +538,104 @@ def test_every_judge_is_built_with_the_pinned_incumbent(name: str) -> None:
     judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE)
     assert judge.model_id == KURDISH_EDITORIAL_JUDGE
     assert KURDISH_EDITORIAL_JUDGE in judge._url("generateContent")
+
+
+# --- D-148: §3's governance box has two gates, and only one of them was held ------------------
+#
+# `Governance.assert_permits_upload` guards the Gemini Developer API and has three refusal tests.
+# `Governance.assert_permits_vertex` guards the *confidential* Vertex route — the one §3 reserves
+# for material that must not train a model — and had none: the only `VertexGeminiJudge` ever built
+# with a `Governance` is the fully permitted triple, which asserts the call succeeds and is green
+# whether the gate exists or not. Measured by neutering each gate in turn against a green
+# baseline: `evidence/the-confidential-routes-zdr-gate-reddened-nothing.md`.
+# =========================================================================================
+
+
+_CONFIDENTIAL_WITHOUT_A_VALID_CONFIRMATION: tuple[tuple[str, Governance], ...] = (
+    ("zero-data-retention is not configured", Governance(confidential=True)),
+    (
+        "zero-data-retention is claimed but unattributed",
+        Governance(confidential=True, zero_data_retention=True),
+    ),
+    (
+        "the attribution is only whitespace",
+        Governance(confidential=True, zero_data_retention=True, confirmed_by="   "),
+    ),
+)
+
+
+@pytest.mark.parametrize("name", sorted(_concrete_judges()))
+@pytest.mark.parametrize(
+    ("label", "governance"),
+    _CONFIDENTIAL_WITHOUT_A_VALID_CONFIRMATION,
+    ids=[label for label, _governance in _CONFIDENTIAL_WITHOUT_A_VALID_CONFIRMATION],
+)
+def test_no_judge_sends_confidential_material_without_an_attributed_confirmation(
+    name: str, label: str, governance: Governance
+) -> None:
+    """Every judge a caller can build, under every confidential state §3 forbids.
+
+    Asserted on the transport, not on the exception: a gate that raised *after* the upload would
+    satisfy `pytest.raises` and still have put 100% of a client's Kurdish transcript on the wire.
+    The recorded URLs are the artifact.
+    """
+    api = Api()
+    judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE, governance, api)
+    with pytest.raises(GeminiUnavailable):
+        judge.judge(a_request())
+    assert api.urls == [], f"{name} sent confidential material anyway — {label}"
+
+
+@pytest.mark.parametrize("name", sorted(_concrete_judges()))
+def test_every_judge_still_sends_material_that_needs_no_confirmation(name: str) -> None:
+    """The control, and it has to be one: a governance gate that refused *everything* — or a
+    transport that never sent anything — passes every test above.
+
+    So this requires the same constructor to reach the API and come back with a verdict.
+    """
+    api = Api()
+    judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE, None, api)
+    assert judge.judge(a_request()).candidate_id == "c1"
+    assert api.urls, f"{name} sent nothing at all, so the refusals above measure nothing"
+
+
+def test_an_attributed_confirmation_does_not_substitute_for_configuring_zdr() -> None:
+    """Naming who approved it is not the same as turning it on.
+
+    Found by mutating `assert_permits_vertex`: deleting the zero-data-retention rule entirely
+    left the suite green, because every forbidden state in the table above also lacked an
+    attribution, so the *second* rule caught them all. This is the state that separates them —
+    somebody is recorded as having confirmed, and ZDR is still not configured.
+    """
+    api = Api()
+    judge = _concrete_judges()["VertexGeminiJudge"](
+        KURDISH_EDITORIAL_JUDGE,
+        Governance(confidential=True, zero_data_retention=False, confirmed_by="Hawa"),
+        api,
+    )
+    with pytest.raises(GeminiUnavailable, match="zero-data-retention"):
+        judge.judge(a_request())
+    assert api.urls == [], "confidential material was sent on an attributed but unconfigured route"
+
+
+@pytest.mark.parametrize("name", sorted(_concrete_judges()))
+@pytest.mark.parametrize("entry_point", ["count_parts", "generate_json"])
+def test_each_public_entry_point_gates_confidential_material_on_its_own(
+    name: str, entry_point: str
+) -> None:
+    """`judge()` is not the only door. `path_a.py` drives `count_parts` and `generate_json`
+    directly, and each has its own governance check for that reason.
+
+    Found by mutating `generate_json`'s check away: nothing reddened, because Path A always
+    calls `count_parts` first and that one refuses. A guard that is only correct because of the
+    order its one caller happens to use is a guard the next caller will walk past.
+    """
+    api = Api()
+    judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE, Governance(confidential=True), api)
+    parts: list[dict[str, Any]] = [{"text": "نهێنی — confidential client transcript"}]
+    with pytest.raises(GeminiUnavailable):
+        if entry_point == "count_parts":
+            judge.count_parts(parts)
+        else:
+            judge.generate_json(parts, VERDICT_SCHEMA)
+    assert api.urls == [], f"{name}.{entry_point} sent confidential material"
