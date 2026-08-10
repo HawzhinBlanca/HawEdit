@@ -138,3 +138,30 @@ The histories were joined after that acceptance:
 
 Protected main is therefore an ancestor and the join imported no older file content. As with each
 prior join, an exact post-merge gate is still required for the final commit identity.
+
+## CLI-preflight source-binding advance
+
+Protected main then advanced to `2fd2e55` with the measured CLI-refusal finding integrated in
+D-181. Readiness had already replaced the weak exit-only assertions with a broader 21-case matrix,
+removed two dominated branches, and covered all 15 live preflight guards. The upstream delta added
+one material future-regression net: bind the case table to the source rather than only enumerating
+today's behavior.
+
+Readiness adapted that insight by reading every direct `ValueError` before input loading through
+the AST and requiring a one-to-one case-fragment match in both directions. A legal-argv control
+must pass the whole block. The focused pipeline suite rose to 143/143; the combined
+pipeline/claims/evidence slice passed 189/189; and the exact floor rose to 2,039. Package source
+bytes remained `3994b043398d95c0f2c01a0d8aac52fd18465b72900f865553738846dfdc05e6`,
+so the already accepted receipt-bound WSL VEX artifact remained current.
+
+The clean first parent passed Ruff, mypy over 129 source files, formatting, 2,039/2,039 tests, zero
+skipped and accepted JUnit evidence in 257.2 seconds. The histories were then joined:
+
+- readiness parent: `f5087bf72264e4e99456bb95bad538346fe6ab15`
+- protected-main parent: `2fd2e55d5679e6aa2a963e14a177449ad99d26fa`
+- merge: `f35680459859773cbfc58f3f4b7696aa05bb66e2`
+- readiness-parent tree: `a40298ea3654e74eef9f681b32507fde602b35a1`
+- merge tree: `a40298ea3654e74eef9f681b32507fde602b35a1`
+
+Protected main is again an ancestor and no older content entered the tree. The final commit identity
+still requires its own canonical and hosted gates.

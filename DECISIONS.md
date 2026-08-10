@@ -6020,6 +6020,21 @@ held, and misleads operators about which prerequisite owns the refusal.
 
 `evidence/cli-preflight-boundaries-2026-08-10.md`.
 
+## D-182 - Join main after adding its future-guard binding to the broader preflight matrix
+
+Protected main `2fd2e55` implemented the CLI-refusal finding recorded in D-181 and added a valuable
+AST contract: a future refusal cannot arrive without a test case. Readiness retained its broader
+21-case matrix, removal of two unreachable branches, distinct compound-rule cases and legal-argv
+control, then adapted the bidirectional source binding. The focused pipeline suite passed 143/143,
+the exact floor rose to 2,039, and the canonical gate passed before the join.
+
+Merge `f356804` has readiness parent `f5087bf` and protected-main parent `2fd2e55`. Its tree and the
+first parent's tree are both `a40298ea3654e74eef9f681b32507fde602b35a1`, so the history join
+cannot replace the audited code, tests, evidence or floor with protected main's older versions.
+The final merged identity still needs local and hosted acceptance.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
 ## D-179 - Confidential ZDR is a property of the constructible judge class set
 
 Protected main neutered the two §3 governance gates independently. Developer-API upload tests
