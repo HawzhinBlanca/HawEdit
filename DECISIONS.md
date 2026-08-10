@@ -6010,6 +6010,11 @@ accepted.
 
 `evidence/smoke-video-preflight-2026-08-10.md`.
 
+The source change rotates the receipt/VEX identity to `df74ba00dcae757e…`. The exact WSL runtime
+was reprovisioned and the live gate accepted all 12 audit findings against 12 reviewed
+dispositions with three authenticated assets (43,546,500,168 bytes) and two CUDA devices; this is
+affected/mitigated evidence, not a claim of zero vulnerabilities.
+
 ## D-183 - Hold Kurdish invariant #3 at every Stage 2 query-reading model
 
 Protected main removed query normalization independently from the Qwen embedder and reranker. Both

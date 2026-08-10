@@ -17,3 +17,9 @@ of the sample rather than silently shortening text or using synthetic/unrelated 
 The production change rotates the receipt/VEX source identity to
 `df74ba00dcae757e7e5f04670811898a61acb847a8c107f321b0c0e562ce8efb`; live WSL acceptance must
 use a receipt for that exact snapshot before this policy can pass.
+
+That acceptance was executed after commit: CPython 3.12.0, 140 exact distributions, two CUDA
+devices and three authenticated Omni assets totaling 43,546,500,168 bytes. The live audit emitted
+12 findings and matched all 12 reviewed, unexpired dispositions. The non-overwriting artifact is
+`.gate/wsl-vex-df74ba00-20260810.json`, SHA-256
+`4b6d1af1d908270b0820d704f103578c3bb946df62be12162ef0ff6de3d23a23`.
