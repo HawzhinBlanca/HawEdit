@@ -1092,3 +1092,42 @@ def test_the_resolution_vocabulary_is_used_by_something() -> None:
         f"declared but unused: {sorted(_BLOCKED_RESOLUTIONS - used)}. Remove the word until an "
         f"entry needs it, so the list stays a description of this file rather than a prediction."
     )
+
+
+# --- D-152: the live check the README documents, and the entries the docs point at ------------
+
+
+def test_the_readme_offers_the_live_check_with_the_argument_it_requires() -> None:
+    """`smoke.py` refuses Stage 4 without `--video`, and that refusal is now ahead of the two
+    billed Path A calls. A documented invocation without it used to spend money, print
+    candidates and stop — never running the stage the prose promises.
+
+    Bidirectional against the source: if the requirement goes away, the README must stop showing
+    the flag, and if it stays, the README must show it.
+    """
+    smoke = (ROOT / "src" / "hawedit" / "smoke.py").read_text(encoding="utf-8")
+    requires_video = "Stage 4 needs --video" in smoke
+
+    offered = [
+        line for line in claims_only(README).splitlines() if "python -m hawedit.smoke" in line
+    ]
+    assert offered, "the README no longer offers the live check at all"
+    for line in offered:
+        assert ("--video" in line) == requires_video, (
+            f"smoke.py {'requires' if requires_video else 'does not require'} --video, but the "
+            f"README offers: {line.strip()!r}"
+        )
+
+
+def test_every_blocked_entry_the_docs_cite_exists() -> None:
+    """A citation is a promise that the reader can go and read it.
+
+    `test_every_blocked_row_points_at_a_live_blocked_entry` covers PROGRESS's `BLOCKED` rows and
+    nothing else, so a README pointing at an entry number that was never written passed — found
+    by mutating `#20` to `#21`.
+    """
+    entries = set(_blocked_entries())
+    for name, document in (("README.md", README), ("PROGRESS.md", PROGRESS)):
+        cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", claims_only(document)))
+        missing = sorted(cited - entries, key=int)
+        assert not missing, f"{name} cites BLOCKED entries that do not exist: {missing}"

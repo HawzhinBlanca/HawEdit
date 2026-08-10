@@ -7576,3 +7576,73 @@ single line of defence. It also printed `[lint dirty]` (my mutation ran past 100
 run would not have counted either way.
 
 `evidence/invariant-1-had-no-digest-no-problem.md`. Floor 1471 → 1488.
+
+## D-152
+
+**The one command in this project that spends money spent it and then refused.** `README.md`
+offered `python -m hawedit.smoke  # two real calls, ~$0.003` and said it *"runs §3 Stage 3 Path A
+over a built-in Sorani sample and §3 Stage 4 on the top candidate, then prints the Kurdish title it
+got back"*. Run exactly as documented, `smoke.py` made **both** Path A calls — `countTokens` and
+`generateContent` — printed the candidates, and then reached
+
+```python
+if args.video is None:
+    print("✗ Stage 4 needs --video; text-only visual judging is refused", file=sys.stderr)
+    return 1
+```
+
+and exited 1, having never run Stage 4 and never printed a title. `--video` appeared nowhere in the
+README. This is D-071's shape a third time: a refusal `argv` settles, placed after the billed call.
+
+**Decision: hoist it above everything billable, and above the confirmation.** The check now runs
+straight after the key check and returns **2** — a refusal, not a failed run. Above the
+confirmation prompt as well, because being asked to authorise spending on a run that cannot finish
+is its own defect; a user who answers "y" there has agreed to nothing they will get.
+
+**Exit 1 → 2 is deliberate.** Everywhere else in this project 2 means *refused before doing
+anything* and 1 means *ran and could not finish*. Once the check precedes every call, 2 is the
+honest code. No test asserted the old value — that was the whole problem.
+
+**The measurement that made this bigger than a missing flag.** The built-in sample spans
+**0..13,000 ms** (22 words). The only Kurdish video in the repository,
+`tests/fixtures/kurdish-speech-3cuts.mp4`, is **4.162 s** and is a different recording. Extracting
+judge keyframes from it, measured:
+
+```
+(0, 4000)     20 frames, timestamps 100, 300, 500, 700, 900, 1100 …
+(0, 13000)    20 frames, timestamps 325, 975, 1625, 2275, 2925, 3575 …   <- from a 4.16 s file
+(5000, 13000) KeyframeError: ffmpeg failed to extract judge keyframes
+```
+
+So there is no video here that makes the live check runnable: a shorter one either fails outright
+or returns frames stamped across a span the file does not contain. **`BLOCKED.md` #20** records it
+as Hawa's, because it is a recording rather than a decision, and names what I refused to do instead
+— re-cutting the sample to fit a different video (it would make the two agree by construction), and
+shipping a synthetic one (`AGENTS.md` forbids the stub, and Stage 4's whole point is the actual
+pixels).
+
+**The README now states the requirement and the gap** rather than promising a check that cannot
+run, and two bindings hold it: the documented invocation must carry `--video` exactly when
+`smoke.py` requires it, and every `BLOCKED.md #N` the docs cite must exist.
+
+**Two existing tests changed, and both got stronger.**
+`test_it_sends_nothing_until_a_human_agrees` and `test_a_declined_prompt_at_eof_also_sends_nothing`
+drove `main([])` to the confirmation prompt, which the new guard short-circuits. They now pass a
+`--video`, so the run they decline is one that could otherwise have proceeded — declining a run
+that would have refused anyway measures nothing.
+
+**Mutation audit 6/6, after 3/6.** Two survivors were real gaps in my own work: nothing bound the
+README's invocation to `smoke.py`'s requirement, and nothing checked that a `BLOCKED.md #N` cited
+in the README exists — found by mutating `#20` to `#21`, which passed.
+`test_every_blocked_row_points_at_a_live_blocked_entry` covers PROGRESS's `BLOCKED` rows only. The
+third was a bad mutation of mine: I "moved" the guard by inserting a no-op line, which changes
+nothing. Moving a block is a delete *plus* an insert, and applying either half alone measures
+something else — the audit harness now takes a list of edits for one mutation, and that mutation is
+caught by the confirmation test.
+
+`evidence/the-live-check-spent-money-then-refused.md`. Floor 1488 → 1494.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`, exit 1. Hawa
+reports billing is solved upstream; the key is not on this machine, and the credential panel is the
+only way it gets here — it reads with `getpass`, writes through `O_NOFOLLOW` at `0600`, rewrites the
+ACL to the owner alone, and refuses any path git tracks. Nothing in this iteration simulated a key.

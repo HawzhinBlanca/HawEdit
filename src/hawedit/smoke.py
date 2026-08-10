@@ -95,6 +95,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✗ no {GEMINI_API_KEY}. Run `python -m hawedit.credentials` first.", file=sys.stderr)
         return 2
 
+    # Before anything is billed. §3 Stage 4 is refused without real source pixels, and this used
+    # to be checked *after* Path A's two calls — so the command the README documents spent money,
+    # printed candidates, and then stopped without ever running the stage it promised. The
+    # condition needs `argv` and nothing else, which is D-071's reasoning about the overwrite
+    # guard. Refusing here also means the confirmation prompt below is never asked for a run that
+    # cannot finish. D-152.
+    if args.video is None:
+        print(
+            "✗ Stage 4 needs --video: this check judges real source pixels, and text-only "
+            "visual judging is refused. Pass a video matching the built-in Sorani sample.",
+            file=sys.stderr,
+        )
+        return 2
+    video = args.video
+    if not video.is_file():
+        print(f"✗ no sample video at {video}", file=sys.stderr)
+        return 2
+
     normalized = normalize_transcript(SAMPLE)
     print("hawedit live check — §3 Stage 3 Path A, then §3 Stage 4\n")
     print(f"key         {mask(key)}")
@@ -147,15 +165,9 @@ def main(argv: list[str] | None = None) -> int:
     # --- §3 Stage 4 -----------------------------------------------------------------------
     top = candidates[0]
     print("\n==> Stage 4")
-    if args.video is None:
-        print("✗ Stage 4 needs --video; text-only visual judging is refused", file=sys.stderr)
-        return 1
-    if not args.video.is_file():
-        print(f"✗ no sample video at {args.video}", file=sys.stderr)
-        return 2
     try:
         keyframes = extract_judge_frames(
-            args.video,
+            video,
             top.in_ms,
             top.out_ms,
             Path(".gate") / "gemini-smoke-keyframes",

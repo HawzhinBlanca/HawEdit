@@ -939,3 +939,45 @@ be read as validated routing. Nothing is routed anywhere — the rzgar validator
 
 **The measurement to repeat once this is answered:** the same run, and the fraction of 545 segments
 escalating on disagreement alone. It is **176** today.
+
+---
+
+## #20 · The live check needs a video of the built-in sample, and none exists
+
+**What is blocked:** `python -m hawedit.smoke`, the only command in this project that spends money,
+cannot be run as shipped.
+
+**Why.** §3 Stage 4 judges real source pixels — `smoke.py` refuses text-only visual judging, and
+`AUDIT_REPORT.md` records that refusal as deliberate. So the check needs `--video`. The built-in
+Sorani sample spans **0..13,000 ms** (22 words). The only Kurdish video in the repository,
+`tests/fixtures/kurdish-speech-3cuts.mp4`, is **4.162 s** and is a different recording. Measured on
+hawapc01 with ffmpeg 8.1.1-full, extracting judge keyframes from that fixture:
+
+```
+(0, 4000)     20 frames, timestamps 100, 300, 500, 700, 900, 1100 …
+(0, 13000)    20 frames, timestamps 325, 975, 1625, 2275, 2925, 3575 …   <- from a 4.16 s file
+(5000, 13000) KeyframeError: ffmpeg failed to extract judge keyframes
+```
+
+So a shorter video either fails outright, or returns frames stamped across a span the file does not
+contain — pixels labelled with times they did not come from, handed to the judge as evidence.
+
+**What would resolve it — Hawa's, because it is a recording, not a decision:** a video of the
+built-in sample being spoken, at least 13 s long, committed or pointed at. Then
+`python -m hawedit.smoke --video <that file>` is runnable and the README's claim is true without a
+caveat.
+
+**Rejected here, and why they are not mine to take:**
+
+1. **Re-cut the sample to match the 4.162 s fixture.** That changes what the live check measures —
+   the sample is 22 words of coherent Sorani chosen so a real failure reads as a model problem, and
+   trimming it to fit a different recording makes the two agree by construction rather than by
+   being the same material.
+2. **Ship a synthetic video.** A generated file is not the sample being spoken, and §3 Stage 4's
+   whole point is that the judge sees the actual pixels. `AGENTS.md` forbids the stub either way.
+3. **Let `--video` be optional again.** That is the defect D-152 fixed: the run spent money on both
+   Path A calls and then refused.
+
+**What is done in the meantime:** the refusal is hoisted ahead of every billed call, so the
+documented invocation costs nothing when it cannot finish, and the README states the requirement and
+this entry rather than promising a check that cannot run.
