@@ -6852,3 +6852,82 @@ the `prog=` argument echoed back, and they enumerate `[project.scripts]` the way
 sixth entry point is covered the day it is declared. The control is that the two modes must print
 *different* names: a fixed `prog` satisfies one of the two assertions, so asserting only one would be
 satisfied by exactly the defect. `evidence/help-named-a-command-that-was-not-installed.md`.
+
+## D-143
+
+**README.md understated the project's own quality bar, and its `cli.py` row named none of what
+`cli.py` does.** The README is the last document in the loop's step 1(b) list never checked
+systematically, and it is the one a reader meets first.
+
+### It said the required status check was not done, two days after it was
+
+```
+README.md:257  … Making that job a required status check is a repository setting, and is not done.
+BLOCKED.md:260 ## #7 · The hawedit CI job is not a *required* status check — **RESOLVED 2026-08-08**
+```
+
+Measured against the live API rather than taken from the record:
+
+```
+required_status_checks: {"contexts": ["gate"], "strict": true, …}
+```
+
+So `gate` is required on `main` **and** a branch must be up to date before merging, which is
+stronger than the README claimed — and every `git push` in this loop has printed
+`Required status check "gate" is expected.` Understating a bar is a smaller sin than overstating
+one, and it is still a document contradicting reality in the place it is read first.
+
+### The `cli.py` module-map row named 0 of 3 exports
+
+```
+hawedit.cli.__all__: ['machine_readable_stdout', 'program_name', 'use_utf8_streams']
+the row:            "What every entry point does before it writes: pin stdout and stderr to UTF-8…"
+exported but not named in the row: all three
+```
+
+It described `use_utf8_streams`'s *effect* without naming it, omitted `machine_readable_stdout`
+(D-119) entirely, and omitted `program_name` — which **I added two commits earlier**, in D-142.
+One drift predating this loop and one created by it.
+
+**Decision: bind the README to the two things that can contradict it.** `BLOCKED.md` is this
+project's record of what is still in the way, so a resolved entry cannot be described as undone —
+checked **both ways**, because with the entry live the README must not claim the check is in place
+either, and overstating is the worse direction. And the `cli.py` row must name every callable in
+`hawedit.cli.__all__`, because that module's whole job is collecting things every `main()` must do,
+so it is the one that grows a fourth.
+
+**Doc-to-doc on purpose.** Branch protection is a repository setting, and a test that read it would
+need the network and a token — a test that skips, and a skipped test is the quiet green this suite
+is written against. The live API answer is recorded here as the measurement instead.
+
+**Rejected: checking every module-map row against its module's `__all__`.** Forty-odd rows of
+deliberate prose, most of them describing an *invariant* rather than an API, and a test demanding
+symbol names would push them all toward being worse documentation. `cli.py` earns the check because
+its row is a list by nature.
+
+### The prose-grep trap, four times, now fixed structurally
+
+The first version of the README fix left the phrase `is not done` inside its own correction
+sentence, and the new test failed on it. That is the fourth occurrence:
+
+* **D-121** — `fetch-ffmpeg.sh` *explains* `--fail` in a comment; the test asserting `--fail` was
+  present matched the comment.
+* **D-139** — the gate workflow *quotes* `-e '.[dev,media]'` to say what it replaced; the control
+  asserting its absence matched the quote.
+* **D-141** — the audit report's correction *names* the entry point it had omitted; dropping that
+  name from the list again survived.
+* **D-143** — the README *quotes* "is not done" while correcting it.
+
+Each was fixed locally. `tests/test_claims.py` now has one `claims_only()` helper that removes
+`**Corrected …**` / `**Amended …**` spans, and both documentation checks read through it. The
+convention that causes the trap — quote the wrong sentence while correcting it — is what makes the
+record readable and is worth keeping; what changes is that checks read the claim, not the history.
+
+**The helper's own first version dropped whole paragraphs** and emptied the audit report's
+entry-point list, because README puts corrections in their own paragraph while AUDIT_REPORT and
+PROGRESS put them mid-bullet *after* the claim. It cuts each paragraph at the marker now.
+
+**Mutation audit 7/7,** after 6/7. The survivor was the mirror direction: reopening `BLOCKED.md`
+#7 while the README still claimed the check was in place left the suite green, because the test
+returned early on a live entry instead of asserting the opposite.
+`evidence/the-readme-understated-its-own-bar.md`.

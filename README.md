@@ -254,7 +254,14 @@ The gate is deliberately hard to fool, because it is the only thing that decides
 CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the
 ffmpeg archive **at a pinned commit and verifies its SHA-256 before unzipping it** (D-121 — this
 line said "pinned" for a while when the URL was a branch path), and fails if the §4.3 golden render
-or the §3 Stage 0 tests *skip* rather than run. Making that job a required status check is a repository setting, and is not done.
+or the §3 Stage 0 tests *skip* rather than run. **That job is a required status check on `main`**
+(`BLOCKED.md` #7, resolved 2026-08-08), with `strict: true`, so a branch must also be up to date
+with `main` before it can merge. Measured against the live API:
+`required_status_checks.contexts == ["gate"]`.
+
+**Corrected 2026-08-10 (D-143):** the paragraph above ended "Making that job a required status
+check is a repository setting, and is not done" for two days after #7 was resolved — understating
+the project's own bar, in the one document a reader meets first.
 
 ## Module map
 
@@ -300,7 +307,7 @@ or the §3 Stage 0 tests *skip* rather than run. Making that job a required stat
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) and the CMX 3600 EDL (source timeline). Refuses NTSC rather than writing timecode that drifts. Shares §4.3.5's line breaks with the ASS — an SRT cue on one line hands the break points to the player. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
-| `cli.py` | — | What every entry point does before it writes: pin stdout and stderr to UTF-8. The locale's codec is cp1252 on §6's machine and the output is Sorani. |
+| `cli.py` | — | What every entry point does before it writes. `use_utf8_streams` pins stdout and stderr to UTF-8 — the locale's codec is cp1252 on §6's machine and the output is Sorani. `machine_readable_stdout` holds stdout for one JSON document and sends everything a library prints to stderr. `program_name` derives the name `--help` shows from how the process was started, because a console script and `python -m` are different commands. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |
 | `models.py` | §7 | Which §7 components this machine actually has, and the registry-driven fetcher. |

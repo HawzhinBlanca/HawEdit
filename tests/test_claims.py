@@ -25,6 +25,30 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 PROGRESS = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
 
 
+def claims_only(document: str) -> str:
+    """`document` with every `**Corrected …**` span removed, so checks read claims not history.
+
+    This project's convention is to **quote the wrong sentence while correcting it** — it is what
+    makes the record readable, and it is why a check that greps a whole document matches the very
+    string it is asserting is gone. That has cost four fixes: D-121 (`fetch-ffmpeg.sh` explains
+    `--fail` in a comment), D-139 (the gate workflow quotes the install command it replaced),
+    D-141 (the audit report names the entry point it had omitted) and D-143 (the README quotes
+    "is not done"). Fixed locally each time; structural here.
+
+    A correction runs from its marker to the end of its paragraph, so each paragraph is *cut* at
+    the marker rather than dropped: README puts corrections in their own paragraph, while
+    AUDIT_REPORT and PROGRESS put them mid-bullet after the claim they amend. Dropping the whole
+    paragraph therefore lost the claim too — the first version of this helper did exactly that and
+    left the audit report's entry-point list empty.
+    """
+    markers = ("**Corrected", "**Amended", "**Hardened", "**Progressed", "**Audited")
+    kept: list[str] = []
+    for paragraph in document.split("\n\n"):
+        cut = min((paragraph.find(m) for m in markers if m in paragraph), default=-1)
+        kept.append(paragraph if cut < 0 else paragraph[:cut])
+    return "\n\n".join(kept)
+
+
 def _ledger_row(task: str) -> str:
     """The PROGRESS.md row for one task id, e.g. "M0.3"."""
     for line in PROGRESS.splitlines():
@@ -857,8 +881,7 @@ def _claimed_console_scripts_text() -> str:
     it omitted, and a check over the whole bullet reads that name as though the list still had it.
     """
     section = _audit_report().split("## Verification evidence")[1]
-    bullet = section.split("- Clean Python 3.12 wheel install:")[1]
-    return bullet.split("**Corrected")[0]
+    return claims_only(section.split("- Clean Python 3.12 wheel install:")[1])
 
 
 def test_the_audit_report_names_every_console_script_and_no_others() -> None:
@@ -925,3 +948,69 @@ def test_the_audit_reports_wheel_contents_claim_names_real_paths() -> None:
     for module in ("hawedit/asr_worker.py", "hawedit/wsl_setup.py"):
         assert module in section, f"the wheel-contents claim no longer names {module}"
         assert (ROOT / "src" / module).is_file(), f"{module} is claimed for the wheel and absent"
+
+
+# --- D-143: the README is the front door, and two of its claims had drifted ------------------
+
+
+def test_the_readme_does_not_call_a_resolved_blocker_outstanding() -> None:
+    """`BLOCKED.md` is this project's record of what is still in the way, so the README cannot
+    describe a resolved entry as undone.
+
+    Measured: #7 (*the CI job is not a required status check*) was resolved 2026-08-08 and the
+    README still said "Making that job a required status check is a repository setting, and is not
+    done" — for two days, in the one document a reader meets first, understating the project's own
+    bar. Confirmed against the live API at the time of the fix:
+    `required_status_checks.contexts == ["gate"]`, `strict: true`.
+
+    The check is doc-to-doc on purpose. Branch protection is a repository setting and a test that
+    read it would need the network and a token, which is a test that skips — and a skipped test is
+    the quiet green this suite is written against.
+    """
+    claims = claims_only(README)
+    if _blocked_entries().get("7", True):
+        # The mirror, and the direction that matters more: with the entry live, the README must
+        # not claim the check is in place. Returning early here left that unchecked — measured,
+        # reopening #7 with the README unchanged SURVIVED — and overstating the bar is worse than
+        # understating it, which is the defect this test was written for.
+        assert "required status check on `main`" not in claims, (
+            "BLOCKED.md #7 is open, so `gate` is not a required check, but README.md says it is. "
+            "Resolve the entry or correct the sentence."
+        )
+        return
+
+    outstanding = [
+        phrase
+        for phrase in ("is not done", "is not a required", "not yet a required")
+        if phrase in claims
+    ]
+    assert not outstanding, (
+        f"BLOCKED.md #7 is resolved — `gate` is a required status check on main — but README.md "
+        f"still says {outstanding}. Fix the sentence or reopen the entry."
+    )
+    assert "required status check on `main`" in README, (
+        "the README no longer states that the gate is a required check, which is the fact #7's "
+        "resolution rests on"
+    )
+
+
+def test_the_module_map_row_for_cli_names_everything_cli_exports() -> None:
+    """`cli.py` is the "what every entry point does" module, so its row is a list, not a summary.
+
+    Measured: the row named **0 of 3** exports. It described `use_utf8_streams`'s effect without
+    naming it, and `machine_readable_stdout` (D-119) and `program_name` (D-142) were absent
+    entirely — one drift predating this loop, one created by it two commits earlier.
+
+    Only this module gets the check, and deliberately: it is the one whose whole purpose is to
+    collect things every `main()` must do, so it is the one that grows a fourth.
+    """
+    from hawedit import cli
+
+    row = next((line for line in README.splitlines() if line.startswith("| `cli.py` |")), None)
+    assert row is not None, "README.md's module map has no row for cli.py"
+
+    missing = [name for name in cli.__all__ if f"`{name}`" not in row]
+    assert not missing, (
+        f"cli.py exports {sorted(cli.__all__)} and its README row does not name {missing}. A "
+        f"module whose job is 'what every entry point does' has to list all of them."
+    )
