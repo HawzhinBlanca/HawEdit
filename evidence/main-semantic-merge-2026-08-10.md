@@ -111,3 +111,30 @@ The histories were joined only after those classifications and acceptance:
 Thus protected main is an ancestor, while tree equality proves the merge imported no stale file
 content. A post-merge canonical gate remains required because the merge changes commit identity
 and therefore reproducible-wheel timestamps even though the tree is equal.
+
+## Confidential Vertex ZDR coverage advance
+
+Protected main advanced again to `3765add` with no production-code delta. It proved that disabling
+the confidential Vertex ZDR gate reddened nothing and recorded a mutated judge sending both the
+client transcript and real source JPEG bytes through `countTokens` and `generateContent`.
+
+D-179 integrated the finding against readiness's newer class-set routing matrix. Every concrete
+judge is now exercised under three forbidden confidential states with a recording transport;
+configuration and attribution are separated; `count_parts` and `generate_json` gate independently;
+and positive controls prove the allowed route still sends. The 13 new cases made the focused
+Gemini suite 78/78 and the combined Gemini/claims/evidence slice 124/124.
+
+The exact collector rose from 2,008 to 2,021 and the floor was ratcheted to that measured value.
+The clean first parent then passed Ruff, mypy over 129 source files, formatting, 2,021/2,021 tests,
+zero skipped and accepted JUnit evidence in 258.6 seconds.
+
+The histories were joined after that acceptance:
+
+- readiness parent: `8bd29740850f0227d4cfe25914f47742e32183e1`
+- protected-main parent: `3765addc446ec7ba661091fdc7aaf548fda9573c`
+- merge: `8cf878dde4b5cc1ba49e6c2707d85bff3609ad89`
+- readiness-parent tree: `32bb011f1195b1f063d51efd5a59f34b327b9c3f`
+- merge tree: `32bb011f1195b1f063d51efd5a59f34b327b9c3f`
+
+Protected main is therefore an ancestor and the join imported no older file content. As with each
+prior join, an exact post-merge gate is still required for the final commit identity.

@@ -6017,6 +6017,20 @@ gates were already correct.
 
 `evidence/confidential-zdr-class-set-2026-08-10.md`.
 
+## D-180 - Join the confidential-ZDR coverage history without replacing the newer matrix
+
+Protected main `3765add` contained the D-179 finding, tests, evidence and ledger changes but no
+production-code delta. Readiness adapted its behavioral claim into the existing bidirectional
+judge-class inventory, added independent public-entry-point controls, passed the 78-test Gemini
+suite, ratcheted the exact floor to 2,021, and passed the canonical gate before joining histories.
+
+Merge `8cf878d` has readiness parent `8bd2974` and protected-main parent `3765add`. Both its tree
+and the first-parent tree are `32bb011f1195b1f063d51efd5a59f34b327b9c3f`, so no older test,
+documentation or floor content replaced the audited readiness versions. A post-merge canonical
+gate remains mandatory because identical Git trees do not prove the new commit identity executes.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
 ## D-172 - Declare every way a blocker stops needing Hawa
 
 `tests/test_claims.py` maps `BLOCKED.md` headings to live or resolved entries so a milestone cannot
