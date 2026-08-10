@@ -6072,6 +6072,23 @@ which is a distinct unsatisfied trust requirement.
 
 `evidence/invariant-1-digest-evidence-2026-08-10.md`.
 
+## D-187 - Join main only after adapting its missing-digest mutation to current APIs
+
+Protected main `f189b19` added no production change; it proved the missing/unreadable digest
+refusal could be neutralized while its older 1,471-test suite remained green.  Readiness adapted
+the finding to its newer API: direct verification and the independent check inside normalized
+artifact publication, not the removed `reusable_raw` method.  Seventeen new cases passed in a
+289-test transcript/pipeline/concurrency slice, the floor rose to 2,062, and the canonical gate
+passed before the history join.
+
+Merge `003963d` has accepted readiness parent `227e1bc` and protected-main parent `f189b19`.
+Its tree and the first-parent tree are both `e41b8c6624664bb95aabcf3f70f529f754b091a2`;
+the join therefore records main's ancestry without replacing newer transcript storage, release,
+pipeline, evidence or ledger content.  The merged identity still requires its own local and hosted
+acceptance.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
 ## D-181 - A prerequisite is held by its own diagnostic, not by a shared exit code
 
 Protected main measured that deleting twelve of fourteen older argv guards left their tests green.

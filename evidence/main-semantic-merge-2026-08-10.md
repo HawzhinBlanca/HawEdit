@@ -194,3 +194,28 @@ The histories were then joined:
 
 Protected main is an ancestor and the join imported no older file content. Post-merge local and
 hosted gates remain required for the final identity.
+
+## Transcript digest-evidence coverage advance
+
+Protected main next advanced to `f189b19` after measuring that its suite did not hold the
+missing/unreadable sidecar refusal in `verify_raw_integrity`.  Its commit changed only tests,
+evidence and ledgers; readiness production was already correct.
+
+D-186 adapted the finding to the current transcript store, which no longer has main's
+`reusable_raw` method.  Five sidecar-destruction states are derived into direct-verification and
+normalized-publication cases, then repeated against changed raw bytes.  Three unreadable states
+must report missing evidence; two readable-invalid states must report digest mismatch; an intact
+control must still publish and read the normalized artifact.  The focused current-tree slice
+passed 289/289, the collector and floor rose to 2,062, and package source bytes remained unchanged.
+
+The clean first parent passed Ruff, mypy over 129 source files, formatting, 2,062/2,062 tests,
+zero skipped and accepted JUnit evidence in 248.8 seconds.  The histories were then joined:
+
+- readiness parent: `227e1bcd7ed069a355fae908289023d4f787cbf8`
+- protected-main parent: `f189b19f17f7bb30f7153b8aa64efab9b2d23f04`
+- merge: `003963dc666d2f2c7717835c996f0977fdfcfc26`
+- readiness-parent tree: `e41b8c6624664bb95aabcf3f70f529f754b091a2`
+- merge tree: `e41b8c6624664bb95aabcf3f70f529f754b091a2`
+
+Protected main is an ancestor and no older file content entered the tree.  A new post-merge local
+and hosted gate is still required for the merged commit identity.
