@@ -8811,3 +8811,65 @@ No production code changed: one test. Floor 1552 → 1553.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-170
+
+**The module every caption timing comes from was checked only against itself.** §4.2 puts forced
+alignment in-house and Kurdish invariant #5 makes it the sole source of word timings. M1.1 is
+`DONE` with 33 tests — all of them hand-written expectations, which share one weakness: a
+systematic misreading of CTC would be written into the code *and* into the numbers beside it, and
+every one would still pass.
+
+**Is it right? Measured twice before anything was touched.** Against **torchaudio's** reference
+forced-alignment kernel: 354 randomized matrices compared, 46 refused as infeasible by both,
+**0 mismatches**. Against an **exhaustive search** over every legal CTC state path: 259 compared,
+**0 disagreements** from either implementation. The aligner is correct. It simply had nothing
+holding it.
+
+**What the 33 tests were not holding.** Five real CTC errors, one at a time, whole suite each,
+baseline verified green first. Deleting `extended[state] != extended[state - 2]` — the rule the
+module's own docstring calls *"the CTC rule that makes this a real algorithm rather than an
+argmax"* — left **every one of the 33 green, including `test_a_repeated_token_is_separated_by_a
+_blank`, the test named after it**. Its matrix is `[{1: 0.9}, {BLANK: 0.9}, {1: 0.9}]`, where the
+optimal path crosses that blank whether or not the rule forces it: the test passes for the
+correct implementation and the broken one alike. The other three mutations are already held by
+twelve, twelve and eight existing tests, and are reported as measured rather than claimed for the
+oracle.
+
+**Decision: an exhaustive search, and no new dependency.** `torchaudio==2.11.0+cpu` is in the
+hash-pinned gate lock and a differential test against it would run. **Rejected:** `pyproject.toml`
+avoids torchaudio deliberately (*"WAV frames to tensor without torchaudio"*) and it reaches the
+gate only transitively, so leaning the gate of record on it would be a supply-chain decision taken
+for a test's convenience. The brute force needs nothing, is exact on small matrices — which is
+where boundary errors live — and was validated against torchaudio once, recorded in the evidence.
+**Membership, not equality:** two paths can score identically, so requiring one tie-break would
+pin an implementation detail rather than the answer. **The oracle's own control** is that for
+every case with more than one legal path the optimal set must be a **strict** subset of them — an
+oracle that ranks everything optimal agrees with any aligner at all. Cost: 0.09 s.
+
+**The survivor is a no-op mutation of mine, proved rather than excused.** Deleting
+`extended[state] != blank_id` excludes nothing the clause beside it does not: blanks occupy the
+**even** indices of the extended sequence, so when `state` is blank `state - 2` is blank too and
+`extended[state] != extended[state - 2]` is already `0 != 0`. Measured across seven token
+sequences, **29 transitions examined, 0** where the blank clause is the deciding one. No test can
+distinguish its removal, so it is **documentation, not a control**, and it is not counted. It
+stays — a reader should not have to derive the parity argument.
+
+**And one hypothesis I chased and disproved.** Before finding that argument I assumed the survivor
+was a blank-poor corpus. Matrices where stepping over a token outscores emitting it turn out to be
+everywhere — **34,932 of 50,683** — but that number is about a *different* relaxation: my search
+harness permitted blank→blank skips explicitly, which the real mutation cannot reach. The corpus
+change it prompted is **kept on the honest argument** (real CTC posteriors are blank-dominated, and
+flat random rows are a distribution this aligner never sees) and recorded as having **changed no
+mutation result**.
+
+**4/5 caught lint-clean, 1 of them by the oracle alone.** The baseline check earned its keep for
+the second iteration running: the first run reported `BASELINE NOT GREEN` on mypy `--strict`
+`type-arg` — my own bare `tuple` annotations — which had reddened three gate-as-subprocess tests.
+
+No production code changed: two tests and a type alias. Floor 1553 → 1555.
+`evidence/an-aligner-with-no-independent-oracle.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

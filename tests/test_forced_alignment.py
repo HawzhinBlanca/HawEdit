@@ -17,6 +17,7 @@ complete. §5's sentence anchors are derived from these spans, and the Stage 5 h
 from __future__ import annotations
 
 import math
+import random
 from itertools import pairwise
 
 import pytest
@@ -370,4 +371,164 @@ def test_the_decode_can_produce_a_token_the_reference_text_never_used() -> None:
     assert 4 not in {reference_tokens[i] for i in compacted_ids}, (
         "the compacted decode reached a token outside the reference, so this test is not "
         "measuring the restriction it names"
+    )
+
+
+# --- D-170: an oracle that does not share the implementation's reasoning ---------------------
+#
+# Everything above is a hand-written expectation. They are good tests and they share one
+# weakness: a systematic misreading of CTC would be written into the code *and* into the
+# numbers beside it, and every one of them would still pass. What was missing is an
+# independent answer to the same question.
+#
+# This is exhaustive search — every legal state path enumerated and scored, no dynamic
+# programming, no shared reasoning with `viterbi_align` beyond the CTC transition rule itself.
+# Exponential, so it runs on small matrices; that is where boundary errors live anyway.
+#
+# Cross-checked once against torchaudio's reference kernel on 259 matrices (0 disagreements,
+# `evidence/an-aligner-with-no-independent-oracle.md`). The dependency stays out of the suite:
+# `pyproject.toml` avoids torchaudio deliberately ("WAV frames to tensor without torchaudio")
+# and it reaches the gate only transitively, so leaning the gate on it would be a supply-chain
+# decision taken for a test's convenience.
+
+_ORACLE_TOLERANCE = 1e-9
+# One inclusive frame range per token, in token order — what both answers reduce to.
+_Spans = tuple[tuple[int, int], ...]
+
+
+def _extended(tokens: list[int]) -> list[int]:
+    states = [BLANK]
+    for token in tokens:
+        states.extend((token, BLANK))
+    return states
+
+
+def _legal(states: list[int], previous: int, state: int) -> bool:
+    """Stay, advance one, or skip a blank between two *different* tokens."""
+    if state in (previous, previous + 1):
+        return True
+    if state == previous + 2:
+        return states[state] != BLANK and states[state] != states[state - 2]
+    return False
+
+
+def _all_paths(matrix: list[list[float]], tokens: list[int]) -> dict[_Spans, float]:
+    """Every legal path's span tuple, mapped to the best score that reaches it."""
+    states = _extended(tokens)
+    frames = len(matrix)
+    found: dict[_Spans, float] = {}
+
+    def walk(frame: int, state: int, score: float, path: list[int]) -> None:
+        if frame == frames:
+            if state not in (len(states) - 1, len(states) - 2):
+                return
+            spans: dict[int, list[int]] = {}
+            for index, visited in enumerate(path):
+                if visited % 2 == 1:
+                    spans.setdefault((visited - 1) // 2, [index, index])[1] = index
+            if len(spans) != len(tokens):
+                return  # a path that never entered some token's state emits a shorter sequence
+            key = tuple((spans[i][0], spans[i][1]) for i in range(len(tokens)))
+            found[key] = max(found.get(key, -math.inf), score)
+            return
+        for nxt in range(state, min(state + 3, len(states))):
+            if _legal(states, state, nxt):
+                walk(frame + 1, nxt, score + matrix[frame][states[nxt]], [*path, nxt])
+
+    for start in (0, 1):
+        if start < len(states):
+            walk(1, start, matrix[0][states[start]], [start])
+    return found
+
+
+def _oracle(matrix: list[list[float]], tokens: list[int]) -> tuple[set[_Spans], int]:
+    """The span tuples an exhaustive search finds optimal, and how many were legal at all."""
+    paths = _all_paths(matrix, tokens)
+    if not paths:
+        return set(), 0
+    best = max(paths.values())
+    return {key for key, score in paths.items() if score >= best - _ORACLE_TOLERANCE}, len(paths)
+
+
+def _pseudorandom_matrix(
+    seed: int, frames: int, vocab: int, blank_weight: float
+) -> list[list[float]]:
+    """Deterministic log-probabilities. Seeded so a failure is reproducible, never flaky.
+
+    `blank_weight` is here because real CTC posteriors are blank-dominated — silence and
+    inter-phone frames outnumber emitting ones — and a corpus of flat random rows is a
+    distribution this aligner never sees. Measured: once blanks dominate, the best path changes
+    shape, and over 50,683 such matrices a token-skipping path outscores every legal one on
+    **34,932** of them, so the completeness check is doing real work there.
+
+    Recorded honestly: it was added chasing a mutation that turned out to be a no-op, and it
+    changed no result in the audit (D-170). It is kept for the distribution argument alone.
+    """
+    rng = random.Random(seed)
+    matrix: list[list[float]] = []
+    for _ in range(frames):
+        weights = [rng.uniform(0.05, 1.0) for _ in range(vocab)]
+        weights[BLANK] *= blank_weight
+        total = sum(weights)
+        matrix.append([math.log(w / total) for w in weights])
+    return matrix
+
+
+def _oracle_cases() -> list[tuple[int, list[list[float]], list[int]]]:
+    rng = random.Random(20260811)
+    cases = []
+    for seed in range(60):
+        vocab = rng.randint(3, 5)
+        frames = rng.randint(2, 9)
+        tokens = [rng.randint(1, vocab - 1) for _ in range(rng.randint(1, 4))]
+        # Silence is the common case in real speech, so the corpus has to contain it: a
+        # flat-blank corpus is blind to the whole class of "step over a token" errors.
+        blank_weight = rng.choice([1.0, 1.0, 20.0, 200.0])
+        cases.append((seed, _pseudorandom_matrix(seed, frames, vocab, blank_weight), tokens))
+    return cases
+
+
+def test_the_aligner_agrees_with_an_exhaustive_search_of_every_legal_path() -> None:
+    """The dynamic program must find a path the brute force also calls optimal.
+
+    Membership rather than equality: two paths can score identically, and requiring one
+    particular tie-break would pin an implementation detail rather than the answer.
+    """
+    checked = 0
+    for seed, matrix, tokens in _oracle_cases():
+        optimal, _ = _oracle(matrix, tokens)
+        if not optimal:
+            with pytest.raises(AlignmentInfeasible):
+                viterbi_align(matrix, tokens, blank_id=BLANK)
+            continue
+        spans = viterbi_align(matrix, tokens, blank_id=BLANK)
+        mine = tuple((s.start_frame, s.end_frame) for s in spans)
+        assert mine in optimal, (
+            f"seed {seed}, tokens {tokens}: the aligner returned {mine}, which an exhaustive "
+            f"search of every legal CTC path does not rank best. Optimal: {sorted(optimal)}"
+        )
+        checked += 1
+    assert checked >= 40, f"only {checked} cases were actually aligned; the corpus went vacuous"
+
+
+def test_the_exhaustive_search_rejects_paths_as_well_as_accepting_them() -> None:
+    """The control. An oracle that calls everything optimal agrees with any aligner at all.
+
+    For every case with more than one legal path, the optimal set must be a **strict** subset
+    of them — so the test above is comparing against a real preference and not against
+    "anything goes".
+    """
+    discriminating = 0
+    for seed, matrix, tokens in _oracle_cases():
+        optimal, legal_paths = _oracle(matrix, tokens)
+        if legal_paths <= 1:
+            continue
+        assert len(optimal) < legal_paths, (
+            f"seed {seed}, tokens {tokens}: the oracle ranks all {legal_paths} legal paths "
+            f"equally optimal, so it would accept any aligner"
+        )
+        discriminating += 1
+    assert discriminating >= 40, (
+        f"only {discriminating} cases had a choice to make; the corpus no longer exercises the "
+        f"oracle's ability to reject"
     )
