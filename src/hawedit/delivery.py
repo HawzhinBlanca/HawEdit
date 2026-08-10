@@ -21,8 +21,8 @@ its record timecodes start at zero. An EDL written in clip time tells an editor 
 footage from the top of the episode, and nothing about the file looks wrong.
 
 An EDL also counts **frames**, not milliseconds, so it cannot be written without the rate.
-NTSC 30000/1001 is emitted as SMPTE drop-frame timecode; other fractional rates are refused
-rather than rounded into a slowly drifting conform.
+NTSC 30000/1001 and 60000/1001 are emitted as SMPTE drop-frame timecode; other fractional rates
+are refused rather than rounded into a slowly drifting conform.
 
 The SRT shares §4.3.5's line breaking with the ASS for the same reason it shares the clip
 offset: automatic wrapping on RTL text produces bad break points. A player wraps whatever it
@@ -151,6 +151,9 @@ def build_srt(
     Raises:
         DeliveryError: no sentences, a sentence that never closed, or one outside the clip.
     """
+    clip_in_ms = _nonnegative_milliseconds(clip_in_ms, "SRT clip in-point")
+    if clip_duration_ms is not None:
+        clip_duration_ms = _nonnegative_milliseconds(clip_duration_ms, "SRT clip duration")
     if not sentences:
         raise DeliveryError(
             "no sentences to write: an empty SRT is a valid file that delivers no subtitles"
@@ -182,7 +185,7 @@ def build_srt(
     return "\n".join(cues) + "\n"
 
 
-_NTSC_DROP_FPS: Final = 30_000 / 1_001
+_NTSC_DROP_RATES: Final = ((30, 30_000 / 1_001), (60, 60_000 / 1_001))
 _DROP_RATE_TOLERANCE: Final = 1e-4
 
 
@@ -199,14 +202,17 @@ def _timecode_rate(fps: float) -> tuple[int, float, bool]:
     nominal = round(numeric_fps)
     if abs(numeric_fps - nominal) <= 1e-9:
         return nominal, float(nominal), False
-    # ffprobe reports the exact 30000/1001 ratio while user-facing metadata often reports
-    # 29.97. Both identify the same NTSC rate. The narrow tolerance accepts those two values
-    # but not an arbitrary nearby fractional rate.
-    if abs(numeric_fps - _NTSC_DROP_FPS) <= _DROP_RATE_TOLERANCE:
-        return 30, _NTSC_DROP_FPS, True
+    # ffprobe reports exact 30000/1001 or 60000/1001 ratios while user-facing metadata commonly
+    # reports 29.97 or 59.94. FFmpeg's maintained SMPTE helper defines both: nominal 30 skips two
+    # labels and nominal 60 skips four at every non-tenth minute. The narrow tolerance accepts
+    # the conventional decimals but not an arbitrary nearby fractional rate.
+    for nominal_rate, physical_rate in _NTSC_DROP_RATES:
+        if abs(numeric_fps - physical_rate) <= _DROP_RATE_TOLERANCE:
+            return nominal_rate, physical_rate, True
     raise DeliveryError(
         f"fractional frame rate {fps} is unsupported. HawEdit writes SMPTE drop-frame only "
-        "for NTSC 30000/1001 (29.97) fps; rounding this rate would create a drifting EDL."
+        "for NTSC 30000/1001 (29.97) and 60000/1001 (59.94) fps; rounding another rate "
+        "would create a drifting EDL."
     )
 
 
@@ -264,8 +270,8 @@ def build_edl(
         DeliveryError: the clip has no length, is shorter than a frame, starts before zero,
             or `fps` cannot be represented honestly.
     """
-    if clip_in_ms < 0:
-        raise DeliveryError(f"clip in-point is negative: {clip_in_ms} ms")
+    clip_in_ms = _nonnegative_milliseconds(clip_in_ms, "EDL clip in-point")
+    clip_out_ms = _nonnegative_milliseconds(clip_out_ms, "EDL clip out-point")
     if clip_out_ms <= clip_in_ms:
         raise DeliveryError(
             f"clip spans {clip_in_ms}..{clip_out_ms} ms, which has no length; there is nothing "

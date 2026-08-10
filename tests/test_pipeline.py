@@ -2148,9 +2148,9 @@ def _fractional_rate_copy(source: Path, dest: Path, rate: str) -> Path:
     return dest
 
 
-def _ntsc_copy(source: Path, dest: Path) -> Path:
-    """A real 29.97 fps transcode of the fixture. `frame_rate` reads 30000/1001 from it."""
-    return _fractional_rate_copy(source, dest, "30000/1001")
+def _ntsc_copy(source: Path, dest: Path, rate: str = "30000/1001") -> Path:
+    """A real NTSC transcode. `frame_rate` must read the requested exact fractional rate."""
+    return _fractional_rate_copy(source, dest, rate)
 
 
 def _sidecars_on_disk(work: Path) -> list[str]:
@@ -2160,8 +2160,14 @@ def _sidecars_on_disk(work: Path) -> list[str]:
 
 
 @needs_ffmpeg
-def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(tmp_path: Path) -> None:
-    ntsc = _ntsc_copy(FIXTURE, tmp_path / "ntsc.mp4")
+@pytest.mark.parametrize(
+    ("rate", "media_id"),
+    [("30000/1001", "ntsc30"), ("60000/1001", "ntsc60")],
+)
+def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
+    tmp_path: Path, rate: str, media_id: str
+) -> None:
+    ntsc = _ntsc_copy(FIXTURE, tmp_path / f"{media_id}.mp4", rate)
     from hawedit.render import frame_rate
 
     assert frame_rate(ntsc) != int(frame_rate(ntsc)), "the transcode must be a non-integer rate"
@@ -2170,14 +2176,18 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(tmp_path: Path
     run = run_pipeline(
         ntsc,
         work,
-        media_id="ntsc",
-        transcript=a_transcript("ntsc"),
+        media_id=media_id,
+        transcript=a_transcript(media_id),
         select_sentences=(0,),
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         verdict=a_verdict(100, 1_700),
     )
     assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
-    assert _sidecars_on_disk(work) == ["ntsc-s0-0.edl", "ntsc-s0-0.json", "ntsc-s0-0.srt"]
+    assert _sidecars_on_disk(work) == [
+        f"{media_id}-s0-0.edl",
+        f"{media_id}-s0-0.json",
+        f"{media_id}-s0-0.srt",
+    ]
     edl = Path(run.delivery.edl_path).read_text(encoding="utf-8")
     assert "FCM: DROP FRAME" in edl
     assert ";" in next(line for line in edl.splitlines() if line.startswith("001"))

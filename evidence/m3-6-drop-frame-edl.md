@@ -47,8 +47,9 @@ NTSC / 25 fps / unsupported-fractional / write-failure pipeline slice: 4 passed
 Full repository result: Ruff, format, and mypy clean; **1,109 collected, 1,109 passed, zero
 skipped; `VERIFY OK`**.
 
-## Not claimed
+## Subsequent amendments
 
-CMX 3600 handling for 59.94 high-frame-rate time addresses is not inferred from the 29.97
-rule. The full MP4/ASS/SRT/JSON/EDL bundle is also not yet one atomic transaction; this change
-closes the ordinary NTSC completeness gap, not that separate recovery limitation.
+D-083 made the full MP4/ASS/SRT/JSON/EDL bundle one atomic write-once publication. On 2026-08-10,
+D-082 was extended to `60000/1001` only after FFmpeg's maintained timecode contract independently
+confirmed the nominal-60 four-count rule. That proof is separate rather than retroactively folded
+into this 29.97 measurement: `evidence/m3-6-high-frame-rate-drop-frame.md`.

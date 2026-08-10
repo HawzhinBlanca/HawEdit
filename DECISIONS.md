@@ -3289,7 +3289,7 @@ Gate: `VERIFY OK — 1119 passed, 0 skipped`.
 
 ---
 
-## D-082 · NTSC 30000/1001 uses SMPTE drop-frame EDL timecode
+## D-082 · NTSC fractional rates use SMPTE drop-frame EDL timecode
 
 **Supersedes D-042's NTSC refusal and D-072's remaining drop-frame shortfall.** Refusing 29.97
 was safer than rounding it, but it made §2 delivery impossible on ordinary NTSC footage. The
@@ -3307,8 +3307,18 @@ minute transition, and FFmpeg's `av_timecode_adjust_ntsc_framenum2` supplies an 
 implementation reference. Tests cover every physical frame in the first hour plus a real
 30000/1001 pipeline transcode. `evidence/m3-6-drop-frame-edl.md`.
 
-**Still open.** This makes NTSC delivery complete; it does not make the complete
-MP4/ASS/SRT/JSON/EDL bundle one atomic transaction.
+**Amended 2026-08-10.** The earlier refusal to infer 59.94 from the 29.97 rule was correct until an
+independent standard implementation was cited. FFmpeg's maintained timecode contract explicitly
+defines drop-frame adjustment for multiples of nominal 30, and its implementation names 29.97 and
+59.94: nominal 60 skips four counts at each non-tenth minute. HawEdit therefore also recognizes
+only `60000/1001` and conventional `59.94`, while `120000/1001` and every other unsupported
+fractional rate still refuse. Tests cover the first-minute, tenth-minute and hour boundaries, every
+physical frame in the first ten minutes, and equal source/record EDL durations.
+`evidence/m3-6-high-frame-rate-drop-frame.md`.
+
+**At the time of D-082, still open.** This made NTSC delivery complete but did not make the full
+MP4/ASS/SRT/JSON/EDL bundle one atomic transaction. D-083 immediately below closes that publication
+gap; the wording is retained as the decision's historical boundary rather than a current shortfall.
 
 ---
 

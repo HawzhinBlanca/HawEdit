@@ -152,6 +152,15 @@ def test_the_srt_ends_with_a_blank_line() -> None:
     assert srt.endswith("\n\n")
 
 
+@pytest.mark.parametrize("value", [True, 1.5, "0"])
+def test_srt_clip_bounds_require_exact_integer_milliseconds(value: object) -> None:
+    sentence = a_sentence(0, 1_000)
+    with pytest.raises(DeliveryError, match="SRT clip in-point.*non-negative integer"):
+        build_srt((sentence,), value)  # type: ignore[arg-type]
+    with pytest.raises(DeliveryError, match="SRT clip duration.*non-negative integer"):
+        build_srt((sentence,), 0, value)  # type: ignore[arg-type]
+
+
 def test_an_unreadable_cue_timing_is_refused_instead_of_dropped() -> None:
     malformed = "1\n-1:59:59,500 --> 00:00:01,000\nhello\n"
     with pytest.raises(DeliveryError, match="unreadable timing line"):
@@ -343,6 +352,26 @@ def test_the_common_29_97_decimal_is_treated_as_30000_over_1001() -> None:
     assert ms_to_timecode(3_600_000, 29.97) == "01:00:00;00"
 
 
+def test_high_frame_rate_ntsc_skips_four_counts_outside_tenth_minutes() -> None:
+    ntsc = 60_000 / 1_001
+    assert ms_to_timecode(60_043, ntsc) == "00:00:59;59"
+    assert ms_to_timecode(60_060, ntsc) == "00:01:00;04"
+    assert ms_to_timecode(600_000, ntsc) == "00:10:00;00"
+    assert ms_to_timecode(3_600_000, ntsc) == "01:00:00;00"
+    assert ms_to_timecode(3_600_000, 59.94) == "01:00:00;00"
+
+
+def test_every_high_rate_ntsc_frame_in_ten_minutes_has_one_legal_label() -> None:
+    ntsc = 60_000 / 1_001
+    frame_count = round(600 * ntsc)
+    labels = [ms_to_timecode(round(frame * 1000 / ntsc), ntsc) for frame in range(frame_count)]
+    assert len(set(labels)) == frame_count
+    for label in labels:
+        _, minute, second, frame = (int(part) for part in label.replace(";", ":").split(":"))
+        if minute % 10:
+            assert not (second == 0 and frame < 4), label
+
+
 def test_every_ntsc_frame_in_the_first_hour_has_one_legal_drop_frame_label() -> None:
     ntsc = 30_000 / 1_001
     frame_count = round(3_600 * ntsc)
@@ -357,6 +386,8 @@ def test_every_ntsc_frame_in_the_first_hour_has_one_legal_drop_frame_label() -> 
 def test_an_unsupported_fractional_rate_is_refused_instead_of_rounded() -> None:
     with pytest.raises(DeliveryError, match="fractional frame rate.*unsupported"):
         ms_to_timecode(1_000, 24_000 / 1_001)
+    with pytest.raises(DeliveryError, match="fractional frame rate.*unsupported"):
+        ms_to_timecode(1_000, 120_000 / 1_001)
 
 
 def test_a_non_positive_rate_is_refused() -> None:
@@ -439,6 +470,18 @@ def test_an_ntsc_edl_declares_and_uses_drop_frame_timecode() -> None:
     ]
 
 
+def test_a_high_frame_rate_ntsc_edl_uses_four_count_drop_frame_timecode() -> None:
+    edl = build_edl(clip_in_ms=60_060, clip_out_ms=120_120, fps=60_000 / 1_001)
+    event = next(line for line in edl.splitlines() if line.startswith("001"))
+    assert "FCM: DROP FRAME" in edl
+    assert event.split()[-4:] == [
+        "00:01:00;04",
+        "00:02:00;08",
+        "00:00:00;00",
+        "00:01:00;04",
+    ]
+
+
 def test_the_title_appears_and_is_sanitised_to_one_line() -> None:
     edl = build_edl(clip_in_ms=0, clip_out_ms=1_000, fps=25, title="EP12\nCLIP 1")
     assert "TITLE: EP12 CLIP 1" in edl
@@ -466,3 +509,11 @@ def test_a_clip_shorter_than_one_frame_is_refused() -> None:
 def test_a_negative_in_point_is_refused() -> None:
     with pytest.raises(DeliveryError, match="negative"):
         build_edl(clip_in_ms=-1, clip_out_ms=1_000, fps=25)
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "0"])
+def test_edl_clip_bounds_require_exact_integer_milliseconds(value: object) -> None:
+    with pytest.raises(DeliveryError, match="EDL clip in-point.*non-negative integer"):
+        build_edl(clip_in_ms=value, clip_out_ms=1_000, fps=25)  # type: ignore[arg-type]
+    with pytest.raises(DeliveryError, match="EDL clip out-point.*non-negative integer"):
+        build_edl(clip_in_ms=0, clip_out_ms=value, fps=25)  # type: ignore[arg-type]
