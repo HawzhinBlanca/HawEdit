@@ -49,11 +49,25 @@ __all__ = [
     "parse_srt_times",
 ]
 
-_SRT_TIME = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})")
+_SRT_TIME = re.compile(
+    r"(\d+):([0-5]\d):([0-5]\d),(\d{3})\s*-->\s*"
+    r"(\d+):([0-5]\d):([0-5]\d),(\d{3})"
+)
 
 
 class DeliveryError(ValueError):
     """A sidecar this module would not be able to ship honestly."""
+
+
+def _nonnegative_milliseconds(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise DeliveryError(f"{label} must be a non-negative integer number of milliseconds")
+    if value < 0:
+        raise DeliveryError(
+            f"{label} cannot be negative, got {value} ms. SRT and SMPTE time fields are "
+            "unsigned; formatting this value would emit plausible-looking nonsense."
+        )
+    return value
 
 
 def ms_to_srt_time(milliseconds: int) -> str:
@@ -61,8 +75,10 @@ def ms_to_srt_time(milliseconds: int) -> str:
 
     The separator is a **comma**. A period is WebVTT, and a player expecting SRT either
     rejects the file or mis-parses the cue — either way the subtitles do not appear and
-    nothing says so.
+    nothing says so. Negative, boolean, fractional and string values are refused as domain
+    errors instead of leaking Python arithmetic errors or producing a plausible wrong timestamp.
     """
+    milliseconds = _nonnegative_milliseconds(milliseconds, "SRT timestamp")
     seconds, milliseconds = divmod(milliseconds, 1000)
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
@@ -70,14 +86,51 @@ def ms_to_srt_time(milliseconds: int) -> str:
 
 
 def parse_srt_times(srt_text: str) -> tuple[tuple[int, int], ...]:
-    """Every cue's `(start_ms, end_ms)`, read back out of the file."""
-    return tuple(
-        (
-            ((int(h1) * 60 + int(m1)) * 60 + int(s1)) * 1000 + int(ms1),
-            ((int(h2) * 60 + int(m2)) * 60 + int(s2)) * 1000 + int(ms2),
-        )
-        for h1, m1, s1, ms1, h2, m2, s2, ms2 in _SRT_TIME.findall(srt_text)
-    )
+    """Every cue's `(start_ms, end_ms)`, refusing malformed or silently dropped cues.
+
+    This reader validates the grammar position rather than searching the whole block for a
+    timestamp. Hunting for the first ``-->`` can skip a malformed timing line and reinterpret
+    caption text as timing, while a global regex silently returns fewer cues. Both make a broken
+    delivery look valid to the pipeline check that reads the SRT back.
+    """
+    if not isinstance(srt_text, str):
+        raise DeliveryError("SRT content must be text")
+    body = srt_text.strip()
+    if not body:
+        return ()
+    blocks = re.split(r"\r?\n(?:[ \t]*\r?\n)+", body)
+    times: list[tuple[int, int]] = []
+    for expected_index, block in enumerate(blocks, start=1):
+        lines = block.splitlines()
+        if len(lines) < 2:
+            preview = block[:120].replace("\r", " ").replace("\n", " ")
+            raise DeliveryError(
+                f"SRT cue {expected_index} has no timing line: {preview!r}. Skipping it would "
+                "report fewer cues than the file contains."
+            )
+        label = lines[0].strip()
+        if label != str(expected_index):
+            raise DeliveryError(
+                f"SRT cue index is {label[:40]!r}; expected {expected_index}. Cue indices must "
+                "be one-based and sequential so omissions are visible."
+            )
+        timing = lines[1].strip()
+        match = _SRT_TIME.fullmatch(timing)
+        if match is None:
+            raise DeliveryError(
+                f"SRT cue {expected_index} has an unreadable timing line: {timing[:120]!r}. "
+                "Skipping it would report fewer cues than the file contains."
+            )
+        h1, m1, s1, ms1, h2, m2, s2, ms2 = match.groups()
+        start = ((int(h1) * 60 + int(m1)) * 60 + int(s1)) * 1000 + int(ms1)
+        end = ((int(h2) * 60 + int(m2)) * 60 + int(s2)) * 1000 + int(ms2)
+        if end <= start:
+            raise DeliveryError(
+                f"SRT cue {expected_index} ends at {end} ms and does not end after its "
+                f"{start} ms start"
+            )
+        times.append((start, end))
+    return tuple(times)
 
 
 def build_srt(
@@ -135,15 +188,21 @@ _DROP_RATE_TOLERANCE: Final = 1e-4
 
 def _timecode_rate(fps: float) -> tuple[int, float, bool]:
     """Return nominal counter rate, physical frame rate, and drop-frame mode."""
-    if not math.isfinite(fps) or fps <= 0:
+    if isinstance(fps, bool) or not isinstance(fps, int | float):
+        raise DeliveryError(f"frame rate must be a finite positive number, got {fps!r}")
+    try:
+        numeric_fps = float(fps)
+    except OverflowError as exc:
+        raise DeliveryError("frame rate must be finite, got an out-of-range value") from exc
+    if not math.isfinite(numeric_fps) or numeric_fps <= 0:
         raise DeliveryError(f"frame rate must be finite and positive, got {fps}")
-    nominal = round(fps)
-    if abs(fps - nominal) <= 1e-9:
+    nominal = round(numeric_fps)
+    if abs(numeric_fps - nominal) <= 1e-9:
         return nominal, float(nominal), False
     # ffprobe reports the exact 30000/1001 ratio while user-facing metadata often reports
     # 29.97. Both identify the same NTSC rate. The narrow tolerance accepts those two values
     # but not an arbitrary nearby fractional rate.
-    if abs(fps - _NTSC_DROP_FPS) <= _DROP_RATE_TOLERANCE:
+    if abs(numeric_fps - _NTSC_DROP_FPS) <= _DROP_RATE_TOLERANCE:
         return 30, _NTSC_DROP_FPS, True
     raise DeliveryError(
         f"fractional frame rate {fps} is unsupported. HawEdit writes SMPTE drop-frame only "
@@ -157,8 +216,7 @@ def ms_to_timecode(milliseconds: int, fps: float) -> str:
     Raises:
         DeliveryError: time is negative, or `fps` is invalid or unsupported.
     """
-    if milliseconds < 0:
-        raise DeliveryError(f"timecode time is negative: {milliseconds} ms")
+    milliseconds = _nonnegative_milliseconds(milliseconds, "timecode timestamp")
     nominal, physical, drop_frame = _timecode_rate(fps)
     total_frames = round(milliseconds * physical / 1000)
     return _frames_to_timecode(total_frames, nominal, drop_frame=drop_frame)

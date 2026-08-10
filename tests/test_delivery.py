@@ -83,6 +83,21 @@ def test_srt_keeps_full_millisecond_precision() -> None:
     assert ms_to_srt_time(1_234) == "00:00:01,234"
 
 
+def test_a_negative_srt_timestamp_is_refused_rather_than_formatted() -> None:
+    """Before the guard, -1 formatted as the plausible-looking `-1:59:59,999`."""
+    with pytest.raises(DeliveryError, match="cannot be negative"):
+        ms_to_srt_time(-1)
+    with pytest.raises(DeliveryError, match="cannot be negative"):
+        ms_to_srt_time(-500)
+    assert ms_to_srt_time(0) == "00:00:00,000"
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "5"])
+def test_srt_timestamp_requires_an_exact_integer(value: object) -> None:
+    with pytest.raises(DeliveryError, match="non-negative integer"):
+        ms_to_srt_time(value)  # type: ignore[arg-type]
+
+
 # =========================================================================================
 # build_srt — the clip's timeline, like the ASS beside it
 # =========================================================================================
@@ -135,6 +150,52 @@ def test_no_sentences_is_refused_rather_than_an_empty_file() -> None:
 def test_the_srt_ends_with_a_blank_line() -> None:
     srt = build_srt((a_sentence(0, 1_000),), clip_in_ms=0)
     assert srt.endswith("\n\n")
+
+
+def test_an_unreadable_cue_timing_is_refused_instead_of_dropped() -> None:
+    malformed = "1\n-1:59:59,500 --> 00:00:01,000\nhello\n"
+    with pytest.raises(DeliveryError, match="unreadable timing line"):
+        parse_srt_times(malformed)
+
+
+def test_the_reader_uses_the_timing_lines_grammar_position() -> None:
+    hunted = "1\nBAD\n00:00:05,000 --> 00:00:06,000\n"
+    with pytest.raises(DeliveryError, match="unreadable timing line"):
+        parse_srt_times(hunted)
+
+
+def test_an_arrow_inside_caption_text_is_not_a_second_timing_line() -> None:
+    body = "1\n00:00:00,000 --> 00:00:01,000\nHewler --> Slemani\n"
+    assert parse_srt_times(body) == ((0, 1_000),)
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("1\n00:60:00,000 --> 00:00:01,000\ntext\n", "unreadable timing line"),
+        ("1\n00:00:02,000 --> 00:00:01,000\ntext\n", "does not end after"),
+        ("1\n00:00:01,000 --> 00:00:01,000\ntext\n", "does not end after"),
+        ("2\n00:00:00,000 --> 00:00:01,000\ntext\n", "expected 1"),
+        ("1\n", "no timing line"),
+    ],
+)
+def test_srt_reader_refuses_invalid_clock_and_cue_structure(body: str, message: str) -> None:
+    with pytest.raises(DeliveryError, match=message):
+        parse_srt_times(body)
+
+
+def test_srt_reader_round_trips_every_cue_and_hours_above_two_digits() -> None:
+    body = "1\n00:00:00,000 --> 00:00:01,000\na\n\n2\n100:00:00,000 --> 100:00:01,000\nb\n"
+    assert parse_srt_times(body) == ((0, 1_000), (360_000_000, 360_001_000))
+    assert parse_srt_times("") == ()
+
+
+def test_srt_reader_accepts_windows_line_endings_and_spaced_blank_lines() -> None:
+    body = (
+        "1\r\n00:00:00,000 --> 00:00:01,000\r\na\r\n \t\r\n"
+        "2\r\n00:00:01,000 --> 00:00:02,000\r\nb\r\n"
+    )
+    assert parse_srt_times(body) == ((0, 1_000), (1_000, 2_000))
 
 
 # =========================================================================================
@@ -312,6 +373,23 @@ def test_a_non_finite_rate_is_refused(fps: float) -> None:
 def test_a_negative_timecode_time_is_refused() -> None:
     with pytest.raises(DeliveryError, match="negative"):
         ms_to_timecode(-1, 25)
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "5"])
+def test_timecode_timestamp_requires_an_exact_integer(value: object) -> None:
+    with pytest.raises(DeliveryError, match="non-negative integer"):
+        ms_to_timecode(value, 25)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("fps", [True, "25"])
+def test_timecode_rate_rejects_boolean_and_string_values(fps: object) -> None:
+    with pytest.raises(DeliveryError, match="finite positive number"):
+        ms_to_timecode(1_000, fps)  # type: ignore[arg-type]
+
+
+def test_timecode_rate_normalizes_an_integer_too_large_for_a_float() -> None:
+    with pytest.raises(DeliveryError, match="out-of-range"):
+        ms_to_timecode(1_000, 10**1_000)
 
 
 # =========================================================================================
