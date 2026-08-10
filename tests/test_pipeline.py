@@ -584,40 +584,6 @@ def test_the_cli_reports_malformed_transcript_json_without_a_traceback(tmp_path:
     assert main([str(source), "--transcript", str(transcript)]) == 2
 
 
-@pytest.mark.parametrize(
-    "flags",
-    [
-        ("--sentences", "0"),
-        ("--qc-pass",),
-        ("--confidential",),
-    ],
-)
-def test_the_cli_refuses_flags_whose_prerequisites_are_absent(
-    tmp_path: Path, flags: tuple[str, ...]
-) -> None:
-    from hawedit.pipeline import main
-
-    source = tmp_path / "source.mp4"
-    source.touch()
-    assert main([str(source), *flags]) == 2
-
-
-@pytest.mark.parametrize("query", [None, "   "])
-def test_the_cli_refuses_visual_without_a_bounded_query_source(
-    tmp_path: Path, query: str | None
-) -> None:
-    from hawedit.pipeline import main
-
-    source = tmp_path / "source.mp4"
-    source.touch()
-    transcript = tmp_path / "transcript.json"
-    flags = [str(source), "--transcript", str(transcript), "--visual"]
-    if query is not None:
-        flags.extend(("--visual-query", query))
-
-    assert main(flags) == 2
-
-
 def test_the_cli_can_load_the_documented_stage_4_verdict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2580,6 +2546,104 @@ def _query_preflight_exit(argv: list[str], tmp_path: Path) -> tuple[int, str]:
     with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
         code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), *argv])
     return code, captured.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("label", "flags", "expected"),
+    [
+        (
+            "two Stage 1 sources",
+            ("--transcript", "missing.json", "--omni-asr"),
+            "mutually exclusive Stage 1",
+        ),
+        ("runtime without OmniASR", ("--omni-asr-runtime", "wsl"), "require --omni-asr"),
+        ("distro without OmniASR", ("--wsl-distro", "Ubuntu"), "require --omni-asr"),
+        (
+            "two cloud routes",
+            ("--gemini", "--vertex-project", "project"),
+            "mutually exclusive cloud routes",
+        ),
+        (
+            "live cloud and stored verdict",
+            ("--gemini", "--verdict", "missing.json"),
+            "mutually exclusive Stage 4 sources",
+        ),
+        ("Gemini without Stage 1", ("--gemini",), "cloud discovery requires"),
+        (
+            "Vertex without Stage 1",
+            ("--vertex-project", "project"),
+            "cloud discovery requires",
+        ),
+        ("selection without Stage 1", ("--sentences", "0"), "--sentences requires"),
+        ("verdict without Stage 1", ("--verdict", "missing.json"), "--verdict requires"),
+        (
+            "verdict without selection",
+            ("--transcript", "missing.json", "--verdict", "missing-verdict.json"),
+            "--verdict requires",
+        ),
+        (
+            "visual without Stage 1",
+            ("--visual", "--visual-query", "پرسیار"),
+            "--visual requires",
+        ),
+        (
+            "query without visual",
+            ("--transcript", "missing.json", "--visual-query", "پرسیار"),
+            "--visual-query requires --visual",
+        ),
+        (
+            "blank visual query",
+            ("--transcript", "missing.json", "--visual", "--visual-query", "   "),
+            "non-whitespace Sorani retrieval text",
+        ),
+        (
+            "visual without a query source",
+            ("--transcript", "missing.json", "--visual"),
+            "--visual without Path A",
+        ),
+        ("QC without selection", ("--qc-pass",), "--qc-pass requires"),
+        (
+            "auto-selection without discovery",
+            ("--transcript", "missing.json", "--auto-select"),
+            "Stage 3 producer that can actually produce",
+        ),
+        (
+            "TimeLens without selection",
+            ("--timelens",),
+            "--timelens and --face-reframe require",
+        ),
+        (
+            "reframing without selection",
+            ("--face-reframe",),
+            "--timelens and --face-reframe require",
+        ),
+        (
+            "confidential without cloud",
+            ("--confidential",),
+            "governance flags apply only",
+        ),
+        (
+            "ZDR without cloud",
+            ("--zero-data-retention",),
+            "governance flags apply only",
+        ),
+        (
+            "ZDR attribution without cloud",
+            ("--zdr-confirmed-by", "Hawa"),
+            "governance flags apply only",
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_every_reachable_cli_prerequisite_refuses_at_its_own_boundary(
+    tmp_path: Path, label: str, flags: tuple[str, ...], expected: str
+) -> None:
+    """An exit-2 assertion alone passes when a later unrelated failure kills the run. D-181."""
+    code, stderr = _query_preflight_exit(list(flags), tmp_path)
+
+    assert code == 2, label
+    assert expected in stderr, f"{label}: {stderr}"
+    assert not (tmp_path / "work").exists(), label
 
 
 def test_auto_select_refuses_visual_without_a_query_before_stage_zero(tmp_path: Path) -> None:

@@ -1883,8 +1883,6 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
         if args.qc_pass and not (args.sentences or args.auto_select):
             raise ValueError("--qc-pass requires --sentences or --auto-select")
         visual_query = args.visual_query.strip() if args.visual_query is not None else ""
-        if args.visual_query is not None and not visual_query:
-            raise ValueError("--visual-query must contain a non-whitespace retrieval query")
         # Path B is a producer only when it has something to retrieve against. `--visual`
         # alone plans windows but cannot rank or surface one, so accepting it for auto-selection
         # pays all of Stage 0 for an outcome argv already proves impossible. Path A can either
@@ -1899,8 +1897,6 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
                 "Stage 2 has something to retrieve against. --visual alone cannot rank a "
                 "window."
             )
-        if args.auto_select and not (args.transcript or args.omni_asr):
-            raise ValueError("--auto-select requires --transcript or --omni-asr")
         if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
             raise ValueError("--timelens and --face-reframe require --sentences or --auto-select")
         if (args.confidential or args.zero_data_retention or args.zdr_confirmed_by) and not (
