@@ -6556,3 +6556,61 @@ non-negative — so the guard does not refuse anything this system actually writ
 
 **Mutation audit 23/23**, after 17/18 and then 22/23: the first survivor was the masking above, the
 second was my own non-discriminating control. `evidence/adversarial-pass-21-2026-08-10.md`.
+
+## D-139
+
+**§10/10 asks for a "pinned and checksummed supply chain", and the packages the gate itself runs on
+were neither.** D-120 made the wheel build reproducible and D-121 pinned and checksummed the ffmpeg
+archive. The Python distributions were resolved fresh on every CI run. Measured:
+
+```
+declared in pyproject (all extras): 17
+installed in this venv:             70
+installed but NOT declared anywhere (transitive): 54
+```
+
+So 17 of 71 were pinned by version — 24% — and **zero** by checksum. `pip install -e '.[dev,media]'`
+accepts whatever the index serves: a re-uploaded file, a compromised mirror or a new transitive
+release changes the program under a green gate, and nothing records what was installed.
+
+**Decision: compile a hashed lock for the gate's exact target and install with
+`--require-hashes`.** `requirements/gate-linux-py311.txt` holds **33 distributions, 350 SHA-256
+hashes, 0 pins without one** — the full `.[dev,media]` closure for Linux, CPython 3.11 and the
+PyTorch CPU index, which is the platform the gate of record runs on. Every artifact is verified
+before it is unpacked.
+
+**Two install commands, not one.** `--require-hashes` forbids an editable install in the same
+invocation, so the project goes in afterwards with `--no-deps` — safe because every dependency was
+just installed from the hashed set, and asserted, because `-e .` *without* `--no-deps` would resolve
+them again unpinned alongside.
+
+**The PyTorch index stays.** The lock pins `torch==2.13.0+cpu`, and an index is still needed to
+*find* that file; the hash decides which file is accepted once found. Dropping the index would fail
+to resolve, not silently install something else.
+
+**`scripts/lock-gate-deps.sh` regenerates it.** A lock nobody can reproduce is a binary blob. The
+script records the target explicitly — `--python-platform linux --python-version 3.11` — because a
+lock resolved on this Windows host pins different wheels, and it refuses to write a pin that carries
+no continuation line.
+
+**Rejected: locking every extra.** `gpu`, `asr` and `cloud` are not installed by the gate, `asr` is
+excluded on Windows by its own marker, and resolving them here would produce pins for a platform and
+a GPU stack nothing in CI exercises — a lock that is never verified is a claim, not a guarantee.
+
+**Rejected: `uv sync`/`uv.lock` for the whole project.** It would replace how this repo installs
+everywhere at once, including the developer venv this loop measures on, and the gate of record is
+the thing that needed the guarantee.
+
+**Named shortfall.** The lock covers CI. The developer venv on Windows still resolves freely, and
+`gpu`/`asr`/`cloud` are unlocked. Both are stated rather than implied, because "pinned and
+checksummed supply chain" now holds for the gate and not yet for every install path.
+
+**Mutation audit 9/9,** after 8/9. The survivor was mine: deleting one pin's trailing backslash
+left the block still *containing* `--hash` lines — pip reads a requirement as ending where the
+continuation stops, so that pin owns none of them and `--require-hashes` rejects the whole install.
+The check is structural now: every pin line must continue.
+
+**The prose-grep trap, one file over from D-121.** The first version of the control asserted
+`"-e '.[dev,media]'" not in workflow`, and the workflow *comment* quotes that command to say what it
+replaced — so the test failed on its own explanation. It reads command lines only now, exactly as
+`fetch-ffmpeg.sh`'s `--fail` check had to. `evidence/the-gate-installed-whatever-the-index-served.md`.

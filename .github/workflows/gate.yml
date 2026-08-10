@@ -24,10 +24,25 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
+          # Every distribution the gate installs, pinned to a version AND verified against a
+          # recorded SHA-256 before it is unpacked. `-e '.[dev,media]'` resolved fresh on every
+          # run: 17 of this project's dependencies are pinned in pyproject.toml and **54 more
+          # arrive transitively with no version and no checksum at all** — measured, 70
+          # distributions installed against 17 declared. §10/10 asks for a "pinned and
+          # checksummed supply chain"; that was the ffmpeg archive (D-121) and the wheel build
+          # (D-120), and not the Python packages the gate itself runs on. D-139.
+          #
+          # Two commands because `--require-hashes` forbids an editable install in the same
+          # one; `--no-deps` is safe because the line above installed every dependency.
+          #
           # CPU wheels: §6 puts Stage 0 (ffmpeg, scene detect, VAD) on CPU by design, and the
-          # CUDA build of torch is ~2 GB of runner disk for kernels nothing here calls.
-          .venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu \
-            -e '.[dev,media]'
+          # CUDA build of torch is ~2 GB of runner disk for kernels nothing here calls. The
+          # index is still needed to *find* torch==2.13.0+cpu; the hash decides which file is
+          # accepted once found.
+          .venv/bin/pip install --require-hashes \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            -r requirements/gate-linux-py311.txt
+          .venv/bin/pip install -e . --no-deps
 
       # §4.3.6's golden render is a pixel comparison, so it needs the *pinned* build the
       # reference was rendered from — a distro ffmpeg is a different libass and would fail on

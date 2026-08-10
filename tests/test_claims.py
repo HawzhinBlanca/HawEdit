@@ -707,3 +707,130 @@ def test_the_commit_the_ffmpeg_archive_is_pinned_to_is_published() -> None:
         f"A reader cannot verify a pin they have to read the script to find, and a pin that moves "
         f"silently is the thing D-121 removed."
     )
+
+
+# =========================================================================================
+# §10/10's "pinned and checksummed supply chain", for the packages the gate runs on (D-139)
+#
+# Measured before: 17 dependencies declared in pyproject.toml, **70 distributions installed**,
+# so 54 arrived transitively with no version and no checksum. The ffmpeg archive was
+# checksummed (D-121) and the wheel build reproducible (D-120); the Python packages the gate
+# itself executes were resolved fresh on every run.
+# =========================================================================================
+
+GATE_LOCK = ROOT / "requirements" / "gate-linux-py311.txt"
+_PIN = re.compile(r"^([A-Za-z0-9._-]+)==(\S+?)(?: \\)?$", re.MULTILINE)
+
+
+def _workflow_commands() -> str:
+    """The workflow with `#` comment lines removed.
+
+    D-121 had to learn this one file over: a test that greps the whole text matches the comment
+    *explaining* the fix. This project's convention is to quote the wrong command while
+    correcting it, and the install block quotes `-e '.[dev,media]'` to say what it replaced —
+    which made the control below fire on prose. Commands only.
+    """
+    text = (ROOT / ".github" / "workflows" / "gate.yml").read_text(encoding="utf-8")
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def test_the_gate_lock_is_committed_and_pins_every_distribution_with_a_hash() -> None:
+    """A pin with no hash makes `--require-hashes` reject the whole install, so a partial lock
+    is worse than none: it turns a supply-chain guarantee into a broken build nobody reads.
+    """
+    assert GATE_LOCK.is_file(), f"the gate's dependency lock is missing at {GATE_LOCK}"
+    text = GATE_LOCK.read_text(encoding="utf-8")
+
+    pins = _PIN.findall(text)
+    assert len(pins) >= 30, f"only {len(pins)} pins — the lock does not cover the gate's closure"
+
+    positions = [match.start() for match in _PIN.finditer(text)] + [len(text)]
+    unhashed = [
+        f"{name}=={version}"
+        for index, (name, version) in enumerate(pins)
+        if "--hash=sha256:" not in text[positions[index] : positions[index + 1]]
+    ]
+    assert not unhashed, f"pinned without a checksum: {unhashed}"
+
+    # Structural, and the reason the check above is not enough: pip reads a requirement line as
+    # ending where the backslash stops, so a pin that lost its continuation owns **no** hashes
+    # even though the orphaned `--hash` lines still sit under it. The audit that added this
+    # deleted one backslash and survived — the block still *contained* hashes. A pin must
+    # continue.
+    dangling = [
+        line
+        for line in text.splitlines()
+        if _PIN.fullmatch(line) and not line.rstrip().endswith("\\")
+    ]
+    assert not dangling, (
+        f"these pins do not continue onto their hash lines, so pip sees them unhashed and "
+        f"--require-hashes rejects the whole install: {dangling}"
+    )
+
+
+def test_ci_installs_from_the_lock_with_require_hashes() -> None:
+    """The wiring, which is the whole guarantee. Installing `-e '.[dev,media]'` resolves fresh
+    and accepts whatever the index serves; `--require-hashes` accepts only the recorded files.
+
+    Asserted on the workflow because the claim is *how CI installs* — reverting to a bare
+    resolve would leave every other test green.
+    """
+    workflow = _workflow_commands()
+    assert "--require-hashes" in workflow, "CI no longer verifies dependency checksums"
+    assert "requirements/gate-linux-py311.txt" in workflow, "CI does not install from the lock"
+    # The control: a fresh resolve of the extras must NOT be how dependencies arrive, or the
+    # hashed install is decorative. The editable install of the project itself is fine — it
+    # carries `--no-deps`, so it adds nothing unpinned.
+    assert "-e '.[dev,media]'" not in workflow, (
+        "CI still resolves the extras fresh, so the hashed lock is not what it installs"
+    )
+    assert "-e . --no-deps" in workflow, (
+        "the project must be installed without dependencies, or pip resolves them unpinned "
+        "alongside the hashed set"
+    )
+
+
+def test_every_pyproject_dependency_the_gate_needs_is_in_the_lock() -> None:
+    """The lock is compiled from `pyproject.toml`, so a dependency added to `dev` or `media`
+    without recompiling would be installed by neither command — pip would fail on the import,
+    but only after a maintainer wondered why. This says so at the source.
+    """
+    import tomllib
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    needed = list(project["dependencies"])
+    for extra in ("dev", "media"):
+        needed += project["optional-dependencies"][extra]
+
+    locked = {
+        name.lower().replace("_", "-") for name, _ in _PIN.findall(GATE_LOCK.read_text("utf-8"))
+    }
+    missing = []
+    for spec in needed:
+        name = re.split(r"[<>=!;\[ ]", spec.strip())[0].lower().replace("_", "-")
+        if name not in locked:
+            missing.append(name)
+    assert not missing, (
+        f"declared for the gate but absent from the lock: {missing}. Run "
+        f"`bash scripts/lock-gate-deps.sh` and commit the result."
+    )
+
+
+def test_the_lock_can_be_regenerated_by_a_committed_script() -> None:
+    """A lock nobody can reproduce is a binary blob. The script records the exact target —
+    Linux, CPython 3.11, the PyTorch CPU index — because a lock resolved on another platform
+    pins different wheels.
+    """
+    script = ROOT / "scripts" / "lock-gate-deps.sh"
+    assert script.is_file()
+    body = script.read_text(encoding="utf-8")
+    for flag in ("--generate-hashes", "--python-platform linux", "--python-version 3.11"):
+        assert flag in body, f"the lock script does not pin {flag}"
+    assert "gate-linux-py311.txt" in body
+
+
+def test_the_lock_does_not_pin_the_project_itself() -> None:
+    """`hawedit` is installed editable and cannot be hashed. If it appeared in the lock,
+    `--require-hashes` would demand a checksum for the working tree."""
+    locked = {name.lower() for name, _ in _PIN.findall(GATE_LOCK.read_text("utf-8"))}
+    assert "hawedit" not in locked
