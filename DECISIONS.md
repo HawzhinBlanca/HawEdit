@@ -9204,3 +9204,45 @@ No production code changed. Floor 1566 → 1568.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-177
+
+**Eleven refusals probed; ten held. The survivor is on today's only Stage 4 route.** `main()`
+refuses fourteen argument combinations and `run_pipeline` refuses one more — a supplied verdict
+whose span is not the selected sentence anchors. The argument refusals are exemplary, and
+`test_every_refusal_in_the_source_has_a_case` is *derived from the source*, so a new one cannot
+arrive uncovered; it reads the arg-parsing block, and the surviving check lives outside it.
+
+**Why this one matters now:** `--verdict` is the **only** Stage 4 route while `BLOCKED.md` #3
+stands. `JudgeVerdict.__post_init__` cannot catch a mismatch — it requires
+`clip_in_ms <= payoff_at_ms <= clip_out_ms`, which a verdict for a *different* clip satisfies
+perfectly. Internally valid, externally wrong.
+
+**Measured on the §5 block that ships:** a verdict scored 900000..904000 ms carries
+`payoff_at_ms: 902000` into the editorial block of a clip running 100..4100 ms — §5's payoff
+marker 898 seconds past the end — with `hook_score`, `meaning_fidelity`, `misleading_edit_risk`
+and `cultural_landing` all reached on footage the clip does not contain.
+
+**Decision: cover each end of the span separately.** **Rejected: one test moving both ends**,
+which is what the first version did — and the audit showed that comparing only `clip_in_ms` still
+caught it, leaving unheld the case an operator is most likely to produce by hand: the right start
+and the wrong end. Each end now moves alone, and that mutation is caught by this guard and no
+other.
+
+**Two results recorded rather than claimed.** The `judge is None` clause **survived**, and the
+control I wrote for it measured nothing: with discovery driving the run, `boundary` is
+`StageSkipped` and `anchors` is `None`, so that path never reaches the check — measured, the judge
+answered `(0, 1700)` with no anchors in existence. Defence in depth whose state I could not
+construct, the category of D-166's sibling assertion and D-170's blank clause; the vacuous test
+was **removed** rather than kept, as D-174's was. And two mutations first came back
+**format-dirty**; re-run through `ruff format` so they measured behaviour rather than layout,
+they changed answer — which is why they were re-run rather than reported.
+
+**2 of 3 counted mutations caught by the new guard alone**; the third (refuse every supplied
+verdict) is caught broadly, by the positive control and by every existing test that supplies a
+matching verdict. No production code changed. Floor 1568 → 1570.
+`evidence/a-verdict-for-other-footage.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

@@ -3000,3 +3000,61 @@ def test_the_report_counts_every_skipped_stage_it_names() -> None:
     )
     assert len(run.skipped()) == 3, f"three stages were skipped, the report has {run.skipped()}"
     assert {name for name, _ in run.skipped()} == {"render", "delivery", "discovery"}
+
+
+# --- D-177: a persisted verdict must identify the footage it is applied to ------------------
+
+
+def test_a_supplied_verdict_for_another_span_is_refused(tmp_path: Path) -> None:
+    """`--verdict` is the only Stage 4 route available while BLOCKED #3 stands, so it is the
+    path a real run takes today — and deleting this check left the whole suite green.
+
+    `JudgeVerdict.__post_init__` cannot catch it: it requires
+    `clip_in_ms <= payoff_at_ms <= clip_out_ms`, which a verdict for a *different* clip
+    satisfies perfectly. The verdict is internally valid and externally wrong.
+
+    Measured on the block that ships: a verdict scored for 900000..904000 ms carries
+    `payoff_at_ms: 902000` into §5's editorial block for a clip running 100..4100 ms — §5's
+    payoff marker pointing 898 seconds past the end of the clip — along with every score
+    (`hook_score`, `meaning_fidelity`, `misleading_edit_risk`, `cultural_landing`) reached on
+    footage this clip does not contain. D-177.
+    """
+
+    def run_with(verdict_in: int, verdict_out: int) -> None:
+        run_pipeline(
+            FIXTURE,
+            tmp_path / f"work-{verdict_in}-{verdict_out}",
+            media_id="fixture",
+            transcript=a_transcript(),
+            select_sentences=(0, 1),
+            verdict=a_verdict(verdict_in, verdict_out),
+        )
+
+    # Both ends, separately. A first version of this test moved both at once, and the audit
+    # showed that comparing **only the in-point** then passed — so a verdict scored for the
+    # right start and the wrong end would have been accepted, which is the one an operator is
+    # actually likely to produce by editing a span by hand.
+    with pytest.raises(ValueError, match="identify the same footage"):
+        run_with(900_000, 904_000)
+    with pytest.raises(ValueError, match="identify the same footage"):
+        run_with(100, 5_000)  # right in-point, wrong out-point
+    with pytest.raises(ValueError, match="identify the same footage"):
+        run_with(200, 4_100)  # wrong in-point, right out-point
+
+
+def test_a_supplied_verdict_for_this_span_is_accepted(tmp_path: Path) -> None:
+    """The control. Without it the test above passes for a pipeline that refuses **every**
+    supplied verdict, which would make `--verdict` — today's only Stage 4 route — unusable
+    while looking guarded.
+    """
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="fixture",
+        transcript=a_transcript(),
+        select_sentences=(0, 1),
+        verdict=a_verdict(100, 4_100),
+    )
+    assert run.clip is not None
+    assert run.clip.editorial is not None, "a matching verdict produced no editorial block"
+    assert run.clip.editorial.payoff_at_ms == 2_100
