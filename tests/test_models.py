@@ -22,7 +22,15 @@ from hawedit.models import (
     SourceNotConfigured,
     readiness_report,
 )
-from hawedit.registry import REGISTRY, Provisioning
+from hawedit.registry import (
+    APACHE_2_0,
+    CC_BY_NC_4_0,
+    REGISTRY,
+    Licence,
+    ModelEntry,
+    NonCommercialLicence,
+    Provisioning,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -540,3 +548,84 @@ def test_a_measured_size_of_zero_is_reported_rather_than_omitted() -> None:
     report = readiness_report((_status("empty-files-only", available=True, size_bytes=0),))
     line = next(row for row in report.splitlines() if "empty-files-only" in row)
     assert "(0.0 GB)" in line, f"a measured zero was omitted: {line!r}"
+
+
+# --- D-175: the licence gate that runs before a single byte moves ---------------------------
+
+
+def _fetcher_planning_block() -> str:
+    """The planning block out of `fetch-models.sh`, as executable source.
+
+    Same reasoning as `_fetcher_download_block`: the tests below execute the real block rather
+    than grepping it, because an assertion about the text of a check is not an assertion that
+    the check runs (D-067).
+    """
+    script = (ROOT / "scripts" / "fetch-models.sh").read_text(encoding="utf-8")
+    blocks = [b for b in script.split("<<'PYEOF'")[1:] if "missing_weights" in b]
+    assert len(blocks) == 1, f"expected exactly one planning block, found {len(blocks)}"
+    return blocks[0].split("\nPYEOF")[0]
+
+
+def _run_planning_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entries: tuple[ModelEntry, ...]
+) -> None:
+    """Execute the real planning block with `missing_weights` offering `entries`."""
+    import sys as _sys
+
+    import hawedit.models
+
+    # `hawedit.models.ModelStore`, not the name this module bound at import time: other
+    # tests here `importlib.reload` the module, so the class object imported at the top is
+    # not always the one the executed block will import. Patching the stale one left the
+    # block reading the real §7 table and the refusal never fired — measured, and the
+    # reason this looks the class up dynamically.
+    monkeypatch.setattr(hawedit.models.ModelStore, "missing_weights", lambda _self: entries)
+    monkeypatch.setattr(_sys, "argv", ["fetch", str(tmp_path)])
+    source_code = _fetcher_planning_block()
+    exec(compile(source_code, "fetch-models.sh:PYEOF", "exec"), {"__name__": "__main__"})
+
+
+def _an_entry(licence: Licence) -> ModelEntry:
+    return ModelEntry(
+        model_id="a-checkpoint",
+        component="fabricated for this test",
+        blueprint_model_cell="",
+        licence=licence,
+        provisioning=Provisioning.WEIGHTS,
+        hf_repo="org/repo",
+    )
+
+
+def test_the_fetcher_refuses_a_noncommercial_checkpoint_before_downloading_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`assert_commercially_usable` sits in the planning block, "checked before a single byte
+    moves" — and deleting that line left the whole suite green.
+
+    It cannot fire on the committed tree: `missing_weights` reads §7's production table and
+    D-168's `test_no_registered_model_is_non_commercial` forbids an NC entry there. That makes
+    it defence in depth rather than dead code — the registry docstring says the check "keys off
+    the licence, not off those two names, so the next NC dependency fails the same way" — and
+    defence in depth still has to be shown to work. The state is unconstructible in the tree and
+    perfectly constructible here. D-175.
+    """
+    with pytest.raises(NonCommercialLicence, match="commercial use"):
+        _run_planning_block(tmp_path, monkeypatch, (_an_entry(CC_BY_NC_4_0),))
+
+
+def test_the_fetcher_plans_a_commercially_usable_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The control. Without it the test above passes for a block that refuses *everything* —
+    including a licence §7 permits — and the gate would look present while blocking the fetch
+    of every model this system is allowed to run.
+    """
+    (tmp_path / "sources.json").write_text(
+        json.dumps({"a-checkpoint": "org/repo"}), encoding="utf-8"
+    )
+    _run_planning_block(tmp_path, monkeypatch, (_an_entry(APACHE_2_0),))
+    planned = capsys.readouterr().out
+    assert "a-checkpoint\torg/repo" in planned, (
+        f"the commercial checkpoint was not planned: {planned!r}"
+    )
+    assert "UNCONFIGURED" not in planned, planned

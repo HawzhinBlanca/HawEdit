@@ -9108,3 +9108,55 @@ No behaviour changed. Floor 1563 → 1564.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-175
+
+**The weights half of "pinned and checksummed supply chain", probed — 3/4.** D-139 pinned the
+gate's Python packages, D-121 the ffmpeg archive, D-120 made the wheel reproducible. Model
+weights are the largest surface and the last one, and two lines inside heredocs in
+`scripts/fetch-models.sh` carry it — embedded Python that ruff does not read.
+
+**The pinning half is well held, and held the right way.** Dropping `revision=revision` from
+`snapshot_download`, resolving an unpinned repo to `main`, and making `revision_for` hand back a
+branch head were all caught, by tests that **extract the real block from the script and execute
+it** against a stubbed Hub rather than grepping its text — D-067's rule, applied where it matters
+most.
+
+**The survivor: the licence gate.** `assert_commercially_usable(entry)` in the planning block,
+under the comment *"NonCommercial is a hard reject — checked before a single byte moves"*, could
+be **deleted with the whole suite green**.
+
+**Dead code or defence in depth?** It cannot fire on the committed tree: `missing_weights()`
+iterates §7's *production* table and D-168's `test_no_registered_model_is_non_commercial` forbids
+an NC entry there, while §7's two CC-BY-NC-4.0 models sit in the exclusion table. So it is defence
+in depth, written for a §7 that does not yet exist — the registry docstring says so: the check
+*"keys off the licence, not off those two names, so the next NC dependency fails the same way."*
+
+**Decision: hold it, because unlike the recent survivors this state is constructible.** D-166's
+sibling assertion and D-170's blank clause were left uncounted precisely because the state they
+would catch cannot be built. Here the block consumes whatever `missing_weights()` yields, so a
+test can offer it a CC-BY-NC-4.0 entry and require refusal — executing the real planning block,
+the same way the download block is already tested. **Rejected: deleting the gate as unreachable.**
+The registry test forbids an NC entry *today*; the fetcher is where bytes move, and a licence
+refusal at the download is not made redundant by a licence rule in the table it reads. **Rejected:
+asserting the call appears in the script text** — that is the assertion-about-text mistake D-067
+recorded, one layer up.
+
+**Mutation audit — 4/4 lint-clean.** Deleting the gate, calling it and swallowing its exception,
+and neutering `assert_commercially_usable` are all caught. **The fourth is the control:** making
+the gate refuse *everything* is caught by the positive test alone — without it, the refusal test
+would pass for a gate that blocks every model §7 permits.
+
+**One defect of mine, recorded rather than tidied away.** The first version patched
+`ModelStore.missing_weights` on the class this test module imported at the top. Other tests in the
+same file `importlib.reload(hawedit.models)`, so the executed block imported a **different class
+object**, the patch landed on the stale one, and the refusal never fired — passing in isolation and
+failing in the file, which is the signature. The helper resolves `hawedit.models.ModelStore` at
+call time now, with a comment saying why.
+
+No production code changed. Floor 1564 → 1566.
+`evidence/the-licence-gate-before-the-first-byte.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.
