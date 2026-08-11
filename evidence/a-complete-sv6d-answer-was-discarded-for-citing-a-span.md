@@ -96,7 +96,19 @@ after  : 6/6 dimensions parsed
   narrative : 1040.287s A conversation or interview taking place, with one man speaking and the other listening
 ```
 
-That run returned **6 candidates and 1 unreadable**. This window becomes the 7th.
+That run returned **6 candidates and 1 unreadable**. **Re-run end to end after the fix**, same
+query, same cached embeddings:
+
+```
+before:  candidates 6   unreadable 1
+after:   candidates 7   unreadable 0
+
+  rank 4    1040.3s ..  1043.8s   retrieval 0.5614   rerank 0.3601   <- the discarded window
+```
+
+The other six survivors keep their ranks and scores to four decimals, so the recovered window is
+an addition and not a reshuffle — which is the control on this claim: a change that altered the
+retrieval or rerank stages would show here.
 
 ## Mutation audit — 6/6 lint-clean
 

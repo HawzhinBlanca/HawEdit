@@ -9506,6 +9506,7 @@ assertion names the clip length. D-118's own guard, that one unreadable window d
 others, is untouched and still driven through the real `read_scenes`.
 
 **Proved on the artifact:** the real discarded window re-parses **0/6 → 6/6** and shifts onto
-the media clock as `1040.287s Two men in a studio setting…`. That run returned 6 candidates and
-1 unreadable; this window becomes the 7th. **6/6 mutations, lint-clean, file restored
+the media clock as `1040.287s Two men in a studio setting…`. Re-run end to end after the fix, the run goes from **6 candidates and 1 unreadable to 7 and
+0**, the recovered window landing at rank 4 (retrieval 0.5614, rerank 0.3601) while the other six
+keep their ranks and scores — an addition, not a reshuffle. **6/6 mutations, lint-clean, file restored
 byte-identical.** `evidence/a-complete-sv6d-answer-was-discarded-for-citing-a-span.md`.
