@@ -175,6 +175,16 @@ def extract_window_frames(
         raise VideoInputError("no ffmpeg available — run scripts/fetch-ffmpeg.sh")
 
     dest_dir.mkdir(parents=True, exist_ok=True)
+    # Clear this window's frames before extracting, so the count below grades what ffmpeg just
+    # produced and nothing else. ffmpeg overwrites 1..N but leaves anything above N behind, so a
+    # re-run with a *smaller* plan inherits the old tail and the guard reads it as ffmpeg
+    # overshooting. That is the documented recovery from an OOM — D-108 makes
+    # `--visual-max-frames` lowerable precisely so a 3090 Ti can retry at 8 — and it failed on
+    # the first window every time. Measured 2026-08-11 on the real 38-minute file: run at 64
+    # left 16 jpgs in `s0:w0`, the retry at 8 wrote 8 and the glob counted 16. Second half of
+    # D-104, which fixed this same count being taken over the parity step's output.
+    for stale in dest_dir.glob(f"{window.window_index:03d}_*.jpg"):
+        stale.unlink()
     pattern = dest_dir / f"{window.window_index:03d}_%04d.jpg"
     result = subprocess.run(
         [

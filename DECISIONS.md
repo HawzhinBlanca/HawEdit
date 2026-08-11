@@ -9365,3 +9365,39 @@ Floor 1573 → 1585. `evidence/the-cortex-export-imports-machine-output-as-refer
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-180
+
+**The documented recovery from an OOM failed on the first window every time, and the guard blamed
+the wrong thing.** Found by running the real 38-minute file, the same way D-104 was.
+
+`BLOCKED.md` #17 / D-108 record that this 3090 Ti reads at most 8 frames per window and that
+`--visual-max-frames` is lowerable precisely so a run can be retried under that ceiling. Run 1 at
+§3's default 64 OOMed in the reader (`Tried to allocate 98.56 GiB` — D-106's measured behaviour,
+not a defect). Run 2, the retry at 8 into the same work directory, was refused:
+`ZAR38MinTest:s0:w0 planned 8 frames and ffmpeg produced 16`. **ffmpeg had produced 8.** The
+directory held 16, because `extract_window_frames` writes with `-y` — which overwrites
+`000_0001..000_000N` and leaves anything above N — and then grades the extraction by globbing the
+directory. So the retry's count read 8 fresh frames plus 8 leftovers from the run that OOMed.
+
+**This is the second half of D-104.** That entry fixed this same count being taken over the
+*parity step's* output. It was also being taken over *the previous run's* output, and only a retry
+at a lower frame budget exposes it — which is why it sat behind the one instruction the OOM
+documentation gives.
+
+**Fix: clear this window's frames before extracting**, scoped by `window_index` to match the glob
+it repairs. **Rejected: emptying `dest_dir`** — shorter, passes every other test in the file, and
+silently discards a neighbouring window's extraction; `_FrameCache` happens to give each window
+its own directory but this function takes `dest_dir` from its caller, so the scoping cannot rest
+on a caller's habit. That rejection is the second mutation, and it is what the new control test
+exists for. **Rejected: relaxing the `> frame_count` check** — the check is right and D-104 gave
+it its first test; what was wrong is what the count was allowed to see, not what it refuses.
+`test_more_frames_than_planned_is_refused` still drives a fake ffmpeg writing 37 files for a
+36-frame plan into a clean directory and still raises, unchanged.
+
+**Proved on the artifact, against the directory that raised.** Re-run deliberately without
+clearing it by hand: `frames/ZAR38MinTest_s0_w0/` went from 16 files and a `FrameCountMismatch` to
+8 files and a run that proceeds past w0.
+
+**2/2 mutations, lint-clean, file restored byte-identical.**
+`evidence/a-retry-at-fewer-frames-inherited-the-previous-extraction.md`.

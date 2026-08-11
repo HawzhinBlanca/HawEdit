@@ -627,6 +627,53 @@ def test_more_frames_than_planned_is_refused(
         extract_window_frames(FIXTURE, window, tmp_path)
 
 
+def test_a_retry_with_a_smaller_plan_does_not_inherit_the_previous_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The documented recovery from an OOM, which failed on the first window every time.
+
+    D-108 makes `--visual-max-frames` lowerable precisely so a 3090 Ti can retry at 8 after a
+    64-frame plan exhausts it. ffmpeg overwrites 1..N and leaves anything above N behind, so the
+    retry's glob counted the previous run's tail and `FrameCountMismatch` blamed the ceiling —
+    for files ffmpeg had not produced. Measured 2026-08-11 on the real 38-minute file: the run at
+    64 left 16 jpgs in `s0:w0`, and the retry at 8 was refused as an overshoot of 16.
+    """
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(16))
+    extract_window_frames(FIXTURE, an_unplannable_window(8_000, 2.0), tmp_path)
+    assert len(tuple(tmp_path.glob("000_*.jpg"))) == 16, "the first extraction did not land"
+
+    smaller = an_unplannable_window(4_000, 2.0)
+    assert smaller.frame_count == 8
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(8))
+
+    frames = extract_window_frames(FIXTURE, smaller, tmp_path)
+
+    assert frames.count == 8
+    assert len(tuple(tmp_path.glob("000_*.jpg"))) == 8, (
+        "the previous run's tail is still on disk, so the count that grades ffmpeg is reading "
+        "frames ffmpeg did not produce"
+    )
+
+
+def test_clearing_is_scoped_to_the_window_being_extracted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control on the clearing above: a sibling sharing the directory must survive.
+
+    `_FrameCache` gives each window its own directory, but this function takes `dest_dir` from
+    its caller, and the count it grades is scoped by `window_index` — so the clearing is scoped
+    the same way. Emptying the directory instead would discard a neighbour's extraction, and
+    every other test in this file would still pass.
+    """
+    neighbour = tmp_path / "001_0001.jpg"
+    neighbour.write_bytes(b"\xff\xd8\xff jpeg")
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(8))
+
+    extract_window_frames(FIXTURE, an_unplannable_window(4_000, 2.0), tmp_path)
+
+    assert neighbour.exists(), "a sibling window's frames were cleared along with this one's"
+
+
 def test_the_kept_count_is_always_a_whole_number_of_temporal_patches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
