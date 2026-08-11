@@ -8934,3 +8934,57 @@ Floor 1555 → 1558. `evidence/a-skipped-stage-the-report-could-not-name.md`.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-172
+
+**§3 Stage 5's window edge was held by nothing, and the test named after the blueprint never
+opened it.** M2.2 is `DONE` with 40 tests and had never had its own pass. Six defects that ship a
+*wrong clip* rather than raising — the belt-and-braces `assert_boundary_invariant` already catches
+everything that violates invariant #2 — gave **4/6**.
+
+**Survivor one is real.** §3 Stage 5 states *"preceding shot_cut within 400 ms"* and *"following
+shot_cut within 400 ms"*; "within 400" includes 400. Changing `<=` to `<` on either edge left the
+whole suite green. Measured on the real `fuse_boundary`: a cut at `anchor_out + 400` gives
+`final_out 14400 by 'shot_cut'`, and one millisecond further gives `14200 by 'tail'` — **200 ms of
+delivered clip** at the out edge and **400 ms** at the in edge, plus the attribution §8.2 reads.
+
+**Survivor two is a no-op, proved rather than excused.** `anchor_in` is seeded into
+`in_candidates` first, so a cut at exactly `anchor_in` ties and `min` returns the seed — measured,
+`final_in 10000 by None` with the cut present or absent, and with an earlier cut that one is the
+minimum either way. Documented, **not counted**, and the audit keeps mutating it to confirm it
+stays a no-op.
+
+**The larger finding.** `test_the_constants_are_the_ones_section_3_stage_5_states` asserted
+`VAD_LEAD_IN_MS == 120`, `TAIL_MS == 200`, `SHOT_CUT_WINDOW_MS == 400` — three **literals typed
+into the test**. §3 Stage 5 is named in the function's own title and was never read, so editing a
+constant and its literal together left the suite green, against a **frozen** document that is the
+specification these constants implement. The same shape as D-168's licence column: the
+correspondence was true and accountable to nothing. It now parses the SOFT ADJUSTMENT block for
+all three.
+
+**Decision: derive, and take non-vacuity from the document's own redundancy.** The window is
+stated **twice**, once per edge, so the parse requires both to be found and to agree — structural
+rather than a magic count, and a regex matching nothing fails there instead of asserting nothing.
+**Rejected: asserting the constants against literals and calling it a blueprint check** — that is
+the defect. **Rejected: a test that only follows the constant** (`anchor_out + SHOT_CUT_WINDOW_MS`
+with no independent anchor) — D-098's lesson, where every pause test passed `DEFAULT_PAUSE_MS` and
+so followed it wherever it went; the value comes from the frozen document and the boundary is
+pinned behaviourally on both sides.
+
+**Mutation audit — 7/7 lint-clean.** Both edges, all three constants, and **both directions of
+drift**: code moving away from the blueprint and the blueprint moving away from the code. Each
+edge test reddens exactly the one written for it.
+
+**The floor went down by one, deliberately and visibly.** The new constants test subsumes a
+separate shot-cut-window test written earlier in this iteration, so that one was merged away
+rather than kept as a duplicate to hold a number up. The gate refused the shrink exactly as
+designed — *"a shrinking suite must be a visible edit, not a quieter green run"*. **Nothing that
+shipped was lowered:** the committed floor at `6eefbb4` is **1558**, and the 1562 the gate
+compared against was written by an intermediate run of mine that counted the merged test. This
+commit takes the committed floor 1558 → **1561**, a ratchet up.
+
+`evidence/the-window-edge-and-a-test-that-never-opened-the-blueprint.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

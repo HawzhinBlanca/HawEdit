@@ -49,10 +49,48 @@ def inputs(**overrides: object) -> BoundaryInputs:
 # --- the blueprint's constants ---------------------------------------------------------
 
 
+def _blueprint_stage_5_constants() -> dict[str, int]:
+    """The three numbers §3 Stage 5's SOFT ADJUSTMENT block states, read out of the blueprint.
+
+    `BLUEPRINT.md` is frozen, so it is the specification these constants implement. The test
+    below was named after it and asserted against **literals typed in the test** — `== 120`,
+    `== 200`, `== 400` — which is a restatement, not a derivation: editing a constant and its
+    literal together left the suite green and the blueprint unread. D-172.
+
+    Non-vacuity is structural rather than a magic number: the shot-cut window is stated twice,
+    once per edge, and both must be found and must agree. A regex matching nothing fails here
+    instead of asserting nothing.
+    """
+    import re
+    from pathlib import Path
+
+    blueprint = (Path(__file__).resolve().parents[1] / "BLUEPRINT.md").read_text(encoding="utf-8")
+    block = blueprint[blueprint.index("SOFT ADJUSTMENT") :][:600]
+
+    lead_in = re.search(r"vad_onset\s*[−-]\s*(\d+) ms", block)
+    tail = re.search(r"anchor_out \+ (\d+) ms tail", block)
+    windows = re.findall(r"(preceding|following) shot_cut within (\d+) ms", block)
+    assert lead_in is not None, "§3 Stage 5 no longer states the VAD lead-in"
+    assert tail is not None, "§3 Stage 5 no longer states the tail"
+    assert {side for side, _ in windows} == {"preceding", "following"}, (
+        f"§3 Stage 5 no longer states the shot-cut window for both edges: {windows}"
+    )
+    stated = {int(value) for _, value in windows}
+    assert len(stated) == 1, f"§3 Stage 5 states two different shot-cut windows: {sorted(stated)}"
+
+    return {
+        "vad_lead_in": int(lead_in.group(1)),
+        "tail": int(tail.group(1)),
+        "shot_cut_window": stated.pop(),
+    }
+
+
 def test_the_constants_are_the_ones_section_3_stage_5_states() -> None:
-    assert VAD_LEAD_IN_MS == 120
-    assert TAIL_MS == 200
-    assert SHOT_CUT_WINDOW_MS == 400
+    """Derived from the frozen document, not restated beside the constants."""
+    stated = _blueprint_stage_5_constants()
+    assert stated["vad_lead_in"] == VAD_LEAD_IN_MS, stated
+    assert stated["tail"] == TAIL_MS, stated
+    assert stated["shot_cut_window"] == SHOT_CUT_WINDOW_MS, stated
 
 
 # --- with no soft evidence the anchors stand ------------------------------------------
@@ -508,3 +546,57 @@ def test_the_latest_following_cut_wins_when_several_are_in_the_window() -> None:
     only_nearest = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_OUT + 50,)))
     assert only_nearest.final_out_ms == ANCHOR_OUT + 200
     assert only_nearest.out_extended_by == "tail"
+
+
+# --- D-172: the one number §3 Stage 5 states, and its inclusive edge -------------------------
+
+
+def test_a_cut_exactly_on_the_window_still_extends_the_out_point() -> None:
+    """*"within 400 ms"* includes 400. Measured: the inclusive edge was held by nothing.
+
+    Changing `<=` to `<` on the following-cut filter left the whole suite green, and it is
+    worth 200 ms of delivered clip — the cut gives `anchor_out + 400`, the fallback is the
+    `anchor_out + 200` tail — plus the attribution a §8.2 reader uses to see which signal
+    moved the edge.
+    """
+    on_edge = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_OUT + SHOT_CUT_WINDOW_MS,)))
+    assert on_edge.final_out_ms == ANCHOR_OUT + SHOT_CUT_WINDOW_MS
+    assert on_edge.out_extended_by == "shot_cut"
+
+    # The control: one millisecond further out is outside the window and must fall back to the
+    # tail. Without it, a filter that accepted *every* following cut would pass the assertion
+    # above and pull the out point anywhere.
+    beyond = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_OUT + SHOT_CUT_WINDOW_MS + 1,)))
+    assert beyond.final_out_ms == ANCHOR_OUT + TAIL_MS
+    assert beyond.out_extended_by == "tail"
+
+
+def test_a_cut_exactly_on_the_window_still_extends_the_in_point() -> None:
+    """The mirror, on the edge the fusion reaches backwards for.
+
+    Worth more here than on the out side: there is no equivalent of the tail pulling the in
+    point outward, so the fallback is the anchor itself and the difference is the whole
+    400 ms.
+    """
+    on_edge = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_IN - SHOT_CUT_WINDOW_MS,)))
+    assert on_edge.final_in_ms == ANCHOR_IN - SHOT_CUT_WINDOW_MS
+    assert on_edge.in_extended_by == "shot_cut"
+
+    beyond = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_IN - SHOT_CUT_WINDOW_MS - 1,)))
+    assert beyond.final_in_ms == ANCHOR_IN
+    assert beyond.in_extended_by is None
+
+
+def test_a_cut_exactly_at_the_anchor_cannot_change_the_in_point() -> None:
+    """Recorded, not counted as a guard: `cut <= anchor_in` is redundant at equality.
+
+    The probe that found the window edges also mutated this `<=` to `<`, and it SURVIVED —
+    correctly. The anchor is seeded into `in_candidates` first, so a cut at exactly `anchor_in`
+    ties with it and `min` returns the seed; the point and the attribution are the same whether
+    the candidate is there or not. Measured: `final_in 10000 by None` either way. This test
+    documents that equality is a tie the anchor wins, which is the property a reader needs; it
+    is not evidence that the `<=` is load-bearing, and D-172 does not count it as such.
+    """
+    at_anchor = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_IN,)))
+    assert at_anchor.final_in_ms == ANCHOR_IN
+    assert at_anchor.in_extended_by is None
