@@ -8873,3 +8873,64 @@ No production code changed: two tests and a type alias. Floor 1553 → 1555.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-171
+
+**M2.7 promises a runner *"reporting every stage it could not run"*, and the list of stages was
+hand-written beside the dataclass it describes.** `PipelineRun.skipped()` named nine stages in a
+tuple. Measured: deleting `("delivery", self.delivery)` from it left the **whole suite green**,
+while `visual_index`, `discovery` and `editorial` were each caught by two or three tests — 3/4.
+
+**What it costs, on the report a reader is handed.** The same run with render and delivery
+skipped printed *"INCOMPLETE — **1** stage(s) did not run"* instead of two, never named the
+delivery set, and dropped `blocked_by=('§2 delivery set',)` on the floor. **Never an exit-code
+defect, and recorded that way:** `complete` separately requires `isinstance(self.delivery,
+Delivery)`, so the CLI still exits 1. What failed is §1 of that module — *fail visible, not
+silent* — with an unnamed failure being the silent case.
+
+**Why `delivery` and not the other three.** `complete` is eleven conjuncts, and for two stages its
+evidence is a *different field*: `visual_index` is covered by `bool(self.visual_windows)` and
+`discovery` by `bool(self.candidates)`, so the list is load-bearing there and the suite holds it.
+`delivery` has a direct `isinstance` conjunct, so `complete` stayed right without the list — which
+is precisely why nothing noticed the list was wrong.
+
+**Decision: derive it from the dataclass rather than guard the list.** `fields(self)` filtered to
+values that are `StageSkipped`. Field declaration order **is** pipeline order, so the derived
+sequence is the one the tuple spelled out — verified, the same `['render', 'delivery']` — and a
+stage added later cannot be forgotten. The defect becomes **unconstructible** rather than guarded,
+which is D-166's preference and a shorter diff than a list plus a test policing it.
+
+**Rejected: keeping the list and adding a test that names every stage.** That is a second
+hand-written list to hold the first, and D-127/D-129/D-141/D-149 are four prior instances of a
+list drifting from the thing it describes. **Rejected: enumerating every dataclass field in the
+test regardless of type.** mypy refused it, correctly — `replace()` would be putting a
+`StageSkipped` into fields typed `tuple[MergedCandidate, ...]` — so the test's field set is
+derived twice instead: from the annotations that declare `StageSkipped`, unioned with the stage
+names `pipeline.py` actually constructs one with (which is what catches `boundary`, annotated
+`object | None`).
+
+**Mutation audit — 3/3 lint-clean, with a control that must stay green.** The pre-fix text is
+`git show HEAD:`, not retyped. Restoring it reddens exactly the two new tests; truncating the
+derivation to one stage reddens four; dropping `blocked_by` reddens three. **The control is the
+point:** the *complete* hand-written list is behaviourally identical to the derivation and stays
+**green**, so the new tests pin the property rather than this implementation of it.
+
+**Two contaminated runs of mine, discarded rather than counted.** The first sweep hand-wrote the
+pre-fix method and came back lint/format dirty; rebuilt from git it was dirty again, because
+restoring the list orphans the new `fields` import and F401 fires. Third time this session (D-148,
+D-150 record the pattern) — the fix is always to mutate the state together with everything that
+exists only to serve it.
+
+**Also probed this iteration and disproved, rather than assumed:** §8.1's metrics (M0.5) are both
+correct and well held. `edit_distance` against a breadth-first search over the edit graph —
+**7,225 pairs, 0 mismatches**; `substring_edit_distance` against the minimum over every substring
+— **4,840 pairs, 0 mismatches**; and six plausible defects (substitution cost, the deletion
+branch, the free prefix, the free suffix, the CER denominator, one-sided whitespace stripping)
+were **6/6 caught** by the suite as it stands. An oracle there would have been busywork and was
+not written.
+
+Floor 1555 → 1558. `evidence/a-skipped-stage-the-report-could-not-name.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

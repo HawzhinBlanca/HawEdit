@@ -2877,3 +2877,126 @@ def test_the_delivery_handler_catches_everything_its_builders_refuse_with() -> N
     # it as a guard.
     assert not issubclass(UndeliverableOrder, DeliveryError)
     assert not issubclass(DeliveryError, UndeliverableOrder)
+
+
+# --- D-171: the report's stage list was hand-written beside the dataclass it describes -------
+
+
+def _pipeline_source() -> str:
+    from pathlib import Path as _Path
+
+    return (_Path(__file__).resolve().parents[1] / "src" / "hawedit" / "pipeline.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def _stage_names_the_pipeline_can_produce() -> set[str]:
+    """Every stage name a `StageSkipped` in `pipeline.py` is actually constructed with.
+
+    Two producers: the constructor called directly, and `_not_reached(stage, dependency)`.
+    Read out of the source, so a stage added later is covered without anyone extending a list
+    here — which is the failure this pair of tests exists for.
+    """
+    import re
+
+    source = _pipeline_source()
+    direct = set(re.findall(r'stage="([a-z_0-9]+)"', source))
+    helper = set(re.findall(r'_not_reached\(\s*"([a-z_0-9]+)"', source))
+    # Non-vacuity, and not a magic number: both producers must have been found. A regex that
+    # matched neither would make everything below assert nothing at all.
+    assert direct, "no direct StageSkipped(stage=...) found; the scan is broken, not the code"
+    assert helper, "no _not_reached(...) found; the scan is broken, not the code"
+    return direct | helper
+
+
+def test_every_stage_the_pipeline_can_skip_is_a_field_the_report_reads() -> None:
+    """A skipped stage that `PipelineRun` has no field for can never reach a reader.
+
+    `skipped()` reads the dataclass, so "is there a field with this name" is exactly the
+    question that decides whether a `StageSkipped` the code builds is reportable.
+    """
+    from dataclasses import fields as dataclass_fields
+
+    from hawedit.pipeline import PipelineRun
+
+    known = {field.name for field in dataclass_fields(PipelineRun)}
+    orphaned = sorted(_stage_names_the_pipeline_can_produce() - known)
+    assert not orphaned, (
+        f"pipeline.py builds StageSkipped for {orphaned}, and PipelineRun has no field of that "
+        f"name — the stage would be skipped with nothing in the report saying so"
+    )
+
+
+def test_a_skipped_stage_in_any_field_is_named_in_the_report() -> None:
+    """The guard the hand-written list did not give.
+
+    Measured before this: deleting `("delivery", self.delivery)` from that list left the whole
+    suite green, and a run with the delivery stage skipped reported *"INCOMPLETE — 1 stage(s)
+    did not run"* instead of two, with `blocked_by=('§2 delivery set',)` reaching no one.
+    `complete` stayed False throughout, so this was never an exit-code defect — it was §1's
+    *fail visible, not silent*, failing silently.
+
+    Exhaustive over the dataclass rather than over a list of stage names, so the property is
+    "any field holding a skip is reported" and a field added later needs no edit here.
+    """
+    from dataclasses import fields as dataclass_fields
+
+    from hawedit.pipeline import PipelineRun, StageSkipped
+
+    # Derived twice over, because neither derivation is complete on its own: most stage fields
+    # declare `StageSkipped` in their annotation, but `boundary` is annotated `object | None`
+    # and would be missed — and it is one of the stages `_not_reached` builds.
+    declared = {
+        field.name for field in dataclass_fields(PipelineRun) if "StageSkipped" in str(field.type)
+    }
+    assert declared, "no field declares StageSkipped; the annotation scan is broken"
+    stage_fields = declared | _stage_names_the_pipeline_can_produce()
+
+    base = PipelineRun(media_id="m", source="s.mp4", work_dir="w")
+    checked = 0
+    for field in dataclass_fields(PipelineRun):
+        if field.name not in stage_fields:
+            continue
+        skip = StageSkipped(stage=field.name, reason="measured", blocked_by=("a dependency",))
+        # `Any` because the override is genuinely dynamic — the point of the test is that the
+        # set of stage fields is not written out here.
+        overrides: dict[str, Any] = {field.name: skip}
+        run = replace(base, **overrides)
+        reported = dict(run.skipped())
+        assert field.name in reported, (
+            f"{field.name} holds a StageSkipped and `skipped()` does not name it, so the run "
+            f"report would be short by one and would not say which stage"
+        )
+        assert reported[field.name].blocked_by == ("a dependency",), (
+            f"{field.name} is named but its blocker is not carried, which is the half a reader "
+            f"acts on"
+        )
+        assert not run.complete, f"a run with {field.name} skipped called itself complete"
+        checked += 1
+    assert checked == len(stage_fields & {f.name for f in dataclass_fields(PipelineRun)}), (
+        f"only {checked} of {sorted(stage_fields)} were exercised"
+    )
+    assert checked >= len(declared), f"fewer fields exercised ({checked}) than declare a skip"
+
+
+def test_the_report_counts_every_skipped_stage_it_names() -> None:
+    """The control for the count, which is the number a reader actually sees.
+
+    The defect showed as a *count* — "1 stage(s)" for two skipped stages — so a test that only
+    checked membership would have passed on it for the stages it did name.
+    """
+    from hawedit.pipeline import PipelineRun, StageSkipped
+
+    def skip(stage: str) -> StageSkipped:
+        return StageSkipped(stage=stage, reason="measured", blocked_by=("a dependency",))
+
+    run = PipelineRun(
+        media_id="m",
+        source="s.mp4",
+        work_dir="w",
+        render=skip("render"),
+        delivery=skip("delivery"),
+        discovery=skip("discovery"),
+    )
+    assert len(run.skipped()) == 3, f"three stages were skipped, the report has {run.skipped()}"
+    assert {name for name, _ in run.skipped()} == {"render", "delivery", "discovery"}

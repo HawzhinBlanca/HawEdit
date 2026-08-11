@@ -44,7 +44,7 @@ import hashlib
 import json
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TextIO
 
@@ -255,19 +255,25 @@ class PipelineRun:
         return {"skipped": False, "stage": "editorial", "judge": self.clip.editorial.judge}
 
     def skipped(self) -> tuple[tuple[str, StageSkipped], ...]:
-        """Every stage that did not run, in pipeline order."""
-        ordered = (
-            ("ingest", self.ingest),
-            ("transcript", self.transcript),
-            ("index", self.index),
-            ("visual_index", self.visual_index),
-            ("discovery", self.discovery),
-            ("editorial", self.editorial),
-            ("boundary", self.boundary),
-            ("render", self.render),
-            ("delivery", self.delivery),
+        """Every stage that did not run, in pipeline order.
+
+        Derived from the dataclass, not listed here. It was a hand-written tuple of nine
+        stages, and `delivery` could be deleted from it with the whole suite green (D-171).
+        The exit code survived that — `complete` separately requires
+        `isinstance(self.delivery, Delivery)` — but the report did not: measured, a run with
+        the delivery stage skipped printed *"INCOMPLETE — 1 stage(s) did not run"* instead of
+        two, never named the delivery set, and dropped its `blocked_by=('§2 delivery set',)`
+        on the floor. §1 of this module is *fail visible, not silent*, and an unnamed failure
+        is the silent case.
+
+        Field declaration order **is** pipeline order, so the derived sequence is the one the
+        list spelled out, and a stage added to the dataclass later cannot be forgotten here.
+        """
+        return tuple(
+            (field.name, value)
+            for field in fields(self)
+            if isinstance(value := getattr(self, field.name), StageSkipped)
         )
-        return tuple((name, value) for name, value in ordered if isinstance(value, StageSkipped))
 
     @property
     def complete(self) -> bool:
