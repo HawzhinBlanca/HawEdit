@@ -23,6 +23,7 @@ claims still require the package-managed assets and labelled Sorani audio.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -165,6 +166,26 @@ class CanonicalTranscriptProducer(Protocol):
     ) -> RawTranscript: ...
 
 
+def adapter_fingerprint(adapter_dir: Path) -> str:
+    """Stable identity of a PEFT adapter bundle, for the reuse key and the artifact's claim.
+
+    Two files decide what the adapter *does*: the weights, and the config that says where they
+    attach. Both are hashed, so retraining the same rank onto the same modules still yields a
+    different identity and a re-transcription rather than yesterday's words.
+    """
+    config = adapter_dir / "adapter_config.json"
+    weights = adapter_dir / "adapter_model.safetensors"
+    for required in (config, weights):
+        if not required.is_file():
+            raise FileNotFoundError(
+                f"{adapter_dir} is not a PEFT adapter bundle: {required.name} is missing"
+            )
+    digest = hashlib.sha256()
+    for path in (config, weights):
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:16]
+
+
 class OmniAsrBackend:
     """Meta's official LLM-7B decoder plus CTC-3B emissions and our Viterbi aligner.
 
@@ -172,6 +193,11 @@ class OmniAsrBackend:
     transcription but not timestamp extraction, so this uses the same public pipeline's audio
     preprocessing and CTC model forward pass, then projects the posterior matrix to only the
     target symbols needed by :func:`align_words`. No timing is inferred from text length.
+
+    `lora_adapter` points at a PEFT bundle to apply to the LLM — a fine-tune of the canonical
+    decoder, not a different model. Only the LLM is adapted: invariant #5 puts every timing on
+    CTC-3B's Viterbi path, and that model and its tokenizer are untouched, so an adapter can
+    change *which words are read* and never *when they are said*.
     """
 
     def __init__(
@@ -182,13 +208,30 @@ class OmniAsrBackend:
         language: str = "ckb_Arab",
         llm_card: str = "omniASR_LLM_7B_v2",
         ctc_card: str = "omniASR_CTC_3B_v2",
+        lora_adapter: Path | None = None,
     ) -> None:
         self.llm_device = llm_device
         self.ctc_device = ctc_device
         self.language = language
         self.llm_card = llm_card
         self.ctc_card = ctc_card
+        self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
         self._pipelines: tuple[Any, Any] | None = None
+
+    @property
+    def adapter_name(self) -> str | None:
+        """What `AsrProvenance.adapter` must record, or `None` for a stock run.
+
+        Beside `canonical`, never inside it: §7 checks `canonical` by role and a fine-tune of a
+        §7 model is still that model. Folding the digest in there made `AsrProvenance` refuse
+        every adapted transcript with `ModelNotInRegistry` — and the cheapest way to make that
+        pass would have been to loosen the §7 check, which is exactly the trade this project
+        does not make. `asr.py`'s rule is that a measurement carries the adapter that produced
+        it; this is where it carries it.
+        """
+        if self.lora_adapter is None:
+            return None
+        return f"lora:{adapter_fingerprint(self.lora_adapter)}"
 
     def _load(self) -> tuple[Any, Any]:
         if self._pipelines is None:
@@ -198,11 +241,132 @@ class OmniAsrBackend:
                 raise RuntimeError(
                     "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
                 ) from exc
+            llm = (
+                ASRInferencePipeline(model_card=self.llm_card, device=self.llm_device)
+                if self.lora_adapter is None
+                else self._load_adapted_llm(self.lora_adapter)
+            )
             self._pipelines = (
-                ASRInferencePipeline(model_card=self.llm_card, device=self.llm_device),
+                llm,
                 ASRInferencePipeline(model_card=self.ctc_card, device=self.ctc_device),
             )
         return self._pipelines
+
+    def _load_adapted_llm(self, adapter_dir: Path) -> Any:
+        """Base checkpoint + PEFT adapter, assembled the way the trainer serves it.
+
+        fairseq2 does not accept an adapter through `ASRInferencePipeline(model_card=…)`, so the
+        model is built by hand and handed to the pipeline pre-adapted. Three things this cannot
+        guess and therefore reads:
+
+        * **the tokenizer** — an adapter trained against a different tokenizer must be decoded
+          with that tokenizer, so it is required to sit in the bundle rather than be assumed;
+        * **the vocabulary size** — taken from that tokenizer's own `vocab_info`, never written
+          down as a constant. Measured on this machine: the champion bundle's tokenizer reports
+          **10288**, exactly the literal its trainer's server hardcodes, so the number is
+          derivable and a hardcoded one would only be a guess for the next adapter;
+        * **the base checkpoint** — resolved from the same asset store the unadapted path uses.
+
+        The `Linear` shim and the `LoraConfig` registration are PEFT/fairseq2 glue: PEFT looks
+        for `in_features`/`out_features`, fairseq2's projection names them `input_dim`/
+        `output_dim`, and without the mapping PEFT cannot see a layer to attach to.
+        """
+        import copy
+
+        import torch
+        from fairseq2.assets import get_asset_store, load_in_memory_asset_metadata
+        from fairseq2.data.tokenizers import load_tokenizer
+        from fairseq2.models.hub import load_model
+        from fairseq2.nn.projection import Linear as Fairseq2Linear
+        from fairseq2.runtime.config_registry import get_config
+        from fairseq2.runtime.dependency import get_dependency_resolver
+        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+        from omnilingual_asr.models.wav2vec2_llama import Wav2Vec2LlamaConfig
+
+        try:
+            from peft import LoraConfig, PeftModel
+            from peft.tuners.lora import Linear as LoraLinear
+        except ImportError as exc:
+            # An instruction, not a traceback: this raises inside WSL after Stage 0 has run and
+            # every speech region has been cut, and `peft` was genuinely absent from the runtime
+            # venv until the setup script named it.
+            raise RuntimeError(
+                "--omni-asr-adapter needs PEFT in the OmniASR runtime. Re-run hawedit-asr-setup "
+                "(or scripts/setup-wsl-asr.ps1) to provision it"
+            ) from exc
+
+        tokenizers = sorted(adapter_dir.glob("*.model"))
+        if len(tokenizers) != 1:
+            raise RuntimeError(
+                f"{adapter_dir} must hold exactly one tokenizer (*.model) so the adapter is "
+                f"decoded with the tokenizer it was trained against; found {len(tokenizers)}"
+            )
+        # The official card's own checkpoint value, not a path this module went looking for.
+        # It is a URL (`https://dl.fbaipublicfiles.com/mms/omniASR-LLM-7B-v2.pt`, measured
+        # 2026-08-12), so handing it straight back to fairseq2 reuses whatever that already has
+        # cached and downloads only if it does not — where a hardcoded `~/.cache/...` path, which
+        # is what the trainer's own server uses, is a guess about someone else's disk layout.
+        official = get_asset_store().retrieve_card(self.llm_card)
+        checkpoint = official.field("checkpoint").as_(str)
+
+        Fairseq2Linear.in_features = property(lambda self: self.input_dim)
+        Fairseq2Linear.out_features = property(lambda self: self.output_dim)
+        original_post_init = LoraConfig.__post_init__
+
+        def register_fairseq2_linear(config: Any) -> None:
+            original_post_init(config)
+            config._register_custom_module({Fairseq2Linear: LoraLinear})
+
+        LoraConfig.__post_init__ = register_fairseq2_linear
+
+        card = f"hawedit_adapted_{self.llm_card}"
+        tokenizer_card = f"{card}_tokenizer"
+        store = get_asset_store()
+        store._metadata_providers = [
+            provider
+            for provider in store._metadata_providers
+            if getattr(provider, "_source", "") != "hawedit_adapted"
+        ]
+        store._metadata_providers.append(
+            load_in_memory_asset_metadata(
+                "hawedit_adapted",
+                [
+                    {
+                        "name": tokenizer_card,
+                        "tokenizer_family": "char_tokenizer",
+                        "tokenizer": str(tokenizers[0].resolve()),
+                    },
+                    {
+                        "name": card,
+                        "model_family": "wav2vec2_llama",
+                        # `7b`, though the official card declares `7b_v2`. This follows the
+                        # recipe the adapter's own trainer serves it with, because an adapter is
+                        # only valid against the module shapes it was trained on and that recipe
+                        # is the one measured to produce it. D-181 records the discrepancy.
+                        "model_arch": "7b",
+                        "checkpoint": checkpoint,
+                        "tokenizer_ref": tokenizer_card,
+                    },
+                ],
+            )
+        )
+
+        tokenizer = load_tokenizer(card)
+        vocab_size = int(tokenizer.vocab_info.size)
+        config = copy.deepcopy(get_config(get_dependency_resolver(), Wav2Vec2LlamaConfig, "7b"))
+        config.llama_config.vocab_size = vocab_size
+        config.wav2vec2_asr_config.target_vocab_size = vocab_size
+
+        device = torch.device(self.llm_device)
+        base = load_model(card, device=device, dtype=torch.bfloat16, config=config)
+        adapted = PeftModel.from_pretrained(base, str(adapter_dir))
+        return ASRInferencePipeline(
+            model_card=None,
+            model=adapted.base_model.model,
+            tokenizer=tokenizer,
+            device=device,
+            dtype=torch.bfloat16,
+        )
 
     @staticmethod
     def _token_ids(pipeline: Any, surface: str) -> tuple[int, ...]:
@@ -358,8 +522,28 @@ class OmniAsrAdapter:
 class OmniAsrProducer:
     """Run canonical ASR on Stage 0's VAD-bounded speech regions."""
 
-    def __init__(self, backend: OmniSegmentBackend | None = None) -> None:
-        self.backend = backend or OmniAsrBackend()
+    def __init__(
+        self,
+        backend: OmniSegmentBackend | None = None,
+        *,
+        lora_adapter: Path | None = None,
+    ) -> None:
+        if backend is not None and lora_adapter is not None:
+            raise ValueError(
+                "pass the adapter to the backend, not to both: a supplied backend already "
+                "decides which weights run, and a second answer here could contradict it"
+            )
+        self.backend = backend or OmniAsrBackend(lora_adapter=lora_adapter)
+
+    @property
+    def model_identity(self) -> str | None:
+        """The adapter half of this producer's identity, or `None` when it runs stock weights.
+
+        `pipeline.run_pipeline` keys transcript reuse on the producer, and every OmniASR run
+        answers to the same class name. Without this an adapted run reuses an unadapted run's
+        transcript — the same hole D-136 closed for test doubles, one axis over.
+        """
+        return getattr(self.backend, "adapter_name", None)
 
     def transcribe(
         self,
@@ -371,7 +555,9 @@ class OmniAsrProducer:
     ) -> RawTranscript:
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         results, unaligned = transcribe_prepared_segments(self.backend, prepared)
-        return _assemble_canonical_transcript(media_id, results, unaligned)
+        return _assemble_canonical_transcript(
+            media_id, results, unaligned, adapter=getattr(self.backend, "adapter_name", None)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,6 +669,7 @@ def _assemble_canonical_transcript(
     media_id: str,
     results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
     unaligned: Sequence[UnalignedSpeech] = (),
+    adapter: str | None = None,
 ) -> RawTranscript:
     if not results:
         raise RuntimeError(
@@ -530,6 +717,9 @@ def _assemble_canonical_transcript(
         words=tuple(words),
         asr=AsrProvenance(
             canonical="omniASR_LLM_7B_v2",
+            # …and the fine-tune it ran, if any. A transcript decoded by adapted weights is a
+            # different transcript, and this field is the only place the artifact says so.
+            adapter=adapter,
             aligner="ctc_viterbi",
             mean_logprob=sum(logprobs) / len(logprobs) if logprobs else None,
         ),
@@ -552,10 +742,24 @@ class WslOmniAsrProducer:
         distro: str | None = None,
         interpreter: str | None = None,
         wsl_executable: str = "wsl.exe",
+        lora_adapter: Path | None = None,
     ) -> None:
         self.distro = distro
         self.interpreter = interpreter
         self.wsl_executable = wsl_executable
+        self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
+
+    @property
+    def model_identity(self) -> str | None:
+        """This producer's adapter identity, computed host-side so reuse can be keyed on it.
+
+        Read from the bundle on the Windows side rather than reported by the worker: the reuse
+        decision happens *before* the worker is invoked, and an identity that only exists after
+        a 1,547 s transcription cannot key anything.
+        """
+        if self.lora_adapter is None:
+            return None
+        return f"lora:{adapter_fingerprint(self.lora_adapter)}"
 
     def _prefix(self) -> list[str]:
         # The shared builder, not a second copy. This one used `--`, which routes the command
@@ -615,7 +819,7 @@ class WslOmniAsrProducer:
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         request_path = work_dir / "omni-asr-request.json"
         output_path = work_dir / "omni-asr-worker-output.json"
-        request = {
+        request: dict[str, Any] = {
             "schema_version": 1,
             "media_id": media_id,
             "segments": [
@@ -627,6 +831,13 @@ class WslOmniAsrProducer:
                 for segment in prepared
             ],
         }
+        if self.lora_adapter is not None:
+            # Only present for an adapted run, so an unadapted request is byte-identical to the
+            # one D-136's resume check compares against. Its presence also makes the two runs'
+            # requests differ, which is what stops a killed champion run from being resumed by
+            # the stock path under the same work directory.
+            request["lora_adapter"] = self._wsl_path(self.lora_adapter)
+            request["model_identity"] = self.model_identity
         payload = json.dumps(request, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
         try:
             with request_path.open("x", encoding="utf-8", newline="\n") as stream:
@@ -696,13 +907,21 @@ class WslOmniAsrProducer:
 
 
 def create_omni_asr_producer(
-    runtime: str = "auto", *, distro: str | None = None
+    runtime: str = "auto", *, distro: str | None = None, lora_adapter: Path | None = None
 ) -> CanonicalTranscriptProducer:
     """Choose direct Linux inference or the WSL bridge without hiding that decision."""
     if runtime not in {"auto", "local", "wsl"}:
         raise ValueError("OmniASR runtime must be one of: auto, local, wsl")
+    if lora_adapter is not None:
+        # Fingerprinting reads both files, so a path that is not an adapter bundle fails here —
+        # before Stage 0's regions are cut — rather than 1,547 s later inside WSL.
+        adapter_fingerprint(Path(lora_adapter))
     use_wsl = runtime == "wsl" or (runtime == "auto" and os.name == "nt")
-    return WslOmniAsrProducer(distro=distro) if use_wsl else OmniAsrProducer()
+    return (
+        WslOmniAsrProducer(distro=distro, lora_adapter=lora_adapter)
+        if use_wsl
+        else OmniAsrProducer(lora_adapter=lora_adapter)
+    )
 
 
 def validate_adapter(adapter: ASRAdapter) -> ModelEntry:

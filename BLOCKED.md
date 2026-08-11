@@ -993,3 +993,36 @@ caveat.
 **What is done in the meantime:** the refusal is hoisted ahead of every billed call, so the
 documented invocation costs nothing when it cannot finish, and the README states the requirement and
 this entry rather than promising a check that cannot run.
+
+---
+
+## #21 · The champion adapter has no §7 row, because that needs a licence for weights Hawa trained
+
+**Needs:** Hawa, one answer — under what licence does the Kurdish LoRA at
+`/home/ai/cortex_champion_model` ship? No credentials, no purchase, no download.
+
+D-181 made Stage 1 able to run a fine-tuned decoder: `--omni-asr-adapter <bundle>` loads the base
+`omniASR_LLM_7B_v2` plus a PEFT LoRA, and every transcript it produces records
+`AsrProvenance.adapter = lora:<digest>` so it can never be confused with a stock run. Measured on
+real Sorani, the adapter changes the output on **3 of 3** clips from the 38-minute file.
+
+**What is blocked is the ledger, not the run.** §7's registry requires a `licence` on every entry,
+and D-002 makes a missing licence a refusal rather than a default. The base model is Apache-2.0.
+The adapter is **Hawa's own trained work**, and this loop does not guess a licence — so the
+champion is usable but unlisted:
+
+| | |
+|---|---|
+| Runs today | **yes** — `--omni-asr --omni-asr-adapter …`, no registry lookup on the adapter path |
+| In §7 | **no** — no `ModelEntry`, so `python -m hawedit.models` cannot report on it |
+| Recorded in the artifact | **yes** — `adapter` field, and in the delivered clip sidecar |
+
+**Why it is not simply added with a placeholder.** `licence=NOT_ASSESSED` exists in §7 for models
+this project *excludes*; using it for a model the pipeline actually runs would put an unassessed
+licence in the production table, which is the one thing that table is for. And folding the adapter
+into `canonical` to dodge the question was tried and correctly refused by `AsrProvenance`
+(`ModelNotInRegistry`) — see D-181.
+
+**What is done in the meantime:** the adapter runs, its identity is in the transcript and the clip,
+and the digest covers config + weights so a retrain is a different model to every reader. The only
+thing missing is the row that says who may use it and on what terms.

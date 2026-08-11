@@ -2320,6 +2320,54 @@ def test_stage_1_is_not_re_run_when_its_output_is_already_in_the_work_directory(
     assert calls[-1] == "other", "a different producer reused the first producer's transcript"
 
 
+def test_an_adapted_stage_1_does_not_reuse_the_stock_run_s_transcript(tmp_path: Path) -> None:
+    """The defect D-181 exists for, at the level it actually bites.
+
+    Reuse is keyed on the producer, and every OmniASR producer is the same class — so a run with
+    a LoRA adapter and a run without one were **one key**. The stock transcript would be handed
+    back after 0 s and the report would name the adapter: 545 segments of words the champion
+    never read, presented as the champion's. This is D-136's own rule ("a transcript stored by a
+    stub must not be reused by a real run") on the axis that did not exist when it was written.
+    """
+    calls: list[str | None] = []
+
+    class Adaptable:
+        """One class, two sets of weights — exactly the shape the class-name key could not see."""
+
+        def __init__(self, adapter: str | None) -> None:
+            self.model_identity = adapter
+
+        def transcribe(
+            self,
+            media_id: str,
+            audio_path: Path,
+            speech_segments: object,
+            work_dir: Path,
+            ffmpeg: Path | None = None,
+        ) -> RawTranscript:
+            calls.append(self.model_identity)
+            return replace(a_transcript(media_id), media_id=media_id)
+
+    mixed = tmp_path / "mixed"
+    run_pipeline(FIXTURE, work_dir=mixed, media_id="probe", asr=Adaptable(None))
+    assert calls == [None]
+
+    run_pipeline(FIXTURE, work_dir=mixed, media_id="probe", asr=Adaptable("lora:abc123"))
+
+    assert calls == [None, "lora:abc123"], (
+        "the adapted run reused the stock transcript; its words would ship as the adapter's"
+    )
+
+    # The control, in its own work directory because invariant #1 gives one media_id exactly one
+    # canonical transcript: reuse must still fire for the *same* weights, or this key re-runs
+    # Stage 1 on every invocation and the 1,547 s D-136 saved is spent again each time.
+    same = tmp_path / "same"
+    calls.clear()
+    run_pipeline(FIXTURE, work_dir=same, media_id="probe", asr=Adaptable("lora:abc123"))
+    run_pipeline(FIXTURE, work_dir=same, media_id="probe", asr=Adaptable("lora:abc123"))
+    assert calls == ["lora:abc123"], "the same adapter re-transcribed instead of reusing"
+
+
 def test_a_supplied_transcript_never_licenses_a_reuse(tmp_path: Path) -> None:
     """`--transcript` hands in a file that was not made from this audio by any producer here, so
     it must leave no provenance sidecar — otherwise the next `--omni-asr` run would reuse it and
@@ -2649,7 +2697,12 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
     (
         "an OmniASR runtime flag without the runtime",
         ["--wsl-distro", "Ubuntu"],
-        "--omni-asr-runtime and --wsl-distro require --omni-asr",
+        "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr",
+    ),
+    (
+        "an OmniASR adapter without the runtime",
+        ["--omni-asr-adapter", "champion"],
+        "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr",
     ),
     (
         "both cloud routes",

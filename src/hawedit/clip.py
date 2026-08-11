@@ -274,6 +274,10 @@ class ClipTranscript:
             ],
             "asr": {
                 "canonical": self.asr.canonical,
+                # Hand-enumerated, so a field added to `AsrProvenance` is dropped here unless it
+                # is named — and this dict is what §2 ships. Without `adapter` the delivered clip
+                # says stock weights read these words whichever weights actually did. D-181.
+                "adapter": self.asr.adapter,
                 "aligner": self.asr.aligner,
                 "validated_by": self.asr.validated_by,
                 "mean_logprob": self.asr.mean_logprob,

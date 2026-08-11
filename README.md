@@ -12,6 +12,11 @@ human-labelled Sorani/editorial sets; this repository does not fabricate those r
 Stage 1 is runnable through `--omni-asr`; on Windows the runner automatically uses the WSL2
 bridge because Meta's fairseq2 native extension has no Windows wheel. Its model execution is
 not a measured Sorani benchmark until the package-managed weights and labels are present.
+`--omni-asr-adapter <PEFT bundle>` runs a **fine-tuned** decoder — base plus LoRA — and the
+adapter's digest is recorded in `AsrProvenance.adapter`, so an adapted transcript is never
+reused by, or mistaken for, a stock one. Only the decoder is adapted: CTC-3B and every word
+timing are unchanged, per Kurdish invariant #5. An adapter has no §7 row until its licence is
+recorded (`BLOCKED.md` #21).
 
 ```bash
 .venv/bin/python -m hawedit.pipeline VIDEO.mp4 --work-dir work

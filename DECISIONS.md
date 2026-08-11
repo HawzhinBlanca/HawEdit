@@ -9401,3 +9401,61 @@ clearing it by hand: `frames/ZAR38MinTest_s0_w0/` went from 16 files and a `Fram
 
 **2/2 mutations, lint-clean, file restored byte-identical.**
 `evidence/a-retry-at-fewer-frames-inherited-the-previous-extraction.md`.
+
+## D-181
+
+**A fine-tuned decoder would have shipped the base model's words under its own name.** Asked to
+run Stage 1 with Hawa's own fine-tuned OmniASR-7B ("champion"), `--omni-asr` had no way to load an
+adapter — and giving it one exposed three defects, the first of which ships wrong output.
+
+**1. The reuse key could not tell an adapted run from a stock one.** `run_pipeline` keys Stage 1
+reuse on `f"{module}.{qualname}"` of the producer, and every OmniASR run is
+`hawedit.asr.WslOmniAsrProducer`. A stock run then an adapted run over one work directory returned
+the **stock transcript in 0 s** and reported the adapter: 545 segments of words the champion never
+read, presented as the champion's. That is D-136's own rule — a transcript "must not be reused
+by a run that did not make it" — on the axis that did not exist when D-136 was written.
+**2. The artifact hardcoded the base model**: `_assemble_canonical_transcript` wrote
+`canonical="omniASR_LLM_7B_v2"` as a literal, so an adapted transcript claimed stock provenance in
+the file that ships to the client. **3. `peft` was absent from the runtime venv** — measured
+`peft MISSING` against `%LOCALAPPDATA%\HawEdit\wsl-asr\venv` — so the adapter path would
+have raised `ImportError` inside WSL *after* Stage 0 and 545 WAV cuts.
+
+**The judgement: `adapter` is a new `AsrProvenance` field beside `canonical`, never inside it.**
+Folding the digest into `canonical` was written first and `AsrProvenance` **refused** it with
+`ModelNotInRegistry`: §7 role-checks that field, and a fine-tune of a §7 model is still
+that model. The cheapest way to make that pass would have been to loosen the §7 check —
+refused; the guard is right. **Rejected: recording the adapter only in the run report** — the
+transcript is the artifact that ships, and D-103 already settled that what a transcript does not
+contain belongs *in* it. **Rejected: a §7 registry row for the champion** — that needs a
+licence for weights Hawa trained, and this loop does not guess a licence. `BLOCKED.md` #21.
+
+**Nothing guessed.** The `vocab_size = 10288` the trainer's server hardcodes is the bundle
+tokenizer's own `vocab_info.size` (verified: `10288`, `derivable: True`), so it is read, not
+written down — a literal would be a guess for the next adapter. The base checkpoint is the
+official card's own `checkpoint` field (`https://dl.fbaipublicfiles.com/mms/omniASR-LLM-7B-v2.pt`)
+handed back to fairseq2 so its cache answers, rather than the `~/.cache/…` path the trainer's
+server hardcodes about its own disk. `peft==0.19.1` is the version `adapter_config.json` records
+as having written the bundle. **One deviation recorded rather than resolved:** the in-memory card
+uses `model_arch: "7b"` where the official card declares `7b_v2`. The trainer's recipe uses `7b`,
+an adapter is only valid against the shapes it was trained on, and `7b` is what was measured
+end-to-end — so `7b` it is, and this sentence is why.
+
+**Kurdish invariant #5 is untouched and asserted.** Only the LLM decoder is adapted; CTC-3B, its
+tokenizer and its device are identical between the two backends, and every timing still comes from
+the Viterbi path over CTC emissions. An adapter changes which words are read, never when they are
+said.
+
+**The adapter is not cosmetic**, measured against the same in-memory checkpoint on three real
+clips from `ZAR38MinTest.mp4` differing only in whether it was applied: **3/3 changed**. At 19:15
+the base drops the opening line and the champion recovers it
+(`هەستەکەم درۆم لە
+گەڵ ناکا …`); at 1:00 the base opens with a hallucinated
+`سانە` the champion does not emit.
+
+**9/9 mutations, lint-clean, every file restored byte-identical.**
+`evidence/the-champion-adapter-would-have-shipped-the-base-models-words.md`.
+
+**One operational finding, because it cost a real run.** A Stage 1 run died on `runtime is not
+provisioned` while the mutation audit was running: `_runtime` resolves the WSL snapshot by
+`package_fingerprint`, a digest over `src/hawedit/*.py`, and the audit was rewriting those files.
+Not a defect — a real run and any edit to `src/hawedit` cannot overlap.

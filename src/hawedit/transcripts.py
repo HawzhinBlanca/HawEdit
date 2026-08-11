@@ -195,11 +195,21 @@ class AsrProvenance:
     aligner: str | None = None
     validated_by: str | None = None
     mean_logprob: float | None = None
+    # A fine-tune applied on top of `canonical`, as `lora:<digest of the bundle>`. Separate from
+    # `canonical` on purpose: §7 blesses the base architecture and weights, and a fine-tune of a
+    # §7 model is still that model — so folding the adapter into `canonical` would either force
+    # every retrain through the blueprint or, worse, be "fixed" by relaxing the §7 check above.
+    # It is in the artifact rather than a log because a transcript decoded by adapted weights and
+    # one decoded by stock weights are different transcripts, and only this field says which is
+    # which. D-181.
+    adapter: str | None = None
 
     def __post_init__(self) -> None:
         # Role-checked, not merely registry-checked: a scene detector is in §7 but did not
         # transcribe anything (audit finding #8).
         resolve_role(self.canonical, frozenset({"canonical_asr"}), "the canonical ASR")
+        if self.adapter is not None and not self.adapter.strip():
+            raise ValueError("AsrProvenance.adapter must name the fine-tune or be None")
         if self.validated_by is not None:
             resolve_role(self.validated_by, frozenset({"asr_validator"}), "the ASR validator")
         if self.aligner is not None:

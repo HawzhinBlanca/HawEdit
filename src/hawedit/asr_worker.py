@@ -77,11 +77,25 @@ def run_request(
             )
         prepared.append(segment)
 
-    model = backend or OmniAsrBackend()
+    # An adapter named in the request must reach the weights or stop the run. Ignoring it would
+    # transcribe on base weights and publish the result under the adapter's name — the request is
+    # the only channel across the WSL boundary, so a field read by nobody is silently wrong
+    # output, not a no-op.
+    adapter = payload.get("lora_adapter")
+    if adapter is not None and not isinstance(adapter, str):
+        raise ValueError("ASR worker request lora_adapter must be a path string")
+    if adapter is not None and backend is not None:
+        raise ValueError(
+            "ASR worker request names a LoRA adapter but a backend was supplied; the adapter "
+            "would be ignored and its transcript filed under the adapter's name anyway"
+        )
+    model = backend or OmniAsrBackend(lora_adapter=Path(adapter) if adapter is not None else None)
     # The shared helper, not a second generator expression: one unalignable region used to
     # discard every other region's inference. D-103.
     results, unaligned = transcribe_prepared_segments(model, prepared)
-    transcript = _assemble_canonical_transcript(media_id, results, unaligned)
+    transcript = _assemble_canonical_transcript(
+        media_id, results, unaligned, adapter=getattr(model, "adapter_name", None)
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(transcript.to_json())

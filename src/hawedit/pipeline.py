@@ -1016,6 +1016,14 @@ def run_pipeline(
         # a test double "can never be read as a run on real weights", and a transcript stored by a
         # stub must not be reused by a real --omni-asr run.
         producer_id = f"{type(asr).__module__}.{type(asr).__qualname__}"
+        # …and its weights, when the producer runs something other than stock ones. Every
+        # OmniASR producer answers to the same class name, so a champion run and a base run were
+        # one key: the base transcript would be reused and the report would name the adapter.
+        # That is D-136's own reasoning — a stored transcript "must not be reused" by a run that
+        # did not make it — on the axis D-136 did not have, because no adapter existed then.
+        model_identity = getattr(asr, "model_identity", None)
+        if model_identity:
+            producer_id = f"{producer_id}+{model_identity}"
         reused = TranscriptStore(work_dir / "transcripts").reusable_raw(
             identifier, audio_digest, producer_id
         )
@@ -1681,6 +1689,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--wsl-distro", help="optional WSL distribution for canonical OmniASR")
     parser.add_argument(
+        "--omni-asr-adapter",
+        type=Path,
+        help=(
+            "a PEFT LoRA bundle to apply to the LLM decoder — a fine-tune of the canonical "
+            "model. Only the decoder is adapted; CTC-3B and every timing stay untouched"
+        ),
+    )
+    parser.add_argument(
         "--verdict", type=Path, help="a JudgeVerdict JSON document to stand in for Stage 4"
     )
     parser.add_argument(
@@ -1774,8 +1790,12 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
     try:
         if args.transcript and args.omni_asr:
             raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
-        if (args.omni_asr_runtime != "auto" or args.wsl_distro) and not args.omni_asr:
-            raise ValueError("--omni-asr-runtime and --wsl-distro require --omni-asr")
+        if (
+            args.omni_asr_runtime != "auto" or args.wsl_distro or args.omni_asr_adapter
+        ) and not args.omni_asr:
+            raise ValueError(
+                "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr"
+            )
         if args.gemini and args.vertex_project:
             raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
         if (args.gemini or args.vertex_project) and args.verdict:
@@ -1860,7 +1880,11 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
         if args.omni_asr:
             from hawedit.asr import create_omni_asr_producer
 
-            canonical_asr = create_omni_asr_producer(args.omni_asr_runtime, distro=args.wsl_distro)
+            canonical_asr = create_omni_asr_producer(
+                args.omni_asr_runtime,
+                distro=args.wsl_distro,
+                lora_adapter=args.omni_asr_adapter,
+            )
 
         assert_devices_available(
             {

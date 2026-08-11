@@ -40,6 +40,7 @@ from hawedit.asr import (
     WslOmniAsrProducer,
     _assemble_canonical_transcript,
     _PreparedSpeechSegment,
+    adapter_fingerprint,
     create_omni_asr_producer,
     long_audio_failure_rate,
     transcribe_prepared_segments,
@@ -799,3 +800,259 @@ def test_a_clean_run_still_reports_one_aggregate_as_before(tmp_path: Path) -> No
     assert transcript.asr.mean_logprob == pytest.approx(-0.1)
     assert len(transcript.segment_confidence) == 3
     assert all(entry.mean_logprob == pytest.approx(-0.1) for entry in transcript.segment_confidence)
+
+
+def _adapter_bundle(root: Path, *, rank: int = 16, weights: bytes = b"lora") -> Path:
+    """The three files a PEFT bundle carries. Contents are arbitrary; identity is not."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "adapter_config.json").write_text(
+        json.dumps({"peft_type": "LORA", "r": rank, "target_modules": ["q_proj", "v_proj"]}),
+        encoding="utf-8",
+    )
+    (root / "adapter_model.safetensors").write_bytes(weights)
+    (root / "tokenizer.model").write_bytes(b"sentencepiece")
+    return root
+
+
+def test_an_adapted_run_does_not_file_its_transcript_under_the_base_model(tmp_path: Path) -> None:
+    """§7's ledger reads `asr.canonical`, and an adapted decoder is not the stock one."""
+    adapter = _adapter_bundle(tmp_path / "champion")
+    prepared = _regions(tmp_path, 2)
+    results, unaligned = transcribe_prepared_segments(FakeOmniBackend(), prepared)
+
+    transcript = _assemble_canonical_transcript(
+        "zar38", results, unaligned, adapter=OmniAsrBackend(lora_adapter=adapter).adapter_name
+    )
+
+    assert transcript.asr.adapter == f"lora:{adapter_fingerprint(adapter)}", (
+        "an adapted transcript that records no adapter claims a provenance it does not have"
+    )
+    assert transcript.asr.canonical == "omniASR_LLM_7B_v2", (
+        "the base model is still what §7 blesses; the adapter is recorded beside it, not inside"
+    )
+
+
+def test_an_unadapted_run_still_names_the_base_model_exactly(tmp_path: Path) -> None:
+    """The control: the stock path's artifact must be unchanged by any of this."""
+    prepared = _regions(tmp_path, 2)
+    results, unaligned = transcribe_prepared_segments(FakeOmniBackend(), prepared)
+
+    transcript = _assemble_canonical_transcript(
+        "zar38", results, unaligned, adapter=OmniAsrBackend().adapter_name
+    )
+
+    assert transcript.asr.canonical == "omniASR_LLM_7B_v2"
+    assert transcript.asr.adapter is None, "a stock run must not claim a fine-tune"
+    assert WslOmniAsrProducer().model_identity is None, (
+        "a stock WSL run must add nothing to the reuse key, or every stored transcript is orphaned"
+    )
+
+
+def test_an_adapted_producer_does_not_share_a_reuse_key_with_a_stock_one(tmp_path: Path) -> None:
+    """The defect this exists for: both producers are the same class, so the class name alone
+    made a 1,547 s champion run reuse the base run's words and report them as the champion's."""
+    adapter = _adapter_bundle(tmp_path / "champion")
+
+    stock = WslOmniAsrProducer()
+    adapted = WslOmniAsrProducer(lora_adapter=adapter)
+
+    assert type(stock).__qualname__ == type(adapted).__qualname__, (
+        "if these ever stop sharing a class name this test is measuring nothing"
+    )
+    assert stock.model_identity != adapted.model_identity
+    assert adapted.model_identity is not None
+
+
+def test_retraining_the_same_shape_produces_a_different_reuse_key(tmp_path: Path) -> None:
+    """Weights are hashed, not just the config: a retrain at the same rank is a different model."""
+    first = _adapter_bundle(tmp_path / "run1", weights=b"weights-v1")
+    second = _adapter_bundle(tmp_path / "run2", weights=b"weights-v2")
+
+    assert adapter_fingerprint(first) != adapter_fingerprint(second)
+
+
+def test_reattaching_the_same_weights_elsewhere_produces_a_different_reuse_key(
+    tmp_path: Path,
+) -> None:
+    """And the config is hashed, not just the weights: same tensors, different attachment."""
+    first = _adapter_bundle(tmp_path / "r16", rank=16, weights=b"same")
+    second = _adapter_bundle(tmp_path / "r32", rank=32, weights=b"same")
+
+    assert adapter_fingerprint(first) != adapter_fingerprint(second)
+
+
+def test_the_same_bundle_keeps_one_identity_across_calls(tmp_path: Path) -> None:
+    """The control for the two above: a fingerprint that never repeats would re-transcribe every
+    run and no reuse would ever fire."""
+    adapter = _adapter_bundle(tmp_path / "champion")
+
+    assert adapter_fingerprint(adapter) == adapter_fingerprint(adapter)
+
+
+def test_a_directory_that_is_not_an_adapter_bundle_is_refused_before_stage_0(
+    tmp_path: Path,
+) -> None:
+    """Cheap and early, not 1,547 s later inside WSL."""
+    empty = tmp_path / "not-an-adapter"
+    empty.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="adapter_config.json"):
+        create_omni_asr_producer("wsl", lora_adapter=empty)
+
+
+def _capture_wsl_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stage1: Path,
+    adapter: Path | None,
+) -> dict[str, Any]:
+    """Run the producer with the worker faked, and return the request it wrote.
+
+    The worker is not `run_request` here: an adapted request is *refused* when a backend is
+    supplied, which is the point of the worker test below. This one is about what crosses the
+    boundary, so it publishes a valid output directly and reads the request.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "wslpath" in args:
+            return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
+        if "hawedit.asr_worker" in args:
+            seen.append(json.loads((stage1 / "omni-asr-request.json").read_text(encoding="utf-8")))
+            published = RawTranscript(
+                media_id="zar38",
+                text_ckb="کوردی.",
+                words=(Word(w="کوردی.", start_ms=1_050, end_ms=1_500, conf=0.9),),
+                asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+            )
+            (stage1 / "omni-asr-worker-output.json").write_text(
+                published.to_json() + "\n", encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+        Path(args[-1]).write_bytes(b"wav")
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    WslOmniAsrProducer(interpreter="/opt/hawedit/python", lora_adapter=adapter).transcribe(
+        "zar38",
+        tmp_path / "audio.wav",
+        (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
+        stage1,
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    assert seen, "the worker was never invoked"
+    return seen[0]
+
+
+def test_the_wsl_request_carries_the_adapter_across_the_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The request is the only channel into WSL. If the adapter is not in it, the worker loads
+    base weights and the transcript is published under the adapter's name anyway."""
+    adapter = _adapter_bundle(tmp_path / "champion")
+
+    request = _capture_wsl_request(monkeypatch, tmp_path, tmp_path / "stage1", adapter)
+
+    assert request["lora_adapter"] == "/mnt/c/shared", (
+        "the adapter did not reach the worker, so it would have run base weights"
+    )
+
+
+def test_a_stock_wsl_request_gains_no_field_at_all(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The control on the test above: D-136 resumes a killed run by comparing the request
+    verbatim, so an unadapted run must not gain a key and orphan every in-flight request."""
+    request = _capture_wsl_request(monkeypatch, tmp_path, tmp_path / "stage1", None)
+
+    assert set(request) == {"schema_version", "media_id", "segments"}
+
+
+def test_the_worker_refuses_an_adapter_it_would_have_ignored(tmp_path: Path) -> None:
+    """A field read by nobody is silently wrong output. The worker takes a backend in tests, and
+    a supplied backend cannot be adapted after the fact — so the request must stop rather than
+    transcribe on base weights and publish under the adapter's name."""
+    segment = tmp_path / "speech-0000.wav"
+    segment.write_bytes(b"wav")
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "media_id": "episode",
+                "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
+                "lora_adapter": "/home/ai/cortex_champion_model",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="would be ignored"):
+        run_request(request, tmp_path / "output.json", FakeOmniBackend())
+
+
+def test_a_request_without_an_adapter_still_runs_the_supplied_backend(tmp_path: Path) -> None:
+    """The control: the refusal above must not fire on every ordinary request."""
+    segment = tmp_path / "speech-0000.wav"
+    segment.write_bytes(b"wav")
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "media_id": "episode",
+                "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    transcript = run_request(request, tmp_path / "output.json", FakeOmniBackend())
+
+    assert transcript.asr.canonical == "omniASR_LLM_7B_v2"
+
+
+def test_only_the_decoder_is_adapted_never_the_timings(tmp_path: Path) -> None:
+    """Kurdish invariant #5: every timing comes from CTC-3B's Viterbi path. An adapter that
+    reached the CTC card or its tokenizer would put invented word boundaries in the canonical
+    transcript, which is the one thing this stage may never do."""
+    adapter = _adapter_bundle(tmp_path / "champion")
+
+    adapted = OmniAsrBackend(lora_adapter=adapter)
+    stock = OmniAsrBackend()
+
+    assert adapted.ctc_card == stock.ctc_card
+    assert adapted.ctc_device == stock.ctc_device
+    assert adapted.llm_card == stock.llm_card, (
+        "the adapter attaches to the canonical decoder; it does not select a different one"
+    )
+
+
+def test_an_adapter_and_a_supplied_backend_cannot_disagree(tmp_path: Path) -> None:
+    """Two answers to "which weights run" is how the wrong one gets used silently."""
+    adapter = _adapter_bundle(tmp_path / "champion")
+
+    with pytest.raises(ValueError, match="not to both"):
+        OmniAsrProducer(FakeOmniBackend(), lora_adapter=adapter)
+
+
+def test_the_delivered_clip_sidecar_carries_the_adapter_too(tmp_path: Path) -> None:
+    """`ClipTranscript.to_dict` names its fields one by one, so a new one is dropped unless it
+    is added there — and that dict is what §2 ships. A clip that says stock weights read words
+    an adapter read is the same wrong claim, one artifact further downstream."""
+    from hawedit.clip import ClipTranscript
+
+    adapter = _adapter_bundle(tmp_path / "champion")
+    identity = OmniAsrBackend(lora_adapter=adapter).adapter_name
+    clip = ClipTranscript(
+        raw_ckb="کوردی.",
+        norm_ckb="کوردی",
+        en_aux=None,
+        words=(Word(w="کوردی.", start_ms=0, end_ms=500, conf=0.9),),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", adapter=identity, aligner="ctc_viterbi"),
+    )
+
+    shipped = clip.to_dict()
+
+    assert shipped["asr"]["adapter"] == identity
+    assert ClipTranscript.from_dict(shipped).asr.adapter == identity, "it must survive a round trip"

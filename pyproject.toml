@@ -126,6 +126,11 @@ module = [
   "google.*",
   "omnilingual_asr.*",
   "fairseq2.*",
+  # `peft`, like the two above, lives only in the WSL2 runtime `hawedit-asr-setup` provisions —
+  # never in the Windows or CI environment. `--omni-asr-adapter` imports it inside a function
+  # behind `try: ... except ImportError`, which is what makes it optional at runtime; this says
+  # the same thing to the type checker. D-181.
+  "peft.*",
   # The `gpu` extra. CI installs `.[dev,media]` only — §6 puts Stage 0 on CPU and the CUDA
   # build of torch is ~2 GB of runner disk for kernels nothing in the gate calls — so these
   # resolve on hawapc01 and not on a clean runner. Every import of them is already inside a

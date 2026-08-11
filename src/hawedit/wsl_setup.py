@@ -105,14 +105,14 @@ if command -v uv >/dev/null 2>&1; then
     uv venv --python 3.12 "$venv"
   fi
   uv pip install --python "$venv/bin/python" \
-    'omnilingual-asr==0.2.0' 'klpt==0.1.7' 'fonttools==4.55.3'
+    'omnilingual-asr==0.2.0' 'klpt==0.1.7' 'fonttools==4.55.3' 'peft==0.19.1'
 elif command -v python3.12 >/dev/null 2>&1; then
   if [[ ! -x "$venv/bin/python" ]]; then
     python3.12 -m venv "$venv"
   fi
   "$venv/bin/python" -m pip install --upgrade pip
   "$venv/bin/python" -m pip install \
-    'omnilingual-asr==0.2.0' 'klpt==0.1.7' 'fonttools==4.55.3'
+    'omnilingual-asr==0.2.0' 'klpt==0.1.7' 'fonttools==4.55.3' 'peft==0.19.1'
 else
   printf '%s\n' 'Install uv or Python 3.12 inside WSL2.' >&2
   exit 1
@@ -122,7 +122,12 @@ import torch
 from hawedit.asr_worker import run_request
 from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
 
-del run_request, ASRInferencePipeline
+# `--omni-asr-adapter` loads a PEFT bundle inside this venv. It was missing here and the
+# adapter path would have raised ImportError *after* Stage 0 and 545 WAV cuts. Pinned to the
+# version `adapter_config.json` records as having written the bundle — read, not chosen.
+from peft import PeftModel
+
+del run_request, ASRInferencePipeline, PeftModel
 if not torch.cuda.is_available():
     raise SystemExit("OmniASR installed, but CUDA is not visible inside WSL2")
 if torch.cuda.device_count() < 2:
