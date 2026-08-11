@@ -76,10 +76,55 @@ def test_the_fixture_is_committed() -> None:
 # --- §3 Stage 0's literal parameters ------------------------------------------------------
 
 
+def _blueprint_stage_0_settings() -> dict[str, str]:
+    """Every Stage 0 setting §3 states, read out of the frozen blueprint.
+
+    The blueprint gives two ffmpeg commands and the VAD line verbatim, so these are not
+    approximations — unlike `ContentDetector, threshold ~27` and the visual `~1 fps`, which are
+    written with a tilde and are deliberately **not** bound here: pinning an approximate figure
+    as exact would invent precision the document declined to give.
+
+    This test previously asserted `== 16_000`, `== "loudnorm=…"` and `== (1, 720, 28)` — literals
+    typed beside the constants, with `BLUEPRINT.md` named in the function title and never opened.
+    Adversarial pass 28 also found it covered **four of the six** Stage 0 constants: neither
+    `MAX_SPEECH_DURATION_S` nor `OMNIASR_CEILING_S` appeared, and the first could go 38 → 30 with
+    the whole suite green, because the only test touching it asserts a *margin*
+    (`CEILING - MAX >= 2.0`) that 30 satisfies. D-173.
+
+    Non-vacuity: every one of the six must be found, and a missing match fails here rather than
+    quietly asserting nothing.
+    """
+    import re
+    from pathlib import Path as _Path
+
+    blueprint = (_Path(__file__).resolve().parents[1] / "BLUEPRINT.md").read_text(encoding="utf-8")
+    patterns = {
+        "sample_rate": r"-ar (\d+)",
+        "loudnorm": r"-af (loudnorm=[^\s\\]+)",
+        "proxy_fps": r"-vf \"fps=(\d+),scale=-2:\d+\"",
+        "proxy_height": r"-vf \"fps=\d+,scale=-2:(\d+)\"",
+        "proxy_crf": r"-crf (\d+)",
+        "max_speech_duration_s": r"max_speech_duration_s=(\d+)",
+        "omniasr_ceiling_s": r"OmniASR's (\d+) s ceiling",
+    }
+    found: dict[str, str] = {}
+    for name, pattern in patterns.items():
+        match = re.search(pattern, blueprint)
+        assert match is not None, f"§3 Stage 0 no longer states {name}; the scan is broken"
+        found[name] = match.group(1)
+    return found
+
+
 def test_the_stage_0_constants_are_the_blueprints() -> None:
-    assert TARGET_SAMPLE_RATE == 16_000
-    assert LOUDNORM_FILTER == "loudnorm=I=-23:TP=-2:LRA=7"
-    assert (PROXY_FPS, PROXY_HEIGHT, PROXY_CRF) == (1, 720, 28)
+    """Derived from the frozen document, and covering every constant it states."""
+    stated = _blueprint_stage_0_settings()
+    assert int(stated["sample_rate"]) == TARGET_SAMPLE_RATE, stated
+    assert stated["loudnorm"] == LOUDNORM_FILTER, stated
+    assert int(stated["proxy_fps"]) == PROXY_FPS, stated
+    assert int(stated["proxy_height"]) == PROXY_HEIGHT, stated
+    assert int(stated["proxy_crf"]) == PROXY_CRF, stated
+    assert float(stated["max_speech_duration_s"]) == MAX_SPEECH_DURATION_S, stated
+    assert float(stated["omniasr_ceiling_s"]) == OMNIASR_CEILING_S, stated
 
 
 def test_the_vad_ceiling_leaves_a_margin_under_the_asr_limit() -> None:

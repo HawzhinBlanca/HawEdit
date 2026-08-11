@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from hawedit.index import (
+    DEFAULT_NGRAM_SIZE,
     DEFAULT_NGRAM_WEIGHT,
     Bm25Index,
     Document,
@@ -392,3 +393,45 @@ def test_a_limit_that_cannot_return_a_document_is_refused() -> None:
     # "any limit is refused". D-090's over-strict direction is the one only a control catches.
     assert len(index.search("کوردستان", limit=1)) == 1
     assert len(index.search("کوردستان", limit=10)) == 10
+
+
+# --- D-173: §2's n-gram size, stated in the frozen blueprint and held by nothing -------------
+
+
+def test_the_ngram_size_is_the_one_the_blueprint_states() -> None:
+    """§2/§3: *"BM25 + character 3-grams over the normalized transcript."*
+
+    Adversarial pass 28 measured this one drifting silently: `DEFAULT_NGRAM_SIZE` 3 → 4 left the
+    whole suite green. Nothing pinned it to the blueprint and nothing pinned it behaviourally
+    either, though the document singles the choice out — *"Character n-grams matter more than
+    usual — Sorani is morphologically rich"* — which is why it is a stated number and not a
+    tuning knob.
+
+    Read from the document rather than restated beside the constant, for the reason D-172
+    records one module over.
+    """
+    import re
+    from pathlib import Path as _Path
+
+    blueprint = (_Path(__file__).resolve().parents[1] / "BLUEPRINT.md").read_text(encoding="utf-8")
+    stated = re.findall(r"character (\d+)-grams", blueprint)
+    assert stated, "§2 no longer states the character n-gram size; the scan is broken"
+    assert len(set(stated)) == 1, f"the blueprint states two different n-gram sizes: {stated}"
+    assert int(stated[0]) == DEFAULT_NGRAM_SIZE, (
+        f"§2 states character {stated[0]}-grams and DEFAULT_NGRAM_SIZE is {DEFAULT_NGRAM_SIZE}"
+    )
+
+
+def test_the_ngram_size_is_the_one_the_index_actually_uses() -> None:
+    """The control: the constant could be right while nothing consulted it.
+
+    Binding a constant to a document proves the *number* is the blueprint's, not that the index
+    uses it — so this asserts on the artifact, the emitted n-grams of a word long enough to
+    distinguish 3 from 4.
+    """
+    emitted = character_ngrams("کوردستان")
+    assert emitted, "no n-grams emitted for a word long enough to produce them"
+    assert {len(gram) for gram in emitted} == {DEFAULT_NGRAM_SIZE}, (
+        f"character_ngrams emitted lengths {sorted({len(g) for g in emitted})}, and "
+        f"DEFAULT_NGRAM_SIZE is {DEFAULT_NGRAM_SIZE}"
+    )

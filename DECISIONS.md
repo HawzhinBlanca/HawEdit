@@ -8988,3 +8988,66 @@ commit takes the committed floor 1558 → **1561**, a ratchet up.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-173
+
+**Adversarial pass 28 — the same defect had now appeared twice, so this pass swept the class
+instead of a row.** D-168 (§7's Licence column) and D-172 (§3 Stage 5's three numbers) were both
+*a value `BLUEPRINT.md` states, checked against a literal typed into a test*. 46 numeric `Final`
+constants in `src/hawedit/`; 29 have their value somewhere in the blueprint; **9 are stated
+verbatim** and were mutated one at a time. **7/9 already held. 2 did not.**
+
+**Excluded deliberately, and this is the judgment call:** `CONTENT_DETECTOR_THRESHOLD = 27.0`
+(§3: *"threshold ~27, tuned per content type"*) and `REFERENCE_FPS = 1.0` (*"Reference settings
+run ~1 fps"*). Both carry a tilde. Binding an approximate figure as exact would invent precision
+the frozen document declined to give — the never-guess-a-threshold rule pointing the other way.
+Naive matching is also noisy and was not trusted: `DEFAULT_TOLERANCE_MS = 50` "matches" *"expect
+~50+ GB/s unidirectional"*, so every candidate was read in context first.
+
+**Survivor 1 — `MAX_SPEECH_DURATION_S`, and the test that should have caught it.**
+`test_the_stage_0_constants_are_the_blueprints` asserted `== 16_000`, the loudnorm string and
+`== (1, 720, 28)` — literals, with `BLUEPRINT.md` in the function's own title and never opened.
+**And it covered four of the six Stage 0 constants:** neither `MAX_SPEECH_DURATION_S` nor
+`OMNIASR_CEILING_S` appeared. The only test touching the first asserts a *relation* —
+`OMNIASR_CEILING_S - MAX_SPEECH_DURATION_S >= 2.0` — which **38 → 30 satisfies** (40 − 30 = 10), so
+it passed. The blueprint says 38; the suite permitted anything at or below it. That number decides
+where Silero cuts every piece of audio handed to ASR, so every segment boundary and every
+transcript follows it. The margin test is a real, separate property and stays; what it is not is a
+check that the value is the blueprint's.
+
+**Survivor 2 — `DEFAULT_NGRAM_SIZE` 3 → 4, whole suite green.** Bound to nothing and pinned
+behaviourally by nothing, though §2 singles the choice out: *"Character n-grams matter more than
+usual — Sorani is morphologically rich with heavy clitic attachment."* A stated number, not a
+tuning knob.
+
+**Decision: parse the document, and assert on the artifact as well.** The Stage 0 test now reads
+§3's two ffmpeg commands and its VAD line for **all seven** values; the index test reads §2's
+n-gram size. Non-vacuity is a required match per value — a regex finding nothing fails there
+rather than asserting nothing. **A document binding proves the number is the blueprint's, not that
+anything consults it**, so `test_the_ngram_size_is_the_one_the_index_actually_uses` asserts on the
+emitted n-grams of a word long enough to distinguish 3 from 4 — and its mutation (hard-coding a
+size in `character_ngrams`) is caught by that test and no other.
+
+**Rejected: a generic "every constant in `src` must appear in the blueprint" check.** Most of
+these 46 constants are implementation choices the blueprint never mentions, and such a test would
+either be vacuous or force fake blueprint entries for them. **Rejected: extending
+`test_claims.py`'s decision-log binding to the blueprint wholesale** — `DECISIONS.md` states values
+in a uniform recorded form; §3 states them inside prose and shell commands, so the parse has to be
+per-site and belongs beside the module it constrains.
+
+**Mutation audit — 7/7 lint-clean.** Both survivors, **both directions of drift** for four values
+(code away from the document, document away from the code), and the artifact control. Each
+mutation reddens exactly the test written for it.
+
+**What survived the pass, and why that is not luck:** the other seven constants are held mostly
+*behaviourally* — `TARGET_SAMPLE_RATE` reddens 68 tests because the real fixture is 16 kHz, and
+`MAX_FRAMES_PER_WINDOW` reddens 18 through `test_claims.py`'s existing decision-log binding. That
+binding already existed for `DECISIONS.md`; the equivalent for `BLUEPRINT.md` is what these two
+rows lacked.
+
+**No production code changed.** Both survivors were correct values that nothing held.
+Floor 1561 → 1563. `evidence/adversarial-pass-28-constants-the-blueprint-states.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.
