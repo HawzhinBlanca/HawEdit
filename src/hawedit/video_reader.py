@@ -99,9 +99,57 @@ retention | <seconds> | what would keep a viewer watching
 {duration:.1f}. Write the number alone, no unit. Put no other times in the description text. \
 Output the six lines and nothing else."""
 
-_LINE: Final = re.compile(
-    r"^\s*(?P<name>[a-z]+)\s*\|\s*(?P<at>[0-9]+(?:\.[0-9]+)?)\s*\|\s*(?P<text>.+?)\s*$"
-)
+_LINE: Final = re.compile(r"^\s*(?P<name>[a-z]+)\s*\|\s*(?P<at>[^|]+?)\s*\|\s*(?P<text>.+?)\s*$")
+_POINT: Final = re.compile(r"^([0-9]+(?:\.[0-9]+)?)$")
+# `0.0-3.5`, and the dashes a model reaches for instead of a hyphen. Measured on the real
+# 38-minute run: VideoChat3 answered every dimension this way for `ZAR38MinTest:s54:w4`.
+_SPAN: Final = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*[-‐-―]\s*([0-9]+(?:\.[0-9]+)?)$")
+
+
+def _anchor(name: str, field: str, duration_s: float) -> float:
+    """The second field as one second-offset into the window, or a refusal that names the line.
+
+    A **span** is accepted and anchored at its start. §3 Stage 3's rule is *"Reject output where
+    a claim has no timeline evidence"*, and `0.0-3.5` is evidence — more of it than a point, not
+    less. The start is used because it is a number the model itself wrote: a midpoint would be a
+    number nobody observed, which is the same defect as filling a missing dimension with a
+    default. Both ends are bounds-checked, so a span that runs past the clip is refused exactly
+    as a late point is.
+
+    Raises:
+        PathBError: the field is neither a time nor a span, or it leaves the clip.
+    """
+    point = _POINT.match(field)
+    span = _SPAN.match(field)
+    if point is not None:
+        at = end = float(point.group(1))
+    elif span is not None:
+        at, end = float(span.group(1)), float(span.group(2))
+        if end < at:
+            raise PathBError(
+                f"SV6D {name} cites the span {field!r}, which ends before it starts. Nothing "
+                f"here can tell whether the model meant the order or the numbers."
+            )
+    else:
+        # Never `continue`. A line naming a real dimension that this module cannot read is the
+        # model having answered and the answer being thrown away — which then surfaces as
+        # "returned no usable line", sending the operator after a model that answered fine.
+        # Measured on the real 38-minute run: all six dimensions of `ZAR38MinTest:s54:w4` were
+        # complete and correct, cited `0.0-3.5`, and were discarded in silence. D-182.
+        raise PathBError(
+            f"SV6D {name} cites {field!r} in its time field, which is neither a time nor a "
+            f"span. The line is otherwise complete, so this is an answer this module cannot "
+            f"read rather than a dimension the model omitted."
+        )
+    for value in (at, end):
+        if not 0.0 <= value <= duration_s:
+            raise PathBError(
+                f"SV6D {name} cites {value} s of a {duration_s:.3f} s clip. §3 Stage 3: 'Reject "
+                f"output where a claim has no timeline evidence' — the model was never shown "
+                f"that moment, and once shifted onto the media's clock the number would land "
+                f"inside some other scene and read as evidence."
+            )
+    return at
 
 
 def parse_sv6d_lines(text: str, duration_s: float) -> dict[str, tuple[float, str]]:
@@ -111,10 +159,15 @@ def parse_sv6d_lines(text: str, duration_s: float) -> dict[str, tuple[float, str
     before the claim can become an `Sv6d`, where a well-formed string is indistinguishable from
     an observation.
 
+    A line whose first field is not one of the six is left alone — the model's prose, a heading
+    or a markdown rule is noise, not an answer. A line that *does* name a dimension is answered
+    for: it is parsed or refused by name, never skipped, because a skipped line is reported later
+    as a dimension the model never returned. D-182.
+
     Raises:
-        PathBError: a dimension is missing, named twice, carries no parseable time, cites a time
-            outside the clip it was shown, has no description, or hides a second time inside
-            that description.
+        PathBError: a dimension is missing, named twice, carries a time field this module cannot
+            read, cites a time outside the clip it was shown, has no description, or hides a
+            second time inside that description.
     """
     found: dict[str, tuple[float, str]] = {}
     for line in text.splitlines():
@@ -132,14 +185,7 @@ def parse_sv6d_lines(text: str, duration_s: float) -> dict[str, tuple[float, str
                 f"dimension is two claims about the same footage, and nothing chooses between "
                 f"them."
             )
-        at = float(match.group("at"))
-        if not 0.0 <= at <= duration_s:
-            raise PathBError(
-                f"SV6D {name} cites {at} s of a {duration_s:.3f} s clip. §3 Stage 3: 'Reject "
-                f"output where a claim has no timeline evidence' — the model was never shown "
-                f"that moment, and once shifted onto the media's clock the number would land "
-                f"inside some other scene and read as evidence."
-            )
+        at = _anchor(name, match.group("at"), duration_s)
         description = match.group("text")
         cited = parse_timestamps_ms(description)
         if cited:

@@ -394,9 +394,14 @@ def test_a_window_whose_frames_the_processor_resampled_stops_the_read(tmp_path: 
 # --- D-118: one unreadable window discarded every other reading -------------------------------
 
 # Verbatim from `MCG-NJU/VideoChat3-4B` on a survivor of the real 38-minute file — a static logo
-# card. Six well-formed dimensions, and a time *range* where SV6D_PROMPT asks for "the number
-# alone, no unit", so §3's "reject output with no timeline evidence" refuses all six. That single
-# refusal discarded all seven candidates after Stage 0, 641 embeddings, retrieval and reranking.
+# card. Six well-formed dimensions, and a time *span* where SV6D_PROMPT asks for a bare number.
+# That single refusal discarded all seven candidates after Stage 0, 641 embeddings, retrieval and
+# reranking, which is the defect D-118 fixed.
+#
+# **Since D-182 a span is read, not refused for being a span.** This fixture is still unreadable
+# here, and for the reason it should be: the windows below are 1.4 s and it cites 3.5 s, which is
+# a moment the model was never shown. The bound is now checked on a span's far end too — that is
+# what this fixture exercises, and it is why the assertion names the clip length.
 REAL_RANGE_OUTPUT = (
     "subject | 0.0 - 3.5 | A logo with white and orange shapes and text on a blue "
     "background\n"
@@ -455,7 +460,7 @@ def test_read_scenes_records_one_unreadable_window_and_keeps_the_others(tmp_path
     assert len(produced.readings) == 2
     assert len(produced.unreadable) == 1
     assert produced.unreadable[0].window_id == windows[1].window_id
-    assert "no usable line" in produced.unreadable[0].reason
+    assert "3.5 s of a 1.400 s clip" in produced.unreadable[0].reason
     assert produced.unreadable[0].in_ms == windows[1].in_ms
 
 
@@ -467,3 +472,83 @@ def test_read_scenes_reports_nothing_unreadable_when_every_window_reads(tmp_path
 
     assert len(produced.readings) == 3
     assert produced.unreadable == ()
+
+
+# --- a span in the time field, measured on the real 38-minute run (D-182) --------------------
+
+# Verbatim from `path_b_result.json`, the one window of seven that came back unreadable. Every
+# dimension is present, correct and describes the footage; all six were discarded in silence.
+REAL_SPAN_OUTPUT = (
+    "subject | 0.0-3.5 | Two men in a studio setting, one speaking and gesturing, the other "
+    "listening attentively\n"
+    "aesthetics | 0.0-3.5 | Bright, modern studio with blue and yellow walls, plants, and a "
+    "colorful table runner\n"
+    "camera | 0.0-3.5 | Wide shot capturing both men and the table, static with no movement\n"
+    "editing | 0.0-3.5 | No cuts or transitions, smooth and continuous\n"
+    "narrative | 0.0-3.5 | A conversation or interview taking place, with one man speaking and "
+    "the other listening\n"
+    "retention | 0.0-3.5 | The engaging conversation and modern aesthetic would keep viewers "
+    "watching"
+)
+
+
+def test_the_answer_the_real_run_threw_away_now_parses() -> None:
+    """`ZAR38MinTest:s54:w4`, a 3.531 s window, reported as "no usable line" for all six."""
+    parsed = parse_sv6d_lines(REAL_SPAN_OUTPUT, duration_s=3.531)
+
+    assert sorted(parsed) == sorted(Sv6d.DIMENSIONS)
+    assert parsed["subject"][0] == 0.0, "a span anchors at its start, a number the model wrote"
+    assert "Two men in a studio" in parsed["subject"][1]
+
+
+def test_a_span_anchors_at_its_start_not_its_middle() -> None:
+    """A midpoint would be a number no model observed — the same defect as defaulting a gap."""
+    parsed = parse_sv6d_lines(REAL_SPAN_OUTPUT.replace("0.0-3.5", "1.0-3.0"), duration_s=3.531)
+
+    assert parsed["camera"][0] == 1.0
+    assert parsed["camera"][0] != 2.0, "the midpoint is invented"
+
+
+def test_a_span_leaving_the_clip_is_refused_on_its_far_end() -> None:
+    """The bound is on both ends: 0.0-9999 was never shown, however plausible its start is."""
+    with pytest.raises(PathBError, match="9999.0 s of a 3.531 s clip"):
+        parse_sv6d_lines(REAL_SPAN_OUTPUT.replace("0.0-3.5", "0.0-9999"), duration_s=3.531)
+
+
+def test_a_backwards_span_is_refused_rather_than_reordered() -> None:
+    with pytest.raises(PathBError, match="ends before it starts"):
+        parse_sv6d_lines(REAL_SPAN_OUTPUT.replace("0.0-3.5", "3.5-0.0"), duration_s=3.531)
+
+
+def test_a_dimension_whose_time_cannot_be_read_is_refused_by_name_not_skipped() -> None:
+    """The root defect. A dimension line this module cannot read used to `continue`, and the
+    answer surfaced later as a dimension the model never returned — which is a different bug
+    from the one the operator would then go looking for."""
+    unreadable = REAL_SPAN_OUTPUT.replace("camera | 0.0-3.5 |", "camera | throughout the clip |")
+
+    with pytest.raises(PathBError, match="neither a time nor a span"):
+        parse_sv6d_lines(unreadable, duration_s=3.531)
+
+
+def test_a_line_that_names_no_dimension_is_still_left_alone() -> None:
+    """The control: only *dimension* lines are answered for. Widening the time field must not
+    turn the model's prose or a stray table row into a refusal."""
+    noisy = (
+        "Here is my analysis of the clip:\n"
+        "| dimension | time | observation |\n"
+        "notes | whenever | this names no dimension\n"
+        f"{REAL_SPAN_OUTPUT}\n"
+        "Let me know if you want more detail."
+    )
+
+    parsed = parse_sv6d_lines(noisy, duration_s=3.531)
+
+    assert sorted(parsed) == sorted(Sv6d.DIMENSIONS)
+
+
+def test_a_plain_point_still_parses_exactly_as_before() -> None:
+    """The control on the whole change: the format that already worked is untouched."""
+    parsed = parse_sv6d_lines(REAL_OUTPUT, duration_s=1.4)
+
+    assert sorted(parsed) == sorted(Sv6d.DIMENSIONS)
+    assert all(at == 0.0 for at, _ in parsed.values())

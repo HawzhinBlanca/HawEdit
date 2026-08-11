@@ -9459,3 +9459,53 @@ the base drops the opening line and the champion recovers it
 provisioned` while the mutation audit was running: `_runtime` resolves the WSL snapshot by
 `package_fingerprint`, a digest over `src/hawedit/*.py`, and the audit was rewriting those files.
 Not a defect — a real run and any edit to `src/hawedit` cannot overlap.
+
+## D-182
+
+**A complete, correct SV6D answer was discarded for citing a span — the second half of
+D-118.** That entry found this exact message on the real 38-minute run and fixed its *blast
+radius*: one unreadable window no longer discards every other candidate. It treated the refusal
+itself as correct. It was not. Measured on `path_b_result.json`, the one window of seven that came
+back `unreadable`:
+
+```
+ZAR38MinTest:s54:w4   1040.287s .. 1043.818s   (3.531 s)
+reason: the model returned no usable line for ['subject', … all six …]
+
+subject | 0.0-3.5 | Two men in a studio setting, one speaking and gesturing, the other listening
+… and five more, every dimension present, described and timed
+```
+
+Six lines, six dimensions, each with a description — and the description is **right**, since
+frames decoded from this file show exactly two men across a table in a studio. `_LINE` required a
+bare number, so against `0.0-3.5` the `at` group matched `0.0`, the next character was `-` rather
+than `|`, the line failed, and `if match is None: continue` dropped all six as noise. Verified
+before changing anything: `_LINE.match('subject | 0.0-3.5 | …') -> None`, `… 0.0 …
+-> matched`. **Computed and discarded, not never computed.**
+
+**The root defect is the silence, not the span.** Supporting `0.0-3.5` alone would fix one line
+and leave the next unanticipated format to vanish identically. So: a span is read *and* a line
+naming a real dimension is never skipped — it parses or is refused **by name**. A line naming
+no dimension is still left alone, because the model's prose and a stray markdown rule are noise,
+and that distinction is what keeps this from turning chatter into refusals. It is also the control
+the mutation audit needed.
+
+**The judgement: a span anchors at its start**, a number the model itself wrote, with **both** ends
+bounds-checked. **Rejected: the midpoint** — nobody observed it, and inventing it is the same
+defect as filling a missing dimension with a default, which the very next branch already refuses.
+**Rejected: keeping the refusal** because `SV6D_PROMPT` asks for a bare number — the prompt
+asks, the model answers as it answers, and §3's rule is *"Reject output where a claim has no
+timeline evidence."* `0.0-3.5` **is** timeline evidence, more of it than a point. Refusing it
+enforced the prompt's formatting, not the blueprint's rule.
+
+**This reverses a position the repo already held, and it is reversed openly.**
+`tests/test_video_reader.py` carried `REAL_RANGE_OUTPUT` commented as a span that §3
+*"refuses all six"*. That fixture is **kept** and is still unreadable in D-118's test — for the
+reason it should be, since it cites 3.5 s of a 1.4 s window. Its comment now says so and the
+assertion names the clip length. D-118's own guard, that one unreadable window does not discard the
+others, is untouched and still driven through the real `read_scenes`.
+
+**Proved on the artifact:** the real discarded window re-parses **0/6 → 6/6** and shifts onto
+the media clock as `1040.287s Two men in a studio setting…`. That run returned 6 candidates and
+1 unreadable; this window becomes the 7th. **6/6 mutations, lint-clean, file restored
+byte-identical.** `evidence/a-complete-sv6d-answer-was-discarded-for-citing-a-span.md`.
