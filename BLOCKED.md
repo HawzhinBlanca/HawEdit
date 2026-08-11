@@ -70,6 +70,18 @@ machine can fetch. The importer (M0.14) is built and tested and has nothing to i
    and `import_common_voice` takes it from there. It refuses a non-`ckb` locale and refuses to
    run without the durations file, so a wrong download fails loudly rather than quietly.
 2. **Your own footage**, which is option 1 above and worth more than any of this.
+   **Measured 2026-08-11 (D-179): a route to this now exists and is built.** Cortex Speech
+   Studio is Hawa's own Sorani transcription and review app, and `import_cortex_speech` reads
+   its export. What it produces is real material with real human-confirmed transcripts and
+   **no §8.1 coverage** — Cortex captures neither §4.4's dialect nor §8.1's seven conditions,
+   so every item imports unlabelled and this entry stays open. **Two things close it, and both
+   are yours:** (a) capture four fields at review time in Cortex — `dialect` (hewler /
+   slemani / mukriyan), `conditions` (any of the seven), `named_entities` where that condition
+   is set, `code_switch_spans` where either code-switch condition is set; (b) answer whether
+   using Cortex — licensed **PolyForm Noncommercial 1.0.0** — to produce assets for a product
+   that ships commercially is permitted. You hold the copyright on both, so it is a decision
+   rather than an obstacle, but it is not mine to assume. The *data* is unencumbered either
+   way: `licence` is a required parameter recording the terms on your recordings.
 3. **Authorise `akam-ot/sorani-tts` despite the missing licence.** I am recording it rather than
    recommending it: D-002's rule is no data without a licence, this ships to clients, and TTS
    read speech is further from §8.1's conditions than Common Voice was.

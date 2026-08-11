@@ -1,8 +1,9 @@
-"""Import a public Sorani corpus as an **interim** labelled set.
+"""Import a Sorani corpus this project did not label itself.
 
-Authorised in `DECISIONS.md` D-012: use public data to exercise the harness end to end while
-the real §8.1 set is assembled. That authorisation is narrow, and this module is written to
-keep it narrow.
+Two sources, one rule. `import_common_voice` was authorised in `DECISIONS.md` D-012: use
+public data to exercise the harness end to end while the real §8.1 set is assembled.
+`import_cortex_speech` reads a Cortex Speech Studio export — Hawa's own audio with
+human-reviewed transcripts, which is `BLOCKED.md` #1's stated first preference (D-179).
 
 The governing rule is that the importer must be pessimistic about everything the source does
 not actually state. Common Voice is read speech collected from volunteers: it has no §4.4
@@ -18,16 +19,27 @@ interim stand-in into a number somebody quotes six months from now:
 * **Locale is checked.** Kurmanji (`kmr`) and Farsi (`fa`) are one directory away in any
   Common Voice download, and importing either would silently poison every `ckb` number.
 
+The same pessimism governs the Cortex export, where one default would be far worse than any
+of the above. Its writer **deliberately includes unverified ASR output** — `transcript_export`
+drops only human-rejected clips and placeholders, on the reasoning that the owner wants their
+whole working transcript. Read as `reference_ckb`, that scores OmniASR against OmniASR's own
+output: the character error rate collapses toward zero and reads as a triumph. So only
+human-verified records are imported, and the count that was left behind goes in the manifest
+rather than into a log nobody reads.
+
 Reference text is stored exactly as the corpus wrote it. Normalizing on import would destroy
 the very thing this data is most useful for right now — real evidence about how often the
-§4.1 collisions occur in Kurdish that real people typed.
+§4.1 collisions occur in Kurdish that real people typed. Cortex ships its own
+`normalizedTranscript` under its own `normalizerVersion`; importing that would put a foreign
+normalization into the artifact every index, embedding and model input reads (invariant #3).
 """
 
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from hawedit.corpus import Corpus, CorpusItem, Provenance
 
@@ -35,8 +47,10 @@ __all__ = [
     "COMMON_VOICE_LICENCE",
     "CorpusImportError",
     "MissingDurations",
+    "NoVerifiedTranscripts",
     "WrongLocale",
     "import_common_voice",
+    "import_cortex_speech",
 ]
 
 # Common Voice's published licence. Recorded here rather than assumed at the call site so a
@@ -52,6 +66,16 @@ class CorpusImportError(ValueError):
 
 class MissingDurations(CorpusImportError):
     """Raised when clip durations are unavailable — RTF and hours would be fabricated."""
+
+
+class NoVerifiedTranscripts(CorpusImportError):
+    """Raised when an export carries nothing a human confirmed.
+
+    Distinct from an empty file: this one means records were present and every single
+    reference in them is still machine output. Scoring against those measures the model
+    against itself, so an empty result is the honest outcome and it is loud rather than
+    quiet.
+    """
 
 
 class WrongLocale(CorpusImportError):
@@ -164,6 +188,152 @@ def import_common_voice(
                 "§8.1's recording conditions — no podcast, no overlapping speakers, no "
                 "code-switch or named-entity annotation. Exercises the harness on real "
                 "Kurdish; does not discharge M0."
+            ),
+        ),
+    )
+
+
+# Cortex Speech Studio's export is a JSON array of segment records in camelCase. Only the four
+# fields this importer actually reads are named; the export carries ~27, and depending on ones
+# it does not need would break on a schema change that costs nothing here.
+_CORTEX_ID: Final = "id"
+_CORTEX_AUDIO: Final = "audioPath"
+_CORTEX_RAW: Final = "rawTranscript"
+_CORTEX_DURATION_MS: Final = "durationMs"
+# Two independent ways a record can carry a human's confirmation. `isGold` marks reference
+# material; `verified` marks a reviewer having passed it. Either is a human; neither is the
+# decoder.
+_CORTEX_VERIFIED: Final = ("verified", "isGold")
+
+
+def _is_human_confirmed(record: Any) -> bool:
+    return any(bool(record.get(field)) for field in _CORTEX_VERIFIED)
+
+
+def import_cortex_speech(
+    export_path: Path,
+    licence: str,
+    limit: int | None = None,
+) -> Corpus:
+    """Import a Cortex Speech Studio export as an unlabelled corpus of real material.
+
+    `BLOCKED.md` #1 asks first for "your own labelled material with reference transcripts".
+    This is the first half of that: real Sorani audio whose transcripts a human confirmed.
+    The second half — §4.4's dialect and §8.1's recording conditions — Cortex does not
+    capture, so every item arrives unlabelled and the coverage check still refuses the set.
+
+    Args:
+        export_path: a Cortex export — a JSON array of segment records.
+        licence: the licence covering *this material*, recorded in the provenance. No default
+            and no guess: Common Voice has a published licence this module can name, a private
+            export does not, and "unknown" is not a licence.
+        limit: import at most this many confirmed records, for a quick smoke run.
+
+    Returns:
+        A `Corpus` of the human-confirmed records only, marked interim, so
+        `assert_section_8_1_coverage()` still fails and `bench.decide_canonical` still refuses
+        to move the canonical pin.
+
+    Raises:
+        CorpusImportError: the export is not a JSON array, a record is missing a field this
+            importer reads, or a confirmed record carries no usable duration or transcript.
+        NoVerifiedTranscripts: records were present and none of them was human-confirmed.
+    """
+    if not licence.strip():
+        raise CorpusImportError(
+            "no licence supplied for the Cortex export. Every corpus entering this system "
+            "carries an audited licence, and a private export has none this module could "
+            "look up — state it at the call site rather than letting it default."
+        )
+
+    raw = json.loads(export_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise CorpusImportError(
+            f"{export_path.name} is a {type(raw).__name__}, not the JSON array of segment "
+            f"records a Cortex export is. Reading a different shape would import whatever "
+            f"happened to parse."
+        )
+
+    items: list[CorpusItem] = []
+    unconfirmed = 0
+    for record in raw:
+        if not isinstance(record, dict):
+            raise CorpusImportError(
+                f"{export_path.name} contains a {type(record).__name__} where a segment "
+                f"record was expected."
+            )
+        if not _is_human_confirmed(record):
+            # Skipped, and counted — the count reaches the manifest below. Cortex exports
+            # machine output on purpose; scoring against it would measure the decoder against
+            # itself.
+            unconfirmed += 1
+            continue
+        if limit is not None and len(items) >= limit:
+            break
+
+        identifier = str(record.get(_CORTEX_ID) or "").strip()
+        audio = str(record.get(_CORTEX_AUDIO) or "").strip()
+        reference = str(record.get(_CORTEX_RAW) or "").strip()
+        duration_ms = record.get(_CORTEX_DURATION_MS)
+        if not identifier or not audio:
+            raise CorpusImportError(
+                f"a confirmed record is missing {_CORTEX_ID!r} or {_CORTEX_AUDIO!r}: "
+                f"{record.get(_CORTEX_ID)!r} / {record.get(_CORTEX_AUDIO)!r}. Both name the "
+                f"thing being scored, so neither can be invented."
+            )
+        if not reference:
+            # A *confirmed* record with no text is a corpus defect rather than a partial
+            # review — a reviewer marked something that says nothing. Loud, not skipped.
+            raise CorpusImportError(
+                f"record {identifier!r} is marked human-confirmed and has an empty "
+                f"{_CORTEX_RAW!r}. Character error rate is undefined without a reference; "
+                f"fix the export rather than scoring it."
+            )
+        if not isinstance(duration_ms, int | float) or isinstance(duration_ms, bool):
+            raise CorpusImportError(
+                f"record {identifier!r} has {_CORTEX_DURATION_MS}={duration_ms!r}, which is "
+                f"not a number. Real-time factor and the hours-of-coverage check both divide "
+                f"by it, and a default would fabricate both."
+            )
+
+        items.append(
+            CorpusItem(
+                item_id=identifier,
+                audio_path=audio,
+                # Raw, exactly as the reviewer confirmed it. Cortex's own
+                # `normalizedTranscript` is deliberately not read — see the module docstring.
+                reference_ckb=reference,
+                dialect=None,
+                conditions=frozenset(),
+                duration_s=duration_ms / 1000,
+                # `reference_words` is left empty on purpose. Cortex aligns with
+                # OmniASR-CTC-300M through sherpa-onnx; §7 pins the 3B, and invariant #5 says
+                # word timings come from CTC Viterbi alignment only. §8.1's alignment metric
+                # therefore scores none of these items — None, not 0.0.
+            )
+        )
+
+    if not items:
+        raise NoVerifiedTranscripts(
+            f"{export_path.name} carries {unconfirmed} record(s) and not one is human-"
+            f"confirmed. Cortex exports unverified decoder output by design, so importing it "
+            f"as reference would score the model against its own transcript. Review the "
+            f"segments in Cortex first."
+        )
+
+    return Corpus(
+        tuple(items),
+        provenance=Provenance(
+            name=f"Cortex Speech Studio export ({export_path.name})",
+            licence=licence,
+            interim=True,
+            note=(
+                f"{len(items)} human-confirmed segment(s); {unconfirmed} unconfirmed record(s) "
+                f"left behind. Real material, which is BLOCKED.md #1's first preference — but "
+                f"Cortex captures no §4.4 dialect and none of §8.1's recording conditions, so "
+                f"every item is unlabelled and fills no coverage cell. Interim until those "
+                f"four labels are captured at review time: dialect, conditions, named_entities "
+                f"and code_switch_spans."
             ),
         ),
     )

@@ -9,11 +9,19 @@ number somebody quotes.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from hawedit.corpus_import import MissingDurations, WrongLocale, import_common_voice
+from hawedit.corpus_import import (
+    CorpusImportError,
+    MissingDurations,
+    NoVerifiedTranscripts,
+    WrongLocale,
+    import_common_voice,
+    import_cortex_speech,
+)
 
 # Real Sorani, written the way Common Voice contributors actually type it — note the
 # Arabic yeh/kaf and ZWNJ forms that §4.1 exists to normalize.
@@ -211,3 +219,176 @@ def test_an_honest_ckb_split_still_imports(tmp_path: Path) -> None:
     )
     assert len(corpus.items) == len(ROWS)
     assert "ckb" in corpus.provenance.name
+
+
+# --- D-179: the Cortex Speech Studio export --------------------------------------------------
+
+# Fields named exactly as the real export writes them. Taken from a committed artifact in that
+# repository (`manifests/real_audio_tests/…user_dataset_output.json`), not from its type
+# declarations, so the shape here is one the tool has actually produced.
+CONFIRMED = {
+    "id": "9409cc07-f150-42ed-b853-1ffcaf10abee",
+    "audioPath": "B7871-esv2-speech-89p.wav",
+    "rawTranscript": "ئەمە دەقێکی ڕاستەقینەیە",
+    "normalizedTranscript": "SOMETHING CORTEX NORMALIZED",
+    "durationMs": 15_000,
+    "speakerId": "SPEAKER_00",
+    "verified": True,
+    "isGold": False,
+}
+MACHINE_ONLY = {
+    "id": "0000-unverified",
+    "audioPath": "B7871-esv2-speech-89p.wav",
+    "rawTranscript": "ئەمە دەرچووی ئامێرە",
+    "durationMs": 4_000,
+    "speakerId": "SPEAKER_00",
+    "verified": False,
+    "isGold": False,
+}
+
+A_LICENCE = "proprietary — Hawa's own recordings"
+
+
+def write_export(path: Path, records: list[dict[str, object]]) -> Path:
+    path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_unverified_records_are_not_imported_as_reference(tmp_path: Path) -> None:
+    """The defect this importer exists to prevent.
+
+    Cortex's `transcript_export` drops only human-rejected clips and placeholders — its own
+    comment says the owner wants their whole working transcript, so **unverified decoder output
+    is included by design**, and the committed sample artifact carries `"verified": false`.
+    Imported as `reference_ckb`, that scores OmniASR against OmniASR's own transcript: CER
+    collapses toward zero and reads as a triumph, and every §3 Stage 1 escalation threshold and
+    M7 quality gate is derived from it. D-179.
+    """
+    export = write_export(tmp_path / "export.json", [CONFIRMED, MACHINE_ONLY])
+    corpus = import_cortex_speech(export, licence=A_LICENCE)
+
+    assert [item.item_id for item in corpus.items] == [CONFIRMED["id"]]
+    assert all(item.reference_ckb != MACHINE_ONLY["rawTranscript"] for item in corpus.items)
+
+
+def test_a_confirmed_record_is_imported(tmp_path: Path) -> None:
+    """The control. Without it the test above passes for an importer that imports nothing,
+    and "no unverified data got in" would be true by refusing everything."""
+    export = write_export(tmp_path / "export.json", [CONFIRMED, MACHINE_ONLY])
+    corpus = import_cortex_speech(export, licence=A_LICENCE)
+
+    (item,) = corpus.items
+    assert item.reference_ckb == CONFIRMED["rawTranscript"]
+    assert item.audio_path == CONFIRMED["audioPath"]
+    assert item.duration_s == 15.0, "durationMs must arrive as seconds"
+
+
+def test_gold_counts_as_human_confirmation(tmp_path: Path) -> None:
+    """Two independent doors: a reviewer passing a segment, and it being reference material.
+
+    Checked separately because an importer keyed on `verified` alone would silently drop every
+    gold segment — the *most* trustworthy records in the export.
+    """
+    gold = {**MACHINE_ONLY, "id": "gold-1", "verified": False, "isGold": True}
+    corpus = import_cortex_speech(write_export(tmp_path / "e.json", [gold]), licence=A_LICENCE)
+    assert [item.item_id for item in corpus.items] == ["gold-1"]
+
+
+def test_an_export_with_nothing_confirmed_is_refused_loudly(tmp_path: Path) -> None:
+    """An empty corpus would be the quiet version of the same answer.
+
+    `Corpus` is happy to hold nothing, and a caller measuring an empty set gets no items and no
+    complaint. The refusal names the count so the operator knows the export was read correctly
+    and simply has not been reviewed yet.
+    """
+    export = write_export(tmp_path / "export.json", [MACHINE_ONLY, {**MACHINE_ONLY, "id": "b"}])
+    with pytest.raises(NoVerifiedTranscripts, match="not one is human-confirmed"):
+        import_cortex_speech(export, licence=A_LICENCE)
+
+
+def test_imported_items_are_unlabelled_so_coverage_still_refuses(tmp_path: Path) -> None:
+    """Cortex captures no §4.4 dialect and none of §8.1's conditions.
+
+    The importer must not invent them — and the consequence has to stay visible: an unlabelled
+    item fills no coverage cell, so the set cannot discharge M0 however many hours it holds.
+    """
+    corpus = import_cortex_speech(write_export(tmp_path / "e.json", [CONFIRMED]), licence=A_LICENCE)
+    (item,) = corpus.items
+    assert item.dialect is None
+    assert item.conditions == frozenset()
+    assert not item.is_labelled
+    assert corpus.provenance.interim, "an unlabelled set must not read as evidence for a switch"
+
+
+def test_cortex_own_normalization_is_not_imported(tmp_path: Path) -> None:
+    """Invariant #3: every index, embedding and model input reads *this* project's normalized
+    form. Cortex ships its own under its own `normalizerVersion`.
+
+    The fixture makes the two impossible to confuse — importing the wrong field would put
+    `SOMETHING CORTEX NORMALIZED` into the reference, which no CER against Kurdish could
+    survive quietly.
+    """
+    corpus = import_cortex_speech(write_export(tmp_path / "e.json", [CONFIRMED]), licence=A_LICENCE)
+    (item,) = corpus.items
+    assert item.reference_ckb == CONFIRMED["rawTranscript"]
+    assert str(CONFIRMED["normalizedTranscript"]) not in item.reference_ckb
+
+
+def test_reference_word_timings_are_not_imported(tmp_path: Path) -> None:
+    """Invariant #5: word timings come from CTC Viterbi alignment only.
+
+    Cortex aligns with OmniASR-CTC-300M through sherpa-onnx and §7 pins the 3B — a different
+    model at a different tier. §8.1's alignment metric therefore scores none of these items,
+    which is `None` rather than `0.0`, and importing the timings anyway would put a foreign
+    aligner's output behind an invariant that names one.
+    """
+    with_alignment = {**CONFIRMED, "alignmentJson": '{"source_start_ms":0,"source_end_ms":15000}'}
+    corpus = import_cortex_speech(
+        write_export(tmp_path / "e.json", [with_alignment]), licence=A_LICENCE
+    )
+    (item,) = corpus.items
+    assert item.reference_words == ()
+
+
+def test_the_manifest_records_what_was_left_behind(tmp_path: Path) -> None:
+    """ "Skipped silently" is how a corpus quietly shrinks — D-091's lesson on this same module.
+
+    The unconfirmed count belongs in the artifact a reader opens, not in a log line.
+    """
+    records = [CONFIRMED] + [{**MACHINE_ONLY, "id": f"m{i}"} for i in range(3)]
+    corpus = import_cortex_speech(write_export(tmp_path / "e.json", records), licence=A_LICENCE)
+    assert "3 unconfirmed" in corpus.provenance.note
+    assert "1 human-confirmed" in corpus.provenance.note
+
+
+def test_a_licence_must_be_supplied(tmp_path: Path) -> None:
+    """Common Voice has a published licence this module can name; a private export does not.
+
+    The hard rule is never to guess one, so there is deliberately no default to fall back on.
+    """
+    export = write_export(tmp_path / "e.json", [CONFIRMED])
+    with pytest.raises(CorpusImportError, match="no licence supplied"):
+        import_cortex_speech(export, licence="   ")
+
+
+def test_a_confirmed_record_without_a_usable_duration_is_refused(tmp_path: Path) -> None:
+    """Real-time factor and hours-of-coverage both divide by it."""
+    export = write_export(tmp_path / "e.json", [{**CONFIRMED, "durationMs": None}])
+    with pytest.raises(CorpusImportError, match="not a number"):
+        import_cortex_speech(export, licence=A_LICENCE)
+
+
+def test_a_confirmed_record_with_no_transcript_is_refused_not_skipped(tmp_path: Path) -> None:
+    """A reviewer marked something that says nothing — a defect in the export, not a partial
+    review, so it is loud rather than dropped."""
+    export = write_export(tmp_path / "e.json", [{**CONFIRMED, "rawTranscript": "  "}])
+    with pytest.raises(CorpusImportError, match="empty"):
+        import_cortex_speech(export, licence=A_LICENCE)
+
+
+def test_a_file_that_is_not_an_array_of_records_is_refused(tmp_path: Path) -> None:
+    """The control against reading whatever happens to parse."""
+    path = tmp_path / "e.json"
+    path.write_text(json.dumps({"segments": [CONFIRMED]}), encoding="utf-8")
+    with pytest.raises(CorpusImportError, match="not the JSON array"):
+        import_cortex_speech(path, licence=A_LICENCE)

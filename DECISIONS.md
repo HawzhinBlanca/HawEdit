@@ -9301,3 +9301,67 @@ No production code changed. Floor 1570 → 1573.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-179
+
+**A route into `BLOCKED.md` #1, and the one default that would have destroyed the number it
+exists to produce.** #1 asks first for *"your own labelled material with reference transcripts"*.
+Cortex Speech Studio (`HawzhinBlanca/cortex-speech`, Hawa's own product) is a Sorani
+transcription and dataset-curation app with human review and JSON export — the first half of
+that. `import_cortex_speech` reads it.
+
+**Schema read from a committed artifact, not from type declarations.**
+`manifests/real_audio_tests/B7871-esv2-speech-89p.user_dataset_output.json` is an export the tool
+has actually produced: a JSON array of ~27-field camelCase segment records. Four fields map
+directly (`id`, `audioPath`, `rawTranscript`, `durationMs`), and the four §8.1 labels are absent.
+
+**The defect the importer exists to prevent.** `transcript_export.rs` filters on
+`!is_human_rejected` and `!is_effective_placeholder` and **not** on `verified`; its own comment
+says so — *"the owner wants THEIR transcripts"* — and the sample artifact carries
+`"verified": false`. Correct for Cortex, catastrophic here: read as `reference_ckb`, unverified
+records score **OmniASR against OmniASR's own transcript**, CER collapses toward zero and reads
+as a triumph, and §3 Stage 1's escalation quartile plus every M7 quality gate are derived from
+that number.
+
+**Decision: import only what a human confirmed, and make the remainder visible.** `verified`
+**or** `isGold` — two independent doors, because keying on `verified` alone would silently drop
+every gold segment, the most trustworthy records in the file. The count left behind goes in the
+provenance note. **Rejected: returning an empty corpus** when nothing is confirmed — that is the
+quiet version of the same answer, so it raises `NoVerifiedTranscripts` naming the count.
+**Rejected: skipping unconfirmed records silently**, which is how a corpus quietly shrinks
+(D-091's lesson on this same module).
+
+**Four more refusals, each a plausible default declined.** No dialect and no conditions — Cortex
+captures neither, so every item is unlabelled and the coverage check still refuses the set.
+No `reference_words`: Cortex aligns with OmniASR-CTC-**300M** through sherpa-onnx while §7 pins the
+**3B**, and invariant #5 says timings come from CTC Viterbi alignment only — so §8.1's alignment
+metric scores none of these items, `None` rather than `0.0`. No `normalizedTranscript`: Cortex
+ships its own under its own `normalizerVersion`, and importing it would put a foreign
+normalization into the artifact every index, embedding and model input reads (invariant #3). **No
+default licence**: Common Voice has a published one this module can name, a private export does
+not, and "unknown" is not a licence.
+
+**Mutation audit — 6/8 lint-clean.** All eight reddened exactly the tests written for them; two
+left the file format-dirty, so they also measure ruff (D-148, D-150) and are **not counted** —
+reported because they were run, not claimed as coverage.
+
+**What this does not discharge, and it is the important half.** The import produces real material
+with real transcripts and **no §8.1 coverage at all**, so M0 stays blocked and M0.14 stays
+`PARTIAL`. Four fields captured at review time in Cortex would change that: `dialect` (one of
+three), `conditions` (any of seven), `named_entities` where that condition is set, and
+`code_switch_spans` where either code-switch condition is set.
+
+**And a licence question that is Hawa's to answer.** Cortex Speech Studio is **PolyForm
+Noncommercial 1.0.0**. The *data* it produces is Hawa's own and is not encumbered by the tool's
+licence — the provenance records whatever terms cover the recordings, which is why `licence` is a
+required parameter. Whether *using* NC-licensed software to produce assets for a product that
+ships commercially counts as commercial use of that software is a question only the copyright
+holder can answer, and he holds it for both repositories. Recorded rather than assumed. **No code
+was taken from Cortex**: nothing would port — it is Rust/Tauri against this project's Python — and
+taking any would put NC-licensed source inside the system whose own registry hard-rejects NC.
+
+Floor 1573 → 1585. `evidence/the-cortex-export-imports-machine-output-as-reference.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.
