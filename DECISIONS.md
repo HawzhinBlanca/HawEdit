@@ -9160,3 +9160,47 @@ No production code changed. Floor 1564 → 1566.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-176
+
+**M2.8 claims the panel "never prints it", and the branch that prints a *stored* key was driven
+by no test.** Four escape routes for the Gemini key, mutated one at a time: the API-key header,
+the mask, the unreachable-API message and the status readout. **3/4** — the readout survived.
+
+**Why it survived, and why the existing test is not at fault.**
+`test_the_panel_prints_the_mask_and_never_the_key` asserts both directions and is not weak; it
+drives the **entry** path, where the key comes from `getpass`. The surviving line is on the
+**status** path, and `_drive_main` stubs the validator, the writer and `getpass` but **not**
+`credential_status` — so on a machine with no key configured it returns `None`, `main` takes the
+`key is None` branch, and the `else` executes in no test at all. That `else` is what every user
+with a key stored sees on every run, and its output lands in terminal scrollback. `--check`, the
+scriptable path most likely to be piped into a log, was driven by nothing either.
+
+**Decision: drive `main()` with `credential_status` stubbed to a stored key, and assert both
+directions.** The key must be **absent** and the mask **present** — the second half is the
+control, without which both tests pass for a panel that prints nothing and *"never prints it"*
+becomes true by silence. **Rejected: asserting only the absence of the key**, which is the
+vacuity above. **Rejected: pointing the panel at a temporary credential file** — `ENV_FILE` is
+bound at definition time, the reason `_drive_main` stubs the writer rather than redirecting it
+(recorded there), and the claim under test is what the readout prints, not where it reads from.
+
+**Mutation audit — 3/4 lint-clean, and two of them are caught by the new guards alone.** The
+restored defect is one. **The other was not what this iteration set out to find:** `--check`
+returning 0 whatever the API said, so a script gating on `hawedit-credentials --check` would
+proceed with a revoked key — which is the whole purpose of the flag. The fourth mutation (the
+readout prints nothing) reddened the new guards too but left the block **format-dirty**, so it
+measured ruff as well and is not counted (D-148, D-150); the non-vacuity it was testing is
+established inside the guards by the `mask(...) in out` assertion.
+
+**What the pass found already held, and held well:** the credential goes in the `x-goog-api-key`
+**header** rather than the URL — pinned by `test_key_validation_authenticates_by_header_never_by_url`
+— the mask is tested against two keys, and the unreachable-API message is asserted not to contain
+the key. Pass 20 covered the panel's *sequencing* (validate before write); this covers its
+*output*.
+
+No production code changed. Floor 1566 → 1568.
+`evidence/the-status-readout-nothing-drove.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

@@ -452,3 +452,65 @@ def test_a_blank_entry_changes_nothing(
     assert order == [], f"a blank entry reached the API or the writer: {order}"
     assert "no change" in output
     assert code == 1  # no working key is configured
+
+
+# --- D-176: the status readout for a key that is already stored -----------------------------
+
+
+def _drive_status(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    check: KeyCheck,
+) -> tuple[int, str]:
+    """Run the panel with a key **already stored**, and nothing entered.
+
+    `_drive_main` above stubs the validator and the writer but not `credential_status`, so on a
+    machine with no key configured `main` takes the `key is None` branch and the readout for a
+    stored key never executes. That is the branch every user with a key hits on every run, and
+    it is where the key is most tempting to print. D-176.
+    """
+    monkeypatch.setattr("hawedit.credentials.credential_status", lambda *a, **k: (FAKE_KEY, check))
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": "")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    code = credentials_main(argv)
+    return code, capsys.readouterr().out
+
+
+def test_the_status_readout_for_a_stored_key_never_prints_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M2.8's claim is that the panel "never prints it", and the readout was uncovered.
+
+    Measured before this: replacing `mask(key)` with `key` on that line left the whole suite
+    green, including `test_the_panel_prints_the_mask_and_never_the_key` — which drives the
+    *entry* path, where the key comes from `getpass`, not the *status* path, where it comes from
+    the store. A key printed there reaches terminal scrollback and any log capturing stdout.
+    """
+    _, out = _drive_status(monkeypatch, capsys, [], KeyCheck(True, "key works", (_PINNED_JUDGE,)))
+    assert FAKE_KEY not in out, "the panel printed the stored key"
+    # The control: without this the assertion above passes for a panel that prints nothing at
+    # all, which would also satisfy "never prints it" and would be useless.
+    assert mask(FAKE_KEY) in out, f"the readout did not identify the stored key: {out!r}"
+
+
+def test_check_reports_a_stored_key_without_printing_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--check` is the scriptable path, so it is the one most likely to be piped into a log.
+
+    Driven by no test at all before this. Both directions of the exit code are asserted, since
+    "reports status" is only true if a bad key and a good key differ.
+    """
+    good, out = _drive_status(
+        monkeypatch, capsys, ["--check"], KeyCheck(True, "key works", (_PINNED_JUDGE,))
+    )
+    assert FAKE_KEY not in out, "--check printed the stored key"
+    assert mask(FAKE_KEY) in out, f"--check did not identify the stored key: {out!r}"
+    assert good == 0
+
+    bad, rejected = _drive_status(
+        monkeypatch, capsys, ["--check"], KeyCheck(False, "the API rejected this key")
+    )
+    assert FAKE_KEY not in rejected, "--check printed a rejected key"
+    assert bad == 1, "--check reported success for a key the API rejected"
