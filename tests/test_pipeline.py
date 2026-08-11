@@ -3194,3 +3194,131 @@ def test_a_judge_answering_the_request_it_was_given_is_accepted(tmp_path: Path) 
     assert "editorial" not in {name for name, _ in run.skipped()}, (
         "a judge answering its own request was refused"
     )
+
+
+# --- D-183: the printed report was silent about the stage that does the discovering ---------
+
+
+def _printed(run: PipelineRun, capsys: pytest.CaptureFixture[str]) -> str:
+    from hawedit.pipeline import _print_report
+
+    _print_report(run)
+    return capsys.readouterr().out
+
+
+def _discovered_run(tmp_path: Path, media_id: str = "reported") -> PipelineRun:
+    """A run whose Stage 3 actually ran, over BOTH paths — `discover` is the verbal path only,
+    so a visual composer is what puts a second `discovery_path` in the split."""
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            return VisualDiscoveryResult(
+                media_id,
+                query,
+                3,
+                3,
+                (),
+                (Candidate("scene-2", media_id, 2_800, 4_162, DiscoveryPath.VISUAL, 1, 0.7),),
+            )
+
+    return run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id=media_id,
+        transcript=a_transcript(media_id),
+        discover=lambda _n: [
+            Candidate("v1", media_id, 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
+        ],
+        visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="two people talking",
+    )
+
+
+@needs_ffmpeg
+def test_the_printed_report_says_what_stage_3_found(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D-111's finding one representation over.
+
+    That entry fixed `report["discovery"]` reading `null` whether Stage 3 produced candidates or
+    was never attempted — "a stage reporting nothing about itself is the silent case" — and fixed
+    it only in the JSON. Measured on the real 38-minute run with `--visual`: the JSON carried
+    `discovery: {skipped: false, candidates: 7}` and the printed report, which is what the
+    documented invocation produces, went straight from Stage 2's survivors to §4.2's sentences.
+    """
+    run = _discovered_run(tmp_path)
+    assert run.candidates, "this fixture must actually discover something"
+
+    printed = _printed(run, capsys)
+
+    assert "stage 3" in printed, "the stage that produces the pipeline's output is unreported"
+    assert f"{len(run.candidates)} candidate(s)" in printed
+    # §5: rejection is first-class and "your only measure of recall" — reported even at zero,
+    # because the set was computed and a line that appears only when non-empty cannot be told
+    # from one that never ran.
+    assert f"{len(run.rejected)} rejected" in printed
+
+
+@needs_ffmpeg
+def test_the_printed_report_splits_candidates_by_discovery_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """§8.2 measures Recall@20 *per discovery path*, and "if Path B never surfaces a winner Path
+    A missed, collapse it" is decided on that split — a bare total cannot support it."""
+    run = _discovered_run(tmp_path, "split")
+    printed = _printed(run, capsys)
+
+    counts: dict[str, int] = {}
+    for candidate in run.candidates:
+        key = candidate.discovery_path.value
+        counts[key] = counts.get(key, 0) + 1
+    assert len(counts) == 2, "a one-path fixture cannot show whether the split is real"
+
+    # The count, not just the path name. Asserting the bare name passed for the WRONG answer:
+    # the *rejection* split prints the same names, so deleting the candidate split entirely
+    # left `visual` in the output and this test green. Caught by the mutation audit, which is
+    # what it is for.
+    for path, count in counts.items():
+        assert f"{path} {count}" in printed, (
+            f"the printed report does not credit {count} candidate(s) to {path}"
+        )
+
+
+@needs_ffmpeg
+def test_the_printed_report_reads_the_same_source_as_the_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The control that matters: two reports of one run must not be able to disagree. Both read
+    `_discovery_ran`, so a count recomputed in the printer would fail here."""
+    run = _discovered_run(tmp_path, "agree")
+    printed = _printed(run, capsys)
+    machine = run.to_dict()["discovery"]
+
+    assert machine["skipped"] is False
+    assert f"{machine['candidates']} candidate(s)" in printed
+
+
+def test_a_skipped_stage_3_still_prints_exactly_its_skip_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The control on the whole change: a run with no Stage 3 producer must print what it
+    printed before — one SKIPPED line and no `stage 3` line invented from an empty tuple."""
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="fixture", transcript=a_transcript())
+    assert not run.candidates
+
+    printed = _printed(run, capsys)
+
+    assert "stage 3" not in printed, "a stage that never ran must not report a result"
+    assert "SKIPPED discovery" in printed

@@ -9510,3 +9510,46 @@ the media clock as `1040.287s Two men in a studio setting…`. Re-run end to end
 0**, the recovered window landing at rank 4 (retrieval 0.5614, rerank 0.3601) while the other six
 keep their ranks and scores — an addition, not a reshuffle. **6/6 mutations, lint-clean, file restored
 byte-identical.** `evidence/a-complete-sv6d-answer-was-discarded-for-citing-a-span.md`.
+
+## D-183
+
+**The printed report never said what Stage 3 found — D-111's finding, one representation
+over.** D-111 fixed `report["discovery"]` reading `null` whether Stage 3 produced candidates or was
+never attempted, and stated the rule: *"a stage reporting nothing about itself is the silent
+case."* It fixed the **JSON**. The **printed** report — what the documented invocation
+produces — said nothing about Stage 3 at all, and the asymmetry is the tell: a *skipped*
+discovery printed a `SKIPPED discovery:` line, a *successful* one printed nothing.
+
+Measured on the full composed pipeline over the real 38-minute file with the champion adapter
+(Stage 0 and Stage 1 both reused, Stage 2 and Path B live). The whole printed report went straight
+from Stage 2's survivors to §4.2's sentences:
+
+```
+stage 2 641 scene window(s) · 4873 frame(s) at 2.0 fps · 7 reranked survivor(s)
+§4.2    185 sentence(s)
+```
+
+while the same run's `--json` carried
+`"discovery": {"skipped": false, "candidates": 7, "by_path": {"visual": 7}}`. Among those 7 is
+`zar38champion:s54:w4` — the window D-182 recovered — so the stage the operator cannot see
+is the one producing the run's actual output. Computed, carried, and reported in one representation
+but not the other.
+
+**Fixed with one line in `_print_report`**, in pipeline order between Stage 2 and §4.2:
+`stage 3 7 candidate(s) [visual 7] · 0 rejected [visual 0]`. **The judgement: it is read off
+`_discovery_ran()`**, the same helper `to_dict` uses, rather than recounted from `run.candidates`
+— two reports of one run must not be able to disagree about what it did, and that is a guard
+with its own mutation, not a convenience. **Rejections print even at zero**: §5 makes rejection
+first-class and calls that set *"your only measure of recall"*, the set was computed so `0` is a
+measurement rather than an absence, and a line appearing only when something had been rejected
+could not be told from one that never ran — D-110's reasoning, which `to_dict` already applies
+to these same two fields. **Rejected: printing a bare total** — §8.2 measures Recall@20
+*per discovery path* and "if Path B never surfaces a winner Path A missed, collapse it" is decided
+on that split, which a total cannot support.
+
+**5/5 mutations, lint-clean, file restored byte-identical — after 3/5, and the audit caught a
+test of mine that measured nothing.** The per-path split test first asserted only that each path's
+*name* appeared in the output; the rejection split prints the same names, so deleting the candidate
+split entirely left `visual` in the line and the test stayed green. It now asserts each path's
+*count*, which the all-zero rejection split cannot satisfy.
+`evidence/the-printed-report-never-said-what-stage-3-found.md`.

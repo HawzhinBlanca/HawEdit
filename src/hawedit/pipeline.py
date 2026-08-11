@@ -1983,6 +1983,30 @@ def _print_report(run: PipelineRun) -> None:
             f"stage 2 {len(run.visual_windows)} scene window(s) · {frames} frame(s) at "
             f"{run.visual_windows[0].fps} fps{suffix}"
         )
+    ran = run._discovery_ran()
+    if ran is not None:
+        # D-111's finding, one representation over. That entry fixed `report["discovery"]`
+        # reading `null` whether Stage 3 produced candidates or was never attempted — "a stage
+        # reporting nothing about itself is the silent case" — and fixed it only in the JSON.
+        # The printed report, which is what the documented invocation produces, said nothing
+        # about Stage 3 at all: a *skipped* discovery printed a SKIPPED line, a *successful* one
+        # printed nothing. Measured on the real 38-minute run with `--visual`: the JSON carried
+        # `discovery: {skipped: false, candidates: 7}` and the 14-line printed report went
+        # straight from Stage 2's survivors to §4.2's sentences. D-183.
+        #
+        # Read off `_discovery_ran`, not recounted here, so the two reports cannot disagree
+        # about what the same run did.
+        by_path = " · ".join(f"{path} {count}" for path, count in sorted(ran["by_path"].items()))
+        # §5: "Rejection is a first-class outcome … that set is your only measure of recall."
+        # Printed even at zero — the set was computed, so 0 is a measurement, and a line that
+        # appears only when something was rejected cannot be told from one that never ran.
+        rejected = " · ".join(
+            f"{path} {count}" for path, count in sorted(run._rejected_by_path().items())
+        )
+        print(
+            f"stage 3 {ran['candidates']} candidate(s) [{by_path}] · "
+            f"{len(run.rejected)} rejected{f' [{rejected}]' if rejected else ''}"
+        )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")
     if run.clip is not None:
