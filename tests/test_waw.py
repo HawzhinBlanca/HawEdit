@@ -224,3 +224,35 @@ def test_the_evidence_file_records_real_counts(lexicon: tuple[str, ...]) -> None
 
     assert numbers["dictionary_words_damaged"] == 0
     assert numbers["unsplittable_waw_initial_words"] == len(numbers["unsplittable_examples"])
+
+
+def test_zwnj_fragments_the_token_which_is_why_the_order_is_what_it_is() -> None:
+    r"""The mechanism behind `test_normalization_runs_the_encoding_fixes_before_the_lexicon_lookup`.
+
+    That test asserts the right answer comes out. `normalize_sorani`'s comment used to explain it
+    as a spelling mismatch — the dictionary holds `ە` and the input has `ه`+ZWNJ, so the lookup
+    misses. True as far as it goes, and **not** the operative mechanism: measured, ZWNJ is U+200C,
+    a format character, so `_TOKEN`'s `\w+` does not match it and the word arrives as two tokens.
+    The lookup never receives it.
+
+    The distinction is not academic. Reading the old comment, the natural repair is to normalize
+    the *remainder* inside the lookup — and that still does not separate, because the token was
+    already broken in half before the lookup was reached. Measured while writing this: with that
+    repair applied, `separate_conjunctive_waw` returns the ZWNJ input unchanged, exactly as
+    before. D-174.
+    """
+    from hawedit.normalize import _TOKEN, _preprocessor
+
+    typed_with_zwnj = "وکتێبه‌کان"
+    assert _TOKEN.findall(typed_with_zwnj) == ["وکتێبه", "کان"], (
+        "ZWNJ no longer fragments the token, so the recorded reason for the call order in "
+        "normalize_sorani is no longer the true one"
+    )
+    normalised = str(_preprocessor().normalize(typed_with_zwnj))
+    assert _TOKEN.findall(normalised) == [normalised], (
+        f"the normalized form should be a single token, got {_TOKEN.findall(normalised)}"
+    )
+    # The control: the fragment's remainder is not a word, which is why no split can happen
+    # before normalization — and the whole word's remainder is, which is why one happens after.
+    assert not is_sorani_word("کتێبه")
+    assert is_sorani_word("کتێبەکان")

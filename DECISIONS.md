@@ -9051,3 +9051,60 @@ Floor 1561 → 1563. `evidence/adversarial-pass-28-constants-the-blueprint-state
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-174
+
+**The call order inside `normalize_sorani` was right; the reason recorded for it was not the
+operative one.** The comment said a ZWNJ-typed word *"is not the dictionary's spelling of it, so
+it would never be recognised"*. True as far as it goes. Measured, the lookup **never receives the
+word**: ZWNJ is U+200C, a format character, so `_TOKEN`'s `\w+` does not match it and
+`وکتێبه‌کان` arrives as **two tokens** — `['وکتێبه', 'کان']`. The fragment's remainder is not a word;
+the whole word's is.
+
+**Why the distinction is not academic.** Reading the old comment, the natural repair is to
+normalize the *remainder* inside the lookup. Measured, that repair changes nothing — the token was
+already broken in half before the lookup was reached — so someone would have made it, seen no test
+fail, and concluded the order was no longer load-bearing.
+
+**What the order is worth, measured across KLPT's 24,894 entries:** 11,896 contain `ە` and have a
+`و`-joined form that is not itself a word; of the first 400, the shipped order separates **400**
+and the reverse separates **3**. Not an edge case — §4.1's fourth collision working or not on
+exactly the text §4.1 exists for, with `transcript.raw.json` untouched either way and every index,
+embedding and model input reading the joined form (Kurdish invariant #3).
+
+**Two errors of mine, recorded rather than tidied away.** A sweep reported the reversal SURVIVING;
+that was a **bad mutation** — it left the trailing `separate_conjunctive_waw` in place, adding a
+pass rather than reordering. The property was held all along by
+`test_normalization_runs_the_encoding_fixes_before_the_lexicon_lookup`. A control written on that
+false premise was then **measured vacuous** — it wrapped the comparison in `normalize()`, which
+re-joins the space, so it passed for the mutated and the shipped code alike — and was **removed
+rather than kept**. *"A test that passes for both measures nothing"* applies to tests written in
+this loop as much as to the ones it audits.
+
+**Decision: correct the recorded mechanism, and pin the tokenization it rests on.** The comment
+now states what was measured. `test_zwnj_fragments_the_token_which_is_why_the_order_is_what_it_is`
+asserts that `\w+` fragments the ZWNJ form into two tokens and does not fragment the normalized
+one. **Rejected: leaving the comment and adding only a test** — the comment is what a future reader
+acts on, and acting on it produces a no-op repair. **Rejected: making `_TOKEN` absorb ZWNJ so the
+order stops mattering** — that is the repair the old comment invites, it would put a format
+character inside a word token everywhere else too, and §4.1's answer to ZWNJ is to remove it, not
+to tokenize around it.
+
+**Mutation audit — 2/3 lint-clean.** The ZWNJ-absorbing pattern is caught by **the new test and
+nothing else**, which is what earns it a place beside a property already held. **The survivor is a
+demonstrated no-op and is not counted:** normalising the remainder inside the lookup changes no
+output, for the structural reason the corrected comment gives — the same shape as D-170's
+blank-skip clause, and its survival confirms the mechanism rather than exposing a gap.
+
+**Also probed this iteration and found well held:** `normalize.py`'s other guards — the mis-split
+refusal, the remainder requirement, the Latin numeral target and the word-aware token pattern were
+**4/4** against the suite as it stands, and `normalize_sorani`'s idempotence is asserted three
+ways. **And M0.3's named shortfall is still not closable here:** §4.1 does not say what `ř`/`ł`
+normalize *to*, so `BLOCKED.md` #13 stands — refused rather than guessed.
+
+No behaviour changed. Floor 1563 → 1564.
+`evidence/the-ordering-comment-named-the-wrong-mechanism.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

@@ -63,8 +63,12 @@ def normalize_sorani(text: str) -> str:
     """
     normalized: str = _preprocessor().normalize(text)
     # Order matters: the encoding fixes must land before any dictionary lookup, or separation
-    # would fail on exactly the text §4.1 exists for — a word typed with `ه`+ZWNJ is not the
-    # dictionary's spelling of it, so it would never be recognised and never be separated.
+    # fails on exactly the text §4.1 exists for. The mechanism is tokenization, not spelling —
+    # measured, not inferred (D-174). ZWNJ is U+200C, a format character, so `_TOKEN`'s `\w+`
+    # does not match it and a word typed with `ه`+ZWNJ arrives as **two** tokens:
+    # `وکتێبه‌کان` -> ['وکتێبه', 'کان']. The lookup never receives the word to fail on. After
+    # normalization it is one token and separates. Across KLPT's 24,894 entries, 11,896 are in
+    # this class; of the first 400, this order separates 400 and the reverse separates 3.
     return separate_conjunctive_waw(normalized)
 
 
