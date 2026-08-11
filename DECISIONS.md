@@ -9246,3 +9246,58 @@ matching verdict. No production code changed. Floor 1568 → 1570.
 **BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
 `GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
 ZAR38MinTest end-to-end run stays blocked on #3.
+
+## D-178
+
+**Adversarial pass 29 — every refusal in `src/`, and which the suite never reaches.**
+`tests/test_credentials.py` states this project's thesis: *"the tests that matter are refusals"*.
+Four consecutive iterations then found one unreached refusal apiece (D-175, D-176 twice, D-177),
+so this pass measured the whole surface instead of continuing one at a time.
+
+**Method, and a rejected one.** `coverage` is not installed and installing it would change what
+the gate's environment contains — D-139 fixed that deliberately with a hash-pinned lock, and a
+one-off measurement does not justify reopening it. **Rejected**, in favour of a stdlib
+`sys.settrace` line tracer whose local trace function returns `None` for every file outside
+`src/hawedit`, so per-line tracing runs only on the code being measured; `ast` supplies every
+`raise` and its enclosing function. **Caveat recorded, not hidden:** subprocess-based tests are
+not traced, so a refusal reached only there reads as unreached.
+
+**Measured: 438 raise statements in `src/hawedit`, 125 never executed by the suite.** Largest
+first: `asr.py` 14, `pipeline.py` 10, `asr_worker.py` 9, `editorial_bench.py` 8, `transcripts.py`
+8, `gemini.py` 7. **125 is not 125 defects and this decision does not claim it is** — much is
+legitimately unreachable here (`OmniAsrBackend` and `WslOmniAsrProducer` need weights and a WSL
+runtime, `gemini.py` needs a key, several are `SystemExit` under `__main__`). Naming the number
+without calling it a defect count is the point; the opposite would be exactly the uncounted-list
+claim this project keeps finding in its own documents.
+
+**The standout, and it is the twin of D-177.** `_assert_verdict_matches_request` runs on every
+judged run: its call site and **both** comparisons execute, and **neither of its two refusals ever
+fires**. It is the only thing between a judge adapter's answer and §5's editorial block — and
+D-177 measured one iteration earlier what a verdict for other footage carries there:
+`payoff_at_ms` outside the clip, every editorial score reached on footage the clip does not
+contain. Same state as the persisted-verdict door: correct, load-bearing, accountable to nothing.
+
+**Decision: drive Stage 4 with an adapter whose verdict comes from an injected factory.** The two
+refusals get a test each — **separately**, because an adapter answering the right candidate over
+the wrong seconds passes the identifier check completely — plus a control requiring an adapter
+that answers its own request to be accepted. **Rejected: one test for both refusals**, which is
+the mistake D-177's first version made (moving both ends of a span at once let a half-check pass).
+
+**Mutation audit — 4/4 lint-clean, three caught by the new guards alone:** each refusal
+separately, and the call site that reaches them. The fourth, a guard that refuses *everything*, is
+caught broadly by the positive control and by every existing test that drives a judge — which is
+what makes the first three meaningful rather than satisfiable by a pipeline that refuses all.
+
+**A mutation left on disk, recorded because the hazard is real.** This pass's first audit run was
+killed with the session and its `finally` never ran, leaving mutation 4 — `if True:` in place of
+the candidate-identity comparison — in `src/hawedit/pipeline.py`. `git add <file>` stages the file
+**as it is on disk**, which is precisely what BLOCKED #12 records carrying into main under someone
+else's message. Caught by diffing the tree against `HEAD` before staging anything and restored
+with `git checkout --`; the habit is the only thing that catches it.
+
+No production code changed. Floor 1570 → 1573.
+`evidence/adversarial-pass-29-refusals-nothing-reaches.md`.
+
+**BLOCKED #3 re-measured this iteration and still live:** `GEMINI_API_KEY: not set`,
+`GOOGLE_API_KEY: not set` and `~/.hawedit/credentials.json` absent; `HF_TOKEN` unset (#4). The
+ZAR38MinTest end-to-end run stays blocked on #3.

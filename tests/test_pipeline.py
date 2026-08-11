@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -3058,3 +3058,86 @@ def test_a_supplied_verdict_for_this_span_is_accepted(tmp_path: Path) -> None:
     assert run.clip is not None
     assert run.clip.editorial is not None, "a matching verdict produced no editorial block"
     assert run.clip.editorial.payoff_at_ms == 2_100
+
+
+# --- D-178: the adapter-side twin of D-177, which had never once refused ---------------------
+
+
+def _run_with_judge_returning(
+    tmp_path: Path, make_verdict: Callable[..., JudgeVerdict]
+) -> PipelineRun:
+    """Drive Stage 4 with an adapter whose verdict is whatever `make_verdict` builds."""
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return make_verdict(request)
+
+    return run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            Candidate("v1", "judged", 0, 1_700, DiscoveryPath.VERBAL, rank=1, score=0.9)
+        ],
+        judge=Judge(),
+    )
+
+
+@needs_ffmpeg
+def test_a_judge_returning_another_candidates_verdict_is_refused(tmp_path: Path) -> None:
+    """`_assert_verdict_matches_request` runs on every judged run and had **never fired**.
+
+    Measured by tracing the whole suite: its call site and both of its comparisons execute,
+    and neither of its two `raise` statements ever does. It is the only thing standing between
+    an adapter's answer and §5's editorial block, and D-177 measured what a verdict for other
+    footage carries there — `payoff_at_ms` outside the clip, every editorial score reached on
+    footage the clip does not contain. D-178.
+    """
+    with pytest.raises(ValueError, match="belongs to different footage"):
+        _run_with_judge_returning(
+            tmp_path,
+            lambda request: replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id="a-different-candidate",
+            ),
+        )
+
+
+@needs_ffmpeg
+def test_a_judge_returning_another_span_is_refused(tmp_path: Path) -> None:
+    """The second refusal, which the same trace showed had never fired either.
+
+    Separate from the one above because they catch different lies: an adapter that answers the
+    right candidate over the wrong seconds passes the identifier check completely.
+    """
+    with pytest.raises(ValueError, match="judge returned span"):
+        _run_with_judge_returning(
+            tmp_path,
+            lambda request: replace(
+                a_verdict(request.clip_in_ms + 5_000, request.clip_out_ms + 5_000),
+                candidate_id=request.candidate_id,
+            ),
+        )
+
+
+@needs_ffmpeg
+def test_a_judge_answering_the_request_it_was_given_is_accepted(tmp_path: Path) -> None:
+    """The control. Without it both tests above pass for a pipeline that refuses **every**
+    adapter verdict, which would make Stage 4 unusable while looking guarded.
+    """
+    run = _run_with_judge_returning(
+        tmp_path,
+        lambda request: replace(
+            a_verdict(request.clip_in_ms, request.clip_out_ms),
+            candidate_id=request.candidate_id,
+        ),
+    )
+    assert "editorial" not in {name for name, _ in run.skipped()}, (
+        "a judge answering its own request was refused"
+    )
