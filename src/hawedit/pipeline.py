@@ -1883,173 +1883,198 @@ def main(argv: list[str] | None = None) -> int:
         return _run_from_args(args, report_stream)
 
 
+def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> PipelineRun:
+    """Validate `args`, build every §3 producer they name, and run the pipeline.
+
+    Everything `_run_from_args` used to do between parsing and reporting, extracted so a second
+    caller can drive the identical producer wiring — the same `--gemini`/`--visual`/`--omni-asr`
+    branches, the same mutual-exclusion checks — without re-deriving any of it. `durable.py`'s
+    DBOS step is that second caller: it needs `on_event` wired to a durable sink and it needs
+    the same exceptions this raises (`_run_from_args` still catches them; nothing about what is
+    raised or when changed here, only where the try/except now sits). D-A2.
+
+    Raises:
+        Exactly what `run_pipeline` raises, plus `ValueError` for a combination of flags that
+        cannot produce a coherent run.
+    """
+    if args.transcript and args.omni_asr:
+        raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
+    if (
+        args.omni_asr_runtime != "auto" or args.wsl_distro or args.omni_asr_adapter
+    ) and not args.omni_asr:
+        raise ValueError(
+            "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr"
+        )
+    if args.gemini and args.vertex_project:
+        raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
+    if (args.gemini or args.vertex_project) and args.verdict:
+        raise ValueError("cloud judging and --verdict are mutually exclusive Stage 4 sources")
+    if (args.gemini or args.vertex_project) and not (args.transcript or args.omni_asr):
+        raise ValueError("cloud discovery requires --transcript or --omni-asr")
+    if args.sentences and not (args.transcript or args.omni_asr):
+        raise ValueError("--sentences requires --transcript or --omni-asr")
+    if args.verdict and (not (args.transcript or args.omni_asr) or not args.sentences):
+        raise ValueError("--verdict requires a Stage 1 source and --sentences")
+    if args.visual and not (args.transcript or args.omni_asr):
+        raise ValueError("--visual requires --transcript or --omni-asr")
+    if args.visual_query and not args.visual:
+        raise ValueError("--visual-query requires --visual")
+    if args.qc_pass and not (args.sentences or args.auto_select):
+        raise ValueError("--qc-pass requires --sentences or --auto-select")
+    # `--visual` counts as a producer only when Stage 2 can retrieve, and §3 Stage 2 has
+    # exactly two sources for a query: `--visual-query`, or Path A anchoring one from its
+    # best candidate, which needs `--gemini`/`--vertex-project`. D-117 removed the third —
+    # the whole transcript — because a corpus is not a query. So since D-117 `--visual`
+    # alone cannot rank a window, cannot surface a candidate, and cannot answer
+    # `--auto-select`; this test accepted it anyway. Measured on the real 38-minute
+    # ZAR38MinTest.mp4: the run paid for all of Stage 0, then skipped `visual_index` for
+    # want of a query and `discovery` for want of candidates, and selected nothing — every
+    # bit of it decidable from argv. D-147.
+    stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
+        args.visual and args.visual_query
+    )
+    if args.auto_select and not stage_3_can_produce:
+        raise ValueError(
+            "--auto-select needs a Stage 3 producer that can actually produce: "
+            "--gemini/--vertex-project for Path A, or --visual with --visual-query so §3 "
+            "Stage 2 has something to retrieve against. --visual on its own has no query "
+            "and cannot rank a window (D-117), so nothing would reach the selector."
+        )
+    if args.auto_select and not (args.transcript or args.omni_asr):
+        raise ValueError("--auto-select requires --transcript or --omni-asr")
+    if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
+        raise ValueError("--timelens and --face-reframe require --sentences or --auto-select")
+    if (args.confidential or args.zero_data_retention or args.zdr_confirmed_by) and not (
+        args.gemini or args.vertex_project
+    ):
+        raise ValueError("governance flags apply only with a Gemini or Vertex route")
+
+    transcript = (
+        RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
+        if args.transcript
+        else None
+    )
+    verdict = (
+        JudgeVerdict.from_dict(json.loads(args.verdict.read_text(encoding="utf-8")))
+        if args.verdict
+        else None
+    )
+    selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
+
+    discover = None
+    judge = None
+    governance = None
+    if args.gemini or args.vertex_project:
+        from hawedit.gemini import GeminiJudge, Governance, VertexGeminiJudge
+        from hawedit.path_a import PathADiscovery
+
+        governance = Governance(
+            confidential=args.confidential,
+            zero_data_retention=args.zero_data_retention,
+            confirmed_by=args.zdr_confirmed_by,
+        )
+        judge = (
+            VertexGeminiJudge(
+                args.vertex_project,
+                location=args.vertex_location,
+                governance=governance,
+            )
+            if args.vertex_project
+            else GeminiJudge(governance=governance)
+        )
+        path_a = PathADiscovery(client=judge)
+        discover = path_a.discover
+
+    canonical_asr = None
+    if args.omni_asr:
+        from hawedit.asr import create_omni_asr_producer
+
+        canonical_asr = create_omni_asr_producer(
+            args.omni_asr_runtime,
+            distro=args.wsl_distro,
+            lora_adapter=args.omni_asr_adapter,
+        )
+
+    assert_devices_available(
+        {
+            **({"the Path B reader": args.visual_device} if args.visual else {}),
+            **({"Stage 2 indexing": args.index_device} if args.visual else {}),
+            **({"TimeLens2": args.timelens_device} if args.timelens else {}),
+        }
+    )
+
+    visual_composer = None
+    if args.visual:
+        visual_composer = build_visual_composer(args)
+
+    temporal_grounder = None
+    if args.timelens:
+        from hawedit.models import ModelStore
+        from hawedit.registry import REGISTRY
+        from hawedit.video_grounding import TimeLens2Grounder
+        from hawedit.video_input import extract_window_frames
+
+        temporal_grounder = TimeLens2Grounder(
+            ModelStore().path_for(REGISTRY["MCG-NJU/TimeLens2-4B"]),
+            lambda window: extract_window_frames(
+                args.source,
+                window,
+                args.work_dir / "timelens" / "frames" / window.window_id.replace(":", "_"),
+            ),
+            device=args.timelens_device,
+        )
+
+    subject_tracker = None
+    if args.face_reframe:
+        from hawedit.reframe import OpenCvFaceTracker
+
+        subject_tracker = OpenCvFaceTracker()
+
+    return run_pipeline(
+        args.source,
+        args.work_dir,
+        media_id=args.media_id,
+        transcript=transcript,
+        asr=canonical_asr,
+        select_sentences=selection,
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=True) if args.qc_pass else None,
+        verdict=verdict,
+        discover=discover,
+        visual_composer=visual_composer,
+        visual_query=args.visual_query,
+        judge=judge,
+        temporal_grounder=temporal_grounder,
+        subject_tracker=subject_tracker,
+        auto_select=args.auto_select,
+        visual_fps=args.visual_fps,
+        visual_max_frames=args.visual_max_frames,
+        on_event=on_event,
+    )
+
+
+# `_build_and_run` raises through here; the CLI is the one caller that turns a raised exception
+# into a printed line and an exit code rather than propagating it, so the catch stays here and
+# not inside `_build_and_run` — a second caller (`durable.py`) needs the exception itself, not
+# stderr and a 2.
+_BUILD_ERRORS = (
+    CredentialError,
+    FileExistsError,
+    FileNotFoundError,
+    GeminiUnavailable,
+    IngestError,
+    KeyError,
+    RawTranscriptImmutable,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
 def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
     """Everything after argument parsing. `report_stream` is where the one document goes."""
     try:
-        if args.transcript and args.omni_asr:
-            raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
-        if (
-            args.omni_asr_runtime != "auto" or args.wsl_distro or args.omni_asr_adapter
-        ) and not args.omni_asr:
-            raise ValueError(
-                "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr"
-            )
-        if args.gemini and args.vertex_project:
-            raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
-        if (args.gemini or args.vertex_project) and args.verdict:
-            raise ValueError("cloud judging and --verdict are mutually exclusive Stage 4 sources")
-        if (args.gemini or args.vertex_project) and not (args.transcript or args.omni_asr):
-            raise ValueError("cloud discovery requires --transcript or --omni-asr")
-        if args.sentences and not (args.transcript or args.omni_asr):
-            raise ValueError("--sentences requires --transcript or --omni-asr")
-        if args.verdict and (not (args.transcript or args.omni_asr) or not args.sentences):
-            raise ValueError("--verdict requires a Stage 1 source and --sentences")
-        if args.visual and not (args.transcript or args.omni_asr):
-            raise ValueError("--visual requires --transcript or --omni-asr")
-        if args.visual_query and not args.visual:
-            raise ValueError("--visual-query requires --visual")
-        if args.qc_pass and not (args.sentences or args.auto_select):
-            raise ValueError("--qc-pass requires --sentences or --auto-select")
-        # `--visual` counts as a producer only when Stage 2 can retrieve, and §3 Stage 2 has
-        # exactly two sources for a query: `--visual-query`, or Path A anchoring one from its
-        # best candidate, which needs `--gemini`/`--vertex-project`. D-117 removed the third —
-        # the whole transcript — because a corpus is not a query. So since D-117 `--visual`
-        # alone cannot rank a window, cannot surface a candidate, and cannot answer
-        # `--auto-select`; this test accepted it anyway. Measured on the real 38-minute
-        # ZAR38MinTest.mp4: the run paid for all of Stage 0, then skipped `visual_index` for
-        # want of a query and `discovery` for want of candidates, and selected nothing — every
-        # bit of it decidable from argv. D-147.
-        stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
-            args.visual and args.visual_query
-        )
-        if args.auto_select and not stage_3_can_produce:
-            raise ValueError(
-                "--auto-select needs a Stage 3 producer that can actually produce: "
-                "--gemini/--vertex-project for Path A, or --visual with --visual-query so §3 "
-                "Stage 2 has something to retrieve against. --visual on its own has no query "
-                "and cannot rank a window (D-117), so nothing would reach the selector."
-            )
-        if args.auto_select and not (args.transcript or args.omni_asr):
-            raise ValueError("--auto-select requires --transcript or --omni-asr")
-        if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
-            raise ValueError("--timelens and --face-reframe require --sentences or --auto-select")
-        if (args.confidential or args.zero_data_retention or args.zdr_confirmed_by) and not (
-            args.gemini or args.vertex_project
-        ):
-            raise ValueError("governance flags apply only with a Gemini or Vertex route")
-
-        transcript = (
-            RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
-            if args.transcript
-            else None
-        )
-        verdict = (
-            JudgeVerdict.from_dict(json.loads(args.verdict.read_text(encoding="utf-8")))
-            if args.verdict
-            else None
-        )
-        selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
-
-        discover = None
-        judge = None
-        governance = None
-        if args.gemini or args.vertex_project:
-            from hawedit.gemini import GeminiJudge, Governance, VertexGeminiJudge
-            from hawedit.path_a import PathADiscovery
-
-            governance = Governance(
-                confidential=args.confidential,
-                zero_data_retention=args.zero_data_retention,
-                confirmed_by=args.zdr_confirmed_by,
-            )
-            judge = (
-                VertexGeminiJudge(
-                    args.vertex_project,
-                    location=args.vertex_location,
-                    governance=governance,
-                )
-                if args.vertex_project
-                else GeminiJudge(governance=governance)
-            )
-            path_a = PathADiscovery(client=judge)
-            discover = path_a.discover
-
-        canonical_asr = None
-        if args.omni_asr:
-            from hawedit.asr import create_omni_asr_producer
-
-            canonical_asr = create_omni_asr_producer(
-                args.omni_asr_runtime,
-                distro=args.wsl_distro,
-                lora_adapter=args.omni_asr_adapter,
-            )
-
-        assert_devices_available(
-            {
-                **({"the Path B reader": args.visual_device} if args.visual else {}),
-                **({"Stage 2 indexing": args.index_device} if args.visual else {}),
-                **({"TimeLens2": args.timelens_device} if args.timelens else {}),
-            }
-        )
-
-        visual_composer = None
-        if args.visual:
-            visual_composer = build_visual_composer(args)
-
-        temporal_grounder = None
-        if args.timelens:
-            from hawedit.models import ModelStore
-            from hawedit.registry import REGISTRY
-            from hawedit.video_grounding import TimeLens2Grounder
-            from hawedit.video_input import extract_window_frames
-
-            temporal_grounder = TimeLens2Grounder(
-                ModelStore().path_for(REGISTRY["MCG-NJU/TimeLens2-4B"]),
-                lambda window: extract_window_frames(
-                    args.source,
-                    window,
-                    args.work_dir / "timelens" / "frames" / window.window_id.replace(":", "_"),
-                ),
-                device=args.timelens_device,
-            )
-
-        subject_tracker = None
-        if args.face_reframe:
-            from hawedit.reframe import OpenCvFaceTracker
-
-            subject_tracker = OpenCvFaceTracker()
-
-        run = run_pipeline(
-            args.source,
-            args.work_dir,
-            media_id=args.media_id,
-            transcript=transcript,
-            asr=canonical_asr,
-            select_sentences=selection,
-            qc=Qc(auto_pass=False, flags=(), human_reviewed=True) if args.qc_pass else None,
-            verdict=verdict,
-            discover=discover,
-            visual_composer=visual_composer,
-            visual_query=args.visual_query,
-            judge=judge,
-            temporal_grounder=temporal_grounder,
-            subject_tracker=subject_tracker,
-            auto_select=args.auto_select,
-            visual_fps=args.visual_fps,
-            visual_max_frames=args.visual_max_frames,
-        )
-    except (
-        CredentialError,
-        FileExistsError,
-        FileNotFoundError,
-        GeminiUnavailable,
-        IngestError,
-        KeyError,
-        RawTranscriptImmutable,
-        RuntimeError,
-        TypeError,
-        ValueError,
-    ) as exc:
+        run = _build_and_run(args)
+    except _BUILD_ERRORS as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2
 

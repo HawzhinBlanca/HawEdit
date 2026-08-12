@@ -108,14 +108,23 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.12 wheel install: `pip check` clean; **all five** console scripts —
-  `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials` and
-  `hawedit-editorial-bench` — start from the installed wheel. **Corrected 2026-08-10 (D-141):**
+- Clean Python 3.12 wheel install: `pip check` clean; **all six** console scripts —
+  `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials`, `hawedit-durable`
+  and `hawedit-editorial-bench` — start from the installed wheel. **Corrected 2026-08-10 (D-141):**
   this named **four**, omitting `hawedit-credentials`, which is the entry point that handles the
   API key. `[project.scripts]` has declared five since M2.8 landed, and nothing tied this list to
   it — the same uncounted-list failure as D-127's *five repositories* and D-129's *four blocked
   stages*. Re-measured against a real wheel on 2026-08-10: 5 declared, 5 console scripts present,
   all 5 exit 0 on `--help`, `pip check` clean on 3.12.13.
+  **Amended 2026-08-12 (D-A3):** `hawedit-durable`, the agentic upgrade's sixth entry point,
+  raised `ModuleNotFoundError: No module named 'dbos'` on `--help` from a wheel built at the
+  moment it was added — `dbos` is the one extra (`agentic`) this project has that a console
+  script's own `--help` depends on, and every other optional-dependency import in this codebase
+  is deferred inside a function precisely so `--help` never needs it. Fixed by splitting the
+  DBOS-decorated workflow into `durable_workflow.py`, imported only after `hawedit.durable.main`
+  has already parsed `argv` and exited on `-h`/a bad flag. Re-measured against a real wheel on
+  2026-08-12 (venv installed with only base deps — `klpt`, `fonttools` — no `agentic` extra): 6
+  declared, 6 console scripts present, **all 6 exit 0 on `--help`**, `pip check` clean.
   `tests/test_claims.py` now asserts this list equals `[project.scripts]` in both directions.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
   Verified 2026-08-10 by listing the archive: `assets/fonts/NotoNaskhArabic-Regular.ttf`,

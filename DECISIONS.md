@@ -9873,3 +9873,130 @@ the exception, both of which the caller already holds. Only a wrapper outside th
 boundary can honestly report a run that died mid-stage, and that wrapper is Phase 2's durable
 workflow. Emitting them from inside would mean threading a terminal event through nine `return`
 statements to duplicate what one `try/finally` a level up expresses once.
+
+## D-A2
+
+**The CLI's producer wiring was one function, and only one caller could reach it.**
+`_run_from_args` did argument validation, built every §3 producer `--gemini`/`--visual`/
+`--omni-asr` name, called `run_pipeline`, and printed the result — all in one function, entered
+only from `main`. The durable workflow needs the middle of that (validate, build, run) without
+the CLI-specific ends (print to a report stream, catch exceptions into an exit code) — and
+needs it to be the *same* wiring, not a second copy that could drift from the first the next
+time a flag is added.
+
+**Extracted, not duplicated.** `_build_and_run(args, on_event=discard)` is everything between
+parsing and reporting; `_run_from_args` is now four lines: call it, catch `_BUILD_ERRORS`,
+report. Nothing about what is validated or in what order changed — confirmed by running the
+full suite before and after with no edits to expected behaviour, only to `tests/
+test_pipeline.py::_argv_refusals`, which walks `_run_from_args`'s AST by name to build its list
+of refusal messages and correctly failed the moment those `raise ValueError`s moved to a
+different function. Repointed at `_build_and_run`; caught the drift it exists to catch.
+
+**`on_event` threads through as a parameter, not a global.** `_build_and_run` takes the same
+`EventSink` `run_pipeline` (D-A1) already accepts and passes it straight through — the CLI's own
+call needs nothing, so `_run_from_args` calls `_build_and_run(args)` with the default `discard`
+and is unaffected.
+
+## D-A3
+
+**Phase 1's second half: a coarse DBOS workflow around `_build_and_run`.**
+`AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` calls for "wrap the current CLI/pipeline
+invocation as a coarse DBOS workflow and durable step" — one step around the whole call, not one
+per §3 stage, because the pipeline's own digest caches (`TranscriptStore.reusable_raw`, the
+per-window visual embedding cache, `resumed_over`/D-146's delivery resumption) already make a
+from-scratch re-entry cheap where it matters. Splitting into per-stage steps would duplicate
+resumability the pipeline already has, for no reason Phase 1 needs — that is Phase 5's job, and
+only if HawEdit becomes a genuinely distributed service.
+
+**The DBOS API was not guessed.** `dbos==2.29.0`'s Python API is not fully documented publicly
+as of this writing — a `WebFetch` of the official programming guide came back missing
+`start_workflow`, `retrieve_workflow`, and any mention of `recover_pending_workflows` at all.
+Guessing decorator signatures for a system whose entire purpose is correctness under a crash
+would be exactly the wrong place to guess, so every claim `durable_workflow.py` makes is
+checked against the installed source: `DBOS.launch()` calls `startup_recovery_thread` for every
+`PENDING` local workflow unconditionally (`_dbos.py::_launch`), and `start_workflow`/a direct
+call under a repeated `SetWorkflowID` returns the already-completed result rather than
+re-invoking the function (`_core.py`: "Workflow {status} is already completed... Directly
+return the result"). Both then verified empirically, not just read: a same-process smoke test
+proved the dedup path (a step counter stayed at 1 across two calls under one ID) before any of
+this was trusted into the real module.
+
+**Crash/restart proven against a real second process, not a same-process reconstruction.**
+`DBOS.destroy()` then `DBOS(config=...)` again in the same test process would show DBOS *can*
+be re-launched; it would not show that a process genuinely killed mid-step comes back, because
+nothing was ever actually interrupted — Python state, in particular the `PENDING` row DBOS
+writes before a step runs, was never put at risk. `tests/test_durable.py::
+test_a_process_killed_mid_step_resumes_in_the_next_process` instead writes a child script to
+disk, runs it as a real subprocess, and has the monkeypatched step body call `os._exit(137)` —
+no exception, no cleanup, no chance for the step wrapper to record anything — after writing an
+"attempt" marker but before returning. A second subprocess, launched against the same SQLite
+file and the same workflow ID, must find that row `PENDING`, retry the step exactly once (the
+marker count reaching 2 is the proof), and complete; a third call after that must not add a
+third marker, proving recovery does not turn off the dedup guarantee it was just used to
+demonstrate. Run four times in a row with no flake before being trusted into the gate.
+
+**SQLite, matching the architecture record's own scoping, not a shortcut around it.** DBOS's
+system database — where both properties above are checkpointed — defaults to a local SQLite
+file when `system_database_url` is unset (`_dbos_config.py`: `f"sqlite:///{name}.sqlite"`).
+Postgres is the document's explicit call for when HawEdit becomes distributed or multi-host;
+neither is true of one Windows box running one CLI at a time, so `configure_dbos` uses SQLite
+and accepts an override for the day that changes.
+
+**`--help` broke on a clean wheel install, and the fix is a module split, not a workaround.**
+Every optional heavy dependency elsewhere in this codebase (`torch`, `transformers`,
+`omnilingual_asr`, `peft`) is imported inside a function behind `try: ... except ImportError`,
+so a module that merely *mentions* the dependency stays importable without it. `dbos` cannot
+follow that pattern: `@DBOS.workflow()`/`@DBOS.step()` decorate module-level functions, so
+`from dbos import DBOS` has to run at import time for the module defining them to exist at all.
+The first version of `durable.py` put that import at the top of the one file containing
+`main()`, which meant `hawedit-durable --help` — a command that should need nothing beyond
+argparse — imported `dbos` before argparse ever got a chance to recognise `-h`. Measured against
+a clean wheel built with `scripts/build-wheel.sh` and installed into a venv with only the base
+dependencies (`klpt`, `fonttools`, no `agentic` extra): `ModuleNotFoundError: No module named
+'dbos'`, traceback, before any usage text. Fixed by splitting the module: `durable_workflow.py`
+carries the `@DBOS`-decorated functions and imports `dbos` at its own top level (fine — nothing
+imports this module until it is actually needed); `durable.py` keeps `main`, parses and
+validates `argv` with a plain `argparse.ArgumentParser`, and imports `durable_workflow` only
+after that parse has already exited on `-h` or a bad flag combination. Re-measured on the same
+clean-venv wheel after the split: `--help` exits 0, and the usage line correctly reads
+`hawedit-durable` rather than `hawedit-pipeline` — `build_parser()`'s own parser hardcodes
+`prog="hawedit.pipeline"`, so `durable.py`'s early parse overrides `.prog` before calling
+`parse_args`.
+
+**The same `--help` path was also printing to a stream it does not own.** `tests/test_cli.py`'s
+`test_no_document_is_printed_to_a_shared_stdout` — a source-level scan for `print(json.dumps(
+...))` with no `file=` — caught a second defect in the same code: `main`'s JSON report was a
+bare `print`, not routed through `machine_readable_stdout()`. D-119 measured what a library's
+own stray `print` does to a promised single-document stdout stream; `durable.py` runs the same
+producers `pipeline.main` does and was exposed to the identical risk. Fixed the same way
+`pipeline.main` was.
+
+**`requirements/gate-linux-py311.txt` regenerated, and the first regeneration was wrong in a
+way worth recording.** CI installs from this hash-pinned lockfile, not from `pyproject.toml`
+directly (D-139), and separately refuses a run that ratchets `scripts/test-count.floor` without
+the lockfile agreeing — so adding `dbos` to the `agentic` extra meant nothing to CI until this
+file changed too. Regenerated with the recorded command plus `--extra agentic`
+(`uv pip compile pyproject.toml --extra dev --extra media --extra agentic --generate-hashes
+--python-platform linux --python-version 3.11 --index-strategy unsafe-best-match`) and diffed
+package-by-package against the prior file before trusting it: the first attempt silently pulled
+in `cuda-bindings`, `cuda-toolkit`, eleven `nvidia-*` packages and `triton` — none of them
+`dbos` dependencies — because without `--extra-index-url https://download.pytorch.org/whl/cpu`
+(the flag CI's own install step passes, and the flag the lockfile's own auto-generated header
+comment does not record having been given, on the run that first produced it) `uv` resolved
+plain PyPI `torch==2.13.0`, which bundles CUDA on Linux, instead of the `+cpu` variant the
+`media` extra's own comment exists to keep pinned. Re-run with that flag added: the diff against
+the original lockfile is exactly `dbos` and its own declared dependencies (`click` already
+present; `greenlet`, `psycopg`/`psycopg-binary`, `python-dateutil`, `pyyaml`, `six`,
+`sqlalchemy`, `websockets` newly added), `torch==2.13.0+cpu` unchanged. The gate workflow's own
+`git diff --exit-code -- scripts/test-count.floor` step is what would have caught a mismatch
+between what this branch's environment ran and what CI's would — checked in advance rather than
+discovered by a red CI run.
+
+**AUDIT_REPORT.md's console-script measurement re-run for real, not hand-edited.** The existing
+entry is a dated, measured claim ("all five console scripts... start from the installed wheel"),
+not a static list — `tests/test_claims.py::test_the_audit_report_states_how_many_console_scripts
+_there_are` requires the stated count to match `[project.scripts]`, but nothing requires the
+*evidence* behind it to still be true after a sixth script is added with a real defect in its
+`--help` path. Re-measured with `scripts/build-wheel.sh`, a fresh venv, and only the base
+dependencies installed (deliberately no `agentic` extra, to prove `--help` needs none of it):
+6 declared, 6 present, all 6 exit 0, `pip check` clean.

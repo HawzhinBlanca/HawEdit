@@ -35,7 +35,7 @@ not to the pipeline being observed — see the `ponytail:` note on `RunEventLog`
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -106,6 +106,24 @@ class RunEvent:
             "state": self.state.value,
             "reason": self.reason,
         }
+
+    @staticmethod
+    def from_dict(data: Mapping[str, Any]) -> RunEvent:
+        """The inverse of `to_dict`, for a sink that persists events as JSON and reads them back.
+
+        `durable.py`'s JSONL ledger is the first caller: one `to_dict()` per line out, one
+        `from_dict()` per line back in, with `RunEvent.__post_init__` re-validating every field
+        exactly as it did the first time — a line a crash left half-written fails to parse as
+        JSON before it ever reaches here, rather than silently reconstructing a truncated event.
+        """
+        return RunEvent(
+            run_id=str(data["run_id"]),
+            sequence=int(data["sequence"]),
+            at_ms=int(data["at_ms"]),
+            stage=str(data["stage"]),
+            state=RunState(str(data["state"])),
+            reason=str(data.get("reason", "")),
+        )
 
 
 EventSink = Callable[[RunEvent], None]

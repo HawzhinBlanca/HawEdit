@@ -33,3 +33,7 @@ models/*
 !models/revisions.json
 /.gate/
 /build/
+# DBOS's own system database (D-A3): local SQLite by default, one file, never committed — it
+# is process state (workflow/step checkpoints), not source, and its schema is DBOS's to
+# migrate, not this repo's to track.
+/.dbos/

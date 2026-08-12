@@ -316,6 +316,8 @@ the project's own bar, in the one document a reader meets first.
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `events.py` | §3 | What a run says about itself *before* it returns: one stage-transition event per start and per end, to a sink that defaults to discarding. A skip carries the same reason the report will carry, so the timeline cannot go green over a stage that refused. |
+| `durable.py` | — | The `hawedit-durable` CLI entry point. Parses and validates argv — including `-h`/`--help` — before importing anything that needs the `agentic` extra, so `--help` is a pure no-op regardless of whether `dbos` is installed. |
+| `durable_workflow.py` | Phase 1 | The coarse DBOS workflow around `_build_and_run`: one `@DBOS.step()`, crash-recovered on the next `DBOS.launch()` and deduplicated by workflow ID, both verified against the installed `dbos` source and a real killed subprocess rather than assumed. |
 | `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
 | `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, and fail-closed confidential routing. |

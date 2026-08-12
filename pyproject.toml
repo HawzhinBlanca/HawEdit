@@ -68,6 +68,12 @@ asr = [
 cloud = [
     "google-auth>=2.40,<3", # Apache-2.0 — Vertex ADC bearer authentication
 ]
+# AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md Phase 1: the coarse durable workflow around
+# run_pipeline (D-A3). MIT. Pulls in psycopg (Postgres, unused until a later phase),
+# sqlalchemy and click — all already-audited-elsewhere licences, no NC.
+agentic = [
+    "dbos==2.29.0",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -89,6 +95,7 @@ hawedit-asr-bench = "hawedit.bench:main"
 hawedit-asr-setup = "hawedit.wsl_setup:main"
 hawedit-credentials = "hawedit.credentials:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
+hawedit-durable = "hawedit.durable:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -139,5 +146,13 @@ module = [
   # passed here and failed on the runner for four of my own lines (D-067).
   "transformers.*",
   "PIL.*",
+  # The `agentic` extra (D-A3). `dbos` ships its own inline type hints (no `-stubs` package
+  # needed to resolve names) but declaring it here is what lets `durable.py` import it at
+  # module level — required for `@DBOS.workflow()`/`@DBOS.step()` to decorate module-level
+  # functions — without every environment that runs `mypy --strict` having it installed.
+  # Unlike `transformers`/`PIL` above, CI's lockfile *does* install it (`requirements/
+  # gate-linux-py311.txt` was regenerated with `--extra agentic`), so this override is for the
+  # environments that lockfile does not cover: a bare `pip install -e .` with no extras.
+  "dbos.*",
 ]
 ignore_missing_imports = true
