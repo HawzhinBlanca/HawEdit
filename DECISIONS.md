@@ -9792,13 +9792,14 @@ trim costs VideoChat3 at most one frame it would have accepted and saves Qwen fr
 count by repeating the last frame — a frame never filmed, which is the defect D-060 exists to
 prevent.
 
-**Pinned so it cannot drift again.** Two tests read the constants back off the checkpoints, skipped
-when the weights are absent (CI installs none, and D-095 made the floor count *passed*, so a skip
-is safe): the rate and minimum must be the single value every config declares, and
-`TEMPORAL_PATCH_FRAMES == max(declared)` — **`max`, not equality**. The second carries its own
-control, asserting the declared sizes are **not** all equal: if a future checkpoint set made them
-uniform, `max` would become indistinguishable from "what they all declare", which is exactly the
-claim that was wrong, and the test says so by name rather than passing quietly.
+**Pinned so it cannot drift again — by three tests that run everywhere**, asserting against
+`DECLARED_VIDEO_PREPROCESSORS` rather than reading the checkpoints (see the correction below; the
+first version read the files behind a `skipif` and CI refused it): the rate and minimum must be the
+single value every recorded checkpoint declares; `TEMPORAL_PATCH_FRAMES == max(recorded)` —
+**`max`, not equality** — carrying its own control that the sizes are **not** all equal, since
+a uniform set would make `max` indistinguishable from "what they all declare", which is exactly the
+claim that was wrong; and every §7 model with a visual role must appear in the table, because
+one missing from it drops out of the `max` silently.
 
 **3/3 mutations, lint-clean, file restored byte-identical.** Before these tests, all three
 constants could be set to a wrong value with the whole suite green — justified by a comment

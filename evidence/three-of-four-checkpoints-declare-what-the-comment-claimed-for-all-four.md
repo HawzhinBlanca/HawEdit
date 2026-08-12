@@ -118,3 +118,37 @@ perform it is exactly the one CI cannot run. Naming it here is the honest form: 
 data the suite asserts against, and the date and machine they were read on are recorded with them.
 
 **Gate after the redesign: 1622 passed, 0 skipped, floor 1622** — a number the runner can reach.
+
+## D-190's own text was stale for one commit, and a wider sweep found nothing else
+
+The paragraph above ("Pinned so it cannot drift again") was written for the version CI rejected. It
+said **two** tests reading the constants **off the checkpoints**; `main` has **three** asserting
+against `DECLARED_VIDEO_PREPROCESSORS`. Appending the CI-failure section left the entry
+contradicting itself — the repo's own rule is that corrections go *in* the cell, not in prose after
+it — so both D-190 and the M5.2 cell are corrected in place rather than extended again.
+
+**A wider sweep for the same class of rot found none.** Every `test_*` name cited in PROGRESS.md,
+DECISIONS.md, README.md, BLOCKED.md and AUDIT_REPORT.md was resolved against the 1,505 test
+functions actually defined:
+
+```
+distinct names cited in docs   : 133
+  of those, test FILE names    :  47   (tests/test_asr.py, not a function)
+  cited functions NOT DEFINED  :   5   -> all five checked individually
+```
+
+All five were false positives of the probe, not of the ledger:
+
+* `test_a_changed_source_is_extracted_again` and `test_a_crashed_run_leaves_no_record` — the docs
+  cite a **prefix** of a longer real name (`…_rather_than_served_from_the_old_output`,
+  `…_an_earlier_settings_run_could_match`).
+* `test_counting_tokens_cannot_send_confidential_text_before_the_zdr_gate` — exists; the probe's
+  own line-healing had glued `UNHELD` onto it from the next line.
+* `test_the_cli_refuses_flags_whose_prerequisites_are_absent` — **deliberately removed by D-149**,
+  which explains at length that it "looked like coverage" while asserting only `main(...) == 2`,
+  and `tests/test_pipeline.py:494` carries a tombstone comment saying where it stood. The citation
+  is history, correctly recorded.
+
+The first count was **52**, which was the probe matching test *file* names and truncated prefixes.
+Reporting 52, or even 5, would have been reporting the probe rather than the repository — the same
+failure as this session's two `pgrep` matches and the gate-attack harness. Verified down to zero.
