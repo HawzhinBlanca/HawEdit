@@ -392,3 +392,45 @@ def test_a_file_that_is_not_an_array_of_records_is_refused(tmp_path: Path) -> No
     path.write_text(json.dumps({"segments": [CONFIRMED]}), encoding="utf-8")
     with pytest.raises(CorpusImportError, match="not the JSON array"):
         import_cortex_speech(path, licence=A_LICENCE)
+
+
+# --- D-188: the Common Voice import shrank the corpus without saying so ---------------------
+
+
+def test_rows_skipped_as_unusable_are_counted_into_the_manifest(tmp_path: Path) -> None:
+    """This module states the rule in its own refusal for a missing duration — "skipping it
+    silently would quietly shrink the corpus" — and the Cortex importer next door obeys it by
+    counting `unconfirmed` into the manifest. This path did not.
+
+    Measured before the counter existed: a 4-row TSV with two unusable rows imported as 2 items
+    with nothing in the corpus, its provenance or its manifest saying so. Corpus size is what
+    §8.1's hours-of-coverage divides.
+    """
+    rows = [
+        *ROWS,
+        ("common_voice_ckb_004.mp3", "", "ckb"),  # validated clip, no sentence
+        ("common_voice_ckb_005.mp3", "   ", "ckb"),  # whitespace only
+    ]
+    corpus = import_common_voice(
+        write_tsv(tmp_path / "validated.tsv", rows),
+        write_durations(tmp_path / "clip_durations.tsv", rows),
+    )
+
+    assert len(corpus.items) == len(ROWS), "the unusable rows must not become items"
+
+    note = " ".join(corpus.provenance.note.split())
+    assert "2 row(s) skipped as unusable" in note, note
+    assert f"{len(ROWS)} of {len(rows)} rows read" in note, note
+
+
+def test_a_clean_import_reports_zero_skipped_rather_than_omitting_it(tmp_path: Path) -> None:
+    """The control, and D-110's rule: a line that appears only when something was skipped
+    cannot be told from an import that does not count skips at all."""
+    corpus = import_common_voice(
+        write_tsv(tmp_path / "validated.tsv"),
+        write_durations(tmp_path / "clip_durations.tsv"),
+    )
+
+    note = " ".join(corpus.provenance.note.split())
+    assert "0 row(s) skipped as unusable" in note, note
+    assert f"{len(ROWS)} of {len(ROWS)} rows read" in note, note

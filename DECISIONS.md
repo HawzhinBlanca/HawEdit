@@ -9700,3 +9700,36 @@ claim). None is free and none is measurable without deciding what a window is *f
 turns it red against real planner output, which is honest — but red with no fix available, and
 a permanently red gate is not a signal. Named in #22 so the exemption cannot be read as coverage.
 `evidence/the-sweep-exempts-the-window-that-crashes.md`.
+
+## D-188
+
+**The Common Voice import shrank the corpus in silence, against a rule this module states in its
+own refusal.** `import_common_voice` raises, for a clip missing from the durations file, *"Every
+item needs a real duration; **skipping it silently would quietly shrink the corpus**, and defaulting
+it would fabricate a measurement."* Ten lines above that refusal it skipped rows silently. The
+Cortex importer in the same file obeys the rule — `unconfirmed += 1`, carried into the manifest
+under the comment *"Skipped, and counted"*.
+
+**Measured by executing the importer** on a Common Voice-shaped TSV of four rows, two unusable (one
+empty `sentence`, one whitespace-only): **4 rows in, 2 items out, and the provenance note mentioned
+neither a skip nor a count.** Corpus size is the denominator of §8.1's hours-of-coverage, so a
+quietly smaller corpus reports a quietly wrong coverage figure with nothing naming the loss.
+
+**The TSV is constructed, not downloaded**, and that is stated rather than glossed: there is no
+Common Voice `ckb` release on this machine (M0.16 is BLOCKED). It is adequate because the defect is
+in the *shape* of the code — a skip no artifact records — and the reproduction is by
+execution, not by reading. It is weaker than this project's usual real-media standard, which is why
+the finding was **deferred for six iterations** after it was first spotted rather than reported on
+sight.
+
+**Fixed** by counting `unusable` into the `Provenance` note, mirroring `unconfirmed`:
+*"2 row(s) skipped as unusable — no validated sentence, or no clip path — so this corpus
+is 2 of 4 rows read."* **Reported even at zero** (D-110's rule, and what the control test pins): a
+line appearing only when something was skipped cannot be told from an import that does not count
+skips at all. **The denominator is carried too**, because a count without a total says how many
+were lost but not out of what.
+
+**3/3 mutations, lint-clean, file restored byte-identical.** The third is the control's own target
+— it keeps the counter and the total and only hides the line on a clean import, which is
+exactly the version that looks correct in review.
+`evidence/the-common-voice-import-shrank-the-corpus-in-silence.md`.

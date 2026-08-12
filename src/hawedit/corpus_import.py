@@ -129,6 +129,7 @@ def import_common_voice(
     durations = _read_durations(durations_path)
 
     items: list[CorpusItem] = []
+    unusable = 0
     with tsv_path.open(encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle, delimiter="\t"):
             if limit is not None and len(items) >= limit:
@@ -155,7 +156,15 @@ def import_common_voice(
             sentence = (row.get("sentence") or "").strip()
             clip = (row.get("path") or "").strip()
             if not sentence or not clip:
-                # A clip with no validated sentence has no reference to score against.
+                # A clip with no validated sentence has no reference to score against. Skipped,
+                # and **counted** — the count reaches the manifest below, exactly as the Cortex
+                # importer's `unconfirmed` does. This module states the rule itself, in the
+                # refusal it raises a few lines down for a missing duration: "skipping it
+                # silently would quietly shrink the corpus". Measured before this counter
+                # existed: a 4-row TSV with two unusable rows imported as 2 items with nothing
+                # in the corpus, its provenance or its manifest saying so — and corpus size is
+                # what §8.1's hours-of-coverage is computed from. D-188.
+                unusable += 1
                 continue
 
             if clip not in durations:
@@ -184,10 +193,14 @@ def import_common_voice(
             licence=licence,
             interim=True,
             note=(
-                "Read speech from volunteer contributors. No §4.4 dialect labels and none of "
-                "§8.1's recording conditions — no podcast, no overlapping speakers, no "
-                "code-switch or named-entity annotation. Exercises the harness on real "
-                "Kurdish; does not discharge M0."
+                f"Read speech from volunteer contributors. {unusable} row(s) skipped as "
+                f"unusable — no validated sentence, or no clip path — so this corpus is "
+                f"{len(items)} of {len(items) + unusable} rows read. Reported even at zero: "
+                f"corpus size is what §8.1's hours-of-coverage divides, and a skip nothing "
+                f"records shrinks it invisibly (D-188). No §4.4 dialect labels and none of "
+                f"§8.1's recording conditions — no podcast, no overlapping speakers, no "
+                f"code-switch or named-entity annotation. Exercises the harness on real "
+                f"Kurdish; does not discharge M0."
             ),
         ),
     )
