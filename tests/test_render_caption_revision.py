@@ -17,6 +17,7 @@ import pytest
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import Qc
 from hawedit.judge import JudgeVerdict
+from hawedit.learning import ReasonCode
 from hawedit.pipeline import PipelineRun, run_pipeline
 from hawedit.proposals import (
     RevisionRejected,
@@ -96,7 +97,12 @@ def _approve(work: Path, revision_id: str, caption_style: str) -> None:
     proposal = propose_caption_revision(work, caption_style)
     assert proposal.valid, proposal.violation
     commit_caption_revision(
-        work, proposal, revision_id=revision_id, approved_by="hawa", confirm=lambda _: True
+        work,
+        proposal,
+        revision_id=revision_id,
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
 
 
@@ -218,7 +224,12 @@ def test_a_declined_revision_cannot_be_rendered(real_run: tuple[Path, PipelineRu
     proposal = propose_caption_revision(work, "line")
     with pytest.raises(RevisionRejected):
         commit_caption_revision(
-            work, proposal, revision_id="declined", approved_by="hawa", confirm=lambda _: False
+            work,
+            proposal,
+            revision_id="declined",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: False,
         )
     with pytest.raises(FileNotFoundError):
         render_caption_revision(work, "declined")

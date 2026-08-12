@@ -20,6 +20,7 @@ from hawedit.boundary import BoundaryInvariantViolated
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import Qc
 from hawedit.judge import JudgeVerdict
+from hawedit.learning import ReasonCode
 from hawedit.pipeline import PipelineRun, run_pipeline
 from hawedit.proposals import (
     RevisionRejected,
@@ -99,7 +100,12 @@ def _approve(work: Path, revision_id: str, final_in_ms: int, final_out_ms: int) 
     proposal = propose_boundary_revision(work, final_in_ms, final_out_ms)
     assert proposal.valid, proposal.violation
     commit_boundary_revision(
-        work, proposal, revision_id=revision_id, approved_by="hawa", confirm=lambda _: True
+        work,
+        proposal,
+        revision_id=revision_id,
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
 
 
@@ -215,7 +221,12 @@ def test_a_declined_revision_cannot_be_rendered(real_run: tuple[Path, PipelineRu
     proposal = propose_boundary_revision(work, final_in_ms=50, final_out_ms=4140)
     with pytest.raises(RevisionRejected):
         commit_boundary_revision(
-            work, proposal, revision_id="declined", approved_by="hawa", confirm=lambda _: False
+            work,
+            proposal,
+            revision_id="declined",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: False,
         )
     with pytest.raises(FileNotFoundError):
         render_boundary_revision(work, "declined")

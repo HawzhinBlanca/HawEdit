@@ -18,6 +18,7 @@ import pytest
 
 from hawedit.boundary import Boundary
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Output
+from hawedit.learning import DecisionOutcome, ReasonCode, read_decision_deltas
 from hawedit.proposals import (
     BoundaryRevisionProposal,
     CaptionRevisionProposal,
@@ -26,6 +27,7 @@ from hawedit.proposals import (
     commit_caption_revision,
     propose_boundary_revision,
     propose_caption_revision,
+    replay_decision_deltas,
 )
 from hawedit.sentences import Sentence
 from hawedit.transcripts import AsrProvenance, Word
@@ -209,7 +211,12 @@ def test_commit_refuses_an_invalid_proposal_without_asking_for_approval(tmp_path
 
     with pytest.raises(RevisionRejected, match="Kurdish invariant #2"):
         commit_boundary_revision(
-            tmp_path, proposal, revision_id="r1", approved_by="hawa", confirm=confirm
+            tmp_path,
+            proposal,
+            revision_id="r1",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=confirm,
         )
     assert asked == [], "an invalid proposal must never reach the approval prompt"
     assert not (tmp_path / "revisions").exists()
@@ -219,7 +226,12 @@ def test_commit_refuses_an_unattributed_approval(tmp_path: Path) -> None:
     proposal = _approved_proposal(tmp_path)
     with pytest.raises(RevisionRejected, match="unattributed"):
         commit_boundary_revision(
-            tmp_path, proposal, revision_id="r1", approved_by="   ", confirm=lambda _: True
+            tmp_path,
+            proposal,
+            revision_id="r1",
+            approved_by="   ",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: True,
         )
     assert not (tmp_path / "revisions").exists()
 
@@ -228,7 +240,12 @@ def test_commit_refuses_a_declined_approval_and_writes_nothing(tmp_path: Path) -
     proposal = _approved_proposal(tmp_path)
     with pytest.raises(RevisionRejected, match="declined"):
         commit_boundary_revision(
-            tmp_path, proposal, revision_id="r1", approved_by="hawa", confirm=lambda _: False
+            tmp_path,
+            proposal,
+            revision_id="r1",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: False,
         )
     assert not (tmp_path / "revisions").exists()
 
@@ -236,7 +253,12 @@ def test_commit_refuses_a_declined_approval_and_writes_nothing(tmp_path: Path) -
 def test_commit_writes_the_approved_record_only_after_a_yes(tmp_path: Path) -> None:
     proposal = _approved_proposal(tmp_path)
     path = commit_boundary_revision(
-        tmp_path, proposal, revision_id="r1", approved_by="hawa", confirm=lambda _: True
+        tmp_path,
+        proposal,
+        revision_id="r1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
     assert path == tmp_path / "revisions" / "r1.json"
     record = json.loads(path.read_text(encoding="utf-8"))
@@ -256,7 +278,12 @@ def test_commit_passes_the_real_diff_to_the_confirm_prompt(tmp_path: Path) -> No
         return True
 
     commit_boundary_revision(
-        tmp_path, proposal, revision_id="r1", approved_by="hawa", confirm=confirm
+        tmp_path,
+        proposal,
+        revision_id="r1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=confirm,
     )
     assert seen and "0..4300" in seen[0] and "0..4500" in seen[0]
 
@@ -265,11 +292,21 @@ def test_two_commits_under_the_same_id_overwrite_the_prior_record(tmp_path: Path
     """Documented behavior, not an accident: `revision_id` is the caller's idempotency key."""
     proposal = _approved_proposal(tmp_path)
     commit_boundary_revision(
-        tmp_path, proposal, revision_id="r1", approved_by="hawa", confirm=lambda _: True
+        tmp_path,
+        proposal,
+        revision_id="r1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
     second = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=4400)
     commit_boundary_revision(
-        tmp_path, second, revision_id="r1", approved_by="hawa2", confirm=lambda _: True
+        tmp_path,
+        second,
+        revision_id="r1",
+        approved_by="hawa2",
+        reason_code=ReasonCode.UNDO,
+        confirm=lambda _: True,
     )
     record = json.loads((tmp_path / "revisions" / "r1.json").read_text(encoding="utf-8"))
     assert record["approved_by"] == "hawa2"
@@ -281,7 +318,12 @@ def test_commit_writes_kind_boundary(tmp_path: Path) -> None:
     what a real boundary commit actually writes, so that refusal is checked against reality."""
     proposal = _approved_proposal(tmp_path)
     path = commit_boundary_revision(
-        tmp_path, proposal, revision_id="r1", approved_by="hawa", confirm=lambda _: True
+        tmp_path,
+        proposal,
+        revision_id="r1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
     assert json.loads(path.read_text(encoding="utf-8"))["kind"] == "boundary"
 
@@ -350,7 +392,12 @@ def test_caption_commit_refuses_an_invalid_proposal_without_asking_for_approval(
 
     with pytest.raises(RevisionRejected, match="Kurdish invariant #4"):
         commit_caption_revision(
-            tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=confirm
+            tmp_path,
+            proposal,
+            revision_id="c1",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=confirm,
         )
     assert asked == [], "an invalid proposal must never reach the approval prompt"
     assert not (tmp_path / "revisions").exists()
@@ -360,7 +407,12 @@ def test_caption_commit_refuses_an_unattributed_approval(tmp_path: Path) -> None
     proposal = _approved_caption_proposal(tmp_path)
     with pytest.raises(RevisionRejected, match="unattributed"):
         commit_caption_revision(
-            tmp_path, proposal, revision_id="c1", approved_by=" ", confirm=lambda _: True
+            tmp_path,
+            proposal,
+            revision_id="c1",
+            approved_by=" ",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: True,
         )
     assert not (tmp_path / "revisions").exists()
 
@@ -369,7 +421,12 @@ def test_caption_commit_refuses_a_declined_approval_and_writes_nothing(tmp_path:
     proposal = _approved_caption_proposal(tmp_path)
     with pytest.raises(RevisionRejected, match="declined"):
         commit_caption_revision(
-            tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=lambda _: False
+            tmp_path,
+            proposal,
+            revision_id="c1",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: False,
         )
     assert not (tmp_path / "revisions").exists()
 
@@ -377,7 +434,12 @@ def test_caption_commit_refuses_a_declined_approval_and_writes_nothing(tmp_path:
 def test_caption_commit_writes_the_approved_record_only_after_a_yes(tmp_path: Path) -> None:
     proposal = _approved_caption_proposal(tmp_path)
     path = commit_caption_revision(
-        tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=lambda _: True
+        tmp_path,
+        proposal,
+        revision_id="c1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
     assert path == tmp_path / "revisions" / "c1.json"
     record = json.loads(path.read_text(encoding="utf-8"))
@@ -394,7 +456,12 @@ def test_render_boundary_revision_refuses_a_caption_revision_record(tmp_path: Pa
 
     proposal = _approved_caption_proposal(tmp_path)
     commit_caption_revision(
-        tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=lambda _: True
+        tmp_path,
+        proposal,
+        revision_id="c1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
     with pytest.raises(ValueError, match="not a boundary revision"):
         render_boundary_revision(tmp_path, "c1")
@@ -408,10 +475,208 @@ def test_render_caption_revision_refuses_a_boundary_revision_record(tmp_path: Pa
     boundary_proposal = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=4300)
     assert boundary_proposal.valid, boundary_proposal.violation
     commit_boundary_revision(
-        tmp_path, boundary_proposal, revision_id="b1", approved_by="hawa", confirm=lambda _: True
+        tmp_path,
+        boundary_proposal,
+        revision_id="b1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
     )
     with pytest.raises(ValueError, match="not a caption revision"):
         render_caption_revision(tmp_path, "b1")
+
+
+# --- decision deltas: every outcome is recorded, not just approvals (D-A13) --------------------
+
+
+def test_an_invalid_proposal_is_recorded_before_it_is_refused(tmp_path: Path) -> None:
+    _write_report(tmp_path)
+    proposal = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=3000)
+    with pytest.raises(RevisionRejected):
+        commit_boundary_revision(
+            tmp_path,
+            proposal,
+            revision_id="r1",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: True,
+        )
+    (delta,) = read_decision_deltas(tmp_path / "decisions.jsonl")
+    assert delta.outcome is DecisionOutcome.REFUSED_INVALID
+    assert delta.reason_code is None
+    assert delta.approved_by is None
+
+
+def test_an_unattributed_approval_attempt_is_recorded(tmp_path: Path) -> None:
+    proposal = _approved_proposal(tmp_path)
+    with pytest.raises(RevisionRejected):
+        commit_boundary_revision(
+            tmp_path,
+            proposal,
+            revision_id="r1",
+            approved_by="  ",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: True,
+        )
+    (delta,) = read_decision_deltas(tmp_path / "decisions.jsonl")
+    assert delta.outcome is DecisionOutcome.REFUSED_UNATTRIBUTED
+    assert delta.reason_code is None
+
+
+def test_a_decline_is_recorded_with_its_reason_code(tmp_path: Path) -> None:
+    proposal = _approved_proposal(tmp_path)
+    with pytest.raises(RevisionRejected):
+        commit_boundary_revision(
+            tmp_path,
+            proposal,
+            revision_id="r1",
+            approved_by="hawa",
+            reason_code=ReasonCode.ACCIDENT,
+            confirm=lambda _: False,
+        )
+    (delta,) = read_decision_deltas(tmp_path / "decisions.jsonl")
+    assert delta.outcome is DecisionOutcome.DECLINED
+    assert delta.reason_code is ReasonCode.ACCIDENT
+    assert delta.approved_by == "hawa"
+
+
+def test_an_approval_is_recorded_with_its_reason_code(tmp_path: Path) -> None:
+    proposal = _approved_proposal(tmp_path)
+    commit_boundary_revision(
+        tmp_path,
+        proposal,
+        revision_id="r1",
+        approved_by="hawa",
+        reason_code=ReasonCode.UNDO,
+        confirm=lambda _: True,
+    )
+    (delta,) = read_decision_deltas(tmp_path / "decisions.jsonl")
+    assert delta.outcome is DecisionOutcome.APPROVED
+    assert delta.reason_code is ReasonCode.UNDO
+    assert delta.kind == "boundary"
+    assert delta.proposal["proposed_final_out_ms"] == 4500
+
+
+def test_two_commit_attempts_on_the_same_run_both_land_in_the_ledger(tmp_path: Path) -> None:
+    """Sequenced, not overwritten — unlike `revisions/<id>.json`, decisions are a log."""
+    _write_report(tmp_path)
+    bad = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=3000)
+    with pytest.raises(RevisionRejected):
+        commit_boundary_revision(
+            tmp_path,
+            bad,
+            revision_id="r1",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: True,
+        )
+    good = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=4500)
+    commit_boundary_revision(
+        tmp_path,
+        good,
+        revision_id="r2",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
+    )
+    deltas = read_decision_deltas(tmp_path / "decisions.jsonl")
+    assert [d.outcome for d in deltas] == [
+        DecisionOutcome.REFUSED_INVALID,
+        DecisionOutcome.APPROVED,
+    ]
+    assert [d.sequence for d in deltas] == [1, 2]
+
+
+def test_a_caption_approval_is_recorded_too(tmp_path: Path) -> None:
+    proposal = _approved_caption_proposal(tmp_path)
+    commit_caption_revision(
+        tmp_path,
+        proposal,
+        revision_id="c1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
+    )
+    (delta,) = read_decision_deltas(tmp_path / "decisions.jsonl")
+    assert delta.outcome is DecisionOutcome.APPROVED
+    assert delta.kind == "caption"
+
+
+# --- offline replay (D-A13) ---------------------------------------------------------------------
+
+
+def test_replay_raises_with_no_ledger(tmp_path: Path) -> None:
+    _write_report(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        replay_decision_deltas(tmp_path)
+
+
+def test_replay_finds_nothing_when_todays_code_still_agrees(tmp_path: Path) -> None:
+    proposal = _approved_proposal(tmp_path)
+    commit_boundary_revision(
+        tmp_path,
+        proposal,
+        revision_id="r1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
+    )
+    assert replay_decision_deltas(tmp_path) == ()
+
+
+def test_replay_ignores_declined_and_refused_decisions(tmp_path: Path) -> None:
+    """Only an APPROVED decision was ever applied; a decline or refusal has nothing for a
+    validator regression to break, so replay must not report on it."""
+    _write_report(tmp_path)
+    bad = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=3000)
+    with pytest.raises(RevisionRejected):
+        commit_boundary_revision(
+            tmp_path,
+            bad,
+            revision_id="r1",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: True,
+        )
+    declined = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=4500)
+    with pytest.raises(RevisionRejected):
+        commit_boundary_revision(
+            tmp_path,
+            declined,
+            revision_id="r2",
+            approved_by="hawa",
+            reason_code=ReasonCode.PREFERENCE,
+            confirm=lambda _: False,
+        )
+    assert replay_decision_deltas(tmp_path) == ()
+
+
+def test_replay_flags_an_approval_the_run_no_longer_supports(tmp_path: Path) -> None:
+    """The regression case: approve a legal narrowing, then the run's own recorded anchors
+    change (as they would if an upstream re-run corrected them) so the *same* proposal is no
+    longer legal — replay must catch that, re-running the real validator rather than trusting
+    the `valid` flag frozen into the original record."""
+    _write_report(tmp_path)
+    proposal = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=4300)
+    assert proposal.valid, proposal.violation
+    commit_boundary_revision(
+        tmp_path,
+        proposal,
+        revision_id="r1",
+        approved_by="hawa",
+        reason_code=ReasonCode.PREFERENCE,
+        confirm=lambda _: True,
+    )
+    # Tighten the anchor past what was approved — legal under §3 Stage 5 (anchors move only
+    # when the run itself is redone), and now `final_out_ms=4300` ends before the anchor.
+    tightened = dict(_DEFAULT_BOUNDARY)
+    tightened["anchor_out_ms"] = 4301
+    _write_report(tmp_path, boundary=tightened)
+
+    (finding,) = replay_decision_deltas(tmp_path)
+    assert finding.kind == "boundary"
+    assert finding.media_id == "fixture"
+    assert "mid-sentence" in finding.violation
 
 
 # --- the CLI, run as a real subprocess so --help never depends on the agentic extra -----------
@@ -449,6 +714,8 @@ def test_cli_declines_on_a_blank_answer_and_writes_nothing(tmp_path: Path) -> No
             "r1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
         ],
         input_text="\n",
     )
@@ -472,6 +739,8 @@ def test_cli_commits_on_an_explicit_yes_with_no_render(tmp_path: Path) -> None:
             "r1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
             "--no-render",
         ],
         input_text="y\n",
@@ -498,6 +767,8 @@ def test_cli_reports_a_render_failure_as_its_own_outcome(tmp_path: Path) -> None
             "r1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
         ],
         input_text="y\n",
     )
@@ -520,6 +791,8 @@ def test_cli_reports_an_invalid_proposal_and_never_prompts(tmp_path: Path) -> No
             "r1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
         ],
         input_text="",
     )
@@ -532,7 +805,9 @@ def test_cli_reports_an_invalid_proposal_and_never_prompts(tmp_path: Path) -> No
 
 
 def test_cli_requires_one_revision_kind() -> None:
-    result = _run_cli(["work", "--revision-id", "r1", "--approved-by", "hawa"])
+    result = _run_cli(
+        ["work", "--revision-id", "r1", "--approved-by", "hawa", "--reason-code", "preference"]
+    )
     assert result.returncode == 2
     assert "give either" in result.stderr
 
@@ -551,6 +826,8 @@ def test_cli_refuses_both_revision_kinds_at_once() -> None:
             "r1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
         ]
     )
     assert result.returncode == 2
@@ -559,7 +836,17 @@ def test_cli_refuses_both_revision_kinds_at_once() -> None:
 
 def test_cli_refuses_a_lone_final_in_ms() -> None:
     result = _run_cli(
-        ["work", "--final-in-ms", "0", "--revision-id", "r1", "--approved-by", "hawa"]
+        [
+            "work",
+            "--final-in-ms",
+            "0",
+            "--revision-id",
+            "r1",
+            "--approved-by",
+            "hawa",
+            "--reason-code",
+            "preference",
+        ]
     )
     assert result.returncode == 2
     assert "must both be given" in result.stderr
@@ -575,10 +862,31 @@ def test_cli_refuses_an_unrecognized_caption_style() -> None:
             "c1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
         ]
     )
     assert result.returncode == 2
     assert "invalid choice" in result.stderr
+
+
+def test_cli_requires_a_reason_code() -> None:
+    """`--reason-code` is required unconditionally (D-A13), the same way `--approved-by` is."""
+    result = _run_cli(
+        [
+            "work",
+            "--final-in-ms",
+            "0",
+            "--final-out-ms",
+            "100",
+            "--revision-id",
+            "r1",
+            "--approved-by",
+            "hawa",
+        ]
+    )
+    assert result.returncode == 2
+    assert "--reason-code" in result.stderr
 
 
 def test_cli_commits_a_caption_revision_with_no_render(tmp_path: Path) -> None:
@@ -594,6 +902,8 @@ def test_cli_commits_a_caption_revision_with_no_render(tmp_path: Path) -> None:
             "c1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
             "--no-render",
         ],
         input_text="y\n",
@@ -622,6 +932,8 @@ def test_cli_declines_a_caption_revision_on_a_blank_answer_and_writes_nothing(
             "c1",
             "--approved-by",
             "hawa",
+            "--reason-code",
+            "preference",
         ],
         input_text="\n",
     )

@@ -88,6 +88,17 @@ validator is `assert_captions_within_clip` rather than an invented safe-region c
 render functions refuse a record that is not theirs instead of failing on a missing key; a
 record written before this field existed is still treated as a boundary revision, matching
 what every such record on disk actually is.
+
+**Phase 4's decision-delta ledger, added later (D-A13).** Both `commit_*_revision` functions
+now record every outcome — approved, declined, or refused before a human ever saw it — to
+`work_dir/decisions.jsonl` via `learning.record_decision_delta`, closing a real gap: a decline
+previously wrote nothing to disk at all. Both take a `reason_code: ReasonCode`, required
+unconditionally the same way `approved_by` is, because the architecture record is explicit that
+a decision is not automatically a preference. `replay_decision_deltas` re-runs every recorded
+*approved* decision's own propose function against the run's current `report.json` and flags
+any today's real validator no longer accepts — the "offline evaluation" step, scoped to what
+this branch can honestly claim without a live model or a benchmark corpus (`BLOCKED.md` #1,
+#3). See `learning.py`'s module docstring for the ledger's own design.
 """
 
 from __future__ import annotations
@@ -111,6 +122,13 @@ from hawedit.cli import program_name, use_utf8_streams
 from hawedit.clip import Clip, Qc
 from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.ingest import IngestError
+from hawedit.learning import (
+    DecisionOutcome,
+    ReasonCode,
+    ReplayFinding,
+    read_decision_deltas,
+    record_decision_delta,
+)
 from hawedit.pipeline import FONTS_DIR, _proxy_dimensions, _write_atomic
 from hawedit.render import RenderError, frame_rate, render_clip
 from hawedit.sentences import Sentence, UndeliverableOrder
@@ -119,6 +137,8 @@ from hawedit.transcripts import Word
 __all__ = [
     "BoundaryRevisionProposal",
     "CaptionRevisionProposal",
+    "ReasonCode",
+    "ReplayFinding",
     "RevisionRejected",
     "commit_boundary_revision",
     "commit_caption_revision",
@@ -126,6 +146,7 @@ __all__ = [
     "propose_caption_revision",
     "render_boundary_revision",
     "render_caption_revision",
+    "replay_decision_deltas",
 ]
 
 
@@ -241,9 +262,15 @@ def commit_boundary_revision(
     proposal: BoundaryRevisionProposal,
     revision_id: str,
     approved_by: str,
+    reason_code: ReasonCode,
     confirm: Callable[[str], bool] = _interactive_confirm,
 ) -> Path:
     """Write an approved revision record. Does not render — see `render_boundary_revision`.
+
+    Every outcome — approved, declined, or refused before a human ever saw it — is recorded to
+    `work_dir/decisions.jsonl` via `learning.record_decision_delta` (D-A13). This is the one
+    function-level side effect that happens regardless of which branch below is taken, which is
+    why it is not folded into any single return/raise below.
 
     Args:
         revision_id: names the output file (`work_dir/revisions/{revision_id}.json`) and is the
@@ -254,19 +281,38 @@ def commit_boundary_revision(
         approved_by: who is approving. Required and must be non-blank — `gemini.py`'s
             `Governance.confirmed_by` is the same rule for the same reason: an unattributed
             approval is not a recorded one.
-        confirm: the approval channel. Defaults to a real terminal prompt; tests substitute a
-            function that returns a fixed answer, exactly the way `gemini.py`'s `GeminiJudge`
-            takes an injectable `sleep`.
+        reason_code: why the human is making this decision — required unconditionally, the same
+            way `approved_by` is, because §Phase 4 is explicit that a decision is not
+            automatically a preference. Recorded only when the decision actually reaches a human
+            (approved or declined); a proposal refused before that point (invalid, or
+            unattributed) is recorded with no reason code — nobody made a reasoned decision, so
+            the value supplied here is not used for that record.
 
     Raises:
         RevisionRejected: the proposal failed validation, `approved_by` is blank, or `confirm`
             returned a refusal.
+        ValueError: `reason_code` is present/absent the wrong way round for this outcome —
+            raised by `DecisionDelta.__post_init__` inside `record_decision_delta`.
     """
     if not proposal.valid:
+        record_decision_delta(
+            work_dir,
+            proposal.media_id,
+            "boundary",
+            DecisionOutcome.REFUSED_INVALID,
+            proposal.to_dict(),
+        )
         raise RevisionRejected(
             f"proposal for {proposal.media_id!r} fails Kurdish invariant #2: {proposal.violation}"
         )
     if not approved_by.strip():
+        record_decision_delta(
+            work_dir,
+            proposal.media_id,
+            "boundary",
+            DecisionOutcome.REFUSED_UNATTRIBUTED,
+            proposal.to_dict(),
+        )
         raise RevisionRejected(
             "a revision needs a named approver; an unattributed approval is not one "
             "(same rule as gemini.py's Governance.confirmed_by)."
@@ -277,8 +323,26 @@ def commit_boundary_revision(
         f"{proposal.proposed_final_out_ms} ms. Apply?"
     )
     if not confirm(prompt):
+        record_decision_delta(
+            work_dir,
+            proposal.media_id,
+            "boundary",
+            DecisionOutcome.DECLINED,
+            proposal.to_dict(),
+            reason_code=reason_code,
+            approved_by=approved_by,
+        )
         raise RevisionRejected(f"{approved_by!r} declined the proposed revision")
 
+    record_decision_delta(
+        work_dir,
+        proposal.media_id,
+        "boundary",
+        DecisionOutcome.APPROVED,
+        proposal.to_dict(),
+        reason_code=reason_code,
+        approved_by=approved_by,
+    )
     record = {
         **proposal.to_dict(),
         "kind": "boundary",
@@ -576,22 +640,40 @@ def commit_caption_revision(
     proposal: CaptionRevisionProposal,
     revision_id: str,
     approved_by: str,
+    reason_code: ReasonCode,
     confirm: Callable[[str], bool] = _interactive_confirm,
 ) -> Path:
     """Write an approved caption-revision record. Does not render — see
     `render_caption_revision`. Same three refusals as `commit_boundary_revision`: an invalid
-    proposal, an unattributed approver, or an explicit decline.
+    proposal, an unattributed approver, or an explicit decline — and the same decision-delta
+    recording on every outcome (D-A13); see that function's docstring for `reason_code`.
 
     Raises:
         RevisionRejected: the proposal failed validation, `approved_by` is blank, or `confirm`
             returned a refusal.
+        ValueError: `reason_code` is present/absent the wrong way round for this outcome —
+            raised by `DecisionDelta.__post_init__` inside `record_decision_delta`.
     """
     if not proposal.valid:
+        record_decision_delta(
+            work_dir,
+            proposal.media_id,
+            "caption",
+            DecisionOutcome.REFUSED_INVALID,
+            proposal.to_dict(),
+        )
         raise RevisionRejected(
             f"caption proposal for {proposal.media_id!r} fails Kurdish invariant #4: "
             f"{proposal.violation}"
         )
     if not approved_by.strip():
+        record_decision_delta(
+            work_dir,
+            proposal.media_id,
+            "caption",
+            DecisionOutcome.REFUSED_UNATTRIBUTED,
+            proposal.to_dict(),
+        )
         raise RevisionRejected(
             "a revision needs a named approver; an unattributed approval is not one "
             "(same rule as gemini.py's Governance.confirmed_by)."
@@ -601,8 +683,26 @@ def commit_caption_revision(
         f"{proposal.proposed_caption_style!r}. Apply?"
     )
     if not confirm(prompt):
+        record_decision_delta(
+            work_dir,
+            proposal.media_id,
+            "caption",
+            DecisionOutcome.DECLINED,
+            proposal.to_dict(),
+            reason_code=reason_code,
+            approved_by=approved_by,
+        )
         raise RevisionRejected(f"{approved_by!r} declined the proposed caption revision")
 
+    record_decision_delta(
+        work_dir,
+        proposal.media_id,
+        "caption",
+        DecisionOutcome.APPROVED,
+        proposal.to_dict(),
+        reason_code=reason_code,
+        approved_by=approved_by,
+    )
     record = {
         **proposal.to_dict(),
         "kind": "caption",
@@ -740,6 +840,64 @@ def render_caption_revision(
     return revision
 
 
+# --- Offline replay (D-A13) -------------------------------------------------------------------
+#
+# The architecture record's "offline evaluation" step, scoped to what this branch can honestly
+# claim without a live model or a benchmark corpus: not an evaluation against held-out data
+# (`BLOCKED.md` #1, no labelled Sorani set) or a live judge call (`BLOCKED.md` #3, Gemini
+# billing), but a regression check on the codebase's own deterministic gates — did today's code
+# change what an already-approved edit is allowed to do?
+
+
+def replay_decision_deltas(work_dir: Path) -> tuple[ReplayFinding, ...]:
+    """Re-propose every recorded *approved* decision under `work_dir` and flag any today's real
+    validator no longer accepts.
+
+    Deliberately re-runs `propose_boundary_revision`/`propose_caption_revision` themselves
+    against the run's current `report.json`, rather than hand-rebuilding a `Boundary` or
+    re-deriving caption validity from the recorded proposal dict — the same validator the
+    original commit checked, invoked the same way, so a finding here means the codebase's
+    behaviour changed, not that this function's own re-implementation drifted from it.
+
+    Only `APPROVED` deltas are replayed — a `DECLINED` or `REFUSED_*` decision was never
+    applied, so there is no committed state for a validator regression to silently break.
+
+    Raises:
+        FileNotFoundError: no `decisions.jsonl` under `work_dir`, or (surfaced from the
+            underlying propose call) no `report.json` — the run's own state that a replayed
+            decision needs is gone, and replay cannot honestly proceed without it.
+    """
+    deltas = read_decision_deltas(work_dir / "decisions.jsonl")
+    findings: list[ReplayFinding] = []
+    for delta in deltas:
+        if delta.outcome is not DecisionOutcome.APPROVED:
+            continue
+        valid: bool
+        violation: str | None
+        if delta.kind == "boundary":
+            boundary_now = propose_boundary_revision(
+                work_dir,
+                delta.proposal["proposed_final_in_ms"],
+                delta.proposal["proposed_final_out_ms"],
+            )
+            valid, violation = boundary_now.valid, boundary_now.violation
+        else:
+            caption_now = propose_caption_revision(
+                work_dir, delta.proposal["proposed_caption_style"]
+            )
+            valid, violation = caption_now.valid, caption_now.violation
+        if not valid:
+            findings.append(
+                ReplayFinding(
+                    sequence=delta.sequence,
+                    media_id=delta.media_id,
+                    kind=delta.kind,
+                    violation=violation or "",
+                )
+            )
+    return tuple(findings)
+
+
 def _main_boundary(args: argparse.Namespace) -> int:
     try:
         proposal = propose_boundary_revision(args.work_dir, args.final_in_ms, args.final_out_ms)
@@ -756,7 +914,13 @@ def _main_boundary(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        path = commit_boundary_revision(args.work_dir, proposal, args.revision_id, args.approved_by)
+        path = commit_boundary_revision(
+            args.work_dir,
+            proposal,
+            args.revision_id,
+            args.approved_by,
+            ReasonCode(args.reason_code),
+        )
     except RevisionRejected as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 1
@@ -793,7 +957,13 @@ def _main_caption(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        path = commit_caption_revision(args.work_dir, proposal, args.revision_id, args.approved_by)
+        path = commit_caption_revision(
+            args.work_dir,
+            proposal,
+            args.revision_id,
+            args.approved_by,
+            ReasonCode(args.reason_code),
+        )
     except RevisionRejected as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 1
@@ -815,9 +985,12 @@ def _main_caption(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`hawedit-revise <work_dir> --revision-id ID --approved-by NAME`, plus exactly one of
-    `--final-in-ms N --final-out-ms N` (a boundary revision) or `--caption-style STYLE` (a
-    caption revision — `line` or `word_highlight`).
+    """`hawedit-revise <work_dir> --revision-id ID --approved-by NAME --reason-code CODE`, plus
+    exactly one of `--final-in-ms N --final-out-ms N` (a boundary revision) or `--caption-style
+    STYLE` (a caption revision — `line` or `word_highlight`). `--reason-code` is one of
+    `preference`/`undo`/`experiment`/`accident`/`policy_forced` (D-A13) — required unconditionally,
+    the same way `--approved-by` is, even though it is only ever recorded if the proposal is
+    valid enough to reach a human decision at all.
 
     Proposes, prints the validation result, and — only if valid — asks on the real terminal
     before committing. No flag skips that prompt: this entry point's whole purpose is being the
@@ -846,6 +1019,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--caption-style", choices=[member.value for member in CaptionStyle])
     parser.add_argument("--revision-id", required=True)
     parser.add_argument("--approved-by", required=True)
+    parser.add_argument(
+        "--reason-code",
+        required=True,
+        choices=[member.value for member in ReasonCode],
+        help="why this decision is being made — required, never assumed (D-A13)",
+    )
     parser.add_argument(
         "--no-render",
         action="store_true",

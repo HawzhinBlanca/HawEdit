@@ -10583,3 +10583,71 @@ is unchanged (a caption revision must not move the cut points).
 
 VERIFY OK — hawedit gate green: 1760 collected, 1760 passed, 0 skipped (floor ratcheted
 1730 -> 1760).
+
+## D-A13
+
+**Phase 4's first bullet, taken literally: "Record structured decision deltas and reason
+codes."** Research before writing anything: `judge.py` already has `ShadowVerdict`/
+`decide_judge` (a shadow-model comparison and promotion decision, both pure functions, neither
+ever called or persisted), no version constant exists beyond `POLICY_VERSION`
+(`policy.py:56`), and — the load-bearing finding — **a decline currently writes nothing.**
+`commit_boundary_revision`/`commit_caption_revision` raise `RevisionRejected` for an invalid
+proposal, an unattributed approver, or an explicit decline, and in every case the only
+`_write_atomic` call in either function sits after the point each of those three refusals
+already returned. An approval and a decline are both facts worth a permanent record — the
+architecture record's own line, "Store structured deltas such as moved boundary, rejected
+candidate, caption correction, reason codes and final approval," names rejection explicitly,
+not only success.
+
+**`src/hawedit/learning.py`, a new module rather than an extension of `events.py`.**
+`RunEvent`'s schema is purpose-built for pipeline stage transitions — a 3-state enum with a
+skip/reason coupling baked into `__post_init__` — and cannot carry a decision delta without
+breaking that invariant. So this is a sibling ledger, same shape: append-only JSONL,
+flush-per-line, tolerant of a torn last line, for the same reason `JsonlEventSink`/`read_events`
+have that property — a crash must not lose an already-recorded decision. `DecisionDelta` itself
+is validated at construction the same way `RunEvent`/`JudgeVerdict` are: a human-reached
+outcome (`APPROVED`/`DECLINED`) must carry both `reason_code` and `approved_by`; a
+`REFUSED_INVALID`/`REFUSED_UNATTRIBUTED` outcome — a proposal that never reached a human at all
+— must carry neither. Enforced both directions, so a future edit cannot silently invent a
+reason code for a decision nobody made.
+
+**`reason_code` is required unconditionally, not defaulted.** The record's own words: "Do not
+treat every user action as a preference: undo operations, experiments, accidental changes and
+policy-forced changes need distinct labels." A default of `ReasonCode.PREFERENCE` would be
+exactly the failure this line warns against — a silent classification nobody chose — so
+`commit_boundary_revision`/`commit_caption_revision` both gained `reason_code: ReasonCode` with
+no default, the same way `approved_by` has none. It is required even on the two refusal paths
+that never end up recording it, matching how `approved_by` is already asked for before a
+proposal's validity is even known — the human states why before learning whether the edit will
+go through.
+
+**Offline replay, scoped to what this branch can honestly claim.** The architecture record's
+loop names "offline evaluation" and "redacted replay dataset" against held-out data and a live
+judge — both blocked (`BLOCKED.md` #1, no labelled Sorani set; #3, Gemini billing). Building
+against either would be the infrastructure-before-the-trigger mistake D-A11/Phase 5 already
+declined once. What is real and buildable today: `replay_decision_deltas` re-runs every
+recorded *approved* decision's own `propose_boundary_revision`/`propose_caption_revision` call
+against the run's current `report.json`, and reports any today's code no longer accepts. This
+reuses the same propose functions the original commit called — not a hand-rebuilt `Boundary` or
+a re-derivation of caption validity from the frozen proposal dict — so a finding here means the
+codebase's behaviour changed, not that a second implementation drifted from the first. Only
+`APPROVED` deltas are replayed: a declined or refused proposal was never applied, so there is
+no committed state for a validator regression to silently break.
+
+**Mutation-audited twice, at the two points that matter most.** (1) Removing the
+`record_decision_delta` call on the approved path fails three tests by name —
+`test_an_approval_is_recorded_with_its_reason_code` and both replay tests that depend on a
+ledger existing at all — confirming the recording is load-bearing, not decorative. (2)
+Neutering `replay_decision_deltas`'s own validity check (`if not now.valid` -> `if False`)
+fails exactly `test_replay_flags_an_approval_the_run_no_longer_supports` and nothing else,
+confirming the regression test is the one this property depends on, not a coincidence of some
+other assertion.
+
+**Explicitly out of scope for this row, named rather than silently absent**: shadow-challenger
+persistence (`ShadowVerdict` gaining `to_dict`/`from_dict`), a promotion gate wired to
+`decide_judge`'s existing `JudgeDecision`, and any version tracking beyond `POLICY_VERSION`.
+Real work, and real Phase 4 scope — deferred to a following row rather than rushed into this
+one, the same discipline every other D-A-numbered slice this branch has kept.
+
+VERIFY OK — hawedit gate green: 1786 collected, 1786 passed, 0 skipped (floor ratcheted
+1760 -> 1786).
