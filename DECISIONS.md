@@ -10276,3 +10276,57 @@ the command scanning is a tripwire for obvious cases and not a security boundary
 boundary is the `file_path` check plus filesystem permissions. The real gate is
 `.github/workflows/gate.yml` on a clean runner, re-running from committed source with no shell
 of the agent's — which is why the local hooks can afford to be helpful rather than airtight.
+
+## D-199
+
+**The two CODYSTEM scripts that decide what "done" means had no automated test, and the ledger
+flipper had never once run.** D-198 recorded the first half deliberately — "a Python test of it
+would have moved that floor and is left as separate work" — because ratcheting
+`scripts/test-count.floor` in a commit whose gate had never run would have cost the final CI step
+its meaning. This is that separate work. The second half was not known: `scripts/update-ledger.sh`
+computes its target as `specs/<feature>/tasks.md`, `specs/` held only `constitution.md`, and the
+script refuses a missing ledger before it does anything else. It had therefore refused every
+invocation ever made of it, which means AGENTS.md's rule that only the flipper may flip a row was
+true the way a rule about an empty room is true. The 33 DONE rows in `PROGRESS.md` are a different
+ledger, hand-maintained, and no script wrote them.
+
+**What the tests do.** Sixteen of them, in `tests/test_harness_scripts.py`. Both scripts locate
+the repository by walking up from their own path, so copying one into a tmpdir makes that tmpdir
+its whole world; each test runs against a stub gate there and never the real one. That keeps the
+suite at roughly a second instead of the gate's two and a half minutes, keeps
+`.gate/last-test-run.xml` and the committed floor untouched while a second session shares this
+checkout (BLOCKED #12), and lets the stub record *that it was invoked* — which is how "this
+refusal fires before the gate" became an assertion instead of a reading of the source.
+
+**A stub gate is not the forgery D-092 and D-093 closed.** Those refused a fake `pytest` on
+`PYTHONPATH` and an interpreter override that replaced every step including the one grading the
+others — fakes of the gate's own tools, standing in for the thing under test. Neither script here
+is the gate. The Stop wrapper's entire job is translating an exit code it did not produce, and
+enumerating the codes it must translate requires producing them; D-198 exercised exactly this by
+hand against a stub returning 0,1,2,3,4,5,9, and this commits that exercise rather than leaving it
+a sentence. The flipper's refusals are asserted never to reach a gate at all.
+
+**What remains structurally untestable from pytest, stated because this file does not accept a
+green that was not run.** Everything below the flipper's invocation of the gate: the citation
+check against the report, the awk flip, and the provenance line. Reaching them needs the gate to
+exit 0, but pytest runs underneath that same gate, which exports a depth variable and refuses a
+nested full run with exit 4 — so the inner call cannot return 0 by construction, not by accident.
+The only honest proof is running the real script by hand, which this commit also does: the three
+rows in `specs/harness-integrity/tasks.md` were flipped by `scripts/update-ledger.sh` itself, each
+after its own green gate, with `specs/harness-integrity/ledger.log` carrying one provenance line
+per flip. Those are the first successful executions of that script in this repository.
+
+**A defect found while writing the prefix test, reported and not fixed here.** The flipper
+constrains a task id to `[A-Za-z0-9_.-]+` and then interpolates it into a `grep -E` pattern. A dot
+is legal in that set and is also a regex metacharacter, so the task id `T.` passes validation and
+then matches the row `T1`. `T-` is harmless and `T10` correctly does not match `T1`, so the
+anchoring is right and only the dot leaks. Fixing it means editing an enforcement script, which
+was not in this feature's approved plan; it is recorded here rather than absorbed silently, and
+the plan for it belongs in its own spec with its own row.
+
+**Measured, on this machine only.** Windows 11, Python 3.11.15, pytest 8.3.4, in this checkout:
+the suite went from 1643 to 1659 collected, all passing, none skipped; the gate ran green three
+times at 155.41 s, 142.94 s and 153.81 s. The floor was ratcheted by the gate, not by hand, and is
+committed alongside the tests so that CI's final step — which fails a run that ratcheted it — keeps
+saying what it was built to say. No CI run has yet seen any of this; a local green cannot speak
+for a clean runner, and until that check is green nothing here is done.
