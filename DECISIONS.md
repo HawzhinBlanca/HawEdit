@@ -9826,7 +9826,13 @@ precisely the one CI cannot run — so the numbers are data the suite asserts ag
 the date and machine they were read on. **1622 passed, 0 skipped, floor 1622.**
 `evidence/three-of-four-checkpoints-declare-what-the-comment-claimed-for-all-four.md`.
 
-## D-191
+<!-- Decisions made on the `agentic` branch are numbered D-A1, D-A2, … deliberately. main is
+     being finished by a concurrent session that is appending its own D-19x entries to the end
+     of this same file; two branches both claiming "D-191" would merge into a contradiction
+     that reads like a renumbering error rather than a collision. Measured, not predicted: main
+     had an uncommitted D-191 of its own at the moment this branch wrote one. -->
+
+## D-A1
 
 **The pipeline's only report arrived after the work was over.** `run_pipeline` returns a
 complete, honest `PipelineRun` and says nothing at all before that. On the 38-minute source
