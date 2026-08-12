@@ -9883,3 +9883,57 @@ the same reason. Both harnesses now take green from the **exit code** and print 
 one exists. That is the fifth filter-over-raw-output mistake this session and the first one where
 the harness was wrong in my favour rather than against me.
 `evidence/the-refusal-named-the-state-it-had-already-created.md`.
+
+## D-192
+
+**Artifact identity is the bytes on disk, not a re-serialisation of the parsed object.**
+`read_norm` decided whether a norm belonged to its raw by calling `read_raw(media_id).sha256()` —
+parsing the file, walking it back through today's dataclasses, and hashing *that*. D-181 added one
+optional `adapter` field to `AsrProvenance` on 2026-08-11, and from that moment every normalized
+transcript ever written was rejected as stale.
+
+**Measured on four real artifacts**, including the 38-minute `ZAR38MinTest.mp4` run: the stored
+`.sha256` file, and the sha256 of the bytes on disk, are both `7912e7bd1d35…`; `RawTranscript
+.sha256()` today returns `4748ac2a3e02…`. `verify_raw_integrity` **passed** on all four — the files
+are byte-identical to what was published — while `read_norm` refused them as *"derived from raw
+7912e7bd1d35… but the stored raw is 4748ac2a3e02…"*. Every particular of that message was wrong:
+the norm was derived from that raw, and `4748ac…` hashes a file that has never existed. Its
+prescribed remedy — re-run normalization — stamped the same unstable value again, so the next
+added field would break it identically. **Nothing shipped wrong to a client**: the pipeline writes
+and reads the norm inside one run, where the schema cannot change underneath it. What was lost is
+every stored artifact — 35,185 characters of Kurdish and 6,104 word timings from the real run,
+unreadable through the API that exists to read them.
+
+**Decision: the digest of the raw *file* is the identity, in all four places that touch it.**
+`write_raw` already computes and stores `sha256(raw.to_json().encode())`; `read_norm` compares
+against `raw_digest(media_id)`; `normalize_transcript` takes `source_sha256`; the pipeline passes
+`store.raw_digest(identifier)`, the same value `verify_raw_integrity` checked one line above. All
+four artifacts read again after the change.
+
+**`normalize_transcript`'s default stays `raw.sha256()`.** An in-memory transcript has no file, and
+there the object hash is the only identity available. **Rejected: making the parameter required** —
+it would touch eight call sites, six of them tests with no store at all, to protect the two that
+have one.
+
+**The guard lives in `write_norm`, not at the call site.** Every producer can forget the digest and
+only one of them is in `src/`. It is invisible while a release is young — a raw written by today's
+schema hashes the same either way — and fires exactly when it matters: a second run over a work
+directory holding a raw from an earlier release. Refusing at write time beats storing a norm that
+reads back as stale forever. `test_a_stale_normalized_transcript_is_detected` now asserts both
+ends: the write refuses, and a norm that reaches the directory by other means is still refused at
+read.
+
+**Mutation audit 3/4, and the survivor is recorded rather than papered over.** "The pipeline stops
+stamping the file digest" survives because for an artifact written by the running release
+`raw.sha256()` and `raw_digest()` are the same number — which is exactly why the defect stayed
+invisible for a day. It is observable only against a raw written by an earlier schema, which inside
+the pipeline means a release boundary no unit test can stage. **Rejected: an
+`inspect.getsource`-style assertion that the call passes `source_sha256`** — it would check the
+spelling of a line rather than its effect. What the `write_norm` guard changes is the failure mode:
+with the stamp forgotten the pipeline now stops loudly at the write instead of storing a norm every
+later read rejects.
+
+**Also rejected: calling `verify_raw_integrity` from inside `read_norm`.** It would name tampering
+correctly instead of reporting it as staleness, but it is a separate concern from this defect, and
+the pipeline already calls it one line before normalizing.
+`evidence/adding-a-field-re-dated-every-transcript-ever-written.md`.

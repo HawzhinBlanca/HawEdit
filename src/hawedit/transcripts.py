@@ -348,17 +348,26 @@ class NormalizedTranscript:
         )
 
 
-def normalize_transcript(raw: RawTranscript) -> NormalizedTranscript:
+def normalize_transcript(
+    raw: RawTranscript, source_sha256: str | None = None
+) -> NormalizedTranscript:
     """Derive the normalized artifact from `raw`, recording which raw it came from.
 
     Word timings are carried across with their *raw* surface forms: alignment keys off the
     tokens the acoustic model actually emitted (§4.2), and normalization strips and rewrites
     characters in ways that would not survive a re-tokenization.
+
+    `source_sha256` must be the digest of the raw **file** when there is one —
+    `TranscriptStore.raw_digest`. `raw.sha256()` re-serialises the parsed object, so it answers
+    with today's schema rather than the bytes that were stored: adding one optional field to
+    `AsrProvenance` changed that answer for every transcript ever written, and `read_norm` then
+    rejected artifacts whose raw file was provably untouched. The default remains the object
+    hash because an in-memory transcript has no file, and there it is the only identity there is.
     """
     return NormalizedTranscript(
         media_id=raw.media_id,
         text_ckb=normalize_sorani(raw.text_ckb),
-        source_sha256=raw.sha256(),
+        source_sha256=source_sha256 if source_sha256 is not None else raw.sha256(),
         words=raw.words,
     )
 
@@ -567,7 +576,26 @@ class TranscriptStore:
 
     def write_norm(self, norm: NormalizedTranscript) -> Path:
         """Write the derived artifact. Unlike raw this may be rewritten — re-normalizing
-        after a KLPT upgrade is a legitimate operation."""
+        after a KLPT upgrade is a legitimate operation.
+
+        Raises:
+            StaleNormalizedTranscript: `source_sha256` is not the stored raw's digest.
+
+        The check is here rather than at the caller because every producer can forget it and
+        only one of them is in `src/`. It is invisible while a release is young — a raw written
+        by today's schema hashes the same either way — and fires exactly when it matters: a
+        second run over a work directory holding a raw from an earlier release, where
+        `raw.sha256()` reports what this version *would* write and the file says otherwise.
+        Refusing at write time beats storing a norm that reads back as stale forever.
+        """
+        expected = self.raw_digest(norm.media_id)
+        if norm.source_sha256 != expected:
+            raise StaleNormalizedTranscript(
+                f"refusing to store a norm for {norm.media_id} recording raw "
+                f"{norm.source_sha256[:12]}… when the stored raw is {expected[:12]}…. Derive it "
+                f"with normalize_transcript(raw, source_sha256=store.raw_digest(media_id)) — the "
+                f"digest of the file, not a re-serialisation of the parsed object."
+            )
         path = self.norm_path(norm.media_id)
         path.write_text(norm.to_json(), encoding="utf-8")
         return path
@@ -579,7 +607,13 @@ class TranscriptStore:
             StaleNormalizedTranscript: `source_sha256` does not match the stored raw.
         """
         norm = NormalizedTranscript.from_json(self.norm_path(media_id).read_text(encoding="utf-8"))
-        expected = self.read_raw(media_id).sha256()
+        # The digest of the raw FILE, not of the parsed object. `read_raw(...).sha256()` walks
+        # the JSON back through today's dataclasses, so it reports what this release *would*
+        # write rather than what was written: `AsrProvenance` gaining one optional field
+        # re-dated every stored transcript, and this check then called four untouched real
+        # artifacts stale — including the 38-minute run — while `verify_raw_integrity`, which
+        # hashes the bytes, passed on all of them. Bytes are the identity; a schema is not.
+        expected = self.raw_digest(media_id)
         if norm.source_sha256 != expected:
             raise StaleNormalizedTranscript(
                 f"{self.norm_path(media_id)} was derived from raw {norm.source_sha256[:12]}… "

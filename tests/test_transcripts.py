@@ -290,13 +290,53 @@ def test_normalized_is_derived_and_records_its_source() -> None:
 
 
 def test_a_stale_normalized_transcript_is_detected(tmp_path: Path) -> None:
-    """A norm derived from a different raw is worse than no norm — it looks right."""
+    """A norm derived from a different raw is worse than no norm — it looks right.
+
+    Refused at both ends since D-192. The write refuses because a producer that got the digest
+    wrong should hear about it while it still has the right one to hand; the read refuses
+    because a norm can reach the directory without going through this store at all.
+    """
     store = TranscriptStore(tmp_path)
     store.write_raw(a_raw())
     other = normalize_transcript(a_raw("a completely different transcript"))
-    store.write_norm(other)
+
+    with pytest.raises(StaleNormalizedTranscript):
+        store.write_norm(other)
+    assert not store.norm_path("media-001").exists(), "the refused norm was stored anyway"
+
+    store.norm_path("media-001").write_text(other.to_json(), encoding="utf-8")
     with pytest.raises(StaleNormalizedTranscript):
         store.read_norm("media-001")
+
+
+def test_storing_a_norm_stamped_from_the_parsed_object_is_refused(tmp_path: Path) -> None:
+    """The producer half of D-192, at the boundary every producer shares.
+
+    `normalize_transcript(store.read_raw(id))` — no digest passed — is the line the pipeline
+    used to run and the obvious thing to write. It is right until the raw on disk predates a
+    schema field, and then it stamps what this release would have written. Same hand-built
+    pre-`adapter` artifact as above; here the norm derived from it must be refused at write.
+    """
+    import hashlib
+
+    store = TranscriptStore(tmp_path)
+    payload = json.loads(a_raw().to_json())
+    payload["asr"].pop("adapter")
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
+    store.raw_path("media-001").write_bytes(body)
+    store._digest_path("media-001").write_text(hashlib.sha256(body).hexdigest(), encoding="ascii")
+
+    careless = normalize_transcript(store.read_raw("media-001"))
+    with pytest.raises(StaleNormalizedTranscript, match="digest of the file"):
+        store.write_norm(careless)
+
+    # The control: the same derivation, given the file's digest, is stored and reads back — so
+    # this measures where the value came from and not that `write_norm` refuses everything.
+    correct = normalize_transcript(
+        store.read_raw("media-001"), source_sha256=store.raw_digest("media-001")
+    )
+    store.write_norm(correct)
+    assert store.read_norm("media-001") == correct
 
 
 def test_norm_written_from_the_matching_raw_reads_back(tmp_path: Path) -> None:
@@ -305,6 +345,43 @@ def test_norm_written_from_the_matching_raw_reads_back(tmp_path: Path) -> None:
     norm = normalize_transcript(store.read_raw("media-001"))
     store.write_norm(norm)
     assert store.read_norm("media-001") == norm
+
+
+def test_a_transcript_written_before_a_field_existed_is_not_called_stale(tmp_path: Path) -> None:
+    """`read_norm` compared the stored `source_sha256` against a **re-serialised** raw.
+
+    So it answered with today's schema rather than with the bytes on disk, and D-181 adding one
+    optional `adapter` field to `AsrProvenance` re-dated every transcript ever written. Measured
+    on the real 38-minute run and three other artifacts in `work/`: `verify_raw_integrity`
+    passed — the files are byte-identical to what was stored — while `read_norm` refused them as
+    *"derived from raw 7912e7bd1d35… but the stored raw is 4748ac2a3e02…"* and told the operator
+    to re-normalize. Re-normalizing would have written the same unstable value again.
+
+    The pre-D-181 shape is written by hand here, because `write_raw` necessarily writes today's.
+    """
+    import hashlib
+
+    store = TranscriptStore(tmp_path)
+    payload = json.loads(a_raw().to_json())
+    assert payload["asr"].pop("adapter", "absent") is None, (
+        "this reproduces a transcript stored before `adapter` existed — the field is now gone "
+        "from AsrProvenance, so the artifact being simulated is not the one that broke"
+    )
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
+    store.raw_path("media-001").write_bytes(body)
+    store._digest_path("media-001").write_text(hashlib.sha256(body).hexdigest(), encoding="ascii")
+
+    stored = store.read_raw("media-001")
+    # The control. If the two digests agreed, this file would not exhibit the drift and every
+    # assertion below would hold for a `read_norm` that still re-hashed the parsed object.
+    assert stored.sha256() != store.raw_digest("media-001"), (
+        "the hand-written artifact serialises identically under today's schema, so it cannot "
+        "measure the defect"
+    )
+    store.verify_raw_integrity("media-001")  # invariant #1: the bytes are what was written
+
+    store.write_norm(normalize_transcript(stored, source_sha256=store.raw_digest("media-001")))
+    assert store.read_norm("media-001").text_ckb == "ئەمە زۆر باشە"
 
 
 def test_norm_may_be_rewritten_because_it_is_derived(tmp_path: Path) -> None:

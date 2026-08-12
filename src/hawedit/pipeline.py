@@ -1137,7 +1137,9 @@ def run_pipeline(
         # `ctc_text` was never computed (D-135); it is computed now, so the rule runs here.
         escalation=select_for_validation(scores_from_transcript(transcript)),
     )
-    normalized = normalize_transcript(transcript)
+    # Stamp the norm with the digest of the raw *file* — the same value `verify_raw_integrity`
+    # checked one line above — so the link survives a later release adding a transcript field.
+    normalized = normalize_transcript(transcript, source_sha256=store.raw_digest(identifier))
     store.write_norm(normalized)
 
     # --- §4.2 sentence segmentation, against this run's own VAD ---------------------------
