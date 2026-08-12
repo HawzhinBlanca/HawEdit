@@ -9553,3 +9553,32 @@ test of mine that measured nothing.** The per-path split test first asserted onl
 split entirely left `visual` in the line and the test stayed green. It now asserts each path's
 *count*, which the all-zero rejection split cannot satisfy.
 `evidence/the-printed-report-never-said-what-stage-3-found.md`.
+
+## D-184
+
+**Adversarial pass 30 — M0.4's "enforced three ways" claim survives, and the pass's own first
+attempt did not.** `transcripts.py` claims invariant #1 is enforced by three independent
+mechanisms *"because any one of them alone is bypassable"*. That is falsifiable: remove each and
+see whether the suite notices. Each was reverted in turn against a baseline verified green first,
+against the **whole** suite rather than `tests/test_transcripts.py`, since a guard defended only by
+its own module's tests is the shape D-105, D-108, D-112 and D-118 each found separately.
+
+**Nothing survived.** Write-once **refuted by 13 tests**; `frozen=True` refuted by
+`test_raw_transcript_is_immutable_in_memory`; the SHA-256 comparison refuted by
+`test_tampering_with_raw_on_disk_is_detected`. Files restored byte-identical, suite green after
+restore. **M0.4 stays DONE and no code changed.**
+
+**The judgement worth recording is about the pass, not the claim.** The first attempt at mechanism
+1 removed only the digest reservation and left `os.link(staging, path)` — which still raises
+`FileExistsError` on a second write. It reported REFUTED, and that verdict was worthless: it had
+tested a sub-part while the mechanism itself stood, and it failed in the flattering direction. It
+was caught by reading *which* test fired: under `pytest -x` the first failure was
+`test_distinct_selections_do_not_overwrite_each_others_deliveries`, a **delivery** test rather than
+a transcript one, and a guard whose only visible defender is incidental is worth a second look. The
+second look found the reversal at fault, not the coverage.
+
+**Method fixed for later passes: no `-x`.** It answers "does anything notice?" and hides "how
+much" — and for an adversarial pass the second question is the one that matters, because a
+mechanism defended by a single incidental test is one deletion away from being defended by nothing.
+Re-run properly: 13 defenders, several named for exactly this.
+`evidence/adversarial-pass-30-invariant-1-enforced-three-ways.md`.
