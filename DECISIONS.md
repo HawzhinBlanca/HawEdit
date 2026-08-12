@@ -9825,3 +9825,45 @@ up). The table was verified equal to all four configs on disk before committing;
 precisely the one CI cannot run — so the numbers are data the suite asserts against, carrying
 the date and machine they were read on. **1622 passed, 0 skipped, floor 1622.**
 `evidence/three-of-four-checkpoints-declare-what-the-comment-claimed-for-all-four.md`.
+
+## D-191
+
+**The pipeline's only report arrived after the work was over.** `run_pipeline` returns a
+complete, honest `PipelineRun` and says nothing at all before that. On the 38-minute source
+that is most of an hour in which nothing outside the function can learn that Stage 0 finished
+and Stage 3 started. Every part of the agentic upgrade needs those transitions — a durable
+workflow to checkpoint on them, an editor's timeline to show anything at all — and none of it
+can be built on a return value.
+
+**So: one additive `on_event` parameter, defaulting to `discard`.** Not a rewrite, not a
+`ProgressReporter` object threaded through ten signatures, not an abstract base class with one
+implementation. `EventSink` is `Callable[[RunEvent], None]`, which makes `list.append` already
+a sink, so `events.py` contains no collector class either. Every existing caller — the CLI,
+`smoke.py`, all 1,622 tests — passes nothing and pays one function call per stage.
+
+**The property worth the code is that the stream cannot disagree with the report.** An event
+saying a stage completed where the report records a `StageSkipped` would be worse than no
+stream: a green timeline over a run that refused is precisely the silent success §1 of
+`pipeline.py` is written against. So a skip event's reason is *read from the record*, never
+written beside it — `_skip_reason(run.editorial)` rather than a second copy of the string —
+and `RunEvent` refuses a skip with no reason and a completion that carries one.
+
+**Mutation-audited, and the first audit failed.** Replacing `_skip_reason`'s body with a fixed
+`"stage did not run"` left the whole suite green. The agreement test drove only the run that
+stops at Stage 1, where the reason is the module constant `_STAGE_1_ASR.reason` and the bridge
+is never reached; the two call sites that use `_skip_reason` are the editorial and boundary
+skips, which need a run that gets a transcript and then stops for want of a selection. That
+arrangement is now the second half of a parametrized case, and the mutation fails exactly it.
+The test that "passed" before was measuring the constants, not the mechanism.
+
+**Sequence numbers, not timestamps, are the replay cursor.** Phase 1's reconnect contract is
+"replay from the last event ID". Two events inside one millisecond are ordinary — asserted
+under a frozen clock, where six events share an `at_ms` and remain totally ordered by a
+per-log counter starting at 1.
+
+**Deliberately not built here:** persistence, and any run-level `started`/`completed`/`failed`
+event. The run *is* the `run_pipeline` call; its start is the call and its end is the return or
+the exception, both of which the caller already holds. Only a wrapper outside the process
+boundary can honestly report a run that died mid-stage, and that wrapper is Phase 2's durable
+workflow. Emitting them from inside would mean threading a terminal event through nine `return`
+statements to duplicate what one `try/finally` a level up expresses once.

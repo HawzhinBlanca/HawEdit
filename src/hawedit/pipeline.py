@@ -62,6 +62,7 @@ from hawedit.escalation import (
     scores_from_transcript,
     select_for_validation,
 )
+from hawedit.events import EventSink, RunEventLog, discard
 from hawedit.gemini import GeminiUnavailable
 from hawedit.index import Bm25Index
 from hawedit.ingest import IngestError, IngestResult, ingest, probe_stream
@@ -476,6 +477,17 @@ _STAGE_4_JUDGE = StageSkipped(
     ),
     blocked_by=("Stage 4 judgment not enabled",),
 )
+
+
+def _skip_reason(outcome: object) -> str | None:
+    """The reason a stage recorded for not running, or `None` when it ran.
+
+    The bridge between `PipelineRun`'s stage records and `events.py`'s stage events, so the two
+    cannot disagree: an event that says "skipped" reads its reason from the very object the
+    report will carry, rather than from a second string written beside it. `events.py` takes
+    the reason rather than the record precisely so it needs no import from this module.
+    """
+    return outcome.reason if isinstance(outcome, StageSkipped) else None
 
 
 def _not_reached(stage: str, dependency: str) -> StageSkipped:
@@ -983,6 +995,7 @@ def run_pipeline(
     visual_fps: float | None = None,
     visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
+    on_event: EventSink = discard,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1008,6 +1021,10 @@ def run_pipeline(
             when the composed model path is enabled.
         judge: §3 Stage 4. Supply `GeminiJudge(...)` and the runner scores the top candidate
             itself rather than needing `verdict` handed to it.
+        on_event: called once when each stage starts and once when it ends. The default
+            discards, so every existing caller is unchanged. This is the only way anything
+            outside this function can learn what it is doing before it returns — an hour into
+            a 38-minute source, the return value is not yet a fact about anything.
         verdict: what §3 Stage 4 would have returned. The second stand-in, for the same reason
             as `transcript`: `Clip.assert_renderable` refuses a clip with no editorial block,
             because an unjudged clip has no meaning fidelity and no misleading-edit risk and
@@ -1036,9 +1053,12 @@ def run_pipeline(
         )
 
     work_dir.mkdir(parents=True, exist_ok=True)
+    log = RunEventLog(identifier, on_event)
 
     # --- §3 Stage 0 ----------------------------------------------------------------------
+    log.started("ingest")
     ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
+    log.finished("ingest")
 
     audio_digest: str | None = None
     producer_id: str | None = None
@@ -1079,6 +1099,7 @@ def run_pipeline(
     # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
     # embedding". The segmenting is arithmetic over the cuts Stage 0 just found on this video,
     # so it runs now and is real; only the embedding itself waits on the model.
+    log.started("visual_windows")
     effective_visual_fps = (
         visual_fps
         if visual_fps is not None
@@ -1091,6 +1112,7 @@ def run_pipeline(
         fps=effective_visual_fps,
         max_frames=visual_max_frames,
     )
+    log.finished("visual_windows")
 
     run = PipelineRun(
         media_id=identifier,
@@ -1107,7 +1129,9 @@ def run_pipeline(
         render=_not_reached("render", "a judged boundary and QC pass"),
         delivery=_not_reached("delivery", "a successful render"),
     )
+    log.started("transcript")
     if transcript is None:
+        log.finished("transcript", _STAGE_1_ASR.reason)
         return run
 
     # --- §3 Stage 1 (supplied) + §4.1 -----------------------------------------------------
@@ -1139,12 +1163,16 @@ def run_pipeline(
     )
     normalized = normalize_transcript(transcript)
     store.write_norm(normalized)
+    log.finished("transcript")
 
     # --- §4.2 sentence segmentation, against this run's own VAD ---------------------------
+    log.started("sentences")
     vad_pauses = _pauses_between(ingested)
     sentences = segment_sentences(transcript.words, vad_pauses=vad_pauses)
+    log.finished("sentences")
 
     # --- §3 Stage 2 (text half) -----------------------------------------------------------
+    log.started("index")
     # One document per sentence, not one for the episode. Measured on the real 38-minute file,
     # `from_transcript` gave a **single** document: BM25's idf is then log(1 + 0.5/1.5) for every
     # one of 2,784 terms — one distinct value against the per-sentence index's 37 — so rarity is
@@ -1152,6 +1180,7 @@ def run_pipeline(
     # whole 38.6 minutes. Built after segmentation for that reason; the sentences were already
     # three lines away. D-134.
     index = Bm25Index.from_sentences(sentences, normalized)
+    log.finished("index")
 
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 
@@ -1164,6 +1193,7 @@ def run_pipeline(
     _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
 
     # --- §3 Stage 3, both paths -------------------------------------------------------------
+    log.started("discovery")
     merged: tuple[MergedCandidate, ...] = ()
     visual_result: VisualDiscoveryResult | None = None
     visual_skipped: StageSkipped | None = None
@@ -1174,6 +1204,10 @@ def run_pipeline(
         # proceed, and a verbal-only moment is the case the dual path exists to protect. When
         # a composer *is* supplied it retrieves and reranks before reading any scene.
         visual_candidates_tuple: tuple[Candidate, ...] = ()
+        # Reported only inside Stage 3, because outside it the visual index is genuinely never
+        # reached — the discovery skip below is the whole explanation, and a second event
+        # repeating it would suggest two independent stages declined.
+        log.started("visual_index")
         if visual_composer is not None:
             best_verbal = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
             # The whole transcript used to stand in here when neither was available. It is not a
@@ -1219,6 +1253,9 @@ def run_pipeline(
                     )
                 else:
                     visual_candidates_tuple = visual_result.candidates
+            log.finished("visual_index", visual_skipped.reason if visual_skipped else None)
+        else:
+            log.finished("visual_index", _STAGE_2_VISUAL.reason)
         merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
@@ -1226,6 +1263,9 @@ def run_pipeline(
             candidates=merged,
             visual_index=visual_result or visual_skipped or _STAGE_2_VISUAL,
         )
+        log.finished("discovery", None if merged else _STAGE_3_NOTHING_FOUND.reason)
+    else:
+        log.finished("discovery", _STAGE_3_DISCOVERY.reason)
 
     if auto_select and not select_sentences and merged:
         automatic = _automatic_sentence_selection(merged, sentences)
@@ -1267,6 +1307,7 @@ def run_pipeline(
         )
 
     # --- §3 Stage 4 -----------------------------------------------------------------------
+    log.started("editorial")
     if judge is not None and merged and (not selected or selected_anchors is not None):
         assert selected_candidate is not None, "Stage 4's condition implies a chosen survivor"
         survivor = selected_candidate
@@ -1299,24 +1340,26 @@ def run_pipeline(
             judged = replace(judged, sv6d=survivor.sv6d)
         verdict = judged
         run = replace(run, editorial=None)
+    log.finished("editorial", _skip_reason(run.editorial))
 
+    log.started("boundary")
     if not select_sentences:
+        log.finished("boundary", _skip_reason(run.boundary))
         return run
 
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------
     anchors = selected_anchors
     if anchors is None:
-        return replace(
-            run,
-            boundary=StageSkipped(
-                stage="boundary",
-                reason=(
-                    "no complete sentence in the selection, so §5 has no anchor. Kurdish "
-                    "invariant #2 is reject, never render — a boundary invented here is how a "
-                    "clip that starts mid-sentence reaches a client."
-                ),
+        no_anchor = StageSkipped(
+            stage="boundary",
+            reason=(
+                "no complete sentence in the selection, so §5 has no anchor. Kurdish "
+                "invariant #2 is reject, never render — a boundary invented here is how a "
+                "clip that starts mid-sentence reaches a client."
             ),
         )
+        log.finished("boundary", no_anchor.reason)
+        return replace(run, boundary=no_anchor)
 
     anchor_in, anchor_out = anchors
     if (
@@ -1396,19 +1439,18 @@ def run_pipeline(
     ]
     if uncaptioned:
         first = uncaptioned[0]
-        return replace(
-            run,
-            boundary=StageSkipped(
-                stage="boundary",
-                reason=(
-                    f"soft boundary expansion {boundary.final_in_ms}..{boundary.final_out_ms} ms "
-                    f"would include unselected speech beginning with {first.w!r} at "
-                    f"{first.start_ms}..{first.end_ms} ms. Rendering it would ship speech "
-                    "missing from the captions and clip transcript."
-                ),
-                blocked_by=("uncaptioned speech",),
+        would_ship_uncaptioned = StageSkipped(
+            stage="boundary",
+            reason=(
+                f"soft boundary expansion {boundary.final_in_ms}..{boundary.final_out_ms} ms "
+                f"would include unselected speech beginning with {first.w!r} at "
+                f"{first.start_ms}..{first.end_ms} ms. Rendering it would ship speech "
+                "missing from the captions and clip transcript."
             ),
+            blocked_by=("uncaptioned speech",),
         )
+        log.finished("boundary", would_ship_uncaptioned.reason)
+        return replace(run, boundary=would_ship_uncaptioned)
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
@@ -1449,23 +1491,24 @@ def run_pipeline(
         qc=qc,
     )
     run = replace(run, boundary=boundary, clip=clip)
+    log.finished("boundary")
 
     # --- §3 Stage 6 render ----------------------------------------------------------------
+    log.started("render")
     if verdict is None:
         # Not a shortcut around the gate — the gate's own conclusion, reached before spending
         # an encode on a clip that `assert_renderable` would refuse anyway.
-        return replace(
-            run,
-            render=StageSkipped(
-                stage="render",
-                reason=(
-                    "§3 Stage 4 did not run, so the clip has no editorial block and §2's "
-                    "render gate refuses it: an unjudged clip has no meaning fidelity and no "
-                    "misleading-edit risk. Supply a verdict to render."
-                ),
-                blocked_by=("Stage 4 verdict",),
+        unjudged = StageSkipped(
+            stage="render",
+            reason=(
+                "§3 Stage 4 did not run, so the clip has no editorial block and §2's "
+                "render gate refuses it: an unjudged clip has no meaning fidelity and no "
+                "misleading-edit risk. Supply a verdict to render."
             ),
+            blocked_by=("Stage 4 verdict",),
         )
+        log.finished("render", unjudged.reason)
+        return replace(run, render=unjudged)
 
     ass_path, render_path, srt_path, edl_path, editing_json_path = _delivery_artifact_paths(
         work_dir, clip.clip_id
@@ -1479,6 +1522,7 @@ def run_pipeline(
     try:
         clip.assert_renderable()
     except (ValueError, IncompleteSentence) as exc:
+        log.finished("render", str(exc))
         return replace(
             run,
             render=StageSkipped(
@@ -1514,6 +1558,7 @@ def run_pipeline(
     except (IngestError, RenderError, ValueError) as exc:
         ass_path.unlink(missing_ok=True)
         render_path.unlink(missing_ok=True)
+        log.finished("render", str(exc))
         return replace(
             run,
             render=StageSkipped(
@@ -1522,8 +1567,10 @@ def run_pipeline(
         )
 
     run = replace(run, render=rendered)
+    log.finished("render")
 
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
+    log.started("delivery")
     # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
     try:
         # Build all three before writing any. This used to write the JSON, then the SRT, then
@@ -1570,6 +1617,7 @@ def run_pipeline(
             _delivery_record_path(work_dir, clip.clip_id),
         ):
             path.unlink(missing_ok=True)
+        log.finished("delivery", str(exc))
         return replace(
             run,
             delivery=StageSkipped(
@@ -1579,6 +1627,7 @@ def run_pipeline(
             ),
         )
 
+    log.finished("delivery")
     return replace(
         run,
         delivery=Delivery(
