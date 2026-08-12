@@ -9601,9 +9601,11 @@ the retrieval was.
 2.0 fps gives **32.0 s**, this machine's 8-frame limit at the same rate gives **4.0 s**, and 8
 frames at **0.25 fps** gives **32.0 s** again. `BLOCKED.md` #17 / D-108 record the 8-frame limit and
 that lowering it "changes what a window *is*"; what they do not say, and this adds, is that the
-limit constrains the **product** and therefore the window *duration* — so §3's ~32 s
-retrieval unit is reachable on this 24 GB card at a lower sampling rate, trading temporal
-resolution for window length. **#17 refreshed with that measurement.**
+limit constrains the **product** and therefore the window *duration*. **Corrected 2026-08-12
+(D-186):** this entry then concluded that §3's ~32 s unit was therefore reachable at a lower
+sampling rate. It is not — `SceneWindow` enforces a **1.0 fps floor**, so the reachable ceiling
+here is 8 frames @ 1.0 fps = **8.0 s**, and the 0.25 fps route is refused at plan time. **#17
+refreshed, then corrected with that measurement.**
 
 **No default changed.** `DECLARED_SAMPLING_FPS = 2.0` is a declared constant and §8.2's
 Recall@K is measured on whatever unit it yields; picking a new rate is a threshold decision with a
@@ -9623,3 +9625,36 @@ because `run.boundary` is overwritten downstream on every path where a selection
 verified by applying it and re-running the wide-window case. The guard stays `if not automatic:`
 because it is intention-revealing, not because a test defends it.
 `evidence/auto-select-chose-nothing-and-would-not-say-why.md`.
+
+## D-186
+
+**D-185 recorded a route the code refuses; the real ceiling is 8 s, not 32 s.** D-185 concluded
+that §3's ~32 s unit *"is reachable on this 24 GB card at a lower sampling rate"* — derived
+from `_max_window_ms` arithmetic and never run. `SceneWindow.__post_init__` enforces a **1.0 fps
+floor** (`REFERENCE_FPS = 1.0`), and its refusal names the reasoning D-185 missed: *"Lowering the
+rate is how a long scene fits under the 64-frame ceiling without being segmented, and the resulting
+embedding is indistinguishable from an honest one. Split the scene instead."* The repo had already
+considered and rejected that exact trade.
+
+**The arithmetic was right and the conclusion was wrong, because it never asked whether the code
+permitted the setting** — the same failure the D-182 verification caught one iteration
+earlier, in the same shape: a prediction recorded where a measurement belongs. It reached `main` in
+330b430 before it was checked, and §4 of this loop's own instructions say to assert on the
+artifact, never on the reasoning.
+
+**Measured, what is actually reachable here:** §3's 64 frames @ 2.0 fps = 32.0 s, out of reach
+(`BLOCKED.md` #17); 8 frames @ 2.0 fps = **4.0 s**, which runs and fits **0** of 184 complete
+sentences; 8 frames @ 0.25 fps = 32.0 s, **refused at plan time**; 8 frames @ **1.0 fps = 8.0 s**,
+the real ceiling. The median complete sentence is **6.72 s**, so D-185's question stays live —
+the answer is **8 s via `--visual-fps 1.0`**, not 32 s via 0.25.
+
+**A second defect found by trying it, recorded not fixed.** `--visual-fps 1.0` is supported and on
+the real file it does not refuse — it dies inside the reader with
+`t:1 must be larger than temporal_factor:2`, after Stage 0 and a full re-embed, naming neither the
+window nor the cause. `frame_count` is `ceil(duration_ms * fps / 1000)`, so a scene under ~1.5 s
+yields 1–2 frames at 1.0 fps where it yielded 3 at 2.0, and the reader needs more than 2. Not
+fixed here: the minimum is a property of each §7 reader and must be read from the checkpoints
+rather than guessed — `_MIN_SAMPLED_FRAMES = 4` already sits nearby for a *different* quantity,
+which is exactly how a guessed constant looks right and is wrong. `BLOCKED.md` #22.
+
+**No code changed.** The error was in the record. `evidence/d-185-recorded-a-route-the-code-refuses.md`.

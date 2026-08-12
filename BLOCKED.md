@@ -880,12 +880,17 @@ candidates, so §5 selects nothing, `--auto-select` chooses nothing, and the run
 clip. The pipeline is not failing — the retrieval unit is an order of magnitude shorter than
 the thing §5 must fit inside it.
 
-So §3's ~32 s unit **is** reachable on this 24 GB card, at 0.25 fps: one frame per four
-seconds instead of two per second. That is a real loss of temporal resolution and it is not a
-choice this loop may make — `DECLARED_SAMPLING_FPS` is a declared constant and §8.2's
-Recall@K is measured on whatever unit it produces. **Needs: Hawa, one decision** — keep 2.0 fps
-and accept that this hardware cannot cut a clip from long-form media, or lower the sampling rate
-and re-measure §8.2 on the new unit. No credentials, no purchase.
+**Corrected 2026-08-12 (D-186): the 0.25 fps row above is not reachable.** `SceneWindow` enforces a
+**1.0 fps floor** (`REFERENCE_FPS`) and refuses anything lower, because "the resulting embedding is
+indistinguishable from an honest one". So the reachable settings on this card are 8 frames @ 2.0 fps
+= **4.0 s** (what every run has used, and which fits 0 sentences) and 8 frames @ **1.0 fps = 8.0 s**,
+the real ceiling. 8 s is still above the median complete sentence of **6.72 s**, so a clip may be
+reachable — but `--visual-fps 1.0` currently **crashes** inside the reader (#22), so it is
+untested end to end.
+
+**Needs: Hawa, one decision** — keep 2.0 fps and accept that this hardware cannot cut a clip
+from long-form media, or move to 1.0 fps once #22 is fixed and re-measure §8.2 on the 8 s unit.
+No credentials, no purchase.
 
 ## #18 · What queries the §2 text index?
 
@@ -1050,3 +1055,36 @@ into `canonical` to dodge the question was tried and correctly refused by `AsrPr
 **What is done in the meantime:** the adapter runs, its identity is in the transcript and the clip,
 and the digest covers config + weights so a retrain is a different model to every reader. The only
 thing missing is the row that says who may use it and on what terms.
+
+
+---
+
+## #22 · `--visual-fps 1.0` crashes inside the reader instead of refusing
+
+**Needs:** nothing from Hawa — a code fix waiting on one fact that must be read from the
+§7 checkpoints rather than guessed.
+
+Measured on `ZAR38MinTest.mp4` while testing whether an 8 s retrieval unit lets the pipeline reach a
+clip (D-186). `--visual-fps 1.0` is a supported flag and does not produce a refusal:
+
+```
+✗ t:1 must be larger than temporal_factor:2
+```
+
+The run dies **after** Stage 0 and a full re-embed, with a message from inside the model naming
+neither the window nor the cause. `SceneWindow.frame_count` is `ceil(duration_ms * fps / 1000)`, so
+a scene shorter than ~1.5 s yields **1–2** frames at 1.0 fps where it yielded 3 at 2.0 fps, and
+the reader's temporal factor requires more than 2.
+
+This is the repo's own *fail visible, not silent* standard unmet: a supported setting produces a
+library traceback where a plan-time refusal naming the window belongs.
+
+**Why it is not fixed yet.** The minimum frame count is a property of each §7 visual reader,
+and writing `3` into `visual_index.py` would be a guessed threshold that looks right —
+`_MIN_SAMPLED_FRAMES = 4` already sits a few lines away for a *different* quantity (what a processor
+takes after re-sampling), which is precisely how such a constant passes review and is wrong. The
+number has to come from the checkpoints' own configuration.
+
+**What this blocks:** 8 s is the only retrieval unit on this hardware that could contain a median
+6.72 s sentence, so until this is fixed, whether long-form media can reach a clip here is untested
+rather than answered. §3's declared 2.0 fps is unaffected and every run so far has used it.
