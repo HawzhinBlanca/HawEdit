@@ -77,6 +77,12 @@ _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$"
 # reconstructs it in two halves — see the comment at its `os.open` call.
 _O_NOFOLLOW: Final = getattr(os, "O_NOFOLLOW", 0)
 
+# The same reasoning one step further: the ACL half of the guarantee below is Windows-only, so
+# on a POSIX runner `os.name != "nt"` returns before it and the branch that protects the machine
+# holding the real key is never executed by CI. Reading the platform from a module constant lets
+# a test reach that branch anywhere, the way `_O_NOFOLLOW` is patched to 0 rather than skipped.
+_IS_WINDOWS: Final = os.name == "nt"
+
 
 def restrict_to_owner(path: Path) -> None:
     """Narrow `path` so no other local account can read it.
@@ -93,7 +99,7 @@ def restrict_to_owner(path: Path) -> None:
         CredentialError: the file could not be narrowed. A key sitting at inherited
             permissions is not something to warn about and continue past.
     """
-    if os.name != "nt":
+    if not _IS_WINDOWS:
         path.chmod(0o600)
         return
 
@@ -277,11 +283,24 @@ def write_credential(
             f"try again."
         )
 
+    # Narrow the file while it is still EMPTY, and before O_TRUNC. An existing file keeps its
+    # old mode through O_CREAT so this has to happen on every write regardless — but the
+    # *order* is the guarantee, and it used to be the other way round. On Windows the mode
+    # handed to `os.open` carries only the read-only bit, so a new `.env` lands at whatever its
+    # directory grants: measured on hawapc01 with `icacls` made to fail for real, the key was on
+    # disk at `Everyone:(F)` while the panel printed "Refusing to leave a credential at
+    # inherited permissions". The refusal named the state it had already created. Narrowing
+    # first means a failure here exposes an empty file, and staying above `ftruncate` means a
+    # refusal leaves the previous key intact instead of destroying it on the way out.
+    try:
+        restrict_to_owner(env_file)
+    except (CredentialError, OSError):
+        os.close(handle)
+        raise
+
     with os.fdopen(handle, "w", encoding="utf-8") as stream:
         os.ftruncate(stream.fileno(), 0)  # safe now: this inode is ours alone
         stream.write(body)
-    # An existing file keeps its old mode through O_CREAT, so narrow it explicitly too.
-    restrict_to_owner(env_file)
     return env_file
 
 

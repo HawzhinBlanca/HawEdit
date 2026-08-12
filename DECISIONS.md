@@ -9825,3 +9825,61 @@ up). The table was verified equal to all four configs on disk before committing;
 precisely the one CI cannot run — so the numbers are data the suite asserts against, carrying
 the date and machine they were read on. **1622 passed, 0 skipped, floor 1622.**
 `evidence/three-of-four-checkpoints-declare-what-the-comment-claimed-for-all-four.md`.
+
+## D-191
+
+**A refusal that named the state it had already created, found by sweeping every `raise` in the
+credential store.** D-149's method — each refusal deleted whole by its AST span, one at a time,
+whole suite each time, against a baseline verified green first — pointed at
+`src/hawedit/credentials.py` because that module writes secrets to disk. **6 of 10 held, 4 did
+not.** One of the four is `raise SystemExit(main())`, a `raise` by grammar and not a refusal;
+counting it and then saying so is the difference between reporting the repository and reporting
+the probe.
+
+**The finding is bigger than the sweep's.** `restrict_to_owner` was called *after* the body was
+written, so a failed narrowing left the plaintext key on disk at inherited permissions while
+`main()` printed `✗ … Refusing to leave a credential at inherited permissions` and returned 2 —
+the operator reads "nothing was stored". Measured on hawapc01 with a **real** `icacls` failure
+(`getpass.getuser()` reads `USERNAME`, an unresolvable principal gives exit 1332, "No mapping
+between account names and security IDs was done") in a directory granting `Everyone:(OI)(CI)F`:
+95 bytes containing the key, readable by Everyone — **identically whether the refusal was present
+or deleted.** The guard's only contribution was the exception.
+
+**Why it was Windows-only.** The comment above `os.open` is correct on POSIX — a file cannot be
+created wider than the mode passed to `O_CREAT`, so there is no window. On Windows that mode
+argument carries only the read-only bit and the file inherits its directory's ACL, so everything
+between the open and `restrict_to_owner` is a window there and nothing here. The key was written
+inside it.
+
+**Decision: the narrowing moves above the write, and stays above `os.ftruncate`.** Above the write
+so a failure exposes an empty file; above the truncate for the reason the code already declines
+`O_TRUNC` — a refusal after truncation destroys the previous credential on the way out and leaves
+the operator with neither key. Re-measured against the same real failure: new key absent, previous
+key intact, refusal raised; and the control, a real account, still writes and still comes out
+`HAWAPC01\Wareen` alone with `icacls` rewriting the DACL under an open handle.
+
+**`_IS_WINDOWS` is now a module constant** because `os.name != "nt"` made the `icacls` refusal a
+branch the Linux runner can never execute — the guard protecting the machine that will hold the
+real key was the one the grading machine could not reach. The test patches the constant rather
+than skipping on POSIX, which is what `_O_NOFOLLOW` already does and what D-095's floor
+(`passed`, never `collected`) exists to force. **Rejected: `pytest.mark.skipif(os.name != "nt")`**
+— it is the exact commit shape the gate refused at 5995d87 with *"a skip condition is creeping"*,
+and this repo still runs 0 skips.
+
+**Lines 247 and 252 are the same defect from the other side.** `_O_NOFOLLOW` is 0 here, so the
+pre-open check answers first and the kernel's `ELOOP` arm is unreachable on this host — while on
+the POSIX runner it is the live path the symlink test drives. Unheld *here*, held *there*; now
+held on both by supplying the kernel's answer rather than waiting for a privilege Windows will not
+grant, which is what the symlink test one file over already does.
+
+**Mutation audit 5/5**, file restored byte-identical, suite green after restore. Recorded honestly:
+the fifth mutation (`_IS_WINDOWS = False`) is caught by four tests *on this host* and is a no-op on
+the runner, where that is already the value.
+
+**A filter lied again, and it was mine.** The first audit run died with `IndexError` hunting the
+`N passed` line: `addopts` already carries `-q`, so a second `-q` makes it `-qq` and suppresses the
+count entirely. The earlier sweep had printed a pytest docs URL as its "baseline: GREEN (…)" for
+the same reason. Both harnesses now take green from the **exit code** and print a count only when
+one exists. That is the fifth filter-over-raw-output mistake this session and the first one where
+the harness was wrong in my favour rather than against me.
+`evidence/the-refusal-named-the-state-it-had-already-created.md`.

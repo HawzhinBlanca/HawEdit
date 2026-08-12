@@ -11,6 +11,7 @@ toward putting one somewhere convenient.
 
 from __future__ import annotations
 
+import errno
 import getpass
 import json
 import os
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from hawedit import credentials
 from hawedit.credentials import (
     _PINNED_JUDGE,
     GEMINI_API_KEY,
@@ -197,6 +199,115 @@ def test_the_opened_env_must_be_the_file_the_symlink_check_looked_at(
     monkeypatch.setattr("hawedit.credentials.os.lstat", real_lstat)
     write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
     assert GEMINI_API_KEY in env_file.read_text(encoding="utf-8")
+
+
+def test_the_key_never_reaches_the_disk_when_the_narrowing_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal used to name a state it had already created.
+
+    `restrict_to_owner` ran *after* the body was written, so when it failed the plaintext key
+    was on disk at inherited permissions and the panel printed "Refusing to leave a credential
+    at inherited permissions". Measured on hawapc01 against a real `icacls` failure — an
+    unresolvable principal, exit 1332 — in a directory granting `Everyone:(OI)(CI)F`: 95 bytes
+    containing the key, readable by Everyone, and `main()` returning 2 as though nothing had
+    been stored.
+
+    So the narrowing moved above the write, and this asserts the file rather than the exception.
+    """
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_API_KEY=sk-the-one-already-stored\n", encoding="utf-8")
+    real_restrict = credentials.restrict_to_owner
+
+    def cannot_narrow(_path: Path) -> None:
+        raise CredentialError("could not restrict … refusing to leave it at inherited permissions")
+
+    monkeypatch.setattr("hawedit.credentials.restrict_to_owner", cannot_narrow)
+
+    with pytest.raises(CredentialError, match="inherited permissions"):
+        write_credential(
+            GEMINI_API_KEY, "sk-MUST-NOT-REACH-DISK", env_file=env_file, check_ignored=False
+        )
+
+    body = env_file.read_text(encoding="utf-8")
+    assert "sk-MUST-NOT-REACH-DISK" not in body, (
+        "the key is on disk at permissions the code just refused to accept"
+    )
+    # The narrowing is also above `ftruncate`, so refusing does not destroy what was stored
+    # before it — a failed rotation must not leave the operator with neither key.
+    assert "sk-the-one-already-stored" in body, "the previous key was destroyed on the way out"
+
+    # The control. With the narrowing working, the same call writes — otherwise this test would
+    # pass just as well against a `write_credential` that never writes anything.
+    monkeypatch.setattr("hawedit.credentials.restrict_to_owner", real_restrict)
+    write_credential(
+        GEMINI_API_KEY, "sk-MUST-NOT-REACH-DISK", env_file=env_file, check_ignored=False
+    )
+    assert "sk-MUST-NOT-REACH-DISK" in env_file.read_text(encoding="utf-8")
+
+
+def test_a_narrowing_that_could_not_be_applied_is_refused_not_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`icacls` exiting nonzero is the only signal Windows gives that the ACL was not rewritten.
+
+    Deleting this check left the entire suite green — the sweep that found it deleted every
+    `raise` in the module one at a time — because the branch is Windows-only and the assertion
+    that would catch it lives on the success path. `_IS_WINDOWS` is patched rather than the test
+    being skipped on POSIX, for the reason spelled out above: a guard only one platform executes
+    is a guard the runner never checks.
+    """
+    monkeypatch.setattr("hawedit.credentials._IS_WINDOWS", True)
+    target = tmp_path / ".env"
+    target.write_text("x\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def icacls(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(argv)
+        # 1332 is what the real tool returns for a principal it cannot map to a SID, measured.
+        return subprocess.CompletedProcess(argv, 1332, "", "No mapping between account names")
+
+    monkeypatch.setattr("hawedit.credentials.subprocess.run", icacls)
+    with pytest.raises(CredentialError, match="inherited permissions"):
+        credentials.restrict_to_owner(target)
+    assert seen and seen[0][0] == "icacls" and "/inheritance:r" in seen[0], seen
+
+    # The control: the same code path with the tool succeeding must return, so this measures the
+    # exit status and not merely that the call was intercepted.
+    monkeypatch.setattr(
+        "hawedit.credentials.subprocess.run",
+        lambda argv, **_k: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    credentials.restrict_to_owner(target)
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [(errno.ELOOP, "symbolic link"), (errno.EACCES, "cannot write")],
+)
+def test_the_kernels_own_answer_about_a_symlink_is_a_refusal_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, message: str
+) -> None:
+    """Where `O_NOFOLLOW` exists, the kernel refuses the symlink and the code reads `ELOOP`.
+
+    That branch is unreachable on this Windows host — `_O_NOFOLLOW` is 0, so the pre-open check
+    answers first — and the sweep duly found both arms of the `OSError` handler deletable with
+    the suite green here. On the POSIX runner they are the live path. The kernel's answer is
+    supplied rather than waited for, which is what the symlink test one file over already does
+    with the privilege it cannot get on Windows.
+    """
+    env_file = tmp_path / ".env"
+    real_open = os.open
+
+    def refusing_open(path: object, flags: int, mode: int = 0o777) -> int:
+        if str(path) == str(env_file):
+            raise OSError(code, os.strerror(code))
+        return real_open(path, flags, mode)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("hawedit.credentials.os.open", refusing_open)
+    with pytest.raises(CredentialError, match=message):
+        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
+    assert not env_file.exists(), "a refused open still left a credential file behind"
 
 
 # --- refusal 2: never store a key that has not been verified ------------------------------
