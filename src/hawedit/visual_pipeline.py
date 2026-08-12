@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from hawedit import video_input
 from hawedit.discovery import Candidate
 from hawedit.path_b import UnreadableScene, VideoUnderstanding, discover_visual
 from hawedit.video_input import WindowFrames, extract_window_frames
@@ -123,10 +124,24 @@ class _EmbeddingCache:
       space, and mixing two would make every similarity meaningless while looking fine. D-073
       pinned the revisions for exactly this reason and D-136 made the producer part of the key;
     * the **source digest**, because a window is a time range and the same range of a different
-      recording is different footage.
+      recording is different footage;
+    * `TEMPORAL_PATCH_FRAMES`, which decides how many of the delivered frames survive to the
+      model. Added by adversarial pass 32, which measured this list being wrong: it claimed
+      "everything that changes the vector" while naming only the first three. On the real file,
+      `zar38:s2:w0` (60,000–77,500 ms at 2 fps) yields **34** frames at a patch of 2 and **32**
+      at 4 — different pixels, different embedding — with every other key above byte-identical,
+      and `discover` consults this cache *before* extracting anything, so nothing downstream
+      could notice. The window's own `frame_count` does not cover it: it is the **planned** 35,
+      a number neither extraction produced.
+
+    What is still outside the key is the ffmpeg invocation itself — a change to the filters or
+    the output quality would produce different pixels under an unchanged fingerprint. That is
+    code rather than data, it is not fingerprinted anywhere in this repo's on-disk caches, and
+    the honest statement is that this key covers the settings, not the implementation.
 
     Any mismatch, unreadable file or malformed vector re-embeds — the expensive answer, never the
-    wrong one.
+    wrong one. `load` compares the whole record, so records written before a key existed simply
+    fail to match and are re-embedded once.
     """
 
     def __init__(self, root: Path, model_id: str, revision: str, source_sha256: str) -> None:
@@ -144,6 +159,12 @@ class _EmbeddingCache:
             "model_id": self.model_id,
             "revision": self.revision,
             "source_sha256": self.source_sha256,
+            # Which of the window's frames actually reach the model. `extract_window_frames`
+            # trims the delivered frames to a multiple of this, and D-190 defines it as `max()`
+            # over the §7 checkpoints' declared `temporal_patch_size` — so it moves when the
+            # model set moves, with no edit to this file. Read from the module that does the
+            # trimming, not re-imported, so the fingerprint is the value actually applied.
+            "temporal_patch_frames": video_input.TEMPORAL_PATCH_FRAMES,
             "vector": list(vector),
         }
 

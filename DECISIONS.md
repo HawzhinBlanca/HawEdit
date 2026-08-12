@@ -9937,3 +9937,59 @@ later read rejects.
 correctly instead of reporting it as staleness, but it is a separate concern from this defect, and
 the pipeline already calls it one line before normalizing.
 `evidence/adding-a-field-re-dated-every-transcript-ever-written.md`.
+
+## D-193
+
+**Adversarial pass 32 — the embedding reuse key did not cover which frames reach the model.**
+`_EmbeddingCache`'s own docstring claimed reuse was verified *"on everything that changes the
+vector"* and listed three keys: the window, the model id and revision, and the source digest.
+`discover` consults the cache **before** extracting frames — that is where D-140's 95.1 ms/window
+saving comes from — so the key must describe the pixels by describing the settings that make them,
+and one was missing.
+
+**Measured on `ZAR38MinTest.mp4` (82,446,418 bytes), real ffmpeg, real jpgs.** Window
+`zar38:s2:w0`, 60,000–77,500 ms at 2 fps: `TEMPORAL_PATCH_FRAMES=2` yields **34** frames
+(`387be9116d335d85…`), `=4` yields **32** (`51a2cbdf826a26b2…`), and every element of the key is
+byte-identical across both. The cache would have served the 34-frame vector for the 32-frame
+extraction and retrieval, rerank and the reader would all have worked from an embedding of footage
+it was not describing. **The window's own `frame_count` does not cover it** — it records the
+*planned* **35**, arithmetic over `duration_ms` and `fps` computed before ffmpeg ran, a number
+neither extraction produced.
+
+**This is reachable without anyone editing a constant.** D-190 defines `TEMPORAL_PATCH_FRAMES` as
+`max()` over the §7 checkpoints' declared `temporal_patch_size`, so adding a checkpoint that
+declares 4 moves it — and every cached vector on disk silently becomes a vector of frames the model
+will no longer be shown.
+
+**Decision: the trim goes in the record, read through the module that applies it**
+(`video_input.TEMPORAL_PATCH_FRAMES`, not a re-import of `visual_index`'s). `load` compares the
+whole record, so entries written before the key existed fail to match and re-embed once — the
+behaviour the cache already documents. **Rejected: reading it from `visual_index`** — the two are
+always equal in a real process, but the value that must be fingerprinted is the one that does the
+trimming, and the mutation that hardcodes `2` (correct today, wrong in principle) is caught only
+because the test pins where it is read from.
+
+**`video_input.__all__` now declares the re-export.** Reading it from outside is an implicit
+re-export, which this repo forbids: *"Module `hawedit.video_input` does not explicitly export
+attribute `TEMPORAL_PATCH_FRAMES` [attr-defined]"*. **Rejected: silencing it with a type ignore** —
+the binding genuinely is part of that module's contract now.
+
+**The docstring is corrected rather than left aspirational.** It names what the key covers and
+states what it does not: the ffmpeg invocation itself, where a change to the filters or output
+quality would produce different pixels under an unchanged fingerprint. That is code rather than
+data and is not fingerprinted anywhere in this repo's on-disk caches. Saying so beats a claim that
+reads as total and is not — which is the defect this pass just found.
+
+**Mutation audit 3/3, and the first run of it was worthless while reporting the same 3/3.** Every
+mutation came back `[lint dirty]`: deleting the record entry leaves `video_input` imported and
+unused, and `tests/test_gate.py` runs the real `verify.sh`, lint included — so three gate tests sat
+in the CAUGHT lists having failed on the mutation's tidiness rather than on the guard. Re-run with
+each mutation dropping the unused import, the first two are clean and fail by exactly the two tests
+written for them. Pass 30's lesson from a new direction: **check which test failed, not that one
+did.** The third mutation remains lint-dirty and is reported as such.
+
+**The gate caught what a targeted run could not.** `pytest tests/test_visual_pipeline.py` passed on
+a program mypy rejects; what surfaced it was this audit's *baseline* going red on four `test_gate
+.py` tests, which invoke `scripts/verify.sh` as a subprocess. A per-file run is not a substitute for
+the gate even when the change looks local to that file.
+`evidence/adversarial-pass-32-the-reuse-key-did-not-cover-the-frames.md`.

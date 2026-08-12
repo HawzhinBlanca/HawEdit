@@ -364,6 +364,54 @@ def test_a_replaced_source_re_embeds(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert len(embedder.calls) == 24, "a replaced source served the old video's embeddings"
 
 
+def test_a_changed_frame_trim_re_embeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Adversarial pass 32 refuted the cache docstring's own claim on real footage.
+
+    It said reuse was verified "on everything that changes the vector" and keyed on three things:
+    the window, the checkpoint, the source. `extract_window_frames` trims the delivered frames to
+    a multiple of `TEMPORAL_PATCH_FRAMES`, and D-190 defines that as `max()` over the §7
+    checkpoints' declared `temporal_patch_size` — so it moves when the model set moves, without
+    anyone editing it.
+
+    Measured on `ZAR38MinTest.mp4`, window `zar38:s2:w0` (60,000–77,500 ms at 2 fps): **34**
+    frames at a patch of 2, **32** at 4, different pixel digests, and a byte-identical key. The
+    window's own `frame_count` does not cover it — that is the *planned* 35, which neither
+    extraction produced. `discover` reads this cache before extracting anything, so the stale
+    vector was served with nothing downstream in a position to notice.
+    """
+
+    def widen_the_temporal_patch(_work: Path) -> None:
+        monkeypatch.setattr("hawedit.video_input.TEMPORAL_PATCH_FRAMES", 4)
+
+    embedder, _, _ = _discover_twice(monkeypatch, tmp_path, between=widen_the_temporal_patch)
+
+    assert len(embedder.calls) == 24, (
+        "a different frame trim served the vectors built from the old frame set"
+    )
+
+
+def test_the_frame_trim_is_recorded_in_the_cache_entry(tmp_path: Path) -> None:
+    """Assert the artifact, not the behaviour above: the fingerprint is *in* the written file.
+
+    `load` compares the whole record, so a key that is silently absent would make every entry
+    from an older release match a newer one — which is the shape of the defect, one level down.
+    """
+    import json
+
+    from hawedit.visual_index import TEMPORAL_PATCH_FRAMES
+    from hawedit.visual_pipeline import _EmbeddingCache
+
+    cache = _EmbeddingCache(tmp_path / "embeddings", "Qwen3-VL-Embedding-2B", "rev-1", "abc")
+    window = windows(1)[0]
+    cache.store(VisualEmbedding(window, (0.1, 0.2, 0.3), "Qwen3-VL-Embedding-2B"))
+
+    written = json.loads(next((tmp_path / "embeddings").glob("*.json")).read_text(encoding="utf-8"))
+    assert written["temporal_patch_frames"] == TEMPORAL_PATCH_FRAMES, written
+    # The control: the entry it just wrote is one this cache accepts, so the assertion above is
+    # about the key's presence and not about a record no reader would take anyway.
+    assert cache.load(window) is not None
+
+
 def test_a_truncated_cache_entry_re_embeds_only_that_window(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

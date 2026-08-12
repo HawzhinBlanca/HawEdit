@@ -47,6 +47,11 @@ from hawedit.captions import find_ffmpeg
 from hawedit.visual_index import TEMPORAL_PATCH_FRAMES, SceneWindow
 
 __all__ = [
+    # Re-exported deliberately: `_EmbeddingCache` fingerprints the trim below, and the value it
+    # must record is the one *this* module applies. Under `no_implicit_reexport` that is an
+    # error to read from outside unless the re-export is declared, which is the point — the
+    # binding is part of this module's contract, not an import detail. Adversarial pass 32.
+    "TEMPORAL_PATCH_FRAMES",
     "TIMESTAMP_TOKEN",
     "FrameCountMismatch",
     "TimestampsOutsideWindow",
