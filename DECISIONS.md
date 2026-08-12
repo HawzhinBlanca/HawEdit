@@ -9993,3 +9993,52 @@ a program mypy rejects; what surfaced it was this audit's *baseline* going red o
 .py` tests, which invoke `scripts/verify.sh` as a subprocess. A per-file run is not a substitute for
 the gate even when the change looks local to that file.
 `evidence/adversarial-pass-32-the-reuse-key-did-not-cover-the-frames.md`.
+
+## D-194
+
+**A guard-revert sweep over the two modules that build the deliverable: 20 of 23 refusals held.**
+D-149's method — every `raise` located by AST, deleted one at a time, whole suite each time,
+against a baseline verified green first — pointed at `delivery.py` (the SRT/EDL/ASS/JSON a client
+opens) and `render.py` (the MP4). `delivery.py` came back **12/12 held**, each by a test named for
+the property. Worth recording as a null result: the sweep's value is as much in the modules it
+clears as in the ones it does not.
+
+**`render.py` had three refusals nothing would have missed**, and **no production code changed** —
+all three were already there and already correct. What was missing was anything that would notice
+their removal.
+
+**The encode failure is the one that matters.** `if result.returncode != 0 or not output.exists()`
+is the last check between ffmpeg and a client, and deleting it left the suite green. The
+fall-through is not harmless: the next line probes `output` for its duration, so a failed encode
+becomes whatever `probe_duration_ms` says about a file that may not be there. Reproduced with a
+**real** ffmpeg failure rather than a mock — the output path is a directory, which is what a stale
+run directory looks like, and `output.parent.mkdir` runs first and succeeds so this reaches the
+encoder as a real fault would: exit **4294967283**, *"Error opening output …: Permission denied"*.
+The test asserts ffmpeg's own words are in the message. **Rejected: matching only on "encode
+failed"** — a generic message satisfies that and tells an operator nothing, and ffmpeg is the only
+thing that knows why it stopped.
+
+**The other two.** A source too small to crop — `1x1000`, `1000x1` and `2x2` all reduce to a zero
+dimension once `yuv420p`'s even-number rounding is applied, and without the refusal that is an
+ffmpeg error at encode time or a frame of nothing. And a frame rate of `0/0`, which is what ffprobe
+reports for a stream whose rate it cannot determine: without the refusal the ratio is evaluated and
+the caller gets `ZeroDivisionError` from inside a rate probe, one function further away than the
+fault. ffprobe's answer is **supplied** rather than hunted for, the way the symlink tests supply the
+kernel's — what is scarce is a file that provokes it, not the refusal under test.
+
+**The control earned its place inside one edit.** `test_a_source_too_small_to_crop_is_refused`
+asserts the fixture's own `640x360` still produces a filter; the first version passed the target
+size positionally, where `crop_filter` takes `focus_x` and `focus_points`, and got
+`TypeError: 'int' object is not iterable`. Every refusal in the loop still fired, because all three
+degenerate sources raise *before* the focus-point branch — so the `pytest.raises` half alone would
+have passed while calling the function wrongly. The scratch probe that measured these cases had the
+same bug and printed clean output.
+
+**Mutation audit 3/3 lint-clean, and the first run of it was not.** Deleting the whole `if` around
+the encode refusal leaves `result` unused, ruff says so, and `tests/test_gate.py` runs the real
+`verify.sh` — so three gate tests failed alongside the genuine defender. The mutation now replaces
+only the `raise`, which is the sweep's own form, and each guard is caught by exactly the one test
+written for it. **The audit harness now prints `[LINT DIRTY — the gate tests fail for free]`**
+rather than a quiet marker: this is the third time this session a lint-dirty mutation has dressed
+itself up as a held guard, and a marker I skim past is not a check.
+`evidence/three-refusals-in-the-renderer-that-nothing-would-miss.md`.

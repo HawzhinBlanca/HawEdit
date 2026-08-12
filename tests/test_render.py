@@ -943,3 +943,78 @@ def test_an_unshifted_caption_file_is_refused_at_the_burn(tmp_path: Path) -> Non
 
     with pytest.raises(CaptionsOutsideClip):
         render_clip(clip, FIXTURE, ass, FONTS, tmp_path / "never.mp4", SOURCE_WIDTH, SOURCE_HEIGHT)
+
+
+# =========================================================================================
+# The three refusals a guard-revert sweep over this module found UNHELD: every `raise` here
+# deleted one at a time against a green baseline, whole suite each time. `delivery.py` came
+# back 12/12 held; these are render.py's, and the first one is the last check standing between
+# a failed encode and a client. D-194.
+# =========================================================================================
+
+
+@needs_ffmpeg
+def test_a_failed_encode_is_refused_with_ffmpegs_own_words(tmp_path: Path) -> None:
+    """Deleting this left the suite green, and the fall-through is not harmless: the next line
+    probes `output` for its duration, so a failed encode became whatever `probe_duration_ms`
+    says about a file that may not be there.
+
+    The failure is real rather than mocked — a directory where the encode expects to write a
+    file, which is what a stale run directory looks like. Measured: ffmpeg exits 4294967283 and
+    says `Error opening output …: Permission denied`.
+    """
+    output = tmp_path / "clip.mp4"
+    output.mkdir()
+
+    with pytest.raises(RenderError, match="encode failed") as refused:
+        render_clip(
+            clip=_clip(),
+            source=FIXTURE,
+            ass_path=_write_ass(tmp_path),
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+            fonts_dir=FONTS,
+        )
+
+    # The control: the refusal must carry ffmpeg's own diagnosis. A generic "encode failed"
+    # would satisfy the match above while telling an operator nothing, and the reason this
+    # message exists at all is that ffmpeg is the only thing that knows why it stopped.
+    assert "Error opening output" in str(refused.value), refused.value
+
+
+def test_a_source_too_small_to_crop_is_refused(tmp_path: Path) -> None:
+    """A crop of zero width is not a narrow clip, it is an ffmpeg error at encode time or a
+    frame of nothing. Measured: 1x1000, 1000x1 and 2x2 all reduce to a zero dimension once the
+    even-number rounding yuv420p needs is applied."""
+    for width, height in ((1, 1000), (1000, 1), (2, 2)):
+        with pytest.raises(ValueError, match="cannot be cropped"):
+            crop_filter(width, height)
+
+    # The control: the real fixture's own dimensions must still produce a filter, so this
+    # measures the degenerate case and not a `crop_filter` that refuses everything. It earned
+    # its place immediately — the first version passed the target size positionally, where the
+    # signature takes `focus_x` and `focus_points`, and every refusal above still fired.
+    assert crop_filter(SOURCE_WIDTH, SOURCE_HEIGHT).startswith("crop=")
+
+
+def test_a_frame_rate_of_zero_is_refused_rather_than_divided_by(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`0/0` is what ffprobe reports for a stream whose rate it cannot determine, and the guard
+    that turns it into a named refusal was held by nothing. Without it the ratio is evaluated
+    and the caller gets `ZeroDivisionError` from inside a rate probe — `frame_duration_ms`
+    divides by the result, so the traceback would point one function further away still.
+
+    ffprobe's answer is supplied rather than hunted for, the way the symlink tests supply the
+    kernel's: what is scarce is a file that provokes it, not the refusal under test.
+    """
+    monkeypatch.setattr("hawedit.render.probe_stream", lambda *_a, **_k: "0/0")
+    with pytest.raises(RenderError, match="could not read a frame rate"):
+        frame_rate(FIXTURE)
+
+    # The control: a rate ffprobe *can* report is returned as the exact ratio, not rounded —
+    # 30000/1001 is 29.97002997…, and `delivery.ms_to_timecode` refuses the non-integer rate on
+    # purpose, which it can only do if it is told the truth.
+    monkeypatch.setattr("hawedit.render.probe_stream", lambda *_a, **_k: "30000/1001")
+    assert frame_rate(FIXTURE) == 30000 / 1001
