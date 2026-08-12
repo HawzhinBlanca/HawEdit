@@ -723,3 +723,76 @@ def test_a_ceiling_below_one_temporal_patch_is_refused() -> None:
         plan_scene_windows(
             "m1", duration_ms=30_000, shot_cuts_ms=(), max_frames=TEMPORAL_PATCH_FRAMES - 1
         )
+
+
+# --- D-190: the constants read back off the checkpoints they claim to come from -------------
+
+_VISUAL_ROLES = frozenset(
+    {"visual_embedding", "visual_rerank", "visual_discovery", "temporal_evidence"}
+)
+
+
+def _declared_video_preprocessors() -> dict[str, dict[str, object]]:
+    """Every §7 visual checkpoint's own `video_preprocessor_config.json`, when present."""
+    import json
+    from pathlib import Path
+
+    from hawedit.models import ModelStore
+    from hawedit.registry import REGISTRY
+
+    store = ModelStore()
+    found: dict[str, dict[str, object]] = {}
+    for model_id, entry in REGISTRY.items():
+        if getattr(entry, "role", None) not in _VISUAL_ROLES:
+            continue
+        config = Path(store.path_for(entry)) / "video_preprocessor_config.json"
+        if config.is_file():
+            found[model_id] = json.loads(config.read_text(encoding="utf-8"))
+    return found
+
+
+needs_visual_weights = pytest.mark.skipif(
+    not _declared_video_preprocessors(), reason="no §7 visual checkpoints on this machine"
+)
+
+
+@needs_visual_weights
+def test_the_declared_rate_and_minimum_are_the_checkpoints_own() -> None:
+    """`DECLARED_SAMPLING_FPS` and `_MIN_SAMPLED_FRAMES` are stated in `visual_index.py` as the
+    checkpoints' numbers, not §3's. Read them back rather than trusting the comment."""
+    from hawedit.visual_index import _MIN_SAMPLED_FRAMES, DECLARED_SAMPLING_FPS
+
+    configs = _declared_video_preprocessors()
+    assert {c.get("fps") for c in configs.values()} == {DECLARED_SAMPLING_FPS}, configs
+    assert {c.get("min_frames") for c in configs.values()} == {_MIN_SAMPLED_FRAMES}, configs
+
+
+@needs_visual_weights
+def test_the_temporal_patch_constant_is_the_strictest_the_checkpoints_declare() -> None:
+    """The claim this pins was **false** until D-190: the comment said all four checkpoints ship
+    `temporal_patch_size: 2`. Measured, `MCG-NJU/VideoChat3-4B` ships **1** and the other three
+    ship 2.
+
+    The constant is still 2, and for a reason the old comment did not give:
+    `extract_window_frames` extracts a window once and D-140's cache hands the same files to the
+    embedder and the reader, so the count must satisfy the coarsest patch among them. This
+    asserts that relationship — `max`, not a shared declaration — so the constant tracks the
+    weights rather than a sentence about them.
+    """
+    declared = {
+        model_id: config.get("temporal_patch_size")
+        for model_id, config in _declared_video_preprocessors().items()
+    }
+    sizes = [size for size in declared.values() if isinstance(size, int)]
+    assert sizes, declared
+
+    assert max(sizes) == TEMPORAL_PATCH_FRAMES, (
+        f"one extraction feeds every visual model, so the trim must satisfy the coarsest "
+        f"patch. Declared: {declared}"
+    )
+    # The control on the assertion above: if every checkpoint agreed, `max` would be
+    # indistinguishable from "they all declare it", which is the claim that was wrong.
+    assert len(set(sizes)) > 1, (
+        "the checkpoints now agree on temporal_patch_size, so this test no longer distinguishes "
+        "'the strictest' from 'what they all declare' — re-read the configs and D-190"
+    )

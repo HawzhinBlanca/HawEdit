@@ -9764,3 +9764,43 @@ own command line. **Method for later passes: invoke the thing under attack the w
 would, one shell, directly, and grep the raw log.** A harness that constructs the environment is a
 second program that can be wrong, and when it is wrong it fails in whichever direction its author
 expected. `evidence/adversarial-pass-31-the-gate-itself.md`.
+
+## D-190
+
+**A constant justified by a comment that is false of one of the four checkpoints it cites.**
+`visual_index.py` stated as measured fact that *"all four §7 visual models ship
+`do_sample_frames: true` with `fps: 2`, `min_frames: 4` and `temporal_patch_size: 2`"*, and
+`video_input.py` repeats it. Read off the four `video_preprocessor_config.json` files on disk:
+
+```
+Qwen3-VL-Embedding-2B    fps 2  min_frames 4  temporal_patch_size 2
+Qwen3-VL-Reranker-2B     fps 2  min_frames 4  temporal_patch_size 2
+MCG-NJU/VideoChat3-4B    fps 2  min_frames 4  temporal_patch_size 1   <-
+MCG-NJU/TimeLens2-4B     fps 2  min_frames 4  temporal_patch_size 2
+```
+
+"All four" is right about the count, `fps: 2` and `min_frames: 4` hold for all four, and
+`temporal_patch_size: 2` holds for **three**.
+
+**The constant stays 2 and nothing behaves differently — the justification was wrong, not the
+number.** `TEMPORAL_PATCH_FRAMES` is the **strictest** of the declared sizes, not a shared
+declaration, and that distinction is why it is correct: `extract_window_frames` extracts a window
+**once** and D-140's `_FrameCache` hands the same files to the embedder *and* the reader
+(`VideoChat3Reader` takes `read_frames` precisely so the frames a window was embedded from are the
+frames it is read from). One extraction feeding patches of 1 and 2 has to satisfy the coarser. The
+trim costs VideoChat3 at most one frame it would have accepted and saves Qwen from padding an odd
+count by repeating the last frame — a frame never filmed, which is the defect D-060 exists to
+prevent.
+
+**Pinned so it cannot drift again.** Two tests read the constants back off the checkpoints, skipped
+when the weights are absent (CI installs none, and D-095 made the floor count *passed*, so a skip
+is safe): the rate and minimum must be the single value every config declares, and
+`TEMPORAL_PATCH_FRAMES == max(declared)` — **`max`, not equality**. The second carries its own
+control, asserting the declared sizes are **not** all equal: if a future checkpoint set made them
+uniform, `max` would become indistinguishable from "what they all declare", which is exactly the
+claim that was wrong, and the test says so by name rather than passing quietly.
+
+**3/3 mutations, lint-clean, file restored byte-identical.** Before these tests, all three
+constants could be set to a wrong value with the whole suite green — justified by a comment
+and checked by nothing.
+`evidence/three-of-four-checkpoints-declare-what-the-comment-claimed-for-all-four.md`.

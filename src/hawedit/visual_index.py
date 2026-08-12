@@ -63,9 +63,24 @@ MAX_FRAMES_PER_WINDOW: Final = 64
 REFERENCE_FPS: Final = 1.0
 
 # The other end of the rate, and it is not §3's — it is the checkpoints'. All four §7 visual
-# models ship `do_sample_frames: true` with `fps: 2`, `min_frames: 4` and
-# `temporal_patch_size: 2` in `video_preprocessor_config.json`, so their processors re-sample
-# whatever they are handed. Measured off `video_grid_thw` (D-060):
+# models ship `do_sample_frames: true` with `fps: 2` and `min_frames: 4` in
+# `video_preprocessor_config.json`, so their processors re-sample whatever they are handed.
+#
+# `temporal_patch_size` is **not** uniform, though this comment claimed it was until D-190.
+# Read off the four configs on disk:
+#
+#     Qwen3-VL-Embedding-2B    fps 2  min_frames 4  temporal_patch_size 2
+#     Qwen3-VL-Reranker-2B     fps 2  min_frames 4  temporal_patch_size 2
+#     MCG-NJU/VideoChat3-4B    fps 2  min_frames 4  temporal_patch_size 1
+#     MCG-NJU/TimeLens2-4B     fps 2  min_frames 4  temporal_patch_size 2
+#
+# `TEMPORAL_PATCH_FRAMES` is therefore the **strictest** of them, not a shared declaration:
+# `extract_window_frames` extracts a window once and D-140's cache hands those same files to the
+# embedder *and* the reader, so the count has to satisfy the model with the coarsest patch. Two
+# is right; "all four declare 2" was not, and `test_the_temporal_patch_constant_is_the_strictest`
+# now reads it back off the checkpoints so the claim cannot drift again.
+#
+# Measured off `video_grid_thw` (D-060):
 #
 #     extracted  rate    the model read
 #            64  4 fps   32
