@@ -9803,4 +9803,24 @@ claim that was wrong, and the test says so by name rather than passing quietly.
 **3/3 mutations, lint-clean, file restored byte-identical.** Before these tests, all three
 constants could be set to a wrong value with the whole suite green — justified by a comment
 and checked by nothing.
+
+**The first version of this fix was pinned to the weights and CI refused it — correctly.** The
+tests read the four config files directly behind a `skipif`; locally 1621 passed, on the runner
+`1619 passed, 2 skipped` and `REFUSED: only 1619 tests passed against a floor of 1621 (2 skipped of
+1621 collected)`, exit 6. **Main was red for one commit (5995d87).** The mechanism is D-095's: the
+floor compares **passed**, never `collected`, because "the two differ by exactly the skips, which
+is the case the ratchet exists to catch". A test that passes where the weights are and skips where
+they are not cannot count toward a global floor — it raises the bar on the machine that has
+them and fails on the machine that grades. This repo had **zero** skips before; the two I added
+were the first and broke the invariant immediately.
+
+**Redesigned better than what CI rejected:** the declarations moved out of prose into
+`DECLARED_VIDEO_PREPROCESSORS`, a table in `visual_index.py` that three tests assert against on
+**every** machine — the rate and minimum are the single declared value, `TEMPORAL_PATCH_FRAMES
+== max(recorded)` with the not-all-equal control, and every §7 model with a visual role appears
+in the table (a model missing from it drops out of the `max` silently, the same defect one level
+up). The table was verified equal to all four configs on disk before committing; that check is a
+**measurement in the evidence file rather than a test**, because the test that would perform it is
+precisely the one CI cannot run — so the numbers are data the suite asserts against, carrying
+the date and machine they were read on. **1622 passed, 0 skipped, floor 1622.**
 `evidence/three-of-four-checkpoints-declare-what-the-comment-claimed-for-all-four.md`.

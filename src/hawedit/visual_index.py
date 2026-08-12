@@ -94,6 +94,23 @@ DECLARED_SAMPLING_FPS: Final = 2.0
 _MIN_SAMPLED_FRAMES: Final = 4
 TEMPORAL_PATCH_FRAMES: Final = 2
 
+# What each §7 visual checkpoint declares, as **data rather than prose**. The paragraph above
+# used to carry these numbers in a sentence, and a sentence cannot be asserted — it said all four
+# ship `temporal_patch_size: 2` and one of them ships 1 (D-190). Recorded here so the constants
+# above can be checked against the thing they claim to come from, on every machine including a
+# runner with no weights installed.
+#
+# Read from `video_preprocessor_config.json` on hawapc01, 2026-08-12, against the revisions §7
+# pins. `tests/test_visual_index.py` asserts the constants against this table and this table
+# against §7's model list; `evidence/three-of-four-checkpoints-declare-what-the-comment-claimed-
+# for-all-four.md` carries the measurement it was taken from.
+DECLARED_VIDEO_PREPROCESSORS: Final[dict[str, dict[str, float]]] = {
+    "Qwen3-VL-Embedding-2B": {"fps": 2, "min_frames": 4, "temporal_patch_size": 2},
+    "Qwen3-VL-Reranker-2B": {"fps": 2, "min_frames": 4, "temporal_patch_size": 2},
+    "MCG-NJU/VideoChat3-4B": {"fps": 2, "min_frames": 4, "temporal_patch_size": 1},
+    "MCG-NJU/TimeLens2-4B": {"fps": 2, "min_frames": 4, "temporal_patch_size": 2},
+}
+
 # §3 Stage 2: "Retrieve top 50 → Qwen3-VL-Reranker-2B → keep top 5–10."
 RETRIEVE_K: Final = 50
 KEEP_MIN: Final = 5

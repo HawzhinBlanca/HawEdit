@@ -72,3 +72,49 @@ suite after restore: GREEN
 
 Before these tests existed, all three constants could be changed to a wrong value with the whole
 suite green — they were justified by a comment and checked by nothing.
+
+## The first fix was pinned to weights, and CI refused it
+
+The tests above were first written to read the four `video_preprocessor_config.json` files
+directly, behind `pytest.mark.skipif(not _declared_video_preprocessors())`. **Locally green,
+1621 passed. On the runner:**
+
+```
+1619 passed, 2 skipped, 86 warnings in 80.33s
+REFUSED: only 1619 tests passed against a floor of 1621 (2 skipped of 1621 collected).
+Either 2 test(s) disappeared, or a skip condition is creeping.
+```
+
+Exit 6. **Main was red for one commit** ([5995d87](../../commit/5995d87)).
+
+The gate was right and the mechanism is D-095's: the floor compares **passed**, never `collected`,
+*"the two differ by exactly the skips, which is the case the ratchet exists to catch"*. A test that
+passes where the weights are and skips where they are not can never count toward a global floor —
+it ratchets the bar on the machine that has them and fails on the machine that grades. This repo
+had **zero** skips before; the two I added were the first, and they broke the invariant
+immediately.
+
+**The redesign, which is better than what CI rejected.** The declarations move out of prose and
+into `DECLARED_VIDEO_PREPROCESSORS` — a table in `visual_index.py`, checked by three tests that run
+**everywhere**:
+
+* the rate and minimum are the single value every recorded checkpoint declares;
+* `TEMPORAL_PATCH_FRAMES == max(recorded)`, with the control that the sizes are **not** all equal;
+* every §7 model carrying a visual role appears in the table — a model missing from it would drop
+  out of the `max` silently, which is the same defect one level up.
+
+The table itself was verified against all four checkpoints on disk before committing:
+
+```
+Qwen3-VL-Embedding-2B   recorded == disk  OK
+Qwen3-VL-Reranker-2B    recorded == disk  OK
+MCG-NJU/VideoChat3-4B   recorded == disk  OK
+MCG-NJU/TimeLens2-4B    recorded == disk  OK
+recorded table matches every checkpoint on disk: True
+```
+
+That verification is a measurement in this file rather than a test, because the test that would
+perform it is exactly the one CI cannot run. Naming it here is the honest form: the numbers are
+data the suite asserts against, and the date and machine they were read on are recorded with them.
+
+**Gate after the redesign: 1622 passed, 0 skipped, floor 1622** — a number the runner can reach.
