@@ -9658,3 +9658,45 @@ rather than guessed — `_MIN_SAMPLED_FRAMES = 4` already sits nearby for a *dif
 which is exactly how a guessed constant looks right and is wrong. `BLOCKED.md` #22.
 
 **No code changed.** The error was in the record. `evidence/d-185-recorded-a-route-the-code-refuses.md`.
+
+## D-187
+
+**`BLOCKED.md` #22's root cause found, and the obvious fix reverted because it is worse than the
+defect.** #22 said the minimum frame count must be read from the §7 checkpoints rather than
+guessed. Read: `video_preprocessor_config.json` for `MCG-NJU/VideoChat3-4B` declares `fps: 2`,
+`min_frames: 4`, `temporal_patch_size: 1`, `temporal_merge_size: 4` — confirming both
+`DECLARED_SAMPLING_FPS = 2.0` and `_MIN_SAMPLED_FRAMES = 4` against the weights.
+
+**The root, reproduced with no GPU** on the real file's own Stage 0 output: `plan_scene_windows`
+at 2.0 fps emits **641** windows of which **1** is below `min_frames` (`s22:w0`, 1000 ms → **2**
+frames); at 1.0 fps it emits **364** of which **31** are, the smallest being that same scene at
+**1** frame — which is the crash, `t:1`.
+
+**And the sweep that appears to rule this out exempts it.**
+`test_every_plannable_window_is_delivered_to_the_model_whole` claims *"every window a planner can
+produce is delivered whole"* and its body reads `if emitted < 2: continue`. Its own arithmetic on
+the real counterexample: 1 frame @ 1.0 fps → the model reads **2**, not whole. The claim holds
+only of the windows the sweep did not skip, and real media produces the skipped one.
+
+**The fix that was tried and reverted.** `SceneWindow` already refuses the *upper* bound, so the
+symmetric lower bound looked obviously right, and measured it did exactly what #22 asked: 2.0 fps
+unaffected, 1.0 fps **refused at plan time** naming the window instead of dying inside the model
+after a full re-embed. **It also broke two existing tests, and they were right.**
+`plan_scene_windows` defaults to `REFERENCE_FPS = 1.0`, so at the default rate *any scene shorter
+than 2 s cannot be planned at all* — an ordinary 1-second tail scene fails planning outright.
+§3 requires windows to **tile** the media and `assert_window_coverage` exists because "a hole
+here makes a moment invisible to Path B"; refusing a short scene is exactly such a hole. **Trading
+a padded frame for missing footage is the wrong trade.** Reverted; `visual_index.py` is unchanged
+and the suite is green.
+
+**Rejected, with their opposite failure modes, rather than chosen:** *let it through* (today —
+the processor pads by repeating the last frame, so the model reads a frame that was never filmed
+and the embedding is "indistinguishable from an honest one"); *merge the short scene into its
+neighbour* (keeps coverage, but the window then spans the shot cut §3 Stage 2 segments on);
+*extend the window past the scene* (keeps coverage and count, embeds footage the window does not
+claim). None is free and none is measurable without deciding what a window is *for*.
+
+**Also left deliberately unfixed:** the sweep's `if emitted < 2: continue`. Removing the exemption
+turns it red against real planner output, which is honest — but red with no fix available, and
+a permanently red gate is not a signal. Named in #22 so the exemption cannot be read as coverage.
+`evidence/the-sweep-exempts-the-window-that-crashes.md`.

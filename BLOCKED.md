@@ -1088,3 +1088,37 @@ number has to come from the checkpoints' own configuration.
 **What this blocks:** 8 s is the only retrieval unit on this hardware that could contain a median
 6.72 s sentence, so until this is fixed, whether long-form media can reach a clip here is untested
 rather than answered. §3's declared 2.0 fps is unaffected and every run so far has used it.
+
+
+**Root cause found 2026-08-12 (D-187), and the obvious fix reverted.** The number is read, not
+guessed: `video_preprocessor_config.json` declares `fps: 2`, `min_frames: 4`,
+`temporal_patch_size: 1`, `temporal_merge_size: 4`. Reproduced with no GPU on the real file's Stage
+0 output — at 2.0 fps the planner emits 641 windows of which **1** is below `min_frames`
+(`s22:w0`, 1000 ms → 2 frames); at 1.0 fps, **31** of 364, the smallest at **1** frame, which
+is the crash.
+
+**The sweep that appears to rule this out exempts it:**
+`test_every_plannable_window_is_delivered_to_the_model_whole` contains `if emitted < 2: continue`,
+so its claim covers only the windows it did not skip.
+
+**A symmetric lower-bound refusal in `SceneWindow` was written, measured and reverted.** It did what
+this entry asked — 2.0 fps unaffected, 1.0 fps refused at plan time by name — but
+`plan_scene_windows` defaults to `REFERENCE_FPS = 1.0`, so it made *any scene shorter than 2 s*
+unplannable, and §3 requires windows to tile the media. Refusing a short scene is the coverage
+hole `assert_window_coverage` exists to prevent. A padded frame is a smaller harm than missing
+footage.
+
+**Needs: a decision about what a window is for**, because the three handlings have opposite failure
+modes and none is measurable without it:
+
+1. **Let it through** (today). The processor pads by repeating the last frame; the model reads a
+   frame that was never filmed and the embedding is "indistinguishable from an honest one".
+2. **Merge into the neighbouring scene.** Keeps coverage; the window then spans a shot cut, the one
+   boundary §3 Stage 2 segments on.
+3. **Extend the window past the scene.** Keeps coverage and frame count; embeds footage the window
+   does not claim.
+
+**What this still blocks:** `--visual-fps 1.0`, and therefore the 8 s retrieval unit that is the
+only one on this hardware able to contain a median 6.72 s sentence (D-186). §3's declared
+2.0 fps is unaffected — it produces exactly one such window on this media, and has in every
+run so far.
