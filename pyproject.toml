@@ -73,6 +73,16 @@ cloud = [
 # sqlalchemy and click — all already-audited-elsewhere licences, no NC.
 agentic = [
     "dbos==2.29.0",
+    # Phase 2 (D-A5). MIT. Bare package, no provider extra: build_agent() takes an
+    # already-constructed Model, so this module never chooses or wires a provider itself —
+    # see agent.py's module docstring for why the model choice is deferred, not this
+    # dependency's business. Adding a provider extra (e.g. `[google]`) pulls in google-genai +
+    # google-auth, which broke `mypy --strict` locally the moment it was actually installed
+    # (google-auth's own `Credentials.refresh` has no type annotation, and the existing
+    # `google.*` mypy override only suppresses *missing*-import errors, not real ones against
+    # an installed package) — confirmed by installing it, hitting the error, and removing it
+    # again rather than guessing whether it was needed.
+    "pydantic-ai-slim==2.28.0",
 ]
 
 [build-system]

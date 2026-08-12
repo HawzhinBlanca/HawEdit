@@ -44,11 +44,17 @@ producer from `argv` exactly as `_build_and_run` always has.
 
 **The Run Event Ledger, minimally.** `events.py`'s `on_event` sink is wired here to an
 append-only JSONL file beside the run's other artifacts (`work_dir / "events.jsonl"`), flushed
-per line. `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` describes a Postgres Artifact Ledger as
-the agent's eventual world model — that is real scope, and it is not this file's: nothing reads
-this ledger back except `read_events`, there is no derivation graph, and Postgres buys nothing
-Phase 1 needs when the only reader is a human replaying one run's own history. ponytail: a flat
-JSONL file is the whole ledger for now; move to the Postgres schema in that document's "Artifact
+per line, and the step's own return value is mirrored to `work_dir / "report.json"` — the same
+document, on disk, atomically written. Both exist for the same reason: DBOS checkpoints the
+step's result in its own opaque system database, which answers "what did the workflow return"
+to a caller holding the workflow ID, not "what is on disk for this run" to `agent.py`'s tools
+(Phase 2), which are a separate process with only the work directory to read.
+`AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` describes a Postgres Artifact Ledger as the
+agent's eventual world model — that is real scope, and it is not this file's: nothing reads
+these back except `read_events`/`agent.py`'s tools, there is no derivation graph, and Postgres
+buys nothing Phase 1 or 2 needs when the only reader is a human or one read-only agent replaying
+a single run's own history. ponytail: two flat files are the whole ledger for now; move to the
+Postgres schema in that document's "Artifact
 Ledger" section when a second reader (a UI, a second process) actually needs to query across
 runs rather than replay one.
 
@@ -80,7 +86,7 @@ from typing import Any
 from dbos import DBOS, SetWorkflowID
 
 from hawedit.events import RunEvent
-from hawedit.pipeline import _build_and_run, build_parser
+from hawedit.pipeline import _build_and_run, _write_atomic, build_parser
 
 __all__ = [
     "configure_dbos",
@@ -175,7 +181,15 @@ def _run_pipeline_step(argv: list[str]) -> dict[str, Any]:
         run = _build_and_run(args, on_event=sink)
     finally:
         sink.close()
-    return run.to_dict()
+    payload = run.to_dict()
+    # `report.json`, beside `events.jsonl`: DBOS checkpoints this dict in its own opaque system
+    # database, which answers "what did the workflow return" but not "what is on disk for this
+    # run" — and the agent framework (`agent.py`, Phase 2) is a separate process that has only
+    # the work directory to read. Same atomic staging-file-and-rename `_write_atomic` already
+    # uses for §2's sidecars, so a process killed mid-write leaves no half-written report for a
+    # reader to trust.
+    _write_atomic(args.work_dir / "report.json", json.dumps(payload, ensure_ascii=False, indent=2))
+    return payload
 
 
 @DBOS.workflow()

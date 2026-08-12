@@ -10049,3 +10049,78 @@ the same bar D-A3's crash/restart case was held to.
 
 VERIFY OK — hawedit gate green: 1654 collected, 1654 passed, 0 skipped (floor ratcheted
 1651 -> 1654).
+
+## D-A5
+
+**Phase 2's first slice: a read-only creative-director agent, scoped narrower than the
+architecture record's full tool list.** `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` Phase 2:
+"Add Pydantic AI with inspection, explanation and candidate-comparison tools... Load the
+versioned App Manifest... Add the benchmarked model router. Make all proposals non-mutating."
+Four bullets; this closes the first, third-of-a-third (one tool per named category), and fourth
+(structurally, not by promise). It deliberately does not close the model-router bullet — see
+below — and does not load editorial skills, which the same document's security section gates
+behind "only versioned, reviewed, internally signed skills." Neither omission is silent:
+PROGRESS.md's M9.4 row names both.
+
+**`pydantic-ai-slim`'s real API was checked before being designed against, the same discipline
+D-A3 used for `dbos`.** `Agent`, `RunContext`, `@agent.tool`, and `pydantic_ai.models.test.
+TestModel` were introspected on the installed `2.28.0` package rather than assumed from the
+public docs, and the whole tool-wiring pattern (deps injection, typed tool return values,
+`TestModel(call_tools='all')` auto-calling every registered tool) was proven end to end with a
+throwaway script — a synthetic `report.json`, a two-tool agent, a real `run_sync` call — before
+any of it went into `agent.py`.
+
+**`work_dir` is bound at construction, never a tool argument, and this is a security decision
+made deliberately rather than an implementation convenience.** The architecture record: "Media
+storage uses scoped object references rather than filesystem paths where possible" and "the
+model sees only an allowlisted tool registry." A tool that accepted a path string chosen by the
+model would let a prompt-injected transcript (the same threat class §3 Stage 3's judge already
+treats as untrusted input) ask a "read-only" agent to read anything the OS user running it can
+read — not scoped to the project, not scoped to the work directory, scoped to nothing at all.
+`Deps.work_dir` is a frozen dataclass field fixed by whoever constructs the `Agent` instance —
+the application, not the model — and every one of the three tools closes over `ctx.deps.
+work_dir`. `test_two_agents_scoped_to_different_work_dirs_stay_scoped` builds two agents against
+two directories and confirms neither ever produces the other's `media_id` in its output.
+
+**Read-only proven by an AST scan of the module's own source, matching this repo's established
+"prove the invariant, don't state it" convention** (`_argv_refusals` walks `_run_from_args`/
+`_build_and_run` the same way). `test_agent_module_never_writes_a_file` walks every `ast.Call`
+in `agent.py` and fails on any write-shaped name (`write_text`, `unlink`, `rename`, `mkdir`, an
+`open()` call whose mode contains `w`/`a`/`x`). A docstring saying "read-only" is a claim about
+the code; this is a claim about a specific AST property that fails loudly the day it stops
+being true.
+
+**`report.json` exists because DBOS's own checkpoint is not readable by a second process.**
+`durable_workflow.py`'s `_run_pipeline_step` already returned `run.to_dict()` as its checkpointed
+result — durable, but opaque: reading it back requires the DBOS workflow ID and the DBOS API,
+not a filesystem path. `agent.py`'s tools are a separate process with only `work_dir` to go on,
+so the step now also mirrors the same dict to `work_dir / "report.json"` via the existing
+`_write_atomic` (staging file, one rename — the same crash-safety property every other §2
+sidecar in this codebase already has, reused rather than re-derived). One line changed in
+`durable_workflow.py`; every existing `test_durable.py` case re-run and still green.
+
+**`compare_candidates` does not identify the selected candidate, and this is a finding, not an
+oversight.** The natural next step after listing candidates and rejections is "and this one
+won" — but `Clip` (`clip.py`) carries `clip_id`, `in_ms`, `out_ms`, `discovery_path`, and no
+`candidate_id`. Matching the final clip back to its source candidate would mean comparing spans,
+and a boundary that VAD or TimeLens moved during Stage 5 fusion can leave the final `in_ms`/
+`out_ms` different from every candidate's own recorded span — meaning a span-equality match can
+report "no candidate matches" for a clip that unambiguously came from one of them, and a
+nearest-span heuristic can guess wrong. `CandidateComparison` reports `final_clip_span_ms`
+alongside the full candidate list instead, so a reader — human or the calling model — can make
+the comparison themselves with the real data rather than trust an inference this module chose
+not to make. `test_compare_candidates_does_not_guess_which_candidate_won` pins the field set so
+a future edit cannot quietly add a guessed `selected_candidate_id` without that test naming
+what changed.
+
+**The "benchmarked model router" bullet is explicitly not this row's.** `build_agent(model,
+deps)` accepts any `pydantic_ai.models.Model` and makes no choice of its own — not a stalled
+TODO, a decision. Choosing a model for the creative director needs the same kind of evidence
+`judge.py`'s `decide_judge` already requires for Stage 4 (a real regression set, blind
+comparisons, a promotion rule), and this branch does not have that evidence for a
+creative-director role yet. Hardcoding a default model here — even a defensible-sounding one —
+would be exactly the unverified claim Phase 1's D-A3/D-A4 history (guessing DBOS's API, then
+overclaiming "Phase 1 complete" one property early) already cost time to catch and correct.
+Left as a parameter; the router is real future work, not this decision's to fake.
+
+VERIFY OK — hawedit gate green (see PROGRESS.md M9.4 for the exact count).
