@@ -3322,3 +3322,80 @@ def test_a_skipped_stage_3_still_prints_exactly_its_skip_line(
 
     assert "stage 3" not in printed, "a stage that never ran must not report a result"
     assert "SKIPPED discovery" in printed
+
+
+# --- D-185: --auto-select chose nothing and would not say why -------------------------------
+
+
+def _auto_select_run(tmp_path: Path, window_ms: int, media_id: str) -> PipelineRun:
+    """A run whose only candidate is `window_ms` long, auto-selecting against real sentences."""
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+
+    return run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id=media_id,
+        transcript=a_transcript(media_id),
+        discover=lambda _n: [
+            Candidate("v1", media_id, 0, window_ms, DiscoveryPath.VERBAL, rank=1, score=0.9)
+        ],
+        auto_select=True,
+    )
+
+
+@needs_ffmpeg
+def test_auto_select_choosing_nothing_says_why_in_the_numbers(tmp_path: Path) -> None:
+    """§5 selects complete sentences *wholly inside* a candidate, so a retrieval unit shorter
+    than a sentence contains none however good the retrieval was — and the operator used to
+    read only "complete selected sentences was not available", the symptom.
+
+    Measured on the real 38-minute file: 7 candidates of 3.48–3.96 s against 184 complete
+    sentences with a median of 6.72 s, 0 wholly inside any of them.
+    """
+    run = _auto_select_run(tmp_path, window_ms=120, media_id="tootight")
+    assert run.clip is None, "this fixture must fail to select, or it measures nothing"
+
+    boundary = dict(run.skipped())["boundary"]
+
+    assert "no complete sentence fits a candidate window" in boundary.blocked_by
+    assert "--auto-select examined 1 candidate(s)" in boundary.reason
+    # The span values, not just the count: a reason that says "1 candidate" without saying how
+    # long it was states the symptom again.
+    assert "0.12–0.12s" in boundary.reason, boundary.reason
+    lengths = sorted(s.end_ms - s.start_ms for s in run.sentences if s.complete)
+    median = lengths[len(lengths) // 2] / 1000
+    assert f"median {median:.2f}s" in boundary.reason, (
+        "the sentence lengths are the other half of the cause, and the median is the number "
+        "that says whether a wider window would help"
+    )
+    assert "BLOCKED.md #17" in boundary.reason
+
+
+@needs_ffmpeg
+def test_a_candidate_wide_enough_still_selects_and_reports_no_such_reason(
+    tmp_path: Path,
+) -> None:
+    """The control. A window that does contain a complete sentence must select normally and
+    must NOT carry the explanation — a reason attached unconditionally explains nothing."""
+    run = _auto_select_run(tmp_path, window_ms=4_162, media_id="widecand")
+
+    boundary = dict(run.skipped()).get("boundary")
+    reason = boundary.reason if boundary is not None else ""
+    assert "no complete sentence fits a candidate window" not in (
+        boundary.blocked_by if boundary is not None else ()
+    ), f"a window wide enough to hold a sentence still reported nothing fits: {reason}"
+
+
+@needs_ffmpeg
+def test_a_run_without_auto_select_keeps_the_plain_dependency_reason(tmp_path: Path) -> None:
+    """The second control: this explanation belongs to --auto-select. A run that simply
+    selected no sentences must still say what it said before."""
+    run = run_pipeline(
+        FIXTURE, tmp_path / "work", media_id="plain", transcript=a_transcript("plain")
+    )
+
+    boundary = dict(run.skipped())["boundary"]
+
+    assert "complete selected sentences was not available" in boundary.reason
+    assert "--auto-select" not in boundary.reason

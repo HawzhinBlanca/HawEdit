@@ -486,6 +486,42 @@ def _not_reached(stage: str, dependency: str) -> StageSkipped:
     )
 
 
+def _nothing_fits_a_candidate(
+    candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence]
+) -> StageSkipped:
+    """Why `--auto-select` chose nothing, in the numbers the run already has.
+
+    Without this the operator reads `_not_reached`'s "complete selected sentences was not
+    available" — the symptom — and goes looking for a broken selector. The cause is arithmetic
+    between two measurements this run holds, and neither is a defect: §5 selects complete
+    sentences *wholly inside* a candidate, so a retrieval unit shorter than a sentence can
+    contain none however good the retrieval was.
+
+    Measured on the real 38-minute file with the champion transcript: 7 candidates spanning
+    3.48–3.96 s against 184 complete sentences of 0.41–102.52 s, median 6.72 s — **0** fit. A
+    window holds `max_frames / fps` seconds, so this machine's 8-frame ceiling (`BLOCKED.md`
+    #17, D-108) at the declared 2.0 fps gives a 4 s unit where §3 describes 32 s. The ceiling
+    shortens the *window*, not the run, and that is what makes it reach Stage 5 with nothing.
+    D-185.
+    """
+    spans = sorted(candidate.out_ms - candidate.in_ms for candidate in candidates)
+    lengths = sorted(s.end_ms - s.start_ms for s in sentences if s.complete)
+    median = lengths[len(lengths) // 2] if lengths else 0
+    return StageSkipped(
+        stage="boundary",
+        reason=(
+            f"--auto-select examined {len(candidates)} candidate(s) spanning "
+            f"{spans[0] / 1000:.2f}–{spans[-1] / 1000:.2f}s and found no complete sentence "
+            f"wholly inside any of them. The transcript has {len(lengths)} complete "
+            f"sentence(s) of {(lengths[0] / 1000) if lengths else 0:.2f}–"
+            f"{(lengths[-1] / 1000) if lengths else 0:.2f}s, median {median / 1000:.2f}s. A "
+            f"candidate window holds max_frames/fps seconds, so a lowered frame ceiling "
+            f"shortens the retrieval unit — see BLOCKED.md #17."
+        ),
+        blocked_by=("no complete sentence fits a candidate window",),
+    )
+
+
 def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
     """Refuse a selection whose span covers a sentence it does not include.
 
@@ -1193,6 +1229,19 @@ def run_pipeline(
 
     if auto_select and not select_sentences and merged:
         automatic = _automatic_sentence_selection(merged, sentences)
+        if not automatic:
+            # `--auto-select` ran, examined every candidate and chose nothing. Reported as a
+            # skip naming the measurement, because the downstream skip says only "complete
+            # selected sentences was not available" — the symptom, not the cause — and an
+            # operator reading that goes looking for a broken selector. The cause is arithmetic
+            # between two numbers this run already has, and neither is a defect.
+            #
+            # Measured on the real 38-minute file with the champion transcript: 7 candidates
+            # spanning 3.48–3.96 s, 184 complete sentences running 0.41–102.52 s with a median
+            # of 6.72 s, and **0** wholly inside any candidate. The window ceiling is
+            # `max_frames / fps`, so this machine's 8-frame limit (`BLOCKED.md` #17) at the
+            # declared 2.0 fps yields a 4 s retrieval unit against §3's 32 s. D-185.
+            run = replace(run, boundary=_nothing_fits_a_candidate(merged, sentences))
         select_sentences, selected, selected_anchors = _prepare_selection(
             transcript, sentences, automatic
         )

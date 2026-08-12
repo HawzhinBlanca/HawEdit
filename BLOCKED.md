@@ -863,6 +863,30 @@ visual path routinely proposes footage no complete Kurdish sentence sits inside,
 sentence-hard. Choosing the retrieval unit is still yours: §3 fixes 64 frames, this card reads 8
 (D-106), and the two cannot both hold.
 
+
+**Refreshed 2026-08-12 (D-185) with what the ceiling actually costs.** The 8-frame limit is a limit
+on the **product** `max_frames / fps`, which is the window *duration* — `_max_window_ms` is
+`floor(max_frames * 1000 / fps)`. Measured:
+
+| setting | window |
+|---|---|
+| §3's blueprint: 64 frames @ 2.0 fps | **32.0 s** |
+| this machine: 8 frames @ 2.0 fps | **4.0 s** ← what every run here has used |
+| this machine: 8 frames @ 0.25 fps | **32.0 s** |
+
+**What that costs, measured end to end on the 38-minute file:** at a 4 s retrieval unit, **0** of
+the transcript's 184 complete sentences (median **6.72 s**) lie wholly inside any of the 7 Path B
+candidates, so §5 selects nothing, `--auto-select` chooses nothing, and the run cannot reach a
+clip. The pipeline is not failing — the retrieval unit is an order of magnitude shorter than
+the thing §5 must fit inside it.
+
+So §3's ~32 s unit **is** reachable on this 24 GB card, at 0.25 fps: one frame per four
+seconds instead of two per second. That is a real loss of temporal resolution and it is not a
+choice this loop may make — `DECLARED_SAMPLING_FPS` is a declared constant and §8.2's
+Recall@K is measured on whatever unit it produces. **Needs: Hawa, one decision** — keep 2.0 fps
+and accept that this hardware cannot cut a clip from long-form media, or lower the sampling rate
+and re-measure §8.2 on the new unit. No credentials, no purchase.
+
 ## #18 · What queries the §2 text index?
 
 **Raised 2026-08-10 (D-134, adversarial pass #19). Needs Hawa.**

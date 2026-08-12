@@ -9582,3 +9582,44 @@ much" — and for an adversarial pass the second question is the one that matter
 mechanism defended by a single incidental test is one deletion away from being defended by nothing.
 Re-run properly: 13 defenders, several named for exactly this.
 `evidence/adversarial-pass-30-invariant-1-enforced-three-ways.md`.
+
+## D-185
+
+**`--auto-select` chose nothing on the real file and would not say why.** The composed pipeline
+runs to completion on the 38-minute media and produces no clip, which is not a defect — but the
+only thing the report said was `boundary did not run because complete selected sentences was not
+available`, the symptom, which reads as a broken selector.
+
+**Measured on the champion run:** 7 candidates spanning **3.48–3.96 s** against **184** complete
+sentences of **0.41–102.52 s**, median **6.72 s**, and **0** wholly inside any candidate
+(57–63 per candidate are short enough *in principle*). §5 selects complete sentences
+*wholly inside* a candidate, so a retrieval unit shorter than a sentence contains none however good
+the retrieval was.
+
+**Why the windows are 3.5 s, from the code's own arithmetic.** `_max_window_ms` is
+`floor(max_frames * 1000 / fps)`, so the ceiling is `max_frames / fps`: §3's 64 frames at
+2.0 fps gives **32.0 s**, this machine's 8-frame limit at the same rate gives **4.0 s**, and 8
+frames at **0.25 fps** gives **32.0 s** again. `BLOCKED.md` #17 / D-108 record the 8-frame limit and
+that lowering it "changes what a window *is*"; what they do not say, and this adds, is that the
+limit constrains the **product** and therefore the window *duration* — so §3's ~32 s
+retrieval unit is reachable on this 24 GB card at a lower sampling rate, trading temporal
+resolution for window length. **#17 refreshed with that measurement.**
+
+**No default changed.** `DECLARED_SAMPLING_FPS = 2.0` is a declared constant and §8.2's
+Recall@K is measured on whatever unit it yields; picking a new rate is a threshold decision with a
+real cost, and this loop does not guess thresholds. The option and its measured trade are recorded
+for whoever makes that call.
+
+**Fixed** by making the boundary skip state the cause in the numbers the run already holds —
+candidate count and span, complete-sentence count, range and median, and the pointer to #17. Same
+family as D-111 and D-183: a step that decided something reported nothing about the decision.
+
+**5/5 mutations lint-clean, file restored byte-identical — after 2/5, then 3/5.** Two of the
+first mutations were *broken programs* rather than mutations (deleting an assignment while the
+f-string still referenced the name), and rewriting them to substitute values forced the test to
+assert the span values and the median **value** instead of the word "median". **One equivalent
+mutant is reported rather than counted:** attaching the explanation unconditionally survives
+because `run.boundary` is overwritten downstream on every path where a selection succeeds —
+verified by applying it and re-running the wide-window case. The guard stays `if not automatic:`
+because it is intention-revealing, not because a test defends it.
+`evidence/auto-select-chose-nothing-and-would-not-say-why.md`.
