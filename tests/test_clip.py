@@ -406,3 +406,88 @@ def test_every_discovery_path_member_is_distinguishable_in_the_artifact() -> Non
     assert len(rendered) == len(list(DiscoveryPath)) == 3, (
         f"{len(list(DiscoveryPath))} paths collapsed to {sorted(rendered)} in the artifact"
     )
+
+
+# =========================================================================================
+# The four refusals a guard-revert sweep over `clip.py` found held by nothing: every `raise`
+# deleted one at a time against a green baseline, whole suite each time. 11 of 15 held; these
+# are the rest, and two of them sit inside `assert_renderable` — the gate `render_clip` calls
+# before it starts an encoder. D-195.
+# =========================================================================================
+
+
+def test_a_clip_that_was_never_judged_is_not_renderable() -> None:
+    """§2 puts the QC gate before output *always*, and the judge is half of that gate.
+
+    The QC-record and QC-not-cleared refusals above this one in `assert_renderable` are each
+    held by a test. These two were not, so a clip with no editorial block — no meaning-fidelity
+    and no misleading-edit score, the number §8.2 calls the one that matters for a media
+    organisation — could have reached an encoder if the check were ever refactored away.
+    """
+    unjudged = a_clip(editorial=None)
+    assert unjudged.qc is not None and unjudged.qc.auto_pass, (
+        "the fixture must clear QC, or this would pass on the QC refusal above instead"
+    )
+
+    with pytest.raises(ValueError, match="never judged"):
+        unjudged.assert_renderable()
+
+    # The control: the same clip with its editorial block is renderable, so this measures the
+    # missing block and not a fixture that could never render.
+    a_clip().assert_renderable()
+
+
+def test_a_clip_with_no_output_block_is_not_renderable() -> None:
+    """The last of `assert_renderable`'s four refusals, and the one with nothing to render
+    *with*: no title, no crop target, no caption style. Reached only once QC and the judge have
+    both passed, so the fixture has to clear those to arrive here at all."""
+    unnamed = a_clip(output=None)
+    assert unnamed.editorial is not None, "this must fail on the output block, not the judge"
+
+    with pytest.raises(ValueError, match="no output block"):
+        unnamed.assert_renderable()
+
+    a_clip().assert_renderable()  # the control, as above
+
+
+def test_a_non_positive_output_duration_is_refused() -> None:
+    """`durations` are §5's delivery lengths in seconds. A zero or negative one is not a short
+    clip, it is an ffmpeg `-t 0` and an empty file, and the refusal was held by nothing."""
+    for durations in ((0,), (-15,), (15, 0, 60)):
+        with pytest.raises(ValueError, match="positive seconds"):
+            Output(
+                title_ckb="ناونیشان",
+                description_ckb="وەسف",
+                crop_target="speaker_face",
+                caption_style="word_highlight",
+                durations=durations,
+            )
+
+    # The control: §5's own three lengths are accepted, so this measures the sign and not a
+    # constructor that refuses every duration.
+    assert Output(
+        title_ckb="ناونیشان",
+        description_ckb="وەسف",
+        crop_target="speaker_face",
+        caption_style="word_highlight",
+        durations=(15, 30, 60),
+    ).durations == (15, 30, 60)
+
+
+def test_qc_flags_must_be_a_tuple_of_non_empty_strings() -> None:
+    """`Qc.from_dict`'s refusal of a scalar `flags` is held by a test; the constructor's own was
+    not. They are different doors to the same field: a flag list built in memory never passes
+    through `from_dict`, and an empty-string flag is a review reason that names nothing.
+    """
+    # A tuple holding an empty flag, a tuple holding a blank one, a real tuple with a non-string
+    # in it, and a bare string — which `any(...)` iterates character by character and would
+    # otherwise accept, since every character of a non-empty string is a non-empty string.
+    for flags in (("",), ("needs_review", "   "), ("needs_review", 7), "not a tuple at all"):
+        with pytest.raises(ValueError, match="qc.flags"):
+            Qc(auto_pass=False, flags=flags, human_reviewed=False)  # type: ignore[arg-type]
+
+    # The control: a real flag tuple, and the empty tuple that means "nothing flagged".
+    assert Qc(auto_pass=False, flags=("needs_review",), human_reviewed=True).flags == (
+        "needs_review",
+    )
+    assert Qc(auto_pass=True, flags=(), human_reviewed=False).flags == ()

@@ -10042,3 +10042,54 @@ written for it. **The audit harness now prints `[LINT DIRTY — the gate tests f
 rather than a quiet marker: this is the third time this session a lint-dirty mutation has dressed
 itself up as a held guard, and a marker I skim past is not a check.
 `evidence/three-refusals-in-the-renderer-that-nothing-would-miss.md`.
+
+## D-195
+
+**`assert_renderable` — the gate `render_clip` calls before starting an encoder — was half
+covered.** A guard-revert sweep over `clip.py`, the module whose dict *is* the §5 client sidecar:
+every `raise` located by AST, deleted one at a time, whole suite each time, against a baseline
+verified green first. **11 of 15 held.** The four that did not include both of the judge's halves of
+that gate:
+
+```
+if self.qc is None:                                   held, by 11 tests
+if not (self.qc.auto_pass or self.qc.human_reviewed): held, by 3
+if self.editorial is None:                            HELD BY NOTHING
+if self.output is None:                               HELD BY NOTHING
+```
+
+Its docstring says *"§8.3 requires this on every shipped clip"*. A clip with no editorial block has
+no meaning-fidelity and no misleading-edit score — the number §8.2 calls the one that matters for a
+media organisation — and one with no output block has no title, crop target or caption style to
+render with. Either could have reached ffmpeg if the check were refactored away, suite green. The
+shape worth noticing: the QC guards written under "audit finding #3" got tests, and the two added
+beside them in the same function did not.
+
+The other two were `Output.durations` having to be positive seconds (a zero is not a short clip, it
+is `-t 0` and an empty file) and `Qc.flags` having to be a tuple of non-empty strings — whose
+`from_dict` sibling **is** held, so the JSON door was covered and the constructor was not.
+
+**No production code changed.** All four refusals were already correct; only the tests were missing.
+
+**Decision: the sweep harness now reports a third outcome, `GATE`.** A mutation whose only failures
+are `test_gate.py`'s four subprocess tests was caught by the real `verify.sh`'s lint or typecheck
+step, not by anything behavioural — which happened three times earlier this session and read as
+coverage each time. `clip.py` came back **gate-only 0**, so its 11 held are held by named tests.
+**Rejected: keeping the two-outcome HELD/UNHELD report** — it cannot distinguish a guard a test
+defends from a guard ruff defends, and I have already been fooled by that distinction.
+
+**Each new test asserts the precondition of the guard above it.** The unjudged-clip test asserts
+`qc.auto_pass` first, so it cannot pass on the QC refusal one line earlier; the output-block test
+asserts `editorial is not None` for the same reason. Without those, both tests would pass against a
+`assert_renderable` that refuses for the wrong reason — which is the defect one line up.
+
+**One case in the flags test is worth naming:** `flags="not a tuple at all"` is refused by the
+`isinstance(self.flags, tuple)` half specifically. Without it, `any(...)` iterates the string
+**character by character** and accepts it, because every character of a non-empty string is itself a
+non-empty string.
+
+**Mutation audit 4/4 lint-clean**, each guard caught by exactly the one test written for it and by no
+gate test, file restored byte-identical. Every module that builds or ships the deliverable —
+`delivery.py` 12/12, `credentials.py` 6/10, `render.py` 8/11, `clip.py` 11/15 — has now been swept
+once.
+`evidence/the-gate-before-the-encoder-had-two-refusals-nothing-held.md`.
