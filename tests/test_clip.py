@@ -491,3 +491,105 @@ def test_qc_flags_must_be_a_tuple_of_non_empty_strings() -> None:
         "needs_review",
     )
     assert Qc(auto_pass=True, flags=(), human_reviewed=False).flags == ()
+
+
+# =========================================================================================
+# D-196: every key of the shipped sidecar has to be load-bearing.
+#
+# D-101 found this defect once by hand — `Clip.to_dict` hardcoding `DiscoveryPath.VERBAL.value`
+# left five test files green, because `a_clip()` builds a verbal clip and the round-trip test
+# compared "verbal" against "verbal". D-181 found it again: `AsrProvenance.adapter` was missing
+# from the hand-enumerated dict and the delivered clip would have named stock weights.
+#
+# Both are the same defect, and a round-trip can only see a dropped field when the value it
+# carries differs from what `from_dict` supplies in its absence. Measured on `a_clip()`, four
+# keys were invisible: `Editorial.payoff_at_ms` (None), `Output.hashtags_ckb` ([]), `Qc.flags`
+# ([]) and `Qc.human_reviewed` (False) — including whether a human reviewed the clip at all.
+#
+# Two of the four turned out to be held elsewhere: D-033's projection test asserts `payoff_at_ms`
+# and `hashtags_ckb` explicitly. `Qc.flags` and `Qc.human_reviewed` were held by nothing, and a
+# mutation audit proved it by deleting each from `Qc.to_dict` with the whole suite still green.
+# The fix is a fixture whose optional fields are all non-default, run through the round-trip that
+# already existed — not a cleverer property. The first attempt here WAS a cleverer property, and
+# it could not see a dropped key at all: it iterated the keys `to_dict` emits, so a key that
+# stopped being emitted was never examined. The audit caught that, which is what audits are for.
+# =========================================================================================
+
+
+def a_fully_populated_clip() -> Clip:
+    """A clip where every optional field carries a NON-DEFAULT value.
+
+    That is the whole point: a fixture that leaves an optional field at its default cannot tell
+    a dropped key from an absent one, because `from_dict` reconstructs the same object either
+    way. Every default in these five blocks is deliberately avoided here.
+    """
+    return a_clip(
+        speaker="SPK_02",
+        editorial=an_editorial(payoff_at_ms=87_400),
+        output=Output(
+            title_ckb="ناونیشان",
+            description_ckb="وەسف",
+            crop_target="speaker_face",
+            caption_style="word_highlight",
+            durations=(15, 30, 60),
+            hashtags_ckb=("#کوردی", "#هەواڵ"),
+        ),
+        qc=Qc(auto_pass=False, flags=("low_confidence",), human_reviewed=True),
+    )
+
+
+def test_the_fully_populated_clip_round_trips_through_json() -> None:
+    """The same round-trip as `test_the_clip_round_trips_through_json`, on a fixture that can
+    actually fail it.
+
+    `a_clip()` leaves four fields at their defaults, so `from_dict` reconstructs them identically
+    whether the key was emitted or not: measured, `Editorial.payoff_at_ms`, `Output.hashtags_ckb`,
+    `Qc.flags` and `Qc.human_reviewed` could each be deleted from `to_dict` and the round-trip
+    would still compare equal. `Qc.flags` and `Qc.human_reviewed` — the review reasons, and
+    whether a human looked at the clip at all — could be deleted with the **whole suite** green.
+
+    Per-block as well as whole-clip, so a failure names which block lost the field rather than
+    only that some nested dict differs.
+    """
+    original = a_fully_populated_clip()
+    assert original.editorial is not None
+    assert original.output is not None
+    assert original.qc is not None
+
+    restored = Clip.from_dict(json.loads(json.dumps(original.to_dict())))
+    assert restored == original
+
+    for label, block, rebuild in (
+        ("Editorial", original.editorial, Editorial.from_dict),
+        ("Output", original.output, Output.from_dict),
+        ("ClipTranscript", original.transcript, ClipTranscript.from_dict),
+        ("Qc", original.qc, Qc.from_dict),
+    ):
+        assert rebuild(json.loads(json.dumps(block.to_dict()))) == block, (
+            f"{label} did not survive its own round trip"
+        )
+
+
+def test_the_fully_populated_clip_leaves_no_field_at_its_default() -> None:
+    """The control for the property above, and the reason it keeps working.
+
+    If `a_fully_populated_clip` ever fell back to a default, the key for that field would become
+    invisible again and the test above would go green by *losing* coverage rather than by gaining
+    it — a check that stops measuring is worse than one that fails.
+    """
+    clip = a_fully_populated_clip()
+    assert clip.editorial is not None and clip.output is not None and clip.qc is not None
+
+    defaults = {
+        "Editorial.payoff_at_ms": (clip.editorial.payoff_at_ms, None),
+        "Editorial.sv6d": (clip.editorial.sv6d, None),
+        "Output.hashtags_ckb": (clip.output.hashtags_ckb, ()),
+        "Qc.flags": (clip.qc.flags, ()),
+        "Qc.human_reviewed": (clip.qc.human_reviewed, False),
+        "ClipTranscript.en_aux": (clip.transcript.en_aux, None),
+    }
+    left_at_default = [name for name, (actual, default) in defaults.items() if actual == default]
+    assert not left_at_default, (
+        f"{left_at_default} carry their default value, so a `to_dict` that dropped them would "
+        f"round-trip identically and the property test above would not see it"
+    )

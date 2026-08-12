@@ -10093,3 +10093,49 @@ gate test, file restored byte-identical. Every module that builds or ships the d
 `delivery.py` 12/12, `credentials.py` 6/10, `render.py` 8/11, `clip.py` 11/15 — has now been swept
 once.
 `evidence/the-gate-before-the-encoder-had-two-refusals-nothing-held.md`.
+
+## D-196
+
+**`Qc.to_dict` could stop emitting `flags` and `human_reviewed` with the whole suite green.** The
+review reasons, and whether a human looked at the clip at all — the field §2's "human QC gate before
+output, always" is recorded in. A sidecar that stopped carrying it would read back `False` for every
+clip a human had in fact approved.
+
+**Why the existing round-trip could not see it.** `clip.py` pairs `to_dict` with `from_dict` for
+every block and `test_the_clip_round_trips_through_json` has always asserted
+`from_dict(to_dict(x)) == x`. That catches a dropped field only when its value differs from what
+`from_dict` supplies in its absence, and `a_clip()` leaves four optional fields at exactly their
+defaults. Measured by deleting each emitted key and rebuilding: `Editorial.payoff_at_ms` (None),
+`Output.hashtags_ckb` ([]), `Qc.flags` ([]) and `Qc.human_reviewed` (False) all rebuilt identically.
+
+**This is the third instance of one defect.** D-101 (`Clip.to_dict` hardcoding
+`DiscoveryPath.VERBAL.value`, five test files green because the fixture was verbal) and D-181
+(`AsrProvenance.adapter` missing from the hand-enumerated dict) were each found by hand, one field at
+a time. Two of the four here were held elsewhere — D-033's projection test asserts `payoff_at_ms` and
+`hashtags_ckb` — which is luck rather than design. The two `Qc` fields were held by nothing.
+
+**Decision: a fixture whose optional fields are all non-default, run through the round-trip that
+already existed.** `a_fully_populated_clip()` sets every optional field in all five blocks away from
+its default, whole-clip and per-block so a failure names which block lost the field. A second test
+asserts no field in that fixture still carries its default — without it, a later edit could return
+the fixture to `a_clip()`'s values and the round-trip would go green by **losing** coverage rather
+than gaining it.
+
+**Rejected, after building it and proving it useless: a "no emitted key is redundant" property.**
+Delete each emitted key in turn and require the round-trip to notice. It passed, it read well, and it
+**could not detect the defect it named** — it iterated the keys `to_dict` *emits*, so a key that
+stopped being emitted was never examined. The mutation audit reported **3/5**: the two `Qc` mutations
+survived outright, and the two that were caught named a pre-existing test rather than the new one,
+which appeared in exactly one row — the mutation against its own fixture. It was guarding itself and
+nothing else. The rewrite is 5/5. **A cleverer test that measures nothing is worse than the obvious
+one, and only the audit could tell them apart.**
+
+**The fifth mutation attacks the test rather than the code** — returning the fixture to the defaults —
+because that is the failure mode this whole entry is about. It is now caught too.
+
+**Process, twice in two iterations:** `pytest tests/test_clip.py` passed 40/40 on a file ruff and
+mypy both reject (`Any` unimported, then `union-attr` because `clip.editorial` is `Editorial | None`).
+Both surfaced only as the audit's **baseline** going red on `test_gate.py`'s four subprocess tests —
+15 minutes to learn what `ruff check` and `mypy` answer in twenty seconds. **The habit is now: lint
+and typecheck the whole tree before launching any audit.**
+`evidence/whether-a-human-reviewed-the-clip-could-leave-the-sidecar-in-silence.md`.
