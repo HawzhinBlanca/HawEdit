@@ -10462,3 +10462,58 @@ is exactly when someone needs to think hardest.
 
 VERIFY OK — hawedit gate green: 1726 collected, 1726 passed, 0 skipped (floor ratcheted
 1718 -> 1726).
+
+## D-A11
+
+**OS/DB-level enforcement, scoped to what is real today rather than built speculatively.**
+The architecture record's security section is explicit that HawEdit "must enforce capability
+limits in its tool service, database permissions, OS identity and egress policy" — three of
+those four are infrastructure this branch does not have. `grep -ri postgres src/` finds
+exactly one hit, a docstring naming it as the document's own future schema; `configure_dbos`
+defaults to SQLite by an already-recorded decision, because Postgres is the record's own call
+for when HawEdit is "distributed or multi-host," neither true of the single Windows box this
+runs on. A read-only Postgres role has no database to attach to, and provisioning one now
+would be exactly the infrastructure-before-the-trigger this branch already declined once for
+Phase 5.
+
+**A restricted OS identity is not this session's to create, and not this gate's to hold even
+if it were.** Changing what Windows account or NTFS ACL a process runs under is a system
+security setting on a real machine — outside what an agent may change unilaterally regardless
+of what a blueprint recommends, and, independent of that boundary, not something `verify.sh`
+could ever assert: a role provisioned outside the repository leaves nothing in source for a
+test to check, so the gate would print green while the actual guarantee lived in a runbook
+nobody re-verifies. Every other property this branch has shipped — the Policy Gate (D-A10),
+the injection gate (D-A9), read-only-by-AST (D-A5) — was chosen specifically because a test
+can hold it. An OS account is real hardening and belongs in deployment documentation for
+whoever provisions the box this eventually runs on outside a developer's own machine; it is
+not a `src/hawedit` change.
+
+**So the honest, buildable slice is one level under the Policy Gate: capability surface, not
+just registered tools.** D-A10 proves no *registered* tool exposes a blocked operation.
+`tests/test_capability_surface.py` proves something a registered-tool check cannot: that the
+modules defining those tools do not even *import* a shell/network/filesystem-mutation-capable
+module, wired to a tool or not. A tool the Policy Gate would catch on the day someone
+registers it; a bare unused import sitting in the same file is one line away from being
+reachable, with nothing forcing a declared approval class first. Scoped to the modules that
+define `build_*_agent` functions themselves, not their transitive dependency tree —
+`pydantic_ai` uses `httpx` internally, and auditing every third-party import is a different,
+much larger property than "did this codebase's own agent-definition file add a dangerous
+import."
+
+Measured: both `agent.py` and `editor_agent.py` already import nothing from
+`{subprocess, os, shutil, socket, urllib, requests, httpx, aiohttp, ftplib, telnetlib,
+smtplib, pip, ensurepip}` — the test passes today because the property already held, not
+because the bar was set low; `_DANGEROUS_IMPORTS` is exactly `BLOCKED_OPERATIONS`'s
+capabilities mapped to the modules that would provide them. **Mutation-audited**: adding
+`import subprocess` to `editor_agent.py` fails the test and names both the module and the
+import.
+
+**Deferred with a named trigger, mirroring Phase 5's own scoping**: the Postgres read-only
+role and the OS-identity restriction both become real work the day an Artifact Ledger with an
+actual database connection exists — that is the trigger, the same shape as D-A2's Postgres
+deferral for DBOS itself. Building either now would be provisioning security infrastructure
+for a database and a deployment topology that do not exist, which is the same mistake Phase 5
+was scoped away from.
+
+VERIFY OK — hawedit gate green: 1730 collected, 1730 passed, 0 skipped (floor ratcheted
+1728 -> 1730).
