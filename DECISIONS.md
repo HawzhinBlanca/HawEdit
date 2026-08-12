@@ -10797,3 +10797,45 @@ for a generic version registry.
 
 VERIFY OK — hawedit gate green: 1819 collected, 1819 passed, 0 skipped (floor ratcheted
 1808 -> 1819).
+
+## D-A16
+
+**One of the eleven acceptance gates, closed rather than left to hold by accident.** The
+architecture record's acceptance-gate list (lines 390-404) includes: "Sensitive media/
+transcript content is absent from telemetry unless a project policy explicitly enables it."
+Auditing this branch's remaining gap against that list — after D-A11 through D-A15 closed the
+tool-boundary, injection, mutation-surface and rollback gates — found this one true today but
+unasserted: nothing anywhere imports a telemetry SDK, but nothing said so where a future change
+would have to notice breaking it.
+
+**Scoped to real external transmission, not stdlib `logging`.** `grep -rl "logging"` finds real
+hits: DBOS logs its own operation internally (every `verify.sh` run's own `[INFO] (dbos:...)`
+lines are proof), and a few modules already use Python's stdlib `logging` for local,
+non-transmitting output. Neither is what the acceptance gate is about — the risk it names is
+content leaving the machine to an external collector. `_TELEMETRY_IMPORTS` names the actual
+import identifiers of products whose entire purpose is exactly that (`sentry_sdk`,
+`opentelemetry`, `datadog`, `posthog`, …), checked via the same AST-import-scan
+`test_capability_surface.py` (D-A11) already uses for shell/network capability — applied here
+across the whole `src/hawedit` tree rather than only the agent-defining modules D-A11 scoped
+to, since this gate is about the whole application's telemetry surface, not only what an agent
+can reach.
+
+**A near-miss worth naming: a naive grep for "segment"/"analytics" (Segment.io's own import
+name) would have false-positived on this codebase's own vocabulary** — "segment" appears
+throughout as an ordinary English word for a piece of audio/video, and "analytics" collides
+with this project's own editorial-analytics language. Checked directly before trusting it: a
+precise grep for the real product names returned zero hits, confirming the AST check is
+catching a real absence rather than a coincidence of vocabulary.
+
+**The qualifier "unless a project policy explicitly enables it" is checked from both sides.**
+No module imports a telemetry SDK, and no entry in `policy.py`'s `TOOL_POLICIES` names a
+telemetry-shaped capability either — so a future edit could not add telemetry by declaring it
+in policy without also importing something, or vice versa, without at least one of these two
+checks failing and forcing the decision to be explicit.
+
+**Mutation-audited**: adding `import sentry_sdk` to `gemini.py` fails the test and names the
+exact file, confirming the check is a real assertion rather than a vacuous pass over an empty
+set.
+
+VERIFY OK — hawedit gate green: 1822 collected, 1822 passed, 0 skipped (floor ratcheted
+1819 -> 1822).
