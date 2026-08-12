@@ -247,7 +247,36 @@ def test_cli_declines_on_a_blank_answer_and_writes_nothing(tmp_path: Path) -> No
     assert not (tmp_path / "revisions").exists()
 
 
-def test_cli_commits_on_an_explicit_yes(tmp_path: Path) -> None:
+def test_cli_commits_on_an_explicit_yes_with_no_render(tmp_path: Path) -> None:
+    """`--no-render` isolates the approval step from a real source file being present at
+    all — the render path itself is `test_render_boundary_revision.py`'s job, against a real
+    fixture."""
+    _write_report(tmp_path)
+    result = _run_cli(
+        [
+            str(tmp_path),
+            "--final-in-ms",
+            "0",
+            "--final-out-ms",
+            "4500",
+            "--revision-id",
+            "r1",
+            "--approved-by",
+            "hawa",
+            "--no-render",
+        ],
+        input_text="y\n",
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads((tmp_path / "revisions" / "r1.json").read_text(encoding="utf-8"))
+    assert record["status"] == "approved_pending_render"
+
+
+def test_cli_reports_a_render_failure_as_its_own_outcome(tmp_path: Path) -> None:
+    """Without `--no-render`, the CLI attempts to render right after committing — and a source
+    that does not exist (`_write_report`'s default `"x.mp4"`) fails *rendering*, distinctly
+    from a declined or invalid proposal. The approval itself must still be on disk: a render
+    failure is not grounds to un-approve a legal, human-approved change."""
     _write_report(tmp_path)
     result = _run_cli(
         [
@@ -263,8 +292,10 @@ def test_cli_commits_on_an_explicit_yes(tmp_path: Path) -> None:
         ],
         input_text="y\n",
     )
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "revisions" / "r1.json").is_file()
+    assert result.returncode == 1, result.stderr
+    assert "render failed" in result.stderr
+    record = json.loads((tmp_path / "revisions" / "r1.json").read_text(encoding="utf-8"))
+    assert record["approved_by"] == "hawa", "a render failure must not erase the approval record"
 
 
 def test_cli_reports_an_invalid_proposal_and_never_prompts(tmp_path: Path) -> None:

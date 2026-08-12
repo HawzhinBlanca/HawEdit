@@ -44,7 +44,7 @@ import hashlib
 import json
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields, replace
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TextIO
 
@@ -207,6 +207,13 @@ class PipelineRun:
     rejected: tuple[RejectedCandidate, ...] = ()
     boundary: object | None = None
     clip: Clip | None = None
+    # The exact `Sentence` objects `clip` was built from — not the episode's full segmentation
+    # (`sentences` above), the subset `select_sentences` chose. Captions and the SRT sidecar are
+    # timed from these, and nothing else on this record carries word-level timing: `clip.
+    # transcript` is raw/normalized *text*. Persisted so a boundary revision (`proposals.py`,
+    # Phase 3, D-A7) can rebuild captions for a shifted span without re-running §4.2 segmentation
+    # against VAD pauses this record does not carry either. Empty when no clip was built.
+    selected_sentences: tuple[Sentence, ...] = ()
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
     # Artifacts of an earlier, unfinished attempt that this run overwrote. A previous run that
@@ -408,6 +415,11 @@ class PipelineRun:
             "editorial": encode(self.editorial) or self._editorial_ran(),
             "boundary": encode(self.boundary),
             "clip": self.clip.to_dict() if self.clip is not None else None,
+            # `asdict`, matching how `RawTranscript.to_json`/`NormalizedTranscript.to_json`
+            # already serialize their own `words: tuple[Word, ...]` — `Sentence` needs no
+            # separate `to_dict` when the stdlib one already does this correctly for a plain
+            # nested dataclass.
+            "selected_sentences": [asdict(sentence) for sentence in self.selected_sentences],
             "render": (
                 encode(self.render)
                 if isinstance(self.render, StageSkipped)
@@ -1490,7 +1502,7 @@ def run_pipeline(
         ),
         qc=qc,
     )
-    run = replace(run, boundary=boundary, clip=clip)
+    run = replace(run, boundary=boundary, clip=clip, selected_sentences=tuple(selected))
     log.finished("boundary")
 
     # --- §3 Stage 6 render ----------------------------------------------------------------

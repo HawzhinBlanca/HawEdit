@@ -10190,3 +10190,87 @@ revision tool that silently produced a caption-broken re-render on a legal bound
 be a worse outcome than one that stops at "approved, pending render" and says so.
 
 VERIFY OK — hawedit gate green (see PROGRESS.md M9.5 for the exact count).
+
+## D-A7
+
+**Closing D-A6's own named gap: a committed revision now actually re-renders.** The user asked
+directly: finish the boundary-revision loop, make it re-render. D-A6 stopped at an approved,
+attributed JSON record deliberately, naming the missing piece as the sentences' word-level
+timing that captions need and that no run persisted. This closes it.
+
+**The missing data is persisted once, at the source, not reconstructed per revision.**
+`PipelineRun` gained `selected_sentences: tuple[Sentence, ...]` — the exact sentences a clip's
+captions were built from, set at the same point `boundary`/`clip` are (`run = replace(run,
+boundary=boundary, clip=clip, selected_sentences=tuple(selected))`), serialized in `to_dict()`
+via plain `dataclasses.asdict`. No new `Sentence.to_dict()`/`from_dict()` pair: `asdict` on a
+frozen dataclass containing a tuple of `Word` (itself a plain dataclass) already produces the
+right shape, and reconstructing with `Sentence(words=tuple(Word(**w) for w in data["words"]),
+complete=data["complete"])` mirrors exactly how `RawTranscript.from_json` already rebuilds its
+own `words` field — the same pattern, not a new one. Verified against a real run before being
+trusted: a throwaway script ran the real fixture through `run_pipeline` and inspected the
+persisted JSON directly, rather than assuming the shape from reading the dataclass definitions.
+
+**This is additive to `PipelineRun`, and the blast radius was checked, not assumed.** Adding a
+field to a dataclass over a thousand tests already construct and compare is exactly the kind of
+change that can quietly break something far from where it was made. Checked before trusting it:
+no test in the suite asserts an exact key set on `PipelineRun.to_dict()`'s output (grepped for
+the pattern), and `test_the_run_report_serializes_to_json` — the test most likely to be
+sensitive to new keys — asserts specific subkeys, not full-dict equality. The full suite ran
+clean before and after with zero test edits needed for the field itself.
+
+**Editorial, output and QC are reused from the original clip, and this is a correctness
+argument, not a shortcut.** `Clip.assert_renderable` — called inside `render_clip`, not
+duplicated here — refuses a clip with no editorial block (Stage 4's judgment) or no output
+block (title/description/crop target). A boundary revision changes neither: it moves the cut
+points, not what was judged or how the deliverable should be titled. So `Clip.from_dict(
+report["clip"])` plus `dataclasses.replace` for the new `in_ms`/`out_ms`/`boundary` is the
+correct reconstruction, not a convenience that happens to satisfy the type checker. QC is the
+one field supplied fresh (`Qc(auto_pass=False, human_reviewed=True)`) rather than carried over:
+the interactive approval `commit_boundary_revision` already required *is* the human review for
+this specific span, and reusing the original clip's QC record would misattribute that review to
+whoever approved a different one.
+
+**Approval and render stay two functions, and a test proves why that matters rather than just
+asserting it as a design choice.** A render can fail for reasons that have nothing to do with
+whether the revision itself was legal or approved — no ffmpeg on this machine, a full disk, an
+RTL font gap. Folding render into `commit_boundary_revision` would mean a render failure could
+look like the approval itself failed, or worse, a bug in error handling could silently drop the
+recorded approval along with the failed render. `test_cli_reports_a_render_failure_as_its_own_
+outcome` runs the full CLI against a synthetic report whose `source` does not exist, confirms
+the process exits 1 with "render failed" on stderr, and — the part that actually tests the
+separation — confirms the revision record on disk still carries `approved_by`. The render gate
+inside `render_boundary_revision` also re-validates the proposed span against
+`assert_boundary_invariant` rather than trusting the record's `status` field, proven by a test
+that hand-edits an "approved" record to an illegal span and confirms the render function still
+refuses it: a status string on disk is not itself a security boundary, and this module does not
+treat it as one.
+
+**Found, not assumed: the test fixture leaves no room to extend the original boundary.** The
+first version of the render test tried to widen the original 0..4162 ms boundary to 0..4362 ms
+— a legal move under Kurdish invariant #2's arithmetic alone — and `render.py` correctly refused
+it, checked against the real file: the fixture is exactly 4162 ms long, so the original render
+already used the entire source, and there is no media to extend into. This is exactly the
+render-time real-media check `render.py`'s own docstring describes (measured on the real
+38-minute file: "asking for 0..8000 ms of a 4162 ms source makes ffmpeg exit 0 and write 4180
+ms... the only place to catch it is against the media itself, before encoding") doing its job on
+a second, unrelated caller. The test now proposes a legal *narrowing* instead (final_in_ms=50,
+final_out_ms=4140, still satisfying `final_in_ms <= anchor_in_ms` and `final_out_ms >=
+anchor_out_ms`), and a duration test measures the resulting file — not just that it exists — to
+confirm the revised span is what actually got encoded.
+
+**Still a real, named simplification carried over from D-A6, not fixed here.** Revisions render
+with `focus_points=()` unconditionally — a face-tracked original's revision comes back statically
+centred. Reproducing tracked reframing over a shifted span needs `reframe.py`'s tracker re-run
+against the source, genuinely separate scope from "make the boundary loop re-render," and is
+named in the revision's own docstring rather than silently approximated.
+
+**Re-verified, not assumed, that `--help` still needs none of the new dependency surface.**
+`render_boundary_revision` pulls in `render.py`, `captions.py`, `delivery.py`, `clip.py`,
+`sentences.py`, `ingest.py` — none of which existed as `proposals.py` imports before this
+change. Checked two ways before trusting the D-A6 guarantee still held: grepped all six for a
+top-level import beyond the standard library (none), then rebuilt the wheel and reran the exact
+D-A6 measurement (a venv with only `klpt`/`fonttools`, no `agentic` extra) — `hawedit-revise
+--help` still exits 0, and all seven console scripts still do too.
+
+VERIFY OK — hawedit gate green: 1705 collected, 1705 passed, 0 skipped (floor ratcheted
+1696 -> 1705).
