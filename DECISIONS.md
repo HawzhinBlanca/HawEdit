@@ -9733,3 +9733,34 @@ were lost but not out of what.
 — it keeps the counter and the total and only hides the line on a clean import, which is
 exactly the version that looks correct in review.
 `evidence/the-common-voice-import-shrank-the-corpus-in-silence.md`.
+
+## D-189
+
+**Adversarial pass 31 — M0.1's claim attacked six ways and held, and the pass's own first
+harness reported it false.** Everything in this repository rests on *"the gate refuses a no-op
+command instead of printing green"*: every DONE row, every `N/N mutations`, every "CI green" is an
+assertion the gate made. It has been fooled twice — D-092 (`PY=true.exe`) and D-093 (a forged
+`pytest` on PYTHONPATH, which also ratcheted the floor 1155 → 1200, so every honest run
+afterwards would fail a bar the forgery invented).
+
+**6/6 refused, floor unmoved at 1619.** Two defences, both doing their documented job: **exit 3**
+from the interpreter probe (`PY=/usr/bin/true`, and the forged pytest — refused *by name*,
+because the probe asks where the steps' programs came from), and **exit 5** from the override
+refusal, which `${VAR+set}` catches even for an *empty* assignment, so `TEST_CMD=` is refused
+rather than silently replaced by the default. A substituted `hawedit` package remains out of reach
+and stays recorded as such, so 6/6 is not read as "unfoolable".
+
+**The judgement worth recording is about the pass.** Its first harness built the environment as a
+Python dict for `subprocess.run` and printed `*** M0.1's CLAIM IS FALSE ***`. **That was wrong.** On
+Windows the constructed environment did not reach `bash` as intended: the overrides leaked into the
+suite's own gate-invoking tests — all four "HELD" lines named
+`test_nested_full_gate_refuses_instead_of_recursing`, a *test* failing rather than a *gate*
+refusing — and the matched `VERIFY OK` came from somewhere other than a verdict. Run directly,
+the identical attack gives exit 3 and a `REFUSED` banner with no `VERIFY OK` in the log at all.
+
+Caught by reading *which line* the harness had matched instead of trusting its summary — the
+same failure as the two `pgrep` false positives earlier in this session, where a pattern matched its
+own command line. **Method for later passes: invoke the thing under attack the way an attacker
+would, one shell, directly, and grep the raw log.** A harness that constructs the environment is a
+second program that can be wrong, and when it is wrong it fails in whichever direction its author
+expected. `evidence/adversarial-pass-31-the-gate-itself.md`.
