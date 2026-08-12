@@ -10651,3 +10651,72 @@ one, the same discipline every other D-A-numbered slice this branch has kept.
 
 VERIFY OK — hawedit gate green: 1786 collected, 1786 passed, 0 skipped (floor ratcheted
 1760 -> 1786).
+
+## D-A14
+
+**Phase 4's remaining bullet: "Add ... shadow challengers and canary promotion."** D-A13
+scoped this out explicitly as "real work, deferred to a following row" — this is that row.
+`judge.py` already had the evaluation half of the architecture record's loop (Agent proposal ->
+... -> Shadow or canary challenger -> Human promotion gate -> Versioned ... model): `ShadowVerdict`
+(a shadow model's opinion, structurally unable to reach §5's editorial block) and `decide_judge`
+(§3's "empirical beats newer" rule as a pure function), both built before this branch and never
+called or persisted anywhere in `src/` — confirmed by research before writing anything, not
+assumed. This row is the missing second half: persistence for the shadow opinion, and a real,
+human-gated promotion turning `decide_judge`'s recommendation into an active, rollback-able
+state.
+
+**Scoped to the judge model, the one axis with real backing — not a generic version
+registry.** The acceptance gate names "model, prompt, skill, policy and workflow" version.
+Policy already has `POLICY_VERSION` (D-A10). Of the rest, only the judge model has a real
+comparison mechanism (`decide_judge`) and a real incumbent (`KURDISH_EDITORIAL_JUDGE`) to
+promote against — there is no prompt-versioning concept, no skill-versioning concept, anywhere
+in this codebase. Building a generic multi-axis registry for content that does not exist would
+be the same infrastructure-before-the-trigger mistake D-A11 declined for a Postgres role and
+Phase 5 declined for a distributed stack. `PromotionRecord.component` is a free string so a
+future axis can reuse the ledger shape without a rewrite; only `"judge"` is ever produced today.
+
+**The first system-wide, cross-run persistent state this branch has written.** `events.jsonl`,
+`revisions/<id>.json`, `decisions.jsonl` are all scoped to one run's `work_dir`, because the
+fact each records is about that run. A promotion is different in kind: it changes what judge
+*future* runs — runs that do not exist yet — should use, so it cannot live inside any single
+run's directory. Stored at `.hawedit/judge_promotions.jsonl`, relative to the current working
+directory, mirroring the precedent `durable_workflow.py`'s `.dbos/hawedit.sqlite` already set
+for "state that belongs to the installation, not to one run" — and for the same underlying
+fact: a single Windows box running one CLI at a time has exactly one working directory this can
+mean. Added to `.gitignore` alongside `/.dbos/`, for the same reason: process/installation
+state, not source.
+
+**Read-only integration today, named as a boundary rather than left to look finished.**
+`current_judge()` reports what the ledger says is active. `gemini.py`'s `GeminiJudge`
+constructor still defaults every parameter to the module constant `KURDISH_EDITORIAL_JUDGE`,
+unchanged by this row — wiring a dynamically promoted judge into the actual render path is a
+real, separate change to an already-shipped, tested call site (`gemini.py`, `editorial_bench.py`
+both consume the constant directly), not something a promotion ledger should silently imply by
+existing.
+
+**Rollback restores the immediately preceding version, matching the acceptance gate's own
+wording exactly.** "A rollback restores *the previous* ... version" is singular, not "any
+recorded point." `rollback_judge` reads the last two ledger entries (or falls back to the
+pinned default if only one promotion has ever happened — the implicit prior state
+`current_judge` already treats an empty ledger as) and writes a new entry restoring the one
+before the most recent change. A second rollback therefore toggles back to what the first
+rollback undid, the same one-level-undo shape a browser back button has — intentional and
+tested (`test_rolling_back_twice_toggles_rather_than_unwinds_further`), not a limitation
+discovered later.
+
+**`ShadowVerdict` gained `to_dict`/`from_dict`**, mirroring `JudgeVerdict`'s own existing
+pair exactly — a shadow opinion nobody can read back is one `decide_judge`'s
+incumbent/shadow/tie tally cannot be reconstructed from later. `shadow_verdicts.jsonl` lives
+beside a run's other artifacts (`work_dir`-scoped, unlike the promotion ledger above) because
+which judge is being challenged on which candidate is a fact about that specific run.
+
+**Mutation-audited twice, at the two points that matter most.** (1) Neutering the
+switch-recommendation check (`if not decision.switch or ...` -> `if False`) fails exactly
+`test_promote_refuses_a_decision_that_did_not_recommend_switching` and nothing else. (2)
+Neutering the rollback "previous version" computation (always using the *current* version
+instead of the one before it) fails all three tests that depend on the computation being
+correct — one promotion, two promotions, and the double-rollback toggle — and only those three,
+confirming the tests are checking the arithmetic itself rather than something incidental.
+
+VERIFY OK — hawedit gate green: 1808 collected, 1808 passed, 0 skipped (floor ratcheted
+1786 -> 1808).

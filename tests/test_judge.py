@@ -156,6 +156,14 @@ def test_a_shadow_verdict_cannot_become_a_clips_editorial_block() -> None:
         a_verdict(judge=SHADOW).to_editorial()
 
 
+def test_a_shadow_verdict_round_trips_through_to_dict_from_dict() -> None:
+    """Added for `promotion.py`'s shadow-verdict ledger (D-A14) — a shadow opinion has to
+    survive being written to `decisions.jsonl`'s sibling ledger and read back unchanged, the
+    same round-trip `JudgeVerdict.to_dict`/`from_dict` already has."""
+    shadow = ShadowVerdict(verdict=a_verdict(judge=SHADOW), incumbent=JUDGE)
+    assert ShadowVerdict.from_dict(shadow.to_dict()) == shadow
+
+
 def test_section_5s_editorial_block_refuses_the_shadow_a_second_time() -> None:
     """Defence at both ends, because a verdict can arrive as JSON that never passed through
     `to_editorial()` at all."""
