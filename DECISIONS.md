@@ -10000,3 +10000,52 @@ _there_are` requires the stated count to match `[project.scripts]`, but nothing 
 `--help` path. Re-measured with `scripts/build-wheel.sh`, a fresh venv, and only the base
 dependencies installed (deliberately no `agentic` extra, to prove `--help` needs none of it):
 6 declared, 6 present, all 6 exit 0, `pip check` clean.
+
+## D-A4
+
+**Phase 1's acceptance line names four properties, and D-A3 verified two.**
+`AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md`: "verify crash/restart, duplicate request,
+cancellation and reconnect behavior." D-A3's commit message called Phase 1 complete having
+built and proven only the first two — an overclaim caught while looking for the next unit of
+work, not by anyone else. Corrected in place: PROGRESS.md's M9.2 cell no longer says "complete"
+(this repo's own rule is that a correction goes in the cell, not as prose appended after it),
+and this entry plus M9.3 are the remaining two properties.
+
+**Cancellation was observed before it was asserted.** The obvious design for a test — start a
+workflow, block its step, cancel it, confirm the block is interrupted — assumes DBOS can reach
+into a running synchronous Python call and stop it. A throwaway script checked this first
+rather than writing the assertion on faith: a step blocked on `threading.Event().wait()`,
+cancelled via `DBOS.cancel_workflow` while still blocked, ran to completion and returned its
+computed value when released. DBOS has no mechanism to preempt a thread executing ordinary
+Python code, and nothing in its public API claims one. What actually happens, read from the
+real traceback the script produced: the *persist* step DBOS runs after the function returns
+finds the workflow already marked `CANCELLED` and raises `DBOSAwaitedWorkflowCancelledError`
+from the persist call itself, which propagates out of `WorkflowHandle.get_result()`. So the
+guarantee is at the awaiter, not at the running code — which is the guarantee that matters for
+an editor: cancelling a run must mean the caller never receives a result it would otherwise
+treat as real, not that the underlying work stops instantly. `test_cancelling_a_running_
+workflow_fails_the_awaiter` asserts exactly that shape: `get_result()` raises, and
+`get_workflow_status(run_id).status == "CANCELLED"`, without asserting anything about how long
+the blocked call itself took to unwind. A second case, `test_cancellation_does_not_wedge_
+later_runs`, confirms cancelling one workflow ID leaves every other workflow ID unaffected —
+DBOS's own scoping, checked rather than assumed given how much of this module already turned
+out to need checking against the source rather than the public docs (D-A3).
+
+**Reconnect is `read_events` called mid-run, and the test proves "mid-run" rather than naming
+it.** `_JsonlEventSink` (D-A3) flushes every line immediately specifically so a reconnecting
+reader does not have to wait for the run to finish. Proving that requires a genuinely
+in-progress run at the moment of reading, not a completed one read back afterward: `test_
+reading_the_event_ledger_mid_run_sees_partial_progress` runs `run_durable` in a background
+thread against a stub that writes two real events through the real sink, signals a
+`threading.Event`, and then blocks; the test thread waits for that signal, calls `read_events`
+on the same file *while the background thread is still blocked inside the stage*, and asserts
+both events are already there — sequence and state matching what the stub wrote — before
+releasing the block and letting the run finish. A `read_events` call made only after the whole
+test function returns would not distinguish "flushed as it happened" from "flushed once the
+run finished, coincidentally before I checked."
+
+**All three cases run four times with no flake before being trusted into the gate**, matching
+the same bar D-A3's crash/restart case was held to.
+
+VERIFY OK — hawedit gate green: 1654 collected, 1654 passed, 0 skipped (floor ratcheted
+1651 -> 1654).
