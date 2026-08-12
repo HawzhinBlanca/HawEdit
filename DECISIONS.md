@@ -10720,3 +10720,64 @@ confirming the tests are checking the arithmetic itself rather than something in
 
 VERIFY OK — hawedit gate green: 1808 collected, 1808 passed, 0 skipped (floor ratcheted
 1786 -> 1808).
+
+## D-A15
+
+**Phase 5, built to the shape the user explicitly chose: a trigger check and a migration path,
+not the distributed stack itself.** Asked directly which of the two AskUserQuestion options to
+build, the answer was "Trigger check + migration path" over building Temporal/worker
+services/HA now — the architecture record's own Phase 5 heading is "scale only when triggered,"
+and no trigger has fired. This row is that check, built honestly rather than as a placeholder
+that always returns "not yet."
+
+**None of the five conditions are measurable from this codebase's own state, so nothing here
+guesses.** The record names five explicit, numbered conditions for moving DBOS to Temporal
+(lines 124-130): multiple physical worker pools, multi-tenant HA hosting, contractual
+cross-region/retention requirements, workflow-history management outgrowing the application and
+its Postgres deployment, and the team needing Temporal's operational ecosystem enough to justify
+it. Every one is an organizational or deployment fact — not something a static read of a
+single-process CLI's source can observe. `evaluate_scale_triggers` takes an explicit, named
+answer for each condition and refuses if any is missing, rather than defaulting an unanswered
+one to "not triggered" — the same "required, never assumed" rule `reason_code` established for
+a much smaller decision (D-A13), applied here to the largest one this branch makes.
+
+**The five conditions are pinned to the record's own words, not a paraphrase that could
+drift.** `SCALE_TRIGGERS` quotes lines 124-130 of `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md`
+verbatim, and `test_every_trigger_condition_is_quoted_verbatim_from_the_architecture_record`
+reads that file directly and asserts each condition string is a substring of it — so an edit to
+either side that lets them diverge is caught, not merely trusted from the code's own comment
+claiming to quote it.
+
+**The migration path is a function, checked against real code, not a `.md` file that could go
+stale beside the source it describes.** `describe_migration_path()` is prose, and
+`tests/test_scale.py` binds every module and function it names to what is actually on disk —
+the same discipline `test_claims.py` already holds the README's module map and PROGRESS's
+ledger to, applied to a new document before it has the chance to drift the way those did.
+
+**The claim that matters most in that prose is checked directly, not trusted.** The migration
+path states that DBOS-specific code is isolated to one module — `durable_workflow.py` is the
+only place `@DBOS.step()`/`@DBOS.workflow()` appear, and `durable.py` is the only caller that
+imports it (one function-local import of `run_durable()`, deferred past argument parsing so
+`--help` needs no `dbos` install, D-A2/D-A3). Verified by grepping every file under `src/` for
+an actual `from hawedit.durable_workflow import` line before writing the claim, not assumed
+from memory of how the module split was originally reasoned about — and re-verified by the test
+itself on every future run. This is a genuinely useful fact for anyone actually planning a
+migration: it means rewriting `durable_workflow.py` and its one call site is the whole
+DBOS-specific surface area, not a search-and-replace across the codebase.
+
+**Mutation-audited twice.** (1) Rewording one trigger condition's text fails the verbatim-quote
+test by name. (2) Adding a second, real `from hawedit.durable_workflow import run_durable` line
+to `events.py` fails `test_migration_path_states_durable_workflow_is_the_only_dbos_specific_module`
+by name, naming the offending file.
+
+**Explicitly not built, matching the chosen scope rather than silently absent**: a Temporal
+integration, dedicated worker-service deployment, OpenLineage export, and persistence for a
+`ScaleAssessment` (unlike `decide_judge`, which D-A14 gave a promotion ledger, an architecture
+assessment happens rarely enough and has no acceptance-gate language demanding a record the way
+Phase 4's did — `decide_judge` itself went unpersisted until there was a real reason to persist
+it). Building any of the first three now, with no trigger fired, would repeat the
+infrastructure-before-the-trigger mistake D-A11 declined for a Postgres role and D-A14 declined
+for a generic version registry.
+
+VERIFY OK — hawedit gate green: 1819 collected, 1819 passed, 0 skipped (floor ratcheted
+1808 -> 1819).
