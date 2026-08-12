@@ -10400,3 +10400,65 @@ survives a hostile report.
 
 VERIFY OK — hawedit gate green: 1718 collected, 1718 passed, 0 skipped (floor ratcheted
 1710 -> 1718).
+
+## D-A10
+
+**Phase 0's "policy classes", built as the Policy Gate the architecture record names as a
+numbered component.** "A hard **Policy Gate** outside the model. The production agent receives
+only named HawEdit tools and cannot write source code, invoke an unrestricted shell, install
+packages, or silently publish an edit." And: "**The Policy Gate owns authority.** It decides
+which action is allowed and whether human approval is required. A model's promise to behave is
+never considered authorization."
+
+**A declaration whose tests are the gate, not a runtime interceptor.** The obvious reading is a
+layer that inspects each tool call at request time. That would be a second enforcement path
+duplicating what the tool functions already do — and a weaker one, since it could only see
+calls that reached it, while the record is explicit that "tool implementations—not prompts—
+verify all of these." The enforcement that matters already exists and is tested:
+`commit_boundary_revision` refuses an unattributed or unconfirmed approval (D-A6),
+`assert_boundary_invariant` refuses an illegal span, `Deps.work_dir` is not model-suppliable
+(D-A5, D-A9). Adding a wrapper around those would create a place for the two to disagree.
+
+So this module's job is different and not otherwise covered: make the *set* of capabilities an
+auditable, tested contract. Every tool any agent registers must appear in `TOOL_POLICIES` with
+an explicit `ApprovalClass`, and adding a tool without deciding its class is a failing build
+rather than a silent capability grant.
+
+**The test discovers agents rather than listing them, and that is the whole point.**
+`tests/test_policy.py::_all_agent_builders` walks `pkgutil.iter_modules(hawedit.__path__)` for
+every `build_*_agent` function, builds each, and reads the tools it actually registered off the
+built agent. A hardcoded list of agents would cover exactly the agents someone remembered to
+add to it — which is not the failure mode worth defending against. A new agent module with an
+undeclared tool fails on the day it is added, without this test file being touched.
+Mutation-audited: adding a `sneaky_new_capability` tool to `editor_agent.py` fails two policy
+tests and names the tool.
+
+**A real defect in my own first version, found by its own test.** The blocked-capability name
+check (`_FORBIDDEN_NAME_FRAGMENTS` — `shell`, `install`, `publish`, `delete`, `commit_`, …)
+originally ran *after* the declaration check. A forbidden capability is nearly always also
+undeclared, so it was reported as merely "undeclared" and the fragment list was unreachable —
+dead code defending nothing, which
+`test_a_blocked_capability_name_is_refused` caught immediately by asserting on the message.
+
+Reordered so the blocked check runs first. That fixes the unreachability *and* buys the
+stronger property: declaring a forbidden capability is not a way through. The realistic failure
+this defends is not an attacker — it is a future edit adding
+`ToolPolicy(name="publish_clip", ...)` and passing review. Pinned by
+`test_a_blocked_capability_is_refused_even_when_someone_declares_it`, which monkeypatches
+exactly that entry into `TOOL_POLICIES` and confirms the refusal still fires.
+
+**The manifest gained `policy_version` and `blocked_operations`.** Both appear in the record's
+own App Manifest contents list ("policy version and blocked operations") and neither existed.
+Both are sourced from `policy.py` rather than restated in `agent.py`, so the paragraph the
+model reads cannot describe a policy other than the one the tests enforce. `POLICY_VERSION`
+also gives the rollback acceptance gate ("a rollback restores the previous model, prompt,
+skill, policy and workflow version") something to restore *to*: policy is now a version rather
+than an implicit state of the source tree.
+
+**`mutating_tool_names()` returns `()` today, and a test asserts it.** The strongest honest
+statement about this codebase's agents: the set of mutating capabilities reachable from any of
+them is empty, not merely small. That test should fail loudly the day it stops holding, which
+is exactly when someone needs to think hardest.
+
+VERIFY OK — hawedit gate green: 1726 collected, 1726 passed, 0 skipped (floor ratcheted
+1718 -> 1726).
