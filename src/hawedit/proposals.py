@@ -78,6 +78,16 @@ mean re-running `reframe.py`'s tracker against the source for the new span — r
 scope this slice does not take on. `focus_points=()` unconditionally. A revision of a
 face-tracked original therefore renders centred, not tracked; this is visible in the revision
 record it writes, not hidden in one that claims otherwise.
+
+**A second proposal type, added later (D-A12): captions.** Same propose/commit/render shape,
+reusing every shared helper (`_write_atomic`, `_sentence_from_dict`, `_interactive_confirm`,
+`RevisionRejected`) rather than a parallel copy. See the module's caption-revision section
+below for what "revising a caption" means and does not mean, and why the deterministic
+validator is `assert_captions_within_clip` rather than an invented safe-region check.
+`revisions/<id>.json` records now carry `"kind"` (`"boundary"` or `"caption"`) so the two
+render functions refuse a record that is not theirs instead of failing on a missing key; a
+record written before this field existed is still treated as a boundary revision, matching
+what every such record on disk actually is.
 """
 
 from __future__ import annotations
@@ -91,7 +101,12 @@ from pathlib import Path
 from typing import Any
 
 from hawedit.boundary import Boundary, BoundaryInvariantViolated, assert_boundary_invariant
-from hawedit.captions import CaptionStyle, build_ass
+from hawedit.captions import (
+    CaptionsOutsideClip,
+    CaptionStyle,
+    assert_captions_within_clip,
+    build_ass,
+)
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.clip import Clip, Qc
 from hawedit.delivery import DeliveryError, build_edl, build_srt
@@ -103,10 +118,14 @@ from hawedit.transcripts import Word
 
 __all__ = [
     "BoundaryRevisionProposal",
+    "CaptionRevisionProposal",
     "RevisionRejected",
     "commit_boundary_revision",
+    "commit_caption_revision",
     "propose_boundary_revision",
+    "propose_caption_revision",
     "render_boundary_revision",
+    "render_caption_revision",
 ]
 
 
@@ -262,6 +281,7 @@ def commit_boundary_revision(
 
     record = {
         **proposal.to_dict(),
+        "kind": "boundary",
         "revision_id": revision_id,
         "approved_by": approved_by,
         "status": "approved_pending_render",
@@ -312,6 +332,13 @@ def render_boundary_revision(
     if not revision_path.is_file():
         raise FileNotFoundError(f"no revision record at {revision_path}")
     revision: dict[str, Any] = json.loads(revision_path.read_text(encoding="utf-8"))
+    # `None` covers a record written before D-A12 added `"kind"` — old boundary revisions have
+    # no such field and remain renderable here, which a caption revision never predates.
+    if revision.get("kind") not in (None, "boundary"):
+        raise ValueError(
+            f"revision {revision_id!r} has kind {revision.get('kind')!r}, not a boundary "
+            f"revision — render_caption_revision handles caption revisions."
+        )
     if revision.get("status") != "approved_pending_render":
         raise ValueError(
             f"revision {revision_id!r} has status {revision.get('status')!r}, not "
@@ -426,44 +453,294 @@ def render_boundary_revision(
     return revision
 
 
-def main(argv: list[str] | None = None) -> int:
-    """`hawedit-revise <work_dir> --final-in-ms N --final-out-ms N --revision-id ID
-    --approved-by NAME`.
+# --- Caption revisions (D-A12) --------------------------------------------------------------
+#
+# The second proposal type `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` names directly beside
+# boundaries (`propose_caption_revision`, line 193). Same shape as the boundary triad above —
+# propose validates and never writes, commit requires a named human and an explicit yes,
+# render is its own call — deliberately, not a second implementation copied by hand: the
+# functions below are shorter than the boundary ones precisely because they reuse
+# `_write_atomic`, `_sentence_from_dict`, `_interactive_confirm` and `RevisionRejected` rather
+# than repeating them.
+#
+# **What "revising a caption" means here, precisely.** Not the caption *text* — §4.3's own
+# docstring is explicit that caption text is "the raw surface forms... a viewer must see what
+# was said," so an agent proposing different words would violate the same invariant boundary
+# revisions cannot touch anchors. What is genuinely revisable is `Output.caption_style`
+# (`CaptionStyle.LINE` vs `WORD_HIGHLIGHT`) — real, both already implemented in `build_ass`,
+# not aspirational. The architecture record's deterministic gate "captions fit validated safe
+# regions" (line 225) has no §-numbered spatial-margin check anywhere in `BLUEPRINT.md` to
+# reuse or divergence from — inventing a pixel-safe-region validator would be product judgment
+# this frozen spec does not back. What *is* real and already gates every render is Kurdish
+# invariant #4's `assert_captions_within_clip` (`captions.py`) — reused here exactly the way
+# `propose_boundary_revision` reuses `assert_boundary_invariant`, not reimplemented.
 
-    Proposes, prints the validation result, and — only if valid — asks on the real terminal
-    before committing. No flag skips that prompt: this entry point's whole purpose is being the
-    human gate, so unlike every other flag in this module's functions, there is deliberately
-    nothing here to automate it away. A caller that wants a scripted approval channel calls
-    `commit_boundary_revision` directly with its own `confirm`.
 
-    Renders immediately after a successful commit unless `--no-render` is given — approval and
-    render are still two separate function calls underneath (`commit_boundary_revision`,
-    `render_boundary_revision`), so a render failure is reported as its own outcome rather than
-    unwinding the approval that already happened. `--no-render` leaves the revision at
-    `"approved_pending_render"` for a later `render_boundary_revision` call — useful on a
-    machine without ffmpeg, or to batch approvals separately from encoding.
+@dataclass(frozen=True, slots=True)
+class CaptionRevisionProposal:
+    """A proposed new `caption_style` for one run's clip, and whether it is legal.
 
-    Exit codes: 0 committed (and rendered, unless `--no-render`); 1 declined, invalid, or
-    render failed; 2 bad arguments or no report to revise.
+    `valid`/`violation` come from the real `assert_captions_within_clip`, run against the
+    candidate style's own rebuilt caption file — the same gate `render_clip` applies at the
+    burn, not a second implementation of Kurdish invariant #4.
     """
-    use_utf8_streams()
-    parser = argparse.ArgumentParser(
-        prog=program_name("hawedit.proposals"),
-        description="Propose a boundary revision for a completed HawEdit run, and commit it "
-        "only on explicit approval.",
-    )
-    parser.add_argument("work_dir", type=Path)
-    parser.add_argument("--final-in-ms", type=int, required=True)
-    parser.add_argument("--final-out-ms", type=int, required=True)
-    parser.add_argument("--revision-id", required=True)
-    parser.add_argument("--approved-by", required=True)
-    parser.add_argument(
-        "--no-render",
-        action="store_true",
-        help="commit the approval without rendering; leaves status=approved_pending_render",
-    )
-    args = parser.parse_args(argv)
 
+    media_id: str
+    original_caption_style: str
+    proposed_caption_style: str
+    valid: bool
+    violation: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "media_id": self.media_id,
+            "original_caption_style": self.original_caption_style,
+            "proposed_caption_style": self.proposed_caption_style,
+            "valid": self.valid,
+            "violation": self.violation,
+        }
+
+
+def _load_clip_and_sentences(work_dir: Path) -> tuple[str, Clip, tuple[Sentence, ...]]:
+    """The run's `media_id`, its real `Clip`, and the sentences its captions were built from.
+
+    Raises:
+        FileNotFoundError: no run has completed under `work_dir` yet.
+        ValueError: the run has no clip yet, or predates `selected_sentences` (D-A7) and so has
+            nothing a caption proposal could validate against.
+    """
+    path = work_dir / "report.json"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"no report.json under {work_dir} — durable_workflow.py writes this once a run "
+            f"completes or stops; has one run here yet?"
+        )
+    report: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    clip_data = report.get("clip")
+    if not clip_data:
+        raise ValueError(f"the run at {work_dir} has no clip to propose a caption revision for")
+    clip = Clip.from_dict(clip_data)
+    selected_data = report.get("selected_sentences") or []
+    if not selected_data:
+        raise ValueError(
+            f"the run at {work_dir} has no persisted selected sentences, so a caption proposal "
+            f"cannot be validated against real captions. This run predates D-A7 — re-run the "
+            f"pipeline over the same source to produce a report that carries them."
+        )
+    return str(report["media_id"]), clip, tuple(_sentence_from_dict(s) for s in selected_data)
+
+
+def propose_caption_revision(work_dir: Path, caption_style: str) -> CaptionRevisionProposal:
+    """Validate a proposed `caption_style` by rebuilding real captions and running Kurdish
+    invariant #4 against them. Never writes.
+
+    Raises:
+        FileNotFoundError: no run has completed under `work_dir` yet.
+        ValueError: the run has no clip, or predates `selected_sentences` (D-A7).
+    """
+    media_id, clip, selected = _load_clip_and_sentences(work_dir)
+    original_style = clip.output.caption_style if clip.output is not None else ""
+    try:
+        style = CaptionStyle(caption_style)
+    except ValueError:
+        return CaptionRevisionProposal(
+            media_id=media_id,
+            original_caption_style=original_style,
+            proposed_caption_style=caption_style,
+            valid=False,
+            violation=(
+                f"{caption_style!r} is not a recognized caption style; choose one of "
+                f"{[member.value for member in CaptionStyle]}"
+            ),
+        )
+    clip_duration_ms = clip.out_ms - clip.in_ms
+    ass_text = build_ass(
+        selected, style=style, clip_in_ms=clip.in_ms, clip_duration_ms=clip_duration_ms
+    )
+    try:
+        assert_captions_within_clip(ass_text, clip_duration_ms)
+        valid, violation = True, None
+    except CaptionsOutsideClip as exc:
+        valid, violation = False, str(exc)
+    return CaptionRevisionProposal(
+        media_id=media_id,
+        original_caption_style=original_style,
+        proposed_caption_style=style.value,
+        valid=valid,
+        violation=violation,
+    )
+
+
+def commit_caption_revision(
+    work_dir: Path,
+    proposal: CaptionRevisionProposal,
+    revision_id: str,
+    approved_by: str,
+    confirm: Callable[[str], bool] = _interactive_confirm,
+) -> Path:
+    """Write an approved caption-revision record. Does not render — see
+    `render_caption_revision`. Same three refusals as `commit_boundary_revision`: an invalid
+    proposal, an unattributed approver, or an explicit decline.
+
+    Raises:
+        RevisionRejected: the proposal failed validation, `approved_by` is blank, or `confirm`
+            returned a refusal.
+    """
+    if not proposal.valid:
+        raise RevisionRejected(
+            f"caption proposal for {proposal.media_id!r} fails Kurdish invariant #4: "
+            f"{proposal.violation}"
+        )
+    if not approved_by.strip():
+        raise RevisionRejected(
+            "a revision needs a named approver; an unattributed approval is not one "
+            "(same rule as gemini.py's Governance.confirmed_by)."
+        )
+    prompt = (
+        f"{proposal.media_id}: caption style {proposal.original_caption_style!r} -> "
+        f"{proposal.proposed_caption_style!r}. Apply?"
+    )
+    if not confirm(prompt):
+        raise RevisionRejected(f"{approved_by!r} declined the proposed caption revision")
+
+    record = {
+        **proposal.to_dict(),
+        "kind": "caption",
+        "revision_id": revision_id,
+        "approved_by": approved_by,
+        "status": "approved_pending_render",
+    }
+    revisions_dir = work_dir / "revisions"
+    revisions_dir.mkdir(parents=True, exist_ok=True)
+    path = revisions_dir / f"{revision_id}.json"
+    _write_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
+    return path
+
+
+def render_caption_revision(
+    work_dir: Path, revision_id: str, ffmpeg: Path | None = None
+) -> dict[str, Any]:
+    """Render an approved-but-not-yet-rendered caption revision into a real deliverable set.
+
+    Same shape as `render_boundary_revision`: rebuilds captions from `report.json`'s persisted
+    `selected_sentences` (unchanged span, new style), reuses the original clip's boundary and
+    editorial blocks (a caption revision changes neither), supplies a fresh QC record for the
+    same reason — the approval `commit_caption_revision` already required *is* the human review
+    for this change — and renders through the same `render_clip` every other output uses.
+
+    Raises:
+        FileNotFoundError: no such revision record, or no `report.json`.
+        ValueError: the revision is not a caption revision, its status is not
+            `"approved_pending_render"`, the run has no clip or output block, or the run
+            predates `selected_sentences` (D-A7).
+        RenderError: rendering failed. The revision record is updated to `"render_failed"`
+            before this propagates.
+        IngestError: the source could not be probed for its frame dimensions.
+    """
+    revision_path = work_dir / "revisions" / f"{revision_id}.json"
+    if not revision_path.is_file():
+        raise FileNotFoundError(f"no revision record at {revision_path}")
+    revision: dict[str, Any] = json.loads(revision_path.read_text(encoding="utf-8"))
+    if revision.get("kind") != "caption":
+        raise ValueError(
+            f"revision {revision_id!r} has kind {revision.get('kind')!r}, not a caption "
+            f"revision — render_boundary_revision handles boundary revisions."
+        )
+    if revision.get("status") != "approved_pending_render":
+        raise ValueError(
+            f"revision {revision_id!r} has status {revision.get('status')!r}, not "
+            f"'approved_pending_render' — only an approved, not-yet-rendered revision can be "
+            f"rendered."
+        )
+
+    report_path = work_dir / "report.json"
+    if not report_path.is_file():
+        raise FileNotFoundError(f"no report.json under {work_dir}")
+    report: dict[str, Any] = json.loads(report_path.read_text(encoding="utf-8"))
+
+    source = Path(report["source"])
+    clip_data = report.get("clip")
+    if not clip_data:
+        raise ValueError(f"the run at {work_dir} has no clip to revise")
+    original_clip = Clip.from_dict(clip_data)
+    if original_clip.output is None:
+        raise ValueError(f"the run at {work_dir} has no output block to revise a caption on")
+
+    selected_data = report.get("selected_sentences") or []
+    if not selected_data:
+        raise ValueError(
+            f"the run at {work_dir} has no persisted selected sentences, so its captions "
+            f"cannot be rebuilt. This run predates D-A7 — re-run the pipeline over the same "
+            f"source to produce a report that carries them."
+        )
+    selected = tuple(_sentence_from_dict(s) for s in selected_data)
+
+    style = CaptionStyle(revision["proposed_caption_style"])
+    revised_clip = replace(
+        original_clip,
+        clip_id=f"{original_clip.clip_id}-{revision_id}",
+        output=replace(original_clip.output, caption_style=style.value),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+    )
+
+    revisions_dir = work_dir / "revisions"
+    ass_path = revisions_dir / f"{revision_id}.ass"
+    render_path = revisions_dir / f"{revision_id}.mp4"
+    srt_path = revisions_dir / f"{revision_id}.srt"
+    edl_path = revisions_dir / f"{revision_id}.edl"
+    clip_duration_ms = revised_clip.out_ms - revised_clip.in_ms
+
+    _write_atomic(
+        ass_path,
+        build_ass(
+            selected, style=style, clip_in_ms=revised_clip.in_ms, clip_duration_ms=clip_duration_ms
+        ),
+    )
+    width, height = _proxy_dimensions(source, ffmpeg)
+    try:
+        render_clip(
+            revised_clip,
+            source,
+            ass_path,
+            FONTS_DIR,
+            render_path,
+            source_width=width,
+            source_height=height,
+            ffmpeg=ffmpeg,
+        )
+    except (IngestError, RenderError, ValueError) as exc:
+        ass_path.unlink(missing_ok=True)
+        render_path.unlink(missing_ok=True)
+        revision["status"] = "render_failed"
+        revision["render_error"] = str(exc)
+        _write_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
+        raise
+
+    revision["ass_path"] = str(ass_path)
+    revision["render_path"] = str(render_path)
+
+    try:
+        srt = build_srt(selected, clip_in_ms=revised_clip.in_ms, clip_duration_ms=clip_duration_ms)
+        edl = build_edl(
+            clip_in_ms=revised_clip.in_ms,
+            clip_out_ms=revised_clip.out_ms,
+            fps=frame_rate(source, ffmpeg),
+            title=f"{report['media_id']} {revised_clip.clip_id}",
+        )
+        _write_atomic(srt_path, srt)
+        _write_atomic(edl_path, edl)
+        revision["srt_path"] = str(srt_path)
+        revision["edl_path"] = str(edl_path)
+        revision["status"] = "rendered"
+    except (DeliveryError, UndeliverableOrder) as exc:
+        revision["status"] = "rendered_without_delivery_sidecars"
+        revision["delivery_error"] = str(exc)
+
+    _write_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
+    return revision
+
+
+def _main_boundary(args: argparse.Namespace) -> int:
     try:
         proposal = propose_boundary_revision(args.work_dir, args.final_in_ms, args.final_out_ms)
     except (FileNotFoundError, ValueError) as exc:
@@ -498,6 +775,95 @@ def main(argv: list[str] | None = None) -> int:
     if record["status"] == "rendered_without_delivery_sidecars":
         print(f"✗ delivery sidecars: {record.get('delivery_error')}", file=sys.stderr)
     return 0
+
+
+def _main_caption(args: argparse.Namespace) -> int:
+    try:
+        proposal = propose_caption_revision(args.work_dir, args.caption_style)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"{proposal.media_id}: caption style {proposal.original_caption_style!r} -> "
+        f"{proposal.proposed_caption_style!r}"
+    )
+    if not proposal.valid:
+        print(f"✗ invalid — {proposal.violation}", file=sys.stderr)
+        return 1
+
+    try:
+        path = commit_caption_revision(args.work_dir, proposal, args.revision_id, args.approved_by)
+    except RevisionRejected as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 1
+    print(f"committed: {path}")
+
+    if args.no_render:
+        return 0
+
+    try:
+        record = render_caption_revision(args.work_dir, args.revision_id)
+    except (FileNotFoundError, ValueError, RenderError, IngestError) as exc:
+        print(f"✗ render failed — {exc}", file=sys.stderr)
+        return 1
+
+    print(f"{record['status']}: {record.get('render_path')}")
+    if record["status"] == "rendered_without_delivery_sidecars":
+        print(f"✗ delivery sidecars: {record.get('delivery_error')}", file=sys.stderr)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`hawedit-revise <work_dir> --revision-id ID --approved-by NAME`, plus exactly one of
+    `--final-in-ms N --final-out-ms N` (a boundary revision) or `--caption-style STYLE` (a
+    caption revision — `line` or `word_highlight`).
+
+    Proposes, prints the validation result, and — only if valid — asks on the real terminal
+    before committing. No flag skips that prompt: this entry point's whole purpose is being the
+    human gate, so unlike every other flag in this module's functions, there is deliberately
+    nothing here to automate it away. A caller that wants a scripted approval channel calls
+    `commit_boundary_revision`/`commit_caption_revision` directly with its own `confirm`.
+
+    Renders immediately after a successful commit unless `--no-render` is given — approval and
+    render are still two separate function calls underneath, so a render failure is reported as
+    its own outcome rather than unwinding the approval that already happened. `--no-render`
+    leaves the revision at `"approved_pending_render"` for a later render call — useful on a
+    machine without ffmpeg, or to batch approvals separately from encoding.
+
+    Exit codes: 0 committed (and rendered, unless `--no-render`); 1 declined, invalid, or
+    render failed; 2 bad arguments or no report to revise.
+    """
+    use_utf8_streams()
+    parser = argparse.ArgumentParser(
+        prog=program_name("hawedit.proposals"),
+        description="Propose a boundary or caption revision for a completed HawEdit run, and "
+        "commit it only on explicit approval.",
+    )
+    parser.add_argument("work_dir", type=Path)
+    parser.add_argument("--final-in-ms", type=int)
+    parser.add_argument("--final-out-ms", type=int)
+    parser.add_argument("--caption-style", choices=[member.value for member in CaptionStyle])
+    parser.add_argument("--revision-id", required=True)
+    parser.add_argument("--approved-by", required=True)
+    parser.add_argument(
+        "--no-render",
+        action="store_true",
+        help="commit the approval without rendering; leaves status=approved_pending_render",
+    )
+    args = parser.parse_args(argv)
+
+    boundary_given = args.final_in_ms is not None or args.final_out_ms is not None
+    if boundary_given and args.caption_style is not None:
+        parser.error("--final-in-ms/--final-out-ms and --caption-style are mutually exclusive")
+    if boundary_given and (args.final_in_ms is None or args.final_out_ms is None):
+        parser.error("--final-in-ms and --final-out-ms must both be given")
+    if not boundary_given and args.caption_style is None:
+        parser.error("give either --final-in-ms/--final-out-ms or --caption-style")
+
+    if args.caption_style is not None:
+        return _main_caption(args)
+    return _main_boundary(args)
 
 
 if __name__ == "__main__":

@@ -64,7 +64,8 @@ def _dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
 
 
 def _poisoned_report(work_dir: Path) -> None:
-    """A `report.json` whose every free-text field carries an injection payload."""
+    """A `report.json` whose every free-text field — including a clip's caption-relevant ones,
+    for `propose_caption_revision_tool` (D-A12) — carries an injection payload."""
     report: dict[str, object] = {
         "media_id": INJECTIONS[0],
         "source": INJECTIONS[3],
@@ -108,7 +109,48 @@ def _poisoned_report(work_dir: Path) -> None:
                 "reject_reason": INJECTIONS[1],
             }
         ],
-        "clip": None,
+        "clip": {
+            "clip_id": "poisoned-0",
+            "media_id": INJECTIONS[0],
+            "in_ms": 0,
+            "out_ms": 1000,
+            "discovery_path": "verbal",
+            "boundary": {
+                "anchor_in_ms": 100,
+                "anchor_out_ms": 900,
+                "final_in_ms": 0,
+                "final_out_ms": 1000,
+                "in_extended_by": INJECTIONS[1],
+                "out_extended_by": INJECTIONS[2],
+                "sentence_complete": True,
+                "confidence": None,
+            },
+            "transcript": {
+                "raw_ckb": INJECTIONS[3],
+                "norm_ckb": INJECTIONS[3],
+                "asr": {"canonical": "omniASR_LLM_7B_v2", "aligner": "ctc_viterbi"},
+            },
+            "speaker": None,
+            "editorial": None,
+            "output": {
+                "title_ckb": INJECTIONS[4],
+                "description_ckb": INJECTIONS[5],
+                "crop_target": "9:16",
+                # A free-text field, poisoned like every other — `propose_caption_revision`
+                # only ever reads this back as `original_caption_style` data, never parses it
+                # as a real CaptionStyle, so an off-enum string here must not raise.
+                "caption_style": INJECTIONS[6],
+                "durations": [30],
+                "hashtags_ckb": [],
+            },
+            "qc": None,
+        },
+        "selected_sentences": [
+            {
+                "words": [{"w": INJECTIONS[0], "start_ms": 0, "end_ms": 200, "conf": 0.9}],
+                "complete": True,
+            }
+        ],
         "render": None,
         "delivery": None,
     }
@@ -164,7 +206,10 @@ def test_injected_content_does_not_give_the_editor_agent_a_commit_tool(tmp_path:
     )
     agent = build_editor_agent(TestModel(), Deps(work_dir=tmp_path))
     agent.run_sync("revise this", deps=Deps(work_dir=tmp_path))
-    assert _tool_names(agent) == {"propose_boundary_revision_tool"}
+    assert _tool_names(agent) == {
+        "propose_boundary_revision_tool",
+        "propose_caption_revision_tool",
+    }
 
 
 def test_a_poisoned_run_writes_nothing_anywhere_under_its_work_dir(tmp_path: Path) -> None:
@@ -207,12 +252,17 @@ def test_injected_paths_cannot_move_the_agent_outside_its_work_dir(tmp_path: Pat
         )
 
 
-def test_the_editor_agents_only_parameters_are_integers(tmp_path: Path) -> None:
-    """The editor agent legitimately *does* take parameters — a proposal needs a span — so the
-    guarantee there is narrower and worth stating separately: every parameter is an integer, so
-    there is no string field an injected instruction could use to smuggle a path, a command, or
-    a second instruction through the tool boundary. Pydantic AI validates against this schema
-    before the function is called, so a non-integer never reaches `proposals.py` at all.
+def test_the_editor_agents_parameters_are_integers_or_closed_enums(tmp_path: Path) -> None:
+    """The editor agent legitimately *does* take parameters — a proposal needs a span or a
+    style — so the guarantee there is narrower and worth stating separately: every parameter is
+    either an integer or a closed enum, never an open-ended string an injected instruction could
+    use to smuggle a path, a command, or a second instruction through the tool boundary.
+
+    `caption_style` (D-A12) is typed `Literal["line", "word_highlight"]`, which pydantic_ai
+    renders as `{"type": "string", "enum": [...]}` — still JSON type "string", but closed: the
+    schema itself, not this module's code, rejects anything outside the two real values before
+    `propose_caption_revision` ever runs. Checked against the real schema below rather than
+    assumed, the same discipline that caught this file's own control case originally.
 
     This test is also the control for the one above: it proves the schema assertion would fire
     if a read-only tool ever grew a parameter, rather than passing because the attribute path
@@ -222,11 +272,17 @@ def test_the_editor_agents_only_parameters_are_integers(tmp_path: Path) -> None:
 
     _poisoned_report(tmp_path)
     agent = build_editor_agent(TestModel(), Deps(work_dir=tmp_path))
-    properties: dict[str, dict[str, str]] = {}
+    properties: dict[str, dict[str, object]] = {}
     for tool in agent._function_toolset.tools.values():
         properties.update(tool.function_schema.json_schema.get("properties", {}))
     assert properties, "the control case must actually have parameters, or it proves nothing"
-    assert {spec["type"] for spec in properties.values()} == {"integer"}, properties
+    for name, spec in properties.items():
+        if spec["type"] == "integer":
+            continue
+        assert spec["type"] == "string" and "enum" in spec, (
+            f"{name} is a free-form (non-enum) string parameter: {spec} — an injected "
+            f"instruction could smuggle arbitrary content through it"
+        )
 
 
 def test_the_run_outside_the_work_dir_is_untouched(tmp_path: Path) -> None:

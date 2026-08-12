@@ -16,12 +16,19 @@ from pathlib import Path
 
 import pytest
 
+from hawedit.boundary import Boundary
+from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Output
 from hawedit.proposals import (
     BoundaryRevisionProposal,
+    CaptionRevisionProposal,
     RevisionRejected,
     commit_boundary_revision,
+    commit_caption_revision,
     propose_boundary_revision,
+    propose_caption_revision,
 )
+from hawedit.sentences import Sentence
+from hawedit.transcripts import AsrProvenance, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,7 +44,12 @@ _DEFAULT_BOUNDARY: dict[str, object] = {
 }
 
 
-def _write_report(work_dir: Path, boundary: object = _DEFAULT_BOUNDARY) -> None:
+def _write_report(
+    work_dir: Path,
+    boundary: object = _DEFAULT_BOUNDARY,
+    clip: object = None,
+    selected_sentences: object = (),
+) -> None:
     report: dict[str, object] = {
         "media_id": "fixture",
         "source": "x.mp4",
@@ -47,12 +59,71 @@ def _write_report(work_dir: Path, boundary: object = _DEFAULT_BOUNDARY) -> None:
         "boundary": boundary,
         "candidates": [],
         "rejected": [],
-        "clip": None,
+        "clip": clip,
         "render": None,
         "delivery": None,
+        "selected_sentences": selected_sentences,
     }
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+
+_WORDS = (
+    Word(w="ڕۆژنامەوانی", start_ms=0, end_ms=800, conf=0.95),
+    Word(w="کوردی.", start_ms=800, end_ms=1_700, conf=0.94),
+)
+
+
+def _clip_dict(caption_style: str = "line") -> dict[str, object]:
+    """A minimal but real `Clip.to_dict()`, valid enough for `propose_caption_revision` to read
+    `output.caption_style` off — not a hand-typed shape that could drift from the real one."""
+    boundary = Boundary(
+        anchor_in_ms=100,
+        anchor_out_ms=4100,
+        final_in_ms=0,
+        final_out_ms=4300,
+        in_extended_by="vad_onset",
+        out_extended_by="tail",
+        sentence_complete=True,
+        confidence=None,
+    )
+    clip = Clip(
+        clip_id="fixture-0",
+        media_id="fixture",
+        in_ms=boundary.final_in_ms,
+        out_ms=boundary.final_out_ms,
+        discovery_path=DiscoveryPath.VERBAL,
+        boundary=boundary,
+        transcript=ClipTranscript(
+            raw_ckb="ڕۆژنامەوانی کوردی.",
+            norm_ckb="ڕۆژنامەوانی کوردی.",
+            en_aux=None,
+            words=_WORDS,
+            asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        ),
+        output=Output(
+            title_ckb="t",
+            description_ckb="d",
+            crop_target="9:16",
+            caption_style=caption_style,
+            durations=(30,),
+        ),
+    )
+    return clip.to_dict()
+
+
+def _selected_sentences_json() -> list[dict[str, object]]:
+    import dataclasses
+
+    return [dataclasses.asdict(Sentence(words=_WORDS, complete=True))]
+
+
+def _write_caption_report(work_dir: Path, caption_style: str = "line") -> None:
+    _write_report(
+        work_dir,
+        clip=_clip_dict(caption_style),
+        selected_sentences=_selected_sentences_json(),
+    )
 
 
 # --- propose: read-only, never touches disk ---------------------------------------------------
@@ -205,6 +276,144 @@ def test_two_commits_under_the_same_id_overwrite_the_prior_record(tmp_path: Path
     assert record["proposed_final_out_ms"] == 4400
 
 
+def test_commit_writes_kind_boundary(tmp_path: Path) -> None:
+    """`render_caption_revision` refuses a record whose `kind` is not `"caption"` — this pins
+    what a real boundary commit actually writes, so that refusal is checked against reality."""
+    proposal = _approved_proposal(tmp_path)
+    path = commit_boundary_revision(
+        tmp_path, proposal, revision_id="r1", approved_by="hawa", confirm=lambda _: True
+    )
+    assert json.loads(path.read_text(encoding="utf-8"))["kind"] == "boundary"
+
+
+# --- propose_caption_revision / commit_caption_revision (D-A12) --------------------------------
+
+
+def test_caption_propose_reads_the_runs_own_style_not_an_invented_one(tmp_path: Path) -> None:
+    _write_caption_report(tmp_path, caption_style="line")
+    proposal = propose_caption_revision(tmp_path, "word_highlight")
+    assert isinstance(proposal, CaptionRevisionProposal)
+    assert proposal.original_caption_style == "line"
+    assert proposal.proposed_caption_style == "word_highlight"
+    assert not (tmp_path / "revisions").exists(), "propose must never create a revisions/ dir"
+
+
+def test_caption_propose_accepts_a_real_style_change(tmp_path: Path) -> None:
+    _write_caption_report(tmp_path, caption_style="line")
+    proposal = propose_caption_revision(tmp_path, "word_highlight")
+    assert proposal.valid is True
+    assert proposal.violation is None
+
+
+def test_caption_propose_rejects_an_unrecognized_style(tmp_path: Path) -> None:
+    _write_caption_report(tmp_path, caption_style="line")
+    proposal = propose_caption_revision(tmp_path, "subtitles_but_huge")
+    assert proposal.valid is False
+    assert "not a recognized caption style" in (proposal.violation or "")
+    assert proposal.proposed_caption_style == "subtitles_but_huge"
+
+
+def test_caption_propose_raises_with_no_report(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="report.json"):
+        propose_caption_revision(tmp_path, "line")
+
+
+def test_caption_propose_raises_with_no_clip(tmp_path: Path) -> None:
+    _write_report(tmp_path)  # clip=None by default
+    with pytest.raises(ValueError, match="no clip"):
+        propose_caption_revision(tmp_path, "line")
+
+
+def test_caption_propose_raises_with_no_selected_sentences(tmp_path: Path) -> None:
+    _write_report(tmp_path, clip=_clip_dict(), selected_sentences=[])
+    with pytest.raises(ValueError, match="predates D-A7"):
+        propose_caption_revision(tmp_path, "line")
+
+
+def _approved_caption_proposal(work_dir: Path) -> CaptionRevisionProposal:
+    _write_caption_report(work_dir, caption_style="line")
+    return propose_caption_revision(work_dir, "word_highlight")
+
+
+def test_caption_commit_refuses_an_invalid_proposal_without_asking_for_approval(
+    tmp_path: Path,
+) -> None:
+    _write_caption_report(tmp_path, caption_style="line")
+    proposal = propose_caption_revision(tmp_path, "not_a_real_style")
+    assert proposal.valid is False
+
+    asked: list[str] = []
+
+    def confirm(prompt: str) -> bool:
+        asked.append(prompt)
+        return True
+
+    with pytest.raises(RevisionRejected, match="Kurdish invariant #4"):
+        commit_caption_revision(
+            tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=confirm
+        )
+    assert asked == [], "an invalid proposal must never reach the approval prompt"
+    assert not (tmp_path / "revisions").exists()
+
+
+def test_caption_commit_refuses_an_unattributed_approval(tmp_path: Path) -> None:
+    proposal = _approved_caption_proposal(tmp_path)
+    with pytest.raises(RevisionRejected, match="unattributed"):
+        commit_caption_revision(
+            tmp_path, proposal, revision_id="c1", approved_by=" ", confirm=lambda _: True
+        )
+    assert not (tmp_path / "revisions").exists()
+
+
+def test_caption_commit_refuses_a_declined_approval_and_writes_nothing(tmp_path: Path) -> None:
+    proposal = _approved_caption_proposal(tmp_path)
+    with pytest.raises(RevisionRejected, match="declined"):
+        commit_caption_revision(
+            tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=lambda _: False
+        )
+    assert not (tmp_path / "revisions").exists()
+
+
+def test_caption_commit_writes_the_approved_record_only_after_a_yes(tmp_path: Path) -> None:
+    proposal = _approved_caption_proposal(tmp_path)
+    path = commit_caption_revision(
+        tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=lambda _: True
+    )
+    assert path == tmp_path / "revisions" / "c1.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["kind"] == "caption"
+    assert record["approved_by"] == "hawa"
+    assert record["status"] == "approved_pending_render"
+    assert record["proposed_caption_style"] == "word_highlight"
+    assert record["original_caption_style"] == "line"
+
+
+def test_render_boundary_revision_refuses_a_caption_revision_record(tmp_path: Path) -> None:
+    """The `kind` guard added in D-A12, checked from the boundary side."""
+    from hawedit.proposals import render_boundary_revision
+
+    proposal = _approved_caption_proposal(tmp_path)
+    commit_caption_revision(
+        tmp_path, proposal, revision_id="c1", approved_by="hawa", confirm=lambda _: True
+    )
+    with pytest.raises(ValueError, match="not a boundary revision"):
+        render_boundary_revision(tmp_path, "c1")
+
+
+def test_render_caption_revision_refuses_a_boundary_revision_record(tmp_path: Path) -> None:
+    """The same guard, checked from the caption side."""
+    from hawedit.proposals import render_caption_revision
+
+    _write_caption_report(tmp_path, caption_style="line")
+    boundary_proposal = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=4300)
+    assert boundary_proposal.valid, boundary_proposal.violation
+    commit_boundary_revision(
+        tmp_path, boundary_proposal, revision_id="b1", approved_by="hawa", confirm=lambda _: True
+    )
+    with pytest.raises(ValueError, match="not a caption revision"):
+        render_caption_revision(tmp_path, "b1")
+
+
 # --- the CLI, run as a real subprocess so --help never depends on the agentic extra -----------
 
 
@@ -316,4 +525,105 @@ def test_cli_reports_an_invalid_proposal_and_never_prompts(tmp_path: Path) -> No
     )
     assert result.returncode == 1
     assert "invalid" in result.stderr
+    assert not (tmp_path / "revisions").exists()
+
+
+# --- CLI dispatch between boundary and caption revisions (D-A12) -------------------------------
+
+
+def test_cli_requires_one_revision_kind() -> None:
+    result = _run_cli(["work", "--revision-id", "r1", "--approved-by", "hawa"])
+    assert result.returncode == 2
+    assert "give either" in result.stderr
+
+
+def test_cli_refuses_both_revision_kinds_at_once() -> None:
+    result = _run_cli(
+        [
+            "work",
+            "--final-in-ms",
+            "0",
+            "--final-out-ms",
+            "100",
+            "--caption-style",
+            "line",
+            "--revision-id",
+            "r1",
+            "--approved-by",
+            "hawa",
+        ]
+    )
+    assert result.returncode == 2
+    assert "mutually exclusive" in result.stderr
+
+
+def test_cli_refuses_a_lone_final_in_ms() -> None:
+    result = _run_cli(
+        ["work", "--final-in-ms", "0", "--revision-id", "r1", "--approved-by", "hawa"]
+    )
+    assert result.returncode == 2
+    assert "must both be given" in result.stderr
+
+
+def test_cli_refuses_an_unrecognized_caption_style() -> None:
+    result = _run_cli(
+        [
+            "work",
+            "--caption-style",
+            "subtitles_but_huge",
+            "--revision-id",
+            "c1",
+            "--approved-by",
+            "hawa",
+        ]
+    )
+    assert result.returncode == 2
+    assert "invalid choice" in result.stderr
+
+
+def test_cli_commits_a_caption_revision_with_no_render(tmp_path: Path) -> None:
+    """`--no-render` isolates the approval step, matching the boundary CLI test — the render
+    path itself is `test_render_caption_revision.py`'s job, against a real fixture."""
+    _write_caption_report(tmp_path, caption_style="line")
+    result = _run_cli(
+        [
+            str(tmp_path),
+            "--caption-style",
+            "word_highlight",
+            "--revision-id",
+            "c1",
+            "--approved-by",
+            "hawa",
+            "--no-render",
+        ],
+        input_text="y\n",
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads((tmp_path / "revisions" / "c1.json").read_text(encoding="utf-8"))
+    assert record["kind"] == "caption"
+    assert record["status"] == "approved_pending_render"
+
+
+def test_cli_declines_a_caption_revision_on_a_blank_answer_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Matches `test_cli_declines_on_a_blank_answer_and_writes_nothing`'s coverage of the
+    boundary CLI. A well-formed choice `argparse` accepts but `CaptionStyle` still rejects is
+    not reachable through this CLI — the `choices=` list is generated from the same enum
+    `propose_caption_revision` parses — so the invalid-*proposal* path is exercised through the
+    function directly, in `test_caption_propose_rejects_an_unrecognized_style` above."""
+    _write_caption_report(tmp_path, caption_style="line")
+    result = _run_cli(
+        [
+            str(tmp_path),
+            "--caption-style",
+            "word_highlight",
+            "--revision-id",
+            "c1",
+            "--approved-by",
+            "hawa",
+        ],
+        input_text="\n",
+    )
+    assert result.returncode == 1, result.stderr
     assert not (tmp_path / "revisions").exists()

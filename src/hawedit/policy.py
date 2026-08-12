@@ -120,6 +120,16 @@ TOOL_POLICIES: Final[tuple[ToolPolicy, ...]] = (
             "is a value, and committing it is a separate function no agent may call."
         ),
     ),
+    ToolPolicy(
+        name="propose_caption_revision_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Validates a proposed caption style against Kurdish invariant #4 and returns the "
+            "verdict. Writes nothing, same shape as propose_boundary_revision_tool: committing "
+            "is a separate function (commit_caption_revision) no agent may call."
+        ),
+    ),
 )
 
 # The architecture record's "never expose to the production creative agent" list. Asserted

@@ -10517,3 +10517,69 @@ was scoped away from.
 
 VERIFY OK — hawedit gate green: 1730 collected, 1730 passed, 0 skipped (floor ratcheted
 1728 -> 1730).
+
+## D-A12
+
+**The second proposal type the architecture record names beside boundaries:
+`propose_caption_revision` (line 193, directly under `propose_boundary_revision`).** Same
+propose/commit/render triad as D-A6/D-A7, deliberately not a parallel implementation —
+`commit_caption_revision`/`render_caption_revision` reuse `_write_atomic`,
+`_sentence_from_dict`, `_interactive_confirm` and `RevisionRejected` rather than repeating them,
+and the CLI (`hawedit-revise`) gained one flag (`--caption-style`) rather than a second entry
+point, dispatching internally to whichever triad the caller asked for.
+
+**What "revising a caption" means here, and does not mean.** Not the caption *text* —
+`captions.py`'s own docstring is explicit that caption text is "the raw surface forms... a
+viewer must see what was said," so a tool letting an agent propose different words would
+violate the same invariant a boundary revision cannot touch anchors for. What is genuinely
+revisable is `Output.caption_style` — `CaptionStyle.LINE` vs `WORD_HIGHLIGHT`, both already
+real and implemented in `build_ass` (`WORD_HIGHLIGHT` emits actual `\kf` karaoke tags from word
+timing), not aspirational.
+
+**The deterministic validator is reused, not invented — and `BLUEPRINT.md` is why.** The
+architecture record's own quality-gate list includes "captions fit validated safe regions"
+(line 225), which reads as a spatial margin check. `BLUEPRINT.md` — the frozen spec whose
+divergence needs an ADR — has no §-numbered safe-region requirement anywhere; inventing a
+pixel-margin validator here would be product judgment this branch has no spec backing for, the
+same reasoning that kept Phase 5 to a trigger check rather than a distributed stack. What is
+real and already gates every render is Kurdish invariant #4's `assert_captions_within_clip`
+(`captions.py`) — reused exactly the way `propose_boundary_revision` reuses
+`assert_boundary_invariant`, not reimplemented, and run against the candidate style's own
+rebuilt caption file rather than the string alone.
+
+**`revisions/<id>.json` records now carry `"kind"`.** Both render functions refuse a record
+that is not theirs (`render_boundary_revision` requires `kind` absent-or-`"boundary"`,
+`render_caption_revision` requires `"caption"`), a clear `ValueError` instead of a confusing
+`KeyError` on whichever field the wrong renderer expected next. `None` is accepted as boundary
+because every record written before this field existed is one — checked directly rather than
+assumed, and covered by a test in each direction.
+
+**A real, structural question this raised, and the answer that survived it: `caption_style` is
+typed `Literal["line", "word_highlight"]` on the editor agent's tool, not `str`.**
+`tests/test_prompt_injection.py`'s own control test pins every parameter on that agent to a
+schema with no free-form string field, specifically so an injected instruction cannot smuggle
+content through the tool boundary. A plain `str` parameter would have opened exactly that field
+— caught immediately, before this shipped, by that control test failing rather than by review.
+Pydantic AI renders a `Literal` as `{"type": "string", "enum": [...]}` — checked against the
+real schema before relying on it, the same discipline that produced the original assertion —
+so the JSON type is still "string" but the set of accepted values is closed; anything outside
+the two real `CaptionStyle` values never reaches this module's code. The control test is
+widened accordingly: every parameter must be either an integer or a closed enum, never an
+open-ended string, which is the actual property worth having and is strictly weaker than
+neither test could hold with an unconstrained field.
+
+**Mutation-audited**: changing the parameter's type annotation back to `str` fails the widened
+control test by name (`caption_style is a free-form (non-enum) string parameter`), confirming
+the assertion is load-bearing rather than decorative.
+
+**Test coverage mirrors the boundary triad's own split.** Hand-built-report tests in
+`test_proposals.py` cover propose/commit refusals without ffmpeg (a real `Clip`/`Output`
+constructed via the actual dataclasses and `.to_dict()`'d, not hand-typed JSON that could drift
+from the real shape). `tests/test_render_caption_revision.py` drives a genuine `run_pipeline`
+call against the real fixture, approves a style change, renders it, and reads the resulting
+`.ass` file back to confirm `\kf` karaoke tags are present for `word_highlight` and absent for
+`line` — a measured difference, not merely "a file exists" — while probing that the span itself
+is unchanged (a caption revision must not move the cut points).
+
+VERIFY OK — hawedit gate green: 1760 collected, 1760 passed, 0 skipped (floor ratcheted
+1730 -> 1760).
