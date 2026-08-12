@@ -10124,3 +10124,69 @@ overclaiming "Phase 1 complete" one property early) already cost time to catch a
 Left as a parameter; the router is real future work, not this decision's to fake.
 
 VERIFY OK — hawedit gate green (see PROGRESS.md M9.4 for the exact count).
+
+## D-A6
+
+**Phase 3, scoped down twice before any code was written.** The architecture record's Phase 3
+covers boundaries, captions and render variants, and a `commit_approved_edit` tool the agent
+itself could call after some `request_human_approval` step. Two scope decisions were made
+before implementation, both because the alternative would have meant inventing a design this
+project has no evidence for yet, not because the smaller scope was easier to code:
+
+1. **Boundary revisions only**, offered to the user as a named choice rather than picked
+   unilaterally — the same reasoning D-A5 used for Phase 2's read-only span applies here more
+   sharply: boundaries have a real deterministic validator already in this codebase
+   (`boundary.py`'s Kurdish invariant #2). Captions and render variants would each need this
+   branch to invent a validator that does not exist yet, and a hand-written "looks about right"
+   validator for a mutating tool is exactly the kind of unverified claim this whole session has
+   tried not to make.
+2. **No `commit_*_tool` on any agent.** The architecture record's own recommended tool list
+   includes `commit_approved_edit` as something the agent calls. That shape requires a real,
+   out-of-band way to know a human — not the model, narrating on the model's own behalf —
+   actually approved something, and this branch has no such channel yet (no UI, no signed
+   approval token, nothing but a terminal). Building `commit_approved_edit` as an agent tool
+   today would mean either trusting the model's own claim that a human approved (worthless as a
+   security boundary) or inventing an approval-proof mechanism with no real requirements behind
+   it. So the boundary is drawn at the process level instead: `editor_agent.py` registers
+   `propose_boundary_revision` and nothing else; `commit_boundary_revision` is a plain function a
+   human calls directly, and `test_editor_agent_module_never_calls_commit` asserts the name
+   `commit_boundary_revision` does not appear anywhere in `editor_agent.py`'s AST — not
+   reachable, not merely unregistered.
+
+**The validator is reused, not re-derived.** `propose_boundary_revision` constructs a candidate
+`Boundary` from the run's own recorded anchors and calls `boundary.py`'s real
+`assert_boundary_invariant` — the same function `pipeline.py` calls at the render gate. A
+second implementation of Kurdish invariant #2 living in `proposals.py` could drift from the one
+that actually gates a render, and a proposal this module calls "valid" has to mean what the
+render gate would also accept; only importing the real function guarantees that.
+
+**Three refusals, each proven not to reach the next step.** `commit_boundary_revision` refuses
+an invalid proposal, an unattributed approval, and a declined one — and each test checks not
+just that the call raised, but that the *side effect that should not have happened, didn't*:
+an invalid proposal must never reach the confirm prompt at all (`asked == []`), and none of the
+three refusal paths may create the `revisions/` directory. A revision tool that enforces its
+gate on the happy path but leaves a partial write behind on a declined approval would be worse
+than no gate — exactly the class of defect `_write_atomic`'s staging-file-and-rename already
+guards render/delivery artifacts against, reused here rather than re-derived for the same
+reason.
+
+**The `--help` lesson from D-A3 was applied proactively this time, not discovered by testing.**
+`proposals.py`'s module docstring states up front why `build_editor_agent` lives in a separate
+file (`editor_agent.py`) that `proposals.py` never imports, and this was verified before the
+wheel-build check: uninstalling every package in the `agentic` extra's dependency tree from the
+working venv and confirming `python -m hawedit.proposals --help` still ran cleanly, then
+reinstalling and re-running the real wheel-install measurement (7 declared, 7 present, all 7
+exit 0 on `--help`, from a venv with no `agentic` extra) to hold the same bar D-A3/D-A5 already
+established rather than trust the cheaper check alone.
+
+**Deliberately does not re-render, and this is the biggest named gap in the branch so far.** A
+committed revision is `work_dir/revisions/{id}.json` — an attributed, validated record of an
+approved change — not a new MP4. Actually re-rendering with a shifted boundary needs the
+selected sentences' word-level timing to rebuild ASS captions correctly (`captions.py`'s
+`build_ass` takes `Sequence[Sentence]`; `report.json` persists a sentence *count*, not the
+sentences), which no run currently persists per-`work_dir`. Extending `durable_workflow.py` to
+persist that too is the natural next increment — deferred rather than built halfway, since a
+revision tool that silently produced a caption-broken re-render on a legal boundary change would
+be a worse outcome than one that stops at "approved, pending render" and says so.
+
+VERIFY OK — hawedit gate green (see PROGRESS.md M9.5 for the exact count).
