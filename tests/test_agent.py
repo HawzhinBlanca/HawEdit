@@ -24,6 +24,7 @@ pytest.importorskip("pydantic_ai")
 dbos = pytest.importorskip("dbos")
 
 from hawedit.agent import (  # noqa: E402
+    TOOL_NAMES,
     CandidateComparison,
     Deps,
     RunExplanation,
@@ -33,6 +34,7 @@ from hawedit.agent import (  # noqa: E402
     compare_candidates,
     explain_run_state,
     inspect_run,
+    run_timeline,
 )
 from hawedit.captions import find_ffmpeg  # noqa: E402
 from hawedit.durable_workflow import configure_dbos, run_durable  # noqa: E402
@@ -110,7 +112,7 @@ def test_agent_module_never_writes_a_file() -> None:
     assert not offenders, f"agent.py contains a write-shaped call: {offenders}"
 
 
-def test_the_built_agent_has_exactly_the_three_read_only_tools(tmp_path: Path) -> None:
+def test_the_built_agent_has_exactly_the_read_only_tools(tmp_path: Path) -> None:
     """`_function_toolset` is a private attribute — accepted here only because
     `pyproject.toml` pins `pydantic-ai-slim==2.28.0` exactly, so its shape cannot change under
     this test without a version bump this repo controls. A version bump that breaks the
@@ -122,7 +124,29 @@ def test_the_built_agent_has_exactly_the_three_read_only_tools(tmp_path: Path) -
     _write_report(tmp_path)
     agent = build_agent(TestModel(), Deps(work_dir=tmp_path))
     tool_names = {tool.name for tool in agent._function_toolset.tools.values()}
-    assert tool_names == {"inspect_run_tool", "explain_run_state_tool", "compare_candidates_tool"}
+    assert tool_names == {
+        "inspect_run",
+        "explain_run_state",
+        "compare_candidates",
+        "run_timeline",
+    }
+
+
+def test_the_manifest_names_exactly_the_tools_the_agent_registers(tmp_path: Path) -> None:
+    """The drift guard that makes the manifest worth showing a model at all.
+
+    `build_agent` puts `app_manifest().as_prompt()` in the system prompt, and that paragraph
+    tells the model which tools it can call. If `TOOL_NAMES` and the real registered toolset
+    ever diverge, the model plans against tools that do not exist (or never learns about ones
+    that do) — a failure that would show up as confusing model behaviour, not as an error.
+    """
+    from pydantic_ai.models.test import TestModel
+
+    _write_report(tmp_path)
+    agent = build_agent(TestModel(), Deps(work_dir=tmp_path))
+    registered = {tool.name for tool in agent._function_toolset.tools.values()}
+    assert set(app_manifest().tool_names) == registered
+    assert set(TOOL_NAMES) == registered
 
 
 # --- the plain functions, against real report shapes -----------------------------------------
@@ -132,6 +156,94 @@ def test_app_manifest_reports_a_real_installed_version() -> None:
     manifest = app_manifest()
     assert manifest.read_only is True
     assert manifest.hawedit_version, "an empty version string is not a fact about the build"
+
+
+def test_the_manifest_actually_reaches_the_model(tmp_path: Path) -> None:
+    """The defect this fixes (D-A8): `app_manifest()` existed, was exported and unit-tested, and
+    was loaded by nothing — no model ever saw it. Asserted against the messages the model was
+    actually sent, not against `build_agent`'s source.
+    """
+    from pydantic_ai.models.test import TestModel
+
+    _write_report(tmp_path)
+    agent = build_agent(TestModel(), Deps(work_dir=tmp_path))
+    result = agent.run_sync("hello", deps=Deps(work_dir=tmp_path))
+    system_parts = [
+        part.content
+        for message in result.all_messages()
+        for part in getattr(message, "parts", ())
+        if type(part).__name__ == "SystemPromptPart"
+    ]
+    combined = "\n".join(system_parts)
+    assert "App manifest" in combined, f"no manifest in the system prompt: {combined!r}"
+    assert app_manifest().hawedit_version in combined
+    for tool_name in TOOL_NAMES:
+        assert tool_name in combined, f"{tool_name} missing from the manifest the model saw"
+
+
+def test_run_timeline_reads_the_event_ledger(tmp_path: Path) -> None:
+    """The second half of D-A8: `agent.py`'s docstring claimed it read `events.jsonl` while no
+    tool did. This is the capability that makes the claim true."""
+    _write_report(tmp_path)
+    ledger = [
+        {
+            "run_id": "fixture",
+            "sequence": 1,
+            "at_ms": 1000,
+            "stage": "ingest",
+            "state": "started",
+            "reason": "",
+        },
+        {
+            "run_id": "fixture",
+            "sequence": 2,
+            "at_ms": 1200,
+            "stage": "ingest",
+            "state": "completed",
+            "reason": "",
+        },
+        {
+            "run_id": "fixture",
+            "sequence": 3,
+            "at_ms": 1300,
+            "stage": "transcript",
+            "state": "skipped",
+            "reason": "no Stage 1 producer was enabled.",
+        },
+    ]
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in ledger) + "\n", encoding="utf-8"
+    )
+    timeline = run_timeline(tmp_path)
+    assert timeline.available is True
+    assert [event.stage for event in timeline.events] == ["ingest", "ingest", "transcript"]
+    assert [event.state for event in timeline.events] == ["started", "completed", "skipped"]
+    assert timeline.events[2].reason == "no Stage 1 producer was enabled."
+    assert [event.sequence for event in timeline.events] == [1, 2, 3]
+
+
+def test_a_non_durable_run_reports_no_ledger_rather_than_an_empty_one(tmp_path: Path) -> None:
+    """ "No ledger was ever written" and "a ledger recorded nothing" are different facts, and
+    `StageSkipped` is this codebase's own precedent for refusing to conflate them. Reported as
+    a value rather than raised, because a run started through `hawedit` (not `hawedit-durable`)
+    genuinely has no ledger and a model should be able to say so and carry on."""
+    _write_report(tmp_path)
+    timeline = run_timeline(tmp_path)
+    assert timeline.available is False
+    assert timeline.events == ()
+    assert timeline.unavailable_reason is not None
+    assert "events.jsonl" in timeline.unavailable_reason
+
+
+def test_a_missing_ledger_does_not_end_an_agent_run(tmp_path: Path) -> None:
+    """The behavioural half of the case above: `TestModel` calls every registered tool, so a
+    tool that raised here would abort the whole conversation over an ordinary state."""
+    from pydantic_ai.models.test import TestModel
+
+    _write_report(tmp_path)
+    agent = build_agent(TestModel(), Deps(work_dir=tmp_path))
+    result = agent.run_sync("what happened?", deps=Deps(work_dir=tmp_path))
+    assert '"available":false' in result.output.replace(" ", "")
 
 
 def test_inspect_run_reads_the_stage_1_stopped_report(tmp_path: Path) -> None:

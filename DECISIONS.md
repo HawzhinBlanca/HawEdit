@@ -10274,3 +10274,74 @@ D-A6 measurement (a venv with only `klpt`/`fonttools`, no `agentic` extra) — `
 
 VERIFY OK — hawedit gate green: 1705 collected, 1705 passed, 0 skipped (floor ratcheted
 1696 -> 1705).
+
+## D-A8
+
+**Two defects in my own Phase 2 work, found by auditing what was wired rather than what the
+docstrings claimed.** Both were introduced by D-A5 and survived its own tests, its gate run,
+and a commit message describing the feature as delivered. Neither was found by the suite; both
+were found by re-reading the module against the architecture record's Phase 2 bullet list when
+the user asked what remained. That is worth recording as a pattern: a test suite proves the
+code does what its tests say, not that the code does what its docstring says.
+
+**Defect 1: `app_manifest()` was loaded by nothing.** It was defined, exported in `__all__`,
+and unit-tested (`test_app_manifest_reports_a_real_installed_version` asserted its version
+string was non-empty) — and no `Agent` ever received it. `build_agent`'s system prompt was a
+hardcoded literal. So the test passed, the function was "covered", and Phase 2's "Load the
+versioned App Manifest" bullet was not addressed at all, while M9.4's ledger row implied it
+was. A manifest no model ever sees is a fact about this module, not about the agent's context.
+
+Fixed with `@creative_director.system_prompt` returning `app_manifest().as_prompt()`, kept as
+a second system prompt rather than concatenated into the first: the manifest is *generated*
+(real installed version, real tool list), and keeping it separate is what lets a caller or a
+test ask for the same value the model was shown instead of parsing it back out of a literal.
+
+The new test asserts against `result.all_messages()` — the messages actually sent to the model —
+not against `build_agent`'s source, because the defect being fixed is precisely "the source
+looks right and the model never sees it." **Mutation-audited**: deleting the three-line wiring
+fails `test_the_manifest_actually_reaches_the_model` and nothing else.
+
+**Tool names now match what the manifest claims, enforced.** The manifest tells the model which
+tools it can call. Before this, the manifest's default listed `inspect_run`/`explain_run_state`/
+`compare_candidates` while the registered names were `inspect_run_tool` etc. — Pydantic AI takes
+the Python function name unless given `name=`. So had the manifest ever been loaded, it would
+have described tools that did not exist under those names. Tools are now registered with
+explicit `name=`, a module-level `TOOL_NAMES` is the single source, and
+`test_the_manifest_names_exactly_the_tools_the_agent_registers` pins manifest == constant ==
+the agent's real toolset. This class of drift shows up as confusing model behaviour, never as
+an error, which is why it needs a test rather than care.
+
+(`name=` required marking `ctx` positional-only — mypy rejected the parameterized `@tool(...)`
+overload otherwise, and said so precisely enough to fix directly.)
+
+**Defect 2: the module docstring claimed it read `events.jsonl`; no tool did.** All three tools
+read `report.json` only. Fixed by building the capability rather than deleting the sentence,
+because the event ledger genuinely belongs in the read-only inspection surface — Phase 1 built
+it precisely so something could replay a run, and until now nothing outside a test ever read it.
+
+**Testing that produced a real design correction, not just coverage.** `TestModel` calls every
+registered tool, so adding `run_timeline` immediately failed three existing tests whose
+fixtures write `report.json` and no ledger. The lazy fix was to add `events.jsonl` to those
+fixtures. The right fix was to notice what the failure was saying: a run started through
+`hawedit` rather than `hawedit-durable` has no ledger, which is an *ordinary, expected state*,
+and raising `FileNotFoundError` for it would abort an entire conversation over something the
+model could simply report and work around. `RunTimeline` now carries `available: bool` and
+`unavailable_reason: str | None` — `StageSkipped`'s own precedent in this codebase that "never
+recorded" and "recorded nothing" must not serialize the same way.
+
+The asymmetry with the other three tools is deliberate and documented: a missing `report.json`
+means no run exists under that directory at all — a caller error, correctly raised — while a
+missing `events.jsonl` means the run exists and simply was not durable. Same-looking absence,
+genuinely different facts.
+
+**Supporting move: the ledger format went to `events.py`.** `JsonlEventSink` and `read_events`
+lived in `durable_workflow.py`, which imports `dbos` at module level — so `agent.py` reading a
+run's timeline would have pulled a durable-execution engine into the read-only agent's import
+graph to parse a text file. The JSONL format is `events.py`'s contract (it already owns
+`RunEvent.to_dict`/`from_dict`), so both halves moved there. `durable_workflow.py` re-exports
+`read_events` with a comment saying why, so the relocation is not a breaking change for
+existing callers — `tests/test_durable.py` imports it from the old location and still passes
+untouched.
+
+VERIFY OK — hawedit gate green: 1710 collected, 1710 passed, 0 skipped (floor ratcheted
+1705 -> 1710).

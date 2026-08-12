@@ -85,11 +85,14 @@ from typing import Any
 
 from dbos import DBOS, SetWorkflowID
 
-from hawedit.events import RunEvent
+from hawedit.events import JsonlEventSink, read_events
 from hawedit.pipeline import _build_and_run, _write_atomic, build_parser
 
 __all__ = [
     "configure_dbos",
+    # Re-exported: `read_events` moved to `events.py` (D-A8, the ledger format's own home), and
+    # every existing caller imported it from here. Kept so that move is not a breaking change
+    # for them, rather than making the format's relocation their problem.
     "read_events",
     "run_durable",
     "run_pipeline_workflow",
@@ -122,50 +125,6 @@ def configure_dbos(system_database_url: str | None = None) -> None:
     DBOS.launch()
 
 
-class _JsonlEventSink:
-    """Appends every `RunEvent` to one file, flushed immediately.
-
-    Flushed per line, not buffered, because the property this exists for is that a crash mid-
-    run leaves every event already emitted durably on disk — a buffered sink would lose exactly
-    the events a crash-recovery reader most needs, the ones nearest the crash. `read_events` is
-    the only reader, and it tolerates a torn last line: a real crash can land mid-`write`, and
-    the line before it must still parse.
-    """
-
-    def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = path.open("a", encoding="utf-8")
-
-    def __call__(self, event: RunEvent) -> None:
-        self._handle.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
-        self._handle.flush()
-
-    def close(self) -> None:
-        self._handle.close()
-
-
-def read_events(path: Path) -> tuple[RunEvent, ...]:
-    """Read one run's event ledger back, tolerating a line a crash left half-written.
-
-    Raises:
-        FileNotFoundError: no run wrote to `path`.
-    """
-    events: list[RunEvent] = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                events.append(RunEvent.from_dict(json.loads(line)))
-            except (json.JSONDecodeError, KeyError, ValueError):
-                # A torn last line — a crash landed between the `write` and the newline it
-                # writes together with the payload. Every earlier line already parsed and is
-                # kept; this one is the record of exactly how far the run got, which the
-                # skip/complete stage records in `run.to_dict()` already say more reliably.
-                break
-    return tuple(events)
-
-
 @DBOS.step()
 def _run_pipeline_step(argv: list[str]) -> dict[str, Any]:
     """The one durable step: parse `argv`, build every producer it names, run, report.
@@ -176,7 +135,7 @@ def _run_pipeline_step(argv: list[str]) -> dict[str, Any]:
     not the events along the way.
     """
     args = build_parser().parse_args(argv)
-    sink = _JsonlEventSink(args.work_dir / "events.jsonl")
+    sink = JsonlEventSink(args.work_dir / "events.jsonl")
     try:
         run = _build_and_run(args, on_event=sink)
     finally:

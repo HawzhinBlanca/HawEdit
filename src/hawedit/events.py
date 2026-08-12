@@ -27,25 +27,36 @@ at 1, and never repeats.
 events with a plain list; a durable workflow passes a function that writes a row. Neither
 needed a class here, so there is not one.
 
-What this module deliberately does NOT do yet: no persistence, no run-level start/finish
-event, no failure event. Those belong to the durable workflow that will call `run_pipeline`,
-not to the pipeline being observed — see the `ponytail:` note on `RunEventLog`.
+**The JSONL ledger format lives here too, both halves.** `JsonlEventSink` writes it and
+`read_events` reads it back. They were originally in `durable_workflow.py`, which imports
+`dbos` at module level — so anything wanting to *read* a run's event ledger had to import a
+durable-execution engine to parse a text file (D-A8). The format is this module's contract, not
+the workflow's, so both halves moved here; `durable_workflow.py` imports them like any other
+caller.
+
+What this module deliberately does NOT do: run-level start/finish events, or failure events.
+Those belong to the durable workflow that calls `run_pipeline`, not to the pipeline being
+observed — see the `ponytail:` note on `RunEventLog`.
 """
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 __all__ = [
     "EventSink",
+    "JsonlEventSink",
     "RunEvent",
     "RunEventLog",
     "RunState",
     "discard",
+    "read_events",
 ]
 
 
@@ -186,3 +197,47 @@ class RunEventLog:
         )
         self._sink(event)
         return event
+
+
+class JsonlEventSink:
+    """Appends every `RunEvent` to one file, flushed immediately.
+
+    Flushed per line, not buffered, because the property this exists for is that a crash mid-
+    run leaves every event already emitted durably on disk — a buffered sink would lose exactly
+    the events a crash-recovery reader most needs, the ones nearest the crash. `read_events` is
+    the reader, and it tolerates a torn last line: a real crash can land mid-`write`, and the
+    line before it must still parse.
+    """
+
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = path.open("a", encoding="utf-8")
+
+    def __call__(self, event: RunEvent) -> None:
+        self._handle.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+        self._handle.flush()
+
+    def close(self) -> None:
+        self._handle.close()
+
+
+def read_events(path: Path) -> tuple[RunEvent, ...]:
+    """Read one run's event ledger back, tolerating a line a crash left half-written.
+
+    Raises:
+        FileNotFoundError: no run wrote to `path`.
+    """
+    events: list[RunEvent] = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                events.append(RunEvent.from_dict(json.loads(line)))
+            except (json.JSONDecodeError, KeyError, ValueError):
+                # A torn last line — a crash landed between the `write` and the newline it
+                # writes together with the payload. Every earlier line already parsed and is
+                # kept; this one is the record of exactly how far the run got, which the
+                # skip/complete stage records in `run.to_dict()` already say more reliably.
+                break
+    return tuple(events)

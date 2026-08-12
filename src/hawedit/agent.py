@@ -1,8 +1,8 @@
 """Phase 2: a read-only creative-director agent over one run's on-disk state.
 
 `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` Phase 2: "Add Pydantic AI with inspection,
-explanation and candidate-comparison tools... Make all proposals non-mutating." Three tools,
-one per category, and nothing here writes anything:
+explanation and candidate-comparison tools... Load the versioned App Manifest... Make all
+proposals non-mutating." Four tools, and nothing here writes anything:
 
 - `inspect_run` — what stage the run reached and whether it produced a deliverable.
 - `explain_run_state` — *why* it stopped where it did, quoting the actual `StageSkipped` reason
@@ -14,6 +14,9 @@ one per category, and nothing here writes anything:
   clip back to its source candidate by span would be a heuristic that can be wrong on a boundary
   that VAD or TimeLens moved, and a wrong inference here is worse than an honest gap — `clip.py`
   is already in the returned document (via `inspect_run`) for a reader who wants to check.
+- `run_timeline` — the run's ordered event ledger. The other three read `report.json`, the
+  run's *final state*; this reads `events.jsonl`, the sequence that produced it, and returns
+  partial progress for a run still in flight (D-A1's per-line flush is what makes that work).
 
 **`work_dir` is bound at construction, never a tool argument.** The architecture record's own
 security section: "Media storage uses scoped object references rather than filesystem paths
@@ -27,10 +30,20 @@ directory a given agent instance can read.
 
 **Reads `report.json` and `events.jsonl`, both written by `durable_workflow.py`.** Neither is
 this project's eventual Postgres Artifact Ledger — see that module's docstring for why a flat
-file is the right amount of ledger for one reader replaying one run. If neither file exists yet
-(no durable run has completed here), every tool raises `FileNotFoundError` naming the path it
-looked for rather than returning an empty-but-valid report a reader could mistake for "this run
-did nothing."
+file is the right amount of ledger for one reader replaying one run.
+
+The two files get different missing-file treatment, deliberately. A missing `report.json` means
+no run exists under this directory at all — a caller error — so the three tools that read it
+raise `FileNotFoundError` naming the path, rather than returning an empty-but-valid report a
+reader could mistake for "this run did nothing." A missing `events.jsonl` means the run exists
+but was started through `hawedit` rather than `hawedit-durable`: ordinary and expected, so
+`run_timeline` reports it as `RunTimeline(available=False, unavailable_reason=...)` rather than
+ending the conversation over a state the model can simply work around.
+
+This paragraph described reading `events.jsonl` for one commit before any tool actually did
+(D-A8) — `run_timeline` is what makes it true. Corrected by building the capability rather than
+deleting the claim, because the event ledger genuinely belongs in the read-only inspection
+surface: Phase 1 built it precisely so something could replay a run.
 
 **Model-portable by construction.** `build_agent` takes any `pydantic_ai.models.Model` — a real
 provider, or `pydantic_ai.models.test.TestModel` for a test that never calls out to a network.
@@ -53,7 +66,10 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import KnownModelName, Model
 
+from hawedit.events import read_events
+
 __all__ = [
+    "TOOL_NAMES",
     "AppManifest",
     "CandidateComparison",
     "CandidateRecord",
@@ -61,12 +77,26 @@ __all__ = [
     "RejectionRecord",
     "RunExplanation",
     "RunInspection",
+    "RunTimeline",
+    "StageEvent",
     "app_manifest",
     "build_agent",
     "compare_candidates",
     "explain_run_state",
     "inspect_run",
+    "run_timeline",
 ]
+
+# The tools `build_agent` registers, named once so the manifest the model is shown at startup
+# and the toolset it can actually call cannot disagree. `tests/test_agent.py` asserts this
+# equals the agent's real registered tool names — a manifest that lists a tool the agent does
+# not have (or omits one it does) is worse than no manifest, since the model plans against it.
+TOOL_NAMES: Final = (
+    "inspect_run",
+    "explain_run_state",
+    "compare_candidates",
+    "run_timeline",
+)
 
 # §3's stage order, for "which stage stopped this run" — the first name in this tuple that
 # appears in the report's `skipped` list is the answer. Read off `pipeline.py`'s own `# --- §3
@@ -97,11 +127,30 @@ class Deps:
 class AppManifest(BaseModel):
     """Versioned facts about this build — what the architecture record calls the agent's
     startup context, kept to what can be read off the running interpreter rather than asserted.
+
+    Rendered into the agent's system prompt by `build_agent` (D-A8). It was defined, exported
+    and unit-tested before that, and loaded by nothing — a manifest no model ever sees is a
+    fact about this module, not about the agent's context.
     """
 
     hawedit_version: str
     read_only: bool = True
-    tool_names: tuple[str, ...] = ("inspect_run", "explain_run_state", "compare_candidates")
+    tool_names: tuple[str, ...] = TOOL_NAMES
+    known_limitations: tuple[str, ...] = (
+        "Reads one run's own artifacts only; cannot see other runs or projects.",
+        "Cannot start, cancel, or resume a pipeline run.",
+        "Cannot propose or apply any change — that is editor_agent.py's separate surface.",
+    )
+
+    def as_prompt(self) -> str:
+        """The manifest as the paragraph a model is shown at startup."""
+        return (
+            f"App manifest (authoritative, generated at startup):\n"
+            f"- hawedit version: {self.hawedit_version}\n"
+            f"- read-only: {self.read_only}\n"
+            f"- tools available to you: {', '.join(self.tool_names)}\n"
+            f"- known limitations: " + " ".join(self.known_limitations)
+        )
 
 
 class RunInspection(BaseModel):
@@ -144,6 +193,34 @@ class CandidateComparison(BaseModel):
     candidates: tuple[CandidateRecord, ...]
     rejected: tuple[RejectionRecord, ...]
     final_clip_span_ms: tuple[int, int] | None
+
+
+class StageEvent(BaseModel):
+    sequence: int
+    at_ms: int
+    stage: str
+    state: str
+    reason: str
+
+
+class RunTimeline(BaseModel):
+    """A run's event ledger, or the reason there is none.
+
+    `available=False` with a reason, rather than an empty `events` tuple or a raised error:
+    "this run was not durable, so nothing recorded a timeline" and "this run recorded a
+    timeline containing nothing" are different facts about the world, and `StageSkipped` is
+    this codebase's own precedent for refusing to let them serialize the same way.
+
+    Deliberately unlike the other three tools' missing-`report.json` behaviour, which *does*
+    raise: a missing `report.json` means no run exists under this directory at all — a caller
+    error. A missing `events.jsonl` means the run exists but was started through `hawedit`
+    rather than `hawedit-durable`, which is an ordinary, expected state a model should be able
+    to report and work around, not one that should end the conversation.
+    """
+
+    available: bool
+    events: tuple[StageEvent, ...] = ()
+    unavailable_reason: str | None = None
 
 
 def app_manifest() -> AppManifest:
@@ -267,6 +344,42 @@ def compare_candidates(work_dir: Path) -> CandidateComparison:
     )
 
 
+def run_timeline(work_dir: Path) -> RunTimeline:
+    """The run's own event ledger, in order — what happened and when, not only where it ended.
+
+    `report.json` (what the other three tools read) is the run's final state; this is the
+    sequence that produced it, including stages that started and completed before a later one
+    stopped the run. Reads `events.jsonl`, which `durable_workflow.py` flushes per line, so this
+    returns partial progress for a run still in flight rather than waiting for it to finish.
+
+    Never raises for a missing ledger — see `RunTimeline` for why that case is reported as a
+    value rather than an error, unlike the other three tools' missing-`report.json` behaviour.
+    """
+    path = work_dir / "events.jsonl"
+    if not path.is_file():
+        return RunTimeline(
+            available=False,
+            unavailable_reason=(
+                f"no events.jsonl under {work_dir} — durable_workflow.py writes one per durable "
+                f"run; a run started through `hawedit` directly (not `hawedit-durable`) has "
+                f"none. This run's final state is still readable through the other tools."
+            ),
+        )
+    return RunTimeline(
+        available=True,
+        events=tuple(
+            StageEvent(
+                sequence=event.sequence,
+                at_ms=event.at_ms,
+                stage=event.stage,
+                state=event.state.value,
+                reason=event.reason,
+            )
+            for event in read_events(path)
+        ),
+    )
+
+
 def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, str]:
     """Construct the read-only creative-director agent, scoped to `deps.work_dir`.
 
@@ -281,27 +394,44 @@ def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, 
         output_type=str,
         system_prompt=(
             "You are a read-only creative-director assistant for one HawEdit repurposing run. "
-            "You can inspect what the run produced, explain why it stopped where it did, and "
-            "compare the candidates §3 Stage 3 found against the ones it rejected. You cannot "
-            "change anything — there is no tool for that, and none will be added to this "
-            "conversation."
+            "You can inspect what the run produced, explain why it stopped where it did, "
+            "compare the candidates §3 Stage 3 found against the ones it rejected, and read the "
+            "run's own event timeline. You cannot change anything — there is no tool for that, "
+            "and none will be added to this conversation."
         ),
     )
 
-    @creative_director.tool
-    def inspect_run_tool(ctx: RunContext[Deps]) -> RunInspection:
+    # The manifest, as a second system prompt rather than a string concatenated into the one
+    # above: it is generated (a real installed version, the real tool list), not authored, and
+    # keeping it separate is what makes "the manifest the model saw" a value this module can
+    # also hand to a caller or a test — `app_manifest()` — rather than a substring of a literal.
+    @creative_director.system_prompt
+    def manifest_prompt() -> str:
+        return app_manifest().as_prompt()
+
+    # Named explicitly so the registered tool names equal `TOOL_NAMES`, which is what the
+    # manifest above tells the model it can call. Without `name=`, these register as
+    # `inspect_run_tool` etc. — and the manifest would be describing tools that do not exist
+    # under the names it gives.
+    @creative_director.tool(name="inspect_run")
+    def inspect_run_tool(ctx: RunContext[Deps], /) -> RunInspection:
         """Report what this run reached: completion, which stages were skipped, whether a
         clip was produced and rendered."""
         return inspect_run(ctx.deps.work_dir)
 
-    @creative_director.tool
-    def explain_run_state_tool(ctx: RunContext[Deps]) -> RunExplanation:
+    @creative_director.tool(name="explain_run_state")
+    def explain_run_state_tool(ctx: RunContext[Deps], /) -> RunExplanation:
         """Explain why this run stopped where it did, quoting its own recorded reason."""
         return explain_run_state(ctx.deps.work_dir)
 
-    @creative_director.tool
-    def compare_candidates_tool(ctx: RunContext[Deps]) -> CandidateComparison:
+    @creative_director.tool(name="compare_candidates")
+    def compare_candidates_tool(ctx: RunContext[Deps], /) -> CandidateComparison:
         """List every candidate §3 Stage 3 found and every one it rejected, with reasons."""
         return compare_candidates(ctx.deps.work_dir)
+
+    @creative_director.tool(name="run_timeline")
+    def run_timeline_tool(ctx: RunContext[Deps], /) -> RunTimeline:
+        """Read this run's ordered event timeline: every stage transition, with timestamps."""
+        return run_timeline(ctx.deps.work_dir)
 
     return creative_director
