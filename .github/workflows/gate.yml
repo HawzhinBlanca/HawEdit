@@ -33,6 +33,14 @@ jobs:
           shellcheck --version
           shellcheck scripts/*.sh
 
+      # The CODYSTEM PreToolUse guard is the one piece of the harness that *allows* — hundreds
+      # of times a session, silently. A broken glob in it does not announce itself, it just
+      # stops covering `.gate/`, and `.gate/` is where D-093 put the evidence that the gate ran
+      # anything at all. Before the install step on purpose: the guard needs no venv and no
+      # project import, so this stays outside the committed test-count floor.
+      - name: the CODYSTEM guard must hold its boundary
+        run: bash scripts/guard-test.sh
+
       - name: install
         run: |
           python -m venv .venv

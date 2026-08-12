@@ -10205,3 +10205,74 @@ same class as this session's two `pgrep` false positives, where a pattern matche
 line. The sweep harness now takes a lock, refuses to start while another holds it, and restores its
 target on normal exit, on exception and on SIGTERM.
 `evidence/the-validators-answer-had-no-specified-effect.md`.
+
+## D-198
+
+**The CODYSTEM operating rules governed this repository from another repository, which means
+they governed nothing.** `AGENTS.md`, the Research → Plan → Implement skills, the PreToolUse
+guard and the Stop-hook gate all lived in the Codystem checkout. Agent context files are
+discovered by walking *up* from the working directory, so opening an editor at this repo loaded
+none of them — and opening one at the parent of both loads a sibling's `CLAUDE.md` never. The
+rules were real, and they applied to a different directory. This commit moves the harness into
+this repository, where the working directory is the repository the rules are about.
+
+**The gate did not change and is not wrapped.** `scripts/verify.sh` remains the single source of
+"does it work", still refusing overridden steps, still probing that its interpreter can import
+this project, still grading `.gate/last-test-run.xml` rather than trusting an exit code. The
+harness added around it only decides *when* it runs and *who may edit what*.
+
+**The Stop hook needed an exit-code translation, and this is the interesting half.** Claude
+Code's hook contract gives exit 2 one meaning — block, and hand stderr back to the agent —
+while every other non-zero code is a notice shown to the human. `verify.sh` already spends 2 on
+"no interpreter in `.venv`". Wired up directly, as the Codystem original does against a gate
+whose codes differ, the two land exactly backwards: **a red test suite (exit 1) would be a
+notice the agent never reads and can stop straight through, while a checkout that has simply not
+run `scripts/setup.sh` yet would block an agent on a condition nothing had told it about.** A
+gate that fails open on the failure it exists to catch is worse than no gate, because the hook
+in `settings.json` reads as protection either way. `scripts/claude-stop-verify.sh` maps
+1/3/5/unknown → block and 2/4 → notice, and honours `stop_hook_active` so a red gate cannot turn
+into an agent that is unable to stop at all.
+
+**`.gate/` is hard-protected, with no escape.** D-093 moved the evidence out of the exit code
+and into the test report because a run that executed nothing was printing VERIFY OK. An agent
+able to write `.gate/last-test-run.xml` by hand puts that forgery straight back, one redirect at
+a time — so the guard blocks writes to it as a path *and* scans shell commands for redirects,
+`tee`, `cp`, `mv`, `dd` and `install` aimed at it. `scripts/test-count.floor` and
+`src/hawedit/gate.py` are protected for the same reason, one layer up.
+
+**The guard reads its payload with jq, or with Python.** The Codystem original requires jq.
+This project requires a Python 3.11+ and does not require jq, and both `setup.sh` and
+`verify.sh` go to real lengths to work on the Windows box §6 names. A guard absent on one of two
+supported platforms while still appearing in the settings file is the quiet green this repo is
+written against. With neither reader present it warns on stderr and allows the call — failing
+closed would block every tool call for a reason no message would connect back to this file.
+
+**Editing the harness is allowed, and made visible rather than prevented.** The gate, the guard,
+its test, the ledger flipper, the hook config, CI, the test floor, `gate.py`, and the golden and
+fixture corpora are all editable once `.codystem-allow-self-edit` exists — a file that shows up
+in `git status` and in the diff. Improving a harness is real work; doing it silently is not.
+
+**What was measured, and by what.** `shellcheck scripts/*.sh` clean across all eleven scripts,
+which is the command CI already runs. `scripts/guard-test.sh` — added here and wired into
+`gate.yml` before the install step, since it needs no venv — passes **56 checks**: every
+hard-protected path in both relative and absolute form, both `models/` files that must stay
+editable, the enforcement surface with and without the sentinel, the dangerous-command set,
+six shell routes to a protected path, six ordinary commands that must not be blocked, and three
+malformed payloads that must not wedge the agent. The jq-absent path was exercised by running
+the guard with a PATH containing no jq; the neither-reader path by a PATH with neither. The
+Stop hook's mapping was exercised against a stub gate returning each of 0,1,2,3,4,5,9.
+
+**What was NOT measured, stated because this file does not accept a green that was not run.**
+`bash scripts/verify.sh` has **not** been run against this commit. The environment the harness
+was assembled in has no `.venv` and no network budget for a ~2 GB torch install, so the Python
+gate is unverified here and CI is the first thing that will run it. Nothing in this commit
+touches `src/`, `tests/`, `pyproject.toml` or the gate's steps, and no pytest test was added —
+deliberately, so `scripts/test-count.floor` stays untouched and the final CI step that fails a
+run which ratcheted it keeps its meaning. The guard's coverage is bash-level only; a Python
+test of it would have moved that floor and is left as separate work.
+
+**Honest limit, unchanged from the original.** An unrestricted Bash tool runs arbitrary code, so
+the command scanning is a tripwire for obvious cases and not a security boundary. The exact
+boundary is the `file_path` check plus filesystem permissions. The real gate is
+`.github/workflows/gate.yml` on a clean runner, re-running from committed source with no shell
+of the agent's — which is why the local hooks can afford to be helpful rather than airtight.

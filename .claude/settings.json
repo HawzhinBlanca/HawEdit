@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "bash scripts/guard-pretooluse.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "bash scripts/verify.sh --fast || { echo '⚠ PostToolUse fast-verify FAILED (lint/typecheck) — fix before Stop, see output above' >&2; true; }" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash scripts/claude-stop-verify.sh" }
+        ]
+      }
+    ]
+  }
+}
