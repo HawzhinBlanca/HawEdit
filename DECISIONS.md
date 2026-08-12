@@ -10345,3 +10345,58 @@ untouched.
 
 VERIFY OK — hawedit gate green: 1710 collected, 1710 passed, 0 skipped (floor ratcheted
 1705 -> 1710).
+
+## D-A9
+
+**The prompt-injection acceptance gate, and an honest statement of what a test can hold.**
+`AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md`: "Prompt injection inside transcript, metadata,
+web retrieval, a skill or an MCP response cannot grant new permissions." The tempting reading
+is "prove the model resists injected instructions." That is not testable here and would not be
+the right guarantee even if it were: it depends on which model is routed (this branch chooses
+none, D-A5), it degrades silently when a provider changes a system prompt's handling, and it
+puts the security boundary inside the least trustworthy component in the system.
+
+**So the tests hold the property the record actually asks for, which is stronger: capability is
+not data-dependent.** No content in a run's artifacts changes which tools exist, what they are
+scoped to, or what they can reach. A model that fully believed an injected instruction still
+could not act on it, because the tool that would carry it out is not registered and the
+directory it would reach is not reachable. The test module says this in its own docstring
+before the first test, so nobody reads these as "the model was proven safe."
+
+**What is actually asserted, against a `report.json` poisoned in every free-text field**
+(`media_id`, `source`, both `StageSkipped.reason` strings, `blocked_by`, `candidate_id`,
+`reject_reason` — every field a tool hands back to a model):
+
+- The read-only agent's registered tool set equals `TOOL_NAMES` after the run, and contains
+  neither `commit_boundary_revision` nor an invented `delete_everything`.
+- The editor agent still has exactly one tool, and it is the proposal tool.
+- The work directory is **byte-identical** before and after a full agent run — snapshotted and
+  compared, which catches a rewrite of `report.json` itself, not merely the appearance of new
+  files. "No new files" would have passed a mutation that overwrote an existing one.
+- A sibling directory the payloads name by absolute path keeps its only file, unchanged.
+
+**The path guarantee is structural and read off the real schema, not the source.** Every
+read-only tool's generated JSON schema has empty `properties`: there is no argument at all for
+an injected instruction to try to control, which is a stronger statement than "the argument is
+validated." Verified by printing the real schemas before writing the assertion, and
+mutation-audited afterwards: giving `inspect_run` an `override_dir: str` parameter fails the
+test and names the offending argument in the message.
+
+**The editor agent is the deliberate control case, and closes a real gap in the claim.** It
+legitimately takes parameters — a proposal needs a span — so "no tool takes arguments" would be
+false of the system as a whole. Its schema is asserted to contain only integers, so there is no
+string field through which a path, a command, or a second instruction could cross the tool
+boundary; Pydantic AI validates against that schema before `proposals.py` is entered at all.
+That test also proves the read-only assertion is not vacuous: if `function_schema.json_schema`
+were the wrong attribute path and silently yielded nothing, the control case would fail too.
+
+**One further point the gate does not name but the same threat model requires.** The manifest
+the model is shown asserts `read-only: True` and lists its tools (D-A8). If any of it were read
+from the run's own artifacts, a poisoned report could rewrite the model's own understanding of
+its permissions — precisely the "grant new permissions" being forbidden, arriving through the
+context rather than the toolset. `test_the_manifest_the_model_sees_is_generated_not_read_from_
+the_run` asserts every payload is absent from the system prompt and that `read-only: True`
+survives a hostile report.
+
+VERIFY OK — hawedit gate green: 1718 collected, 1718 passed, 0 skipped (floor ratcheted
+1710 -> 1718).
