@@ -10139,3 +10139,69 @@ Both surfaced only as the audit's **baseline** going red on `test_gate.py`'s fou
 15 minutes to learn what `ruff check` and `mypy` answer in twenty seconds. **The habit is now: lint
 and typecheck the whole tree before launching any audit.**
 `evidence/whether-a-human-reviewed-the-clip-could-leave-the-sidecar-in-silence.md`.
+
+## D-197
+
+**§3 Stage 1 never said what the validator's answer does to the canonical text. It is evidence,
+never a replacement.**
+
+BLUEPRINT.md:128 says *"Route the bottom quartile, and any segment where LLM-7B and CTC-3B disagree
+materially, to the validator"* — and stops. There is no rule for whether the validator's reading
+replaces the canonical text, is merged with it, or is merely recorded. `select_for_validation` is
+implemented and tested and has no consumer, so nothing implements any of the three. The gap was
+found while answering Hawa's question "why are we using qwen asr?".
+
+**The rule.** The validator's reading may flag a span. It may never rewrite one.
+
+1. **It cannot become canonical text.** Kurdish invariant #1 makes `transcript.raw.json` *exactly as
+   canonical ASR emitted*, write-once, digest-verified. A validator reading written into it would
+   make "canonical" mean whichever model was written there last.
+2. **It cannot occupy the canonical slot.** `AsrProvenance` role-checks `canonical` against
+   `canonical_asr` and `validated_by` against `asr_validator`, so §7's roles are the enforcement,
+   not a convention. Measured: the validator in `canonical`, the emissions model in `canonical`, and
+   the canonical model validating *itself* are all `WrongRole` today; only §7's own pairing is
+   accepted. Now pinned by four tests, three refusals and the control.
+3. **Disagreement routes to a human, not to a merge.** §2 puts a human QC gate before output,
+   always. A span where the validator disagrees is a span with a `qc.flags` entry, which is a
+   mechanism that already exists and already blocks rendering (`assert_renderable`, D-195).
+
+**Why one-directional.** Hawa's assessment, recorded as an assessment: the Sorani checkpoint is
+weaker on Kurdish than the champion LoRA they trained. **Nothing in this repo measures that** — no
+CER, no WER, no side-by-side on Kurdish audio — and the labelled set that could is BLOCKED #1, so
+this is judgement, not a number, and is recorded as judgement. But the rule follows either way: a
+second opinion that can overwrite is only safe if it is *better*, and escalation sends it precisely
+the hardest spans, where being wrong costs most. Evidence-only is correct whether or not the
+assessment holds, which is why it does not wait on BLOCKED #1.
+
+**Precedent, in this repo.** M6.1 settled the same question for TimeLens2: *"intervals as evidence,
+never as cuts"*. Same shape, one stage over.
+
+**Rejected: dropping the validator from §7.** Hawa chose to keep it and specify the rule first
+(2026-08-12). It is a frozen-BLUEPRINT model and removing it would be a divergence; keeping it
+costs nothing while it cannot load.
+
+**Still missing before it can run, and not decided here:** where a validator reading is *stored*.
+`validated_by` records that a validator read a span and which one — not what it said. Adding a field
+for the reading is only worth doing against a loader that exists, which is BLOCKED #16, and D-097
+measured what building against a stub costs.
+
+**Audit and process, recorded with D-197.** Mutation audit **3/3**, each mutation loosening one
+`resolve_role` call to the `ASR_ROLES` union that already exists in the registry and reads like the
+natural refactor, each carrying the import it needs so it is a real program rather than a
+`NameError`. Run **three times** because the first two overlapped other background work; reported
+only because all three agree exactly, file restored byte-identical each time.
+
+**A sweep over `gemini.py` was killed mid-mutation and left the file on disk with a Vertex location
+check replaced by `pass`.** Caught by a routine `git status` before staging — BLOCKED #12's rule
+earning its keep — and restored from HEAD. I then compounded it by starting a second audit while
+that sweep still ran: each mutated its own file while the other ran the whole suite, contaminating
+results in both directions. **The gemini sweep's output is discarded entirely** rather than reported
+with a caveat, and that module remains unswept.
+
+**Root cause, three repetitions of one mistake:** an empty output file plus a momentary gap in `ps`
+is not evidence a background job has died. Output is block-buffered until exit, and `ps` misses the
+gaps between subprocess spawns. **The completion notification is the only reliable signal** — the
+same class as this session's two `pgrep` false positives, where a pattern matched its own command
+line. The sweep harness now takes a lock, refuses to start while another holds it, and restores its
+target on normal exit, on exception and on SIGTERM.
+`evidence/the-validators-answer-had-no-specified-effect.md`.

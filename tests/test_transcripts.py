@@ -20,7 +20,7 @@ from threading import Barrier
 
 import pytest
 
-from hawedit.registry import ModelExcluded, ModelNotInRegistry
+from hawedit.registry import ModelExcluded, ModelNotInRegistry, WrongRole
 from hawedit.transcripts import (
     AsrProvenance,
     NormalizedTranscript,
@@ -37,6 +37,11 @@ from hawedit.transcripts import (
 )
 
 CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
+
+# The two §7 model ids by role, for D-197's tests. Named apart from `CANONICAL` above, which is a
+# whole provenance record rather than a model id.
+CANONICAL_ASR_ID = "omniASR_LLM_7B_v2"
+VALIDATOR_ID = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 
 
 def a_raw(text: str = "ئه‌مه‌ زۆر باشه‌") -> RawTranscript:
@@ -414,6 +419,50 @@ def test_transcript_from_an_excluded_model_is_refused() -> None:
             words=(),
             asr=AsrProvenance(canonical="RevgeAI/vekol-stt-ckb-small"),
         )
+
+
+# --- D-197: the validator's reading is evidence, never a replacement ----------------------
+#
+# §3 Stage 1 says "route the bottom quartile, and any segment where LLM-7B and CTC-3B disagree
+# materially, to the validator" and stops there — it never says what the validator's answer DOES
+# to the canonical text. D-197 specifies it, and the rule is one-directional: the validator can
+# flag a span, never rewrite it. These pin the place the type already enforces that.
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        ("the validator in the canonical slot", {"canonical": VALIDATOR_ID}),
+        ("the emissions model in the canonical slot", {"canonical": "omniASR_CTC_3B_v2"}),
+        (
+            "the canonical model validating itself",
+            {"canonical": CANONICAL_ASR_ID, "validated_by": CANONICAL_ASR_ID},
+        ),
+    ],
+)
+def test_a_model_cannot_take_the_asr_role_it_is_not_section_7s_model_for(
+    label: str, kwargs: dict[str, str]
+) -> None:
+    """The enforcement point of D-197's merge rule.
+
+    If the validator could occupy `canonical`, "the canonical transcript" would mean whichever
+    model happened to be written there, and Kurdish invariant #1 — raw is *exactly as canonical
+    ASR emitted*, write-once — would be guarding a field that no longer says what produced it.
+    The self-validation case is the same defect turned around: a model that validates its own
+    output has validated nothing, and `validated_by` would be a field that always agreed.
+    """
+    with pytest.raises(WrongRole):
+        AsrProvenance(**kwargs)  # type: ignore[arg-type]
+
+
+def test_the_canonical_and_validator_pairing_section_7_names_is_accepted() -> None:
+    """The control. Three refusals above are only meaningful if the legitimate pairing — §7's
+    canonical ASR read, §7's validator second-opinion — is the one thing that passes."""
+    provenance = AsrProvenance(
+        canonical=CANONICAL_ASR_ID, validated_by=VALIDATOR_ID, aligner="ctc_viterbi"
+    )
+    assert provenance.canonical == CANONICAL_ASR_ID
+    assert provenance.validated_by == VALIDATOR_ID
 
 
 def test_validator_model_must_also_be_registered() -> None:

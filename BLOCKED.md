@@ -799,6 +799,48 @@ finished measuring the cost of. M0.11's rzgar adapter waits on the same package.
 implemented and tested; it simply has no consumer yet, and `python -m hawedit.models` now says so
 honestly — 9/15 rather than 10/15, with the reason in the detail line (D-099).
 
+**Refreshed 2026-08-12 — the cheap option was never measured, and it changes the question.**
+
+Four facts, all read from the authoritative source rather than inferred:
+
+1. **`transformers` ships the loader now.** `src/transformers/models/qwen3_asr/` — including
+   `modeling_qwen3_asr.py` — is **absent in v5.12.0 and present in v5.13.0**, checked tag by tag
+   against `huggingface/transformers`. Installed here is **4.57.6**; latest is **5.15.0**. So §7's
+   validator no longer needs a separate package at all: it needs a `transformers` bump.
+
+2. **The checkpoint ships no remote code.** `models/rzgar__qwen3-asr-sorani-kurdish-ckb-v1/`
+   contains no `.py` file and its `config.json` has no `auto_map`, so `trust_remote_code=True` is
+   not a third option — there is nothing to execute. The architecture must come from the library.
+
+3. **What `qwen-asr` would actually cost, if taken.** Version 0.0.6, uploaded 2026-01-30. Its PyPI
+   metadata declares `license: Apache-2.0` — author-declared free text, with **no `License ::`
+   classifier** — and its declared Homepage and Repository both point at
+   `github.com/Qwen/Qwen3-ASR`, which **404s**. The plausible upstream, `QwenLM/Qwen3-ASR`, is
+   Apache-2.0, but nothing in the package's own metadata links to it, so the provenance chain
+   D-002 asks for cannot be closed from the package alone. It requires **ten** packages including
+   **`flask`** and **`gradio`**, and pins `transformers==4.57.6` and `accelerate==1.12.0` — the
+   latter a **downgrade** from the 1.14.0 installed here.
+
+4. **So the comparison is lopsided.** One pin change versus a web server, a UI toolkit, an
+   `accelerate` downgrade and an unclosable licence chain.
+
+**What is still Hawa's call, and why this stays open.** `transformers` 4.57.6 → 5.13+ is a **major**
+version bump, and it is not free: the champion LoRA path, `peft==0.19.1` and the WSL runtime are all
+built against 4.57.6, and **the WSL runtime is keyed on a source fingerprint**. Nothing here has
+measured whether the champion route survives the upgrade, and measuring it means re-provisioning
+that runtime. That is the decision — not the licence, which is no longer the obstacle.
+
+**What it no longer blocks.** D-197 settles what the validator's answer would *do*: it is evidence,
+never a replacement, and disagreement raises a `qc.flags` entry for §2's human gate rather than
+rewriting canonical text. That rule needed no loader and is now specified and tested, so enabling
+the validator later is an addition rather than a design question.
+
+**What is still missing beyond the loader:** somewhere to put a validator *reading*. `validated_by`
+records that a validator read a span and which one, not what it said. Adding that field is worth
+doing against a loader that exists and not before — D-097 measured what building against a stub
+costs.
+
+
 ## #17 · §3's 64-frame window does not fit the reader on the machine §6 names
 
 **Measured 2026-08-09 on hawapc01** (RTX 3090 Ti, 23.99 GiB; `MCG-NJU/VideoChat3-4B` weights 8.68 GiB).
