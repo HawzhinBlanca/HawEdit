@@ -10581,6 +10581,22 @@ call against the real fixture, approves a style change, renders it, and reads th
 `line` — a measured difference, not merely "a file exists" — while probing that the span itself
 is unchanged (a caption revision must not move the cut points).
 
+**Amended: render variants, the third proposal type the record names beside boundaries and
+captions ("Add typed proposal tools for boundaries, captions and render variants", line 372),
+is deliberately not built here or anywhere in this branch yet.** `Clip.output.crop_target` is a
+*report* field describing which reframing actually ran ("face_tracked" if `focus_points` else
+"static_centre", `pipeline.py:1497`), not an independently settable control — proposing a
+different value without re-running `reframe.py`'s tracker over the new footage would be
+inventing a variant that was never actually rendered. `Output.encoder`/`crf` are hardware and
+deployment choices (§6: NVENC on hawapc01, x264 elsewhere), not editorial ones an agent should
+be proposing changes to. `Output.durations` (a different-length cut) is the same operation
+`propose_boundary_revision` already exposes as a span change; a second tool for the same
+capability under a different name would not be a new proposal type. There is no honest,
+real render axis left to build a third triad around without taking on the face-tracked
+re-reframe scope every revision function in `proposals.py` already names as a real
+simplification it does not attempt — so this is named as a scope boundary rather than left a
+silent gap in the module map.
+
 VERIFY OK — hawedit gate green: 1760 collected, 1760 passed, 0 skipped (floor ratcheted
 1730 -> 1760).
 
