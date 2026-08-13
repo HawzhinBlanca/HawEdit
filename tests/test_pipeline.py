@@ -491,6 +491,53 @@ def test_the_cli_reports_malformed_transcript_json_without_a_traceback(tmp_path:
     assert main([str(source), "--transcript", str(transcript)]) == 2
 
 
+# `main`'s except tuple has ten members. Measured by deleting each and running this file plus
+# tests/test_cli.py: FileNotFoundError, KeyError and ValueError were held; FileExistsError,
+# RuntimeError and TypeError were not.
+#
+# The other four — CredentialError, GeminiUnavailable, IngestError, RawTranscriptImmutable — all
+# subclass RuntimeError, which is itself in the tuple, so deleting them cannot change behaviour
+# and no test can hold them. They are listed for the reader, not for the interpreter. Removing
+# RuntimeError is the one that bites: every refusal `reframe.py` raises for a missing OpenCV, an
+# unloadable detector or an unopenable source is a bare RuntimeError, and would reach the
+# operator as a traceback with exit 1 — which `main`'s own contract reserves for an incomplete
+# run, not a refused one.
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [FileExistsError, FileNotFoundError, KeyError, RuntimeError, TypeError, ValueError],
+)
+def test_the_cli_maps_every_expected_failure_to_exit_2(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    raised: type[Exception],
+) -> None:
+    """A refusal has to arrive as `✗ <message>` on stderr with exit 2.
+
+    Exit 1 means "the run was incomplete" — a shell script driving this distinguishes the two,
+    and an uncaught exception exits 1 with a traceback, so a failure that escapes the tuple is
+    reported as the wrong kind of outcome as well as the wrong shape.
+
+    The raised message is asserted in stderr on purpose: without it this test would pass on any
+    earlier refusal that also exits 2, and prove nothing about the tuple.
+    """
+    from hawedit import pipeline as module
+
+    def boom(*args: object, **kwargs: object) -> PipelineRun:
+        raise raised("the run refused for a reason the tuple must carry")
+
+    monkeypatch.setattr(module, "run_pipeline", boom)
+    source = tmp_path / "source.mp4"
+    source.touch()
+
+    assert module.main([str(source), "--work-dir", str(tmp_path / "work")]) == 2
+    captured = capsys.readouterr()
+    assert "the run refused for a reason the tuple must carry" in captured.err
+    assert captured.err.startswith("✗")
+
+
 # `test_the_cli_refuses_flags_whose_prerequisites_are_absent` stood here and asserted
 # `main([source, *flags]) == 2` for three flag combinations. Exit 2 is the code for *every*
 # exception `_run_from_args` catches, so it passed whether the refusal fired or not: measured,
