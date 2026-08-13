@@ -25,7 +25,9 @@ all. They are proved by running the real script by hand against a real ledger; s
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -275,3 +277,71 @@ def test_the_stop_hook_lets_go_when_it_is_already_active(tmp_path: Path) -> None
     result = run_stop_hook(root, '{"stop_hook_active": true}')
     assert result.returncode == 0, result.stderr
     assert not gate_ran(root)
+
+
+# --- the wiring, which decides whether any of the above is ever invoked -----------------------
+#
+# Everything above tests what the scripts do when they run. Nothing tested whether Claude Code is
+# configured to run them at all — and a hook whose command names a path that does not exist fails
+# silently by design, because a hook that cannot start must not wedge the agent. So a typo in
+# `.claude/settings.json` retires the guard, or the Stop gate, and every run stays green.
+
+
+SETTINGS = ROOT / ".claude" / "settings.json"
+
+
+def _hook_commands() -> dict[str, list[str]]:
+    """Every hook command in the settings file, keyed by event."""
+    config = json.loads(SETTINGS.read_text(encoding="utf-8"))
+    found: dict[str, list[str]] = {}
+    for event, entries in config["hooks"].items():
+        for entry in entries:
+            for hook in entry["hooks"]:
+                found.setdefault(event, []).append(hook["command"])
+    return found
+
+
+def test_every_hook_command_names_a_script_that_exists() -> None:
+    """The failure this catches is silent in both directions.
+
+    `guard-pretooluse.sh` is written to allow the call when it cannot start — a guard that
+    fails closed on its own absence would wedge the agent — and Claude Code does not fail a
+    session because a hook's command was not found. So a renamed or mistyped script leaves the
+    boundary open with nothing on screen to say so.
+    """
+    commands = _hook_commands()
+    assert set(commands) == {"PreToolUse", "PostToolUse", "Stop"}, sorted(commands)
+
+    referenced = [
+        (event, name)
+        for event, cmds in commands.items()
+        for cmd in cmds
+        for name in re.findall(r"scripts/[A-Za-z0-9_.-]+\.sh", cmd)
+    ]
+    assert referenced, "no hook names a script at all"
+    for event, name in referenced:
+        assert (ROOT / name).is_file(), f"the {event} hook names {name}, which does not exist"
+
+
+def test_the_guard_covers_every_tool_that_can_write() -> None:
+    """The guard's file_path branch and its shell branch are both reachable only if the matcher
+    selects the tools that use them. Dropping `Write` from the matcher would leave `Edit`
+    guarded and `Write` open, which reads as a working guard.
+    """
+    matchers = json.loads(SETTINGS.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+    covered = {tool for entry in matchers for tool in entry["matcher"].split("|")}
+    assert {"Bash", "Edit", "Write", "MultiEdit"} <= covered, sorted(covered)
+
+
+def test_the_stop_hook_runs_the_wrapper_and_never_the_gate_directly() -> None:
+    """D-198's whole reason for `claude-stop-verify.sh` existing.
+
+    Claude Code gives exit 2 one meaning — block, and feed stderr back to the agent — while
+    `verify.sh` already spends 2 on "no interpreter in .venv". Wired raw the two land exactly
+    backwards: a failing suite becomes a notice the agent stops straight through, and an
+    unprovisioned checkout blocks it on a condition nobody explained. A later simplification of
+    this line to call the gate directly would be silent, and this is what refuses it.
+    """
+    (command,) = _hook_commands()["Stop"]
+    assert "claude-stop-verify.sh" in command
+    assert "verify.sh" not in command.replace("claude-stop-verify.sh", "")
