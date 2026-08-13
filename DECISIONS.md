@@ -10839,3 +10839,68 @@ set.
 
 VERIFY OK — hawedit gate green: 1822 collected, 1822 passed, 0 skipped (floor ratcheted
 1819 -> 1822).
+
+## D-A17
+
+**`export_developer_report`, the one tool the architecture record scopes outside editorial
+work entirely.** Line 199 lists it among Phase 3's recommended tools; line 212 is explicit
+about why it is different in kind from the rest: "If the agent finds an application defect, it
+creates a structured developer report with reproduction steps, workflow/artifact IDs, sanitized
+logs, expected versus actual behavior and the smallest suspected component. A separate coding
+agent or developer can fix it outside the production editor identity." This is not a proposal
+about a clip; it is a report about the application itself, filed for a different identity to
+act on.
+
+**A third agent, not a new tool bolted onto either existing one.** `agent.py`'s core, heavily
+tested promise is that it writes nothing at all — proven by an AST scan of its own source, and
+relied on by `test_a_poisoned_run_writes_nothing_anywhere_under_its_work_dir` (D-A9) among
+others. Adding a write-capable tool there would mean weakening that guarantee for every future
+reader, not composing with it. `editor_agent.py`'s promise is specifically about proposing
+*editorial* revisions. Neither module's stated scope covers "the application has a bug" — so
+this is `src/hawedit/diagnostics_agent.py`, a third module with its own narrower promise,
+matching the pattern `editor_agent.py`'s own docstring already establishes for exactly this
+situation.
+
+**Compose, don't file — the same split every mutating capability in this branch already
+uses.** `build_developer_report` is pure: it validates and returns a `DeveloperReport`, and
+touches no disk. `write_developer_report` is the only write in `developer_report.py`, and it is
+not registered as a tool on any agent — mirroring `propose_boundary_revision`/
+`commit_boundary_revision` (D-A6) exactly. `mutating_tool_names()` (`policy.py`, D-A10) stays
+`()` after this row, unchanged: the strongest statement this branch makes — that the set of
+mutating capabilities reachable from any agent is empty, not merely small — was not weakened to
+accommodate a capability that felt low-risk. A developer report is diagnostic, not a production
+change, but this codebase does not carve out an exception to "the model can propose; it cannot
+commit" on that basis.
+
+**"Sanitized logs" is a checked constraint, not a naming convention.** This project's own real
+risk is exactly what D-A16 closed for telemetry: Kurdish transcript content leaking somewhere
+it should not. A developer report about *the application's* behavior has no legitimate reason
+to quote Kurdish speech verbatim, so every free-text field is refused if it contains a
+character from `captions.py`'s own `KURDISH_REQUIRED_GLYPHS` — letters that do not appear in
+English prose, reused rather than inventing a second Kurdish-detection scheme. Verified against
+a real control case, not merely the positive refusal: English prose *describing* a Kurdish-text
+defect ("Kurdish captions render as boxes", "missing glyphs for several Sorani letters") is
+accepted, while the transcript text itself is refused — the rule is about the script appearing,
+not the topic being discussed.
+
+**Mutation-audited three times, and the third result was genuinely worth learning from.** (1)
+Five targeted tests, one per free-text field, each confirm `SanitizationError` fires and names
+the right field; two controls confirm ordinary English prose is never falsely flagged. (2) The
+Policy Gate: building the diagnostics agent before declaring `export_developer_report_tool` in
+`TOOL_POLICIES` failed `test_every_registered_tool_on_every_agent_is_declared_in_policy` and
+`test_no_agent_exposes_a_blocked_operation` by name, confirmed before the entry was added, not
+merely asserted to have been. (3) The AST-no-write check
+(`test_diagnostics_agent_module_never_calls_write`) has a real, narrow limitation worth
+recording rather than discovering later: it walks `ast.Name`/`ast.Attribute` nodes only, so an
+*unused* `from hawedit.developer_report import write_developer_report` added to the module does
+not fail it — import machinery produces `ast.alias` nodes, which the check does not scan.
+Confirmed directly: adding the bare import left every test green. The realistic mutation —
+actually calling `write_developer_report` from inside the tool, which is the only way an
+unused import could ever matter — failed the test immediately and by name. The check holds
+against the defect that could actually execute a write; it does not (and was never claimed to)
+catch a dead import that can never run. This is the same limitation `editor_agent.py`'s
+original equivalent test has always had, unexamined until this row's mutation pass looked for
+it specifically.
+
+VERIFY OK — hawedit gate green: 1849 collected, 1849 passed, 0 skipped (floor ratcheted
+1822 -> 1849).

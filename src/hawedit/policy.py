@@ -130,6 +130,16 @@ TOOL_POLICIES: Final[tuple[ToolPolicy, ...]] = (
             "is a separate function (commit_caption_revision) no agent may call."
         ),
     ),
+    ToolPolicy(
+        name="export_developer_report_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Composes and validates a structured developer report (sanitized against Kurdish-"
+            "script content) and returns it as a value. Writes nothing: write_developer_report "
+            "is a separate function no agent may call."
+        ),
+    ),
 )
 
 # The architecture record's "never expose to the production creative agent" list. Asserted
