@@ -47,6 +47,7 @@ from hawedit.ingest import (
     ingest,
     media_stack_available,
     probe_duration_ms,
+    probe_stream,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -666,3 +667,90 @@ def test_the_proxy_is_reused_on_the_same_terms_as_the_audio(tmp_path: Path) -> N
 
     assert extract_proxy(FIXTURE, dest).read_bytes() == first
     assert dest.stat().st_mtime_ns == stamp, "the proxy was re-encoded"
+
+
+# --- the two refusals in the probe path that no test held ------------------------------------
+#
+# Measured by neutralising each in a shadow copy of src/hawedit and running tests/test_ingest.py
+# with tests/test_pipeline.py and tests/test_review_findings.py: both survived at that scope, so
+# neither is held incidentally by a caller's file. `probe_stream` is the one argv every probe in
+# the system goes through — the docstring says three call sites had grown their own, "including
+# one that let a raw `CalledProcessError` escape into the pipeline runner". These two guards are
+# what keeps that from happening again, and both are about the *identity* of the failure.
+
+
+def _bin_pair(tmp_path: Path, *, with_ffprobe: bool) -> Path:
+    """An ffmpeg path, optionally with the sibling `ffprobe_for` would resolve to.
+
+    Named through `ffprobe_for` rather than spelled out, so the fixture cannot drift away from
+    the resolver it is meant to exercise — `ffprobe_for` keeps the binary's suffix, which is
+    the whole reason it exists. Nothing here is executed: the refusing case never reaches
+    subprocess, and the control stubs it.
+    """
+    from hawedit.captions import ffprobe_for
+
+    binary = tmp_path / "bin" / "ffmpeg.exe"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(b"")
+    if with_ffprobe:
+        ffprobe_for(binary).write_bytes(b"")
+    return binary
+
+
+def test_an_ffmpeg_with_no_ffprobe_beside_it_is_refused_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without this line the missing binary reaches `subprocess.run`, which raises
+    `FileNotFoundError` naming a path — an OSError crossing a stage boundary, which is the
+    class of escape `probe_stream` was written to end. The refusal says which ffmpeg the
+    ffprobe was expected beside, because that is the fact needed to fix it.
+    """
+    binary = _bin_pair(tmp_path, with_ffprobe=False)
+    with pytest.raises(IngestError, match="no ffprobe beside"):
+        probe_stream(FIXTURE, "format=duration", binary)
+
+    # The control: the same call with the sibling present gets past this line. Without it the
+    # test would pass just as well against a `probe_stream` that refused every input.
+    def succeeds(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 0, b" 4.162\n", b"")
+
+    monkeypatch.setattr("hawedit.ingest.subprocess.run", succeeds)
+    assert probe_stream(FIXTURE, "format=duration", _bin_pair(tmp_path, with_ffprobe=True)) == (
+        "4.162"
+    )
+
+
+def test_a_probe_that_exits_nonzero_is_refused_rather_than_read_as_an_empty_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_run` is the single subprocess call site for Stage 0, and this is its only check.
+
+    Neutralised, `probe_stream` returns `result.stdout.decode().strip()` — for a failed
+    ffprobe, the empty string. That is not an error anyone sees: `probe_duration_ms` turns it
+    into `float("")`, a `ValueError` about string conversion several frames away from the
+    binary that actually failed, with ffprobe's own explanation discarded. So the assertions
+    are on the message, not just the type: the binary's name, its exit code, and the tail of
+    its stderr are the three facts that make the refusal actionable.
+    """
+    binary = _bin_pair(tmp_path, with_ffprobe=True)
+    reason = b"Invalid data found when processing input"
+
+    def failed(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 3, b"", b"x" * 700 + reason)
+
+    monkeypatch.setattr("hawedit.ingest.subprocess.run", failed)
+
+    with pytest.raises(IngestError) as raised:
+        probe_stream(FIXTURE, "format=duration", binary)
+    message = str(raised.value)
+    assert "ffprobe" in message, "the refusal does not say which binary failed"
+    assert "(3)" in message, "the refusal does not carry the exit code"
+    assert reason.decode() in message, "ffprobe's own explanation was dropped"
+    assert "x" * 700 not in message, (
+        "the stderr tail is not bounded — [-600:] must keep the end, which is where ffmpeg "
+        "writes the line that says why, after however much banner precedes it"
+    )
+
+    # The caller that would otherwise raise ValueError from float(""), stated as a caller.
+    with pytest.raises(IngestError):
+        probe_duration_ms(FIXTURE, binary)

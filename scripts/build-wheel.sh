@@ -48,6 +48,18 @@ fi
 
 export SOURCE_DATE_EPOCH="$epoch"
 mkdir -p "$OUT"
+
+# `--no-build-isolation` means setuptools stages into this repo's own build/ rather than a
+# private temporary one, and bdist_wheel finishes by *renaming* the egg-info onto
+# build/bdist.<plat>/wheel/<name>.dist-info. On Windows a rename onto an existing directory is
+# WinError 183, so a build that was interrupted — or a second one racing it, which BLOCKED #12
+# says this checkout gets — leaves that directory behind and wedges every build after it. It
+# did: three tests in test_build.py failed identically until this line existed, on a tree whose
+# only change was two new tests in another file. Only the staging directory goes; build/lib is
+# the incremental cache and is not what collides. A clean runner has neither, which is why CI
+# could not have caught this.
+rm -rf "$here"/build/bdist.*
+
 "$PY" -m pip wheel --no-deps --no-build-isolation -q -w "$OUT" "$here"
 
 "$PY" - "$OUT" <<'PY'
