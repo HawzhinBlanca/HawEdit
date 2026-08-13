@@ -222,6 +222,32 @@ def test_fusion_refuses_an_interval_that_does_not_overlap_the_anchor() -> None:
         )
 
 
+def test_fusion_refuses_an_interval_that_ends_before_the_anchor_begins() -> None:
+    """The overlap guard has two halves and only the later-evidence one was held.
+
+    `boundary.py:229` refuses on `not (start < anchor_out and end > anchor_in)`. The sibling test
+    above supplies evidence five minutes *after* the sentence, which exercises the first conjunct
+    only. Measured by mutation: deleting `end > anchor_in` leaves both boundary test files green,
+    while deleting the other conjunct — or the whole guard — reddens that sibling immediately.
+
+    Nothing else would have caught it. Every other TimeLens assertion in the suite is about
+    `final_out_ms`, and an interval ending at or before `anchor_in` can never beat the
+    `anchor_out + TAIL_MS` candidate, so the number is identical either way — only the refusal
+    disappears, and §3 Stage 5's "evidence about a different moment cannot set this clip's
+    out-point" becomes a silent accept.
+    """
+    with pytest.raises(ValueError, match="does not overlap"):
+        fuse_boundary(
+            BoundaryInputs(
+                anchor_in_ms=ANCHOR_IN,
+                anchor_out_ms=ANCHOR_OUT,
+                sentence_complete=True,
+                timelens_interval_start_ms=0,
+                timelens_interval_end_ms=ANCHOR_IN - 1,
+            )
+        )
+
+
 def test_fusion_accepts_an_overlapping_interval_and_extends_outward() -> None:
     boundary = fuse_boundary(
         BoundaryInputs(
