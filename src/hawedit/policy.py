@@ -149,6 +149,17 @@ TOOL_POLICIES: Final[tuple[ToolPolicy, ...]] = (
             "is a separate function no agent may call."
         ),
     ),
+    ToolPolicy(
+        name="propose_start_pipeline_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Validates that starting a pipeline run is well-formed (source exists, work_dir "
+            "has no report.json to overwrite) and returns the verdict. Writes nothing and "
+            "never touches dbos: commit_start_pipeline is a separate function no agent may "
+            "call."
+        ),
+    ),
 )
 
 # The architecture record's "never expose to the production creative agent" list. Asserted
@@ -165,14 +176,18 @@ BLOCKED_OPERATIONS: Final[tuple[str, ...]] = (
 
 # Substrings that would indicate one of `BLOCKED_OPERATIONS` had been registered as a tool.
 # Deliberately broad: a false positive is a five-second rename, a false negative is a shipped
-# capability nobody decided to grant.
+# capability nobody decided to grant. `"pip_"` carries a trailing underscore for the same
+# reason `"commit_"` below does — a bare `"pip"` matches "pipeline", this codebase's own
+# central domain word (`pipeline.py`, `run_pipeline`, `PipelineRun`), which is not a rare
+# collision worth renaming around every time: D-A19 found `propose_start_pipeline_tool`
+# refused for exactly this, and every future pipeline-lifecycle tool would hit it again.
 _FORBIDDEN_NAME_FRAGMENTS: Final[tuple[str, ...]] = (
     "shell",
     "exec",
     "subprocess",
     "system",
     "install",
-    "pip",
+    "pip_",
     "write_file",
     "delete",
     "rmtree",

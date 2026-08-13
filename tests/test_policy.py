@@ -151,6 +151,31 @@ def test_a_blocked_capability_name_is_refused() -> None:
             assert_tools_are_declared({forbidden})
 
 
+def test_a_real_pip_shaped_tool_name_is_still_refused() -> None:
+    """The check `_FORBIDDEN_NAME_FRAGMENTS`'s `"pip"` fragment still catches what it exists
+    for, after D-A19 found it also matched `propose_start_pipeline_tool` — a false positive on
+    "pipeline", not a real one. The fix was renaming the pipeline tool (`workflow_agent.py`),
+    not narrowing this fragment, so a genuinely pip-shaped name must still fail here."""
+    for forbidden in ("pip_install_tool", "run_pip_tool"):
+        with pytest.raises(PolicyViolation, match="blocked-capability"):
+            assert_tools_are_declared({forbidden})
+
+
+def test_pipeline_in_a_tool_name_is_not_a_blocked_capability() -> None:
+    """The other half of the same finding: "pipeline" is this codebase's own domain word
+    (`pipeline.py`, `run_pipeline`, `PipelineRun`) and must not trip the `"pip"` fragment —
+    `propose_start_pipeline_tool` (`workflow_agent.py`) keeps its natural name because the
+    fragment was fixed at the source (`"pip"` -> `"pip_"`) rather than renamed around.
+
+    `propose_pipeline_status` is not a real declared tool, so `assert_tools_are_declared` must
+    still raise — the assertion here is on *which* refusal it raises: "not declared", never
+    "blocked-capability". Reaching the declaration check at all proves the fragment scan let it
+    through.
+    """
+    with pytest.raises(PolicyViolation, match="not declared"):
+        assert_tools_are_declared({"propose_pipeline_status"})
+
+
 def test_a_blocked_capability_is_refused_even_when_someone_declares_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

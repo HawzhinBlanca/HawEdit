@@ -10956,3 +10956,86 @@ considered to actually prove what it claimed.
 
 VERIFY OK — hawedit gate green: 1860 collected, 1860 passed, 0 skipped (floor ratcheted
 1849 -> 1860).
+
+## D-A19
+
+**`start_pipeline`, built rather than left off the Phase 3 tool list.** Asked directly whether
+to build the remaining recommended tools (`start_pipeline`/`cancel_or_pause_run`/`resume_run`)
+or treat the list as complete, the answer was to build them. This is the first: the same
+propose/commit split every mutating capability in this branch has kept since D-A6, applied to
+*starting a run* rather than revising a clip — a genuinely different risk class from anything
+built so far, since it spends real compute rather than proposing a change to already-produced
+content.
+
+**Scoped to three parameters, not `pipeline.py`'s full ~25-flag CLI.** `build_parser()`
+accepts `--omni-asr`, `--gemini`, `--visual`, `--confidential`, `--zero-data-retention`,
+`--qc-pass`, device selection, and more. `propose_start_pipeline`/`commit_start_pipeline`
+expose exactly `source`, optional `media_id`, optional `transcript` — an agent proposing to
+start a run should not be toggling compliance flags or bypassing the human QC gate itself.
+Everything else runs at `pipeline.py`'s own defaults, the same graceful, already-tested
+`StageSkipped` degradation any caller without live ASR/Gemini access gets (`BLOCKED.md` #1/#3
+mean that is every caller in this environment today, agent or human).
+
+**A run must not silently overwrite a completed one.** `propose_start_pipeline` refuses if
+`work_dir/report.json` already exists — the same "additive, never destructive" principle
+`proposals.py` already holds for boundary/caption revisions, checked against a real run this
+branch's own tests started and completed, not a hand-written stand-in file.
+
+**Recorded as a decision delta on every outcome**, extending `DecisionDelta.kind` to accept
+`"start_pipeline"` alongside `"boundary"`/`"caption"` — the same reasoning D-A13 gave for
+recording declines and refusals, not only approvals: starting a real, compute-consuming run is
+exactly the kind of decision worth a permanent, reasoned record.
+
+**A real, named tradeoff: `source`/`transcript` are free-form strings, unlike every other agent
+parameter in this codebase.** Every prior tool either takes no parameters (`agent.py`'s
+read-only five) or a closed enum (`caption_style`, D-A12) specifically so an injected
+instruction has no open string field to smuggle a path through. `start_pipeline` cannot follow
+that pattern — naming a file *is* the input. The honest boundary this leaves:
+`propose_start_pipeline` only ever calls `Path.is_file()` against `source`/`transcript`, an existence check,
+never a read, so an injected instruction could at most learn whether an attacker-chosen path
+exists on the host, and only by observing which `violation` message comes back — never its
+contents, and nothing runs without a human seeing the real path in `commit_start_pipeline`'s
+confirmation prompt.
+
+**A real Policy Gate defect this tool's own natural name found, fixed at the source rather than
+worked around.** `policy.py`'s `_FORBIDDEN_NAME_FRAGMENTS` had a bare `"pip"` fragment meant to
+catch a tool that shells out to the package installer; `propose_start_pipeline_tool` — the
+name matching the Python function it wraps — matched it, since "pipeline" contains "pip". The
+comment beside that list calls a false positive "a five-second rename," but this codebase's own
+central domain word (`pipeline.py`, `run_pipeline`, `PipelineRun`) is not a rare collision worth
+renaming around every time a workflow tool is added — `cancel_or_pause_run` and anything else
+pipeline-shaped would hit it again. Narrowed to `"pip_"` instead, matching the trailing-
+underscore precision `"commit_"` already uses for the same reason, and pinned in both
+directions: `test_a_real_pip_shaped_tool_name_is_still_refused` (a genuinely dangerous name is
+still caught) and `test_pipeline_in_a_tool_name_is_not_a_blocked_capability` (the domain word
+is not).
+
+**Verified against a real wheel, not assumed.** Built from this commit
+(`scripts/build-wheel.sh`), installed into a clean venv with only base dependencies (`klpt`,
+`fonttools`, no `agentic` extra) — all eight console scripts, `hawedit-workflow` now among
+them, exit 0 on `--help`. Not re-measured against the exact pinned versions the earlier
+`AUDIT_REPORT.md` entries used, so that document's amendment states only that every script
+starts, not a repeat of the earlier "`pip check` clean" claim.
+
+**Mutation-audited twice.** (1) Reverting the fragment fix (`"pip_"` back to bare `"pip"`)
+fails `test_pipeline_in_a_tool_name_is_not_a_blocked_capability` and
+`test_every_registered_tool_on_every_agent_is_declared_in_policy`, and only those two. (2) A
+genuinely pip-shaped name (`pip_install_tool`, `run_pip_tool`) is confirmed still refused after
+the fix, proving the narrowing did not also remove the real protection.
+
+**Explicitly deferred to a following row, named rather than silently absent**:
+`cancel_or_pause_run` and `resume_run`. DBOS has a real `cancel_workflow` API but no "pause" —
+`WorkflowStatusString` in the installed package has no `PAUSED` state, only
+`PENDING/SUCCESS/ERROR/CANCELLED/ENQUEUED` — so the honest version of that tool is a cancel-only
+capability, and it needs a way for a `work_dir`-scoped agent to discover its own run's DBOS
+workflow ID first, since `report.json` does not currently persist one and `run_id` is not
+model-suppliable without breaking the same project-boundary guarantee every other tool in this
+codebase holds. `resume_run` is not built at all: DBOS's own `DBOS.launch()` already recovers a
+`PENDING` workflow automatically, and a completed workflow's result is already returned by a
+second `run_durable` call under the same `run_id` (both verified in M9.2/M9.3) — there is no
+third, distinct "resume" action DBOS actually exposes beyond those two, so building a tool for
+one would be inventing a capability that is not real, the same mistake this branch has declined
+everywhere else (D-A11, D-A15).
+
+VERIFY OK — hawedit gate green: 1893 collected, 1893 passed, 0 skipped (floor ratcheted
+1860 -> 1893).

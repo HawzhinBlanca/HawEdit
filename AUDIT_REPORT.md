@@ -108,9 +108,10 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.12 wheel install: `pip check` clean; **all seven** console scripts —
+- Clean Python 3.12 wheel install: `pip check` clean; **all eight** console scripts —
   `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials`, `hawedit-durable`,
-  `hawedit-editorial-bench` and `hawedit-revise` — start from the installed wheel. **Corrected
+  `hawedit-editorial-bench`, `hawedit-revise` and `hawedit-workflow` — start from the installed
+  wheel. **Corrected
   2026-08-10 (D-141):** this named **four**, omitting `hawedit-credentials`, which is the entry
   point that handles the API key. `[project.scripts]` has declared five since M2.8 landed, and
   nothing tied this list to it — the same uncounted-list failure as D-127's *five repositories*
@@ -132,6 +133,15 @@ produced recorded evidence. Anything stronger would be marketing, not engineerin
   against a real wheel on 2026-08-12 (venv installed with only base deps — `klpt`, `fonttools` —
   no `agentic` extra): 7 declared, 7 console scripts present, **all 7 exit 0 on `--help`**,
   `pip check` clean.
+  **Amended 2026-08-14 (D-A19):** `hawedit-workflow`, the eighth entry point
+  (`workflow_control.py`'s `start_pipeline` propose/commit CLI), took the same precaution —
+  `commit_start_pipeline`'s only `dbos`-needing call (`from hawedit.durable_workflow import
+  run_durable`) is deferred inside the function body, reached only after a real approval, never
+  at import or `argparse` time. Re-measured against a real wheel built from this commit (venv
+  installed with only base deps — `klpt`, `fonttools`, no `agentic` extra): 8 declared, 8
+  console scripts present, **all 8 exit 0 on `--help`**. Not re-measured against the exact
+  pinned versions the earlier entries used, so this line does not repeat their "`pip check`
+  clean" claim — only that every console script starts.
   `tests/test_claims.py` now asserts this list equals `[project.scripts]` in both directions.
 - Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup module.
   Verified 2026-08-10 by listing the archive: `assets/fonts/NotoNaskhArabic-Regular.ttf`,

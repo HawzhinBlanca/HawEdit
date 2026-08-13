@@ -113,9 +113,11 @@ def test_migration_path_names_only_functions_that_exist() -> None:
     assert not missing, f"the migration path names functions that do not exist: {missing}"
 
 
-def test_migration_path_states_durable_workflow_is_the_only_dbos_specific_module() -> None:
+def test_migration_path_states_the_real_dbos_specific_module_importers() -> None:
     """The claim that matters most, checked directly rather than trusted from the prose: grep
-    the real source for who actually imports `durable_workflow.py`."""
+    the real source for who actually imports `durable_workflow.py`. `workflow_control.py`
+    joined `durable.py` in D-A19 — both defer the import inside a function body, past the
+    point where `--help`/proposal validation would already have finished without `dbos`."""
     src = ROOT / "src" / "hawedit"
     importers = [
         p.name
@@ -123,7 +125,8 @@ def test_migration_path_states_durable_workflow_is_the_only_dbos_specific_module
         if p.name not in ("durable_workflow.py",)
         and re.search(r"^\s*from hawedit\.durable_workflow import", p.read_text("utf-8"), re.M)
     ]
-    assert importers == ["durable.py"], (
-        f"expected only durable.py to import durable_workflow.py, found: {importers}. The "
-        f"migration path's claim that DBOS-specific code is isolated to one module is now false."
+    assert sorted(importers) == ["durable.py", "workflow_control.py"], (
+        f"expected only durable.py and workflow_control.py to import durable_workflow.py, "
+        f"found: {sorted(importers)}. The migration path's claim about which modules are "
+        f"DBOS-specific is now false."
     )

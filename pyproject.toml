@@ -107,6 +107,7 @@ hawedit-credentials = "hawedit.credentials:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
 hawedit-durable = "hawedit.durable:main"
 hawedit-revise = "hawedit.proposals:main"
+hawedit-workflow = "hawedit.workflow_control:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
