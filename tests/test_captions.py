@@ -30,10 +30,12 @@ from hawedit.captions import (
     DEFAULT_MAX_CHARS_PER_LINE,
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
+    CaptionsOutsideClip,
     CaptionStyle,
     FontCoverageError,
     GoldenReferenceMissing,
     MissingRtlStack,
+    assert_captions_within_clip,
     assert_font_covers_kurdish,
     assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
@@ -386,6 +388,67 @@ def test_an_incomplete_sentence_is_never_captioned() -> None:
 def test_no_sentences_is_refused() -> None:
     with pytest.raises(ValueError, match="no sentences"):
         build_ass(())
+
+
+# --- §4.3 bounds: six refusals in this module that no test held --------------------------------
+#
+# Measured by neutralising each in a shadow copy of src/hawedit and running this file with
+# tests/test_delivery.py, tests/test_render.py and tests/test_review_findings.py — the callers
+# that turned out to hold guards elsewhere. These six reddened nothing in any of them.
+
+
+def test_a_sentence_starting_before_the_clip_is_refused() -> None:
+    """It "would need a negative timestamp, which means it is speech from outside this clip".
+
+    `build_ass` is handed sentences and a `clip_in_ms` to subtract. Nothing else reconciles the
+    two, so without this the cue is emitted with a negative start and libass draws it from the
+    first frame — a caption for words the clip does not contain, presented as if it did.
+    """
+    with pytest.raises(CaptionsOutsideClip, match="starts before the clip"):
+        build_ass((A_SENTENCE,), clip_in_ms=A_SENTENCE.start_ms + 1)
+
+
+def test_a_sentence_running_past_the_end_of_the_clip_is_refused() -> None:
+    """The other end of the same reconciliation, and the one with no negative number to give it
+    away: the cue is well-formed and simply outlives the video."""
+    duration = A_SENTENCE.end_ms - A_SENTENCE.start_ms
+    with pytest.raises(CaptionsOutsideClip, match="runs past the end of the clip"):
+        build_ass((A_SENTENCE,), clip_in_ms=A_SENTENCE.start_ms, clip_duration_ms=duration - 1)
+    # The control: exactly filling the clip is allowed, so the boundary is `>` and not `>=`.
+    build_ass((A_SENTENCE,), clip_in_ms=A_SENTENCE.start_ms, clip_duration_ms=duration)
+
+
+def test_a_caption_file_with_no_dialogue_lines_is_refused() -> None:
+    """Kurdish invariant #4 is that the burn happens; a file libass reads as empty draws
+    nothing, and the clip ships silently uncaptioned."""
+    with pytest.raises(CaptionsOutsideClip, match="no Dialogue lines"):
+        assert_captions_within_clip("[Script Info]\n[Events]\n", clip_duration_ms=5_000)
+
+
+def test_a_non_positive_wrap_width_is_refused() -> None:
+    """`max_chars` is the line-break width §4.3.5 says to compute ourselves. At zero every word
+    is longer than the limit, so each takes its own line and the wrap becomes one word per line
+    rather than an error anyone would see."""
+    for width in (0, -1):
+        with pytest.raises(ValueError, match="max_chars must be positive"):
+            wrap_caption_lines(A_SENTENCE.words, max_chars=width)
+
+
+def test_a_missing_font_file_is_refused_by_name(tmp_path: Path) -> None:
+    """The coverage check reads the font to decide whether Kurdish renders. Absent, `TTFont`
+    raises about a file handle rather than about the font, and the message a build produces is
+    what tells an operator which of the two failed."""
+    with pytest.raises(FileNotFoundError, match="no font at"):
+        assert_font_covers_kurdish(tmp_path / "absent.ttf")
+
+
+def test_a_missing_candidate_render_is_an_assertion_not_a_comparison(tmp_path: Path) -> None:
+    """§4.3.6's golden test compares two files. The reference has its own refusal one line up;
+    this is the other operand, and without it the comparison reads a file that is not there."""
+    reference = tmp_path / "golden.png"
+    reference.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 64)
+    with pytest.raises(AssertionError, match="no candidate render"):
+        compare_golden_render(reference, tmp_path / "absent.png")
 
 
 def test_braces_in_text_are_escaped_so_they_are_not_read_as_override_tags() -> None:

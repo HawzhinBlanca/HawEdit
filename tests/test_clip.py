@@ -163,6 +163,25 @@ def test_a_human_reviewed_clip_is_renderable_even_without_auto_pass() -> None:
     clip.assert_renderable()
 
 
+def test_a_clip_with_no_qc_record_at_all_is_not_renderable() -> None:
+    """The refusal above this one catches a clip that FAILED QC. This catches one that never
+    had it — and absence is the quieter of the two.
+
+    Its own words: "A clip with no QC record has not passed QC — it has skipped it. §2's
+    diagram puts the gate before output '(always)', so absence is refusal, not permission."
+    Audit finding #3.
+
+    Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file
+    with tests/test_delivery.py and tests/test_review_findings.py: thirteen of clip.py's
+    fourteen redden something and this one did not. It sits inside `assert_renderable`, which
+    D-195 swept and found two refusals nothing held; this is a third in the same function that
+    the sweep did not reach.
+    """
+    clip = a_clip(qc=None)
+    with pytest.raises(ValueError, match="carries no QC record"):
+        clip.assert_renderable()
+
+
 def test_direct_qc_construction_refuses_truthy_string_booleans() -> None:
     with pytest.raises(ValueError, match="boolean"):
         Qc(auto_pass="false", flags=(), human_reviewed=False)  # type: ignore[arg-type]
