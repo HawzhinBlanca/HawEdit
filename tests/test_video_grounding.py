@@ -67,6 +67,14 @@ def test_prose_with_no_array_is_refused() -> None:
         parse_spans("The relevant moment is around two seconds in.")
 
 
+# `parse_spans`'s remaining refusal — `if not isinstance(raw, list)` at video_grounding.py:100 —
+# has no test here on purpose. `start_at = answer.find("[")` and `raw_decode` is called from that
+# index, so by the JSON grammar a successful decode from `[` is an array; anything else raises
+# JSONDecodeError and is caught one branch earlier. It is defence in depth against a state no
+# input can produce. Unreachable is not the same as untested, and a test that reached it by
+# calling the decoder directly would be testing json, not this parser.
+
+
 def test_a_one_element_pair_is_refused_rather_than_padded() -> None:
     with pytest.raises(GroundingError, match=r"expected \[start, end\] pairs"):
         parse_spans("[[1.0]]")

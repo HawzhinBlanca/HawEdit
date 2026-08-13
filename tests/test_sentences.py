@@ -32,19 +32,27 @@ def words(*specs: tuple[str, int, int]) -> tuple[Word, ...]:
     return tuple(Word(w=w, start_ms=s, end_ms=e, conf=0.95) for w, s, e in specs)
 
 
-# --- §2 delivery order: both refusals here were held by nothing -------------------------------
+# --- §2 delivery order ------------------------------------------------------------------------
 #
-# Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file:
-# the pause-threshold guard reddens a test, these two did not.
+# CORRECTION, recorded rather than quietly fixed. These two arrived with a comment claiming both
+# refusals were "held by nothing". That was measured against this file alone, and it was wrong:
+# `tests/test_delivery.py` holds both, through the callers at `captions.py:430` and
+# `delivery.py:145`, with docstrings recording the cues that shipped before the guards existed.
+# Measuring a guard against one test file and reporting the result as coverage is the same
+# mistake the automated sweep made, made by hand.
+#
+# They stay for one assertion that is genuinely absent there: the exactly-touching boundary
+# below. `test_delivery`'s control uses two sentences with a gap between them, which does not
+# distinguish `<` from `<=`.
 
 
 def test_a_sentence_that_ends_before_it_starts_is_refused() -> None:
     """`Sentence.start_ms` and `end_ms` come from the first and last word, so a sentence whose
     words are out of time order spans backwards while every individual word is valid.
 
-    The refusal's own words for why it matters: such a cue "is displayed by nothing and reported
-    by nothing" — it does not fail loudly, it fails invisibly, which is the shape §2 delivery is
-    written against.
+    Redundant with `tests/test_delivery.py::test_a_sentence_whose_words_are_unordered_is_refused`,
+    which reaches the same guard through `build_srt`. Kept as the direct call, so a future
+    refactor that stops SRT construction validating order does not take this with it.
     """
     backwards = Sentence(words=words(("یەک", 500, 900), ("دوو", 100, 400)), complete=True)
     assert backwards.end_ms < backwards.start_ms
