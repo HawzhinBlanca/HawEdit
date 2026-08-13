@@ -27,6 +27,36 @@ def test_keyframes_refuse_more_than_the_stage_4_ceiling(tmp_path: Path) -> None:
         extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=21)
 
 
+def test_more_frames_than_were_asked_for_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal in this module no test held — measured by neutralising each in a shadow copy
+    of src/hawedit and running this file with tests/test_judge.py and tests/test_review_findings.py.
+
+    `-frames:v count` tells ffmpeg how many to write and the glob is what actually comes back;
+    the two are separate facts, and the guard is where they are reconciled. The count is not
+    cosmetic: the timestamps are computed from the cadence ffmpeg was *told* to sample at, so a
+    surplus frame is stamped with a time that belongs to a different frame, and every stamp
+    after it is wrong too. §3 Stage 4 then judges a clip on evidence labelled with the wrong
+    moments — D-126's failure class, one layer further in.
+
+    The extraction is stubbed rather than provoked: no ffmpeg invocation this project makes
+    produces a surplus, so the only way to reach the reconciliation is to supply one.
+    """
+    import subprocess
+
+    def extra_frames(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        work_dir = Path(argv[-1]).parent
+        work_dir.mkdir(parents=True, exist_ok=True)
+        for index in range(1, 5):  # four, where two were asked for
+            (work_dir / f"judge-{index:03d}.jpg").write_bytes(b"\xff\xd8" + b"x" * 2_000)
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", extra_frames)
+    with pytest.raises(KeyframeError, match="asked for 2 keyframes and ffmpeg produced 4"):
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=2)
+
+
 # --- what adversarial pass #13 found unprotected (D-126) --------------------------------
 
 # The fixture is three static shots, so each one's span has its own pixels. Measured:

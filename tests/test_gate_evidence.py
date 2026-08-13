@@ -38,6 +38,24 @@ def test_a_missing_report_is_a_refusal(tmp_path: Path) -> None:
         check_test_evidence(tmp_path / "absent.xml", floor_path=tmp_path / "floor")
 
 
+def test_a_report_with_no_testsuite_element_is_a_refusal(tmp_path: Path) -> None:
+    """The one refusal in gate.py that no test held — measured by neutralising each in a shadow
+    copy of src/hawedit and running this file with tests/test_gate.py and tests/test_claims.py.
+
+    Well-formed XML that parses and carries no `<testsuite>` is the gap between "the test step
+    wrote something" and "the test step wrote evidence". Every count `check_test_evidence`
+    derives is a sum over the suites it finds, so with none the totals are all zero and the
+    refusal one line down — `collected == 0` — would catch it too. This is the earlier and more
+    exact answer: the file is not a report at all, rather than a report of nothing.
+    """
+    empty = tmp_path / "r.xml"
+    empty.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<testsuites></testsuites>\n', encoding="utf-8"
+    )
+    with pytest.raises(NoTestEvidence, match="no <testsuite> element"):
+        check_test_evidence(empty, floor_path=tmp_path / "floor")
+
+
 def test_a_run_that_collected_nothing_is_a_refusal(tmp_path: Path) -> None:
     """pytest exits 0 with `no tests ran` when testpaths points at an empty directory."""
     report = _report(tmp_path / "r.xml", tests=0)

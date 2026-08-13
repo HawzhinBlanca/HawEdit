@@ -294,6 +294,41 @@ def test_gold_counts_as_human_confirmation(tmp_path: Path) -> None:
     assert [item.item_id for item in corpus.items] == ["gold-1"]
 
 
+# The two refusals below were held by nothing — measured by neutralising each in a shadow copy of
+# src/hawedit and running this file with tests/test_corpus.py and tests/test_review_findings.py.
+
+
+def test_a_record_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
+    """The export is a JSON array whose entries this importer reads with `.get`.
+
+    A bare string or number where a record belongs is a different export format, and `.get` on
+    it raises AttributeError several lines later — a stack trace about a missing attribute
+    rather than a statement about the file. §8.1's corpus is what every ASR number is scored
+    against, so "this is not the export you think it is" has to be said in those words.
+    """
+    export = write_export(tmp_path / "e.json", [{**MACHINE_ONLY, "verified": True}])
+    export.write_text(
+        json.dumps([{**MACHINE_ONLY, "verified": True}, "not-a-record"], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(CorpusImportError, match="where a segment record was expected"):
+        import_cortex_speech(export, licence=A_LICENCE)
+
+
+def test_a_confirmed_record_missing_its_id_or_audio_is_refused(tmp_path: Path) -> None:
+    """ "Both name the thing being scored, so neither can be invented."
+
+    An item with no id cannot be matched against a hypothesis, and one with no audio path names
+    no recording to decode. Either would enter the corpus as an item that quietly measures
+    nothing, and §8.1's whole point is that the number carries what produced it.
+    """
+    for field in ("id", "audioPath"):
+        record = {**MACHINE_ONLY, "verified": True, field: "   "}
+        export = write_export(tmp_path / f"e-{field}.json", [record])
+        with pytest.raises(CorpusImportError, match="is missing"):
+            import_cortex_speech(export, licence=A_LICENCE)
+
+
 def test_an_export_with_nothing_confirmed_is_refused_loudly(tmp_path: Path) -> None:
     """An empty corpus would be the quiet version of the same answer.
 
