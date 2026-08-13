@@ -2223,6 +2223,62 @@ def test_a_run_with_no_candidates_is_never_complete(whole_run: PipelineRun) -> N
     assert replace(whole_run, candidates=()).complete is False
 
 
+# The three tests above cover three of `complete`'s eleven conjuncts. Measured by replacing each
+# conjunct with `True` in a shadow copy of `src/hawedit` and running this file: those three are
+# held, and the remaining eight — ingest, transcript, index, boundary, clip, editorial, render,
+# delivery — could each be deleted with the suite green.
+#
+# The reason they were reachable at all is `whole_run`: before it existed nothing reached the
+# True branch, so no conjunct could be told from a no-op. The control was the hard part; these
+# are the rest of the sweep it made possible.
+#
+# Method note worth keeping: a first attempt put the shadow package one level too shallow, so
+# `pipeline.py:111`'s `parents[2] / "assets" / "fonts"` missed and every ffmpeg test died on
+# FontCoverageError. A mutation result read off a baseline like that means nothing — the shadow
+# has to mirror `src/` with the assets beside it.
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("missing", "strip"),
+    [
+        ("ingest", lambda run: replace(run, ingest=None)),
+        ("transcript", lambda run: replace(run, transcript=None)),
+        ("index", lambda run: replace(run, index=None)),
+        ("boundary", lambda run: replace(run, boundary=None)),
+        ("clip", lambda run: replace(run, clip=None)),
+        ("render", lambda run: replace(run, render=None)),
+        ("delivery", lambda run: replace(run, delivery=None)),
+    ],
+)
+def test_a_run_missing_any_material_evidence_is_never_complete(
+    whole_run: PipelineRun, missing: str, strip: Callable[[PipelineRun], PipelineRun]
+) -> None:
+    """`complete` is the CLI's exit code (`return 0 if run.complete else 1`) and the `"complete"`
+    key of the `--json` document.
+
+    Its docstring gives the rule these seven conjuncts enforce: `None` means "this stage
+    succeeded and has no separate result object" for several seams, and is also every field's
+    construction default — so "nothing was skipped" alone lets an empty `PipelineRun` claim
+    success. Each conjunct demands the material evidence a finished run necessarily leaves
+    behind, and each was deletable without reddening anything.
+    """
+    assert strip(whole_run).complete is False, f"a run with no {missing} claimed completeness"
+
+
+@needs_ffmpeg
+def test_a_clip_with_no_editorial_block_is_never_complete(whole_run: PipelineRun) -> None:
+    """The eighth conjunct, and the one that is not a field of the run.
+
+    §3 Stage 5 produces a boundary before Stage 4 has judged anything, so `Clip.editorial` is
+    optional by design — a clip can exist without it. `complete` is where that optionality has
+    to end: a run whose clip carries no editorial block never had a verdict, and reporting exit
+    0 for it would be the silent success §1 of this module forbids.
+    """
+    assert whole_run.clip is not None
+    assert replace(whole_run, clip=replace(whole_run.clip, editorial=None)).complete is False
+
+
 @needs_ffmpeg
 def test_stage_5_fuses_against_the_cuts_stage_0_found_on_this_video(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
