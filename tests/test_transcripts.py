@@ -874,3 +874,208 @@ def test_a_supplied_transcript_carrying_a_broken_word_is_refused_at_the_door() -
     )
     with pytest.raises(ValueError, match="one line"):
         RawTranscript.from_json(payload)
+
+
+# --- the constructor's checks, and the file that reaches them --------------------------------
+#
+# Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file
+# together with the eighteen others that import `hawedit.transcripts`. The wider scope is the
+# point: `:259` read unheld against this file alone and is held by another of the eighteen, so
+# a narrower run would have reported a gap that is not there. The nine below survived it.
+#
+# They divide in two, and the division matters more than the count. `from_json` is the trust
+# boundary — it reads `transcript.raw.json` off disk and hands `data["media_id"]` straight to
+# the constructor — so the first group is reachable by a file. The second is not: `from_json`
+# builds `tuple(Word(**w) …)` and `AsrProvenance(**…)`, so those types are already right by the
+# time the constructor sees them. That group is the contract with a caller that ignores the
+# annotations, which mypy checks statically and nothing checks at runtime.
+
+
+def _raw_file(**overrides: object) -> str:
+    """A valid `transcript.raw.json` with one field replaced.
+
+    Serialised from a real `RawTranscript` rather than hand-written, so a schema change breaks
+    this loudly instead of leaving it testing a document the code no longer reads.
+    """
+    data = json.loads(a_raw().to_json())
+    data.update(overrides)
+    return json.dumps(data, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (42, "media_id must be a non-empty string"),
+        (None, "media_id must be a non-empty string"),
+        ("", "media_id must be a non-empty string"),
+        ("   ", "media_id must be a non-empty string"),
+    ],
+)
+def test_a_raw_transcript_file_whose_media_id_is_not_a_name_is_refused(
+    value: object, message: str
+) -> None:
+    """`media_id` is what the artifact is stored and looked up under, so an empty or non-string
+    one is not a cosmetic problem: `TranscriptStore` would key a file on it.
+    """
+    with pytest.raises(ValueError, match=message):
+        RawTranscript.from_json(_raw_file(media_id=value))
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (None, "text_ckb must be a string"),
+        (["ئه‌مه‌"], "text_ckb must be a string"),
+        (12, "text_ckb must be a string"),
+        ("   ", "text_ckb must not contain only whitespace"),
+        ("\n\t ", "text_ckb must not contain only whitespace"),
+    ],
+)
+def test_a_raw_transcript_file_whose_text_is_not_text_is_refused(
+    value: object, message: str
+) -> None:
+    """Two different failures, and the second is the quiet one.
+
+    A non-string `text_ckb` is caught the moment anything reads it — but only if something
+    does: with no words the surface scan never runs, and `null` would be written straight back
+    out by `to_json` as a canonical artifact of nothing. Whitespace-only is worse still,
+    because it is a perfectly valid string that says a Kurdish clip contains no speech.
+    """
+    with pytest.raises(ValueError, match=message):
+        RawTranscript.from_json(_raw_file(text_ckb=value))
+
+
+def test_the_empty_transcript_is_still_readable() -> None:
+    """The control for the pair above. `text_ckb` is checked with `if self.text_ckb and …`, so
+    the empty string is deliberately allowed — a file that transcribed to nothing is a real
+    outcome and is not the same as one whose text is whitespace. A refusal that swept both up
+    would pass those tests and reject a legitimate artifact.
+    """
+    empty = RawTranscript.from_json(_raw_file(text_ckb="", words=[]))
+    assert empty.text_ckb == ""
+
+
+def test_an_asr_provenance_whose_adapter_is_named_but_blank_is_refused() -> None:
+    """D-181: the adapter field exists because "a transcript decoded by adapted weights and one
+    decoded by stock weights are different transcripts, and only this field says which is
+    which". `None` says there was no fine-tune. `""` says there was one and it has no name —
+    precisely the ambiguity the field was added to remove, and it arrives through the file.
+    """
+    payload = json.loads(a_raw().to_json())
+    payload["asr"]["adapter"] = "   "
+    with pytest.raises(ValueError, match="adapter must name the fine-tune or be None"):
+        RawTranscript.from_json(json.dumps(payload, ensure_ascii=False))
+
+    # The control: `None` is how the same file says there was no fine-tune, and must still load.
+    payload["asr"]["adapter"] = None
+    assert RawTranscript.from_json(json.dumps(payload, ensure_ascii=False)).asr.adapter is None
+
+
+def test_the_constructor_refuses_the_element_types_its_annotations_promise() -> None:
+    """Not reachable through `from_json`; every ignore below marks a state mypy already forbids.
+
+    They are checked at runtime anyway because `RawTranscript` is frozen, hashed, and declared
+    "never modified after write" by Kurdish invariant #1. A list where a tuple belongs is a
+    mutable field inside that artifact, and `sha256()` would go on answering for it while it
+    changed — a mutation invariant #1 exists to make detectable, made undetectable.
+    """
+    with pytest.raises(ValueError, match="words must be a tuple"):
+        RawTranscript(media_id="m", text_ckb="ئه‌مه‌", words=[], asr=CANONICAL)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="asr must be AsrProvenance"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=(),
+            asr={"canonical": CANONICAL_ASR_ID},  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match=r"word 0 is not a Word"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=("ئه‌مه‌",),  # type: ignore[arg-type]
+            asr=CANONICAL,
+        )
+
+    with pytest.raises(ValueError, match=r"unaligned\[0\] is not an UnalignedSpeech"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=(),
+            asr=CANONICAL,
+            unaligned=({"start_ms": 0, "end_ms": 1, "reason": "x"},),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match=r"segment_confidence\[0\] is not a SegmentConfidence"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=(),
+            asr=CANONICAL,
+            segment_confidence=(-0.5,),  # type: ignore[arg-type]
+        )
+
+
+# --- audit finding #9: the path invariant #1 guards is derived from a media_id ----------------
+#
+# Both refusals in `_safe` are held — `test_audit_regressions.py` reaches each with one input,
+# `raw_path("a/b")` and `raw_path("")`. What is *not* held is most of what they say, and the
+# reason is worth recording because it bounds the instrument rather than this module: the
+# guard-revert matrix neutralises a whole `if` line, so a compound condition reports HELD as
+# soon as any one disjunct is covered. These two lines carry six between them:
+#
+#     if not media_id or media_id in {".", ".."}:                       # 1 of 2 covered
+#     if any(sep in media_id for sep in ("/", "\\", "\x00")) or ".." in media_id:   # 1 of 4
+#
+# So this block adds no new refusal. It covers the five disjuncts that were reachable and
+# untested, on a path-traversal guard, which is not somewhere to accept a one-input sample.
+
+
+@pytest.mark.parametrize("media_id", [".", ".."])
+def test_a_media_id_that_is_only_a_path_component_is_refused(tmp_path: Path, media_id: str) -> None:
+    """The second disjunct of the first refusal; `""` is the one already covered elsewhere.
+
+    Neither escapes the store, which is why they are stated apart from the separator check
+    below — `"."` contains no separator and no parent reference, so that check would pass it
+    through, and it becomes `..transcript.raw.json` in the root. Every media_id of that shape
+    collides there, and invariant #1 refuses a *second* write to a path: the collision does not
+    surface as a naming bug but as the next clip being rejected for tampering with the first.
+    """
+    store = TranscriptStore(tmp_path)
+    with pytest.raises(ValueError, match="must not be empty or a path component"):
+        store.raw_path(media_id)
+
+
+@pytest.mark.parametrize(
+    "media_id",
+    [
+        "../../etc/passwd",
+        "a\\b",  # the separator that matters on the box §6 names, and `/` is the covered one
+        "a\x00b",
+        "clip..1",  # no separator at all — the `".." in media_id` clause, on its own
+    ],
+)
+def test_a_media_id_that_would_escape_the_store_is_refused(tmp_path: Path, media_id: str) -> None:
+    """ "`media_id` reaches here from filenames and job payloads." That is the whole argument:
+    the value is not the program's own, and the path is interpolated from it.
+
+    Invariant #1's write-once guarantee is a promise about a path, so a caller who chooses the
+    path has the guarantee for nothing. `a/b` is the case already covered; these are the other
+    three, and `clip..1` is the one furthest from it — it is caught by a different clause of
+    the same line, so no amount of separator testing would have reached it.
+    """
+    store = TranscriptStore(tmp_path)
+    with pytest.raises(ValueError, match="path separator or parent reference"):
+        store.raw_path(media_id)
+
+
+def test_an_ordinary_media_id_still_resolves_inside_the_store(tmp_path: Path) -> None:
+    """The control. A refusal that rejected every media_id would satisfy both tests above and
+    leave the store unable to hold a transcript; `norm_path` is checked too because it derives
+    its path from the same helper and would be the way around it.
+    """
+    store = TranscriptStore(tmp_path)
+    for path in (store.raw_path("media-001"), store.norm_path("media-001")):
+        assert path.parent == tmp_path
+        assert path.name.startswith("media-001.")
