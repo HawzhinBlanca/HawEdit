@@ -10904,3 +10904,55 @@ it specifically.
 
 VERIFY OK — hawedit gate green: 1849 collected, 1849 passed, 0 skipped (floor ratcheted
 1822 -> 1849).
+
+## D-A18
+
+**`run_quality_checks`, the architecture record's own tool name (line 196), added to the
+read-only agent as a fifth tool rather than a new module.** Unlike `export_developer_report`
+(D-A17), which needed its own agent because it writes something, this genuinely fits
+`agent.py`'s existing, heavily tested zero-write promise — every check it runs is a read
+against `report.json`, so it composes with the AST-proof `test_agent_module_never_writes_a_file`
+rather than straining against it.
+
+**Itemized, not short-circuited — and that is a deliberate difference from the function it
+draws on.** `Clip.assert_renderable()` (`clip.py`) already checks four conditions in sequence —
+the boundary invariant, the QC gate, the editorial block, the output block — and raises on the
+first one that fails. A caller asking "is this run's clip ready to ship" is better served by
+everything wrong at once than by whichever check a short-circuiting guard happened to reach
+first, so `run_quality_checks` evaluates all four independently and reports each as its own
+`QualityCheck`. The boundary check reuses the real `assert_boundary_invariant` from
+`boundary.py` — constructing an actual `Boundary` from the report's own recorded fields and
+calling the same function `render_clip`'s gate calls — not a second implementation of Kurdish
+invariant #2, matching every other reused-validator precedent this branch has kept since D-A6.
+
+**Proven equivalent to `assert_renderable()`, not merely modeled on it.** A test builds one real
+`Clip` (via the actual dataclasses, not a hand-typed dict) and derives five variants —
+fully valid; an illegal boundary (`final_out_ms` before the anchor); a missing QC record; a QC
+record present but neither `auto_pass` nor `human_reviewed`; a missing editorial block; a
+missing output block — and asserts that `run_quality_checks(...).all_passed` never disagrees
+with whether `clip.assert_renderable()` raises, checked against the *same* underlying objects
+each time. This is checking two real implementations against each other, not one implementation
+against a description of the other that could itself have drifted.
+
+**Caption validity — Kurdish invariant #4 — is named out of scope, not silently absent.**
+`assert_captions_within_clip` needs a rebuilt `.ass` file from the run's persisted
+`selected_sentences`, and that construction is `proposals.py`'s own logic
+(`_load_clip_and_sentences`, `build_ass`). `agent.py` cannot import `proposals.py` to reuse it:
+`proposals.py` already imports `Deps` from `agent.py`, so the reverse import would complete a
+cycle. Nothing ships uncovered because of this gap — `render_clip` runs
+`assert_captions_within_clip` itself, on every render this codebase produces, revision or
+original — `run_quality_checks` simply does not have an on-demand, read-only path to the same
+check without either duplicating `proposals.py`'s sentence-loading logic here or restructuring
+which module owns it, and this row does neither rather than doing either partially.
+
+**Mutation-audited.** Marking a caught `BoundaryInvariantViolated` as `passed=True` instead of
+`False` fails exactly two tests: the dedicated `test_run_quality_checks_flags_an_illegal_boundary`
+and the equivalence test `test_run_quality_checks_agrees_with_assert_renderable` — and initially
+failed to fail the equivalence test at all, because that test's first version had no illegal-
+boundary case among its five variants. Caught before trusting the mutation pass: the equivalence
+test's own coverage was itself checked by mutation, found incomplete, and a sixth case (the
+illegal boundary, built the same way as the dedicated test's) was added before either test was
+considered to actually prove what it claimed.
+
+VERIFY OK — hawedit gate green: 1860 collected, 1860 passed, 0 skipped (floor ratcheted
+1849 -> 1860).

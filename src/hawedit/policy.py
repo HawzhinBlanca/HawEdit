@@ -112,6 +112,15 @@ TOOL_POLICIES: Final[tuple[ToolPolicy, ...]] = (
         note="Reads the append-only events.jsonl ledger.",
     ),
     ToolPolicy(
+        name="run_quality_checks",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Runs the deterministic render-gate checks against the current clip and reports "
+            "each one. Reuses assert_boundary_invariant; writes nothing."
+        ),
+    ),
+    ToolPolicy(
         name="propose_boundary_revision_tool",
         approval=ApprovalClass.NONE,
         mutating=False,

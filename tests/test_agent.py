@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import json
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from hawedit.agent import (  # noqa: E402
     compare_candidates,
     explain_run_state,
     inspect_run,
+    run_quality_checks,
     run_timeline,
 )
 from hawedit.captions import find_ffmpeg  # noqa: E402
@@ -129,6 +131,7 @@ def test_the_built_agent_has_exactly_the_read_only_tools(tmp_path: Path) -> None
         "explain_run_state",
         "compare_candidates",
         "run_timeline",
+        "run_quality_checks",
     }
 
 
@@ -364,6 +367,198 @@ def test_compare_candidates_does_not_guess_which_candidate_won(tmp_path: Path) -
     moved the span, and a wrong guess is worse than the honest gap this asserts stays a gap."""
     fields = set(CandidateComparison.model_fields)
     assert fields == {"media_id", "candidates", "rejected", "final_clip_span_ms"}
+
+
+# --- run_quality_checks (D-A18) ---------------------------------------------------------------
+
+
+def test_run_quality_checks_raises_with_no_report(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="report.json"):
+        run_quality_checks(tmp_path)
+
+
+def test_run_quality_checks_reports_no_clip(tmp_path: Path) -> None:
+    _write_report(tmp_path)  # clip=None by default
+    report = run_quality_checks(tmp_path)
+    assert report.all_passed is False
+    assert [c.name for c in report.checks] == ["has_clip"]
+
+
+_GOOD_BOUNDARY: dict[str, object] = {
+    "anchor_in_ms": 100,
+    "anchor_out_ms": 4100,
+    "final_in_ms": 0,
+    "final_out_ms": 4300,
+    "in_extended_by": "vad_onset",
+    "out_extended_by": "tail",
+    "sentence_complete": True,
+    "confidence": None,
+}
+
+
+_GOOD_QC: dict[str, object] = {"auto_pass": True, "flags": [], "human_reviewed": False}
+_PRESENT: dict[str, object] = {"present": True}
+
+
+def _clip_dict(
+    boundary: dict[str, object] | None = _GOOD_BOUNDARY,
+    qc: dict[str, object] | None = _GOOD_QC,
+    editorial: dict[str, object] | None = _PRESENT,
+    output: dict[str, object] | None = _PRESENT,
+) -> dict[str, object]:
+    return {
+        "clip_id": "fixture-0",
+        "boundary": boundary,
+        "qc": qc,
+        "editorial": editorial,
+        "output": output,
+    }
+
+
+def test_run_quality_checks_all_pass(tmp_path: Path) -> None:
+    _write_report(tmp_path, clip=_clip_dict())
+    report = run_quality_checks(tmp_path)
+    assert report.all_passed is True
+    assert {c.name for c in report.checks} == {
+        "boundary_invariant",
+        "qc_gate",
+        "editorial_present",
+        "output_present",
+    }
+    assert all(c.passed for c in report.checks)
+
+
+def test_run_quality_checks_flags_an_illegal_boundary(tmp_path: Path) -> None:
+    bad_boundary = {**_GOOD_BOUNDARY, "final_out_ms": 3000}  # ends before the anchor
+    _write_report(tmp_path, clip=_clip_dict(boundary=bad_boundary))
+    report = run_quality_checks(tmp_path)
+    assert report.all_passed is False
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["boundary_invariant"].passed is False
+    assert "mid-sentence" in by_name["boundary_invariant"].detail
+    # Itemized, not short-circuited: the other three still ran and still passed.
+    assert by_name["qc_gate"].passed is True
+    assert by_name["editorial_present"].passed is True
+    assert by_name["output_present"].passed is True
+
+
+def test_run_quality_checks_flags_a_missing_boundary(tmp_path: Path) -> None:
+    _write_report(tmp_path, clip=_clip_dict(boundary=None))
+    report = run_quality_checks(tmp_path)
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["boundary_invariant"].passed is False
+    assert "no boundary recorded" in by_name["boundary_invariant"].detail
+
+
+def test_run_quality_checks_flags_a_missing_qc_record(tmp_path: Path) -> None:
+    _write_report(tmp_path, clip=_clip_dict(qc=None))
+    report = run_quality_checks(tmp_path)
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["qc_gate"].passed is False
+    assert report.all_passed is False
+
+
+def test_run_quality_checks_flags_a_qc_record_that_has_not_passed(tmp_path: Path) -> None:
+    _write_report(
+        tmp_path, clip=_clip_dict(qc={"auto_pass": False, "flags": [], "human_reviewed": False})
+    )
+    report = run_quality_checks(tmp_path)
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["qc_gate"].passed is False
+
+
+def test_run_quality_checks_accepts_human_reviewed_without_auto_pass(tmp_path: Path) -> None:
+    _write_report(
+        tmp_path, clip=_clip_dict(qc={"auto_pass": False, "flags": [], "human_reviewed": True})
+    )
+    report = run_quality_checks(tmp_path)
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["qc_gate"].passed is True
+
+
+def test_run_quality_checks_flags_a_missing_editorial_block(tmp_path: Path) -> None:
+    _write_report(tmp_path, clip=_clip_dict(editorial=None))
+    report = run_quality_checks(tmp_path)
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["editorial_present"].passed is False
+    assert report.all_passed is False
+
+
+def test_run_quality_checks_flags_a_missing_output_block(tmp_path: Path) -> None:
+    _write_report(tmp_path, clip=_clip_dict(output=None))
+    report = run_quality_checks(tmp_path)
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["output_present"].passed is False
+    assert report.all_passed is False
+
+
+def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> None:
+    """The property that matters most: `all_passed` and "would `Clip.assert_renderable()`
+    raise" cannot honestly disagree. Built from a real `Clip`, not a hand-typed dict, so this
+    checks the two real implementations against each other rather than against a shape that
+    could itself have drifted from `clip.py`."""
+    from hawedit.boundary import Boundary, BoundaryInvariantViolated
+    from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
+    from hawedit.transcripts import AsrProvenance, Word
+
+    boundary = Boundary(**_GOOD_BOUNDARY)  # type: ignore[arg-type]
+    words = (Word(w="کوردی", start_ms=0, end_ms=300, conf=0.9),)
+    good_clip = Clip(
+        clip_id="fixture-0",
+        media_id="fixture",
+        in_ms=boundary.final_in_ms,
+        out_ms=boundary.final_out_ms,
+        discovery_path=DiscoveryPath.VERBAL,
+        boundary=boundary,
+        transcript=ClipTranscript(
+            raw_ckb="کوردی",
+            norm_ckb="کوردی",
+            en_aux=None,
+            words=words,
+            asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        ),
+        editorial=Editorial(
+            hook_score=0.8,
+            self_contained=True,
+            meaning_fidelity=0.9,
+            misleading_edit_risk=0.05,
+            cultural_landing=0.8,
+            narrative_role="payoff",
+            judge="gemini-2.5-pro",
+        ),
+        output=Output(
+            title_ckb="t",
+            description_ckb="d",
+            crop_target="9:16",
+            caption_style="line",
+            durations=(30,),
+        ),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=False),
+    )
+    illegal_boundary = replace(boundary, final_out_ms=3000)  # ends before anchor_out_ms=4100
+    for clip, should_raise in (
+        (good_clip, False),
+        (replace(good_clip, boundary=illegal_boundary, out_ms=3000), True),
+        (replace(good_clip, qc=None), True),
+        (replace(good_clip, qc=Qc(auto_pass=False, flags=(), human_reviewed=False)), True),
+        (replace(good_clip, editorial=None), True),
+        (replace(good_clip, output=None), True),
+    ):
+        raised = False
+        try:
+            clip.assert_renderable()
+        except (BoundaryInvariantViolated, ValueError):
+            raised = True
+        assert raised is should_raise, (
+            f"assert_renderable() raised={raised}, expected {should_raise}"
+        )
+
+        _write_report(tmp_path, clip=clip.to_dict())
+        report = run_quality_checks(tmp_path)
+        assert report.all_passed is (not should_raise), (
+            f"run_quality_checks disagreed with assert_renderable: all_passed="
+            f"{report.all_passed}, assert_renderable raised={raised}"
+        )
 
 
 # --- the agent, driven by TestModel — never a real provider ----------------------------------

@@ -2,7 +2,7 @@
 
 `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` Phase 2: "Add Pydantic AI with inspection,
 explanation and candidate-comparison tools... Load the versioned App Manifest... Make all
-proposals non-mutating." Four tools, and nothing here writes anything:
+proposals non-mutating." Five tools, and nothing here writes anything:
 
 - `inspect_run` — what stage the run reached and whether it produced a deliverable.
 - `explain_run_state` — *why* it stopped where it did, quoting the actual `StageSkipped` reason
@@ -17,6 +17,11 @@ proposals non-mutating." Four tools, and nothing here writes anything:
 - `run_timeline` — the run's ordered event ledger. The other three read `report.json`, the
   run's *final state*; this reads `events.jsonl`, the sequence that produced it, and returns
   partial progress for a run still in flight (D-A1's per-line flush is what makes that work).
+- `run_quality_checks` (D-A18) — every deterministic gate `Clip.assert_renderable()` applies
+  before a render, itemized rather than stopped at the first failure: the boundary invariant
+  (reusing the real `assert_boundary_invariant`, not a second implementation), the QC gate,
+  the editorial block, the output block. Caption validity is out of scope — see that
+  function's own docstring for why, and for what still checks it.
 
 **`work_dir` is bound at construction, never a tool argument.** The architecture record's own
 security section: "Media storage uses scoped object references rather than filesystem paths
@@ -66,6 +71,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import KnownModelName, Model
 
+from hawedit.boundary import Boundary, BoundaryInvariantViolated, assert_boundary_invariant
 from hawedit.events import read_events
 from hawedit.policy import BLOCKED_OPERATIONS, POLICY_VERSION
 
@@ -75,6 +81,8 @@ __all__ = [
     "CandidateComparison",
     "CandidateRecord",
     "Deps",
+    "QualityCheck",
+    "QualityReport",
     "RejectionRecord",
     "RunExplanation",
     "RunInspection",
@@ -85,6 +93,7 @@ __all__ = [
     "compare_candidates",
     "explain_run_state",
     "inspect_run",
+    "run_quality_checks",
     "run_timeline",
 ]
 
@@ -97,6 +106,7 @@ TOOL_NAMES: Final = (
     "explain_run_state",
     "compare_candidates",
     "run_timeline",
+    "run_quality_checks",
 )
 
 # §3's stage order, for "which stage stopped this run" — the first name in this tuple that
@@ -230,6 +240,22 @@ class RunTimeline(BaseModel):
     available: bool
     events: tuple[StageEvent, ...] = ()
     unavailable_reason: str | None = None
+
+
+class QualityCheck(BaseModel):
+    """One deterministic gate `run_quality_checks` evaluated, itemized rather than folded into
+    a single pass/fail — see `run_quality_checks` for why this is not just a call to
+    `Clip.assert_renderable()`."""
+
+    name: str
+    passed: bool
+    detail: str
+
+
+class QualityReport(BaseModel):
+    media_id: str
+    checks: tuple[QualityCheck, ...]
+    all_passed: bool
 
 
 def app_manifest() -> AppManifest:
@@ -389,6 +415,112 @@ def run_timeline(work_dir: Path) -> RunTimeline:
     )
 
 
+def run_quality_checks(work_dir: Path) -> QualityReport:
+    """The architecture record's `run_quality_checks` (line 196), read-only: every gate §2
+    puts before output, itemized independently rather than folded into one pass/fail.
+
+    `Clip.assert_renderable()` (`clip.py`) already checks these same four conditions — the
+    boundary invariant, the QC gate, the editorial block, the output block — and this function
+    deliberately reuses the first via the real `assert_boundary_invariant`, not a second
+    implementation of Kurdish invariant #2. It does not simply call `assert_renderable()` and
+    catch the exception, though: that stops at the first failure, and a caller asking "is this
+    ready to ship" is better served by everything that is wrong at once than by the first thing
+    a short-circuiting guard happened to notice. Each check below matches one of
+    `assert_renderable`'s own conditions exactly, so `all_passed` and "would `assert_renderable`
+    raise" cannot honestly disagree.
+
+    Caption validity (Kurdish invariant #4) is out of scope here, named rather than silently
+    missing: `assert_captions_within_clip` needs a rebuilt `.ass` file from the run's persisted
+    `selected_sentences`, which is `proposals.py`'s own logic (`_load_clip_and_sentences`) —
+    and `agent.py` cannot import `proposals.py` without creating the circular import
+    `proposals.py`'s own `from hawedit.agent import Deps` would then complete. Caption validity
+    is still checked at the point that actually matters: `render_clip` runs
+    `assert_captions_within_clip` itself before burning anything in, for every render this
+    codebase produces, revision or original.
+
+    Raises:
+        FileNotFoundError: no run has completed under `work_dir` yet.
+    """
+    report = _load_report(work_dir)
+    clip = report.get("clip")
+    if clip is None:
+        return QualityReport(
+            media_id=report["media_id"],
+            checks=(
+                QualityCheck(
+                    name="has_clip",
+                    passed=False,
+                    detail="the run has no clip yet — §3 Stage 5 was never reached or produced "
+                    "nothing renderable",
+                ),
+            ),
+            all_passed=False,
+        )
+
+    checks: list[QualityCheck] = []
+
+    boundary_data = clip.get("boundary")
+    if isinstance(boundary_data, dict):
+        try:
+            boundary = Boundary(
+                anchor_in_ms=boundary_data["anchor_in_ms"],
+                anchor_out_ms=boundary_data["anchor_out_ms"],
+                final_in_ms=boundary_data["final_in_ms"],
+                final_out_ms=boundary_data["final_out_ms"],
+                in_extended_by=boundary_data.get("in_extended_by"),
+                out_extended_by=boundary_data.get("out_extended_by"),
+                sentence_complete=boundary_data["sentence_complete"],
+                confidence=boundary_data.get("confidence"),
+            )
+            assert_boundary_invariant(boundary)
+            checks.append(QualityCheck(name="boundary_invariant", passed=True, detail="holds"))
+        except BoundaryInvariantViolated as exc:
+            checks.append(QualityCheck(name="boundary_invariant", passed=False, detail=str(exc)))
+    else:
+        checks.append(
+            QualityCheck(name="boundary_invariant", passed=False, detail="no boundary recorded")
+        )
+
+    qc = clip.get("qc")
+    qc_passed = isinstance(qc, dict) and bool(qc.get("auto_pass") or qc.get("human_reviewed"))
+    checks.append(
+        QualityCheck(
+            name="qc_gate",
+            passed=qc_passed,
+            detail="passed"
+            if qc_passed
+            else "no QC record, or QC has not passed — §2 puts a human gate before output, "
+            "always; absence is refusal, not permission",
+        )
+    )
+
+    editorial_present = clip.get("editorial") is not None
+    checks.append(
+        QualityCheck(
+            name="editorial_present",
+            passed=editorial_present,
+            detail="present" if editorial_present else "no editorial block — never judged",
+        )
+    )
+
+    output_present = clip.get("output") is not None
+    checks.append(
+        QualityCheck(
+            name="output_present",
+            passed=output_present,
+            detail="present"
+            if output_present
+            else "no output block — no title, crop target or caption style to render with",
+        )
+    )
+
+    return QualityReport(
+        media_id=report["media_id"],
+        checks=tuple(checks),
+        all_passed=all(check.passed for check in checks),
+    )
+
+
 def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, str]:
     """Construct the read-only creative-director agent, scoped to `deps.work_dir`.
 
@@ -404,9 +536,10 @@ def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, 
         system_prompt=(
             "You are a read-only creative-director assistant for one HawEdit repurposing run. "
             "You can inspect what the run produced, explain why it stopped where it did, "
-            "compare the candidates §3 Stage 3 found against the ones it rejected, and read the "
-            "run's own event timeline. You cannot change anything — there is no tool for that, "
-            "and none will be added to this conversation."
+            "compare the candidates §3 Stage 3 found against the ones it rejected, read the "
+            "run's own event timeline, and run the deterministic quality gates against its "
+            "current clip. You cannot change anything — there is no tool for that, and none "
+            "will be added to this conversation."
         ),
     )
 
@@ -442,5 +575,10 @@ def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, 
     def run_timeline_tool(ctx: RunContext[Deps], /) -> RunTimeline:
         """Read this run's ordered event timeline: every stage transition, with timestamps."""
         return run_timeline(ctx.deps.work_dir)
+
+    @creative_director.tool(name="run_quality_checks")
+    def run_quality_checks_tool(ctx: RunContext[Deps], /) -> QualityReport:
+        """Run every deterministic quality gate against this run's current clip, itemized."""
+        return run_quality_checks(ctx.deps.work_dir)
 
     return creative_director
