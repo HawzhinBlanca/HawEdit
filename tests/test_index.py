@@ -69,6 +69,20 @@ def test_character_ngrams_pad_word_boundaries() -> None:
     assert grams == ("\x02ab", "ab\x03")
 
 
+@pytest.mark.parametrize("size", [0, -1])
+def test_a_character_ngram_size_below_one_is_refused(size: int) -> None:
+    """The only refusal in this module no test held — measured by neutralising each in a shadow
+    copy of src/hawedit and running this file.
+
+    A size of 0 does not fail: `padded[i:i + 0]` is the empty string and the range still runs,
+    so the function returns one empty gram per character position. Those enter the index as real
+    postings that match every word, which turns §4.1's morphological near-match scoring into
+    noise rather than into an error anyone would see.
+    """
+    with pytest.raises(ValueError, match="at least 1"):
+        character_ngrams("کتێب", size=size)
+
+
 def test_character_ngrams_of_a_longer_word_slide() -> None:
     assert "کتێ" in character_ngrams(BOOK, size=3)
 

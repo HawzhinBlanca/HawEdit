@@ -19,7 +19,10 @@ import pytest
 from hawedit.sentences import (
     DEFAULT_PAUSE_MS,
     KURDISH_SENTENCE_FINAL,
+    Sentence,
+    UndeliverableOrder,
     anchors_for,
+    assert_deliverable_order,
     segment_sentences,
 )
 from hawedit.transcripts import Word
@@ -27,6 +30,44 @@ from hawedit.transcripts import Word
 
 def words(*specs: tuple[str, int, int]) -> tuple[Word, ...]:
     return tuple(Word(w=w, start_ms=s, end_ms=e, conf=0.95) for w, s, e in specs)
+
+
+# --- §2 delivery order: both refusals here were held by nothing -------------------------------
+#
+# Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file:
+# the pause-threshold guard reddens a test, these two did not.
+
+
+def test_a_sentence_that_ends_before_it_starts_is_refused() -> None:
+    """`Sentence.start_ms` and `end_ms` come from the first and last word, so a sentence whose
+    words are out of time order spans backwards while every individual word is valid.
+
+    The refusal's own words for why it matters: such a cue "is displayed by nothing and reported
+    by nothing" — it does not fail loudly, it fails invisibly, which is the shape §2 delivery is
+    written against.
+    """
+    backwards = Sentence(words=words(("یەک", 500, 900), ("دوو", 100, 400)), complete=True)
+    assert backwards.end_ms < backwards.start_ms
+    with pytest.raises(UndeliverableOrder, match="ends before it starts"):
+        assert_deliverable_order((backwards,))
+
+
+def test_overlapping_cues_are_refused_but_exactly_touching_ones_are_not() -> None:
+    """ "A subtitle file is read in order: overlapping or reversed cues render two captions at
+    once, or none."
+
+    The control is the point. The docstring on `assert_deliverable_order` states that exactly
+    touching — `later.start_ms == earlier.end_ms` — is ordinary consecutive speech and must be
+    allowed, so the boundary is `<` and not `<=`. Without a test on that side, tightening this
+    guard to `<=` would look like a fix and would refuse every normal transcript.
+    """
+    earlier = Sentence(words=words(("یەک", 0, 1_000)), complete=True)
+    overlapping = Sentence(words=words(("دوو", 500, 1_500)), complete=True)
+    with pytest.raises(UndeliverableOrder, match="starts before the previous one ends"):
+        assert_deliverable_order((earlier, overlapping))
+
+    touching = Sentence(words=words(("دوو", 1_000, 2_000)), complete=True)
+    assert_deliverable_order((earlier, touching))
 
 
 # --- punctuation ----------------------------------------------------------------------
