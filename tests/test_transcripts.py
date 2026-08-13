@@ -1079,3 +1079,55 @@ def test_an_ordinary_media_id_still_resolves_inside_the_store(tmp_path: Path) ->
     for path in (store.raw_path("media-001"), store.norm_path("media-001")):
         assert path.parent == tmp_path
         assert path.name.startswith("media-001.")
+
+
+# --- what clause-level revert found that line-level could not ---------------------------------
+#
+# `guardsweep` neutralises a whole `if` line, so a compound condition reads HELD as soon as any
+# one clause is covered. Replacing one operand at a time instead — `or` operands with False,
+# `and` operands with True, so the rest of the expression still decides — reopened two guards in
+# this module that the line-level run had already passed.
+
+
+@pytest.mark.parametrize("surface", [42, None, ["word"], b"word"])
+def test_a_word_whose_surface_is_not_a_string_is_refused_by_type(surface: object) -> None:
+    """`not isinstance(self.w, str)` in `if not isinstance(self.w, str) or not self.w.strip():`.
+
+    `bytes` is the case that shows why the clause is there rather than merely tidy: `b"word"`
+    has a `.strip()`, it is truthy, and `b"word".splitlines() == [b"word"]`, so without the
+    isinstance check it passes every remaining guard and becomes a `Word`. `to_json` then fails
+    on it much later, in a different module, about a type nobody chose. The numeric and `None`
+    cases fail earlier but no better — `.strip()` on them is an AttributeError from inside the
+    constructor rather than a sentence about the word.
+
+    `RawTranscript.from_json` builds `Word(**w)` straight from `transcript.raw.json`, so none of
+    these values has to be the program's own.
+    """
+    with pytest.raises(ValueError, match="surface form must be a non-empty string"):
+        Word(w=surface, start_ms=0, end_ms=1, conf=0.5)  # type: ignore[arg-type]
+
+
+def test_a_transcript_decoded_with_a_fine_tune_is_not_the_same_transcript() -> None:
+    """`not self.adapter.strip()` in `if self.adapter is not None and not self.adapter.strip():`.
+
+    The clause was uncovered because nothing here had ever built a provenance with a *real*
+    adapter — only a blank one and `None`. Neutralised, the guard fires for every non-None
+    adapter, so a mis-written check would reject every fine-tuned transcript in the system and
+    the suite would stay green.
+
+    Asserted on the digests rather than on the field, because that is the claim D-181 actually
+    makes: the adapter lives in the artifact and not in a log precisely so that "a transcript
+    decoded by adapted weights and one decoded by stock weights are different transcripts". If
+    the two hash alike, the field is decoration.
+    """
+    adapter = "lora:3f5a1c9d2e7b4068"
+    adapted = AsrProvenance(canonical=CANONICAL_ASR_ID, aligner="ctc_viterbi", adapter=adapter)
+    with_lora = RawTranscript(media_id="m", text_ckb="ئه‌مه‌", words=(), asr=adapted)
+    stock = RawTranscript(media_id="m", text_ckb="ئه‌مه‌", words=(), asr=CANONICAL)
+
+    assert with_lora.asr.adapter == adapter
+    assert RawTranscript.from_json(with_lora.to_json()).asr.adapter == adapter
+    assert with_lora.sha256() != stock.sha256(), (
+        "a transcript decoded with a fine-tune hashes identically to one decoded with stock "
+        "weights — D-181 put the adapter in the artifact so that cannot be true"
+    )
