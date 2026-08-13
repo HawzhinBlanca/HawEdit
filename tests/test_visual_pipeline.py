@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from hawedit.clip import Sv6d
-from hawedit.path_b import PATH_B_MODEL, SceneReading, SceneReadings, UnreadableScene
+from hawedit.path_b import (
+    PATH_B_MODEL,
+    SceneReading,
+    SceneReadings,
+    UnreadableScene,
+    VideoUnderstanding,
+)
 from hawedit.video_input import WindowFrames
 from hawedit.visual_index import (
     RerankedHit,
@@ -512,3 +518,157 @@ def test_a_store_that_fails_partway_leaves_no_readable_cache_file(tmp_path: Path
     cache.store(embedding)
     assert len(list((tmp_path / "embeddings").glob("*.json"))) == 1
     assert cache.load(window) is not None
+
+
+# --- the six refusals on this module's boundary, none of which any test held ------------------
+#
+# Measured by mutation against a shadow copy of `src/hawedit`: neutralising each of the six one
+# at a time left tests/test_visual_pipeline.py, tests/test_visual_index.py and
+# tests/test_discovery.py green. The module's own score-provenance loop was among them.
+
+
+def _frames(source: Path, window: SceneWindow, dest: Path, ffmpeg: Path | None) -> WindowFrames:
+    return WindowFrames(window, (dest / "a.jpg", dest / "b.jpg"))
+
+
+def _composer(
+    reader_factory: Callable[[FrameReader, Callable[[SceneWindow], float]], VideoUnderstanding],
+    keep: int = 5,
+) -> VisualComposer:
+    return VisualComposer(FakeEmbedder(), FakeReranker, reader_factory, keep=keep)
+
+
+def test_an_empty_query_is_refused_before_the_text_encoder_sees_it(tmp_path: Path) -> None:
+    """§3 Stage 2 is "Retrieve top 50 → rerank → keep top 5–10". With no query there is no
+    retrieval, and five arbitrary windows would reach VideoChat3 labelled as query results.
+
+    `FakeEmbedder.embed_text` asserts the query is the real one, so if this refusal ever moved
+    below the encoder this test would fail on that assertion instead of passing quietly.
+    """
+    composer = _composer(lambda read, score: FakeReader(read, score, []))
+    for query in ("", "   ", "\n\t"):
+        with pytest.raises(VisualPipelineError, match="must not be empty"):
+            composer.discover(
+                a_source(tmp_path), windows(12), query, tmp_path / "work", media_id="m"
+            )
+
+
+def test_windows_belonging_to_another_media_are_refused(tmp_path: Path) -> None:
+    """A mismatch means one film's scene plan was passed while composing another's — the
+    embeddings would be real and the timestamps would address footage that is not there.
+    """
+    composer = _composer(lambda read, score: FakeReader(read, score, []))
+    with pytest.raises(VisualPipelineError, match="were passed while composing"):
+        composer.discover(
+            a_source(tmp_path), windows(12), "گرنگ", tmp_path / "work", media_id="other"
+        )
+
+
+def test_a_window_id_reused_with_different_boundaries_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`SceneWindow.window_id` is `media:scene:window` — it does not include the boundaries.
+
+    An adapter that re-derives a window from its indices can therefore produce the same id with
+    a different time range, and the frame cache would hand back the pixels of the old range: the
+    reranker scores 16,000..17,000 ms using the frames of 11,000..12,000 ms, and Stages 4 and 5
+    cut on footage the model never saw.
+    """
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", _frames)
+
+    class CollidingReader:
+        def __init__(
+            self, read_frames: FrameReader, score_window: Callable[[SceneWindow], float]
+        ) -> None:
+            self.read_frames = read_frames
+            self.score_window = score_window
+
+        def read_scenes(self, items: Sequence[SceneWindow]) -> SceneReadings:
+            first = items[0]
+            self.read_frames(first)
+            impostor = SceneWindow(
+                media_id=first.media_id,
+                scene_index=first.scene_index,
+                window_index=first.window_index,
+                in_ms=first.in_ms + 5_000,
+                out_ms=first.out_ms + 5_000,
+                fps=first.fps,
+            )
+            assert impostor.window_id == first.window_id
+            self.read_frames(impostor)
+            raise AssertionError("the cache should have refused the second call")
+
+    composer = _composer(lambda read, score: CollidingReader(read, score))
+    with pytest.raises(VisualPipelineError, match="reused with different boundaries"):
+        composer.discover(a_source(tmp_path), windows(12), "گرنگ", tmp_path / "work", media_id="m")
+
+
+def test_a_score_requested_for_a_non_survivor_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only reranked survivors have a score. Asking for one outside that set raises `KeyError`,
+    a type `pipeline.py:1207-1221` does not catch — it handles `VisualPipelineError` and records
+    a StageSkipped, so a bare KeyError takes the whole run down after Stage 2, which is the most
+    expensive stage in this pipeline.
+    """
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", _frames)
+
+    class StrangerReader:
+        def __init__(
+            self, read_frames: FrameReader, score_window: Callable[[SceneWindow], float]
+        ) -> None:
+            self.read_frames = read_frames
+            self.score_window = score_window
+
+        def read_scenes(self, items: Sequence[SceneWindow]) -> SceneReadings:
+            stranger = SceneWindow(
+                media_id="m", scene_index=99, window_index=0, in_ms=0, out_ms=1_000, fps=2.0
+            )
+            self.score_window(stranger)
+            raise AssertionError("scoring a non-survivor should have been refused")
+
+    composer = _composer(lambda read, score: StrangerReader(read, score))
+    with pytest.raises(VisualPipelineError, match="non-survivor"):
+        composer.discover(a_source(tmp_path), windows(12), "گرنگ", tmp_path / "work", media_id="m")
+
+
+# The sixth refusal — `accounted != set(scores)`, "Path B candidates do not exactly match the
+# reranked survivors" — has no test here on purpose, and the reason is worth recording rather
+# than leaving as an apparent omission.
+#
+# Both directions of the mismatch are refused before that line is reached. A reader that DROPS a
+# survivor is refused by `path_b.py:251` ("the model omitted readings for [...]; silently dropping
+# scenes destroys visual recall"), measured by writing that test and watching PathBError arrive
+# instead. A reader that ADDS one is refused by the non-survivor score check above, because the
+# extra window has no entry in `scores`. So the guard is defence in depth against a state no
+# legal caller can construct: unreachable rather than untested, which is a different thing and
+# should not be papered over with a test that fabricates the state directly.
+
+
+def test_a_path_b_score_that_is_not_the_reranker_score_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The check the module exists to perform.
+
+    `Candidate.score` becomes `MergedCandidate.visual_score`, which is what the §5 sidecar
+    publishes and what §8.2's per-path metrics are computed from. A number that did not come
+    from the reranker travelling under that name is precisely what this loop refuses — and
+    removing the loop raised nothing any test noticed.
+    """
+    monkeypatch.setattr("hawedit.visual_pipeline.extract_window_frames", _frames)
+
+    class InventiveReader:
+        def __init__(
+            self, read_frames: FrameReader, score_window: Callable[[SceneWindow], float]
+        ) -> None:
+            self.read_frames = read_frames
+            self.score_window = score_window
+
+        def read_scenes(self, items: Sequence[SceneWindow]) -> SceneReadings:
+            return SceneReadings(
+                tuple(SceneReading(item, sv6d(item), 0.5, PATH_B_MODEL) for item in items)
+            )
+
+    composer = _composer(lambda read, score: InventiveReader(read, score))
+    with pytest.raises(VisualPipelineError, match="is not its reranker score"):
+        composer.discover(a_source(tmp_path), windows(12), "گرنگ", tmp_path / "work", media_id="m")
