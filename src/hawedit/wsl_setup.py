@@ -312,18 +312,23 @@ def _model_metadata_bytes(package_dir: Path) -> dict[str, bytes]:
 
 
 def package_digest(package_dir: Path | None = None, *, reject_bytecode_cache: bool = False) -> str:
-    """Full SHA-256 identity of worker code and its checkpoint identity metadata."""
+    """SHA-256 identity of worker code and metadata with universal newlines canonicalized.
+
+    Git can materialize text as CRLF in an existing Windows worktree while a clean Linux runner
+    receives LF. Python executes those forms identically, so the receipt binds their canonical
+    universal-newline bytes; snapshot publication separately proves the copied bytes are exact.
+    """
     source = package_dir or Path(__file__).resolve().parent
     digest = hashlib.sha256()
     for path in _package_files(source, reject_bytecode_cache=reject_bytecode_cache):
         digest.update(path.relative_to(source).as_posix().encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
         digest.update(b"\0")
     for filename, payload in _model_metadata_bytes(source).items():
         digest.update(f"{WSL_MODEL_METADATA_DIRECTORY}/{filename}".encode())
         digest.update(b"\0")
-        digest.update(payload)
+        digest.update(payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
         digest.update(b"\0")
     return digest.hexdigest()
 

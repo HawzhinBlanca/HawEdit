@@ -145,6 +145,17 @@ def test_package_fingerprint_changes_with_worker_source(tmp_path: Path) -> None:
     assert package_fingerprint(package) != before
 
 
+def test_package_digest_is_stable_across_platform_text_line_endings(tmp_path: Path) -> None:
+    linux = tmp_path / "linux" / "hawedit"
+    windows = tmp_path / "windows" / "hawedit"
+    linux.mkdir(parents=True)
+    windows.mkdir(parents=True)
+    (linux / "worker.py").write_bytes(b"first = 1\nsecond = 2\n")
+    (windows / "worker.py").write_bytes(b"first = 1\r\nsecond = 2\r\n")
+
+    assert package_digest(linux) == package_digest(windows)
+
+
 def test_identity_probe_is_self_contained_and_executable(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

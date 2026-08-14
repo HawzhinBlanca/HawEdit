@@ -1269,6 +1269,18 @@ def _capture_wsl_request(
     boundary, so it publishes a valid output directly and reads the request.
     """
     seen: list[dict[str, Any]] = []
+    validator = tmp_path / "validator"
+    validator.mkdir(exist_ok=True)
+
+    class HostModelStore:
+        @staticmethod
+        def path_for(_entry: ModelEntry) -> Path:
+            return validator
+
+    @contextmanager
+    def verified(_model_id: str, selected: Path) -> Iterator[Path]:
+        assert selected == validator
+        yield selected
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         if "wslpath" in args:
@@ -1289,6 +1301,8 @@ def _capture_wsl_request(
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    monkeypatch.setattr("hawedit.asr.ModelStore", HostModelStore)
+    monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
     WslOmniAsrProducer(interpreter="/opt/hawedit/python", lora_adapter=adapter).transcribe(
         "zar38",
         tmp_path / "audio.wav",
