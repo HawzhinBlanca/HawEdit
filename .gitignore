@@ -9,6 +9,8 @@ secrets/
 
 .venv/
 .venv-wsl/
+/.venv-*/
+/.serena/
 __pycache__/
 *.py[cod]
 .pytest_cache/
