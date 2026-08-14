@@ -10330,3 +10330,77 @@ times at 155.41 s, 142.94 s and 153.81 s. The floor was ratcheted by the gate, n
 committed alongside the tests so that CI's final step — which fails a run that ratcheted it — keeps
 saying what it was built to say. No CI run has yet seen any of this; a local green cannot speak
 for a clean runner, and until that check is green nothing here is done.
+
+---
+
+## D-200
+
+**The licence gate ran before the merge, and found the real blocker was not a licence.**
+
+Task T0 of `specs/production-hardening/plan.md`, promoted ahead of the merge by Hawa on
+2026-08-14 for the reason the ordering exists: finding a NonCommercial dependency after it is
+already in the tree and the history is the failure D-002's hard reject is meant to prevent.
+
+**Scope.** Every runtime dependency `origin/codex/production-readiness-20260809` adds or
+re-pins relative to this branch. D-002's own table covers only `klpt`, `chunspell`, `pytest`,
+`ruff` and `mypy`; D-024 covers the Stage 0 media stack. Neither covers the pins below, so an
+inline comment in `pyproject.toml` was the only claim on record, and a comment is a claim rather
+than a reading.
+
+**Method, D-002's.** Licence read from installed wheel metadata, never from a README or from the
+pyproject comment being checked. Two of them required `License-Expression:` rather than the
+legacy `License:` field, which is why a naive `grep '^License:'` reported nothing for the two
+largest dependencies in the project.
+
+| Dependency | Version read | Licence, as the metadata states it | Verdict |
+|---|---|---|---|
+| `torch` | 2.13.0+cu130 | `Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND MIT` | ACCEPT |
+| `pillow` | 12.3.0 | `MIT-CMU` | ACCEPT |
+| `torchaudio` | 2.11.0+cpu | BSD (OSI classifier) | ACCEPT |
+| `torchvision` | 0.28.0+cu130 | BSD | ACCEPT |
+| `accelerate` | 1.14.0 | Apache | ACCEPT |
+| `fonttools` | 4.55.3 | MIT | ACCEPT |
+| `huggingface-hub` | 0.36.2 | Apache | ACCEPT |
+
+**No NonCommercial term appears in any of them. The gate is clear for these seven.**
+
+Two readings are weaker than they look and are recorded as such rather than rounded up.
+`torch`'s licence is a **conjunction of six**, not the "BSD-3-Clause" its pyproject comment
+claims; the comment understates it. And the version installed here is 2.13.0, while readiness
+pins `torch==2.8.0` and `torchaudio==2.8.0` for non-Windows — so this is a reading of a
+neighbouring version, not of the pinned one. Licences rarely change across a minor, but "rarely"
+is not "did not", and D-002's whole point is reading rather than assuming.
+
+**Four could not be read and are therefore not cleared:** `peft==0.19.1`, `fairseq2==0.6`,
+`qwen-asr==0.0.6` and `google-auth==2.56.3`. None is installed in the host venv — the first three
+live only in the WSL2 runtime `hawedit-asr-setup` provisions, and `peft` is this branch's
+dependency rather than readiness's, reached only through `wsl_setup.py`'s bootstrap. They are
+listed in `BLOCKED.md` rather than waved through. **T0 is not complete while they stand.**
+
+**What the audit found instead, and it blocks more than a licence would.**
+
+The merge-base tops out at `D-154`. Both branches then assigned D-numbers independently, so
+`D-155` through `D-191` — **thirty-seven numbers** — name a different decision on each side.
+Concretely, on this branch `D-165` is the SRT cue-ordering refusal, `D-171` is deriving
+`PipelineRun.skipped()` from `fields(self)`, `D-181` is the fine-tuned decoder's adapter
+provenance and `D-182` is the SV6D span parse; on readiness those same four numbers are a
+scene-window filesystem identity, a semantic-equivalence join, a prerequisite diagnostic and a
+future-guard binding.
+
+This is not cosmetic. AGENTS.md's grounding rules require citing `DECISIONS.md` by D-number when
+a choice was already settled, and after the merge every such citation in code comments, test
+docstrings and commit messages across both branches is ambiguous over a 37-number range. Worse,
+all four numbers quoted above are cited by `plan.md`'s own preservation list — the document
+whose entire purpose is to stop the merge losing those decisions.
+
+**Decision.** The colliding ADRs on the **incoming** branch are renumbered to `D-201` and up as
+part of T13, and its in-code citations rewritten with them. The merge direction is
+readiness → HEAD, so HEAD is the base and its numbering is what the preserved code and the
+approved plan already cite; renumbering the incoming side is the mechanical, greppable change
+and leaves no citation on this branch stale. The cost is honest and stated: it touches comments
+across readiness's 254 changed files, and a missed one is a citation pointing at the wrong
+decision rather than at none, which is the harder failure to notice.
+
+`plan.md` gains T0b for the renumber, and it blocks T13 rather than the merge itself.
+
+**Blueprint ref:** §7 · **Type:** dependency + licence check, and a merge hazard

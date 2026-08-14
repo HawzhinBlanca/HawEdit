@@ -74,6 +74,16 @@ P0/P1 severity as assessed against the brief's phases.
 `.codystem-allow-self-edit` before touching them, delete it after. Take readiness's floor value
 (2073) from the merge — do **not** hand-type it.
 
+- **T0** Licence audit, ahead of the merge. **Partially complete — see D-200.** Seven pins
+  cleared from installed wheel metadata, no NonCommercial term. Four could not be read on this
+  host and are `BLOCKED.md` #23: `peft==0.19.1`, `fairseq2==0.6`, `qwen-asr==0.0.6`,
+  `google-auth==2.56.3`. **T0 blocks T1.** *(tests: `test_every_runtime_dependency_has_a_licence_record`)*
+- **T0b** Renumber the incoming branch's colliding ADRs. D-200 established that the merge-base
+  tops out at D-154 and both branches then assigned **D-155…D-191 independently** — 37 numbers,
+  each naming a different decision per side, including all four this plan's §A cites (D-165,
+  D-171, D-181, D-182). Readiness's collide-range moves to D-201+ with its in-code citations
+  rewritten. Independent of T0; blocks T13.
+  *(tests: `test_no_d_number_names_two_decisions`)*
 - **T1** Merge preparation. Create the merge commit with `git merge --no-commit --no-ff` and
   leave it unstaged. Record the conflict set. No resolution yet. *(tests: none — no tree change
   is committed)*

@@ -1164,3 +1164,44 @@ modes and none is measurable without it:
 only one on this hardware able to contain a median 6.72 s sentence (D-186). §3's declared
 2.0 fps is unaffected — it produces exactly one such window on this media, and has in every
 run so far.
+
+---
+
+## #23
+
+**Four dependency licences cannot be read from this host, so they are not cleared.**
+
+D-200 audited every runtime dependency the readiness integration adds, and cleared seven from
+installed wheel metadata using D-002's method. These four have no metadata to read here:
+
+| Dependency | Version | Where it lives | Comment's claim |
+|---|---|---|---|
+| `peft` | 0.19.1 | WSL2 runtime bootstrap only (`wsl_setup.py`) | — none, it has no pyproject entry |
+| `fairseq2` | 0.6 | `[asr]` extra, non-Windows | BSD-3-Clause |
+| `qwen-asr` | 0.0.6 | `[asr]` extra, non-Windows | Apache-2.0 |
+| `google-auth` | 2.56.3 | Vertex ADC bearer auth | Apache-2.0 |
+
+The three ASR ones install only inside the WSL2 environment `hawedit-asr-setup` provisions, and
+`fairseq2n` has no Windows wheel at all (readiness's own D-numbered note records this). So the
+host venv this audit ran against has never contained them, and there is nothing on disk to read.
+
+**Why this is a blocker and not a footnote.** D-002 makes a NonCommercial licence a hard reject,
+and the whole reason Hawa ordered the audit before the merge is that finding one afterwards
+means it is already in the tree and the history. The pyproject comments assert permissive terms
+for three of the four, and that is exactly the kind of claim D-002 exists to distrust — the same
+audit found `torch`'s comment saying "BSD-3-Clause" where the metadata says a conjunction of
+six, and `scenedetect`'s PyPI classifier is recorded in D-024 as simply wrong.
+
+**Needs one of:**
+
+1. Provision the WSL2 runtime on this host, then read `dist-info/METADATA` for `peft`,
+   `fairseq2` and `qwen-asr` there. This is the reading D-002 asks for and needs no network
+   beyond what the provisioner already does.
+2. Or Hawa confirms these were read on hawapc01 during the readiness work, and where, so the
+   record can cite that reading rather than repeat it.
+
+`google-auth` is separable and cheaper — it is a normal host dependency that simply is not
+installed in this venv yet, and installing the `[gemini]` extra would settle it.
+
+**What this blocks:** T0 of `specs/production-hardening/plan.md`, and therefore the merge. It
+does not block T0b (the D-number renumber), which is independent.
