@@ -145,4 +145,17 @@ clearance.**
 - Hosted CI green on the exact committed SHA.
 - No P0/P1 from section B or C outstanding.
 
-Approved-by:
+Approved-by: Hawa — 2026-08-14, in session, plan approved as written.
+
+Three decisions recorded with it, all binding on the tasks above:
+
+1. **Plan approved as written.** T1–T15 proceed, one bounded task at a time, full
+   `bash scripts/verify.sh` after each.
+2. **Land via a pull request to `main`.** Opened, not merged. This is also what makes CI run
+   under the `pull_request` event, which is the trigger AGENTS.md's definition of done names —
+   `workflow_dispatch` has been standing in for it and cannot.
+3. **Licence audit runs BEFORE the merge, not after.** Every runtime dependency readiness adds
+   is audited and recorded in `DECISIONS.md`. D-002 makes NonCommercial a hard reject: a
+   NonCommercial finding blocks that dependency and is reported rather than merged. This
+   promotes the audit ahead of T1 — it is now **T0**, and the merge does not start until it is
+   clean.
