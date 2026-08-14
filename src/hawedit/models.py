@@ -8,7 +8,7 @@ blueprint requires can be quietly forgotten.
 components, five arrive with a pip package or package-managed model card (Silero VAD ships its
 ONNX model inside the wheel), one is our own code, two are cloud APIs needing credentials, one is
 a system library, and **six are explicitly provisioned multi-gigabyte checkpoints**. Only that
-last group is downloaded by `fetch-models.sh`.
+last group is downloaded by `hawedit-fetch-models` (or its checkout wrapper).
 
 **Source ids are configured, never guessed.** §7 names four models in unambiguous
 `org/name` form and those are used directly. The two Qwen models are *checkpoint names*, not
@@ -27,26 +27,46 @@ should be told so before it spends an hour finding out.
 
 from __future__ import annotations
 
+import errno
+import hashlib
+import importlib
+import importlib.metadata
 import json
 import os
+import re
+import stat
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+import time
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Final
+from pathlib import Path, PurePosixPath
+from typing import Final, cast
 
+from hawedit.atomic_fs import rename_directory_noreplace
+from hawedit.environment import EnvironmentAuditError, resolve_installed_hawedit_data
 from hawedit.registry import REGISTRY, ModelEntry, Provisioning
+from hawedit.wsl_setup import WSL_MODEL_METADATA_DIRECTORY, probe_wsl_runtime
 
 __all__ = [
     "DEFAULT_MODELS_ROOT",
+    "INSTALLED_INTEGRITY",
+    "CheckpointIntegrityError",
+    "CheckpointIntegrityReport",
     "ModelNotProvisioned",
     "ModelStatus",
     "ModelStore",
     "RevisionNotPinned",
     "SourceNotConfigured",
+    "UnsafeModelConfig",
     "WeightsIncomplete",
+    "assert_checkpoint_integrity",
     "assert_fully_loaded",
+    "assert_transformers_config_safe",
+    "checkpoint_publish_lock",
     "readiness_report",
+    "validate_hf_repository_id",
+    "verified_checkpoint_access",
 ]
 
 
@@ -67,6 +87,7 @@ def _default_models_root() -> Path:
 DEFAULT_MODELS_ROOT: Final = _default_models_root()
 INSTALLED_SOURCES: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "sources.json"
 INSTALLED_REVISIONS: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "revisions.json"
+INSTALLED_INTEGRITY: Final = Path(sys.prefix) / "share" / "hawedit" / "models" / "integrity.json"
 
 # Which pip package supplies each PIP-provisioned component. Kept here rather than in the
 # registry because it describes this implementation's packaging, not §7's content.
@@ -84,7 +105,7 @@ _PIP_MODULES: Final[Mapping[str, str]] = {
 # all. Measured 2026-08-09: `transformers` 4.57.6 has no `qwen3_asr` module, `AutoModel` cannot
 # map the config's `model_type`, and `Qwen3ASRForConditionalGeneration` is not importable — while
 # the checkpoint's own model card says `from qwen_asr import Qwen3ASRModel  # pip install
-# qwen-asr`. The import name comes from that card, not from a guess. D-099.
+# qwen-asr`. The import name comes from that card, not from a guess. D-131.
 _WEIGHTS_RUNTIMES: Final[Mapping[str, str]] = {
     "rzgar/qwen3-asr-sorani-kurdish-ckb-v1": "qwen_asr",
 }
@@ -96,6 +117,123 @@ class ModelNotProvisioned(RuntimeError):
 
 class WeightsIncomplete(RuntimeError):
     """Raised when a checkpoint loaded but some of its weights were invented."""
+
+
+class UnsafeModelConfig(RuntimeError):
+    """Raised before Transformers can execute code named by checkpoint configuration."""
+
+
+class CheckpointIntegrityError(RuntimeError):
+    """Raised when local checkpoint bytes differ from the pinned Hub snapshot."""
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointIntegrityReport:
+    """The exact local snapshot proven against ``models/integrity.json``."""
+
+    model_id: str
+    repository: str
+    revision: str
+    files_verified: int
+    size_bytes: int
+
+
+_INTERNAL_IMPLEMENTATION_FIELDS: Final = frozenset(
+    {"_attn_implementation_internal", "_experts_implementation_internal"}
+)
+_PUBLIC_IMPLEMENTATION_FIELDS: Final = frozenset({"attn_implementation", "experts_implementation"})
+_HUB_KERNEL: Final = re.compile(r"^(?:paged\|)?[^/:]+/[^/:]+(?:@[^/:]+)?(?::[^/:]+)?$")
+
+
+def assert_transformers_config_safe(model_dir: Path, allowed_model_types: Collection[str]) -> None:
+    """Refuse checkpoint fields that can make Transformers download and execute code.
+
+    Transformers before 5.3.0 deserialises the private implementation fields below from a
+    model's ``config.json``.  A malicious value can name a Hub kernel repository and execute
+    its Python even when the caller passed ``trust_remote_code=False`` (CVE-2026-4372).  HawEdit
+    is pinned to 4.57.6 because 5.x changes the verified visual checkpoints' behaviour, so this
+    is a deliberately stricter backport of the upstream fix: private fields are never accepted,
+    and neither are repository-shaped values in their public counterparts.  CVE-2026-5241's
+    nested ``trust_remote_code`` override is also refused.  Finally, every nested ``model_type``
+    must belong to the checkpoint-specific allowlist supplied by its adapter, which prevents an
+    altered Qwen config from dispatching into the vulnerable X-CLIP or LightGlue loaders.
+    HawEdit's measured checkpoints use built-in implementations such as ``sdpa`` and need no
+    remote kernel.
+
+    The walk is recursive because nested text/vision configs become ``PretrainedConfig`` objects
+    too.  It runs before any processor, config, or model loader in every HawEdit-owned
+    Transformers path.
+    """
+    allowed = frozenset(allowed_model_types)
+    if not allowed:
+        raise ValueError("allowed_model_types must name at least one measured model type")
+    config_path = model_dir / "config.json"
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise UnsafeModelConfig(
+            f"{config_path} is missing; a Transformers checkpoint without its declared config "
+            "cannot be loaded safely"
+        ) from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise UnsafeModelConfig(f"cannot safely read {config_path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise UnsafeModelConfig(
+            f"{config_path} must contain a JSON object, got {type(raw).__name__}"
+        )
+
+    seen_model_types: set[str] = set()
+
+    def refuse_remote_implementation(value: object, location: str) -> None:
+        if isinstance(value, str) and _HUB_KERNEL.fullmatch(value) is not None:
+            raise UnsafeModelConfig(
+                f"{config_path} asks {location} to load remote kernel {value!r}. "
+                "HawEdit's pinned checkpoints require no remote kernel, so executing one "
+                "is refused."
+            )
+        if isinstance(value, dict):
+            for key, child in value.items():
+                refuse_remote_implementation(child, f"{location}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                refuse_remote_implementation(child, f"{location}[{index}]")
+
+    def walk(value: object, location: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_location = f"{location}.{key}"
+                if key in _INTERNAL_IMPLEMENTATION_FIELDS:
+                    raise UnsafeModelConfig(
+                        f"{config_path} contains forbidden field {child_location}. "
+                        "Transformers <5.3.0 can execute a Hub kernel named there while "
+                        "bypassing trust_remote_code (CVE-2026-4372)."
+                    )
+                if key == "trust_remote_code":
+                    raise UnsafeModelConfig(
+                        f"{config_path} contains forbidden field {child_location}. "
+                        "A nested model config can override the caller's refusal and execute "
+                        "remote code (CVE-2026-5241)."
+                    )
+                if key == "model_type":
+                    if not isinstance(child, str) or child not in allowed:
+                        raise UnsafeModelConfig(
+                            f"{config_path} declares unapproved {child_location}={child!r}; "
+                            f"this adapter accepts only {sorted(allowed)}. Dispatching a pinned "
+                            "checkpoint through another Transformers model family is refused."
+                        )
+                    seen_model_types.add(child)
+                if key in _PUBLIC_IMPLEMENTATION_FIELDS:
+                    refuse_remote_implementation(child, child_location)
+                walk(child, child_location)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, f"{location}[{index}]")
+
+    walk(raw, "config")
+    if not seen_model_types:
+        raise UnsafeModelConfig(
+            f"{config_path} declares no model_type; this adapter accepts only {sorted(allowed)}"
+        )
 
 
 def assert_fully_loaded(model_id: str, missing_keys: Iterable[str]) -> None:
@@ -140,6 +278,27 @@ class RevisionNotPinned(RuntimeError):
     """Raised when a repository would be downloaded at whatever its branch head is today."""
 
 
+_HF_REPOSITORY_ID: Final = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,47}/[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+)
+
+
+def validate_hf_repository_id(repository: object, label: str = "repository") -> str:
+    """Return one plain Hub ``namespace/name`` id without echoing rejected secret bytes."""
+    if not isinstance(repository, str):
+        raise CheckpointIntegrityError(f"{label} must be a repository id string")
+    if (
+        len(repository) > 96
+        or _HF_REPOSITORY_ID.fullmatch(repository) is None
+        or ".." in repository
+        or "--" in repository
+        or repository.lower().endswith(".git")
+        or any(segment.endswith((".", "-")) for segment in repository.split("/"))
+    ):
+        raise CheckpointIntegrityError(f"{label} must be an allowlisted namespace/repository id")
+    return repository
+
+
 @dataclass(frozen=True, slots=True)
 class ModelStatus:
     """Whether one §7 component is actually available on this machine."""
@@ -157,12 +316,152 @@ def _directory_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+_LOCAL_OMNI_PACKAGES: Final[Mapping[str, str]] = {
+    "fairseq2": "0.6",
+    "fonttools": "4.60.2",
+    "klpt": "0.1.7",
+    "omnilingual-asr": "0.2.0",
+    "qwen-asr": "0.0.6",
+    "torch": "2.8.0",
+    "torchaudio": "2.8.0",
+}
+_LOCAL_OMNI_IMPORTS: Final[Mapping[str, str]] = {
+    "fairseq2.assets": "get_asset_store",
+    "fairseq2.data.tokenizers.hub": "load_tokenizer",
+    "fairseq2.models.hub": "load_model",
+    "omnilingual_asr.models.inference.pipeline": "ASRInferencePipeline",
+    "qwen_asr": "Qwen3ASRModel",
+}
+
+
+def _probe_local_omni_runtime() -> tuple[str, Path, int]:
+    if sys.version_info[:2] != (3, 12):
+        raise RuntimeError(
+            f"canonical local OmniASR requires Python 3.12, got "
+            f"{sys.version_info[0]}.{sys.version_info[1]}"
+        )
+    versions: dict[str, str] = {}
+    for distribution, expected in _LOCAL_OMNI_PACKAGES.items():
+        try:
+            actual = importlib.metadata.version(distribution).split("+", 1)[0]
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise RuntimeError(f"required local package {distribution!r} is not installed") from exc
+        versions[distribution] = actual
+        if actual != expected:
+            raise RuntimeError(
+                f"required local package {distribution!r} must be {expected}, got {actual}"
+            )
+
+    from hawedit.omni_assets import (
+        assert_effective_omni_cards,
+        assert_omni_asset_integrity,
+        assert_omni_card_integrity,
+        freeze_fairseq2_asset_overrides,
+    )
+
+    assert_omni_card_integrity()
+    reports = assert_omni_asset_integrity()
+    total = sum(report.size for report in reports)
+    if len(reports) != 3 or total != 43_546_500_168:
+        raise RuntimeError(
+            f"canonical local OmniASR asset set drifted: files={len(reports)}, bytes={total}"
+        )
+    freeze_fairseq2_asset_overrides()
+    try:
+        torch = importlib.import_module("torch")
+        torchaudio = importlib.import_module("torchaudio")
+        modules = {
+            module_name: importlib.import_module(module_name) for module_name in _LOCAL_OMNI_IMPORTS
+        }
+        for module_name, symbol in _LOCAL_OMNI_IMPORTS.items():
+            getattr(modules[module_name], symbol)
+    except (ImportError, AttributeError) as exc:
+        raise RuntimeError(f"canonical local OmniASR imports are incomplete: {exc}") from exc
+    if str(getattr(torch, "__version__", "")).split("+", 1)[0] != versions["torch"]:
+        raise RuntimeError("imported torch version disagrees with installed package metadata")
+    if str(getattr(torchaudio, "__version__", "")).split("+", 1)[0] != versions["torchaudio"]:
+        raise RuntimeError("imported torchaudio version disagrees with installed package metadata")
+    cuda = getattr(torch, "cuda", None)
+    device_count = cuda.device_count() if callable(getattr(cuda, "device_count", None)) else 0
+    if (
+        cuda is None
+        or not callable(getattr(cuda, "is_available", None))
+        or not cuda.is_available()
+        or device_count < 2
+    ):
+        raise RuntimeError("canonical local OmniASR requires two visible CUDA devices")
+    asset_store = modules["fairseq2.assets"].get_asset_store()
+    assert_effective_omni_cards(asset_store)
+    return (
+        f"verified local Python 3.12 runtime, {len(versions)} packages, "
+        f"{len(reports)} OmniASR files / {total} bytes and {device_count} CUDA devices",
+        reports[0].path.parents[1],
+        total,
+    )
+
+
+def _probe_canonical_omni_runtime() -> tuple[str, Path, int]:
+    if os.name == "nt":
+        probe = probe_wsl_runtime()
+        return (
+            f"WSL {probe.receipt.distro}: verified {probe.files_verified} files / "
+            f"{probe.size_bytes} bytes in verified venv generation {probe.receipt.generation}",
+            probe.receipt.generation_root,
+            probe.size_bytes,
+        )
+    return _probe_local_omni_runtime()
+
+
 class ModelStore:
     """The on-disk home of §7's downloadable checkpoints."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, metadata_root: Path | None = None) -> None:
         self.root = root if root is not None else DEFAULT_MODELS_ROOT
-        self._use_installed_sources = root is None
+        if metadata_root is not None:
+            self.metadata_root = metadata_root
+        else:
+            snapshot_metadata = (
+                Path(__file__).resolve().parent.parent / WSL_MODEL_METADATA_DIRECTORY
+            )
+            checkout_metadata = Path(__file__).resolve().parents[2] / "models"
+            # A WSL worker snapshot carries a receipt-bound exact copy of all three identity
+            # manifests beside the package. If that uniquely named directory exists at all,
+            # never fall through to mutable checkpoint roots or unrelated installed metadata:
+            # an incomplete/tampered snapshot must fail closed in ``integrity()``.
+            if os.path.lexists(snapshot_metadata):
+                self.metadata_root = snapshot_metadata
+            elif (checkout_metadata / "sources.json").is_file():
+                self.metadata_root = checkout_metadata
+            else:
+                try:
+                    installed = tuple(
+                        resolve_installed_hawedit_data(f"share/hawedit/models/{name}")
+                        for name in ("sources.json", "revisions.json", "integrity.json")
+                    )
+                except EnvironmentAuditError as exc:
+                    raise CheckpointIntegrityError(
+                        f"cannot authenticate installed checkpoint metadata: {exc}"
+                    ) from exc
+                parents = {path.parent for path in installed}
+                if len(parents) != 1:
+                    raise CheckpointIntegrityError(
+                        "installed checkpoint identity manifests are not colocated"
+                    )
+                self.metadata_root = installed[0].parent
+        self._omni_runtime_probe: tuple[bool, str, Path | None, int | None] | None = None
+
+    def _omni_runtime_status(self) -> tuple[bool, str, Path | None, int | None]:
+        """Prove the canonical runtime once for both OmniASR registry entries."""
+        if self._omni_runtime_probe is not None:
+            return self._omni_runtime_probe
+        result: tuple[bool, str, Path | None, int | None]
+        try:
+            detail, path, total = _probe_canonical_omni_runtime()
+            result = (True, detail, path, total)
+        except (RuntimeError, OSError) as exc:
+            result = (False, f"canonical OmniASR runtime verification failed: {exc}", None, None)
+        self._omni_runtime_probe = result
+        return result
 
     def path_for(self, entry: ModelEntry) -> Path:
         """Where `entry`'s weights live. `/` in a model id becomes `__` in the directory."""
@@ -175,19 +474,36 @@ class ModelStore:
         nothing that §7 already fixes; they supply what §7 leaves as a checkpoint name.
         """
         configured: dict[str, str] = {}
-        source_file = self.root / "sources.json"
-        if not source_file.exists() and self._use_installed_sources and INSTALLED_SOURCES.exists():
-            source_file = INSTALLED_SOURCES
+        source_file = self.metadata_root / "sources.json"
         if source_file.exists():
             # JSON has no comments and this file needs one — it is the file most likely to be
             # "helpfully" completed by guessing the two entries that are deliberately absent.
             # A `_`-prefixed key carries the warning; dropping it here keeps the returned
             # mapping honestly str -> str rather than str -> whatever the note happened to be.
-            raw = json.loads(source_file.read_text(encoding="utf-8"))
-            configured = {k: v for k, v in raw.items() if not k.startswith("_")}
+            try:
+                raw: object = json.loads(source_file.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise CheckpointIntegrityError(
+                    f"cannot read checkpoint sources metadata {source_file}: {exc}"
+                ) from exc
+            document = _object_mapping(raw, str(source_file))
+            for model_id, repository in document.items():
+                if model_id.startswith("_"):
+                    continue
+                entry = REGISTRY.get(model_id)
+                if entry is None or entry.provisioning is not Provisioning.WEIGHTS:
+                    raise CheckpointIntegrityError(
+                        f"{source_file} names unknown downloadable model {model_id!r}"
+                    )
+                configured[model_id] = validate_hf_repository_id(
+                    repository, f"{source_file}: source for {model_id!r}"
+                )
         merged = {e.model_id: e.hf_repo for e in REGISTRY.values() if e.hf_repo}
         merged.update(configured)
-        return merged
+        return {
+            model_id: validate_hf_repository_id(repository, f"source for {model_id!r}")
+            for model_id, repository in merged.items()
+        }
 
     def source_for(self, entry: ModelEntry) -> str:
         """The repo id to download `entry` from.
@@ -202,7 +518,7 @@ class ModelStore:
             raise SourceNotConfigured(
                 f"no download source for {entry.model_id!r}. §7 names it as a checkpoint, "
                 f"not a repository id, and this is not something to guess. Add it to "
-                f"{self.root / 'sources.json'}:\n"
+                f"{self.metadata_root / 'sources.json'}:\n"
                 f'  {{"{entry.model_id}": "<org>/<repo>"}}'
             )
         return source
@@ -214,17 +530,244 @@ class ModelStore:
         could legitimately resolve to one repository.
         """
         configured: dict[str, str] = {}
-        revision_file = self.root / "revisions.json"
-        if (
-            not revision_file.exists()
-            and self._use_installed_sources
-            and INSTALLED_REVISIONS.exists()
-        ):
-            revision_file = INSTALLED_REVISIONS
+        revision_file = self.metadata_root / "revisions.json"
         if revision_file.exists():
-            raw = json.loads(revision_file.read_text(encoding="utf-8"))
-            configured = {k: v for k, v in raw.items() if not k.startswith("_")}
+            try:
+                raw: object = json.loads(revision_file.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise CheckpointIntegrityError(
+                    f"cannot read checkpoint revisions metadata {revision_file}: {exc}"
+                ) from exc
+            document = _object_mapping(raw, str(revision_file))
+            for repository, revision in document.items():
+                if repository.startswith("_"):
+                    continue
+                valid_repository = validate_hf_repository_id(
+                    repository, f"{revision_file}: repository"
+                )
+                if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+                    raise RevisionNotPinned(
+                        f"{revision_file} has no full lowercase 40-hex commit for "
+                        f"{valid_repository!r}"
+                    )
+                configured[valid_repository] = revision
         return configured
+
+    def assert_checkpoint_provisionable(
+        self, model_id: str, repository: str, revision: str
+    ) -> None:
+        """Validate the complete manifest identity before any checkpoint bytes are fetched."""
+        entry = REGISTRY.get(model_id)
+        if entry is None or entry.provisioning is not Provisioning.WEIGHTS:
+            raise CheckpointIntegrityError(
+                f"{model_id!r} is not an explicitly downloaded §7 checkpoint"
+            )
+        model_manifest = _object_mapping(
+            self.integrity().get(model_id), f"integrity manifest for {model_id}"
+        )
+        manifest_repository = validate_hf_repository_id(
+            _required_string(model_manifest, "repository", model_id),
+            f"integrity manifest for {model_id}: repository",
+        )
+        manifest_revision = _required_string(model_manifest, "revision", model_id)
+        if re.fullmatch(r"[0-9a-f]{40}", manifest_revision) is None:
+            raise CheckpointIntegrityError(
+                f"integrity manifest for {model_id} has no full lowercase 40-hex revision"
+            )
+        if (manifest_repository, manifest_revision) != (repository, revision):
+            raise CheckpointIntegrityError(
+                f"{model_id} integrity manifest names {manifest_repository}@{manifest_revision}, "
+                f"but provisioning selects {repository}@{revision}"
+            )
+        status = _required_string(model_manifest, "status", model_id)
+        if status != "verified":
+            reason = _required_string(model_manifest, "reason", model_id)
+            raise CheckpointIntegrityError(
+                f"{model_id} checkpoint verification is {status}: {reason}"
+            )
+        files = _object_mapping(model_manifest.get("files"), f"{model_id}: files")
+        if not files:
+            raise CheckpointIntegrityError(f"{model_id} integrity manifest has no files")
+        for manifest_path, raw_expectation in files.items():
+            _safe_manifest_path(manifest_path, model_id)
+            expectation = _object_mapping(raw_expectation, f"{model_id}:{manifest_path}")
+            algorithm = _required_string(expectation, "algorithm", f"{model_id}:{manifest_path}")
+            digest = _required_string(expectation, "digest", f"{model_id}:{manifest_path}")
+            size = _required_int(expectation, "size_bytes", f"{model_id}:{manifest_path}")
+            expected_length = {"git-sha1": 40, "sha256": 64}.get(algorithm)
+            if (
+                expected_length is None
+                or len(digest) != expected_length
+                or re.fullmatch(r"[0-9a-f]+", digest) is None
+                or size == 0
+            ):
+                raise CheckpointIntegrityError(
+                    f"{model_id}:{manifest_path} has an invalid {algorithm!r} byte identity"
+                )
+
+    def integrity(self) -> Mapping[str, object]:
+        """The tracked byte manifest for every explicitly downloaded checkpoint.
+
+        A pinned revision identifies intended bytes but does not prove the files currently on
+        disk are those bytes.  The manifest records each accessible Hub file's content-addressed
+        Git blob id or LFS SHA-256 at that revision; a gated/redacted repository is explicitly
+        blocked instead of carrying a made-up digest. Installed wheels carry the same manifest
+        beside ``sources.json`` and ``revisions.json``.
+        """
+        integrity_file = self.metadata_root / "integrity.json"
+        if not integrity_file.is_file():
+            raise CheckpointIntegrityError(
+                f"no checkpoint byte manifest at {integrity_file}. A repository revision names "
+                "intended weights but cannot detect a locally changed shard."
+            )
+        try:
+            raw: object = json.loads(integrity_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise CheckpointIntegrityError(
+                f"cannot read checkpoint byte manifest {integrity_file}: {exc}"
+            ) from exc
+        document = _object_mapping(raw, str(integrity_file))
+        if document.get("schema") != 1:
+            raise CheckpointIntegrityError(
+                f"{integrity_file} has unsupported schema {document.get('schema')!r}; expected 1"
+            )
+        return _object_mapping(document.get("models"), f"{integrity_file}: models")
+
+    def verify_checkpoint(
+        self, model_id: str, checkpoint: Path | None = None
+    ) -> CheckpointIntegrityReport:
+        """Hash every snapshot file before any HawEdit-owned model loader interprets it.
+
+        Git-managed files use the Git blob id (SHA-1 over the canonical ``blob <size>\\0``
+        prefix plus bytes); LFS files use their content SHA-256.  The file set is exact and
+        symlinks are refused, so adding executable modelling code is as visible as changing a
+        safetensors byte.  ``.cache/huggingface`` download metadata is excluded because it is
+        downloader state, not part of the repository snapshot.
+        """
+        entry = REGISTRY.get(model_id)
+        if entry is None or entry.provisioning is not Provisioning.WEIGHTS:
+            raise CheckpointIntegrityError(
+                f"{model_id!r} is not an explicitly downloaded §7 checkpoint"
+            )
+        model_manifest = _object_mapping(
+            self.integrity().get(model_id), f"integrity manifest for {model_id}"
+        )
+        repository = _required_string(model_manifest, "repository", model_id)
+        revision = _required_string(model_manifest, "revision", model_id)
+        configured_repository = self.source_for(entry)
+        configured_revision = self.revision_for(configured_repository)
+        if (repository, revision) != (configured_repository, configured_revision):
+            raise CheckpointIntegrityError(
+                f"{model_id} integrity manifest names {repository}@{revision}, but provisioning "
+                f"selects {configured_repository}@{configured_revision}. Refusing a manifest "
+                "for different weights."
+            )
+        integrity_status = _required_string(model_manifest, "status", model_id)
+        if integrity_status != "verified":
+            reason = _required_string(model_manifest, "reason", model_id)
+            raise CheckpointIntegrityError(
+                f"{model_id} checkpoint verification is {integrity_status}: {reason}"
+            )
+
+        files = _object_mapping(model_manifest.get("files"), f"{model_id}: files")
+        expected_paths = set(files)
+        selected_root = checkpoint if checkpoint is not None else self.path_for(entry)
+        if _path_is_reparse(selected_root):
+            raise CheckpointIntegrityError(
+                f"checkpoint root must not be a symlink or reparse point: {selected_root}"
+            )
+        root = selected_root.resolve()
+        if not root.is_dir():
+            raise CheckpointIntegrityError(f"checkpoint directory is missing: {root}")
+
+        actual_paths: set[str] = set()
+        for candidate in root.rglob("*"):
+            relative = candidate.relative_to(root)
+            if relative.parts and relative.parts[0] == ".cache":
+                continue
+            if _path_is_reparse(candidate):
+                raise CheckpointIntegrityError(
+                    f"{model_id} contains a link or reparse point "
+                    f"{relative.as_posix()}; the manifest "
+                    "covers bytes inside the checkpoint, not an external target"
+                )
+            if candidate.is_file():
+                metadata = os.lstat(candidate)
+                if metadata.st_nlink != 1:
+                    raise CheckpointIntegrityError(
+                        f"{model_id}:{relative.as_posix()} must have exactly one hard link; "
+                        f"got {metadata.st_nlink}"
+                    )
+                actual_paths.add(relative.as_posix())
+            elif not candidate.is_dir():
+                raise CheckpointIntegrityError(
+                    f"{model_id} contains a non-regular filesystem member: {relative.as_posix()}"
+                )
+
+        missing = sorted(expected_paths - actual_paths)
+        extra = sorted(actual_paths - expected_paths)
+        if missing or extra:
+            raise CheckpointIntegrityError(
+                f"{model_id} file set differs from {repository}@{revision}: "
+                f"missing={missing[:8]}, extra={extra[:8]}"
+            )
+
+        total = 0
+        for manifest_path in sorted(expected_paths):
+            safe_relative = _safe_manifest_path(manifest_path, model_id)
+            expectation = _object_mapping(files[manifest_path], f"{model_id}:{manifest_path}")
+            algorithm = _required_string(expectation, "algorithm", f"{model_id}:{manifest_path}")
+            digest = _required_string(expectation, "digest", f"{model_id}:{manifest_path}")
+            size = _required_int(expectation, "size_bytes", f"{model_id}:{manifest_path}")
+            target = root.joinpath(*safe_relative.parts)
+            actual_size = target.stat().st_size
+            if actual_size != size:
+                raise CheckpointIntegrityError(
+                    f"{model_id}:{manifest_path} is {actual_size} bytes; pinned snapshot requires "
+                    f"{size}. The checkpoint is incomplete or changed."
+                )
+            actual_digest = _checkpoint_digest(target, algorithm, size)
+            if actual_digest != digest:
+                raise CheckpointIntegrityError(
+                    f"{model_id}:{manifest_path} {algorithm} is {actual_digest}; pinned snapshot "
+                    f"requires {digest}. Same-size weight corruption is not safe to load."
+                )
+            total += size
+        final_paths: set[str] = set()
+        for candidate in root.rglob("*"):
+            relative = candidate.relative_to(root)
+            if relative.parts and relative.parts[0] == ".cache":
+                continue
+            if _path_is_reparse(candidate):
+                raise CheckpointIntegrityError(
+                    f"{model_id} gained a link or reparse point while verifying: "
+                    f"{relative.as_posix()}"
+                )
+            if candidate.is_file():
+                metadata = os.lstat(candidate)
+                if metadata.st_nlink != 1:
+                    raise CheckpointIntegrityError(
+                        f"{model_id}:{relative.as_posix()} gained another hard link while verifying"
+                    )
+                final_paths.add(relative.as_posix())
+            elif not candidate.is_dir():
+                raise CheckpointIntegrityError(
+                    f"{model_id} gained a non-regular filesystem member while verifying: "
+                    f"{relative.as_posix()}"
+                )
+        if final_paths != expected_paths:
+            raise CheckpointIntegrityError(
+                f"{model_id} file set changed while verifying: "
+                f"missing={sorted(expected_paths - final_paths)[:8]}, "
+                f"extra={sorted(final_paths - expected_paths)[:8]}"
+            )
+        return CheckpointIntegrityReport(
+            model_id=model_id,
+            repository=repository,
+            revision=revision,
+            files_verified=len(expected_paths),
+            size_bytes=total,
+        )
 
     def revision_for(self, repo_id: str) -> str:
         """The commit to download `repo_id` at.
@@ -247,10 +790,15 @@ class ModelStore:
                 f"no pinned revision for {repo_id!r}. Downloading a branch head makes the "
                 f"weights unidentifiable and every measurement taken against them "
                 f"unreproducible. Resolve the commit and record it in "
-                f"{self.root / 'revisions.json'}:\n"
+                f"{self.metadata_root / 'revisions.json'}:\n"
                 f'  {{"{repo_id}": "<40-hex commit sha>"}}\n'
                 f'  python -c "from huggingface_hub import HfApi; '
                 f"print(HfApi().model_info('{repo_id}').sha)\""
+            )
+        if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+            raise RevisionNotPinned(
+                f"invalid pinned revision for {repo_id!r}: {revision!r}. Expected one full "
+                f"lowercase 40-hex commit SHA in {self.metadata_root / 'revisions.json'}"
             )
         return revision
 
@@ -264,20 +812,25 @@ class ModelStore:
     def _status_for(self, entry: ModelEntry) -> ModelStatus:
         if entry.provisioning is Provisioning.PIP:
             module = _PIP_MODULES.get(entry.model_id)
+            if entry.model_id.startswith("omniASR_"):
+                available, detail, path, size_bytes = self._omni_runtime_status()
+                return ModelStatus(
+                    model_id=entry.model_id,
+                    component=entry.component,
+                    provisioning=entry.provisioning,
+                    available=available,
+                    detail=detail,
+                    path=path,
+                    size_bytes=size_bytes,
+                )
             available = module is not None and _is_importable(module)
-            package_managed = entry.model_id.startswith("omniASR_")
             return ModelStatus(
                 model_id=entry.model_id,
                 component=entry.component,
                 provisioning=entry.provisioning,
                 available=available,
                 detail=(
-                    (
-                        f"pip package {module!r} importable; official model-card asset is "
-                        "downloaded/cached on first load"
-                        if package_managed
-                        else f"pip package {module!r} importable"
-                    )
+                    f"pip package {module!r} importable"
                     if available
                     else f"pip package {module!r} not installed"
                 ),
@@ -305,7 +858,7 @@ class ModelStore:
                 provisioning=entry.provisioning,
                 available=ffmpeg is not None,
                 detail=(
-                    f"ffmpeg at {ffmpeg}" if ffmpeg else "no ffmpeg — run scripts/fetch-ffmpeg.sh"
+                    f"ffmpeg at {ffmpeg}" if ffmpeg else "no ffmpeg — run hawedit-ffmpeg-setup"
                 ),
                 path=ffmpeg,
             )
@@ -316,18 +869,35 @@ class ModelStore:
             source = self.source_for(entry)
         except SourceNotConfigured:
             source = "<source not configured>"
-
-        # A checkpoint on disk that nothing here can load is not an available component. The
-        # report is read as "can this stage run", so downloaded-but-unloadable has to say so.
+        size_bytes = None
         runtime = _WEIGHTS_RUNTIMES.get(entry.model_id)
         runtime_missing = runtime is not None and not _is_importable(runtime)
-        detail = f"weights from {source}" if present else f"not downloaded ({source})"
-        if present and runtime_missing:
+        if present:
+            try:
+                with _checkpoint_lock_stream(path, exclusive=False):
+                    size_bytes = _directory_size(path)
+                    integrity = self.verify_checkpoint(entry.model_id, path)
+            except (CheckpointIntegrityError, RevisionNotPinned, SourceNotConfigured) as exc:
+                return ModelStatus(
+                    model_id=entry.model_id,
+                    component=entry.component,
+                    provisioning=entry.provisioning,
+                    available=False,
+                    detail=f"checkpoint integrity failed: {exc}",
+                    path=path,
+                    size_bytes=size_bytes,
+                )
             detail = (
-                f"weights from {source} are on disk, but the loader {runtime!r} is not installed "
-                f"— the checkpoint cannot be loaded here, so this component cannot run"
+                f"verified {integrity.files_verified} files from "
+                f"{integrity.repository}@{integrity.revision}"
             )
-
+            if runtime_missing:
+                detail = (
+                    f"{detail}, but the loader {runtime!r} is not installed — the checkpoint "
+                    "cannot be loaded here, so this component cannot run"
+                )
+        else:
+            detail = f"not downloaded ({source})"
         return ModelStatus(
             model_id=entry.model_id,
             component=entry.component,
@@ -335,15 +905,15 @@ class ModelStore:
             available=present and not runtime_missing,
             detail=detail,
             path=path if present else None,
-            size_bytes=_directory_size(path) if present else None,
+            size_bytes=size_bytes,
         )
 
     def missing_weights(self) -> tuple[ModelEntry, ...]:
-        """§7 checkpoints that are not on this machine."""
+        """§7 checkpoints that do not pass exact byte-manifest verification."""
         return tuple(
             entry
             for entry in REGISTRY.values()
-            if entry.provisioning is Provisioning.WEIGHTS and not self.path_for(entry).is_dir()
+            if entry.provisioning is Provisioning.WEIGHTS and not self._status_for(entry).available
         )
 
     def unconfigured_sources(self) -> tuple[ModelEntry, ...]:
@@ -361,14 +931,17 @@ class ModelStore:
         Raises:
             ModelNotProvisioned: the component is unavailable, with what to do about it.
         """
-        status = next((s for s in self.status() if s.model_id == model_id), None)
-        if status is None:
+        entry = REGISTRY.get(model_id)
+        if entry is None:
             raise ModelNotProvisioned(f"{model_id!r} is not in §7")
+        # Do not build the whole readiness report here. That would hash every 37 GB checkpoint
+        # before a stage asking for one of them could start.
+        status = self._status_for(entry)
         if not status.available:
             if status.provisioning is Provisioning.WEIGHTS:
-                remedy = "Run scripts/fetch-models.sh."
+                remedy = "Run hawedit-fetch-models (install `hawedit[models]` first)."
             elif status.provisioning is Provisioning.SYSTEM:
-                remedy = "Run scripts/fetch-ffmpeg.sh."
+                remedy = "Run hawedit-ffmpeg-setup."
             elif status.provisioning is Provisioning.CLOUD:
                 remedy = "Configure the required cloud credentials."
             elif status.model_id.startswith("omniASR_") and os.name == "nt":
@@ -388,6 +961,273 @@ def _is_importable(module: str) -> bool:
         return find_spec(module) is not None
     except (ImportError, ValueError):
         return False
+
+
+def _object_mapping(value: object, label: str) -> Mapping[str, object]:
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise CheckpointIntegrityError(f"{label} must be a JSON object with string keys")
+    return cast(dict[str, object], value)
+
+
+def _required_string(document: Mapping[str, object], key: str, label: str) -> str:
+    value = document.get(key)
+    if not isinstance(value, str) or not value:
+        raise CheckpointIntegrityError(f"{label}.{key} must be a non-empty string")
+    return value
+
+
+def _required_int(document: Mapping[str, object], key: str, label: str) -> int:
+    value = document.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise CheckpointIntegrityError(f"{label}.{key} must be a non-negative integer")
+    return value
+
+
+def _safe_manifest_path(relative: str, model_id: str) -> PurePosixPath:
+    path = PurePosixPath(relative)
+    if not relative or "\\" in relative or path.is_absolute() or ".." in path.parts:
+        raise CheckpointIntegrityError(
+            f"{model_id} integrity manifest contains unsafe path {relative!r}"
+        )
+    return path
+
+
+def _path_is_reparse(path: Path) -> bool:
+    try:
+        metadata = os.lstat(path)
+    except OSError:
+        return False
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & reparse_flag
+    )
+
+
+def _publish_checkpoint_directory(source: Path, destination: Path) -> None:
+    """Atomically rename one verified directory without replacing any existing final path."""
+    try:
+        rename_directory_noreplace(source, destination)
+    except OSError as exc:
+        if exc.errno == errno.ENOTSUP:
+            raise CheckpointIntegrityError(
+                "this platform has no atomic no-replace directory publication primitive"
+            ) from exc
+        raise
+
+
+def _checkpoint_digest(path: Path, algorithm: str, size: int) -> str:
+    if algorithm == "sha256":
+        digest = hashlib.sha256()
+    elif algorithm == "git-sha1":
+        # This reproduces Git's upstream object identity; it is not a new password/signature
+        # primitive. The already-fixed blob would require a second preimage to substitute.
+        digest = hashlib.sha1(usedforsecurity=False)
+        digest.update(f"blob {size}\0".encode())
+    else:
+        raise CheckpointIntegrityError(
+            f"unsupported checkpoint digest algorithm {algorithm!r} for {path}"
+        )
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise CheckpointIntegrityError(f"cannot safely open checkpoint file {path}: {exc}") from exc
+    try:
+        before = os.fstat(descriptor)
+        named = os.lstat(path)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or before.st_nlink != 1
+            or named.st_nlink != 1
+            or _path_is_reparse(path)
+            or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise CheckpointIntegrityError(
+                f"checkpoint file must be one unlinked regular file: {path}"
+            )
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            while chunk := stream.read(8 * 1024 * 1024):
+                digest.update(chunk)
+            after = os.fstat(stream.fileno())
+        current = os.lstat(path)
+        descriptor_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            before.st_nlink,
+        )
+        descriptor_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_nlink,
+        )
+        path_before = (
+            named.st_dev,
+            named.st_ino,
+            named.st_size,
+            named.st_mtime_ns,
+            named.st_ctime_ns,
+            named.st_nlink,
+        )
+        path_after = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_ctime_ns,
+            current.st_nlink,
+        )
+        # Windows gives descriptor ``ctime`` the meaning/value of mtime while pathname stat
+        # reports the filesystem creation/change time. Preserve ctime race detection within
+        # each API, and bind the descriptor to the pathname using cross-platform fields.
+        descriptor_binding = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_nlink,
+        )
+        path_binding = (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_nlink,
+        )
+        if (
+            descriptor_before != descriptor_after
+            or path_before != path_after
+            or descriptor_binding != path_binding
+        ):
+            raise CheckpointIntegrityError(f"checkpoint file changed while hashing: {path}")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    return digest.hexdigest()
+
+
+@contextmanager
+def _checkpoint_lock_stream(model_dir: Path, *, exclusive: bool) -> Iterator[None]:
+    lock_path = model_dir.parent / f".{model_dir.name}.hawedit.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOINHERIT", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise CheckpointIntegrityError(
+            f"cannot safely open checkpoint lock {lock_path}: {exc}"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(lock_path)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or opened.st_nlink != 1
+            or named.st_nlink != 1
+            or _path_is_reparse(lock_path)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise CheckpointIntegrityError(
+                f"checkpoint lock must be one unlinked regular file: {lock_path}"
+            )
+        with os.fdopen(descriptor, "r+b") as stream:
+            descriptor = -1
+            if stream.seek(0, os.SEEK_END) == 0:
+                stream.write(b"\0")
+                stream.flush()
+                os.fsync(stream.fileno())
+            stream.seek(0)
+            if os.name == "nt":
+                msvcrt = importlib.import_module("msvcrt")
+                mode = (
+                    msvcrt.LK_NBLCK if exclusive else getattr(msvcrt, "LK_NBRLCK", msvcrt.LK_NBLCK)
+                )
+                deadline = time.monotonic() + 6 * 60 * 60
+                while True:
+                    stream.seek(0)
+                    try:
+                        msvcrt.locking(stream.fileno(), mode, 1)
+                        break
+                    except OSError as exc:
+                        if time.monotonic() >= deadline:
+                            raise CheckpointIntegrityError(
+                                f"timed out waiting for checkpoint lock {lock_path}"
+                            ) from exc
+                        time.sleep(0.25)
+                try:
+                    yield
+                except BaseException:
+                    with suppress(OSError):
+                        stream.seek(0)
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                    raise
+                else:
+                    try:
+                        stream.seek(0)
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                    except OSError as exc:
+                        raise CheckpointIntegrityError(
+                            f"cannot release checkpoint lock {lock_path}: {exc}"
+                        ) from exc
+            else:
+                fcntl = importlib.import_module("fcntl")
+                operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                try:
+                    fcntl.flock(stream.fileno(), operation)
+                except OSError as exc:
+                    raise CheckpointIntegrityError(
+                        f"cannot acquire checkpoint lock {lock_path}: {exc}"
+                    ) from exc
+                try:
+                    yield
+                except BaseException:
+                    with suppress(OSError):
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                    raise
+                else:
+                    try:
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                    except OSError as exc:
+                        raise CheckpointIntegrityError(
+                            f"cannot release checkpoint lock {lock_path}: {exc}"
+                        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+@contextmanager
+def checkpoint_publish_lock(model_dir: Path) -> Iterator[None]:
+    """Hold the exclusive writer lock used for staged checkpoint publication."""
+    with _checkpoint_lock_stream(model_dir, exclusive=True):
+        yield
+
+
+@contextmanager
+def verified_checkpoint_access(model_id: str, model_dir: Path | None = None) -> Iterator[Path]:
+    """Verify and hold a shared lock while a consumer opens every checkpoint file."""
+    store = ModelStore()
+    entry = REGISTRY.get(model_id)
+    selected = model_dir if model_dir is not None else (store.path_for(entry) if entry else None)
+    if selected is None:
+        raise CheckpointIntegrityError(f"{model_id!r} is not a downloadable checkpoint")
+    with _checkpoint_lock_stream(selected, exclusive=False):
+        store.verify_checkpoint(model_id, selected)
+        yield selected.resolve()
+
+
+def assert_checkpoint_integrity(model_id: str, model_dir: Path) -> CheckpointIntegrityReport:
+    """Verify an explicitly supplied model directory against the tracked snapshot manifest."""
+    return ModelStore().verify_checkpoint(model_id, model_dir)
 
 
 def readiness_report(statuses: Sequence[ModelStatus]) -> str:

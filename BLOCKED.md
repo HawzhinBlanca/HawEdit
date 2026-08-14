@@ -447,10 +447,10 @@ under the user's local app-data, installs official `omnilingual-asr`, and refuse
 both CUDA GPUs. Stage 0 and WAV cutting stay on the host, one worker loads both models
 once, and the returned `RawTranscript` is validated before the immutable store accepts it.
 Direct Linux execution remains available through `--omni-asr-runtime local`. This resolves the
-architecture/runtime blocker, not the missing labelled Sorani corpus or an unrun 44 GB model
-pair; those remain measurement blockers under #1.
+architecture/runtime blocker. The 44 GB pair and rzgar validator have since run through the real
+CLI (D-085); the missing labelled Sorani corpus remains the measurement blocker under #1.
 
-**Needs:** Hawa, one decision — where §3 Stage 1 runs. No credentials, no purchase.
+**Needs:** nothing. The historical platform analysis is retained below.
 
 Answering #10 supplied the repository ids and immediately produced a different obstacle. This
 is not a naming question and not a network question; it is a platform one, and it is the last
@@ -508,42 +508,31 @@ two models §7 makes canonical, which is the worst place for it.
 3. **Stage 1 runs on a Linux host** and hawapc01 does Stage 0 and Stage 6. Matches §6's
    split most closely and needs hardware that is not here.
 
-Until one is chosen, M0.11, M0.13 and M1.4 stay open: the weights are identified, downloadable
-and licensed Apache-2.0, and nothing on this OS can open them.
+Before WSL2 was chosen, M0.11, M0.13 and M1.4 stayed open: the weights were identified,
+downloadable and licensed Apache-2.0, and nothing in the Windows host environment could open
+them. D-064 chose WSL2; D-085 provisioned and ran the complete route.
 
 **Not blocked by this:** every other §7 model. Stage 2's embedder and reranker, Stage 3 Path B,
-Stage 5's TimeLens2 and the Stage 1 validator are all ordinary `transformers` repositories that
-load natively on Windows, and they are being integrated regardless.
+Stage 5's TimeLens2 and the Stage 1 validator are ordinary `transformers` repositories. The
+validator now runs in the same isolated WSL2 worker as OmniASR so Stage 1 has one compatible
+Torch environment.
 
 ---
 
 ---
 
-## #12 · Two sessions share this checkout, and the history no longer says who decided what
+## #12 · Two sessions shared one checkout — **RESOLVED 2026-08-09**
 
-> **Refreshed 2026-08-09 (D-075).** The shared-index half of this is gone: the second agent now
-> works on its own branch (`codex/production-readiness-20260809`, `576dfed`, CI green, no PR
-> open) and `main` no longer changes under this session. The failure mode moved rather than
-> ended — from silently reverting each other's files to silently **duplicating each other's
-> work**. Both branches independently implemented Hugging Face revision pinning within the same
-> day, agreeing on all four visual-checkpoint SHAs and disagreeing on where they live
-> (`models/revisions.json` keyed by repo, versus `models/sources.json` restructured to
-> `name → {repo, revision}`). Their branch also pinned the ffmpeg archive, which `main` had
-> deferred and named as an open gap. Nothing has been reverted in either direction; whoever
-> merges has to pick one structure deliberately, because a naive merge leaves `models.py`
-> reading a file the fetcher no longer writes. **The decision this entry still needs is
-> unchanged in substance and sharper in form:** not "who owns the tree" any more, but who
-> merges the branch and which of the two supply-chain implementations survives.
->
-> One thing in its favour: the duplicate is what caught a real error. D-073 had refused to pin
-> the gated pyannote repo on the grounds that its contents were unseen; their branch pinned it,
-> which prompted a re-measurement showing gating covers downloads and not metadata
-> (`model_info` and `list_repo_files` succeed with no token; `hf_hub_download` raises
-> `GatedRepoError`). Corrected in D-075.
+> **Resolved by isolation and explicit reconciliation.** The production-readiness work moved to
+> its own worktree/branch and never stages broad paths. That branch rebased onto `main`, kept
+> `main`'s tracked `models/revisions.json` design, dropped its duplicate source-manifest design,
+> and retained the non-overlapping ffmpeg, release, and CI action hardening. The pyannote metadata
+> correction from D-075 is present. GitHub Actions passed on the reconciled branch at `69dc68e`.
+> No shared index, unresolved file ownership, or competing model-pin implementation remains.
 
 
-**Needs:** Hawa, one decision — which session owns this working tree, and whether work lands on
-`main` or on a branch. No code, no credentials, no hardware.
+**Needs:** nothing. The historical incident and four concrete losses remain below because they
+are why isolated worktrees, file claims, explicit path commits, and force-with-lease are required.
 
 This is not a complaint about speed. It is that the record has stopped being reliable, which is the
 one thing this project's process exists to protect.
@@ -607,8 +596,6 @@ unit". Confirm whether that still holds.
 Until this is answered the loop keeps running and the gate stays green — 1067 passed, 0 skipped as of
 `9d1292d` — but a commit here no longer tells you who did what, and neither session can fix that from
 inside the checkout.
-
-
 ---
 
 ## #13 · §4.1's fifth collision has no defined target form
@@ -759,7 +746,16 @@ Until it is answered,
 measurement so the relevance gate cannot be read as bounding how far evidence may reach. That test
 going red means the fix landed — re-status M6.1, close this entry, delete the test.
 
-## #16 · The validator's weights are here and its loader is not
+## #16 · The validator's weights are here and its loader is not — **RESOLVED 2026-08-09**
+
+**Resolved.** This entry preserves the measurement that exposed the missing dependency. The
+production route now pins licensed `qwen-asr==0.0.6`, provisions it in the isolated WSL Stage 1
+environment, verifies the rzgar checkpoint before load, and keeps the shared checkpoint lease
+through configuration, CUDA checks and `Qwen3ASRModel.from_pretrained`. The real validator has run
+through the Windows→WSL CLI route; `evidence/m1-4-stage1-validator.md` is the superseding execution
+record. Unlimited-3B, Gemini native audio and labelled Sorani accuracy remain separate open work.
+
+**Historical measurement follows.**
 
 **Measured 2026-08-09 on hawapc01.** `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` — §3 Stage 1's validator,
 Apache 2.0 per §7 — is downloaded in full: `model.safetensors` is 4,076,191,640 bytes, 10.1 GB with the
@@ -849,7 +845,7 @@ frames OOMs. §3 Stage 2 plans up to `MAX_FRAMES_PER_WINDOW = 64`.
 
 The demand is quadratic in frames (48 -> 196.44 GiB requested, 32 -> 87.31, 24 -> 49.11, 16 -> 21.83,
 12 -> 12.28), so this is a factor-of-64 gap, not a margin. Full table and method in
-`evidence/largest-window-a-3090ti-can-read.md`; reasoning in D-106.
+`evidence/largest-window-a-3090ti-can-read.md`; reasoning in D-138.
 
 **Why this is a decision and not a patch.** The three obvious moves are all refused:
 
@@ -875,7 +871,7 @@ The demand is quadratic in frames (48 -> 196.44 GiB requested, 32 -> 87.31, 24 -
 Stage 2's frame extraction, indexing, retrieval and reranking all run: the 38-minute file produced
 **164** windows and reached the reader. Only the read step is blocked.
 
-**Resolved for the implementable option, 2026-08-09 (D-108).** `plan_scene_windows` now takes
+**Resolved for the implementable option, 2026-08-09 (D-143).** `plan_scene_windows` now takes
 `max_frames`, exposed as `--visual-max-frames`, defaulting to §3's ceiling and only lowerable. With
 `--visual-max-frames 8` the real 38-minute run's visual stage **ran**: 641 windows indexed, 50
 retrieved, 7 survivors, 7 candidates, both GPUs at 17,881 MiB, no OOM. The cost is recorded rather than
@@ -936,111 +932,50 @@ No credentials, no purchase.
 
 ## #18 · What queries the §2 text index?
 
-**Raised 2026-08-10 (D-134, adversarial pass #19). Needs Hawa.**
+**Needs:** Hawa's product decision plus labelled §8.2 Path A recall evidence. No new credentials or
+hardware are required for the decision; the labelled corpus is `BLOCKED.md` #1.
 
-`Bm25Index.search` has no caller in `src/`. Measured:
+D-164 corrected the runner's index shape from one whole-episode document to one document per
+sentence. The remaining contradiction is explicit:
 
-```
-$ grep -rn "\.search(" src/
-src/hawedit/clip.py:102:            if not _TIMESTAMP.search(label):   # a regex, not the index
-```
+- BLUEPRINT §3 Path A says Gemini receives the **full normalized Sorani transcript in one pass**,
+  not a filtered subset.
+- The M2 vertical slice says **transcript → BM25 → Gemini**, and §2 requires BM25 plus character
+  n-grams.
+- Current production constructs and reports the sentence index but never calls `search`.
 
-The runner builds the index (186 documents on the real 38-minute file, 37 distinct idf values),
-emits `document_count`, `ngram_size` and `ngram_weight` in the report, and never retrieves from it.
+There is no honest default query to invent. A user brief, a Path A model-generated query, one query
+per sentence, and candidate-driven expansion are different retrieval systems with different recall,
+cost, and context-loss behavior.
 
-**Two parts of the frozen blueprint disagree about why it exists.**
+Acceptance criteria for closing this entry:
 
-* §3 Stage 3 Path A: *"Send the **full normalized Sorani transcript** to the Kurdish judge in one
-  pass. Not a filtered subset. … If the visual stage filters first, the best clip in the episode is
-  gone before anything that understands Kurdish ever reads it."* Under this reading the text index
-  is deliberately **not** a pre-filter, and nothing in Stage 3 should query it.
-* §9's M2 row: *"Vertical slice: transcript → **BM25** → Gemini → manual boundary → one rendered
-  clip"*. Under this reading BM25 is on the path to the judge.
+1. Record which component supplies the query and whether Gemini still receives the full transcript.
+2. Wire `Bm25Index.search` into that production path, or explicitly remove BM25 from the Path A
+   milestone and document its actual consumer.
+3. On the labelled Sorani set, compare the current full-transcript Path A against the proposed BM25
+   route using Recall@20 and misleading-edit rate; do not accept a cost reduction that lowers either
+   protected metric beyond its recorded tolerance.
+4. Add an end-to-end regression proving the selected sentence windows—not a fixture or whole-media
+   fallback—are the context actually delivered to the consumer.
 
-**What the answer changes.** §8.2 measures Recall@K **per discovery path**. If there is a text
-retrieval path, it needs a K, a query source and a labelled set to measure against (#1). If there
-is not, then §2's text half is a tool for something outside Stage 3 — repurposing search, an
-operator query, §7 — and its Recall@K column does not exist.
-
-**Not guessed here.** Inventing a query would put a number in §8.2's per-path table that no design
-decision stands behind, and D-117 already showed what happens when a query source is chosen by
-convenience: the whole transcript became the query and Stage 2 asked for 40.89 GiB.
-
-**What is done in the meantime:** the index is built in the only shape that can retrieve
-(`from_sentences`, D-134), so whichever way this is answered, the structure is ready and the report
-says how many documents it holds.
-
-## #19 · CTC-3B's greedy decode is unconditioned, and §3's disagreement trigger compares it to a Kurdish-conditioned decode
-
-**Raised 2026-08-10 (D-135). Needs Hawa.**
-
-§3 Stage 1 routes "any segment where LLM-7B and CTC-3B disagree materially" to the validator.
-D-135 gave that trigger its missing input — CTC-3B's own greedy decode of the posteriors Stage 1
-already computes. Measured on the real 38-minute file (`ZAR38MinTest.mp4`, 545 segments, 1,547 s on
-two 3090 Ti), 542 segments produced a hypothesis, and:
-
-```
-first script of each CTC hypothesis, over 542
-  ARABIC        428  ( 79.0%)
-  LATIN          96  ( 17.7%)
-  CJK            11  (  2.0%)
-  MALAYALAM 2 · HEBREW 2 · CYRILLIC 1 · DEVANAGARI 1 · BENGALI 1
-
-LLM: کاکە بیلال                       CTC: കക بില                     CER 0.800
-LLM: باسی گیم وڵکنیوزم بۆ بکەی        CTC: paseki molknusen bopka     CER 0.960
-```
-
-The LLM pass runs with `lang=["ckb_Arab"]`. A greedy argmax over the acoustic model's full
-multilingual vocabulary is conditioned on nothing. So `normalized_cer(llm, ctc)` partly measures
-**script mismatch** rather than transcription disagreement — and it does so at the decisive margin:
-
-```
-normalized CER over all 542 hypotheses            median 0.167   ABOVE  D-015's 0.15 bar
-restricted to Arabic-script hypotheses (428)      median 0.125   BELOW  it
-escalated on the real run                         312 / 545 = 57%
-  disagreement only 176 · both 116 · quartile only 20
-```
-
-The quartile alone is 25% by construction. 57% of an episode going to a 4 GiB validator is a
-capacity decision, and 176 of those escalations rest on a comparison whose meaning is unestablished.
-
-**Three options, none of them this loop's to take.**
-
-1. **Condition the CTC decode** the way the LLM pass is conditioned. Closest to §3's intent — "two
-   models reading the same audio" — but it changes what CTC-3B contributes and its effect on §8.1's
-   CER and RTF columns is unmeasured.
-2. **Restrict the decode to a Kurdish token subset.** Requires naming which of ~32,000 vocabulary
-   entries are Kurdish, which is a guess, and it re-creates the compaction problem D-135 rejected:
-   a decode confined to a chosen subset cannot disagree in the way the trigger is for.
-3. **Raise the disagreement threshold** until the confound stops firing. A number chosen to make an
-   output look right, which D-015 explicitly did not do.
-
-**What is done in the meantime:** the hypotheses are computed and carried in
-`transcript.raw.json`'s `segment_confidence` (real data, honestly labelled), §3's rule is applied as
-written with D-015's threshold, and the report carries `escalation.by_trigger` so the total can never
-be read as validated routing. Nothing is routed anywhere — the rzgar validator's loader is #16.
-
-**The measurement to repeat once this is answered:** the same run, and the fraction of 545 segments
-escalating on disagreement alone. It is **176** today.
+Until those facts exist, M2.1 is PARTIAL: the index implementation and runner document shape are
+correct, but claiming it participates in discovery would be false.
 
 ---
 
-## #20 · The live check needs a video of the built-in sample, and none exists
+## #19 · The billed live check needs a matching 13-second sample video
 
-**What is blocked:** `python -m hawedit.smoke`, the only command in this project that spends money,
-cannot be run as shipped.
+**What is blocked:** `python -m hawedit.smoke --video ...`, the one command that intentionally
+spends money, cannot complete as shipped because no video matches its built-in Sorani sample.
 
-**Why.** §3 Stage 4 judges real source pixels — `smoke.py` refuses text-only visual judging, and
-`AUDIT_REPORT.md` records that refusal as deliberate. So the check needs `--video`. The built-in
-Sorani sample spans **0..13,000 ms** (22 words). The only Kurdish video in the repository,
-`tests/fixtures/kurdish-speech-3cuts.mp4`, is **4.162 s** and is a different recording. Measured on
-hawapc01 with ffmpeg 8.1.1-full, extracting judge keyframes from that fixture:
+**Why:** Stage 4 requires real source pixels. The sample's timed words span 0..13,000 ms, while the
+only Kurdish fixture is 4.162 seconds and contains different material. Reusing it would either
+fail on later spans or label pixels from a shorter, unrelated recording as evidence for the sample.
 
-```
-(0, 4000)     20 frames, timestamps 100, 300, 500, 700, 900, 1100 …   all inside the file
-(0, 13000)     6 frames, timestamps 325, 975, 1625, 2275, 2925, 3575     all inside the file
-(5000, 13000) KeyframeError: ffmpeg failed to extract judge keyframes
-```
+**What Hawa must provide:** a real video of the built-in sample being spoken, at least 13 seconds
+long, committed or supplied by path. Then run `python -m hawedit.smoke --video <that file>` with a
+configured Gemini credential.
 
 So a shorter video either fails outright, or returns frames stamped across a span the file does not
 contain — pixels labelled with times they did not come from, handed to the judge as evidence.
@@ -1066,6 +1001,10 @@ documented invocation costs nothing when it cannot finish, and the README states
 this entry rather than promising a check that cannot run.
 
 ---
+
+**What is already fixed:** missing or nonexistent `--video` refuses before confirmation and before
+the billed Path A calls. The sample is not shortened to fit unrelated footage, and synthetic video
+is not accepted as a substitute for the real-pixel check.
 
 ## #21 · The champion adapter has no §7 row, because that needs a licence for weights Hawa trained
 

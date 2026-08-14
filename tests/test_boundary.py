@@ -508,7 +508,7 @@ def test_a_non_positive_media_duration_is_refused() -> None:
 #                             speaker_turn_end, timelens_interval_end }
 #
 # Nothing tested that asymmetry: adding the interval's start to the in-point candidate set left
-# the whole suite green. Found by the second adversarial pass. D-085.
+# the whole suite green. Found by the second adversarial pass. D-092.
 
 
 def test_timelens_never_moves_the_in_point() -> None:

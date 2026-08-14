@@ -25,7 +25,7 @@ computed.
 ## The change
 
 `RawTranscript.segment_confidence`: `(start_ms, end_ms, mean_logprob)` per transcribed region, on the
-media clock. The aggregate is untouched. `from_json` reads pre-D-109 transcripts with `.get`, as D-103
+media clock. The aggregate is untouched. `from_json` reads pre-D-144 transcripts with `.get`, as D-103
 established for `unaligned`.
 
 `SegmentConfidence` refuses a positive `mean_logprob` for the reason `SegmentScore` already gives —

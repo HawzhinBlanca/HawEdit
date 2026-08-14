@@ -49,9 +49,15 @@ from hawedit.path_b import (
     SceneReadings,
     UnreadableScene,
 )
-from hawedit.qwen_visual import DEFAULT_DEVICE, EmbedderUnavailable, load_processor_and_model
+from hawedit.qwen_visual import (
+    DEFAULT_DEVICE,
+    EmbedderUnavailable,
+    load_processor_and_model,
+    release_cuda_model_memory,
+)
 from hawedit.registry import resolve_role
 from hawedit.video_input import (
+    VideoInputError,
     WindowFrames,
     load_window_images,
     video_content,
@@ -252,7 +258,7 @@ class VideoChat3Reader:
         resolve_role(model_id, _DISCOVERY_ROLE, "the Path B video reader")
         if not model_dir.is_dir():
             raise EmbedderUnavailable(
-                f"no weights at {model_dir}. Run `bash scripts/fetch-models.sh {model_id}` — "
+                f"no weights at {model_dir}. Run `hawedit-fetch-models {model_id}` — "
                 f"§7's registry drives it, so it cannot fetch the wrong model."
             )
         self.model_dir = model_dir
@@ -267,13 +273,32 @@ class VideoChat3Reader:
             self._loaded = load_processor_and_model(
                 self.model_dir,
                 self.device,
+                model_id=self.model_id,
+                allowed_model_types=frozenset({"videochat3", "qwen3"}),
                 trust_remote_code=True,
                 causal_lm=True,
                 configure=_use_sdpa_vision,
             )
         return self._loaded
 
+    def close(self) -> None:
+        """Drop VideoChat3 weights after the survivor-reading phase; reload on next use."""
+        was_loaded = self._loaded is not None
+        self._loaded = None
+        if was_loaded:
+            release_cuda_model_memory(self.device)
+
     def read_window(self, window: SceneWindow) -> SceneReading:
+        try:
+            return self._read_window(window)
+        except (EmbedderUnavailable, PathBError, VideoInputError):
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise PathBError(
+                f"{self.model_id} failed while reading {window.window_id}: {exc}"
+            ) from exc
+
+    def _read_window(self, window: SceneWindow) -> SceneReading:
         """One scene, read and turned into §3's SV6D schema on the media's clock."""
         import torch
 
@@ -321,7 +346,7 @@ class VideoChat3Reader:
         38-minute file, one survivor of seven — a static logo card — answered with a time
         *range* where the prompt asks for "the number alone", and that single refusal discarded
         all seven candidates after Stage 0, 641 embeddings, retrieval and reranking had already
-        run. `discover_visual` still refuses when *nothing* was readable. D-118.
+        run. `discover_visual` still refuses when *nothing* was readable. D-156.
         """
         readings: list[SceneReading] = []
         unreadable: list[UnreadableScene] = []

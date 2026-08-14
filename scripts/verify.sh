@@ -10,41 +10,93 @@ FAST="${1:-}"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
-# A venv puts the interpreter in `bin/` on POSIX and `Scripts/` on Windows. hawapc01 — the
-# box §6 names and §8.1 requires the benchmark to run on — is Windows, so hardcoding `bin/`
-# made "one command from a fresh clone to a green gate" false on the one machine that has to
-# run it. Both layouts, first match wins; PY still overrides for a deliberate interpreter.
-if [[ -z "${PY:-}" ]]; then
-  for candidate in "$here/.venv/bin/python" "$here/.venv/Scripts/python.exe"; do
-    if [[ -x "$candidate" ]]; then PY="$candidate"; break; fi
-  done
-fi
-if [[ -z "${PY:-}" || ! -x "$PY" ]]; then
+# A venv puts the interpreter in `bin/` on POSIX and `Scripts/` on Windows. The canonical gate
+# has one trust root: this checkout's `.venv`. A caller-supplied executable used to be able to
+# print the fixed probe token and then return success for every `-m` invocation, including the
+# evidence grader. Normalize paths without executing PY, require an exact canonical path, then
+# use the checkout spelling for every command. An external development venv can run individual
+# tools, but it cannot produce canonical gate evidence.
+canonical_interpreters=()
+for candidate in "$here/.venv/bin/python" "$here/.venv/Scripts/python.exe"; do
+  if [[ -x "$candidate" ]]; then canonical_interpreters+=("$candidate"); fi
+done
+if [[ ${#canonical_interpreters[@]} -eq 0 ]]; then
   echo "✗ no interpreter in .venv — run: bash scripts/setup.sh" >&2
   exit 2
 fi
 
-# The override refusal below is a whitelist of one, and `PY` was the hole in it: PY replaces
-# every step at once, including the evidence step that exists so the exit code stops being the
-# evidence. Measured 2026-08-09: `PY=/usr/bin/true.exe bash scripts/verify.sh` printed
-# VERIFY OK in 1 second, exit 0, with no report written — five steps, all of them `true.exe`,
-# one of them grading the other four. So an interpreter proves it can run *this* project
-# before it is trusted to say whether this project works, and the shell checks the value
-# rather than the exit code, because an exit code is what `true.exe` is good at. D-092.
-#
-# The same probe now also asks where the programs the steps consist of came from. A real PY was
-# not enough: a 30-line `pytest/__main__.py` on PYTHONPATH wrote a clean 1,200-test report and
-# the gate printed VERIFY OK in 4 seconds having run nothing — then ratcheted the committed
-# floor 1155 -> 1200, so every honest run after it would fail a bar a forgery invented.
-# Measured 2026-08-09. D-093.
-_probe="$("$PY" -m hawedit.gate --check-tools 2>&1 || true)"
-if [[ "$_probe" != *hawedit-interpreter-ok* ]]; then
-  echo "REFUSED: $PY cannot import hawedit, or the gate's tools are not its own, so it is" >&2
-  echo "not an interpreter that runs this project — a gate graded by something that cannot" >&2
-  echo "run the code, or by a substituted program, proves nothing." >&2
+_normalized_interpreter() {
+  local directory name
+  directory="$(cd -P "$(dirname "$1")" 2>/dev/null && pwd -P)" || return 1
+  name="$(basename "$1")"
+  printf '%s/%s\n' "$directory" "$name"
+}
+
+selected="${PY:-${canonical_interpreters[0]}}"
+selected_normalized="$(_normalized_interpreter "$selected" || true)"
+matched=""
+for candidate in "${canonical_interpreters[@]}"; do
+  if [[ -n "$selected_normalized" &&
+    "$selected_normalized" == "$(_normalized_interpreter "$candidate")" ]]; then
+    matched="$candidate"
+    break
+  fi
+done
+if [[ -z "$matched" ]]; then
+  echo "REFUSED: PY must be this checkout's canonical .venv interpreter." >&2
+  echo "Got: ${PY:-<unset>}" >&2
+  echo "Expected one of: ${canonical_interpreters[*]}" >&2
+  echo "External interpreters cannot produce canonical gate evidence." >&2
+  exit 3
+fi
+PY="$matched"
+
+_lock_identity="$({ "$PY" -I - <<'PY'
+import platform
+import sys
+
+system = platform.system().lower()
+version = sys.version_info[:2]
+if system not in {"linux", "windows"} or version not in {(3, 11), (3, 12)}:
+    raise SystemExit(2)
+print(f"{system}-py{version[0]}{version[1]}")
+PY
+} 2>/dev/null)" || {
+  echo "REFUSED: canonical gate supports only CPython 3.11/3.12 on Linux/Windows" >&2
+  exit 3
+}
+HOST_LOCK="$here/requirements/host-gate-${_lock_identity}.txt"
+if [[ ! -f "$HOST_LOCK" ]]; then
+  echo "REFUSED: canonical host dependency lock is missing: $HOST_LOCK" >&2
+  exit 3
+fi
+
+# Path identity closes the executable-forgery hole; this second check closes environment drift.
+# Importing *some* hawedit is insufficient: this checkout's shared venv was measured importing
+# an editable install from another checkout, with duplicate HawEdit metadata and stale direct
+# dependencies. Execute the current source check by absolute path under isolated startup. The
+# token is now a response from the path-bound interpreter, not an authentication mechanism.
+# Installed code therefore cannot grade the checkout whose source is about to run. D-104.
+_probe="$("$PY" -I "$here/src/hawedit/environment.py" \
+  --project-root "$here" --extra dev --extra media --lock "$HOST_LOCK" 2>&1 || true)"
+if [[ "$_probe" != hawedit-environment-ok ]]; then
+  echo "REFUSED: $PY cannot verify the exact HawEdit environment for this checkout." >&2
+  echo "A gate graded by another checkout, stale dependencies, or a non-Python executable" >&2
+  echo "proves nothing." >&2
   echo "It answered: ${_probe:-<nothing at all>}" >&2
-  echo "Install the project into it (bash scripts/setup.sh), unset PY, or clear whatever is" >&2
-  echo "shadowing the tool named above — PYTHONPATH is the usual one." >&2
+  echo "Rebuild this checkout's environment (bash scripts/setup.sh), or unset PY." >&2
+  exit 3
+fi
+
+# Environment identity alone does not authenticate the programs invoked by `-m`. Measured on
+# 2026-08-09, a 30-line fake pytest on PYTHONPATH forged a clean JUnit report and poisoned the
+# committed floor. Run this probe without isolated startup so it resolves modules exactly as the
+# later gate commands do, and require every gate tool to come from this locked environment.
+_tool_probe="$("$PY" -m hawedit.gate --check-tools 2>&1 || true)"
+if [[ "$_tool_probe" != *hawedit-interpreter-ok* ]]; then
+  echo "REFUSED: canonical gate tools are missing or shadowed." >&2
+  echo "It answered: ${_tool_probe:-<nothing at all>}" >&2
+  echo "Clear PYTHONPATH/module shadowing or rebuild with bash scripts/setup.sh." >&2
   exit 3
 fi
 

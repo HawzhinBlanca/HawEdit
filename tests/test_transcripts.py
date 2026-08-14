@@ -11,12 +11,17 @@ past both.
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import stat
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +32,7 @@ from hawedit.transcripts import (
     RawTranscript,
     RawTranscriptImmutable,
     RawTranscriptTampered,
+    RejectedValidatorCorrection,
     SegmentConfidence,
     StaleNormalizedTranscript,
     TranscriptStore,
@@ -34,13 +40,18 @@ from hawedit.transcripts import (
     Word,
     assert_model_input,
     normalize_transcript,
+    validate_media_id,
 )
 
 CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
 
 # The two §7 model ids by role, for D-197's tests. Named apart from `CANONICAL` above, which is a
 # whole provenance record rather than a model id.
+
+
 CANONICAL_ASR_ID = "omniASR_LLM_7B_v2"
+
+
 VALIDATOR_ID = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 
 
@@ -538,7 +549,8 @@ def test_deleting_the_digest_does_not_open_the_raw_file_to_a_second_write(tmp_pa
         "a refused write published a digest for content it did not write, which would "
         "authenticate the wrong bytes"
     )
-    assert sorted(path.name for path in tmp_path.iterdir()) == [raw_path.name], (
+    lock_name = ".media-001.transcript.raw.lock"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [lock_name, raw_path.name], (
         "the refused write left staging files behind"
     )
 
@@ -716,6 +728,8 @@ def _a_directory(sidecar: Path) -> None:
 # it, because the failure a test cannot catch is the two drifting apart. Found by mutation: with
 # the state list spelled out separately, dropping "deleted" from it left the suite green while the
 # code that produces that state sat there unused.
+
+
 _SIDECAR_BREAKERS: dict[str, Callable[[Path], None]] = {
     "deleted": _delete,
     "empty": _empty,
@@ -723,6 +737,8 @@ _SIDECAR_BREAKERS: dict[str, Callable[[Path], None]] = {
     "not ASCII": _not_ascii,
     "a directory": _a_directory,
 }
+
+
 _SIDECAR_STATES = tuple(_SIDECAR_BREAKERS)
 
 
@@ -810,6 +826,8 @@ def test_every_way_of_breaking_the_sidecar_is_actually_exercised() -> None:
 # Every break `str.splitlines` recognises, plus the position that a length check would miss.
 # `Word` is the chokepoint: seven construction sites route through `__post_init__`, two of them
 # reading JSON off disk, and one guard here covers all of them.
+
+
 _NOT_ONE_LINE = (
     "a\nb",
     "a\r\nb",
@@ -1043,7 +1061,7 @@ def test_a_media_id_that_is_only_a_path_component_is_refused(tmp_path: Path, med
     surface as a naming bug but as the next clip being rejected for tampering with the first.
     """
     store = TranscriptStore(tmp_path)
-    with pytest.raises(ValueError, match="must not be empty or a path component"):
+    with pytest.raises(ValueError, match="would create a hidden delivery"):
         store.raw_path(media_id)
 
 
@@ -1066,7 +1084,11 @@ def test_a_media_id_that_would_escape_the_store_is_refused(tmp_path: Path, media
     the same line, so no amount of separator testing would have reached it.
     """
     store = TranscriptStore(tmp_path)
-    with pytest.raises(ValueError, match="path separator or parent reference"):
+    with pytest.raises(
+        ValueError,
+        match=r"contains a (control, path separator, or reserved filename character|"
+        r"parent reference)",
+    ):
         store.raw_path(media_id)
 
 
@@ -1131,3 +1153,458 @@ def test_a_transcript_decoded_with_a_fine_tune_is_not_the_same_transcript() -> N
         "a transcript decoded with a fine-tune hashes identically to one decoded with stock "
         "weights — D-181 put the adapter in the artifact so that cannot be true"
     )
+
+
+CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "",
+        "../escape",
+        "a/b",
+        "a\\b",
+        "clip:one",
+        "NUL",
+        "COM1.json",
+        " trailing",
+        ".hidden",
+        "a" * 181,
+    ],
+)
+def test_media_ids_are_refused_before_they_can_become_paths(unsafe: str) -> None:
+    with pytest.raises(ValueError, match="media_id"):
+        validate_media_id(unsafe)
+
+
+def test_sorani_and_spaces_inside_a_media_id_remain_legal() -> None:
+    assert validate_media_id("هەوا episode-12") == "هەوا episode-12"
+
+
+def test_transcript_store_refuses_a_symlink_root_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = os.lstat
+
+    def symlink_root(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) == tmp_path:
+            values = list(result)
+            values[0] = stat.S_IFLNK | 0o777
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "lstat", symlink_root)
+    with pytest.raises(RuntimeError, match="root must be.*symlink"):
+        TranscriptStore(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_transcript_store_refuses_a_windows_reparse_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = os.lstat
+
+    def reparse_root(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> object:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) != tmp_path:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_file_attributes=0x400,
+        )
+
+    monkeypatch.setattr(os, "lstat", reparse_root)
+    with pytest.raises(RuntimeError, match="root must be.*reparse"):
+        TranscriptStore(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_transcript_store_refuses_a_replaced_root_before_publication(tmp_path: Path) -> None:
+    root = tmp_path / "store"
+    store = TranscriptStore(root)
+    displaced = tmp_path / "displaced"
+    root.rename(displaced)
+    root.mkdir()
+
+    with pytest.raises(RuntimeError, match="root changed identity"):
+        store.write_raw(a_raw())
+
+    assert list(root.iterdir()) == []
+    assert list(displaced.iterdir()) == []
+
+
+# --- invariant #1: raw is written once and never mutated ------------------------------
+
+
+def test_losing_writer_cannot_observe_digest_before_raw_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pipeline loser reads immediately after RawTranscriptImmutable; that must be safe."""
+    store = TranscriptStore(tmp_path)
+    winner = RawTranscript(media_id="race", text_ckb="first", words=(), asr=CANONICAL)
+    loser = RawTranscript(media_id="race", text_ckb="second", words=(), asr=CANONICAL)
+    digest_path = tmp_path / "race.transcript.raw.sha256"
+    digest_published = Event()
+    permit_raw_publication = Event()
+    real_link = os.link
+
+    def gated_link(source: Path, destination: Path) -> None:
+        real_link(source, destination)
+        if Path(destination) == digest_path and not digest_published.is_set():
+            digest_published.set()
+            assert permit_raw_publication.wait(timeout=5)
+
+    monkeypatch.setattr(os, "link", gated_link)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winning_write = pool.submit(store.write_raw, winner)
+        assert digest_published.wait(timeout=5)
+        losing_write = pool.submit(store.write_raw, loser)
+        try:
+            with pytest.raises(FutureTimeoutError):
+                losing_write.result(timeout=0.05)
+        finally:
+            permit_raw_publication.set()
+
+        assert winning_write.result(timeout=5) == store.raw_path("race")
+        with pytest.raises(RawTranscriptImmutable):
+            losing_write.result(timeout=5)
+
+    assert store.read_raw("race") == winner
+    store.verify_raw_integrity("race")
+
+
+def test_an_orphan_digest_is_reported_as_interrupted_publication(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    (tmp_path / "media-001.transcript.raw.sha256").write_text("0" * 64, encoding="ascii")
+
+    with pytest.raises(RawTranscriptTampered, match="publication was interrupted"):
+        store.read_raw("media-001")
+    with pytest.raises(RawTranscriptTampered, match="missing while its write-once digest"):
+        store.verify_raw_integrity("media-001")
+
+
+def test_windows_lock_retries_contention_instead_of_using_crt_short_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.transcripts as transcript_module
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self) -> None:
+            self.attempts = 0
+            self.unlocked = False
+
+        def locking(self, _fd: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                self.unlocked = True
+                return
+            self.attempts += 1
+            if self.attempts < 3:
+                raise OSError("lock held")
+
+    fake = FakeMsvcrt()
+    real_import = importlib.import_module
+    monkeypatch.setattr("hawedit.transcripts._WINDOWS_HOST", True)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    with transcript_module._exclusive_file_lock(tmp_path / "retry.lock"):
+        assert fake.attempts == 3
+    assert fake.unlocked
+
+
+@pytest.mark.parametrize("body_fails", (False, True))
+def test_transcript_unlock_failure_is_normalized_without_masking_the_body(
+    body_fails: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.transcripts as transcript_module
+
+    class FailingUnlock:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def locking(self, _fd: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                raise OSError("unlock failed")
+
+    fake = FailingUnlock()
+    real_import = importlib.import_module
+    monkeypatch.setattr("hawedit.transcripts._WINDOWS_HOST", True)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    expected = LookupError if body_fails else RuntimeError
+    message = "body failed" if body_fails else "cannot release transcript"
+    with (
+        pytest.raises(expected, match=message),
+        transcript_module._exclusive_file_lock(tmp_path / f"unlock-{body_fails}.lock"),
+    ):
+        if body_fails:
+            raise LookupError("body failed")
+
+
+def test_a_hardlinked_transcript_lock_cannot_modify_its_other_name(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"")
+    os.link(victim, tmp_path / ".media-001.transcript.raw.lock")
+
+    with pytest.raises(RuntimeError, match="one regular link"):
+        store.write_raw(a_raw())
+    assert victim.read_bytes() == b""
+
+
+def test_a_symlinked_transcript_lock_is_refused_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    lock = tmp_path / ".media-001.transcript.raw.lock"
+    real_lstat = os.lstat
+
+    def fake_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        result = real_lstat(tmp_path)
+        if Path(os.fsdecode(path)) == lock:
+            values = list(result)
+            values[0] = stat.S_IFLNK | 0o777
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(RuntimeError, match="symlink"):
+        store.write_raw(a_raw())
+
+
+def test_a_reparse_transcript_lock_is_refused_before_modification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    lock = tmp_path / ".media-001.transcript.raw.lock"
+    lock.write_bytes(b"do-not-touch")
+    real_lstat = os.lstat
+
+    def fake_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> object:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) != lock:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_nlink=result.st_nlink,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_file_attributes=0x400,
+        )
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(RuntimeError, match="reparse"):
+        store.write_raw(a_raw())
+    assert lock.read_bytes() == b"do-not-touch"
+
+
+def _delete_sidecar(path: Path) -> None:
+    path.unlink()
+
+
+def _empty_sidecar(path: Path) -> None:
+    path.write_text("", encoding="ascii")
+
+
+def _whitespace_sidecar(path: Path) -> None:
+    path.write_text("   \n", encoding="ascii")
+
+
+def _non_ascii_sidecar(path: Path) -> None:
+    path.write_bytes(b"\xff\xfe not a digest")
+
+
+def _directory_sidecar(path: Path) -> None:
+    path.unlink()
+    path.mkdir()
+
+
+_DIGEST_EVIDENCE_BREAKERS: dict[str, Callable[[Path], None]] = {
+    "deleted": _delete_sidecar,
+    "empty": _empty_sidecar,
+    "whitespace": _whitespace_sidecar,
+    "non-ASCII": _non_ascii_sidecar,
+    "directory": _directory_sidecar,
+}
+
+
+_DIGEST_EVIDENCE_STATES = tuple(_DIGEST_EVIDENCE_BREAKERS)
+
+
+_UNREADABLE_DIGEST_EVIDENCE = frozenset({"deleted", "non-ASCII", "directory"})
+
+
+@pytest.mark.parametrize("state", _DIGEST_EVIDENCE_STATES)
+@pytest.mark.parametrize("entry_point", ("verify", "write_norm"))
+def test_missing_or_invalid_digest_evidence_refuses_both_verification_doors(
+    tmp_path: Path, state: str, entry_point: str
+) -> None:
+    """Invariant #1 cannot become green by deleting the file that would contradict it."""
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    _DIGEST_EVIDENCE_BREAKERS[state](store._digest_path("media-001"))
+
+    expected_reason = (
+        "no readable digest"
+        if state in _UNREADABLE_DIGEST_EVIDENCE
+        else "no longer matches the digest"
+    )
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        if entry_point == "verify":
+            store.verify_raw_integrity("media-001")
+        else:
+            store.write_norm(normalize_transcript(raw))
+
+
+@pytest.mark.parametrize("state", _DIGEST_EVIDENCE_STATES)
+def test_tampered_raw_stays_refused_after_its_digest_evidence_is_destroyed(
+    tmp_path: Path, state: str
+) -> None:
+    store = TranscriptStore(tmp_path)
+    original = a_raw()
+    normalized = normalize_transcript(original)
+    path = store.write_raw(original)
+    path.chmod(0o644)
+    path.write_text(a_raw("TAMPERED canonical transcript").to_json(), encoding="utf-8")
+    _DIGEST_EVIDENCE_BREAKERS[state](store._digest_path("media-001"))
+
+    expected_reason = (
+        "no readable digest"
+        if state in _UNREADABLE_DIGEST_EVIDENCE
+        else "no longer matches the digest"
+    )
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        store.verify_raw_integrity("media-001")
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        store.write_norm(normalized)
+
+
+def test_intact_digest_evidence_still_verifies_and_reuses(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    expected = a_raw()
+    normalized = normalize_transcript(expected)
+    store.write_raw(expected)
+
+    store.verify_raw_integrity("media-001")
+    store.write_norm(normalized)
+    assert store.read_norm("media-001") == normalized
+
+
+def test_every_declared_digest_evidence_breaker_is_parametrized() -> None:
+    assert set(_DIGEST_EVIDENCE_STATES) == set(_DIGEST_EVIDENCE_BREAKERS)
+    assert set(_DIGEST_EVIDENCE_BREAKERS) > _UNREADABLE_DIGEST_EVIDENCE
+
+
+def test_norm_publication_replaces_a_hardlink_without_touching_its_victim(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path / "store")
+    raw = a_raw()
+    store.write_raw(raw)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("ORIGINAL", encoding="utf-8")
+    os.link(victim, store.norm_path(raw.media_id))
+
+    norm = normalize_transcript(raw)
+    store.write_norm(norm)
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL"
+    assert store.read_norm(raw.media_id) == norm
+    assert not store.norm_path(raw.media_id).samefile(victim)
+
+
+def test_failed_norm_publication_preserves_the_previous_complete_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    norm = normalize_transcript(raw)
+    store.write_norm(norm)
+    before = store.norm_path(raw.media_id).read_bytes()
+
+    def refuse_replace(_source: Path, _destination: Path) -> None:
+        raise PermissionError("simulated publication refusal")
+
+    monkeypatch.setattr(os, "replace", refuse_replace)
+    with pytest.raises(PermissionError, match="publication refusal"):
+        store.write_norm(norm)
+
+    assert store.norm_path(raw.media_id).read_bytes() == before
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_norm_staging_cleanup_failure_does_not_mask_the_publication_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    norm = normalize_transcript(raw)
+    original_unlink = Path.unlink
+
+    def refuse_replace(_source: Path, _destination: Path) -> None:
+        raise PermissionError("PRIMARY publication refusal")
+
+    def refuse_staging_unlink(path: Path, missing_ok: bool = False) -> None:
+        if path.name.endswith(".tmp"):
+            raise OSError("SECONDARY cleanup refusal")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "replace", refuse_replace)
+    monkeypatch.setattr(Path, "unlink", refuse_staging_unlink)
+    with pytest.raises(PermissionError, match="PRIMARY") as caught:
+        store.write_norm(norm)
+
+    notes = getattr(caught.value, "__notes__", ())
+    assert any("SECONDARY cleanup refusal" in note for note in notes)
+
+
+# --- provenance must name a model §7 permits ------------------------------------------
+
+
+def test_rejected_validator_correction_round_trips_without_becoming_a_gap() -> None:
+    rejected = RejectedValidatorCorrection(
+        start_ms=1_000,
+        end_ms=1_316,
+        validator="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+        reason="AlignmentInfeasible: 15 frames cannot emit 21 validator tokens",
+    )
+    raw = RawTranscript(
+        media_id="validator-fallback",
+        text_ckb="canonical words remain",
+        words=(),
+        asr=CANONICAL,
+        rejected_validator_corrections=(rejected,),
+    )
+
+    restored = RawTranscript.from_json(raw.to_json())
+
+    assert restored == raw
+    assert restored.unaligned == ()
+    assert restored.rejected_validator_corrections == (rejected,)
+
+
+# --- D-139: the raw file's own write-once layer was never reached by a test ------------------

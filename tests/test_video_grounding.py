@@ -11,6 +11,7 @@ reachable without weights and nothing covered the path through the model.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, ClassVar
@@ -40,6 +41,29 @@ def a_window(in_ms: int = 2_800, out_ms: int = 4_162, fps: float = 2.0) -> Scene
         out_ms=out_ms,
         fps=fps,
     )
+
+
+def test_grounder_close_is_idempotent_and_next_use_reloads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    released: list[str] = []
+    loaded = (object(), object())
+
+    def unused_frames(_window: SceneWindow) -> WindowFrames:
+        raise AssertionError("close must not read frames")
+
+    grounder = TimeLens2Grounder(tmp_path, unused_frames, device="cuda:1")
+    grounder._loaded = (object(), object())
+    monkeypatch.setattr("hawedit.video_grounding.release_cuda_model_memory", released.append)
+    monkeypatch.setattr(
+        "hawedit.video_grounding.load_processor_and_model", lambda *_args, **_kwargs: loaded
+    )
+
+    grounder.close()
+    grounder.close()
+    assert released == ["cuda:1"]
+    assert grounder._loaded is None
+    assert grounder._load() is loaded
 
 
 # --- the parser, on real answers -----------------------------------------------------------
@@ -87,8 +111,17 @@ def test_a_three_element_entry_is_refused_rather_than_truncated() -> None:
 
 
 def test_non_numeric_bounds_are_refused() -> None:
-    with pytest.raises(GroundingError, match="must be numbers"):
+    with pytest.raises(GroundingError, match="must be finite JSON numbers"):
         parse_spans('[["start", "end"]]')
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ("[[false, true]]", "[[NaN, 1.0]]", "[[0.0, Infinity]]", f"[[0, {10**1_000}]]"),
+)
+def test_boolean_and_non_finite_bounds_are_refused(answer: str) -> None:
+    with pytest.raises(GroundingError, match="finite JSON numbers"):
+        parse_spans(answer)
 
 
 def test_a_truncated_array_is_refused_rather_than_read_short() -> None:
@@ -121,9 +154,29 @@ def test_a_model_outside_stage_5s_role_is_refused(tmp_path: Path) -> None:
         TimeLens2Grounder(tmp_path, read_frames=lambda w: None, model_id="Qwen3-VL-Embedding-2B")
 
 
-def test_missing_weights_are_refused_naming_the_fetch_script(tmp_path: Path) -> None:
-    with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
-        TimeLens2Grounder(tmp_path / "absent", read_frames=lambda w: None)
+def test_missing_weights_are_lazy_at_construction_and_refused_at_runtime(tmp_path: Path) -> None:
+    absent = tmp_path / "absent"
+    grounder = TimeLens2Grounder(absent, read_frames=lambda w: None)
+
+    assert grounder.model_dir == absent
+    with pytest.raises(EmbedderUnavailable, match="hawedit-fetch-models"):
+        grounder.ground(a_window(), "a speaker gestures")
+
+
+def test_timelens_proves_checkpoint_integrity_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text(
+        '{"model_type":"qwen3_vl","text_config":{"model_type":"qwen3_vl_text"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("integrity sentinel")),
+    )
+    grounder = TimeLens2Grounder(tmp_path, read_frames=lambda w: None)
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        grounder._load()
 
 
 # --- the wiring -----------------------------------------------------------------------------
@@ -222,6 +275,28 @@ def test_grounding_returns_intervals_on_the_medias_clock(tmp_path: Path) -> None
     assert intervals[0].claim == "evidence for: a red number 2 on a blue background"
 
 
+def test_grounding_deletes_extracted_source_pixels_after_model_use(tmp_path: Path) -> None:
+    private = tmp_path / "private-frames"
+    private.mkdir()
+    paths = tuple(private / f"f{index}.jpg" for index in range(4))
+    for path in paths:
+        path.write_bytes(b"source pixel")
+    identity = os.lstat(private)
+    frames = WindowFrames(
+        a_window(),
+        paths,
+        _owner_dir=private,
+        _owner_identity=(identity.st_dev, identity.st_ino),
+    )
+    grounder, _, _ = a_grounder(tmp_path)
+    grounder.read_frames = lambda _window: frames
+
+    intervals = grounder.ground(a_window(), "a speaker gestures")
+
+    assert intervals
+    assert not private.exists()
+
+
 def test_a_found_nothing_answer_yields_no_intervals(tmp_path: Path) -> None:
     grounder, _, _ = a_grounder(tmp_path, answer="[]")
     assert grounder.ground(a_window(), "a speaker gestures") == ()
@@ -258,6 +333,83 @@ def test_the_grounding_is_deterministic_by_construction(tmp_path: Path) -> None:
     grounder.ground(a_window(), "a speaker gestures")
     assert model.generate_kwargs["do_sample"] is False
     assert model.generate_kwargs["max_new_tokens"] == MAX_NEW_TOKENS
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ImportError("torch is unavailable"),
+        OSError("checkpoint read failed"),
+        RuntimeError("CUDA allocation failed"),
+    ],
+    ids=["import-error", "os-error", "runtime-error"],
+)
+def test_model_operational_failures_are_normalized_at_the_grounder_boundary(
+    tmp_path: Path, failure: Exception
+) -> None:
+    grounder, _, model = a_grounder(tmp_path)
+
+    def fail_generate(**kwargs: Any) -> list[list[int]]:
+        raise failure
+
+    model.generate = fail_generate
+    with pytest.raises(GroundingError, match=rf"{type(failure).__name__}: {failure}") as caught:
+        grounder.ground(a_window(), "a speaker gestures")
+
+    assert caught.value.__cause__ is failure
+
+
+def test_cleanup_privacy_note_survives_grounder_error_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private = tmp_path / "private-frames"
+    private.mkdir()
+    paths = tuple(private / f"f{index}.jpg" for index in range(4))
+    for path in paths:
+        path.write_bytes(b"source pixel")
+    identity = os.lstat(private)
+    frames = WindowFrames(
+        a_window(),
+        paths,
+        _owner_dir=private,
+        _owner_identity=(identity.st_dev, identity.st_ino),
+    )
+    grounder, _, model = a_grounder(tmp_path)
+    grounder.read_frames = lambda _window: frames
+    primary = RuntimeError("CUDA allocation failed")
+    model.generate = lambda **_kwargs: (_ for _ in ()).throw(primary)
+    real_unlink = Path.unlink
+
+    def refuse_private_frame(path: Path, missing_ok: bool = False) -> None:
+        if path.parent == private:
+            raise PermissionError("scanner holds the pixel")
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_private_frame)
+    with pytest.raises(GroundingError, match="CUDA allocation failed") as caught:
+        grounder.ground(a_window(), "a speaker gestures")
+
+    assert caught.value.__cause__ is primary
+    assert any("private visual frame cleanup failed" in note for note in caught.value.__notes__)
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    frames.cleanup()
+
+
+def test_programmer_exception_from_grounding_model_is_not_normalized(tmp_path: Path) -> None:
+    grounder, _, model = a_grounder(tmp_path)
+
+    def fail_generate(**kwargs: Any) -> list[list[int]]:
+        raise AssertionError("model adapter invariant broke")
+
+    model.generate = fail_generate
+    with pytest.raises(AssertionError, match="model adapter invariant broke"):
+        grounder.ground(a_window(), "a speaker gestures")
+
+
+def test_out_of_window_model_span_remains_a_schema_value_error(tmp_path: Path) -> None:
+    grounder, _, _ = a_grounder(tmp_path, answer="[[0.0, 9.0]]")
+    with pytest.raises(ValueError, match="span outside the window"):
+        grounder.ground(a_window(), "a speaker gestures")
 
 
 def test_ground_all_flattens_every_windows_evidence(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ from hawedit.visual_index import (
     REFERENCE_FPS,
     RETRIEVE_K,
     TEMPORAL_PATCH_FRAMES,
+    VIDEOCHAT3_3090TI_MAX_FRAMES,
     RerankedHit,
     SceneWindow,
     VisualEmbedding,
@@ -86,6 +87,28 @@ def test_a_window_of_exactly_sixty_four_seconds_holds_exactly_sixty_four_frames(
     window = a_window(0, MAX_WINDOW_MS)
     assert window.frame_count == MAX_FRAMES_PER_WINDOW
     assert window.duration_ms == MAX_WINDOW_MS
+
+
+@pytest.mark.parametrize(
+    "media_id",
+    (
+        "../../outside",
+        r"..\outside",
+        "episode:one",
+        ".hidden",
+        "CON",
+        "trailing.",
+    ),
+)
+def test_scene_window_refuses_media_ids_that_could_escape_extraction_roots(
+    media_id: str,
+) -> None:
+    with pytest.raises(ValueError, match="media_id"):
+        a_window(0, 1_000, media_id=media_id)
+
+
+def test_scene_window_accepts_a_portable_kurdish_media_id() -> None:
+    assert a_window(0, 1_000, media_id="هەوا episode-12").window_id == "هەوا episode-12:s0:w0"
 
 
 def test_one_millisecond_past_the_ceiling_is_refused() -> None:
@@ -154,6 +177,31 @@ def test_a_scene_longer_than_the_ceiling_is_split_not_downsampled() -> None:
     assert all(w.frame_count <= MAX_FRAMES_PER_WINDOW for w in windows)
     assert [w.window_index for w in windows] == [0, 1, 2]
     assert {w.scene_index for w in windows} == {0}
+
+
+def test_the_measured_videochat_capacity_splits_without_losing_coverage() -> None:
+    windows = plan_scene_windows(
+        "m1",
+        duration_ms=30_000,
+        shot_cuts_ms=(10_000, 20_000),
+        fps=2.0,
+        max_frames=VIDEOCHAT3_3090TI_MAX_FRAMES,
+    )
+    assert all(window.frame_count <= VIDEOCHAT3_3090TI_MAX_FRAMES for window in windows)
+    assert windows[0].in_ms == 0 and windows[-1].out_ms == 30_000
+    assert all(nxt.in_ms == previous.out_ms for previous, nxt in pairwise(windows))
+    assert {window.scene_index for window in windows} == {0, 1, 2}
+
+
+@pytest.mark.parametrize("capacity", [False, 8.0, "8"])
+def test_consumer_frame_capacity_is_an_exact_integer(capacity: object) -> None:
+    with pytest.raises(VisualIndexError, match="exact integer"):
+        plan_scene_windows(
+            "m1",
+            30_000,
+            (),
+            max_frames=capacity,  # type: ignore[arg-type]
+        )
 
 
 def test_the_split_is_even_so_no_window_is_a_runt() -> None:
@@ -629,7 +677,7 @@ def test_a_reranked_hit_rank_is_one_based() -> None:
 # k=3 returned 3 survivors and no error, k=1 returned 1, k=0 returned an empty tuple, and k=-5
 # returned 5 survivors after reranking 55 windows, because `retrieve` slices `scored[:k]` and a
 # negative k drops the tail instead of keeping a head. D-037 clause 4 forbids exactly this kind
-# of quiet shortening. D-090.
+# of quiet shortening. D-102.
 
 
 @pytest.mark.parametrize("k", [3, 1, 0, -5])
@@ -658,17 +706,17 @@ def test_the_index_floor_is_still_what_refuses_short_media() -> None:
         rerank_and_keep(_index_of(3), (1.0, 0.0), "q", FakeReranker(), keep=5)
 
 
-# --- D-108: the reader's capacity, not §3's ceiling, is what a plan has to fit ---------------
+# --- D-143: the reader's capacity, not §3's ceiling, is what a plan has to fit ---------------
 
 
 def test_a_lower_frame_ceiling_plans_windows_the_reader_can_read() -> None:
     """§3's 64-frame window does not fit the Path B reader on the machine §6 names.
 
-    Measured (D-106): `MCG-NJU/VideoChat3-4B` reads at most **8** frames per window on a 23.99 GiB
+    Measured (D-138): `MCG-NJU/VideoChat3-4B` reads at most **8** frames per window on a 23.99 GiB
     3090 Ti, and the demand is quadratic in frames. The 38-minute run reached the reader with
     64-frame windows and OOM'd. Lowering `MAX_FRAMES_PER_WINDOW` is refused (§3's constant, now
     recorded), and truncating a window at read time is refused (D-104), so the plan has to be
-    smaller. D-108.
+    smaller. D-143.
     """
     windows = plan_scene_windows(
         "m1", duration_ms=2_313_800, shot_cuts_ms=(), fps=2.0, max_frames=8

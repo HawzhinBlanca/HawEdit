@@ -152,6 +152,8 @@ def test_the_srt_ends_with_a_blank_line() -> None:
 # =========================================================================================
 
 # Real Sorani, long enough that ordinary speech crosses the line width. 74 chars, 12 words.
+
+
 LONG_SORANI: Final = "ڕۆژنامەوانی کوردی لە هەولێر و سلێمانی و دهۆک بەردەوامە لەسەر کارەکانی خۆی."
 
 
@@ -274,12 +276,9 @@ def test_an_hour_is_an_hour() -> None:
     assert ms_to_timecode(3_600_000, 25) == "01:00:00:00"
 
 
-def test_a_non_integer_frame_rate_is_refused_with_the_drift_it_would_cause() -> None:
-    """29.97 needs SMPTE drop-frame timecode. Writing non-drop instead produces an EDL that
-    looks correct and drifts against the footage — about 3.6 s per hour. Refusing names the
-    number; guessing would hand an editor a conform that goes wrong slowly."""
-    with pytest.raises(DeliveryError, match="drop-frame"):
-        ms_to_timecode(1_000, 29.97)
+def test_an_ntsc_frame_rate_uses_drop_frame_timecode_instead_of_drifting() -> None:
+    """29.97 is supported only through SMPTE drop-frame labels, never rounded non-drop."""
+    assert ms_to_timecode(1_000, 29.97) == "00:00:01;00"
 
 
 def test_a_non_positive_rate_is_refused() -> None:
@@ -505,7 +504,7 @@ def test_every_cue_the_writer_produced_is_read_back(tmp_path: Path) -> None:
     assert srt.count("-->") == len(sentences), "one timing line per cue"
 
 
-def test_a_cue_count_is_not_a_check_that_the_cue_text_survived() -> None:
+def test_an_orphaned_srt_text_region_is_refused_instead_of_ignored() -> None:
     """The other half of D-167, in the format that needs no ffmpeg to show it.
 
     An SRT cue block ends at a **blank line**, so a break inside a surface form does not wrap
@@ -534,13 +533,202 @@ def test_a_cue_count_is_not_a_check_that_the_cue_text_survived() -> None:
     assert intact.count(joined) == 1, "the two words are not on one cue text line as assumed"
     broken = intact.replace(joined, f"{first}\n\n{second}")
 
-    assert parse_srt_times(broken) == parse_srt_times(intact), (
-        "the timing readback disagrees, which would have made this detectable — it does not, "
-        "which is why the guard has to be upstream of the writer"
-    )
     blocks = broken.strip().split("\n\n")
     assert len(blocks) == 2, f"expected the cue to split in two, got {len(blocks)}: {blocks!r}"
     assert second not in blocks[0], "the tail is still inside the cue, so nothing was lost here"
-    assert len(parse_srt_times(broken)) == 1, (
-        "the reader now counts the orphaned region as a cue, so the count would have caught this"
+    with pytest.raises(DeliveryError, match="cue 2 has no timing line"):
+        parse_srt_times(broken)
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "5"])
+def test_srt_timestamp_requires_an_exact_integer(value: object) -> None:
+    with pytest.raises(DeliveryError, match="non-negative integer"):
+        ms_to_srt_time(value)  # type: ignore[arg-type]
+
+
+# =========================================================================================
+# build_srt — the clip's timeline, like the ASS beside it
+# =========================================================================================
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "0"])
+def test_srt_clip_bounds_require_exact_integer_milliseconds(value: object) -> None:
+    sentence = a_sentence(0, 1_000)
+    with pytest.raises(DeliveryError, match="SRT clip in-point.*non-negative integer"):
+        build_srt((sentence,), value)  # type: ignore[arg-type]
+    with pytest.raises(DeliveryError, match="SRT clip duration.*non-negative integer"):
+        build_srt((sentence,), 0, value)  # type: ignore[arg-type]
+
+
+def test_an_unreadable_cue_timing_is_refused_instead_of_dropped() -> None:
+    malformed = "1\n-1:59:59,500 --> 00:00:01,000\nhello\n"
+    with pytest.raises(DeliveryError, match="unreadable timing line"):
+        parse_srt_times(malformed)
+
+
+def test_the_reader_uses_the_timing_lines_grammar_position() -> None:
+    hunted = "1\nBAD\n00:00:05,000 --> 00:00:06,000\n"
+    with pytest.raises(DeliveryError, match="unreadable timing line"):
+        parse_srt_times(hunted)
+
+
+def test_an_arrow_inside_caption_text_is_not_a_second_timing_line() -> None:
+    body = "1\n00:00:00,000 --> 00:00:01,000\nHewler --> Slemani\n"
+    assert parse_srt_times(body) == ((0, 1_000),)
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("1\n00:60:00,000 --> 00:00:01,000\ntext\n", "unreadable timing line"),
+        ("1\n00:00:02,000 --> 00:00:01,000\ntext\n", "does not end after"),
+        ("1\n00:00:01,000 --> 00:00:01,000\ntext\n", "does not end after"),
+        ("2\n00:00:00,000 --> 00:00:01,000\ntext\n", "expected 1"),
+        ("1\n", "no timing line"),
+    ],
+)
+def test_srt_reader_refuses_invalid_clock_and_cue_structure(body: str, message: str) -> None:
+    with pytest.raises(DeliveryError, match=message):
+        parse_srt_times(body)
+
+
+def test_srt_reader_round_trips_every_cue_and_hours_above_two_digits() -> None:
+    body = "1\n00:00:00,000 --> 00:00:01,000\na\n\n2\n100:00:00,000 --> 100:00:01,000\nb\n"
+    assert parse_srt_times(body) == ((0, 1_000), (360_000_000, 360_001_000))
+    assert parse_srt_times("") == ()
+
+
+def test_srt_reader_accepts_windows_line_endings_and_spaced_blank_lines() -> None:
+    body = (
+        "1\r\n00:00:00,000 --> 00:00:01,000\r\na\r\n \t\r\n"
+        "2\r\n00:00:01,000 --> 00:00:02,000\r\nb\r\n"
     )
+    assert parse_srt_times(body) == ((0, 1_000), (1_000, 2_000))
+
+
+# =========================================================================================
+# §4.3.5 line breaking — the SRT is the other subtitle format, and a player wraps whatever
+# it is handed
+# =========================================================================================
+
+# Real Sorani, long enough that ordinary speech crosses the line width. 74 chars, 12 words.
+
+
+def test_ntsc_drop_frame_skips_the_first_two_counts_outside_tenth_minutes() -> None:
+    """Apple's canonical transition: 00:00:59;29 advances to 00:01:00;02."""
+    ntsc = 30_000 / 1_001
+    assert ms_to_timecode(60_027, ntsc) == "00:00:59;29"
+    assert ms_to_timecode(60_060, ntsc) == "00:01:00;02"
+
+
+def test_ntsc_drop_frame_does_not_skip_at_tenth_minutes_and_stays_aligned_at_an_hour() -> None:
+    ntsc = 30_000 / 1_001
+    assert ms_to_timecode(600_000, ntsc) == "00:10:00;00"
+    assert ms_to_timecode(3_600_000, ntsc) == "01:00:00;00"
+
+
+def test_the_common_29_97_decimal_is_treated_as_30000_over_1001() -> None:
+    assert ms_to_timecode(3_600_000, 29.97) == "01:00:00;00"
+
+
+def test_high_frame_rate_ntsc_skips_four_counts_outside_tenth_minutes() -> None:
+    ntsc = 60_000 / 1_001
+    assert ms_to_timecode(60_043, ntsc) == "00:00:59;59"
+    assert ms_to_timecode(60_060, ntsc) == "00:01:00;04"
+    assert ms_to_timecode(600_000, ntsc) == "00:10:00;00"
+    assert ms_to_timecode(3_600_000, ntsc) == "01:00:00;00"
+    assert ms_to_timecode(3_600_000, 59.94) == "01:00:00;00"
+
+
+def test_every_high_rate_ntsc_frame_in_ten_minutes_has_one_legal_label() -> None:
+    ntsc = 60_000 / 1_001
+    frame_count = round(600 * ntsc)
+    labels = [ms_to_timecode(round(frame * 1000 / ntsc), ntsc) for frame in range(frame_count)]
+    assert len(set(labels)) == frame_count
+    for label in labels:
+        _, minute, second, frame = (int(part) for part in label.replace(";", ":").split(":"))
+        if minute % 10:
+            assert not (second == 0 and frame < 4), label
+
+
+def test_every_ntsc_frame_in_the_first_hour_has_one_legal_drop_frame_label() -> None:
+    ntsc = 30_000 / 1_001
+    frame_count = round(3_600 * ntsc)
+    labels = [ms_to_timecode(round(frame * 1000 / ntsc), ntsc) for frame in range(frame_count)]
+    assert len(set(labels)) == frame_count
+    for label in labels:
+        _, minute, second, frame = (int(part) for part in label.replace(";", ":").split(":"))
+        if minute % 10:
+            assert (second, frame) not in ((0, 0), (0, 1)), label
+
+
+def test_an_unsupported_fractional_rate_is_refused_instead_of_rounded() -> None:
+    with pytest.raises(DeliveryError, match="fractional frame rate.*unsupported"):
+        ms_to_timecode(1_000, 24_000 / 1_001)
+    with pytest.raises(DeliveryError, match="fractional frame rate.*unsupported"):
+        ms_to_timecode(1_000, 120_000 / 1_001)
+
+
+@pytest.mark.parametrize("fps", [float("nan"), float("inf")])
+def test_a_non_finite_rate_is_refused(fps: float) -> None:
+    with pytest.raises(DeliveryError, match="finite and positive"):
+        ms_to_timecode(1_000, fps)
+
+
+def test_a_negative_timecode_time_is_refused() -> None:
+    with pytest.raises(DeliveryError, match="negative"):
+        ms_to_timecode(-1, 25)
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "5"])
+def test_timecode_timestamp_requires_an_exact_integer(value: object) -> None:
+    with pytest.raises(DeliveryError, match="non-negative integer"):
+        ms_to_timecode(value, 25)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("fps", [True, "25"])
+def test_timecode_rate_rejects_boolean_and_string_values(fps: object) -> None:
+    with pytest.raises(DeliveryError, match="finite positive number"):
+        ms_to_timecode(1_000, fps)  # type: ignore[arg-type]
+
+
+def test_timecode_rate_normalizes_an_integer_too_large_for_a_float() -> None:
+    with pytest.raises(DeliveryError, match="out-of-range"):
+        ms_to_timecode(1_000, 10**1_000)
+
+
+# =========================================================================================
+# build_edl — CMX 3600, and the timeline it is NOT written on
+# =========================================================================================
+
+
+def test_an_ntsc_edl_declares_and_uses_drop_frame_timecode() -> None:
+    edl = build_edl(clip_in_ms=60_060, clip_out_ms=120_120, fps=30_000 / 1_001)
+    event = next(line for line in edl.splitlines() if line.startswith("001"))
+    assert "FCM: DROP FRAME" in edl
+    assert event.split()[-4:] == [
+        "00:01:00;02",
+        "00:02:00;04",
+        "00:00:00;00",
+        "00:01:00;02",
+    ]
+
+
+def test_a_high_frame_rate_ntsc_edl_uses_four_count_drop_frame_timecode() -> None:
+    edl = build_edl(clip_in_ms=60_060, clip_out_ms=120_120, fps=60_000 / 1_001)
+    event = next(line for line in edl.splitlines() if line.startswith("001"))
+    assert "FCM: DROP FRAME" in edl
+    assert event.split()[-4:] == [
+        "00:01:00;04",
+        "00:02:00;08",
+        "00:00:00;00",
+        "00:01:00;04",
+    ]
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "0"])
+def test_edl_clip_bounds_require_exact_integer_milliseconds(value: object) -> None:
+    with pytest.raises(DeliveryError, match="EDL clip in-point.*non-negative integer"):
+        build_edl(clip_in_ms=value, clip_out_ms=1_000, fps=25)  # type: ignore[arg-type]
+    with pytest.raises(DeliveryError, match="EDL clip out-point.*non-negative integer"):
+        build_edl(clip_in_ms=0, clip_out_ms=value, fps=25)  # type: ignore[arg-type]

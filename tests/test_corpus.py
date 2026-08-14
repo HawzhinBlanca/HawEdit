@@ -338,7 +338,7 @@ def test_an_interim_corpus_still_round_trips_through_the_manifest(tmp_path: Path
 # typed into this file, and this file referenced BLUEPRINT.md nowhere — so the grid certified
 # itself. `tests/test_registry.py` has parsed §7 out of the blueprint from the start; §8.1 never
 # got the same treatment, and M0.6's row claims "(3 dialects × 7 conditions)" implements §8.1's
-# list. D-084.
+# list. D-091.
 #
 # The mapping is deliberately explicit because §8.1's phrasing does not line up one-to-one with
 # the enum: "Kurdish–English and Kurdish–Arabic code-switching" is ONE §8.1 item covering TWO

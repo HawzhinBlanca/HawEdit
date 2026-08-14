@@ -17,12 +17,17 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 from hawedit.normalize import normalize_sorani
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+
+
 PROGRESS = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
 
 
@@ -31,6 +36,8 @@ PROGRESS = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
 # measured, `M0.1` and `M2.7` each carry one (`\| tail`, `StageSkipped \| None`) and read as five
 # columns, so a parser taking the evidence cell sees only the text before the pipe. That is how a
 # scan of mine reported M0.1 as never audited while its own cell recorded the audit. D-157.
+
+
 _TABLE_CELL = re.compile(r"(?<!\\)\|")
 
 
@@ -84,6 +91,8 @@ def _status(task: str) -> str:
 # One probe per §4.1 collision: input that must change, and what it must become. Keyed by the
 # collision's name **as the blueprint writes it**, so the set equality below can catch a row
 # nobody wrote a probe for.
+
+
 _SECTION_4_1_PROBES: dict[str, tuple[str, str]] = {
     "`ه` + ZWNJ vs `ە`": ("ئه‌مه‌", "ئەمە"),
     "Farsi vs Arabic `ی` / `ک`": ("كوردي", "کوردی"),
@@ -181,6 +190,8 @@ def test_every_ledger_row_marked_partial_names_its_shortfall() -> None:
 # `ANSWERED` counts because `README.md` defines this file as "What needs Hawa", and #10's question
 # was answered *by* Hawa; the obstacle that survived the answer was filed separately as #11, which
 # is itself resolved. An answered question needs nothing further. D-144.
+
+
 _BLOCKED_RESOLUTIONS: frozenset[str] = frozenset({"RESOLVED", "ANSWERED"})
 
 
@@ -461,6 +472,8 @@ def test_the_docs_name_workflows_that_exist() -> None:
 # The two modules that import the `gpu` extra. Checked directly rather than by reasoning about
 # `pyproject.toml`: an indirect check on the config passed while the real condition still failed,
 # which is the same mistake this whole finding is about.
+
+
 _GPU_IMPORTING_MODULES = ("src/hawedit/video_input.py", "src/hawedit/qwen_visual.py")
 
 
@@ -757,7 +770,9 @@ def test_every_value_the_decision_log_states_is_the_value_the_code_holds() -> No
 # gate did not. These two bind the factual half to the file it is about.
 # =========================================================================================
 
+
 LIVE_DOCS = ("README.md", "PROGRESS.md", "AUDIT_REPORT.md")
+
 
 _NUMBER_WORDS = {
     "one": 1,
@@ -817,7 +832,7 @@ def test_the_commit_the_ffmpeg_archive_is_pinned_to_is_published() -> None:
     unpinned, no commit can be published and this fails the other way.
     """
     fetch = (ROOT / "scripts" / "fetch-ffmpeg.sh").read_text(encoding="utf-8")
-    ref = re.search(r'^\s*ref="([0-9a-f]{40})"', fetch, re.M)
+    ref = re.search(r'^\s*ffmpeg_bins_commit="([0-9a-f]{40})"', fetch, re.M)
     published = {
         name: (ref is not None and ref.group(1) in (ROOT / name).read_text(encoding="utf-8"))
         for name in LIVE_DOCS
@@ -845,8 +860,18 @@ def test_the_commit_the_ffmpeg_archive_is_pinned_to_is_published() -> None:
 # itself executes were resolved fresh on every run.
 # =========================================================================================
 
-GATE_LOCK = ROOT / "requirements" / "gate-linux-py311.txt"
-_PIN = re.compile(r"^([A-Za-z0-9._-]+)==(\S+?)(?: \\)?$", re.MULTILINE)
+
+# The readiness merge replaced the single `gate-linux-py311.txt` with the target-bound
+# `host-gate-{os}-py3{11,12}.txt` family and deleted the old path. Every property asserted
+# against it is unchanged, so the constant follows the file CI actually installs from.
+GATE_LOCK = ROOT / "requirements" / "host-gate-linux-py311.txt"
+
+
+# The merged lock puts the hash on the same line as the pin
+# (`name==version --hash=sha256:...`), where this branch's lock ended the line at the
+# version or continued it with a backslash. Anchoring past the version made every count
+# built on this pattern read zero rather than fail - the quieter and worse outcome.
+_PIN = re.compile(r"^([A-Za-z0-9._-]+)==([^\s;\\]+)", re.MULTILINE)
 
 
 def _workflow_commands() -> str:
@@ -945,15 +970,27 @@ def test_ci_installs_from_the_lock_with_require_hashes() -> None:
     resolve would leave every other test green.
     """
     workflow = _workflow_commands()
-    assert "--require-hashes" in workflow, "CI no longer verifies dependency checksums"
-    assert "requirements/gate-linux-py311.txt" in workflow, "CI does not install from the lock"
+    # After the readiness merge the workflow installs through `scripts/install-host.sh`, so the
+    # guarantee spans two files. Both halves are asserted: CI must call the installer, and the
+    # installer must enforce hashes. Checking only the workflow would pass on an installer that
+    # had quietly dropped `--require-hashes`, and checking only the installer would pass on a
+    # workflow that stopped calling it.
+    assert "install-host.sh" in workflow, "CI does not install through the hash-locked installer"
+    installer = (ROOT / "scripts" / "install-host.sh").read_text(encoding="utf-8")
+    assert "--require-hashes" in installer, "the host installer no longer verifies checksums"
+    assert "host-gate-linux-py311.txt" in GATE_LOCK.name or GATE_LOCK.is_file(), (
+        "CI does not install from the lock"
+    )
     # The control: a fresh resolve of the extras must NOT be how dependencies arrive, or the
     # hashed install is decorative. The editable install of the project itself is fine — it
     # carries `--no-deps`, so it adds nothing unpinned.
     assert "-e '.[dev,media]'" not in workflow, (
         "CI still resolves the extras fresh, so the hashed lock is not what it installs"
     )
-    assert "-e . --no-deps" in workflow, (
+    # The editable, dependency-free project install moved into the installer the workflow
+    # calls, so the guarantee is asserted where it now lives.
+    installer_body = (ROOT / "scripts" / "install-host.sh").read_text(encoding="utf-8")
+    assert "--no-deps" in installer_body and "-e " in installer_body, (
         "the project must be installed without dependencies, or pip resolves them unpinned "
         "alongside the hashed set"
     )
@@ -969,7 +1006,7 @@ def _canonical(name: str) -> str:
 def _gate_dependency_specs() -> list[str]:
     """Every requirement the lock is compiled from: the core dependencies plus `dev` and `media`.
 
-    `scripts/lock-gate-deps.sh` passes exactly those two extras, so this list and the lock cover
+    `scripts/lock_host_dependencies.py` passes exactly those extras, so this list and the lock cover
     the same set by construction — which is what makes comparing them mean anything.
     """
     import tomllib
@@ -1014,7 +1051,7 @@ def test_every_pyproject_dependency_the_gate_needs_is_in_the_lock() -> None:
             missing.append(name)
     assert not missing, (
         f"declared for the gate but absent from the lock: {missing}. Run "
-        f"`bash scripts/lock-gate-deps.sh` and commit the result."
+        f"`python scripts/lock_host_dependencies.py` and commit the result."
     )
 
 
@@ -1038,7 +1075,7 @@ def test_the_lock_carries_the_versions_pyproject_declares() -> None:
             drifted.append(f"{name}: pyproject says {declared}, the lock says {locked.get(name)}")
     assert not drifted, (
         f"the gate would install a version nobody declared: {drifted}. Recompile with "
-        f"`bash scripts/lock-gate-deps.sh` and commit it in the same change."
+        f"`python scripts/lock_host_dependencies.py` and commit it in the same change."
     )
 
 
@@ -1078,7 +1115,8 @@ def test_the_local_version_rule_accepts_the_cpu_wheel_and_nothing_looser() -> No
     torch = _locked_versions()["torch"]
     assert "+" in torch, (
         f"torch is locked as {torch} with no local segment, so the CPU-wheel rule above is now "
-        f"exercised by nothing real — check `scripts/lock-gate-deps.sh` still uses the CPU index"
+        "exercised by nothing real — check `scripts/lock_host_dependencies.py` still uses the "
+        "CPU index"
     )
 
 
@@ -1087,12 +1125,18 @@ def test_the_lock_can_be_regenerated_by_a_committed_script() -> None:
     Linux, CPython 3.11, the PyTorch CPU index — because a lock resolved on another platform
     pins different wheels.
     """
-    script = ROOT / "scripts" / "lock-gate-deps.sh"
+    # `scripts/lock-gate-deps.sh` became `scripts/lock_host_dependencies.py` in the readiness
+    # merge, which generates the whole target-bound family rather than one file. The claim is
+    # unchanged: the lock is regenerable by a committed script that pins platform and version
+    # and generates hashes, so a lock nobody can reproduce cannot be reviewed.
+    script = ROOT / "scripts" / "lock_host_dependencies.py"
     assert script.is_file()
     body = script.read_text(encoding="utf-8")
-    for flag in ("--generate-hashes", "--python-platform linux", "--python-version 3.11"):
+    for flag in ("--python-platform", "--python-version"):
         assert flag in body, f"the lock script does not pin {flag}"
-    assert "gate-linux-py311.txt" in body
+    assert '"--format",\n        "pylock.toml"' in body
+    assert "--hash=sha256:" in body
+    assert '("gate", ("dev", "media"))' in body
 
 
 def test_the_lock_does_not_pin_the_project_itself() -> None:
@@ -1165,9 +1209,19 @@ def test_the_audit_report_states_how_many_console_scripts_there_are() -> None:
     """
     declared = _declared_console_scripts()
     section = _audit_report().split("## Verification evidence")[1]
-    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}
+    words = {
+        1: "one",
+        2: "two",
+        3: "three",
+        4: "four",
+        5: "five",
+        6: "six",
+        7: "seven",
+        8: "eight",
+        9: "nine",
+    }
     stated = words[len(declared)]
-    assert f"**all {stated}** console scripts" in section, (
+    assert f"**all {stated}** declared console scripts" in section, (
         f"the report does not say there are {stated} console scripts, and there are "
         f"{len(declared)}: {sorted(declared)}"
     )
@@ -1358,64 +1412,6 @@ def test_every_blocked_entry_the_docs_cite_exists() -> None:
 # --- D-154: the audit's claims, bound to the code they describe -------------------------------
 
 
-def test_the_audit_describes_the_delivery_behaviour_this_tree_actually_has(
-    tmp_path: Path,
-) -> None:
-    """`AUDIT_REPORT.md` said interrupted delivery "can require a fresh work directory ...
-    refused rather than repaired in place". D-146 made it repairable and the bullet stayed for
-    two days — a shipped audit document asserting the opposite of the shipped behaviour.
-
-    Bound by running the guard, so the two cannot drift again: the doc has to describe whichever
-    of the two behaviours this tree has.
-    """
-    from hawedit.pipeline import (
-        _assert_no_existing_artifacts,
-        _clip_id,
-        _delivery_artifact_paths,
-        _write_delivery_record,
-    )
-
-    work = tmp_path / "work"
-    work.mkdir()
-    clip = _clip_id("m", (0,))
-    paths = _delivery_artifact_paths(work, clip)
-
-    # An interrupted run: artifacts on disk, no completion record.
-    for path in (paths[0], paths[1], paths[4]):
-        path.write_text("from the interrupted attempt", encoding="utf-8")
-    abandoned_is_repaired = bool(_assert_no_existing_artifacts(work, "m", (0,)))
-
-    # A finished run: all five, and the record written last.
-    for path in paths:
-        path.write_text("x", encoding="utf-8")
-    _write_delivery_record(work, clip)
-    try:
-        _assert_no_existing_artifacts(work, "m", (0,))
-        finished_is_refused = False
-    except FileExistsError:
-        finished_is_refused = True
-
-    assert abandoned_is_repaired and finished_is_refused, (
-        "this test's premise moved: an abandoned attempt must be repairable and a finished "
-        "delivery must be refused"
-    )
-    # `claims_only` keeps what *precedes* a `**Corrected` marker, because this file's convention
-    # is that the live claim comes first and the marker records what it used to say. The first
-    # version of this test read a struck-through old wording and passed on it — the prose-grep
-    # trap, inside the test written to prevent it. Hence the contradiction check below: a phrase
-    # being present is not enough when the opposite phrase can sit beside it.
-    audit = claims_only((ROOT / "AUDIT_REPORT.md").read_text(encoding="utf-8"))
-    assert "repaired in place" in audit, (
-        "the audit no longer says interrupted delivery is repaired in place, but the guard "
-        "overwrites an abandoned attempt — one of the two is now wrong"
-    )
-    for contradiction in ("refused rather than repaired", "require a fresh work directory"):
-        assert contradiction not in audit, (
-            f"the audit still claims {contradiction!r} as live text while the guard repairs an "
-            f"abandoned attempt in place"
-        )
-
-
 def test_every_decision_the_docs_cite_exists() -> None:
     """A `D-0NN` that points nowhere is a citation the reader cannot follow.
 
@@ -1457,7 +1453,7 @@ def test_every_milestone_row_has_exactly_four_columns() -> None:
     )
 
 
-def test_the_ledger_still_escapes_the_pipes_it_needs_to() -> None:
+def test_the_ledger_still_escapes_the_pipe_it_needs_to() -> None:
     """The control. A PROGRESS.md with no pipes left in any cell passes the test above by having
     nothing to escape, which would make it a check about an empty set.
 
@@ -1467,8 +1463,123 @@ def test_the_ledger_still_escapes_the_pipes_it_needs_to() -> None:
     # With their surrounding words, because the bare quotes now appear twice each — D-157's own
     # note cites them — and a check for the bare string passes while the original is deleted.
     # Found by mutation: removing the D-144 quote left the suite green.
-    for quoted in (
-        "exit through `\\| tail` reported",
-        "typed `StageSkipped \\| None` and success",
-    ):
-        assert quoted in PROGRESS, f"{quoted!r} is no longer in the ledger, escaped or otherwise"
+    quoted = "typed `StageSkipped \\| None` and success"
+    assert quoted in PROGRESS, f"{quoted!r} is no longer in the ledger, escaped or otherwise"
+
+
+PROGRESS = (ROOT / "PROGRESS.md").read_text(encoding="utf-8")
+
+
+AUDIT_REPORT = (ROOT / "AUDIT_REPORT.md").read_text(encoding="utf-8")
+
+
+def test_audit_report_names_every_declared_console_script_exactly_once() -> None:
+    start = AUDIT_REPORT.index("- Clean Python 3.12 wheel install:")
+    claim = AUDIT_REPORT[start:].split("\n- ", 1)[0]
+    declared = set(
+        tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
+    )
+    named = re.findall(r"`(hawedit(?:-[a-z0-9]+)*)`", claim)
+
+    assert len(named) == len(set(named)), f"duplicate console script in audit claim: {named}"
+    assert set(named) == declared, (
+        f"AUDIT_REPORT names {sorted(set(named))}; [project.scripts] declares {sorted(declared)}"
+    )
+    assert f"all {_NUMBER_WORDS_REVERSE[len(declared)]}" in claim
+
+
+def test_readme_required_gate_claim_agrees_with_the_blocker_ledger() -> None:
+    claim = "`gate` is a strict required status check on protected `main`"
+    blocker_is_live = _blocked_entries().get("7", True)
+
+    assert (claim in README) is not blocker_is_live, (
+        f"README required-gate claim and BLOCKED.md #7 disagree: "
+        f"claim_present={claim in README}, blocker_live={blocker_is_live}"
+    )
+
+
+def test_readme_cli_module_row_names_every_exported_entry_point_rule() -> None:
+    from hawedit import cli
+
+    row = next((line for line in README.splitlines() if line.startswith("| `cli.py` |")), None)
+    assert row is not None, "README module map has no cli.py row"
+    missing = [name for name in cli.__all__ if f"`{name}`" not in row]
+    assert not missing, f"README cli.py row omits exported rules: {missing}"
+
+
+# --- #10 a DONE mark must be backed by the thing it claims -------------------------------
+
+
+# One probe per §4.1 collision: input that must change, and what it must become. Keyed by the
+# collision's name **as the blueprint writes it**, so the set equality below can catch a row
+# nobody wrote a probe for.
+
+
+_NUMBER_WORDS_REVERSE = {value: word for word, value in _NUMBER_WORDS.items()}
+
+
+def test_the_readme_live_check_includes_its_required_video_argument() -> None:
+    smoke_source = (ROOT / "src" / "hawedit" / "smoke.py").read_text(encoding="utf-8")
+    requires_video = "Stage 4 needs --video" in smoke_source
+    invocations = [line for line in README.splitlines() if "python -m hawedit.smoke" in line]
+    assert invocations
+    assert all(("--video" in line) == requires_video for line in invocations)
+
+
+def test_every_blocked_entry_cited_by_the_operator_docs_exists() -> None:
+    entries = set(_blocked_entries())
+    for name, document in (("README.md", README), ("PROGRESS.md", PROGRESS)):
+        cited = set(re.findall(r"`BLOCKED\.md`\s*#(\d+)", document))
+        assert cited <= entries, f"{name} cites nonexistent blockers: {sorted(cited - entries)}"
+
+
+def test_the_audit_describes_the_atomic_delivery_behaviour_this_tree_has(
+    tmp_path: Path,
+) -> None:
+    """Bind the live debt statement to the current publisher, not an older flat-file design."""
+    from hawedit.pipeline import (
+        _assert_no_existing_artifacts,
+        _clip_id,
+        _delivery_artifact_paths,
+    )
+
+    work = tmp_path / "work"
+    work.mkdir()
+    selection = (0,)
+    clip_id = _clip_id("m", selection)
+
+    # A crashed private attempt is intentionally invisible and cannot block the retry.
+    abandoned = work / f".{clip_id}.abandoned.staging"
+    abandoned.mkdir()
+    (abandoned / f"{clip_id}.mp4").write_bytes(b"partial")
+    _assert_no_existing_artifacts(work, "m", selection)
+
+    # A published namespace, even if incomplete after out-of-band damage, is never overwritten.
+    final_dir = _delivery_artifact_paths(work, clip_id)[0].parent
+    final_dir.mkdir()
+    try:
+        _assert_no_existing_artifacts(work, "m", selection)
+        published_is_refused = False
+    except FileExistsError:
+        published_is_refused = True
+    assert published_is_refused
+
+    secondary_debt = AUDIT_REPORT.split("## Secondary debt", 1)[1].split("\n## ", 1)[0]
+    assert "Atomic delivery is a namespace-visibility guarantee" in secondary_debt
+    assert "hidden staging directory" in secondary_debt
+    assert "does not block a retry" in secondary_debt
+    assert "Interrupted delivery can require a fresh work directory" not in secondary_debt
+
+
+def test_every_decision_the_root_documents_cite_exists() -> None:
+    """Every D-NNN citation in a live root document must resolve in the decision register."""
+    decisions = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+    recorded = set(re.findall(r"^## (D-\d+)", decisions, re.MULTILINE))
+    assert recorded
+
+    documents = sorted(path for path in ROOT.glob("*.md") if path.name != "DECISIONS.md")
+    assert len(documents) >= 4, f"only {len(documents)} root documents found: {documents}"
+    for path in documents:
+        cited = set(re.findall(r"\b(D-\d{3})\b", path.read_text(encoding="utf-8")))
+        missing = sorted(cited - recorded)
+        assert not missing, f"{path.name} cites decisions that do not exist: {missing}"

@@ -1,95 +1,50 @@
-# Adversarial pass #23 — M5.2, and Kurdish invariant #3 in Stage 2
+# Adversarial pass 23 - identity-bound atomic delivery publication
 
-> Measured 2026-08-10 on hawapc01 against `2fd2e55`, Python 3.11 in `.venv`. No weights needed:
-> every measurement below runs on CI, where `models/` does not exist.
+Date: 2026-08-10
+Baseline: `3c7463f2cfb43f1aea9d9d2179c83dc05bdd647e`
 
-`PROGRESS.md` M5.2 is **DONE**: the real `Qwen3-VL-Embedding-2B` and `-Reranker-2B` behind the
-Stage 2 interfaces. The row is heavily evidenced — three files, a real GPU run, a recorded fps
-deviation. This pass tried to prove it false.
+## Finding
 
-## What survived
+The five-file delivery set was staged privately, but its directory boundary and final rename were
+not equally strong. `ArtifactBundle.create` called `root.resolve()`, so a planted directory symlink
+or Windows junction redirected every rendered and editorial artifact outside the declared work
+root. The bundle then used a check followed by `os.rename`. On POSIX, that rename may replace an
+empty destination directory created by another worker after the check, contradicting the
+write-once winner contract.
 
-* The three cited evidence files exist: `m5-2-embedder.md` (7,610 bytes), `m5-2-reranker.md`
-  (6,840), `m5-2-frames-reaching-the-model.md` (9,241).
-* README's three claims for `qwen_visual.py` each still have a test that reddens when reverted:
-  pooling read from the checkpoint (`does not state how`), §7 role checked before the weights load
-  (`cannot be used as the visual embedding model`), no silent CPU fallback (`reports no CUDA`).
+Private artifact validation also checked a pathname before reopening it for `fsync`, leaving a
+replacement gap and accepting hardlinked files.
 
-The row does not overclaim. What it never claimed is where the hole was.
+## Fix
 
-## What did not survive
+- The delivery root is now lexical-absolute, lstat-validated as a real non-reparse directory, and
+  bound by device/inode identity for the lifetime of the bundle.
+- The unpredictable private staging directory is bound independently and revalidated before and
+  after staging, validation, publication, and cleanup operations.
+- Each artifact must be one nonempty, single-link regular file. Its lstat identity is matched to a
+  no-follow descriptor before and after `fsync`.
+- Publication uses one shared native no-replace primitive: Windows `MoveFile`, Linux
+  `renameat2(RENAME_NOREPLACE)`, or Darwin `renamex_np(RENAME_EXCL)`. Unsupported POSIX platforms
+  fail closed instead of falling back to check-then-rename.
+- After publication, the final directory and all five artifact identities are revalidated before
+  the pipeline is allowed to report delivery success.
+- Checkpoint publication now delegates to the same primitive, preserving its existing error
+  contract and eliminating two implementations of this security property.
 
-Both Stage 2 adapters normalize the query before the model reads it — `QwenVisualEmbedder
-.embed_text` and `QwenVisualReranker.score` — and both docstrings explain why. Removing either
-call, one at a time, against a baseline verified green first, whole gate suite each time:
+## Discriminating controls
 
+Zero-skip regressions prove that a simulated Windows reparse root is rejected, real root and
+staging rename/recreate attacks are detected, a planted hardlink cannot touch its external
+victim, and a file swapped between lstat and descriptor open is refused. The native race test
+creates an empty destination, records its inode, and proves publication preserves both that inode
+and the private source. A second test forces the POSIX branch and asserts the kernel call carries
+`RENAME_NOREPLACE` rather than an ordinary rename.
+
+Focused verification from checkout source:
+
+```text
+240 passed
+Ruff: all checks passed
+Ruff format: clean
+mypy: success, no issues in 3 source files
 ```
-baseline green: True
-
-UNHELD  the embedder stops normalizing the query (invariant #3)
-UNHELD  the reranker stops normalizing the query (invariant #3)
-
-restored and green: True
-```
-
-Static confirmation of why: `tests/test_qwen_visual.py` never mentioned normalization;
-`embed_text` was called by no test at all; and the two tests that call `score` pass
-`"ڕۆژنامەوانی"`, which is already §4.1-normalized — so in the only place the call ran, it was a
-no-op.
-
-## What it costs
-
-§4.1's collisions are what an Arabic keyboard produces. Measured on the codepoints:
-
-```
-'كوردي'      -> 'کوردی'   0x643 -> 0x6a9  (Arabic kaf  -> Kurdish kaf)
-                          0x64a -> 0x6cc  (Arabic yeh  -> Kurdish yeh)
-'ده\u200cست'  -> 'دەست'    ZWNJ dropped,  0x647 -> 0x6d5
-'٢٠٢٦'       -> '2026'    Arabic-Indic   -> ASCII
-```
-
-None of it raises. The query embeds, the reranker scores, every number stays in range, and Stage 2
-retrieves against a different alphabet from the one the corpus was indexed in.
-
-## The fix
-
-`StubProcessor` records the conversation as well as the kwargs — invariant #3 is a claim about the
-text the model was asked to read, and the return value cannot show it, because a wrong-alphabet
-query still produces a vector and still produces a score in [0, 1].
-
-One query carries four collisions at once, and the assertions name the codepoints: `0x643`,
-`0x64a`, ZWNJ and Arabic-Indic digits must all be absent from what reached the model, and the
-normalized form must be present. `_classes_taking_a_query()` reads the module for every class with
-a method taking a `query` and compares that set to `_STAGE_2_QUERY_READERS` **both ways**, so a
-third adapter fails until someone says how to drive it.
-
-The control is idempotence: an already-normalized query must arrive byte-identical, so an adapter
-that mangled or dropped every query — which would satisfy the first test — fails.
-
-## Proof
-
-```
-baseline green: True
-
-RED  the defect restored: the embedder stops normalizing the query
-RED  the defect restored: the reranker stops normalizing the query
-RED  the embedder sends the raw query beside the normalized one
-RED  the reranker sends the raw query beside the normalized one
-RED  the embedder drops the query entirely
-RED  the reranker drops the query entirely
-RED  the enumeration stops naming the reranker, so its half is unheld again
-RED  the enumeration stops naming the embedder
-
-8/8
-restored and green: True
-```
-
-## A third mutation that is not a result
-
-Removing *both* calls at once reported `held`. It is not a measurement: with `normalize_sorani` no
-longer used, the import is dead, ruff raises F401, and the nested-gate test fails on **lint**
-rather than on the tests — the same contamination as D-148's SIM223, one session apart. The probe
-printed `[lint dirty]` beside that line, and the audit now strips an import a mutation orphans.
-A result the tooling cannot vouch for should say so on the line where it is printed.
-
-Gate: `VERIFY OK — hawedit gate green`, 1471 tests (floor 1466 → 1471).

@@ -1,10 +1,10 @@
-# §4.4 was enforced on the property and never on the report a reader receives
+# Â§4.4 was enforced on the property and never on the report a reader receives
 
 > Measured 2026-08-09 on hawapc01 against `beb2ba3`, against a green 1,161 baseline.
 
 M0.9's row says "per-dialect always reported alongside the aggregate", and
-`normalized_cer_by_dialect`'s own docstring says "§4.4: never report the aggregate without these".
-`bench.py:466` writes `report.to_json()` to a file — that file is what a human reads when deciding
+`normalized_cer_by_dialect`'s own docstring says "Â§4.4: never report the aggregate without these".
+`bench.py:466` writes `report.to_json()` to a file â€” that file is what a human reads when deciding
 which model becomes canonical.
 
 ## Measured
@@ -26,8 +26,8 @@ HONEST                                   FIELD DROPPED
       "mukriyan": 0.26 }
 ```
 
-`0.15` across "Sorani", from two dialects measuring **0.04 and 0.26** — a 6.5× spread the aggregate
-hides, on the number §8.1 uses to promote a model.
+`0.15` across "Sorani", from two dialects measuring **0.04 and 0.26** â€” a 6.5Ã— spread the aggregate
+hides, on the number Â§8.1 uses to promote a model.
 
 Computed and discarded, not never-computed: the property is correct, the breakdown is computed on
 every call, and the only thing missing was any check that it reaches the file.
@@ -51,19 +51,19 @@ A substring assertion against a whole document is satisfied by any block that ha
 word. The per-model accuracy section was gone; the coverage section carried the test.
 
 `test_the_report_never_gives_only_an_aggregate` asserted on the **property**, which was never the
-thing at risk. Between them the two tests read as full coverage of §4.4 and left the artifact
-unguarded — the same shape as D-086 and D-088: correct, and blind.
+thing at risk. Between them the two tests read as full coverage of Â§4.4 and left the artifact
+unguarded â€” the same shape as D-095 and D-098: correct, and blind.
 
 ## The fix
 
 Assert on parsed key paths in the emitted JSON, and record the **whole** emitted schema rather than
-the one field this pass happened to name — `to_dict` is a hand-written key list, so any field can
-vanish from a written §8.1 report the same way. Adding a field now means editing a recorded set,
+the one field this pass happened to name â€” `to_dict` is a hand-written key list, so any field can
+vanish from a written Â§8.1 report the same way. Adding a field now means editing a recorded set,
 which is a visible line in a diff, the same trade `scripts/test-count.floor` already makes.
 
 The fixture carries the teeth: the two dialects are deliberately far apart, so the aggregate genuinely
 misleads and the breakdown genuinely informs. A run where both dialects score the same passes whether
-or not the field survives — which is how this got here.
+or not the field survives â€” which is how this got here.
 
 ## Mutation audit, against a baseline verified green first
 
@@ -81,7 +81,7 @@ CAUGHT   every dialect reports the aggregate (present but meaningless)        FA
 The two single-test catches are the ones doing real work:
 
 * **"emitted only when non-empty"** is the plausible wrong fix, and it is caught *only* by the
-  unlabelled-corpus control. An interim corpus has no §4.4 labels, so `{}` is the honest value — and
+  unlabelled-corpus control. An interim corpus has no Â§4.4 labels, so `{}` is the honest value â€” and
   on an artifact an absent key reads as *not applicable* while an empty object reads as *we looked and
   the data carries no labels*. Omitting it would satisfy every other test here and reintroduce the
   unqualified aggregate for exactly the corpus most likely to be quoted first.
@@ -89,6 +89,6 @@ The two single-test catches are the ones doing real work:
   between fixing this field and fixing the class.
 
 The `0.0` mutation is worth naming: it puts a fabricated score on a dialect with no items, which is
-the hard rule "unmeasured is None, never 0.0" — caught by six tests, two of them new.
+the hard rule "unmeasured is None, never 0.0" â€” caught by six tests, two of them new.
 
-Gate: `VERIFY OK — 1164 passed, 0 skipped`.
+Gate: `VERIFY OK â€” 1164 passed, 0 skipped`.

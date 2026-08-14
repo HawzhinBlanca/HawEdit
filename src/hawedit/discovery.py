@@ -49,7 +49,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from hawedit.clip import DiscoveryPath, Sv6d
-from hawedit.repurposing import DEFAULT_IOU_MATCH, RetrievedCandidate, temporal_iou
+from hawedit.repurposing import (
+    DEFAULT_IOU_MATCH,
+    RetrievedCandidate,
+    _validate_iou_match,
+    temporal_iou,
+)
 
 __all__ = [
     "Candidate",
@@ -201,8 +206,10 @@ def merge_candidates(
         Every input, in a stable order (media, then start, then id). Never fewer.
 
     Raises:
-        ValueError: a candidate is in the wrong path's list, or two share an id.
+        ValueError: `iou_match` is outside `(0, 1]`, a candidate is in the wrong path's
+            list, or two candidates share an id.
     """
+    iou_match = _validate_iou_match(iou_match)
     _assert_path(verbal, DiscoveryPath.VERBAL)
     _assert_path(visual, DiscoveryPath.VISUAL)
     _assert_unique([*verbal, *visual])

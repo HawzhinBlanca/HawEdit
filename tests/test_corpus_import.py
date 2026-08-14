@@ -169,7 +169,7 @@ def test_the_imported_manifest_round_trips(tmp_path: Path) -> None:
 # `locale` column — or with the cell empty — imported clean, and the manifest still declared
 # "Mozilla Common Voice ckb" because the provenance name is built from the *parameter* and never
 # from the data. Measured: two Kurmanji rows imported as `reference_ckb='Ev pir bas e'` under a
-# ckb provenance. Found by the fourth adversarial pass. D-091.
+# ckb provenance. Found by the fourth adversarial pass. D-103.
 
 
 def _kurmanji_tsv(path: Path, *, locale_column: bool, blank: bool = False) -> Path:

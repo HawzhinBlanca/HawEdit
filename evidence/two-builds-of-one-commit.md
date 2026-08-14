@@ -1,96 +1,60 @@
 # Two builds of one commit
 
-> Measured 2026-08-09 on hawapc01 against `450684b`.
+This evidence is about a local wheel candidate. It is not release authorization: production
+publication additionally requires exact-SHA CI, provenance, SBOM, and GitHub attestation.
 
-`AUDIT_REPORT.md`'s wheel bullet quotes a byte count and says, deliberately, that no SHA-256 is
-given: *"The build is not reproducible … A digest here would identify one build at one instant rather
-than this code."* That was true, and it is the one line in the supply-chain section that was still
-accurate.
+## Two independent causes were measured
 
-## The defect
+The original build had no `SOURCE_DATE_EPOCH`. Two ambient `pip wheel` invocations over one tree
+produced equal-size archives with different ZIP timestamps and hashes:
 
-```
-$ pip wheel --no-deps --no-build-isolation -w a .
-$ pip wheel --no-deps --no-build-isolation -w b .
-
-a/hawedit-0.1.0-py3-none-any.whl  333,362 bytes  sha256 a7c3b2f1c280aff4…
-b/hawedit-0.1.0-py3-none-any.whl  333,362 bytes  sha256 38d1d2475c46e120…
+```text
+333,362 bytes  sha256 a7c3b2f1c280aff4...
+333,362 bytes  sha256 38d1d2475c46e120...
 ```
 
-One unchanged tree, the same size, different bytes. Nothing sets `SOURCE_DATE_EPOCH`, so every ZIP
-entry carries the mtime of the moment it was written. Nothing that leaves this repository could be
-identified by a digest, and "pinned and checksummed supply chain" has no checksum to offer.
+Setting the epoch fixed that machine's timestamp drift, but did not make the builder an identity.
+On 2026-08-09, commit `e314c3232f414f3e90ed82ed67a5a1ff0f8b0488` was built with the old
+script through two available Python environments. Both used the same clean Git tree and commit
+epoch and produced the same 473,534-byte filename, but their backend versions differed:
 
-## The fix, and the same two builds
+```text
+builder A: pip 26.2.1, setuptools 84.0.0
+sha256 d7d3486c082ea372faff597b52a9e430ff99b399f3a59cd280236aac7ec3ff9e
 
-```
-$ git log -1 --format=%ct
-1786296162
+builder B: pip 26.2.1, setuptools 79.0.1
+sha256 0246fc0c414cb6bd3cf00f840a8649ed5a90eb9af88c62615ae9ba7a1aacdad9
 
-$ SOURCE_DATE_EPOCH=1786296162 pip wheel … -w c .
-$ SOURCE_DATE_EPOCH=1786296162 pip wheel … -w d .
-
-c  333,362 bytes  sha256 c450f9310d956e90dcd4f9c711efd04aa6e1adfacd690d630c9d34988ed4fec2
-d  333,362 bytes  sha256 c450f9310d956e90dcd4f9c711efd04aa6e1adfacd690d630c9d34988ed4fec2
-identical: True
+equal: false
 ```
 
-`scripts/build-wheel.sh` derives the epoch from the commit's own author date, so the same commit
-yields the same bytes anywhere, and prints the digest. Through the script, twice:
+`SOURCE_DATE_EPOCH` alone therefore did not support the former "any machine" claim. The script
+also only warned about a dirty worktree, allowing uncommitted bytes to be stamped as a commit.
 
-```
-hawedit-0.1.0-py3-none-any.whl  333,362 bytes
-sha256  c450f9310d956e90dcd4f9c711efd04aa6e1adfacd690d630c9d34988ed4fec2
-SOURCE_DATE_EPOCH=1786296162 (commit 450684b)
-```
+## Current contract
 
-It warns when the tree is dirty — the wheel then is not the commit it is stamped with — and refuses
-outside a git checkout rather than falling back to `now`, which is the behaviour it exists to remove.
-That refusal is **not tested**: the script finds the repository from its own location, so reaching the
-branch means copying the tree out of git, which costs more than three fail-closed lines are worth.
+`scripts/build-wheel.sh` delegates to the same candidate builder used by `hawedit-release`:
 
-## Proof
+1. require one clean Git HEAD; dirty and untracked input is refused;
+2. export that exact Git object twice into separate immutable source directories;
+3. create a private builder and install `requirements/release-build.txt` using
+   `--require-hashes --only-binary=:all: --no-deps`;
+4. measure the builder Python, `pip`, `setuptools`, and lock SHA-256;
+5. build each pristine source independently with the commit epoch;
+6. require equal wheel names and SHA-256s and validate source/filename/METADATA identity;
+7. recheck the live checkout identity, then atomically publish a previously absent directory.
 
-Two builds are byte-identical, and — the part that keeps it honest — every ZIP entry is stamped with
-the commit's timestamp in UTC. Equality alone would also be produced by a build system that happened
-to be deterministic today, so the epoch could be deleted unnoticed; and a control asserting that
-setuptools is *non*-deterministic would break the day that stopped being true, which is a check whose
-cheapest fix is deleting it.
+The JSON result records the exact builder identity and artifact digest. Re-running against the same
+output refuses instead of replacing bytes already handed to another process.
 
-## The first version of this test was wrong, and only CI could see it
+The honest reproducibility statement is now narrow: two independent builds of one clean Git object,
+under the same measured Python and hash-locked frontend/backend contract, must be byte-identical.
+Different Python builds, operating systems, architectures, or future backend locks are distinct
+builder identities and are not asserted equal by this test.
 
-It compared the ZIP stamps against the raw epoch and passed here — because `450684b` happened to
-carry an **even** timestamp. The runner's commit was odd, and the test failed by exactly one second:
+## Executable proof
 
-```
-assert {(2026, 8, 9, 17, 43, 52)} == {(2026, 8, 9, 17, 43, 53)}
-```
-
-ZIP stores the second as `sec // 2`, so every stamp the format can hold is an even second —
-verified directly: writing `second=53` reads back `52`. The expectation now rounds down, which is
-not a tolerance but the value the format can represent; a clock-based mtime is wrong by far more
-than one second in every entry. The local gate was green on a tree whose HEAD is now odd, and the
-same test fails on the pre-fix expectation there too.
-
-Two further instrument errors on the way here, both mine, both caught by reading the raw failure:
-
-* `subprocess.run(["bash", …])` on Windows resolves **WSL's** `bash.exe`, which cannot open a `C:/…`
-  path and reported the script as "No such file or directory" while Git Bash ran it. Resolved by
-  path now, via `shutil.which`.
-* bash eats the backslashes in `C:\Users\…`, so the arguments go in POSIX form.
-
-## The document was stale in three places, and contradicted itself in one
-
-```
-revisions.json pinned repositories        6   report: "all five downloaded repositories"
-registry entries with a download source   6
-unpinned among them                       0   report: pyannote "deliberately unpinned", and
-                                               "a test asserts it is the only one"
-```
-
-`tests/test_models.py` asserts `unpinned == []` with no exemptions and its comment records that D-075
-removed the pyannote exemption as an error rather than a principle. Line 101 also called the model
-revisions "unpinned" while line 66 of the same document called them pinned — the correction landed in
-one place and not the other, which is the failure this project keeps finding in itself.
-
-Gate: `VERIFY OK — 1270 passed, 0 skipped`.
+`tests/test_release.py` proves local and production paths share the independent Git snapshots and
+locked builder, refuse dirty input before creating output, and publish write-once. `tests/test_build.py`
+runs the shell helper twice, compares the actual wheel bytes, checks every ZIP timestamp against the
+commit epoch, and verifies both reports name `pip==26.2.1`, `setuptools==84.0.0`, and one lock digest.

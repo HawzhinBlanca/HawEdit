@@ -156,51 +156,45 @@ class ModelReport:
 
     @property
     def alignment(self) -> dict[str, float | int] | None:
-        """§8.1's last metric, aggregated over the items that produced one.
+        """Aggregate §8.1 alignment accuracy over items that produced timing evidence.
 
-        Weighted by **matched words**, the way `_micro_cer` weights by reference characters: a
-        two-word item and a sixty-word one are not equal evidence about timing.
-
-        `coverage` travels with the errors because `AlignmentAccuracy` says why — "a tiny mean
-        error over two matched words out of sixty is not a good alignment, it is a bad
-        transcription" — and an aggregate that omitted it would hide exactly that.
-
-        Returns:
-            `None` when no scored item produced an alignment. Not a zero: **0.0 ms of error is
-            the best possible score**, and §8.1's last metric reading perfect because nobody
-            measured it is the failure this whole report is written against (D-131).
-
-        Raises:
-            ValueError: the items were scored at more than one tolerance. A within-tolerance
-                rate mixed across a 50 ms and a 200 ms bar is a number measured at neither,
-                which is `assert_one_hardware`'s objection one metric over.
+        Errors and the within-tolerance rate are weighted by matched words, just as CER is
+        weighted by reference characters. Coverage remains beside the errors so a tiny error
+        over a tiny matched subset cannot look like good alignment. Different tolerances are
+        incomparable and therefore refused rather than averaged.
         """
-        measured = [s.alignment for s in self.scores if s.alignment is not None]
+        measured = [score.alignment for score in self.scores if score.alignment is not None]
         if not measured:
             return None
-        tolerances = {a.tolerance_ms for a in measured}
-        if len(tolerances) > 1:
+        tolerances = {accuracy.tolerance_ms for accuracy in measured}
+        if len(tolerances) != 1:
             raise ValueError(
                 f"alignment was scored at {sorted(tolerances)} ms tolerances in one report. "
-                f"Averaging within-tolerance rates across different bars invents a rate that "
-                f"was measured at neither."
+                "Averaging rates across different thresholds invents a measurement."
             )
-        matched = sum(a.matched_words for a in measured)
-        reference = sum(a.reference_words for a in measured)
+        if any(
+            accuracy.matched_words <= 0
+            or accuracy.reference_words < accuracy.matched_words
+            or accuracy.reference_words <= 0
+            for accuracy in measured
+        ):
+            raise ValueError("alignment aggregate contains invalid matched/reference word counts")
+        matched = sum(accuracy.matched_words for accuracy in measured)
+        reference = sum(accuracy.reference_words for accuracy in measured)
         return {
             "matched_words": matched,
             "reference_words": reference,
             "coverage": matched / reference,
             "mean_onset_abs_error_ms": sum(
-                a.mean_onset_abs_error_ms * a.matched_words for a in measured
+                accuracy.mean_onset_abs_error_ms * accuracy.matched_words for accuracy in measured
             )
             / matched,
             "mean_offset_abs_error_ms": sum(
-                a.mean_offset_abs_error_ms * a.matched_words for a in measured
+                accuracy.mean_offset_abs_error_ms * accuracy.matched_words for accuracy in measured
             )
             / matched,
             "within_tolerance_rate": sum(
-                a.within_tolerance_rate * a.matched_words for a in measured
+                accuracy.within_tolerance_rate * accuracy.matched_words for accuracy in measured
             )
             / matched,
             "tolerance_ms": tolerances.pop(),
@@ -230,9 +224,6 @@ class ModelReport:
             "code_switch_error": self.code_switch_error,
             "mean_rtf": self.mean_rtf,
             "worst_rtf": self.worst_rtf,
-            # §8.1's last metric. It was computed for every scored item and dropped here:
-            # measured, `align` appeared nowhere in the written document while every item
-            # carried matched 2/2, onset 30.0 ms, within 1.00 at 50 ms. D-131.
             "alignment": self.alignment,
             "long_audio_failure_rate": self.long_audio_failure_rate,
             "peak_vram_bytes": self.peak_vram_bytes,

@@ -414,7 +414,7 @@ def assert_registry_excludes_nothing_it_registers(
     set-equality tests could not see it: they compare the *cells* each table self-declares, so
     a duplicate cell is invisible, and nothing related the two tables to each other. Two of
     §7's nine exclusions are CC-BY-NC-4.0 hard rejects, so the same hole routes work to a
-    NonCommercial model. D-082.
+    NonCommercial model. D-087.
 
     Raises:
         RegistryContradiction: any model id appears in both tables.

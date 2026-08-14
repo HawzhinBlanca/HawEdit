@@ -79,7 +79,7 @@ Verified in five directions:
 ```
 baseline FAILED=0
 CAUGHT   the probe never refuses (the defect)                          FAILED=3
-CAUGHT   empty output reads as no objection (the D-091 shape)          FAILED=2
+CAUGHT   empty output reads as no objection (the D-103 shape)          FAILED=2
 CAUGHT   every interpreter is refused (over-strict)                    FAILED=10
 CAUGHT   the interpreter's own answer is swallowed                     FAILED=1
 CAUGHT   the probe stops importing the project (any python passes)     FAILED=1
@@ -95,7 +95,7 @@ four iterations, the over-strict direction here was already covered** — the co
 explicit rather than newly protected, and it would be wrong to claim otherwise.
 
 The second mutation is worth naming on its own: `-n "$_probe" &&` is the exact shape of the defect
-fixed one iteration earlier in `corpus_import.py` (D-091), where a truthiness clause turned "said
+fixed one iteration earlier in `corpus_import.py` (D-103), where a truthiness clause turned "said
 nothing" into "raised no objection". Here it would have let `true.exe` — which says nothing — straight
 back through.
 
@@ -106,5 +106,13 @@ A **forged report** is a separate hole and is not addressed here. With a real `P
 accepts; the probe cannot see that, because the interpreter really is this project's. Recorded as the
 next item rather than folded in — it needs its own measurement, and it was reported by an agent, not
 yet reproduced by me.
+
+## Superseded by path-bound environment identity
+
+D-117 closes the later token-forging variant left open above. The gate no longer authenticates an
+interpreter by running it and trusting its output: only the path-identical checkout `.venv`
+interpreter is permitted, then `hawedit.environment` verifies installation root, distribution
+records, Python/project versions and active exact requirements. See
+`evidence/environment-identity.md`.
 
 Gate: `VERIFY OK — 1155 passed, 0 skipped`.

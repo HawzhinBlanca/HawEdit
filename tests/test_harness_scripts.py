@@ -37,7 +37,25 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER_FLIPPER = ROOT / "scripts" / "update-ledger.sh"
 STOP_HOOK = ROOT / "scripts" / "claude-stop-verify.sh"
-BASH = shutil.which("bash")
+
+
+def _native_bash() -> str | None:
+    """Choose Git Bash on Windows because WSL cannot open pytest's ``C:/...`` sandboxes."""
+    if os.name != "nt":
+        return shutil.which("bash")
+    candidates: list[Path] = []
+    if configured := os.environ.get("HAWEDIT_BASH"):
+        candidates.append(Path(configured))
+    if git := shutil.which("git"):
+        candidates.append(Path(git).resolve().parent.parent / "bin" / "bash.exe")
+    if program_files := os.environ.get("PROGRAMFILES"):
+        candidates.append(Path(program_files) / "Git" / "bin" / "bash.exe")
+    if local_app_data := os.environ.get("LOCALAPPDATA"):
+        candidates.append(Path(local_app_data) / "Programs" / "Git" / "bin" / "bash.exe")
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+
+
+BASH = _native_bash()
 
 needs_bash = pytest.mark.skipif(BASH is None, reason="needs bash")
 

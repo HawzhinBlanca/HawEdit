@@ -403,7 +403,7 @@ def test_an_unshifted_interval_extends_a_clip_on_evidence_from_elsewhere() -> No
 # Measured through the real `run_pipeline` on the fixture: a 1.60 s anchored sentence shipped as a
 # 4.10 s clip, attributed to `timelens_interval_end`. The runner's uncaptioned-speech guard catches
 # this only when unselected WORDS fall in the swallowed span — which is exactly what "applause
-# five minutes later" does not have. D-085.
+# five minutes later" does not have. D-092.
 
 
 def test_one_millisecond_of_overlap_currently_qualifies_as_relevant() -> None:

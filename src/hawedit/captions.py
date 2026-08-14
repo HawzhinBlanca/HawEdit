@@ -61,17 +61,9 @@ __all__ = [
     "wrap_caption_lines",
 ]
 
-# §4.3.4's list, plus the two heh forms, plus the two letters §4.1's normalizer *produces*.
-#
-# `ھ` U+06BE is not in §4.3's list but appears in ordinary Kurdish words — measured at 204
-# entries in the real lexicon (D-013) — and a font missing it renders boxes in words like دھۆک.
-#
-# `ک` U+06A9 and `ی` U+06CC are not in §4.3's list either, and they are the two characters
-# `normalize_sorani` converts Arabic `ك`/`ي` *into*: §4.1 calls them "the Farsi forms Kurdish
-# uses", so every normalized transcript is written in them. They are not the Arabic kaf and yeh
-# a font is likely to have — measured, the shipped Noto subset to drop only U+06A9 keeps U+0643
-# and passed this check, and rendering the golden line with it broke `کوردی` into a detached
-# fallback `ک` and `وردی`. D-133.
+# §4.3.4's list, the two heh forms, and the two letters §4.1 normalizes Arabic `ك`/`ي`
+# into. A font can contain Arabic kaf/yeh and still lack Kurdish `ک` U+06A9 / `ی` U+06CC;
+# measured, libass then split `کوردی` across fallback fonts (D-163).
 KURDISH_REQUIRED_GLYPHS: Final[frozenset[str]] = frozenset("ڕڵۆێچژپگە" + "هھ" + "کی")
 
 # Caption line width. Long RTL lines are hard to read on a vertical crop; this is a
@@ -82,8 +74,7 @@ _ASS_OVERRIDE = re.compile(r"[{}]")
 
 # The fixed Kurdish line §4.3.6's golden render uses. Chosen to exercise the joining
 # behaviour that `shaping=simple` gets wrong — `لە` and the initial form of `هەولێر` — plus
-# ڕ ۆ ژ ە ی ک from KURDISH_REQUIRED_GLYPHS. This comment said "ی from §4.3.4's required set"
-# while the set contained no ی, which is how D-133's gap stayed readable and unnoticed.
+# ڕ ۆ ژ ە ی from §4.3.4's required set.
 GOLDEN_CAPTION_TEXT: Final = "ڕۆژنامەوانی کوردی لە هەولێر."
 
 
@@ -207,46 +198,30 @@ def assert_fonts_dir_covers_kurdish(
     fonts_dir: Path,
     required: frozenset[str] = KURDISH_REQUIRED_GLYPHS,
 ) -> Path:
-    """Verify the directory libass will search holds a font that can draw Kurdish.
-
-    §4.3.4's check is per-file and had **no caller in `src/`** — it ran in one test, against one
-    hard-coded path, while `render_clip` burned whatever font sat in the `fonts_dir` it was
-    handed. Its own docstring says this "runs at build time rather than being trusted", and it
-    ran at neither build time nor the burn. This is the directory-level form, called where every
-    burn already routes, in the same place and for the same reason as `assert_rtl_stack`. D-133.
-
-    Returns the first covering font, so the caller can report which file answered.
-
-    Raises:
-        FontCoverageError: the directory has no font files, or none covers `required`. The
-            message names the closest candidate's missing characters, because "no usable font"
-            does not say which glyph to go and find.
-    """
-    candidates = sorted(
-        path for path in fonts_dir.glob("*") if path.suffix.lower() in (".ttf", ".otf", ".ttc")
-    )
+    """Return one font libass can use for every required glyph, or fail before encoding."""
+    try:
+        candidates = sorted(
+            path
+            for path in fonts_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".ttf", ".otf", ".ttc"}
+        )
+    except OSError as exc:
+        raise FontCoverageError(f"cannot inspect fonts directory {fonts_dir}: {exc}") from exc
     if not candidates:
         raise FontCoverageError(
-            f"{fonts_dir} holds no font file, so libass falls back to whatever the render host "
-            f"happens to have — §4.3.4 forbids relying on that. Kurdish captions would ship as "
-            f"boxes or in another font's shapes."
+            f"{fonts_dir} holds no font file; §4.3.4 forbids host font fallback"
         )
 
-    shortfalls: dict[Path, list[str]] = {}
+    failures: list[str] = []
     for candidate in candidates:
         try:
             assert_font_covers_kurdish(candidate, required=required)
-        except FontCoverageError as error:
-            shortfalls[candidate] = sorted(re.findall(r"U\+[0-9A-F]{4,6}", str(error)))
-            continue
-        return candidate
-
-    closest = min(shortfalls, key=lambda path: len(shortfalls[path]))
-    raise FontCoverageError(
-        f"no font in {fonts_dir} covers the Kurdish set. Closest is {closest.name}, missing "
-        f"{' '.join(shortfalls[closest])}. §4.3.4: missing glyphs render as boxes, and a box in "
-        f"a burned-in caption cannot be fixed after delivery."
-    )
+        except (FontCoverageError, OSError) as exc:
+            failures.append(f"{candidate.name}: {exc}")
+        else:
+            return candidate
+    detail = failures[0] if failures else "no readable candidate"
+    raise FontCoverageError(f"no font in {fonts_dir} covers Kurdish; closest failure: {detail}")
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -507,7 +482,7 @@ def build_ass(
 
 
 def find_ffmpeg() -> Path | None:
-    """Locate an ffmpeg binary: `HAWEDIT_FFMPEG`, then `.ffmpeg/`, then `PATH`.
+    """Locate ffmpeg: explicit path, source generation, installed-user generation, then PATH.
 
     Returns `None` rather than raising — the caller decides whether a missing ffmpeg is a
     skipped render test or a failed deploy check.
@@ -516,14 +491,22 @@ def find_ffmpeg() -> Path | None:
     from shutil import which
 
     configured = environ.get("HAWEDIT_FFMPEG")
-    if configured and Path(configured).exists():
+    if configured and Path(configured).is_file():
         return Path(configured)
     # Where scripts/fetch-ffmpeg.sh puts it, so the readiness report and the gate agree
     # without anyone having to remember an environment variable.
     vendored = Path(__file__).resolve().parents[2] / ".ffmpeg"
     for name in ("ffmpeg", "ffmpeg.exe"):
-        if (vendored / name).exists():
+        if (vendored / name).is_file():
             return vendored / name
+    # A wheel has no checkout-local scripts directory. hawedit-ffmpeg-setup installs into a
+    # per-user cache and this shared resolver makes the next process discover it automatically.
+    from hawedit.ffmpeg_setup import default_ffmpeg_dir
+
+    installed = default_ffmpeg_dir()
+    for name in ("ffmpeg", "ffmpeg.exe"):
+        if (installed / name).is_file():
+            return installed / name
     located = which("ffmpeg")
     return Path(located) if located else None
 

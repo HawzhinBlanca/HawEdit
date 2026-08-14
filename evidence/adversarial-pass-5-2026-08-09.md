@@ -1,9 +1,9 @@
-# Adversarial pass #5 — four DONE rows attacked, twenty-one false counts found
+# Adversarial pass #5 â€” four DONE rows attacked, twenty-one false counts found
 
 > Run 2026-08-09 on hawapc01 against `2bfde57`, against a green 1,167 baseline.
 > Done by hand, one mutation at a time, rather than by a fleet of agents.
 
-## Part 1 — revert the behaviour, check the test goes red
+## Part 1 â€” revert the behaviour, check the test goes red
 
 Four DONE rows, eight claims, each reverted alone in the source and reverted back before the next.
 Every run covered `test_asr`, `test_alignment`, `test_transcripts`, `test_escalation`,
@@ -20,21 +20,21 @@ baseline FAILED=0
               -> test_measurements_from_different_hardware_refuse_to_be_compared
 [M0.7] RED  a failed item aborts the run instead of being recorded          (3 tests)
 [M0.7] RED  the measurement stops naming its adapter                        (2 tests)
-[M1.5] RED  duration is added to the escalation decision (§3's prohibition)
+[M1.5] RED  duration is added to the escalation decision (Â§3's prohibition)
               -> test_duration_does_not_influence_the_decision
 [M2.5] RED  the merge widens spans to the union of both paths               (2 tests)
 [M2.5] RED  the merge intersects: a one-path candidate is dropped          (17 tests)
 
-8/8 — all four rows survived the attack. unprotected claims: 0
+8/8 â€” all four rows survived the attack. unprotected claims: 0
 ```
 
 One suspicion I raised and then refuted myself: `RawTranscript.__post_init__` checks
-`self.asr.aligner is None`, which is presence rather than identity, and looked like the D-091
-truthiness shape. It is not — `AsrProvenance.__post_init__` calls `assert_ctc_viterbi` on any
+`self.asr.aligner is None`, which is presence rather than identity, and looked like the D-103
+truthiness shape. It is not â€” `AsrProvenance.__post_init__` calls `assert_ctc_viterbi` on any
 non-`None` aligner, so a forbidden aligner is refused one layer earlier and the two checks compose.
 Measured before writing it down.
 
-## Part 2 — do the docs still match the code
+## Part 2 â€” do the docs still match the code
 
 They did not. `PROGRESS.md` carried **30 standing test counts**, and **21 of them were false**:
 
@@ -57,12 +57,12 @@ M3.6    test_delivery               25      26   STALE by +1
 M6.3    test_video_grounding        20      19   STALE by -1
 M2.2    boundary / clip          31/20   38/27   STALE (attached to src/)
 M2.8    credentials / gemini     20/26   21/33   STALE (attached to src/)
-M0.1    test_gate + evidence     29/17   25/14   STALE — written by this loop yesterday
+M0.1    test_gate + evidence     29/17   25/14   STALE â€” written by this loop yesterday
 ```
 
 Two of these deserve naming:
 
-* **M6.3 drifted *downward*** — the direction that means "a test disappeared". It did not: the file
+* **M6.3 drifted *downward*** â€” the direction that means "a test disappeared". It did not: the file
   has had 19 since the commit that wrote the claim (`674b43b`), so the number was miscounted on the
   day it was recorded. Checked before reporting, because a deleted test would have been a much
   larger finding than a stale number.
@@ -72,8 +72,8 @@ Two of these deserve naming:
 
 ### The fix, and why dropping rather than enforcing
 
-All 30 removed; the file references stay. This generalises a decision already recorded twice —
-D-083 and D-084 each say "the stale count is dropped rather than restated" — rather than inventing
+All 30 removed; the file references stay. This generalises a decision already recorded twice â€”
+D-083 and D-084 each say "the stale count is dropped rather than restated" â€” rather than inventing
 one.
 
 The alternative, enforcing every count against `--collect-only`, was rejected: it makes each new
@@ -82,7 +82,7 @@ red on the other agent's commits as readily as on mine. The count is also the on
 reader cannot act on, and `scripts/test-count.floor` is already the instrument that notices tests
 disappearing.
 
-Four **quoted historical** counts survive untouched — the "the stale `(15 tests)` count is dropped
+Four **quoted historical** counts survive untouched â€” the "the stale `(15 tests)` count is dropped
 rather than restated" sentences. Those record a past edit rather than claiming a present fact, which
 is the same distinction `test_every_test_count_in_the_audit_is_dated` already draws.
 
@@ -102,4 +102,4 @@ The third mutation is the one that matters: the check refuses a count that is *c
 because correctness today is not the property at issue. The control proves it does not simply ban
 the digits.
 
-Gate: `VERIFY OK — 1168 passed, 0 skipped`.
+Gate: `VERIFY OK â€” 1168 passed, 0 skipped`.

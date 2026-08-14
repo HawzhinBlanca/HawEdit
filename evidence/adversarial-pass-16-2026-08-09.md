@@ -1,93 +1,36 @@
-# Adversarial pass #16 — the end-to-end runner
+# Adversarial pass #16 - the end-to-end runner
 
-> Run 2026-08-09 on hawapc01 against `7269dd0`.
-> Target: **M2.7**, DONE — 9,594 characters of claims, the largest surface never attacked as a row.
+Run 2026-08-09 against upstream `7269dd0`; semantically integrated into the readiness branch as
+D-159 because D-129 was already assigned there.
 
-Several of its amendments were mutation-audited when they landed (D-070, D-071, D-072, D-110, D-111,
-D-115, D-116). The mutations below target the *original* D-032 claims nobody has re-attacked.
+The pass targeted seven original M2.7 mechanisms. Exit-code refusal in both directions and the
+visual window plan's dependence on Stage 0 cuts were already mutation-sensitive. Four mechanisms
+were correct but under-proved.
 
-```
-CAUGHT  an incomplete run exits 0
-CAUGHT  an incomplete run exits 2, the code a refusal uses
-MISSED  a run with skipped stages calls itself complete
-MISSED  a run with no visual windows calls itself complete
-MISSED  a run with no candidates calls itself complete
-MISSED  Stage 5 fuses against cuts from nowhere on this video
-CAUGHT  the window plan ignores the cuts Stage 0 found
+## The complete branch had never run
 
-3/7
-```
+`PipelineRun.complete` drives the CLI exit code and has eleven conjuncts. Before this pass, even the
+largest end-to-end fixture was incomplete: it had no candidates and reported visual/discovery
+skips. Replacing `not self.skipped()`, `bool(self.visual_windows)`, or `bool(self.candidates)` with
+`True` therefore left every test green.
 
-## `complete` was never True
+The new module fixture uses the real runner and media path with injected discovery, visual and judge
+seams. Ingest, transcript normalization, indexing, visual planning, discovery, boundary fusion,
+editorial projection, render and delivery all produce evidence. The control requires
+`complete is True` and no skips; three tests then remove one requirement at a time and require
+`complete is False`.
 
-`complete` is what the exit code derives from and it has eleven conjuncts. Three could each become
-`True` with 1,302 tests green. The cause is not a missing assertion here or there:
+## Stage 5 cut provenance
 
-```
-full_run.complete   False
-  skipped           ['visual_index', 'discovery']
-  ingest OK   transcript OK   index OK   visual_windows OK
-  candidates NO
-  boundary OK   clip OK   editorial OK   render OK   delivery OK
-```
+On this fixture, natural silence extends to the end of the file and wins over every shot-cut
+candidate. Asserting the final boundary label therefore cannot prove cut wiring. The new test
+records the `BoundaryInputs` passed through the real runner and requires their `shot_cuts_ms` to
+equal the cuts in the same run's Stage 0 `IngestResult`.
 
-Even the six-stage `full_run` is incomplete, so **no test in the suite ever reached the True branch**,
-and a conjunct was indistinguishable from a no-op.
+## Stale count corrected
 
-The suite now has one:
+The original ledger said a bare run named four blocked stages. The current pipeline names eight:
+transcript, index, visual index, discovery, editorial, boundary, render and delivery. The count grew
+as later stages were composed and is no longer stated as four.
 
-```
-run_pipeline(… discover=…, visual_composer=…, judge=…)
-  complete   True
-  skipped    ()
-  candidates 1
-```
-
-Built through the real runner rather than by fabricating `RenderResult` and `Delivery`, so it cannot
-drift from the product. Each conjunct is then removed from that run with `replace()`.
-
-## Eight, not four
-
-```
-bare run exit code   1                          the cell says 1 — correct
-blocked stages       8  ['transcript', 'index', 'visual_index', 'discovery',
-                         'editorial', 'boundary', 'render', 'delivery']
-the cell says        "the four blocked stages"
-```
-
-True when D-032 wrote it. Stage 2's visual half, boundary, render and delivery arrived later. The same
-class as M1.6's "five repositories" — a count nobody re-derived.
-
-## Stage 5's cuts, and why the assertion is on the input
-
-§3 Stage 5 takes the **latest** of its out-point signals. On the only media here, natural silence is
-the end of the VAD speech region — the whole file. Through the real runner, with an anchor 300 ms
-before the 2800 ms cut:
-
-```
-anchor          2000..2500
-final           1834..4162
-out_extended_by natural_silence
-```
-
-`fuse_boundary` on its own does distinguish — `(1400, 2800)` gives 2800/`shot_cut`, `(9000, 9500)`
-gives 2700/`tail` — but through the runner natural silence is always later, so the cut cannot decide
-the result on this fixture. The test therefore asserts that what Stage 5 was handed equals what
-Stage 0 measured off the file: two values from different places, not a request echoed back.
-
-## Two of my own mistakes, caught by controls
-
-The "constant cuts" mutation first used `(1_400, 2_800)` — the fixture's actual cuts — so it could not
-change behaviour and its SURVIVED measured nothing. With `(9_000, 9_500)` it is a real survivor.
-
-And the first three `complete` tests were built on a synthetic run that was already incomplete for
-unrelated reasons, so each removal proved nothing. The control failed, which is the only reason I
-found out. A control that cannot fail is not a control.
-
-```
-after: 7/7
-```
-
-No production code changed.
-
-Gate: `VERIFY OK — 1307 passed, 0 skipped`.
+No production code changed. The seven targeted mechanisms now have discriminating controls.

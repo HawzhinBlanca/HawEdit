@@ -146,7 +146,7 @@ def _normalized_annotation(value: str, kind: str) -> str:
     so a blank annotation counted as a name that **survived** and scored 0.0, the same value as a
     name transcribed perfectly. Measured: `CorpusItem(..., named_entities=("",))` constructs
     without complaint and scores 0.0, so a corpus item annotated for named entities with a blank
-    label silently inflated §8.1's accuracy. D-083.
+    label silently inflated §8.1's accuracy. D-089.
 
     Raises:
         ValueError: the span is empty after normalization — a corpus defect, not a score.

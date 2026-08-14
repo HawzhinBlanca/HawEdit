@@ -91,7 +91,7 @@ Every number above is now recomputed from KLPT's lexicon by
 must close: `lexicon_entries - waw_initial_words == constructible_joined_forms`, and
 `recovered + not_recovered == constructible`. The recall percentage is recomputed too.
 
-> **Corrected 2026-08-09 (D-089).** `waw_initial_words` read **491**; the lexicon has **504**, and
+> **Corrected 2026-08-09 (D-099).** `waw_initial_words` read **491**; the lexicon has **504**, and
 > this file's own `constructible_joined_forms: 24390` proved it — 24 894 − 504 = 24 390, whereas
 > 24 894 − 491 = 24 403. The old version of the test bounded three of the seven numbers
 > (`lexicon_entries > 20_000`, `dictionary_words_damaged == 0`, and the unsplittable list against

@@ -53,6 +53,7 @@ from hawedit.transcripts import Word
 
 FONT = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoNaskhArabic-Regular.ttf"
 
+
 FULL_BUILDCONF = """
   configuration:
     --prefix=/usr
@@ -62,6 +63,7 @@ FULL_BUILDCONF = """
     --enable-libharfbuzz
     --enable-libx264
 """
+
 
 LDD_OUTPUT = """
     libass.so.9 => /usr/lib/libass.so.9
@@ -489,7 +491,10 @@ def test_a_missing_reference_says_how_to_generate_it(tmp_path: Path) -> None:
 
 # --- §4.3.6 the golden render, against a real ffmpeg -------------------------------------
 
+
 GOLDEN = Path(__file__).resolve().parent / "golden" / "kurdish-caption.png"
+
+
 FONTS_DIR = FONT.parent
 
 
@@ -853,7 +858,7 @@ def test_a_fonts_directory_whose_only_font_cannot_draw_kurdish_is_refused(
     tmp_path: Path,
 ) -> None:
     maimed = _font_without(tmp_path, 0x06A9)
-    with pytest.raises(FontCoverageError, match=r"Closest is .*U\+06A9"):
+    with pytest.raises(FontCoverageError, match=r"closest failure: .*U\+06A9"):
         assert_fonts_dir_covers_kurdish(maimed.parent)
 
 
@@ -884,6 +889,7 @@ def test_the_burn_verifies_the_font_directory_it_was_handed() -> None:
 
 
 # --- D-167: what a break inside a surface form costs, in pixels ------------------------------
+
 
 _TWO_WORDS = ("یەکەم", "دووەم")
 
@@ -947,3 +953,35 @@ def test_a_break_inside_a_caption_line_drops_everything_after_it(tmp_path: Path)
         "the cue-time readback disagrees with the intact file, which would have made this "
         "detectable without looking at pixels — it did not, which is why the guard is upstream"
     )
+
+
+def test_the_required_set_contains_kurdish_letters_the_normalizer_produces() -> None:
+    from hawedit.normalize import normalize_sorani
+
+    emitted = {
+        character
+        for character in normalize_sorani(GOLDEN_CAPTION_TEXT + " كوردي")
+        if unicodedata.category(character).startswith("L") and ord(character) > 0x0660
+    }
+    assert emitted <= KURDISH_REQUIRED_GLYPHS, sorted(emitted - KURDISH_REQUIRED_GLYPHS)
+
+
+def test_the_required_set_explicitly_includes_kurdish_keheh_and_yeh() -> None:
+    assert {"ک", "ی"} <= KURDISH_REQUIRED_GLYPHS
+
+
+def test_the_shipped_fonts_directory_has_a_covering_font() -> None:
+    assert assert_fonts_dir_covers_kurdish(FONT.parent) == FONT
+
+
+def test_an_empty_or_noncovering_fonts_directory_is_refused(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(FontCoverageError, match="no font file"):
+        assert_fonts_dir_covers_kurdish(empty)
+
+    only_naskh = tmp_path / "only-naskh"
+    only_naskh.mkdir()
+    (only_naskh / FONT.name).write_bytes(FONT.read_bytes())
+    with pytest.raises(FontCoverageError, match=r"U\+1F600"):
+        assert_fonts_dir_covers_kurdish(only_naskh, required=frozenset({"😀"}))

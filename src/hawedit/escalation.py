@@ -95,20 +95,10 @@ def materially_disagree(
 
 
 def scores_from_transcript(transcript: RawTranscript) -> tuple[SegmentScore, ...]:
-    """The §3 Stage 1 evidence a finished transcript carries, as escalation input.
+    """Build §3 validator-routing scores from the evidence persisted by Stage 1.
 
-    This is the missing link that left `select_for_validation` with no caller in `src/`: D-109
-    put each segment's `mean_logprob` in the artifact, D-135 put both hypotheses beside it, and
-    this turns them into scores. Reading from the artifact rather than from live model objects is
-    deliberate — the rule can then be re-run against a transcript from disk, which is how a
-    threshold gets tuned (§8.2) without paying for inference again.
-
-    Segments carrying no CTC hypothesis are still scored: their confidence quartile is real, and
-    `materially_disagree` treats one empty side as a disagreement, which is the honest reading of
-    "one model produced nothing here".
-
-    `segment_id` is the segment's own span on the media clock, so a decision points at audio
-    rather than at a list position that changes when a region fails to align (D-103).
+    The media-clock span is the stable segment identity. Reading the two hypotheses and
+    confidence from the canonical artifact makes the policy repeatable without rerunning ASR.
     """
     return tuple(
         SegmentScore(

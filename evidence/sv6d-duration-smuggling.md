@@ -33,7 +33,7 @@ the window the cited tests use:
 
 Those three windows are what `plan_scene_windows` produces for the only media in this checkout. The
 cited tests used 300000..312000 — the one distance from zero where 1000 ms falls outside — so the
-rule bit exactly where it was tested and nowhere the pipeline runs. Same shape as D-086 one
+rule bit exactly where it was tested and nowhere the pipeline runs. Same shape as D-095 one
 iteration earlier: a test that was correct and blind because its fixture happened to satisfy it.
 
 ## The fix, and why it needed no threshold

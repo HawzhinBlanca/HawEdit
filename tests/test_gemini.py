@@ -10,7 +10,7 @@ integration fails while looking like it worked:
 * the model answers in English, and every type downstream accepts a `str`;
 * the model puts the payoff outside the clip, and the punchline ships past the out point;
 * the model omits a field, and a default fills in a judgement nobody made;
-* a 400 is retried three times, billing three times for one malformed request;
+* an ambiguous network failure replays a billed non-idempotent generation;
 * a confidential transcript is uploaded before §3's governance box is answered.
 
 Each of those is a test below. The last one is the only one with legal consequences.
@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
+import urllib.request
 from collections.abc import Callable, Mapping
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -32,6 +35,7 @@ from hawedit.gemini import (
     Governance,
     JudgeUnusable,
     VertexGeminiJudge,
+    adc_access_token,
     count_tokens,
 )
 from hawedit.judge import (
@@ -90,7 +94,7 @@ def verdict_fields(**overrides: Any) -> dict[str, Any]:
 class Api:
     """A recording transport that answers countTokens and generateContent."""
 
-    def __init__(self, tokens: int = 1_200, **overrides: Any) -> None:
+    def __init__(self, tokens: object = 1_200, **overrides: Any) -> None:
         self.tokens = tokens
         self.fields = verdict_fields(**overrides)
         self.calls: list[str] = []
@@ -231,6 +235,29 @@ def test_a_score_out_of_range_is_refused() -> None:
         a_judge(Api(hook_score=1.7)).judge(a_request())
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("hook_score", True),
+        ("meaning_fidelity", "0.94"),
+        ("misleading_edit_risk", float("nan")),
+        ("cultural_landing", float("inf")),
+        ("payoff_at_ms", True),
+    ),
+)
+def test_schema_invalid_numeric_verdict_fields_are_refused(field: str, value: object) -> None:
+    with pytest.raises(JudgeUnusable, match=field):
+        a_judge(Api(**{field: value})).judge(a_request())
+
+
+@pytest.mark.parametrize("tokens", (True, -1, "5", 1.5))
+def test_invalid_token_counts_are_refused_before_generation(tokens: object) -> None:
+    api = Api(tokens=tokens)
+    with pytest.raises(GeminiUnavailable, match="non-negative JSON integer"):
+        a_judge(api).judge(a_request())
+    assert len(api.calls) == 1 and api.calls[0].endswith("countTokens")
+
+
 def test_an_omitted_field_is_named_rather_than_defaulted() -> None:
     """A default here would invent a judgement nobody made."""
     api = Api()
@@ -247,6 +274,29 @@ def test_a_non_json_response_is_refused() -> None:
 
     with pytest.raises(JudgeUnusable, match="not JSON"):
         a_judge(transport).judge(a_request())
+
+
+@pytest.mark.parametrize("payload", (None, True, 1, []))
+def test_a_verdict_container_must_be_a_json_object(payload: object) -> None:
+    api = Api()
+    api.fields = payload  # type: ignore[assignment]
+    with pytest.raises(JudgeUnusable, match="JSON object"):
+        a_judge(api).judge(a_request())
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("title_ckb", {"کورد": "garbage"}),
+        ("description_ckb", ["کورد"]),
+        ("hashtags_ckb", [{"کورد": 1}]),
+    ),
+)
+def test_structured_values_cannot_be_stringified_into_editorial_text(
+    field: str, value: object
+) -> None:
+    with pytest.raises(JudgeUnusable, match=field):
+        a_judge(Api(**{field: value})).judge(a_request())
 
 
 def test_an_empty_response_is_refused() -> None:
@@ -292,7 +342,7 @@ def test_a_malformed_request_is_not_retried() -> None:
     assert sum(1 for c in calls if "generateContent" in c) == 1
 
 
-def test_a_rate_limit_is_retried_and_then_given_up_on() -> None:
+def test_a_rate_limit_is_not_retried_without_provider_idempotency() -> None:
     calls: list[str] = []
 
     def transport(url: str, body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
@@ -301,12 +351,12 @@ def test_a_rate_limit_is_retried_and_then_given_up_on() -> None:
             return 200, json.dumps({"totalTokens": 10})
         return 429, json.dumps({"error": {"message": "Resource exhausted"}})
 
-    with pytest.raises(GeminiUnavailable, match="3 attempts"):
+    with pytest.raises(GeminiUnavailable, match="was not retried"):
         a_judge(transport).judge(a_request())
-    assert sum(1 for c in calls if "generateContent" in c) == 3
+    assert sum(1 for c in calls if "generateContent" in c) == 1
 
 
-def test_a_transient_failure_that_clears_produces_a_verdict() -> None:
+def test_a_transient_generation_failure_is_not_replayed_even_if_next_call_would_pass() -> None:
     state = {"n": 0}
 
     def transport(url: str, body: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
@@ -317,7 +367,9 @@ def test_a_transient_failure_that_clears_produces_a_verdict() -> None:
             return 503, json.dumps({"error": {"message": "unavailable"}})
         return Api()(url, body, headers)
 
-    assert a_judge(transport).judge(a_request()).candidate_id == "c1"
+    with pytest.raises(GeminiUnavailable, match="was not retried"):
+        a_judge(transport).judge(a_request())
+    assert state["n"] == 1
 
 
 def test_an_api_error_message_never_contains_the_key() -> None:
@@ -331,6 +383,44 @@ def test_an_api_error_message_never_contains_the_key() -> None:
     with pytest.raises(GeminiUnavailable) as caught:
         a_judge(transport).judge(a_request())
     assert KEY not in str(caught.value)
+
+
+def test_structured_provider_error_is_printable_and_bounded() -> None:
+    def transport(_url: str, _body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
+        return 400, json.dumps({"error": {"message": "bad\x00\n" + "E" * 1_000_000}})
+
+    with pytest.raises(GeminiUnavailable) as caught:
+        GeminiJudge(api_key=KEY, transport=transport).count_parts([{"text": "hello"}])
+    detail = str(caught.value)
+    assert len(detail) < 600
+    assert "\x00" not in detail and "\n" not in detail
+    assert "E" * 512 not in detail
+    assert detail.endswith("...")
+
+
+def test_https_refuses_oversized_response_before_json_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OversizedResponse:
+        status = 200
+
+        def __enter__(self) -> OversizedResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            assert size == (1 << 20) + 1
+            return b"x" * size
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: OversizedResponse(),
+    )
+    with pytest.raises(GeminiUnavailable, match="exceeded 1048576 bytes"):
+        GeminiJudge(api_key=KEY).count_parts([{"text": "hello"}])
 
 
 # --- §3's governance box, as a check rather than a paragraph -------------------------------
@@ -393,6 +483,62 @@ def test_confidential_vertex_route_uses_adc_bearer_and_multimodal_payload() -> N
     assert all("key=" not in url for url in api.urls)
 
 
+@pytest.mark.parametrize("failure", [PermissionError("denied"), UnicodeError("bad token")])
+def test_vertex_token_provider_io_failures_are_normalized_before_transport(
+    failure: Exception,
+) -> None:
+    api = Api()
+
+    def fail() -> str:
+        raise failure
+
+    judge = VertexGeminiJudge("news-project", token_provider=fail, transport=api)
+    with pytest.raises(GeminiUnavailable, match="no request was sent"):
+        judge.count_parts([{"text": "hello"}])
+    assert api.calls == []
+
+
+def test_vertex_token_provider_does_not_hide_programmer_failures() -> None:
+    def fail() -> str:
+        raise AssertionError("control")
+
+    with pytest.raises(AssertionError, match="control"):
+        VertexGeminiJudge("news-project", token_provider=fail, transport=Api()).count_parts(
+            [{"text": "hello"}]
+        )
+
+
+def test_adc_auth_operational_failure_is_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeGoogleAuthError(Exception):
+        pass
+
+    google = ModuleType("google")
+    auth = ModuleType("google.auth")
+    exceptions = ModuleType("google.auth.exceptions")
+    transport = ModuleType("google.auth.transport")
+    requests = ModuleType("google.auth.transport.requests")
+
+    def fail_default(*, scopes: tuple[str, ...]) -> tuple[object, None]:
+        assert scopes == ("https://www.googleapis.com/auth/cloud-platform",)
+        raise FakeGoogleAuthError("provider detail must not escape")
+
+    class Request:
+        pass
+
+    auth.default = fail_default  # type: ignore[attr-defined]
+    exceptions.GoogleAuthError = FakeGoogleAuthError  # type: ignore[attr-defined]
+    requests.Request = Request  # type: ignore[attr-defined]
+    google.auth = auth  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.auth", auth)
+    monkeypatch.setitem(sys.modules, "google.auth.exceptions", exceptions)
+    monkeypatch.setitem(sys.modules, "google.auth.transport", transport)
+    monkeypatch.setitem(sys.modules, "google.auth.transport.requests", requests)
+
+    with pytest.raises(GeminiUnavailable, match="no request was sent"):
+        adc_access_token()
+
+
 def test_regional_vertex_route_uses_the_regional_endpoint() -> None:
     judge = VertexGeminiJudge(
         "news-project",
@@ -413,63 +559,12 @@ def test_vertex_resource_ids_cannot_inject_a_different_url_path() -> None:
 # --- §7, before anything is billed ---------------------------------------------------------
 
 
-def test_the_shadow_cannot_be_constructed_as_the_judge() -> None:
-    """§3 Stage 4: gemini-3.1-pro is "evaluated, not routed"."""
-    from hawedit.judge import NotRoutable
-
-    with pytest.raises(NotRoutable):
-        a_judge(Api(), model_id="gemini-3.1-pro")
-
-
-def test_a_model_outside_section_7_cannot_be_constructed() -> None:
-    with pytest.raises((WrongRole, LookupError, ValueError)):
-        a_judge(Api(), model_id="gpt-4o")
-
-
-def test_a_missing_key_names_the_panel_that_fixes_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.setattr("hawedit.gemini.read_credential", lambda _n=None: None)
-    with pytest.raises(GeminiUnavailable, match="hawedit.credentials"):
-        GeminiJudge(api_key=None, transport=Api())
-
-
-# --- countTokens ----------------------------------------------------------------------------
-
-
-def test_count_tokens_returns_the_apis_number() -> None:
-    assert count_tokens("text", KEY, transport=Api(tokens=4_242)) == 4_242
-
-
-def test_count_tokens_failure_is_not_silently_zero() -> None:
-    """A zero would read as "this request is free and definitely under the ceiling"."""
-
-    def failing(_url: str, _body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
-        return 500, "{}"
-
-    with pytest.raises(GeminiUnavailable, match="countTokens"):
-        count_tokens("text", KEY, transport=failing)
-
-
-# --- §7, held for every judge a caller can build, not only the first one ---------------------
-
-
 def _concrete_judges() -> dict[str, Callable[..., GeminiJudge]]:
-    """Every judge class a caller can construct, with the least each one needs to exist.
+    """Every constructible judge, including its independent governance entry point.
 
-    `governance` and `transport` are optional so the same enumeration can be built under a
-    confidential configuration §3 forbids, with a transport that records what reached the wire.
-    §3's governance box has *two* gates — `assert_permits_upload` for the Developer API and
-    `assert_permits_vertex` for the confidential Vertex route — and only the first had refusal
-    tests, because the only Vertex judge ever given a `Governance` was the permitted one. D-148.
-
-    `VertexGeminiJudge` does not call `super().__init__` — it reimplements it, because Vertex
-    authenticates with ADC and has no API key to read. So `GeminiJudge.__init__`'s §7 check is
-    *copied* into the subclass rather than inherited, and a copy is what a test stops noticing.
-    Measured (adversarial pass #22): deleting `route(self)` from `VertexGeminiJudge.__init__`
-    left this whole suite green, and `VertexGeminiJudge("proj", model_id="gemini-3.1-pro")` then
-    built a judge whose first request would go to
-    `.../projects/proj/locations/global/publishers/google/models/gemini-3.1-pro:generateContent`
-    — the confidential route, billed, using the model §3 Stage 4 marks "evaluated, not routed".
+    Optional governance and transport parameters let the same class-set enumeration exercise the
+    confidential states §3 forbids. Vertex owns separate constructor wiring and a separate ZDR
+    gate, so Developer-API-only tests cannot hold this boundary. D-179.
     """
 
     def gemini(
@@ -502,6 +597,7 @@ def _concrete_judges() -> dict[str, Callable[..., GeminiJudge]]:
 
 
 def _judge_class_names() -> set[str]:
+    """GeminiJudge and every transitive production subclass currently loaded."""
     seen = {GeminiJudge}
     frontier = [GeminiJudge]
     while frontier:
@@ -512,43 +608,31 @@ def _judge_class_names() -> set[str]:
     return {cls.__name__ for cls in seen}
 
 
-def test_every_constructible_judge_is_covered_here() -> None:
-    """Bidirectional, so a new subclass fails until someone states how it is built.
-
-    The §7 check lives in each `__init__`. A subclass that forgets it is the whole failure —
-    naming the classes in one place is what makes forgetting visible.
-    """
+def test_every_constructible_judge_has_a_routing_constructor_here() -> None:
+    """A new subclass fails until its independent §7 constructor path is held."""
     covered = set(_concrete_judges())
-    assert _judge_class_names() == covered, (
-        f"judge classes with no constructor in this suite: "
-        f"{sorted(_judge_class_names() - covered)}; constructors naming a class that no longer "
-        f"exists: {sorted(covered - _judge_class_names())}"
+    actual = _judge_class_names()
+    assert actual == covered, (
+        f"judge classes without routing coverage: {sorted(actual - covered)}; "
+        f"stale constructors: {sorted(covered - actual)}"
     )
 
 
 @pytest.mark.parametrize("name", sorted(_concrete_judges()))
-def test_no_judge_can_be_built_as_the_shadow(name: str) -> None:
+def test_no_concrete_judge_can_be_built_as_the_shadow(name: str) -> None:
     with pytest.raises(NotRoutable):
         _concrete_judges()[name](JUDGE_SHADOW)
 
 
 @pytest.mark.parametrize("name", sorted(_concrete_judges()))
-def test_every_judge_is_built_with_the_pinned_incumbent(name: str) -> None:
-    """The control: a constructor that refused *everything* would pass the test above."""
+def test_every_concrete_judge_accepts_the_pinned_incumbent(name: str) -> None:
+    """Control: a constructor that rejected every model would pass the shadow test alone."""
     judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE)
     assert judge.model_id == KURDISH_EDITORIAL_JUDGE
     assert KURDISH_EDITORIAL_JUDGE in judge._url("generateContent")
 
 
-# --- D-148: §3's governance box has two gates, and only one of them was held ------------------
-#
-# `Governance.assert_permits_upload` guards the Gemini Developer API and has three refusal tests.
-# `Governance.assert_permits_vertex` guards the *confidential* Vertex route — the one §3 reserves
-# for material that must not train a model — and had none: the only `VertexGeminiJudge` ever built
-# with a `Governance` is the fully permitted triple, which asserts the call succeeds and is green
-# whether the gate exists or not. Measured by neutering each gate in turn against a green
-# baseline: `evidence/the-confidential-routes-zdr-gate-reddened-nothing.md`.
-# =========================================================================================
+# --- D-179: every judge and public entry point holds confidential ZDR --------------------------
 
 
 _CONFIDENTIAL_WITHOUT_A_VALID_CONFIRMATION: tuple[tuple[str, Governance], ...] = (
@@ -573,49 +657,39 @@ _CONFIDENTIAL_WITHOUT_A_VALID_CONFIRMATION: tuple[tuple[str, Governance], ...] =
 def test_no_judge_sends_confidential_material_without_an_attributed_confirmation(
     name: str, label: str, governance: Governance
 ) -> None:
-    """Every judge a caller can build, under every confidential state §3 forbids.
-
-    Asserted on the transport, not on the exception: a gate that raised *after* the upload would
-    satisfy `pytest.raises` and still have put 100% of a client's Kurdish transcript on the wire.
-    The recorded URLs are the artifact.
-    """
+    """Assert on the wire, because raising after upload would still disclose client material."""
     api = Api()
     judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE, governance, api)
+
     with pytest.raises(GeminiUnavailable):
         judge.judge(a_request())
+
     assert api.urls == [], f"{name} sent confidential material anyway — {label}"
 
 
 @pytest.mark.parametrize("name", sorted(_concrete_judges()))
 def test_every_judge_still_sends_material_that_needs_no_confirmation(name: str) -> None:
-    """The control, and it has to be one: a governance gate that refused *everything* — or a
-    transport that never sent anything — passes every test above.
-
-    So this requires the same constructor to reach the API and come back with a verdict.
-    """
+    """Control: a gate or transport that refused everything would pass every refusal above."""
     api = Api()
     judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE, None, api)
+
     assert judge.judge(a_request()).candidate_id == "c1"
     assert api.urls, f"{name} sent nothing at all, so the refusals above measure nothing"
 
 
 def test_an_attributed_confirmation_does_not_substitute_for_configuring_zdr() -> None:
-    """Naming who approved it is not the same as turning it on.
-
-    Found by mutating `assert_permits_vertex`: deleting the zero-data-retention rule entirely
-    left the suite green, because every forbidden state in the table above also lacked an
-    attribution, so the *second* rule caught them all. This is the state that separates them —
-    somebody is recorded as having confirmed, and ZDR is still not configured.
-    """
+    """Attribution and actual ZDR configuration are independent required facts."""
     api = Api()
     judge = _concrete_judges()["VertexGeminiJudge"](
         KURDISH_EDITORIAL_JUDGE,
         Governance(confidential=True, zero_data_retention=False, confirmed_by="Hawa"),
         api,
     )
+
     with pytest.raises(GeminiUnavailable, match="zero-data-retention"):
         judge.judge(a_request())
-    assert api.urls == [], "confidential material was sent on an attributed but unconfigured route"
+
+    assert api.urls == [], "confidential material was sent on an attributed unconfigured route"
 
 
 @pytest.mark.parametrize("name", sorted(_concrete_judges()))
@@ -623,19 +697,117 @@ def test_an_attributed_confirmation_does_not_substitute_for_configuring_zdr() ->
 def test_each_public_entry_point_gates_confidential_material_on_its_own(
     name: str, entry_point: str
 ) -> None:
-    """`judge()` is not the only door. `path_a.py` drives `count_parts` and `generate_json`
-    directly, and each has its own governance check for that reason.
-
-    Found by mutating `generate_json`'s check away: nothing reddened, because Path A always
-    calls `count_parts` first and that one refuses. A guard that is only correct because of the
-    order its one caller happens to use is a guard the next caller will walk past.
-    """
+    """A future caller must not depend on today's count-before-generate call order."""
     api = Api()
     judge = _concrete_judges()[name](KURDISH_EDITORIAL_JUDGE, Governance(confidential=True), api)
     parts: list[dict[str, Any]] = [{"text": "نهێنی — confidential client transcript"}]
+
     with pytest.raises(GeminiUnavailable):
         if entry_point == "count_parts":
             judge.count_parts(parts)
         else:
             judge.generate_json(parts, VERDICT_SCHEMA)
+
     assert api.urls == [], f"{name}.{entry_point} sent confidential material"
+
+
+def test_the_shadow_cannot_be_constructed_as_the_judge() -> None:
+    """§3 Stage 4: gemini-3.1-pro is "evaluated, not routed"."""
+    with pytest.raises(NotRoutable):
+        a_judge(Api(), model_id="gemini-3.1-pro")
+
+
+def test_model_routing_remains_eager_while_credentials_are_deferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hawedit.judge import NotRoutable
+
+    def credential_must_not_be_read(_name: str | None = None) -> str:
+        raise AssertionError("credential acquisition ran before static routing")
+
+    monkeypatch.setattr("hawedit.gemini.read_credential", credential_must_not_be_read)
+    with pytest.raises(NotRoutable):
+        GeminiJudge(api_key=None, model_id="gemini-3.1-pro", transport=Api())
+
+
+def test_a_model_outside_section_7_cannot_be_constructed() -> None:
+    with pytest.raises((WrongRole, LookupError, ValueError)):
+        a_judge(Api(), model_id="gpt-4o")
+
+
+def test_key_acquisition_is_lazy_and_missing_key_names_the_panel_on_first_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("hawedit.gemini.read_credential", lambda _n=None: None)
+    api = Api()
+    judge = GeminiJudge(api_key=None, transport=api)
+
+    with pytest.raises(GeminiUnavailable, match="hawedit.credentials"):
+        judge.count_parts([{"text": "hello"}])
+    assert api.calls == []
+
+
+@pytest.mark.parametrize("failure", [PermissionError("denied"), UnicodeError("bad utf-8")])
+def test_deferred_key_storage_failures_are_normalized_before_transport(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    def fail(_name: str | None = None) -> str:
+        raise failure
+
+    api = Api()
+    monkeypatch.setattr("hawedit.gemini.read_credential", fail)
+    judge = GeminiJudge(api_key=None, transport=api)
+
+    with pytest.raises(GeminiUnavailable, match="no request was sent"):
+        judge.count_parts([{"text": "hello"}])
+    assert api.calls == []
+
+
+def test_deferred_key_does_not_hide_programmer_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(_name: str | None = None) -> str:
+        raise AssertionError("control")
+
+    monkeypatch.setattr("hawedit.gemini.read_credential", fail)
+    with pytest.raises(AssertionError, match="control"):
+        GeminiJudge(api_key=None, transport=Api()).count_parts([{"text": "hello"}])
+
+
+def test_deferred_key_is_read_once_and_still_sent_only_in_the_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads = 0
+
+    def credential(_name: str | None = None) -> str:
+        nonlocal reads
+        reads += 1
+        return KEY
+
+    api = Api()
+    monkeypatch.setattr("hawedit.gemini.read_credential", credential)
+    judge = GeminiJudge(api_key=None, transport=api)
+    assert reads == 0
+
+    judge.count_parts([{"text": "first"}])
+    judge.count_parts([{"text": "second"}])
+
+    assert reads == 1
+    assert all(KEY not in url for url in api.urls)
+    assert all(headers == {"x-goog-api-key": KEY} for headers in api.headers)
+
+
+# --- countTokens ----------------------------------------------------------------------------
+
+
+def test_count_tokens_returns_the_apis_number() -> None:
+    assert count_tokens("text", KEY, transport=Api(tokens=4_242)) == 4_242
+
+
+def test_count_tokens_failure_is_not_silently_zero() -> None:
+    """A zero would read as "this request is free and definitely under the ceiling"."""
+
+    def failing(_url: str, _body: bytes | None, _headers: Mapping[str, str]) -> tuple[int, str]:
+        return 500, "{}"
+
+    with pytest.raises(GeminiUnavailable, match="countTokens"):
+        count_tokens("text", KEY, transport=failing)

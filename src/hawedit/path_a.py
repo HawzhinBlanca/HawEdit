@@ -33,6 +33,7 @@ mistake to reject.
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -202,9 +203,18 @@ class PathADiscovery:
     def _to_candidates(self, body: str, transcript: NormalizedTranscript) -> tuple[Candidate, ...]:
         try:
             text = json.loads(body)["candidates"][0]["content"]["parts"][0]["text"]
-            found = json.loads(text)["candidates"]
+            document = json.loads(text)
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise JudgeUnusable(f"Path A returned nothing usable: {exc}") from exc
+        if not isinstance(document, dict):
+            raise JudgeUnusable(
+                f"Path A response must be a JSON object, got {type(document).__name__}"
+            )
+        found = document.get("candidates")
+        if not isinstance(found, list):
+            raise JudgeUnusable(
+                f"Path A candidates must be a JSON array, got {type(found).__name__}"
+            )
 
         words = transcript.words
         start_ms = words[0].start_ms if words else 0
@@ -212,10 +222,32 @@ class PathADiscovery:
 
         checked: list[tuple[float, int, int, str]] = []
         for raw in found:
+            if not isinstance(raw, dict):
+                raise JudgeUnusable(
+                    f"Path A candidate must be a JSON object, got {type(raw).__name__}"
+                )
             try:
-                in_ms, out_ms = int(raw["in_ms"]), int(raw["out_ms"])
-                score = float(raw["score"])
-                reason = str(raw.get("reason_ckb", ""))
+                raw_in_ms, raw_out_ms, raw_score = raw["in_ms"], raw["out_ms"], raw["score"]
+                if isinstance(raw_in_ms, bool) or not isinstance(raw_in_ms, int):
+                    raise TypeError(f"in_ms must be a JSON integer, got {raw_in_ms!r}")
+                if isinstance(raw_out_ms, bool) or not isinstance(raw_out_ms, int):
+                    raise TypeError(f"out_ms must be a JSON integer, got {raw_out_ms!r}")
+                if (
+                    isinstance(raw_score, bool)
+                    or not isinstance(raw_score, int | float)
+                    or (isinstance(raw_score, float) and not math.isfinite(raw_score))
+                ):
+                    raise TypeError(f"score must be a finite JSON number, got {raw_score!r}")
+                if not 0.0 <= raw_score <= 1.0:
+                    raise ValueError(f"score {raw_score} is outside [0, 1]")
+                in_ms, out_ms = raw_in_ms, raw_out_ms
+                score = float(raw_score)
+                reason_value = raw["reason_ckb"]
+                if not isinstance(reason_value, str):
+                    raise TypeError(
+                        f"reason_ckb must be a JSON string, got {type(reason_value).__name__}"
+                    )
+                reason = reason_value
             except (KeyError, TypeError, ValueError) as exc:
                 raise JudgeUnusable(f"Path A candidate is malformed: {raw!r} ({exc})") from exc
 
@@ -230,8 +262,6 @@ class PathADiscovery:
                     f"({start_ms}..{end_ms}). The judge invented a span past the media, and a "
                     f"clip cannot be cut from time the source does not have."
                 )
-            if not 0.0 <= score <= 1.0:
-                raise JudgeUnusable(f"Path A candidate score {score} is outside [0, 1]")
             checked.append((score, in_ms, out_ms, reason))
 
         # Rank by score, densely and deterministically. §8.2 counts Recall@K by rank, so a gap

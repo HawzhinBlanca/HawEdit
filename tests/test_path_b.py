@@ -397,7 +397,7 @@ def test_path_b_never_claims_both() -> None:
     assert all(c.path is not DiscoveryPath.BOTH for c in candidates)
 
 
-# --- D-118: one unreadable survivor discarded all of Path B -----------------------------------
+# --- D-156: one unreadable survivor discarded all of Path B -----------------------------------
 
 
 class PartlyUnreadable:

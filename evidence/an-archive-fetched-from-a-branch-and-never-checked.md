@@ -47,16 +47,22 @@ So pinning changes nothing about today's bytes and everything about tomorrow's.
 ## What changed
 
 ```
-ref="df95abcb0ce6efff710dda5ef28a2f6f1dc21493"
-sha256="ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad"
-url=…/${ref}/v8.0/linux.zip
-curl -sSL --fail -o "${dest}/linux.zip" "$url"
-bash verify-sha256.sh "${dest}/linux.zip" "$sha256"   <- before unzip, before chmod +x
+ffmpeg_bins_commit="df95abcb0ce6efff710dda5ef28a2f6f1dc21493"
+linux_zip_sha256="ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad"
+url=…/${ffmpeg_bins_commit}/v8.0/linux.zip
+curl --fail --location --proto '=https' --tlsv1.2 -o "$private_stage/linux.zip" "$url"
+bash verify-sha256.sh "$private_stage/linux.zip" "$linux_zip_sha256"
+                                                   <- before unzip or executable publication
 ```
 
 The digest is **ours**, and the record says so: the project publishes none, which is why the audit
 said there was nothing to compare against. This one attests *"these are the bytes hawapc01 and CI
 have been running"* — weaker than a publisher's signature, immeasurably stronger than nothing.
+
+The integrated installer is stricter than the first patch measured above: a kernel lock protects
+one owner-controlled install root; download, digest verification, unzip and RTL capability probes
+all happen in a private attempt directory; and only an immutable generation with a SHA-256 receipt
+is published. Interrupted or corrupt attempts cannot become the `ffmpeg` launcher.
 
 ## Proof
 
@@ -98,4 +104,5 @@ a comment directly above the call. The ordering test one function up had failed 
 earlier — it matched *"Before unzip, before chmod +x"* in prose and reported the order backwards.
 Both read code lines now, and the audit is **7/7**.
 
-Gate: `VERIFY OK — 1277 passed, 0 skipped`.
+The executable tests use three-byte probes for both digest outcomes; the hosted Linux gate performs
+the full pinned archive download and then requires the real Kurdish golden render to run.

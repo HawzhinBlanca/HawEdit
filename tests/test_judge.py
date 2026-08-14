@@ -63,9 +63,14 @@ from hawedit.judge import (
 from hawedit.registry import WrongRole
 
 JUDGE = "gemini-2.5-pro"
+
+
 SHADOW = "gemini-3.1-pro"
 
+
 TITLE = "ڕۆژنامەوانی کوردی لە هەولێر"
+
+
 DESCRIPTION = "بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی"
 
 
@@ -690,3 +695,24 @@ def test_a_negative_keyframe_timestamp_is_refused() -> None:
     """
     with pytest.raises(ValueError, match="timestamp must be non-negative"):
         JudgeFrame(timestamp_ms=-1, mime_type="image/jpeg", data=b"\xff\xd8jpeg")
+
+
+@pytest.mark.parametrize("value", (True, "0.8", float("nan"), float("inf"), 10**1_000))
+def test_verdict_scores_require_finite_json_numbers(value: object) -> None:
+    with pytest.raises(ValueError, match="finite JSON number|within"):
+        a_verdict(hook_score=value)
+
+
+@pytest.mark.parametrize("field", ("payoff_at_ms", "clip_in_ms", "clip_out_ms"))
+def test_verdict_times_require_json_integers(field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        a_verdict(**{field: True})
+
+
+def test_direct_verdict_construction_rejects_schema_invalid_structures() -> None:
+    with pytest.raises(ValueError, match="self_contained"):
+        a_verdict(self_contained=1)
+    with pytest.raises(ValueError, match="title_ckb"):
+        a_verdict(title_ckb={"کورد": "not a string"})
+    with pytest.raises(ValueError, match="hashtags_ckb"):
+        a_verdict(hashtags_ckb=({"کورد": True},))

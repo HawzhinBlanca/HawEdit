@@ -297,7 +297,7 @@ def test_benchmark_controls_are_not_routable() -> None:
 # requiring no attribution made `resolve("Whisper")` return the entry with no `ModelExcluded`
 # raised, and the full suite stayed at `exit=0, 0 FAILED`. The set-equality tests compare the
 # cells each table self-declares, so a duplicate cell is invisible and nothing related the two
-# tables to each other. Two of §7's nine exclusions are CC-BY-NC-4.0 hard rejects. D-082.
+# tables to each other. Two of §7's nine exclusions are CC-BY-NC-4.0 hard rejects. D-087.
 
 
 def test_the_real_tables_do_not_both_register_and_exclude_anything() -> None:
