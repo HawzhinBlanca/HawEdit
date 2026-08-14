@@ -21,7 +21,9 @@ measured, so it is measured.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import threading
 import wave
 from pathlib import Path
 
@@ -47,23 +49,35 @@ from hawedit.ingest import (
     ingest,
     media_stack_available,
     probe_duration_ms,
+    probe_stream,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.mp4"
 
 # How the fixture was built: three 1.4 s segments, so two cuts.
+
+
 GROUND_TRUTH_CUTS_MS = (1_400, 2_800)
 # §3 Stage 5 matches a shot cut against a 400 ms window. A detector whose error approaches
 # that window is useless to Stage 5 even when it "finds" the cut, so the tolerance here is a
 # quarter of it — tight enough that passing means something.
+
+
 CUT_TOLERANCE_MS = 100
 
 # Not `find_spec`: see ingest.media_stack_available. A module that imports and cannot
 # work is exactly what slipped past CI-less local runs.
+
+
 MEDIA_STACK = media_stack_available()
 
+
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+
+
 needs_media_stack = pytest.mark.skipif(
     not MEDIA_STACK, reason="media stack absent — install '.[media]'"
 )
@@ -382,7 +396,7 @@ def test_a_round_trip_does_not_turn_absent_diarization_into_an_empty_result() ->
 
 def test_missing_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("hawedit.ingest.find_ffmpeg", lambda: None)
-    with pytest.raises(IngestError, match="fetch-ffmpeg.sh"):
+    with pytest.raises(IngestError, match="hawedit-ffmpeg-setup"):
         ingest(FIXTURE, tmp_path / "work")
 
 
@@ -666,3 +680,306 @@ def test_the_proxy_is_reused_on_the_same_terms_as_the_audio(tmp_path: Path) -> N
 
     assert extract_proxy(FIXTURE, dest).read_bytes() == first
     assert dest.stat().st_mtime_ns == stamp, "the proxy was re-encoded"
+
+
+# --- the two refusals in the probe path that no test held ------------------------------------
+#
+# Measured by neutralising each in a shadow copy of src/hawedit and running tests/test_ingest.py
+# with tests/test_pipeline.py and tests/test_review_findings.py: both survived at that scope, so
+# neither is held incidentally by a caller's file. `probe_stream` is the one argv every probe in
+# the system goes through — the docstring says three call sites had grown their own, "including
+# one that let a raw `CalledProcessError` escape into the pipeline runner". These two guards are
+# what keeps that from happening again, and both are about the *identity* of the failure.
+
+
+def _bin_pair(tmp_path: Path, *, with_ffprobe: bool) -> Path:
+    """An ffmpeg path, optionally with the sibling `ffprobe_for` would resolve to.
+
+    Named through `ffprobe_for` rather than spelled out, so the fixture cannot drift away from
+    the resolver it is meant to exercise — `ffprobe_for` keeps the binary's suffix, which is
+    the whole reason it exists. Nothing here is executed: the refusing case never reaches
+    subprocess, and the control stubs it.
+    """
+    from hawedit.captions import ffprobe_for
+
+    binary = tmp_path / "bin" / "ffmpeg.exe"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(b"")
+    if with_ffprobe:
+        ffprobe_for(binary).write_bytes(b"")
+    return binary
+
+
+def test_an_ffmpeg_with_no_ffprobe_beside_it_is_refused_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without this line the missing binary reaches `subprocess.run`, which raises
+    `FileNotFoundError` naming a path — an OSError crossing a stage boundary, which is the
+    class of escape `probe_stream` was written to end. The refusal says which ffmpeg the
+    ffprobe was expected beside, because that is the fact needed to fix it.
+    """
+    binary = _bin_pair(tmp_path, with_ffprobe=False)
+    with pytest.raises(IngestError, match="no ffprobe beside"):
+        probe_stream(FIXTURE, "format=duration", binary)
+
+    # The control: the same call with the sibling present gets past this line. Without it the
+    # test would pass just as well against a `probe_stream` that refused every input.
+    def succeeds(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 0, b" 4.162\n", b"")
+
+    monkeypatch.setattr("hawedit.ingest.subprocess.run", succeeds)
+    assert probe_stream(FIXTURE, "format=duration", _bin_pair(tmp_path, with_ffprobe=True)) == (
+        "4.162"
+    )
+
+
+def test_a_probe_that_exits_nonzero_is_refused_rather_than_read_as_an_empty_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_run` is the single subprocess call site for Stage 0, and this is its only check.
+
+    Neutralised, `probe_stream` returns `result.stdout.decode().strip()` — for a failed
+    ffprobe, the empty string. That is not an error anyone sees: `probe_duration_ms` turns it
+    into `float("")`, a `ValueError` about string conversion several frames away from the
+    binary that actually failed, with ffprobe's own explanation discarded. So the assertions
+    are on the message, not just the type: the binary's name, its exit code, and the tail of
+    its stderr are the three facts that make the refusal actionable.
+    """
+    binary = _bin_pair(tmp_path, with_ffprobe=True)
+    reason = b"Invalid data found when processing input"
+
+    def failed(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 3, b"", b"x" * 700 + reason)
+
+    monkeypatch.setattr("hawedit.ingest.subprocess.run", failed)
+
+    with pytest.raises(IngestError) as raised:
+        probe_stream(FIXTURE, "format=duration", binary)
+    message = str(raised.value)
+    assert "ffprobe" in message, "the refusal does not say which binary failed"
+    assert "(3)" in message, "the refusal does not carry the exit code"
+    assert reason.decode() in message, "ffprobe's own explanation was dropped"
+    assert "x" * 700 not in message, (
+        "the stderr tail is not bounded — [-600:] must keep the end, which is where ffmpeg "
+        "writes the line that says why, after however much banner precedes it"
+    )
+
+    # The caller that would otherwise raise ValueError from float(""), stated as a caller.
+    with pytest.raises(IngestError):
+        probe_duration_ms(FIXTURE, binary)
+
+
+def test_vad_regions_are_intersected_with_the_video_media_clock() -> None:
+    from hawedit.ingest import _clip_speech_to_media
+
+    segments = (
+        SpeechSegment(start_ms=-20, end_ms=100),
+        SpeechSegment(start_ms=900, end_ms=1_020),
+        SpeechSegment(start_ms=1_100, end_ms=1_200),
+    )
+    assert _clip_speech_to_media(segments, 1_000) == (
+        SpeechSegment(start_ms=0, end_ms=100),
+        SpeechSegment(start_ms=900, end_ms=1_000),
+    )
+
+
+def test_an_invalid_vad_region_is_refused_instead_of_hidden_by_clipping() -> None:
+    from hawedit.ingest import _clip_speech_to_media
+
+    with pytest.raises(IngestError, match="invalid speech region"):
+        _clip_speech_to_media((SpeechSegment(start_ms=20, end_ms=20),), 1_000)
+
+
+# --- the artifact ------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+@needs_media_stack
+def test_real_vad_cannot_publish_a_timestamp_after_the_fixture_ends(tmp_path: Path) -> None:
+    """Silero reports this fixture's padded audio through 4180 ms; video ends at 4162 ms."""
+    result = ingest(FIXTURE, tmp_path / "work", media_id="fixture")
+    assert result.duration_ms == 4_162
+    assert result.speech[-1].end_ms == result.duration_ms
+
+
+def _fake_proxy_extractor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+        calls.append(command)
+        source = Path(command[command.index("-i") + 1])
+        Path(command[-1]).write_bytes(b"proxy:" + source.read_bytes())
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.ingest._run", fake_run)
+    return calls
+
+
+def _sidecar(dest: Path) -> Path:
+    return dest.with_suffix(dest.suffix + ".provenance.json")
+
+
+def test_same_source_and_command_reuse_the_verified_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"one")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+
+    extract_proxy(source, dest, Path("ffmpeg"))
+    stamp = dest.stat().st_mtime_ns
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert len(calls) == 1
+    assert dest.stat().st_mtime_ns == stamp
+    assert json.loads(_sidecar(dest).read_text(encoding="utf-8"))["output_bytes"] > 0
+
+
+def test_changed_bytes_at_the_same_source_path_are_extracted_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"one")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    source.write_bytes(b"two")
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert len(calls) == 2
+    assert dest.read_bytes() == b"proxy:two"
+
+
+def test_changed_settings_and_truncated_outputs_are_never_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    monkeypatch.setattr("hawedit.ingest.PROXY_CRF", 29)
+    extract_proxy(source, dest, Path("ffmpeg"))
+    dest.write_bytes(b"cut")
+    extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert len(calls) == 3
+    assert dest.read_bytes() == b"proxy:source"
+
+
+def test_failed_rerun_preserves_the_last_good_artifact_and_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"good")
+    dest = tmp_path / "proxy.mp4"
+    _fake_proxy_extractor(monkeypatch)
+    extract_proxy(source, dest, Path("ffmpeg"))
+    before = dest.read_bytes(), _sidecar(dest).read_bytes()
+    source.write_bytes(b"replacement")
+
+    def fail(_command: list[str]) -> subprocess.CompletedProcess[bytes]:
+        raise IngestError("encode interrupted")
+
+    monkeypatch.setattr("hawedit.ingest._run", fail)
+    with pytest.raises(IngestError, match="interrupted"):
+        extract_proxy(source, dest, Path("ffmpeg"))
+
+    assert (dest.read_bytes(), _sidecar(dest).read_bytes()) == before
+    assert not tuple(tmp_path.glob(".proxy.*.mp4"))
+
+
+def test_source_change_during_encode_refuses_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"before")
+    dest = tmp_path / "proxy.mp4"
+
+    def mutate(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1]).write_bytes(b"mixed output")
+        source.write_bytes(b"after")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.ingest._run", mutate)
+    with pytest.raises(IngestError, match="source changed"):
+        extract_proxy(source, dest, Path("ffmpeg"))
+    assert not dest.exists()
+    assert not _sidecar(dest).exists()
+
+
+def test_success_without_output_is_a_domain_error_not_a_published_empty_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(
+        "hawedit.ingest._run",
+        lambda command: subprocess.CompletedProcess(command, 0, b"", b""),
+    )
+    with pytest.raises(IngestError, match="produced no proxy.mp4"):
+        extract_proxy(source, tmp_path / "proxy.mp4", Path("ffmpeg"))
+
+
+@needs_ffmpeg
+def test_reused_audio_is_still_checked_against_stage_1s_format(tmp_path: Path) -> None:
+    dest = tmp_path / "audio.wav"
+    extract_audio(FIXTURE, dest)
+    with wave.open(str(dest), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(44_100)
+        handle.writeframes(b"\0\0" * 4_000)
+    provenance = json.loads(_sidecar(dest).read_text(encoding="utf-8"))
+    provenance["output_bytes"] = dest.stat().st_size
+    _sidecar(dest).write_text(json.dumps(provenance), encoding="utf-8")
+
+    with pytest.raises(IngestError, match="16000 Hz mono"):
+        extract_audio(FIXTURE, dest)
+
+
+def test_a_hardlinked_lock_is_refused_without_touching_its_victim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"KEEP")
+    os.link(victim, tmp_path / "proxy.mp4.lock")
+    calls = _fake_proxy_extractor(monkeypatch)
+
+    with pytest.raises(IngestError, match="one regular private link"):
+        extract_proxy(source, tmp_path / "proxy.mp4", Path("ffmpeg"))
+    assert victim.read_bytes() == b"KEEP"
+    assert calls == []
+
+
+def test_concurrent_reruns_publish_once_then_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    dest = tmp_path / "proxy.mp4"
+    calls = _fake_proxy_extractor(monkeypatch)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            extract_proxy(source, dest, Path("ffmpeg"))
+        except BaseException as exc:  # asserted below; a thread must not hide its failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(calls) == 1
+    assert dest.read_bytes() == b"proxy:source"

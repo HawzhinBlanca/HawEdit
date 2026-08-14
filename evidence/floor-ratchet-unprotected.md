@@ -4,7 +4,7 @@
 
 `gate.py` records the bug and its fix in the code:
 
-> Ratcheting on `collected` while gating on `passed` made the gate poison itself — one legitimately
+> Ratcheting on `collected` while gating on `passed` made the gate poison itself â€” one legitimately
 > skipped test (a symlink a Windows account may not create) collected 873 and passed 872, so the
 > first run raised the floor to 873 and every run after it was refused for missing a bar the
 > previous run invented. Two floors, one job, and they disagreed on any host with a skip.
@@ -23,10 +23,10 @@ The suite genuinely ran and genuinely did not notice. Two reasons, and the secon
 one:
 
 * Every ratchet test used a report with `skipped=0`, where `passed == collected` by construction. The
-  tests were correct and could not tell the two numbers apart — the same shape as D-086, D-088 and
-  D-094.
+  tests were correct and could not tell the two numbers apart â€” the same shape as D-095, D-098 and
+  D-126.
 * **This host skips nothing.** So the defect is invisible precisely here and fires on a machine where
-  something legitimately skips — a box without the pinned ffmpeg, or CI if the golden render ever
+  something legitimately skips â€” a box without the pinned ffmpeg, or CI if the golden render ever
   starts skipping. A regression would land on somebody else's machine.
 
 What it does, run directly against the 873/872 numbers from `gate.py`'s own comment:
@@ -37,7 +37,7 @@ a host with one skip: collected=873 skipped=1 passed=872
   run 2 on the SAME report: accepted
 
   if the ratchet had written `collected` instead: floor=873
-  run 2 on the SAME report: REFUSED — only 872 tests passed against a floor of 873
+  run 2 on the SAME report: REFUSED â€” only 872 tests passed against a floor of 873
 ```
 
 The gate refuses the very run that set its bar. Computed and discarded, not never-computed: `passed`
@@ -47,11 +47,11 @@ is a property and is correct; nothing checked which number reached the file.
 
 Three tests, and the middle one is the point:
 
-* **The idempotence property** — a green run must never leave the gate refusing an identical one.
+* **The idempotence property** â€” a green run must never leave the gate refusing an identical one.
   This needs no knowledge of which number is right: a ratchet on `collected` fails it and a ratchet
   on `passed` cannot. It is the failure exactly as it happened.
-* The direct assertion, on the **artifact** — the committed floor file reads 872, not 873.
-* The control — with no skips the floor must reach the full count, so "ratchet on `passed`" is not
+* The direct assertion, on the **artifact** â€” the committed floor file reads 872, not 873.
+* The control â€” with no skips the floor must reach the full count, so "ratchet on `passed`" is not
   read as "ratchet lower than collected", which would stop the gate noticing deletions.
 
 ## A structural change tried and backed out
@@ -62,7 +62,7 @@ one-word edit, so the rename only moves the single point. It also broke
 `test_the_readme_describes_the_gate_floor_as_tests_that_passed`, which asserts the literal
 `if evidence.passed < floor:` in the source to keep the README's wording honest (D-069).
 
-The audit settled it. **Mutation 3 below is caught by that source-text test alone** — so the rename
+The audit settled it. **Mutation 3 below is caught by that source-text test alone** â€” so the rename
 would have paid a real protection for a cosmetic gain. `gate.py`'s diff in this commit is comment-only.
 
 ## Mutation audit, against a baseline verified green first
@@ -80,8 +80,8 @@ CAUGHT   the floor is ratcheted one below what ran (over-lax)               FAIL
 
 The last is the over-lax direction: a floor one below what ran leaves room for a test to vanish
 between two green runs, which is the whole purpose of the ratchet. It is caught by four tests, so
-unlike D-087/088/090/091 the new control is not the only witness here — the existing ratchet tests
+unlike D-097/088/090/091 the new control is not the only witness here â€” the existing ratchet tests
 already covered downward drift. What they could not see was *which of two equal numbers* was being
 written.
 
-Gate: `VERIFY OK — 1167 passed, 0 skipped`.
+Gate: `VERIFY OK â€” 1167 passed, 0 skipped`.

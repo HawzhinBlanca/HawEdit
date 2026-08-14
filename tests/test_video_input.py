@@ -18,6 +18,7 @@ The processor itself needs 4 GB of weights, so the end-to-end run is recorded in
 from __future__ import annotations
 
 import math
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -234,6 +235,42 @@ def test_integer_and_fractional_markers_both_parse() -> None:
 def test_a_window_with_no_frames_is_refused() -> None:
     with pytest.raises(FrameCountMismatch, match="no frames"):
         WindowFrames(window=a_window(), paths=())
+
+
+def test_extraction_never_promotes_stale_frames_from_a_prior_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = a_window(duration_ms=20_000, fps=1.0)
+    stale = tuple(tmp_path / f"000_{index:04d}.jpg" for index in range(1, 21))
+    for path in stale:
+        path.write_bytes(b"stale")
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        pattern = command[-1]
+        for index in range(1, 7):
+            Path(pattern.replace("%04d", f"{index:04d}")).write_bytes(f"new-{index}".encode())
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", fake_run)
+    with pytest.raises(FrameCountMismatch, match="ffmpeg produced 6"):
+        extract_window_frames(FIXTURE, window, tmp_path, ffmpeg=Path("ffmpeg"))
+
+    assert all(path.read_bytes() == b"stale" for path in stale)
+    assert set(tmp_path.iterdir()) == set(stale)
+
+
+def test_an_ffmpeg_launch_failure_is_a_video_domain_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_: object, **__: object) -> subprocess.CompletedProcess[bytes]:
+        raise PermissionError("binary is not executable")
+
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", refuse)
+    with pytest.raises(VideoInputError, match="cannot launch ffmpeg") as caught:
+        extract_window_frames(FIXTURE, a_window(), tmp_path, ffmpeg=Path("broken-ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert not list(tmp_path.glob(".000-*"))
 
 
 @needs_ffmpeg
@@ -528,10 +565,10 @@ def test_an_odd_emitted_count_is_trimmed_rather_than_padded_by_the_processor(
     assert all(path.exists() for path in frames.paths)
     # The trimmed frame is still on disk — trimming is a decision about what to hand over, not a
     # deletion, so nothing about the extraction has to be re-run to change it.
-    assert len(sorted(tmp_path.glob("000_*.jpg"))) == 3
+    assert len(sorted(frames.paths[0].parent.glob("000_*.jpg"))) == 3
 
 
-# --- D-104: the parity step's output was graded as though ffmpeg had produced it -------------
+# --- D-136: the parity step's output was graded as though ffmpeg had produced it -------------
 
 
 def _ffmpeg_writing(count: int) -> object:
@@ -557,6 +594,95 @@ def _ffmpeg_writing(count: int) -> object:
     return run
 
 
+def test_extracted_frames_are_deleted_when_the_owner_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+
+    frames.cleanup()
+    frames.cleanup()
+
+    assert not private.exists()
+
+
+def test_cleanup_refuses_a_replaced_private_directory_without_deleting_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+    original = tmp_path / "original-private"
+    private.rename(original)
+    private.mkdir()
+    replacement = private / "replacement-owned-by-someone-else"
+    replacement.write_bytes(b"do not delete")
+
+    with pytest.raises(VideoInputError, match="identity changed"):
+        frames.cleanup()
+
+    assert replacement.read_bytes() == b"do not delete"
+    assert len(tuple(original.glob("000_*.jpg"))) == 4
+
+
+def test_cleanup_refuses_a_missing_owner_on_its_first_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+    moved = tmp_path / "moved-private"
+    private.rename(moved)
+
+    with pytest.raises(VideoInputError, match="cleanup failed"):
+        frames.cleanup()
+
+    assert len(tuple(moved.glob("000_*.jpg"))) == 4
+
+
+def test_cleanup_failure_is_attached_without_masking_the_primary_model_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = an_unplannable_window(2_000, 2.0)
+    monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(4))
+    frames = extract_window_frames(FIXTURE, window, tmp_path)
+    private = frames.paths[0].parent
+    real_unlink = Path.unlink
+
+    def refuse_private_frame(path: Path, missing_ok: bool = False) -> None:
+        if path.parent == private:
+            raise PermissionError("scanner holds the pixel")
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_private_frame)
+    primary = FrameCountMismatch("model rejected the frame count")
+    with pytest.raises(FrameCountMismatch) as caught:
+        try:
+            raise primary
+        finally:
+            frames.cleanup()
+
+    assert caught.value is primary
+    assert any("private visual frame cleanup failed" in note for note in primary.__notes__)
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    frames.cleanup()
+    assert not private.exists()
+
+
+def test_private_directory_creation_failure_is_a_video_input_error(tmp_path: Path) -> None:
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_bytes(b"file")
+
+    with pytest.raises(VideoInputError, match="private frame directory") as caught:
+        extract_window_frames(FIXTURE, a_window(), blocked, ffmpeg=Path("ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, OSError)
+
+
 def test_one_tail_frame_short_is_accepted_and_kept_even(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -567,7 +693,7 @@ def test_one_tail_frame_short_is_accepted_and_kept_even(
     patches, and the guard compared 34 against 36-1 and raised *"the window likely runs past the
     end of the media"*. It does not: the window sits early in a 2313.8 s file and every frame it
     asked for existed. Any window with an even plan and an odd delivery hit this — about half of
-    them — and the visual path got through three windows before stopping. D-104.
+    them — and the visual path got through three windows before stopping. D-136.
     """
     window = an_unplannable_window(17_720, 2.0)
     assert window.frame_count == 36, window.frame_count
@@ -577,7 +703,7 @@ def test_one_tail_frame_short_is_accepted_and_kept_even(
 
     assert frames.count == 34, "the parity step keeps whole 2-frame patches"
     assert frames.count % TEMPORAL_PATCH_FRAMES == 0
-    assert len(tuple(tmp_path.glob("000_*.jpg"))) == 35, (
+    assert len(tuple(frames.paths[0].parent.glob("000_*.jpg"))) == 35, (
         "all 35 delivered frames stay on disk; only the tuple handed to the model is trimmed"
     )
 
@@ -612,7 +738,7 @@ def test_an_exact_delivery_is_accepted_untouched(
 def test_more_frames_than_planned_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The pre-existing ceiling check, which the D-104 audit found had no test at all.
+    """The pre-existing ceiling check, which the D-136 audit found had no test at all.
 
     It survived being replaced with `if False:` — so §3 Stage 2's 64-frame ceiling was enforced by
     a branch nothing exercised. `-frames:v` makes ffmpeg's overshoot unlikely, which is exactly how
@@ -639,8 +765,8 @@ def test_a_retry_with_a_smaller_plan_does_not_inherit_the_previous_extraction(
     64 left 16 jpgs in `s0:w0`, and the retry at 8 was refused as an overshoot of 16.
     """
     monkeypatch.setattr("hawedit.video_input.subprocess.run", _ffmpeg_writing(16))
-    extract_window_frames(FIXTURE, an_unplannable_window(8_000, 2.0), tmp_path)
-    assert len(tuple(tmp_path.glob("000_*.jpg"))) == 16, "the first extraction did not land"
+    first = extract_window_frames(FIXTURE, an_unplannable_window(8_000, 2.0), tmp_path)
+    assert first.count == 16, "the first extraction did not land"
 
     smaller = an_unplannable_window(4_000, 2.0)
     assert smaller.frame_count == 8
@@ -649,10 +775,11 @@ def test_a_retry_with_a_smaller_plan_does_not_inherit_the_previous_extraction(
     frames = extract_window_frames(FIXTURE, smaller, tmp_path)
 
     assert frames.count == 8
-    assert len(tuple(tmp_path.glob("000_*.jpg"))) == 8, (
-        "the previous run's tail is still on disk, so the count that grades ffmpeg is reading "
-        "frames ffmpeg did not produce"
-    )
+    assert set(first.paths).isdisjoint(frames.paths)
+    assert {path.parent for path in first.paths}.isdisjoint(
+        {path.parent for path in frames.paths}
+    ), "a retry must own a fresh extraction directory"
+    assert all(path.exists() for path in first.paths), "a retry mutated the previous result"
 
 
 def test_clearing_is_scoped_to_the_window_being_extracted(
@@ -679,7 +806,7 @@ def test_the_kept_count_is_always_a_whole_number_of_temporal_patches(
 ) -> None:
     """The property the trimming exists for, asserted rather than re-guarded.
 
-    While auditing D-104 I added a guard for "an odd kept count" and it survived mutation, because
+    While auditing D-136 I added a guard for "an odd kept count" and it survived mutation, because
     after trimming a count above `TEMPORAL_PATCH_FRAMES` is even by construction — the branch could
     never fire. A guard that cannot fire reads as protection and is not, so it was deleted and the
     property is asserted here instead, across every odd delivery the plan allows.

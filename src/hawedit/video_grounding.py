@@ -25,14 +25,21 @@ inventing a default.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.qwen_visual import DEFAULT_DEVICE, EmbedderUnavailable, load_processor_and_model
+from hawedit.qwen_visual import (
+    DEFAULT_DEVICE,
+    EmbedderUnavailable,
+    load_processor_and_model,
+    release_cuda_model_memory,
+)
 from hawedit.registry import resolve_role
 from hawedit.timelens import TIMELENS_MODEL, VisualEvidenceInterval
 from hawedit.video_input import (
+    VideoInputError,
     WindowFrames,
     load_window_images,
     video_content,
@@ -109,9 +116,17 @@ def parse_spans(answer: str) -> tuple[tuple[float, float], ...]:
                 f"would be a guess about which."
             )
         start, end = pair
-        if not isinstance(start, int | float) or not isinstance(end, int | float):
-            raise GroundingError(f"span bounds must be numbers, got {pair!r}")
-        spans.append((float(start), float(end)))
+        if any(
+            isinstance(bound, bool)
+            or not isinstance(bound, int | float)
+            or (isinstance(bound, float) and not math.isfinite(bound))
+            for bound in pair
+        ):
+            raise GroundingError(f"span bounds must be finite JSON numbers, got {pair!r}")
+        try:
+            spans.append((float(start), float(end)))
+        except OverflowError as exc:
+            raise GroundingError(f"span bounds must fit finite JSON numbers, got {pair!r}") from exc
     return tuple(spans)
 
 
@@ -137,11 +152,6 @@ class TimeLens2Grounder:
         # §7 first: a model outside the registry, or one in it for a different job, never gets as
         # far as loading 9 GB of weights.
         resolve_role(model_id, _EVIDENCE_ROLE, "the visual temporal evidence model")
-        if not model_dir.is_dir():
-            raise EmbedderUnavailable(
-                f"no weights at {model_dir}. Run `bash scripts/fetch-models.sh {model_id}` — "
-                f"§7's registry drives it, so it cannot fetch the wrong model."
-            )
         self.model_dir = model_dir
         self.read_frames = read_frames
         self.device = device
@@ -150,11 +160,26 @@ class TimeLens2Grounder:
 
     def _load(self) -> tuple[Any, Any]:
         if self._loaded is None:
+            if not self.model_dir.is_dir():
+                raise EmbedderUnavailable(
+                    f"no weights at {self.model_dir}. Run `hawedit-fetch-models "
+                    f"{self.model_id}` — §7's registry drives it, so it cannot fetch the "
+                    "wrong model."
+                )
             # No keyword arguments: TimeLens2 is a plain `Qwen3VLForConditionalGeneration` with
             # `tie_word_embeddings: true` at both config levels, so it needs none of VideoChat3's
             # three workarounds and reports `missing_keys: NONE` on the pinned transformers.
-            self._loaded = load_processor_and_model(self.model_dir, self.device)
+            self._loaded = load_processor_and_model(
+                self.model_dir, self.device, model_id=self.model_id
+            )
         return self._loaded
+
+    def close(self) -> None:
+        """Drop TimeLens2 weights after grounding; the next request reloads safely."""
+        was_loaded = self._loaded is not None
+        self._loaded = None
+        if was_loaded:
+            release_cuda_model_memory(self.device)
 
     def ground(self, window: SceneWindow, query: str) -> tuple[VisualEvidenceInterval, ...]:
         """Where in `window` the model says `query`'s visual evidence is, on the media's clock.
@@ -163,9 +188,24 @@ class TimeLens2Grounder:
         already distinguishes from an out-point of zero.
 
         Raises:
-            GroundingError: the query is empty, or the answer is not the array the card specifies.
+            GroundingError: the query is empty, the answer is not the array the card specifies,
+                or the model runtime cannot produce an answer.
             ValueError: a returned span falls outside the window the model was shown.
         """
+        try:
+            return self._ground(window, query)
+        except (GroundingError, EmbedderUnavailable, VideoInputError):
+            raise
+        except (ImportError, OSError, RuntimeError) as exc:
+            failure = GroundingError(
+                f"{self.model_id} failed while grounding {window.window_id}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            for note in getattr(exc, "__notes__", ()):
+                failure.add_note(note)
+            raise failure from exc
+
+    def _ground(self, window: SceneWindow, query: str) -> tuple[VisualEvidenceInterval, ...]:
         import torch
 
         if not query.strip():
@@ -175,30 +215,38 @@ class TimeLens2Grounder:
             )
         processor, model = self._load()
         frames: WindowFrames = self.read_frames(window)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    video_content(load_window_images(frames, processor)),
-                    {"type": "text", "text": GROUNDING_PROMPT.format(query=query)},
-                ],
+        try:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        video_content(load_window_images(frames, processor)),
+                        {"type": "text", "text": GROUNDING_PROMPT.format(query=query)},
+                    ],
+                }
+            ]
+            batch = window_batch(processor, messages, frames, add_generation_prompt=True)
+            placed = {
+                key: (value.to(self.device) if hasattr(value, "to") else value)
+                for key, value in dict(batch).items()
             }
-        ]
-        batch = window_batch(processor, messages, frames, add_generation_prompt=True)
-        placed = {k: (v.to(self.device) if hasattr(v, "to") else v) for k, v in dict(batch).items()}
-        with torch.no_grad():
-            # Greedy, for the reason `rerank` breaks ties deterministically: §8.2 counts on this
-            # output, and a boundary that moves between runs is not a measurement. The card's
-            # `temperature=0.01, top_k=1` is greedy by a longer route.
-            generated = model.generate(**placed, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
-        answer = processor.tokenizer.decode(
-            generated[0][batch["input_ids"].shape[1] :], skip_special_tokens=True
-        )
-        claim = f"evidence for: {query}"
-        return tuple(
-            VisualEvidenceInterval.from_window(window, start, end, claim, model_id=self.model_id)
-            for start, end in parse_spans(answer)
-        )
+            with torch.no_grad():
+                # Greedy, for the reason `rerank` breaks ties deterministically: §8.2 counts on
+                # this output, and a boundary that moves between runs is not a measurement. The
+                # card's `temperature=0.01, top_k=1` is greedy by a longer route.
+                generated = model.generate(**placed, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
+            answer = processor.tokenizer.decode(
+                generated[0][batch["input_ids"].shape[1] :], skip_special_tokens=True
+            )
+            claim = f"evidence for: {query}"
+            return tuple(
+                VisualEvidenceInterval.from_window(
+                    window, start, end, claim, model_id=self.model_id
+                )
+                for start, end in parse_spans(answer)
+            )
+        finally:
+            frames.cleanup()
 
     def ground_all(
         self, windows: Sequence[SceneWindow], query: str

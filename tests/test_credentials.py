@@ -201,6 +201,41 @@ def test_the_opened_env_must_be_the_file_the_symlink_check_looked_at(
     assert GEMINI_API_KEY in env_file.read_text(encoding="utf-8")
 
 
+def test_a_hard_linked_env_file_is_refused_before_the_key_is_written(tmp_path: Path) -> None:
+    """The sibling of the symlink refusal, and the one no test held.
+
+    Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file
+    with tests/test_claims.py: this one could be deleted with both green.
+
+    Its own comment says where it came from — "found by the second independent review, in the
+    code written to fix the first one". O_NOFOLLOW rejects a *symlinked* `.env` and says nothing
+    about a hardlink, which is an ordinary regular file sharing an inode with, say, a tracked
+    file. O_TRUNC would then rewrite that file's content with the key. The first fix validated
+    the path's name; this validates the file's identity.
+    """
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("a file git knows about\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    try:
+        os.link(tracked, env_file)
+    except (OSError, NotImplementedError) as exc:  # pragma: no cover - filesystem dependent
+        pytest.fail(f"could not create a hard link to exercise the guard: {exc}")
+
+    with pytest.raises(CredentialError, match="hard links"):
+        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
+
+    assert tracked.read_text(encoding="utf-8") == "a file git knows about\n", (
+        "the key was written through a hard link into the file sharing that inode"
+    )
+    assert FAKE_KEY not in env_file.read_text(encoding="utf-8")
+
+    # The control: the same call against a file with one link succeeds, so this measures the
+    # link count and not something else about writing into tmp_path.
+    alone = tmp_path / "alone.env"
+    write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=alone, check_ignored=False)
+    assert GEMINI_API_KEY in alone.read_text(encoding="utf-8")
+
+
 def test_the_key_never_reaches_the_disk_when_the_narrowing_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

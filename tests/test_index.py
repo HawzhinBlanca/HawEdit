@@ -36,6 +36,8 @@ from hawedit.transcripts import (
 )
 
 BOOK = "کتێب"  # book
+
+
 MY_BOOK = "کتێبەکەم"  # my book — the same stem with clitics attached
 
 
@@ -67,6 +69,20 @@ def test_tokenizing_normalizes_first() -> None:
 def test_character_ngrams_pad_word_boundaries() -> None:
     grams = character_ngrams("ab", size=3)
     assert grams == ("\x02ab", "ab\x03")
+
+
+@pytest.mark.parametrize("size", [0, -1])
+def test_a_character_ngram_size_below_one_is_refused(size: int) -> None:
+    """The only refusal in this module no test held — measured by neutralising each in a shadow
+    copy of src/hawedit and running this file.
+
+    A size of 0 does not fail: `padded[i:i + 0]` is the empty string and the range still runs,
+    so the function returns one empty gram per character position. Those enter the index as real
+    postings that match every word, which turns §4.1's morphological near-match scoring into
+    noise rather than into an error anyone would see.
+    """
+    with pytest.raises(ValueError, match="at least 1"):
+        character_ngrams("کتێب", size=size)
 
 
 def test_character_ngrams_of_a_longer_word_slide() -> None:
@@ -435,3 +451,44 @@ def test_the_ngram_size_is_the_one_the_index_actually_uses() -> None:
         f"character_ngrams emitted lengths {sorted({len(g) for g in emitted})}, and "
         f"DEFAULT_NGRAM_SIZE is {DEFAULT_NGRAM_SIZE}"
     )
+
+
+def norm(media_id: str = "m1", text: str = "ئەمە زۆر باشە") -> NormalizedTranscript:
+    return NormalizedTranscript(media_id=media_id, text_ckb=text, source_sha256="abc")
+
+
+# --- tokenization ----------------------------------------------------------------------
+
+
+def test_sentence_documents_rank_distinct_queries_into_distinct_windows() -> None:
+    from hawedit.sentences import segment_sentences
+    from hawedit.transcripts import Word
+
+    words = (
+        Word(w="کوردستان", start_ms=0, end_ms=500, conf=0.9),
+        Word(w="جوانە.", start_ms=500, end_ms=900, conf=0.9),
+        Word(w="هەولێر", start_ms=2000, end_ms=2400, conf=0.9),
+        Word(w="باشە.", start_ms=2400, end_ms=2800, conf=0.9),
+        Word(w="سلێمانی", start_ms=4000, end_ms=4400, conf=0.9),
+        Word(w="گەورەیە.", start_ms=4400, end_ms=4800, conf=0.9),
+    )
+    index = Bm25Index.from_sentences(segment_sentences(words), norm())
+
+    first = index.search("کوردستان")[0]
+    last = index.search("سلێمانی")[0]
+    assert first.doc_id != last.doc_id
+    assert (first.start_ms, first.end_ms) == (0, 900)
+    assert (last.start_ms, last.end_ms) == (4000, 4800)
+
+
+def test_single_document_shape_cannot_return_a_passage() -> None:
+    index = Bm25Index.from_transcript(norm("whole", "کوردستان هەولێر سلێمانی"))
+    assert {index.search(query)[0].doc_id for query in ("کوردستان", "سلێمانی")} == {"whole"}
+
+
+def test_nonpositive_search_limits_are_refused_at_the_exact_boundary() -> None:
+    index = Bm25Index([doc(f"d{position}", "کوردستان") for position in range(10)])
+    for limit in (0, -1, -10):
+        with pytest.raises(ValueError, match="cannot return a document"):
+            index.search("کوردستان", limit=limit)
+    assert len(index.search("کوردستان", limit=1)) == 1

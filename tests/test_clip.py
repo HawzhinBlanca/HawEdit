@@ -102,7 +102,7 @@ def a_clip(**overrides: object) -> Clip:
             caption_style="word_highlight",
             durations=(15, 30, 60),
         ),
-        "qc": Qc(auto_pass=True, flags=(), human_reviewed=False),
+        "qc": Qc(auto_pass=True, flags=(), human_reviewed=True),
     }
     payload.update(overrides)
     return Clip(**payload)  # type: ignore[arg-type]
@@ -158,9 +158,34 @@ def test_a_clip_awaiting_human_review_is_not_renderable() -> None:
         clip.assert_renderable()
 
 
+def test_an_automatic_pass_cannot_replace_human_review() -> None:
+    clip = a_clip(qc=Qc(auto_pass=True, flags=(), human_reviewed=False))
+    with pytest.raises(ValueError, match="human QC"):
+        clip.assert_renderable()
+
+
 def test_a_human_reviewed_clip_is_renderable_even_without_auto_pass() -> None:
     clip = a_clip(qc=Qc(auto_pass=False, flags=("checked",), human_reviewed=True))
     clip.assert_renderable()
+
+
+def test_a_clip_with_no_qc_record_at_all_is_not_renderable() -> None:
+    """The refusal above this one catches a clip that FAILED QC. This catches one that never
+    had it — and absence is the quieter of the two.
+
+    Its own words: "A clip with no QC record has not passed QC — it has skipped it. §2's
+    diagram puts the gate before output '(always)', so absence is refusal, not permission."
+    Audit finding #3.
+
+    Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file
+    with tests/test_delivery.py and tests/test_review_findings.py: thirteen of clip.py's
+    fourteen redden something and this one did not. It sits inside `assert_renderable`, which
+    D-195 swept and found two refusals nothing held; this is a third in the same function that
+    the sweep did not reach.
+    """
+    clip = a_clip(qc=None)
+    with pytest.raises(ValueError, match="carries no QC record"):
+        clip.assert_renderable()
 
 
 def test_direct_qc_construction_refuses_truthy_string_booleans() -> None:
@@ -315,7 +340,7 @@ def test_a_clip_may_omit_the_editorial_block_before_the_judge_has_run() -> None:
 # the claim rides through. Measured on the three windows Stage 0 actually plans for the fixture,
 # 'speaker gestures at 9999s, held over 1s' was ACCEPTED on 0..1400 ms, and the same trick works
 # on 1400..2800 ("over 2s") and 2800..4162 ("over 3s"). The cited tests used only a
-# 300000..312000 window — the one distance from zero where 1000 ms falls outside. D-088.
+# 300000..312000 window — the one distance from zero where 1000 ms falls outside. D-098.
 
 
 def _sv6d_all(label: str) -> Sv6d:
@@ -353,7 +378,7 @@ def test_the_original_headline_defect_is_still_refused() -> None:
         assert_sv6d_within_window(_sv6d_all("speaker gestures at 9999s"), 300_000, 312_000)
 
 
-# --- D-101: the artifact could mislabel which path found the clip ---------------------------
+# --- D-133: the artifact could mislabel which path found the clip ---------------------------
 
 
 @pytest.mark.parametrize("path", list(DiscoveryPath))
@@ -371,7 +396,7 @@ def test_the_emitted_clip_names_the_path_that_actually_found_it(path: DiscoveryP
     `discovery_path in (path, DiscoveryPath.BOTH)`, and `Clip.from_dict` rebuilds the enum from
     this field, so a run resumed from a mislabelled artifact carries the wrong attribution into
     the numbers M2.5's row says still mean something. Parametrized over every member, because a
-    single fixture is how this got here. D-101.
+    single fixture is how this got here. D-133.
     """
     emitted = json.loads(json.dumps(a_clip(discovery_path=path).to_dict()))
     assert emitted["discovery_path"] == path.value

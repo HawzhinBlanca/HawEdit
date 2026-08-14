@@ -10276,3 +10276,901 @@ the command scanning is a tripwire for obvious cases and not a security boundary
 boundary is the `file_path` check plus filesystem permissions. The real gate is
 `.github/workflows/gate.yml` on a clean runner, re-running from committed source with no shell
 of the agent's — which is why the local hooks can afford to be helpful rather than airtight.
+
+## D-199
+
+**The two CODYSTEM scripts that decide what "done" means had no automated test, and the ledger
+flipper had never once run.** D-198 recorded the first half deliberately — "a Python test of it
+would have moved that floor and is left as separate work" — because ratcheting
+`scripts/test-count.floor` in a commit whose gate had never run would have cost the final CI step
+its meaning. This is that separate work. The second half was not known: `scripts/update-ledger.sh`
+computes its target as `specs/<feature>/tasks.md`, `specs/` held only `constitution.md`, and the
+script refuses a missing ledger before it does anything else. It had therefore refused every
+invocation ever made of it, which means AGENTS.md's rule that only the flipper may flip a row was
+true the way a rule about an empty room is true. The 33 DONE rows in `PROGRESS.md` are a different
+ledger, hand-maintained, and no script wrote them.
+
+**What the tests do.** Sixteen of them, in `tests/test_harness_scripts.py`. Both scripts locate
+the repository by walking up from their own path, so copying one into a tmpdir makes that tmpdir
+its whole world; each test runs against a stub gate there and never the real one. That keeps the
+suite at roughly a second instead of the gate's two and a half minutes, keeps
+`.gate/last-test-run.xml` and the committed floor untouched while a second session shares this
+checkout (BLOCKED #12), and lets the stub record *that it was invoked* — which is how "this
+refusal fires before the gate" became an assertion instead of a reading of the source.
+
+**A stub gate is not the forgery D-092 and D-093 closed.** Those refused a fake `pytest` on
+`PYTHONPATH` and an interpreter override that replaced every step including the one grading the
+others — fakes of the gate's own tools, standing in for the thing under test. Neither script here
+is the gate. The Stop wrapper's entire job is translating an exit code it did not produce, and
+enumerating the codes it must translate requires producing them; D-198 exercised exactly this by
+hand against a stub returning 0,1,2,3,4,5,9, and this commits that exercise rather than leaving it
+a sentence. The flipper's refusals are asserted never to reach a gate at all.
+
+**What remains structurally untestable from pytest, stated because this file does not accept a
+green that was not run.** Everything below the flipper's invocation of the gate: the citation
+check against the report, the awk flip, and the provenance line. Reaching them needs the gate to
+exit 0, but pytest runs underneath that same gate, which exports a depth variable and refuses a
+nested full run with exit 4 — so the inner call cannot return 0 by construction, not by accident.
+The only honest proof is running the real script by hand, which this commit also does: the three
+rows in `specs/harness-integrity/tasks.md` were flipped by `scripts/update-ledger.sh` itself, each
+after its own green gate, with `specs/harness-integrity/ledger.log` carrying one provenance line
+per flip. Those are the first successful executions of that script in this repository.
+
+**A defect found while writing the prefix test, reported and not fixed here.** The flipper
+constrains a task id to `[A-Za-z0-9_.-]+` and then interpolates it into a `grep -E` pattern. A dot
+is legal in that set and is also a regex metacharacter, so the task id `T.` passes validation and
+then matches the row `T1`. `T-` is harmless and `T10` correctly does not match `T1`, so the
+anchoring is right and only the dot leaks. Fixing it means editing an enforcement script, which
+was not in this feature's approved plan; it is recorded here rather than absorbed silently, and
+the plan for it belongs in its own spec with its own row.
+
+**Measured, on this machine only.** Windows 11, Python 3.11.15, pytest 8.3.4, in this checkout:
+the suite went from 1643 to 1659 collected, all passing, none skipped; the gate ran green three
+times at 155.41 s, 142.94 s and 153.81 s. The floor was ratcheted by the gate, not by hand, and is
+committed alongside the tests so that CI's final step — which fails a run that ratcheted it — keeps
+saying what it was built to say. No CI run has yet seen any of this; a local green cannot speak
+for a clean runner, and until that check is green nothing here is done.
+
+---
+
+## D-200
+
+**The licence gate ran before the merge, and found the real blocker was not a licence.**
+
+Task T0 of `specs/production-hardening/plan.md`, promoted ahead of the merge by Hawa on
+2026-08-14 for the reason the ordering exists: finding a NonCommercial dependency after it is
+already in the tree and the history is the failure D-002's hard reject is meant to prevent.
+
+**Scope.** Every runtime dependency `origin/codex/production-readiness-20260809` adds or
+re-pins relative to this branch. D-002's own table covers only `klpt`, `chunspell`, `pytest`,
+`ruff` and `mypy`; D-024 covers the Stage 0 media stack. Neither covers the pins below, so an
+inline comment in `pyproject.toml` was the only claim on record, and a comment is a claim rather
+than a reading.
+
+**Method, D-002's.** Licence read from installed wheel metadata, never from a README or from the
+pyproject comment being checked. Two of them required `License-Expression:` rather than the
+legacy `License:` field, which is why a naive `grep '^License:'` reported nothing for the two
+largest dependencies in the project.
+
+| Dependency | Version read | Licence, as the metadata states it | Verdict |
+|---|---|---|---|
+| `torch` | 2.13.0+cu130 | `Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND MIT` | ACCEPT |
+| `pillow` | 12.3.0 | `MIT-CMU` | ACCEPT |
+| `torchaudio` | 2.11.0+cpu | BSD (OSI classifier) | ACCEPT |
+| `torchvision` | 0.28.0+cu130 | BSD | ACCEPT |
+| `accelerate` | 1.14.0 | Apache | ACCEPT |
+| `fonttools` | 4.55.3 | MIT | ACCEPT |
+| `huggingface-hub` | 0.36.2 | Apache | ACCEPT |
+
+**No NonCommercial term appears in any of them. The gate is clear for these seven.**
+
+Two readings are weaker than they look and are recorded as such rather than rounded up.
+`torch`'s licence is a **conjunction of six**, not the "BSD-3-Clause" its pyproject comment
+claims; the comment understates it. And the version installed here is 2.13.0, while readiness
+pins `torch==2.8.0` and `torchaudio==2.8.0` for non-Windows — so this is a reading of a
+neighbouring version, not of the pinned one. Licences rarely change across a minor, but "rarely"
+is not "did not", and D-002's whole point is reading rather than assuming.
+
+**Four could not be read and are therefore not cleared:** `peft==0.19.1`, `fairseq2==0.6`,
+`qwen-asr==0.0.6` and `google-auth==2.56.3`. None is installed in the host venv — the first three
+live only in the WSL2 runtime `hawedit-asr-setup` provisions, and `peft` is this branch's
+dependency rather than readiness's, reached only through `wsl_setup.py`'s bootstrap. They are
+listed in `BLOCKED.md` rather than waved through. **T0 is not complete while they stand.**
+
+**What the audit found instead, and it blocks more than a licence would.**
+
+The merge-base tops out at `D-154`. Both branches then assigned D-numbers independently, so
+`D-155` through `D-191` — **thirty-seven numbers** — name a different decision on each side.
+Concretely, on this branch `D-165` is the SRT cue-ordering refusal, `D-171` is deriving
+`PipelineRun.skipped()` from `fields(self)`, `D-181` is the fine-tuned decoder's adapter
+provenance and `D-182` is the SV6D span parse; on readiness those same four numbers are a
+scene-window filesystem identity, a semantic-equivalence join, a prerequisite diagnostic and a
+future-guard binding.
+
+This is not cosmetic. AGENTS.md's grounding rules require citing `DECISIONS.md` by D-number when
+a choice was already settled, and after the merge every such citation in code comments, test
+docstrings and commit messages across both branches is ambiguous over a 37-number range. Worse,
+all four numbers quoted above are cited by `plan.md`'s own preservation list — the document
+whose entire purpose is to stop the merge losing those decisions.
+
+**Decision.** The colliding ADRs on the **incoming** branch are renumbered to `D-201` and up as
+part of T13, and its in-code citations rewritten with them. The merge direction is
+readiness → HEAD, so HEAD is the base and its numbering is what the preserved code and the
+approved plan already cite; renumbering the incoming side is the mechanical, greppable change
+and leaves no citation on this branch stale. The cost is honest and stated: it touches comments
+across readiness's 254 changed files, and a missed one is a citation pointing at the wrong
+decision rather than at none, which is the harder failure to notice.
+
+`plan.md` gains T0b for the renumber, and it blocks T13 rather than the merge itself.
+
+**Blueprint ref:** §7 · **Type:** dependency + licence check, and a merge hazard
+
+---
+
+## D-201
+
+**BLOCKED #23 is closed: all five remaining licences read, and a second wrong comment found.**
+
+D-200 cleared seven dependencies from installed wheel metadata and listed four it could not
+read, because `peft`, `fairseq2` and `qwen-asr` install only inside the WSL2 runtime the
+provisioner builds and `google-auth` was simply absent from this venv.
+
+Hawa approved provisioning WSL and installing the `[cloud]` extra to read them. That is not what
+happened, for two reasons, and the substitute is stronger rather than weaker.
+
+**Why the approved route was not taken.** `pip install` writes into `.venv/Lib/site-packages/`,
+and AGENTS.md lists `.venv/**` as a hard boundary with no sentinel escape. The PreToolUse guard
+refused the command, correctly — this was not a false positive, and reshaping the command until
+it passed would have been the bypass the guard exists to prevent. `scripts/setup.sh` installs
+only `.[dev,media]`, so the sanctioned route does not reach `[cloud]` either, and editing it to
+add one would push a dependency onto every fresh clone to settle an audit question.
+
+**What was done instead.** The licences were read from the published wheel metadata on the index
+itself, which is what D-002 specifies — its own worked example is
+`klpt-0.1.7-py3-none-any.whl → METADATA`. Reading the index serves the same metadata the wheel
+carries, and it does something installing cannot: it reads **the exact pinned version**. D-200
+had to record `torch` as a reading of 2.13.0 against a pin of 2.8.0, and every reading below is
+of the pin itself.
+
+| Dependency | Version read | `info.license` | Classifier | Verdict |
+|---|---|---|---|---|
+| `peft` | 0.19.1 | `Apache` | `License :: OSI Approved :: Apache Software License` | ACCEPT |
+| `google-auth` | 2.56.3 | `Apache 2.0` | none | ACCEPT |
+| `fairseq2` | 0.6 | **`MIT`** | `License :: OSI Approved :: MIT License` | ACCEPT |
+| `fairseq2n` | 0.6 | `MIT` | `License :: OSI Approved :: MIT License` | ACCEPT |
+| `qwen-asr` | 0.0.6 | `Apache-2.0` | none | ACCEPT |
+
+`fairseq2n` is not named in any pyproject; it is audited because `fairseq2` requires it, it ships
+the native code, and D-002 set that precedent by auditing `chunspell` as a `klpt` dependency.
+
+**No NonCommercial term in any of the twelve dependencies now audited. The gate is clear and the
+merge is unblocked on licence grounds.**
+
+**The finding worth keeping.** `pyproject.toml` annotates `fairseq2==0.6` as `BSD-3-Clause`. The
+published metadata says `MIT`. Both are permissive so nothing is rejected, but this is the second
+comment this audit has caught misstating a licence — D-200 found `torch` annotated
+`BSD-3-Clause` where the metadata is a conjunction of six terms — and D-024 already records a
+PyPI classifier for `scenedetect` that is flatly wrong in the other direction.
+
+Three independent wrong readings, in a project whose gate treats one licence class as a hard
+reject. The rule D-002 stated as method is now stated as a finding: **a licence annotation
+beside a pin is a claim, and the only reading that counts is the distribution's own metadata at
+the pinned version.** The comments are left in place and corrected during the merge rather than
+edited here, because `pyproject.toml` is a conflicted path and T4 owns it.
+
+**Blueprint ref:** §7 · **Type:** licence check · **Closes:** `BLOCKED.md` #23 · **Unblocks:** T1
+
+---
+
+> **The 37 ADRs below arrived with the readiness integration; 37 were
+> renumbered on merge (D-200, task T0b).** The merge-base tops out at D-154 and both branches
+> counted on from there independently, so D-155..D-191 each already named a
+> different decision here. They were remapped to D-202..D-238.
+> Citations *within* these entries moved with them; citations of shared history are untouched.
+
+## D-202 - An operational Stage 0 refusal is still a pipeline run
+
+The module contract says every stage yields either a result or a `StageSkipped`, but Stage 0 ran
+before `PipelineRun` was constructed. An unavailable/denied FFmpeg process, unreadable media, or
+other expected ingest `OSError` therefore escaped through `main`, made `--json` write no JSON, and
+exited as a command/configuration error. Every model stage already preserved the same class of
+operational failure in the report.
+
+**Decision:** `run_pipeline` normalizes only `IngestError` and `OSError` at the ingest boundary. The
+returned report contains Stage 0's bounded concrete failure plus an explicit skip for each of its
+eight downstream dependants, all naming `Stage 0 ingest` as the root blocker. Missing source,
+invalid media identity, transcript/schema errors, and programmer assertions remain exceptions;
+this is not a broad catch. The CLI now exits 1 and emits valid JSON for an operational Stage 0
+refusal, while static invocation errors retain exit 2. `evidence/stage-0-failure-reporting.md`.
+
+## D-203 - One unreadable Path B survivor does not erase the readable survivors
+
+The bounded real 38-minute Path B run planned and embedded 641 windows, retrieved 50 and kept seven,
+then returned zero candidates because the first VideoChat3 survivor produced a time range where the
+six-dimension schema requires one point. The refusal was correct; `read_scenes` aborting the other
+six readings was not. Twelve cached real windows showed 72/72 parseable dimensions and 12/12 point
+timestamps, so widening the parser would have guessed how to collapse an exceptional range.
+
+**Decision:** `VideoChat3Reader` records each refused window as `UnreadableScene` and continues.
+`SceneReadings`, `PathBDiscovery` and `VisualDiscoveryResult` carry those gaps into the run report,
+including an explicit empty list for a clean run. Path B still refuses when no scene is readable.
+The composer's exactness invariant is not weakened: candidate IDs union unreadable IDs must equal
+the reranked survivor IDs, so the model cannot silently omit or invent a window. Reader cleanup
+still runs after the complete survivor phase and cannot mask the primary failure. Eight mutations
+are caught, including a direct trip through the real reader method.
+`evidence/one-window-discarded-every-candidate.md`.
+
+## D-204 - Reproducible bytes must still identify HawEdit
+
+The release command proved that two builds emitted the same bytes, but it never proved which
+distribution those bytes claimed to be. A real HawEdit wheel reconstructed with METADATA
+`Name: hawedit-impostor`, `Version: 9.9.9` and a matching wrong filename still passed
+`_validate_hawedit_wheel`. It could therefore receive HawEdit gate provenance and a GitHub OIDC
+attestation even though the attested artifact identity was not the project identity authorized by
+the gated source.
+
+**Decision:** publication requires one identity across three independent representations. The
+archived `pyproject.toml` supplies the authorized project name/version, the wheel must contain
+exactly one METADATA record, and the PEP 427 filename must encode the same normalized distribution
+name and exact version. The check runs on the immutable first source export before any release
+directory is created. Schema-5 provenance records the measured distribution and version.
+
+The privileged attestation job does not trust that repository-code check. On its fresh no-checkout
+runner it opens the transported wheel with the standard library, requires exactly one METADATA,
+requires normalized distribution `hawedit`, checks filename/METADATA identity, and requires the
+same fields in schema-5 provenance before granting OIDC attestation authority. Tests mutate source,
+METADATA and filename name/version independently and pin the workflow-side verifier. This closes
+artifact-identity substitution; it does not invent the still-missing version/tag policy or durable
+GitHub Release. `evidence/release-identity-binding.md`.
+
+## D-205 - Stage 4 promotion and billing boundaries need exact controls
+
+Adversarial pass #15 revisited the M2.6 editorial-judge contract. The production code already
+refused all nine tested mutations, but three guarantees were not held by discriminating tests:
+
+- the old tie test used 5 wins against 5 wins, so the 20-item minimum answered before the tie rule;
+- the token tests did not stand on the exclusive 200,000-token ceiling; and
+- no test held the 20-keyframe maximum even though inline image bytes are billed.
+
+The regression set now uses 10 wins against 10 wins, asserts that the floor did not answer, and
+includes an 11-to-10 promotion control. A request at exactly 200,000 tokens is refused while one
+token below is accepted. Twenty-one keyframes are refused while exactly twenty inside the candidate
+span are accepted. This makes the cost and managed-migration boundaries mutation-sensitive without
+changing production behavior. The upstream pass called this D-128; the readiness branch already
+used that identifier, so the semantic integration is recorded here as D-205.
+
+`evidence/adversarial-pass-15-2026-08-09.md`.
+
+## D-206 - Pipeline completeness needs a real complete-run control
+
+Adversarial pass #16 attacked the original M2.7 end-to-end runner claims. Three of seven mutations
+were already caught. Four survived because no test in the suite had ever made
+`PipelineRun.complete` true: removing the `not skipped`, non-empty visual-window, or non-empty
+candidate requirements was indistinguishable from a no-op. Stage 5 also had no product-path
+assertion that the cuts it consumed were the cuts Stage 0 measured from the same video.
+
+The suite now constructs a fully complete result through `run_pipeline` with real ingest, indexing,
+boundary fusion, render and delivery plus injected discovery, visual and judge adapters. It proves
+`complete is True` and `skipped() == ()`, then independently removes each of the three requirements
+and requires incompleteness. A separate real-media run records the `BoundaryInputs` passed to Stage
+5 and compares its cuts to the `IngestResult` from Stage 0. The existing fixture's natural-silence
+signal extends to the file end, so asserting the input—not the winning boundary label—is the only
+discriminating integration proof on this media.
+
+The pass also corrected the stale statement that a bare run names four blocked stages; the current
+pipeline names eight. The upstream pass called this D-129; the readiness branch already used that
+identifier, so this semantic integration is D-206.
+
+`evidence/adversarial-pass-16-2026-08-09.md`.
+
+## D-207 - Unmeasured benchmark aggregates remain None
+
+Adversarial pass #17 attacked the M0.7 ASR throughput harness. Seven of nine mutations were already
+caught. The two survivors violated the project's explicit rule one layer above individual
+measurements: an empty score set could publish mean/worst RTF as `0.0`, and an aggregate with no
+VRAM probe could publish peak VRAM as `0`. Those values mean instantaneous transcription and zero
+memory use—not missing evidence—and could mislead the capacity plan.
+
+The new tests assert on `ModelReport.to_dict()`, the document downstream planning reads. They drive
+the unprobed case through `run_benchmark` so the aggregation itself is exercised, rather than
+constructing a report one call after the defect. Opposite-direction controls require measured
+0.25/0.75 RTF values and a 17 GiB probe to survive, preventing a blanket `None` implementation from
+passing. No production code changed. The upstream pass called this D-130; the readiness branch
+already used that identifier, so this semantic integration is D-207.
+
+`evidence/adversarial-pass-17-2026-08-09.md`.
+
+## D-208 - Alignment accuracy must reach the benchmark report
+
+Following D-207's audit of aggregate benchmark values exposed a larger omission: `_score_item`
+computed §8.1 alignment accuracy for every item with reference timings and stored it on
+`ItemScore.alignment`, but `ModelReport.to_dict()` never emitted an alignment field. The last metric
+in §8.1 was computed and discarded at the publication boundary.
+
+`ModelReport.alignment` now micro-aggregates timing evidence by matched words. It publishes matched
+and reference word totals, coverage, matched-word-weighted onset/offset errors and within-tolerance
+rate, the one tolerance, and the count of scored items. It returns `None` when nothing aligned—zero
+milliseconds is a perfect score, not absence—and refuses mixed tolerances rather than averaging
+rates measured against different thresholds. Invalid matched/reference counts also fail closed.
+
+The tests use six timed items across all three dialects, prove the emitted values at a 30 ms shift,
+move beyond the 50 ms threshold with a 120 ms control, require coverage beside errors, hold the
+unmeasured `None` case, and refuse a mixed 50/200 ms report. The field-by-field report schema is
+updated deliberately. Upstream recorded this as D-131; the readiness branch already used that
+identifier, so the integration is D-208.
+
+`evidence/section-8-1s-last-metric-never-reached-the-report.md`.
+
+## D-209 - Stage 0 reuse is content-bound and atomically published
+
+Adversarial pass #19 measured a repeated real 38-minute Stage 0 run spending 100.2 seconds
+recreating `audio.wav` and `proxy.mp4` that were already present: 66% of the first run's work.
+Reuse is now permitted only when the current source SHA-256, destination-independent ffmpeg
+command, and recorded output size all match.
+
+The upstream implementation wrote a rerun directly onto the final artifact. This branch tightens
+the publication boundary: each destination has a safe cross-thread/process lock; ffmpeg writes a
+suffix-preserving private sibling; a zero-byte result or source mutation is refused; the completed
+artifact and fsync'd provenance JSON are individually atomically replaced. A failed encode or
+source validation therefore preserves the last good artifact and provenance, concurrent identical
+reruns encode once, and a hardlinked lock is refused without modifying its victim. Audio format
+validation still runs after cache reuse.
+
+Eight new controls distinguish reuse from an implementation that never reruns or always trusts the
+destination: same-input reuse, same-path source replacement, settings drift plus truncation,
+failed-run preservation, mid-encode source mutation, missing output, unsafe lock, concurrent
+serialization, and post-reuse audio-format validation.
+Upstream recorded the performance finding as D-132; that identifier already exists on this branch,
+so the semantic integration is D-209.
+
+`evidence/two-thirds-of-stage-0-redone-on-every-run.md`.
+
+## D-210 - Font coverage must include normalized Kurdish and run at the burn
+
+The M3.1 font guard omitted `ک` U+06A9 and `ی` U+06CC even though §4.1's normalizer converts
+Arabic kaf/yeh into exactly those Kurdish forms. The golden caption contains both. Upstream
+measurement removed only U+06A9 from the shipped Noto font while retaining Arabic U+0643: the old
+guard passed, and libass rendered `کوردی` as detached fallback runs with 15,999 changed subpixels.
+
+`KURDISH_REQUIRED_GLYPHS` now includes both normalized forms and a test derives the requirement
+from `normalize_sorani`, rather than trusting another handwritten alphabet list. The per-file guard
+also had no product caller: tests checked the checkout font while an installed render consumed an
+arbitrary runtime `fonts_dir`. `assert_fonts_dir_covers_kurdish` now requires at least one covering
+font in the exact directory passed to `render_clip`; the render adapter normalizes a refusal into
+`RenderError` so the pipeline keeps its structured-failure contract.
+
+Controls require the shipped directory to pass, empty and non-covering directories to fail, and a
+real render path to refuse before publishing an MP4. Upstream recorded this as D-133; that number is
+already used on this branch, so the semantic integration is D-210.
+
+`evidence/adversarial-pass-18-2026-08-10.md`.
+
+## D-211 - BM25 retrieval documents are sentence windows, not the episode
+
+The runner built `Bm25Index.from_transcript(normalized)`: exactly one document. On the measured
+38-minute transcript that meant 6,104 words and 2,784 terms in one 322..2,313,729 ms window.
+BM25 had no passages to rank; every query could return only the entire episode. The already-written
+`from_sentences` factory was unused.
+
+Sentence segmentation now precedes index construction and the runner indexes one document per
+sentence. `from_sentences` accepts the `NormalizedTranscript` rather than a bare media id so Kurdish
+invariant #3 remains at the factory the runner actually uses. Tests require different queries to
+select different bounded windows and the emitted run report to contain the exact sentence count.
+The sibling negative-slice defect is also closed: `limit <= 0` is refused rather than silently
+dropping tail hits.
+
+The index is now structurally capable of retrieval, but `Bm25Index.search` still has no production
+caller. BLUEPRINT's Path A sends the full normalized transcript while the milestone describes
+`transcript → BM25 → Gemini`; choosing the index's product role changes the meaning of Path A and
+§8.2 recall. `BLOCKED.md` #18 records the decision and executable acceptance criteria rather than
+inventing a query/filter contract. Upstream recorded this as D-134; the readiness branch already
+uses that number, so this integration is D-211.
+
+`evidence/adversarial-pass-19-2026-08-10.md`.
+
+## D-212 - A scene-window identity is a filesystem identity at its type boundary
+
+`SceneWindow.window_id` is not only retrieval provenance. Qwen visual embedding, the composed
+Path B extractor and the TimeLens CLI all derive an extraction directory from it by replacing its
+logical colons with underscores. The normal runner validates its media id, but the public frozen
+type accepted direct and injected construction. Measured, `media_id="../../outside"` produced
+`../../outside:s0:w0`, and the derived directory resolved outside the declared work root.
+
+The safe contract now lives once in `SceneWindow.__post_init__`: `media_id` must satisfy the same
+cross-platform `validate_media_id` rule used by transcripts and artifact publication. This rejects
+POSIX and Windows separators, parent references, control characters, hidden names, reserved device
+names and non-portable endings before any adapter can form a path, while preserving portable
+Sorani identifiers. Tests exercise both traversal forms and Windows-only filename hazards so a
+fix that checks only the current host cannot pass.
+
+The adjacent M6.3 audit also corrects stale progress prose: TimeLens is composed in the runner and
+released after use; its remaining shortfall is labelled real-footage accuracy, not missing wiring.
+
+`evidence/adversarial-pass-20-2026-08-10.md`.
+
+## D-213 - A rewritable normalized transcript must still publish atomically and content-bound
+
+`transcript.norm.json` is derived and legitimately rewritable after a KLPT upgrade; it is not
+write-once like raw. That distinction was incorrectly implemented as `Path.write_text` on the
+predictable final name. Measured on Windows, planting that name as a hardlink changed an external
+victim from `ORIGINAL` to the normalized JSON while leaving link count two. A crash during the same
+call could expose truncated JSON, and a stale normalized transcript was written successfully and
+only refused if a later reader happened to inspect it.
+
+`write_norm` now takes the media's existing hardened transcript lock, verifies the immutable raw,
+requires `source_sha256` to match that exact file, writes and fsyncs a securely created private
+sibling, repeats raw integrity and identity checks, and atomically replaces the final name. The
+replacement unlinks a planted symlink/hardlink instead of following it. A failed replace keeps the
+previous complete norm; private-stage cleanup never masks the primary exception. The reader's
+stale guard remains because an old build or out-of-band actor can still place an artifact.
+
+`evidence/adversarial-pass-21-2026-08-10.md`.
+
+## D-214 - The transcript store directory is a bound security boundary
+
+Hardening the final normalized filename did not protect a higher-level redirect. `TranscriptStore`
+called `root.mkdir(parents=True, exist_ok=True)` and then trusted the pathname forever. An existing
+POSIX symlink or Windows junction at `work/transcripts` was followed, putting canonical raw bytes,
+their digest, the publication lock and derived norms in an external directory. Replacing the root
+after construction was likewise invisible.
+
+The store now keeps a lexical absolute path rather than calling `resolve`, lstat-validates a real
+directory without reparse indirection, records its device/inode identity, and revalidates it before
+and after every publication lock and around unlocked norm reads. This is deliberately narrower
+than trusting the resolved target: the declared path is the boundary, so an intentional symlink is
+still indirection the application cannot distinguish from a planted one.
+
+Controls simulate a POSIX symlink and a Windows reparse point on every host and perform a real
+rename/recreate identity swap. Each is refused before a lock or transcript artifact appears in the
+replacement root.
+
+`evidence/adversarial-pass-22-2026-08-10.md`.
+
+## D-215 - Stage 2 resumes only exact, pinned per-window embeddings
+
+The composed visual path rebuilt every scene embedding on every run. On the real 38-minute file
+that path plans hundreds of windows, so a late failure discarded the most expensive completed
+work even though each vector is independently reusable. Upstream measured the defect as D-140;
+that number is already used on this branch, so the semantic integration is D-215.
+
+`VisualComposer` now owns a per-window disk cache as part of the same composition that owns
+retrieval, reranking and reader provenance. Production wiring supplies the exact lowercase
+40-hex Qwen embedding revision from the trusted model metadata. A cache-enabled run hashes stable
+source bytes and binds every record to that digest, the complete `SceneWindow`, model id and
+revision. An injected composer without an identified revision remains valid but caching is off;
+an arbitrary branch/tag is refused rather than treated as identity.
+
+Records use a SHA-256 filename derived from the canonical window document, not a media-derived
+pathname. Reads are bounded, no-follow, single-link, regular-file and fd/path identity checked;
+the schema and vector numbers are strict (JSON booleans are not numbers), and `VisualEmbedding`
+re-applies the finite/non-zero invariant. Writes use a unique private sibling, flush and fsync it,
+then atomically replace the record. Corruption, truncation, source replacement or revision drift
+causes only the affected vector to be re-embedded. Cache hits/misses are emitted in
+`VisualDiscoveryResult`, making reuse observable rather than inferred from wall time.
+
+Measured with the exact hash-locked Windows/Python 3.11/CUDA 13.0 profile, Torch 2.13.0+cu130,
+two visible GPUs, the real `ZAR38MinTest.mp4`, `cuda:1`, and pinned revision
+`9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda`: pass one embedded five windows in 36.176 s; pass two
+reported five hits, zero misses, made no additional frame-embedding call and completed in 8.266 s.
+All five record SHA-256s and mtimes were unchanged. The remaining time is verified model reload
+and query embedding, not repeated scene work.
+
+`evidence/stage-2-embedding-resume.md`.
+
+## D-216 - Help names the command that can actually be invoked
+
+Argparse previously exposed two incompatible accidents. `hawedit --help` and
+`hawedit-credentials --help` hard-coded Python module names that are not installed commands, while
+parsers without `prog=` showed a source filename under `python -m`. A fixed string cannot be right
+for both entry modes.
+
+`cli.program_name` now uses Python's invocation contract: under `python -m`, `sys.argv[0]` is the
+module's `.py` file and help names `python -m <module>`; generated launchers name their own stem,
+dropping Windows' `.exe`. Empty `argv[0]` falls back to the module form. Every parser declared in
+the current nine-entry `[project.scripts]` table uses the helper, including model fetch, FFmpeg
+setup, release and the WSL VEX gate that did not exist in upstream's five-entry measurement.
+
+The regression derives module-to-launcher names from `pyproject.toml`, drives every real `main`
+through help under both suffixless and `.exe` launchers, and separately drives module mode using
+the native platform's path separators. The existing Linux/Python 3.12 gate supplies the other
+host, so a Windows-only path literal cannot certify the rule.
+
+`evidence/help-names-the-invoked-command.md`.
+
+## D-217 - The README must agree with the live quality ledger and its CLI API
+
+The README is a product surface, not an archival log. It already states that `gate` is the strict
+required check on protected `main`, while `BLOCKED.md` #7 is resolved; that upstream correction is
+semantically present. The statement was unbound, so reopening the blocker or deleting the claim
+could drift again. A symmetric test now requires exactly one of “#7 is live” and “README says the
+check is required” to be true.
+
+The adjacent module map had real drift: its `cli.py` row described only UTF-8 output after the
+module gained machine-readable stdout ownership and invocation-aware help. The row now names all
+three exported helpers, and a test derives the required names from `hawedit.cli.__all__`. This is
+deliberately scoped to the module whose purpose is shared entry-point behavior; imposing symbol
+lists on every prose module-map row would make the documentation less useful.
+
+`evidence/readme-quality-bar.md`.
+
+## D-218 - Join main only after semantic equivalence, preserving the verified tree
+
+`origin/main` and the readiness branch independently implemented the same audit findings after
+their common base, producing 35 textual conflicts across older pipeline, tests and append-only
+ledgers. Resolving those conflicts file-by-file with whole-side choices would either discard later
+hardening or reintroduce older implementations. Before joining history, every one of main's 25
+commits was classified against the readiness tree. The two findings not already present—Stage 2
+embedding resume and invocation-aware help—were implemented against the newer composition, then
+measured and passed clean canonical gates. README's latest claim was likewise bound to current
+contracts.
+
+The histories were joined with Git's `ours` merge strategy intentionally. This is not a claim that
+main did nothing; it says its semantic effects are already in the first parent's stronger tree.
+Merge `89a1641` has parents `bc12e13` and `ba52888`. Its tree
+`6b1963dc27a1e0997c7e7bfa091bcf29c25c72ae` is byte-identical to the verified readiness parent's
+tree. The second parent makes all main commits ancestors without replaying stale implementations.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-237 - Adapt main's audit correction to the atomic delivery publisher
+
+Protected main corrected an audit statement that contradicted its flat-file recovery guard: an
+abandoned flat artifact set was repairable there. Readiness no longer has that publication model.
+It writes into a unique hidden directory and publishes the exact five-file set with one no-replace
+directory rename. A crashed private attempt is nonblocking; any visible final namespace or legacy
+flat artifact is refused rather than overwritten.
+
+The semantic import therefore preserves main's intent instead of its obsolete sentence. One
+regression executes both current guard outcomes before asserting the audit's atomic-delivery text.
+A second derives every root Markdown document and refuses any `D-NNN` citation absent from the
+decision register. This avoids the two failures main identified without weakening the newer
+publisher or colliding with main's unrelated D-154 number.
+
+`evidence/main-delivery-audit-adaptation-2026-08-10.md`.
+
+## D-238 - Join main's delivery-audit history without replaying the flat publisher
+
+The adapted first parent `e8a411edd2da296dec4a2f6f87f8dbfce7fc9e3b` passed the focused
+claims/pipeline suite before the join. Merge `5a9099abe6d2ff7ac3342c291bd27695f9fac987`
+records protected-main parent `5eba372931eb6aa97edfca70cce6fbcc0718d8e3`. Both the merge and
+first parent have tree `ef2a73250462f8835b5d2a65f617753bb73ebd7c`, proving that the join
+added ancestry without replacing the newer atomic publisher or its adapted audit tests.
+
+Tree equality is not runtime evidence. The canonical gate must pass again at the documented tip,
+and only that post-join result is promotion evidence.
+
+`evidence/main-delivery-audit-merge-2026-08-10.md`.
+
+## D-235 - An impossible live smoke refuses before confirmation and billing
+
+The documented live check omitted `--video`, made its billed Path A calls and only then refused
+pixel-grounded Stage 4. Video presence and file existence are now checked immediately after
+credential presence, before the estimate, confirmation prompt, model construction or transport;
+the refusal is exit 2 because nothing ran. Tests prove no billed boundary or confirmation is
+reached, and a legal existing-video control must reach the billed boundary.
+
+The built-in timed sample lasts 13 seconds and no matching video ships. The unrelated 4.162-second
+fixture cannot honestly supply later pixels, so `BLOCKED.md` #19 requests a real recording. The
+text is not shortened to fit another clip and synthetic pixels are not used to make Stage 4 appear
+accepted.
+
+`evidence/smoke-video-preflight-2026-08-10.md`.
+
+The source change rotates the receipt/VEX identity to `df74ba00dcae757e…`. The exact WSL runtime
+was reprovisioned and the live gate accepted all 12 audit findings against 12 reviewed
+dispositions with three authenticated assets (43,546,500,168 bytes) and two CUDA devices; this is
+affected/mitigated evidence, not a claim of zero vulnerabilities.
+
+## D-236 - Judge frames carry the requested sampling cadence, not stretched time
+
+When ffmpeg returned fewer frames because the source ended before an overlong candidate span,
+timestamps were derived from `duration / frames_returned`. That stretched surviving images across
+moments the video never had. Timestamps now use the cadence given to ffmpeg,
+`duration / requested_count`, at bucket centres. Real-media tests include a 13-second request over
+the 4.162-second fixture and require genuine partial JPEG output with no stamp past source end.
+
+Readiness already owns a unique private extraction directory per call, so prior-run JPEGs cannot
+enter enumeration; main's shared-directory stale refusal is not replayed. This change rotates the
+receipt/VEX source identity again and requires new live acceptance.
+
+`evidence/keyframe-timestamp-cadence-2026-08-10.md`.
+
+The rotated `59a1e500…` WSL receipt and live VEX gate are accepted: 140 packages, two GPUs, three
+authenticated assets totaling 43,546,500,168 bytes, and 12/12 explicit dispositions. This records
+affected/mitigated state; it does not re-label findings as absent.
+
+## D-230 - Hold Kurdish invariant #3 at every Stage 2 query-reading model
+
+Protected main removed query normalization independently from the Qwen embedder and reranker. Both
+mutations left its full gate green: the score remained in range, the embedding remained a vector,
+and existing calls used already-normalized Sorani. Production was correct; the suite never
+observed what either processor actually read.
+
+The shared stub processor now records complete conversations. One Arabic-keyboard query carries
+kaf/yeh collisions, a ZWNJ-heh fold and Arabic-Indic digits. Each adapter must send the §4.1
+normalized form, omit every raw codepoint and preserve an already-normalized query unchanged. An
+introspection contract binds every production class with a query-taking method to the driver table,
+so another adapter cannot inherit invariant #3 only by assumption.
+
+Rejected checking the returned vector or score: a different alphabet changes relevance slightly,
+not the return type or range. Rejected normalizing only at the caller: the adapters are public
+model-input boundaries and already own the correct implementation. The focused visual slice passes
+95/95 without changing production code.
+
+`evidence/stage2-query-normalization-2026-08-10.md`.
+
+## D-231 - Join main after adapting its Stage 2 invariant test to the newer loaders
+
+Protected main `ba2a445` contained the D-230 finding and tests but no production-code change.
+Readiness adapted the processor-conversation assertions, raw-codepoint checks, idempotence control
+and query-reader class inventory against its newer verified-checkpoint and GPU-lifecycle code. The
+focused visual slice passed 95/95, the exact floor rose to 2,044, and the canonical gate passed
+before histories were joined.
+
+Merge `b663cd3` has readiness parent `8ee40e9` and protected-main parent `ba2a445`. Both its tree
+and the first-parent tree are `64fd3068d0b4b6374b8a7d3ef6b60cc0e5b05634`; protected main's
+older tests, evidence, decision numbering and floor therefore cannot replace the audited readiness
+versions. The merged identity still requires local and hosted acceptance.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-232 - Git archive bytes are part of the authenticated release input
+
+The source and hosted gates at `fb17959` were green, yet a clean installed wheel refused its own
+packaged base lock.  Windows `core.autocrlf=true` had converted the unclassified `.txt` member
+from the committed LF bytes to CRLF during `git archive`; the code-bound SHA-256 correctly detected
+the mismatch.  A reproducible wheel can therefore be reproducibly wrong when archive conversion
+changes authenticated data before both builds.
+
+Every tracked `.txt` is now `text eol=lf`, including dependency locks, the release-builder lock
+and the font license.  The regression forces the Windows autocrlf setting and compares every
+archived text member with its Git blob, rather than merely inspecting the working tree.  The exact
+`9322f28` wheel then built twice identically and passed fresh installed-wheel proofs on CPython
+3.11.15 and 3.12.10: hash-only dependency install, `pip check`, exact environment audit, seven
+installed data members and all nine CLIs.
+
+Rejected updating trusted hashes to the CRLF wheel bytes: Linux would then disagree and the digest
+would authenticate a platform conversion rather than the committed lock.  Rejected normalizing
+on read: the raw wheel member, RECORD and provenance must identify the same reviewed bytes.
+
+`evidence/release-text-byte-integrity-2026-08-10.md`.
+
+## D-233 - Missing tamper evidence is a refusal at both transcript runtime doors
+
+Protected main neutralized the missing/unreadable digest branch while leaving its full suite
+green.  Every older tamper test edited the canonical transcript and reached the digest-mismatch
+branch; none removed the evidence.  Rewriting the raw and deleting its sidecar could therefore be
+made to verify cleanly without reddening a test, even though production already contained the
+right refusal.
+
+Five explicit evidence-destruction states are now derived into a two-door matrix for
+`verify_raw_integrity` and the independent verification inside `write_norm`, then repeated against
+an actually tampered canonical file.  Unreadable states require the missing-evidence diagnostic;
+readable empty/whitespace states require digest mismatch.  An intact pair must still verify and
+publish/read its normalized artifact, preventing unconditional refusal from passing the matrix.
+
+Rejected moving verification into `read_raw`: that method deliberately exposes exact parsed bytes
+so byte-only JSON changes remain observable to the separate digest check.  Rejected claiming an
+unkeyed SHA-256 proves origin: an actor able to rewrite both files needs a signature or keyed MAC,
+which is a distinct unsatisfied trust requirement.
+
+`evidence/invariant-1-digest-evidence-2026-08-10.md`.
+
+## D-234 - Join main only after adapting its missing-digest mutation to current APIs
+
+Protected main `f189b19` added no production change; it proved the missing/unreadable digest
+refusal could be neutralized while its older 1,471-test suite remained green.  Readiness adapted
+the finding to its newer API: direct verification and the independent check inside normalized
+artifact publication, not the removed `reusable_raw` method.  Seventeen new cases passed in a
+289-test transcript/pipeline/concurrency slice, the floor rose to 2,062, and the canonical gate
+passed before the history join.
+
+Merge `003963d` has accepted readiness parent `227e1bc` and protected-main parent `f189b19`.
+Its tree and the first-parent tree are both `e41b8c6624664bb95aabcf3f70f529f754b091a2`;
+the join therefore records main's ancestry without replacing newer transcript storage, release,
+pipeline, evidence or ledger content.  The merged identity still requires its own local and hosted
+acceptance.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-228 - A prerequisite is held by its own diagnostic, not by a shared exit code
+
+Protected main measured that deleting twelve of fourteen older argv guards left their tests green.
+The test asserted only exit 2, which every caught setup failure returns, so a later unrelated error
+could impersonate the intended refusal. Readiness's newer surface had 17 condition blocks: 15
+reachable guards and two dominated branches that no CLI invocation could reach.
+
+The dead raw blank-query check was already preceded by the stronger normalized Sorani check. The
+dead auto-selection source check followed the query-capable producer check, while every possible
+producer's own source guard fires earlier. Both were removed instead of inventing direct-internal
+tests for behavior an operator cannot observe.
+
+Twenty-one real-CLI cases now cover every reachable guard and both sides of compound rules. Each
+asserts the target diagnostic and that no work directory exists, in addition to exit 2. A
+bidirectional AST contract requires every pre-input `ValueError` to match exactly one case and
+every case to name a live refusal. A legal-argv control gets beyond the whole block. A guard added,
+deleted, made uniformly strict or reordered behind filesystem work therefore fails for the reason
+the boundary exists. The focused pipeline suite passes 143/143.
+
+Rejected a generic traceback assertion: it still cannot tell which boundary ran. Rejected keeping
+unreachable messages as defensive duplication: duplicated policy drifts, cannot be behaviorally
+held, and misleads operators about which prerequisite owns the refusal.
+
+`evidence/cli-preflight-boundaries-2026-08-10.md`.
+
+## D-229 - Join main after adding its future-guard binding to the broader preflight matrix
+
+Protected main `2fd2e55` implemented the CLI-refusal finding recorded in D-228 and added a valuable
+AST contract: a future refusal cannot arrive without a test case. Readiness retained its broader
+21-case matrix, removal of two unreachable branches, distinct compound-rule cases and legal-argv
+control, then adapted the bidirectional source binding. The focused pipeline suite passed 143/143,
+the exact floor rose to 2,039, and the canonical gate passed before the join.
+
+Merge `f356804` has readiness parent `f5087bf` and protected-main parent `2fd2e55`. Its tree and the
+first parent's tree are both `a40298ea3654e74eef9f681b32507fde602b35a1`, so the history join
+cannot replace the audited code, tests, evidence or floor with protected main's older versions.
+The final merged identity still needs local and hosted acceptance.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-226 - Confidential ZDR is a property of the constructible judge class set
+
+Protected main neutered the two §3 governance gates independently. Developer-API upload tests
+reddened, but removing `assert_permits_vertex` left its suite green. Under that mutation a
+confidential Vertex judge made both `countTokens` and `generateContent` calls carrying the client's
+Kurdish transcript and real JPEG bytes. Production was correct; coverage had silently proved only
+the other route.
+
+Readiness's D-221 constructor inventory already names every concrete `GeminiJudge` subclass
+bidirectionally. That same inventory now builds every judge under each forbidden confidential
+state with a recording transport. The suite asserts zero URLs, not merely an exception, and holds
+`judge`, `count_parts` and `generate_json` independently. A separating case proves attribution
+cannot substitute for configured ZDR; positive controls prove the transport and allowed route
+still work. Thirteen new cases make the focused Gemini suite 78/78.
+
+Rejected one Vertex-only test: it closes today's copy while letting the next subclass repeat it.
+Rejected relying on `judge()` calling `count_parts` before `generate_json`: a public boundary that
+is safe only in its current caller order is not a boundary. No production code changed because the
+gates were already correct.
+
+`evidence/confidential-zdr-class-set-2026-08-10.md`.
+
+## D-227 - Join the confidential-ZDR coverage history without replacing the newer matrix
+
+Protected main `3765add` contained the D-226 finding, tests, evidence and ledger changes but no
+production-code delta. Readiness adapted its behavioral claim into the existing bidirectional
+judge-class inventory, added independent public-entry-point controls, passed the 78-test Gemini
+suite, ratcheted the exact floor to 2,021, and passed the canonical gate before joining histories.
+
+Merge `8cf878d` has readiness parent `8bd2974` and protected-main parent `3765add`. Both its tree
+and the first-parent tree are `32bb011f1195b1f063d51efd5a59f34b327b9c3f`, so no older test,
+documentation or floor content replaced the audited readiness versions. A post-merge canonical
+gate remains mandatory because identical Git trees do not prove the new commit identity executes.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-219 - Declare every way a blocker stops needing Hawa
+
+`tests/test_claims.py` maps `BLOCKED.md` headings to live or resolved entries so a milestone cannot
+remain blocked behind completed work. The parser recognized only `RESOLVED`, but the ledger also
+uses `ANSWERED` on #10. That entry therefore read as live even though Hawa answered the question;
+the remaining Windows loader problem was filed separately as #11 and later resolved.
+
+The accepted vocabulary is now explicitly `{RESOLVED, ANSWERED}` and enforced in both directions.
+Every bold marker in a numbered heading must start with one of those words, and every declared
+word must be used by at least one heading. The specific #10 regression is pinned alongside an
+unmarked-live control. This turns a future status synonym into a deliberate code review rather
+than an invisible resolution.
+
+Rejected renaming #10 to `RESOLVED`: answering Hawa's repository question and removing the loader
+obstacle were distinct events, and the ledger records that distinction accurately. Rejected
+treating any bold text as a resolution: it would make formatting silently change milestone state.
+
+`evidence/a-blocker-could-resolve-invisibly.md`.
+
+## D-220 - Rejoin main after the claims delta, without changing the audited tree
+
+`main` advanced from `ba52888` to `7002331` while the readiness branch was being pushed. The only
+new semantic delta was D-219's `ANSWERED` blocker status. It was reproduced, implemented against
+the readiness claims suite, and focused-green before history was joined.
+
+Merge `8128707` has first parent `baf11b0` and protected-main second parent `7002331`. Both its
+tree and the first-parent tree are `ecb193121a6778a2ff2b9f65d643e0a4f29b7d2a`; the merge adds
+ancestry and no file content. This keeps the rule from D-218: semantic equivalence is established
+before an `ours` history join, never assumed from the strategy name.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-221 - Hold §7 routing for the constructor hierarchy, not one judge class
+
+`VertexGeminiJudge` correctly owns a separate constructor because Vertex uses ADC rather than the
+developer API's key. Consequently its `route(self)` call is copied wiring: the parent constructor's
+routing test does not protect it. Protected main measured that deleting the Vertex call left the
+suite green and made the confidential endpoint constructible for the shadow model.
+
+The suite now declares how every concrete `GeminiJudge` subclass is minimally constructed and
+compares those names bidirectionally with the transitive runtime class hierarchy. Every declared
+constructor must refuse `JUDGE_SHADOW`; a positive control must accept
+`KURDISH_EDITORIAL_JUDGE` and route its URL to that exact model.
+
+Rejected delegating Vertex to `super().__init__`: the parent acquires a Gemini API key, violating
+the ADC route. Rejected one Vertex-only assertion: it closes today's copy but lets the next
+subclass repeat the same unheld wiring.
+
+`evidence/confidential-judge-routing-copy.md`.
+
+## D-222 - Rejoin main after the confidential-route finding, preserving the audited tree
+
+Protected main advanced to `b24ce15` after the previous exact-SHA hosted gate. Its semantic delta
+was D-221's confidential Vertex routing coverage. Readiness integrated that finding against the
+newer Gemini transport, passed its 65-test focused suite, and ratcheted the floor before joining
+history.
+
+Merge `ccb11a3` has first parent `42aa923` and protected-main second parent `b24ce15`. Both the
+merge and first parent have tree `a332a67e40983efbac9f5cf296b45577f54cca56`, so the join added
+ancestry and no file content. The complete local and hosted gates remain mandatory because Git
+tree equality is not execution evidence.
+
+`evidence/main-semantic-merge-2026-08-10.md`.
+
+## D-223 - A rejected validator correction is evidence, not an episode failure or a gap
+
+The first source-current full Sorani run closed the Windows/WSL loader ownership defect and then
+measured a second blast radius after 34.9 minutes: canonical OmniASR had aligned a segment, rzgar
+proposed a correction, and the correction needed 22 CTC frames where only 15 existed. That
+`AlignmentInfeasible` escaped the per-segment boundary and discarded all 547 regions. D-135 had
+made initial canonical failures survivable but did not cover validator re-alignment.
+
+Dropping the segment would throw away admissible timed speech. Keeping it silently would make a
+failed validation attempt look successful. Calling it `UnalignedSpeech` would also lie, because
+canonical timed words remain. The chosen artifact is `RejectedValidatorCorrection`: media bounds,
+the registered validator and a bounded reason. The canonical segment remains, the correction is
+visible in raw JSON and the run report, and `asr.validated_by` names rzgar only if at least one
+correction was actually accepted.
+
+After the fix, the exact receipt-bound source completed the same 2,313.8-second episode in 45.7
+minutes. Worker output and the immutable host artifact were equal; the raw sidecar authenticated
+5,897 words; two genuinely unaligned regions totalled 664 ms; and two rejected corrections were
+reported without becoming transcript gaps. This closes executable M1.4. It does not create a
+labelled accuracy score: M0.13/M7.2 remain external corpus requirements.
+
+`evidence/full-sorani-stage1-acceptance-2026-08-10.md`.
+
+## D-224 - Auto-selection requires a query-capable producer, not a producer-shaped flag
+
+Protected main measured `--visual --auto-select` without a query spending about 170 seconds on the
+real 38-minute Sorani episode before Stage 2 admitted it could not retrieve. The readiness parent
+already refused that exact invocation before Stage 0 through its stricter `--visual without Path A
+requires --visual-query` contract, so replaying main's implementation was neither necessary nor
+safe.
+
+The adjacent auto-selection guard still counted `--visual` by presence, however, and the generic
+Stage 3 skip still instructed operators that `--visual` alone enabled Path B. The rule is now
+expressed once in capability terms: Path A can produce directly; Path B can produce only when
+`--visual` and a normalized nonempty `--visual-query` are both present. Seven behavioral tests
+hold the refusal, both positive producer paths, the no-producer case, whitespace, flag dependency
+and the structured instruction.
+
+Rejected using the whole transcript as an implicit query: it is the retrieval corpus and D-117
+measured the resulting unbounded GPU demand. Rejected copying protected main wholesale: its other
+delta repairs an older flat-file publisher, while readiness's hidden `ArtifactBundle` already
+makes a crashed partial delivery invisible and nonblocking and publishes the exact five files with
+one no-replace directory rename.
+
+`evidence/auto-select-query-preflight-2026-08-10.md`.
+
+## D-225 - Join main only after classifying both deltas against the stronger readiness tree
+
+Protected main advanced through `e2c768f` with an interrupted flat-delivery repair and the
+queryless auto-selection finding integrated in D-224. Readiness already superseded the former with
+its hidden exact-set `ArtifactBundle`; importing flat-file recovery would weaken publication
+ownership. Its stricter earlier visual-query preflight already refused the latter's exact
+invocation, while D-224 aligned the adjacent producer model and evidence with that behavior.
+
+The canonical first-parent gate passed 2,008/2,008 tests with zero skipped before the join. Merge
+`ded03cc` has readiness parent `4b63c04` and protected-main parent `e2c768f`; both the first parent
+and merge have tree `03b07a54ce0d40c98e3f3b0de78b2c1a27640264`. The merge therefore records ancestry without
+replaying stale content. Tree equality is not runtime acceptance, so a new canonical gate is still
+required at the final documented merge tip.
+
+`evidence/main-semantic-merge-2026-08-10.md`.

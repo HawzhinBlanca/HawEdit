@@ -1,27 +1,19 @@
 #!/usr/bin/env bash
-# Build the hawedit wheel reproducibly, and print the digest that identifies it.
+# Build one clean Git revision twice with HawEdit's hash-locked private builder.
 #
-# Two `pip wheel` runs at one unchanged commit used to produce the same 333,362 bytes and two
-# different SHA-256s, because nothing set SOURCE_DATE_EPOCH and every ZIP entry carried the
-# mtime of the moment it was written. `AUDIT_REPORT.md` recorded that as the reason it quotes a
-# byte count and no digest: a hash would have identified one build at one instant rather than
-# this code. Measured 2026-08-09, a7c3b2f1c280aff4 and 38d1d2475c46e120 for the same tree.
-#
-# The epoch is the commit's own author date — derived, never invented — so the same commit built
-# on any machine on any day yields the same bytes. Outside a git checkout there is no commit to
-# derive it from, and this refuses rather than substituting `now`, which would silently restore
-# exactly the behaviour it exists to remove. D-120.
+# PY is only the bootstrap interpreter used to create the private builder. The actual frontend
+# and backend come from requirements/release-build.txt, are installed with --require-hashes, and
+# are measured in the JSON result. The production release command adds exact-SHA CI verification,
+# provenance, SBOM and attestation; this helper deliberately publishes only a local wheel candidate.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
-OUT="${1:-$here/dist}"
-# The single argument is the output directory. Guarded because `build-wheel.sh --help` otherwise
-# creates a directory called `--help` — measured, it did, and git then reported it as untracked.
-if [[ "$OUT" == -* ]]; then
-  echo "✗ usage: bash scripts/build-wheel.sh [OUTPUT_DIR]   (no flags; PY overrides the" >&2
-  echo "  interpreter). Got: $OUT" >&2
+OUT="${1:-$here/dist/local-hawedit-$(git -C "$here" rev-parse --short=12 HEAD 2>/dev/null || true)}"
+if [[ -z "$OUT" || "$OUT" == -* ]]; then
+  echo "usage: bash scripts/build-wheel.sh [OUTPUT_DIR]   (no flags; PY selects the" >&2
+  echo "  bootstrap interpreter). Got: $OUT" >&2
   exit 2
 fi
 
@@ -31,37 +23,25 @@ if [[ -z "${PY:-}" ]]; then
   done
 fi
 if [[ -z "${PY:-}" || ! -x "$PY" ]]; then
-  echo "✗ no interpreter in .venv — run: bash scripts/setup.sh" >&2
+  echo "no bootstrap interpreter in .venv - run: bash scripts/setup.sh" >&2
   exit 2
 fi
 
-if ! epoch="$(git -C "$here" log -1 --format=%ct 2>/dev/null)" || [[ -z "$epoch" ]]; then
-  echo "✗ no commit to take SOURCE_DATE_EPOCH from: this is not a git checkout, or it has no" >&2
-  echo "  commits. Building anyway would stamp the wheel with the current time and the result" >&2
-  echo "  would not be reproducible — which is the whole point of this script." >&2
-  exit 2
-fi
-
-if [[ -n "$(git -C "$here" status --porcelain)" ]]; then
-  echo "! the tree is dirty, so this wheel is not the commit it will be stamped with" >&2
-fi
-
-export SOURCE_DATE_EPOCH="$epoch"
-mkdir -p "$OUT"
-"$PY" -m pip wheel --no-deps --no-build-isolation -q -w "$OUT" "$here"
-
-"$PY" - "$OUT" <<'PY'
-import hashlib
-import pathlib
+PYTHONPATH="$here/src" "$PY" - "$here" "$OUT" <<'PY'
+import json
 import sys
+from pathlib import Path
 
-wheels = sorted(pathlib.Path(sys.argv[1]).glob("hawedit-*.whl"))
-if not wheels:
-    raise SystemExit("✗ pip wheel wrote no hawedit wheel")
-wheel = max(wheels, key=lambda path: path.stat().st_mtime)
-data = wheel.read_bytes()
-print(f"{wheel.name}  {len(data):,} bytes")
-print(f"sha256  {hashlib.sha256(data).hexdigest()}")
+from hawedit.release import ReleaseError, build_local_reproducible_wheel
+
+try:
+    artifact = build_local_reproducible_wheel(
+        Path(sys.argv[1]),
+        Path(sys.argv[2]),
+        python=Path(sys.executable),
+    )
+except ReleaseError as exc:
+    raise SystemExit(f"REFUSED: {exc}") from exc
+
+print(json.dumps(artifact.to_dict(), indent=2, sort_keys=True))
 PY
-
-echo "SOURCE_DATE_EPOCH=$epoch (commit $(git -C "$here" rev-parse --short HEAD))"

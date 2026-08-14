@@ -5,13 +5,15 @@ Central Kurdish / Sorani (`ckb`, Arabic script). Built against `BLUEPRINT.md` v1
 ## What this is today
 
 **This is a fully composed, rigorously tested pipeline, not a production-proven product.** The
-runner wires canonical OmniASR, Qwen retrieval/reranking, survivor-only VideoChat3, multimodal
+runner wires canonical OmniASR, real confidence/disagreement routing to the rzgar Sorani
+validator, Qwen retrieval/reranking, survivor-only VideoChat3, multimodal
 Gemini judging, TimeLens grounding, automatic sentence selection and face-aware reframing. A
 production claim still needs external weights, an authorized cloud route and real
 human-labelled Sorani/editorial sets; this repository does not fabricate those results.
 Stage 1 is runnable through `--omni-asr`; on Windows the runner automatically uses the WSL2
-bridge because Meta's fairseq2 native extension has no Windows wheel. Its model execution is
-not a measured Sorani benchmark until the package-managed weights and labels are present.
+bridge because Meta's fairseq2 native extension has no Windows wheel. The complete LLM + CTC +
+validator path has run on both RTX 3090 Ti GPUs; that execution is not a measured Sorani
+benchmark until a labelled Sorani corpus exists.
 `--omni-asr-adapter <PEFT bundle>` runs a **fine-tuned** decoder — base plus LoRA — and the
 adapter's digest is recorded in `AsrProvenance.adapter`, so an adapted transcript is never
 reused by, or mistaken for, a stock one. Only the decoder is adapted: CTC-3B and every word
@@ -44,7 +46,7 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 | §3 Stage | State | What is missing |
 |---|---|---|
 | 0 · Ingest | **runs** | Diarization — Community-1 is a gated repo (`BLOCKED.md` #4). |
-| 1 · Speech | **wired** | `--omni-asr` runs official OmniASR inference plus CTC-Viterbi timing. Real weights and labelled Sorani validation remain external. |
+| 1 · Speech | **runs** | `--omni-asr` runs official OmniASR LLM/CTC in parallel, decodes the CTC hypothesis, routes the bottom confidence quartile and material disagreement to rzgar, and CTC-realigns validator corrections. A source-bound 38.56-minute Sorani run published 5,897 timed words while retaining canonical segments for two explicitly rejected corrections; labelled Sorani accuracy remains external. |
 | 2 · Index | **wired** | `--visual` extracts each scene once, embeds all windows, retrieves top 50, reranks all hits and retains 5–10. Media with fewer scenes than the survivor count is **refused**, not silently shortened — measured on the 3-scene fixture, `evidence/unlisted-modules.md`. |
 | 3 · Discovery | **wired** | Path A and composed Path B union without promoting non-survivor scenes; `--auto-select` anchors complete contiguous sentences. |
 | 4 · Editorial judge | **wired** | Requests carry actual source JPEG bytes. Developer API handles non-confidential work; Vertex uses ADC bearer auth and an attributed ZDR gate. Credentials/billing remain external. |
@@ -53,6 +55,11 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 
 "Runs" means: on real media, in a test, in the gate. Nothing here is marked done because it
 compiles. `PROGRESS.md` carries the per-task evidence and `BLOCKED.md` carries what needs Hawa.
+
+A successful delivery is one directory named for the clip, containing exactly ASS, MP4, SRT,
+EDL and editing JSON. The runner builds all five in a hidden sibling directory and publishes
+the directory only after the complete set is non-empty and flushed. If render or sidecar work
+fails, no partial delivery becomes public; an existing bundle is write-once and wins unchanged.
 
 | File | What it is |
 |---|---|
@@ -75,6 +82,10 @@ Stage 0 on CPU by design), verifies or fetches an ffmpeg whose libass has HarfBu
 model readiness, and finishes by running the gate. If it exits 0 the checkout is genuinely
 ready, and the last thing it prints is the interpreter path for *this* machine.
 
+HawEdit supports Python 3.11 and 3.12. Python 3.13 is refused rather than advertised: the pinned
+base dependency graph has no complete 3.13 distribution set, and the official OmniASR stack also
+caps at 3.12. Setup validates both the selected base interpreter and an existing `.venv`.
+
 > **Windows.** hawapc01 is a Windows box, so every `.venv/bin/python` below is
 > `.venv/Scripts/python.exe` there. `setup.sh` and `verify.sh` detect the layout themselves;
 > only the commands quoted in this file are written one way. An ffmpeg on `PATH` with libass,
@@ -89,11 +100,22 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-wsl-asr.ps1
 ```
 
 That creates a source-fingerprinted runtime below `%LOCALAPPDATA%\HawEdit\wsl-asr`, using Python
-3.12, and probes both CUDA GPUs. The host runner still owns Stage 0, cuts every VAD-bounded WAV
+3.12, matched Torch/torchaudio 2.8, official OmniASR 0.2.0, fairseq2 0.6 and Qwen-ASR 0.0.6.
+Before importing either model stack it downloads and SHA-256-verifies the exact 43.5 GB
+LLM-7B/CTC-3B/tokenizer set; every worker hashes those bytes and the installed official card again
+before model construction. Rerunning setup revalidates or repairs missing assets instead of
+trusting an old `.ready` marker. It then imports both stacks and probes both CUDA GPUs. The host
+runner still owns Stage 0, cuts every VAD-bounded WAV
 locally, invokes one WSL worker so both models load once, then validates the returned immutable
 transcript. An installed wheel exposes the same operation as `hawedit-asr-setup`. Override the
 distribution with `-Distribution Ubuntu`; advanced deployments can set
 `HAWEDIT_WSL_RUNTIME`, `HAWEDIT_WSL_PYTHON` and `HAWEDIT_WSL_SOURCE` explicitly.
+
+The WSL receipt also owns the exact checkpoint source/revision/integrity manifests used by the
+validator; it does not resolve trust metadata from mutable weight storage. Reprovisioning stages a
+new generation without invalidating a prior valid receipt, and the WSL result crosses through a
+random no-follow, single-link, descriptor-bound host file. See
+`evidence/wsl-runtime-receipt.md`.
 
 The media extra is not optional here even though `pyproject.toml` marks it optional: without
 it the Stage 0 tests *skip*, and a skipped test is the quiet green this project is written
@@ -104,15 +126,88 @@ against. That is also why setup ends with the gate rather than with an install.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,media]'
-bash scripts/fetch-ffmpeg.sh     # ~200 MB, lands in .ffmpeg/ (git-ignored)
+bash scripts/fetch-ffmpeg.sh     # ~142 MB, lands in .ffmpeg/ (git-ignored)
 bash scripts/verify.sh
 ```
 
-`fetch-ffmpeg.sh` verifies the RTL stack and refuses a build that cannot shape Arabic script.
+`fetch-ffmpeg.sh` addresses an immutable upstream commit, verifies the Git-LFS SHA-256 before
+unpacking, then verifies the RTL stack and refuses a build that cannot shape Arabic script.
 `verify.sh` discovers the binary automatically; without it §4.3.6's golden render — the only
 real safeguard on Kurdish invariant #4 — skips.
 
 </details>
+
+## Reproducible release
+
+Release from a clean, committed checkout with one command:
+
+```bash
+hawedit-release --project-root . --gate-run-id GITHUB_ACTIONS_RUN_ID
+```
+
+The run id is explicit: the command queries GitHub and requires the official repository's
+`.github/workflows/gate.yml` **push** run on `main` for the exact clean `HEAD`. The run, its single
+`gate` job and every mandatory install/gate/real-media/evidence step must be completed and
+successful. A feature-branch, pull-request, manual, fork, queued, failed, wrong-SHA or incomplete
+run is refused; network/API failure is also a refusal. Set `GITHUB_TOKEN` when unauthenticated API
+limits are insufficient. Redirects are rejected before following so that token is never forwarded
+to another host. The accepted run and job are written into schema-5 provenance.
+
+Only then does the command derive `SOURCE_DATE_EPOCH` from `HEAD`, create a private temporary
+builder from the exact Pip and Setuptools wheels hash-locked in
+`requirements/release-build.txt`, export the verified Git object twice with replacement refs
+disabled, and build each wheel from its own pristine source directory. It requires identical
+filenames and SHA-256 digests, checks the archive for the Kurdish font/licence and model
+source/revision manifests, and requires one distribution name/version across the archived
+`pyproject.toml`, wheel filename and the wheel's single METADATA record, then atomically publishes a
+write-once directory under `dist/`. That directory contains the wheel, `SHA256SUMS`,
+`release-provenance.json`, and deterministic SPDX 2.3 JSON. The SBOM binds the exact wheel and
+bundled Noto font hashes and records every base/optional dependency declared by the wheel; it
+marks unbundled requirements unresolved instead of borrowing versions from the build machine.
+Provenance records that distribution identity, the measured Python, build frontend/backend and
+build-lock digest.
+`SHA256SUMS` covers all three metadata/artifact payloads. A dirty checkout, unpinned or drifting
+gate mismatch, builder drift, hash mismatch, non-reproducible build, missing runtime file, corrupt
+wheel, or existing release directory is refused.
+
+On the default branch, `.github/workflows/release.yml` consumes only a successful official
+`gate` **push** run on `main`, checks out that run's exact SHA, invokes the same fail-closed release
+verifier in a read-only job, then requires fresh no-checkout Python 3.11 and 3.12 runners to install
+the exact wheel, run `pip check`, resolve installed package data and start all seven CLIs. Only after
+both pass does it transfer the four explicit payloads to a fresh runner. Only that isolated job has
+OIDC/attestation authority; it refuses any extra, nested,
+linked, malformed or digest-mismatched entry, independently requires the wheel to identify the
+`hawedit` distribution with the same filename/METADATA version, and binds schema-5 provenance to
+that identity and the triggering run
+before attesting and uploading the same explicit four-file set. The workflow actions are
+full-commit pinned and neither job has repository-content write permission. Verify a downloaded
+run artifact rather than trusting its filename. If `main` advances before an older gate is
+promoted, the workflow refuses that stale run so GitHub's OIDC/SLSA commit claim cannot name newer
+source than the bytes being attested:
+
+```bash
+cd PATH/TO/DOWNLOADED/hawedit-release-SHA
+sha256sum --check SHA256SUMS
+EXPECTED_SHA=THE_EXACT_40_HEX_SHA_IN_THE_ARTIFACT_NAME
+for file in *; do
+  gh attestation verify "$file" \
+    --repo HawzhinBlanca/HawEdit \
+    --signer-workflow HawzhinBlanca/HawEdit/.github/workflows/release.yml \
+    --source-ref refs/heads/main \
+    --source-digest "$EXPECTED_SHA" \
+    --signer-digest "$EXPECTED_SHA" \
+    --deny-self-hosted-runners
+done
+```
+
+This proves repeatable source-to-wheel bytes and defines a keyless publisher-identity check. The
+hosted workflow still needs one post-merge protected-`main` run before the Python 3.12 prerequisite,
+installed-wheel matrix and attestation path have live evidence; a feature branch cannot supply it.
+It also does not create a version/tag policy, a
+durable GitHub Release, or a resolved transitive deployment lock. Separately, OmniASR's
+package-managed assets and the project-managed Hugging Face snapshots have application-owned byte
+identities and pre-load verification; those runtime proofs are not implied by a green wheel. See
+`evidence/release-attestation.md`.
 
 ## Models and weights
 
@@ -125,33 +220,96 @@ Check what this machine has:
 Fetch what it does not:
 
 ```bash
-bash scripts/fetch-models.sh             # everything §7 needs, into models/
-bash scripts/fetch-models.sh --status    # same as the readiness report
+# Source checkout; use .model-fetch/Scripts/python.exe on Windows Git Bash.
+python -m venv .model-fetch
+bash scripts/install-host.sh .model-fetch/bin/python models
+PY=.model-fetch/bin/python bash scripts/fetch-models.sh
 ```
 
-The fetcher is driven by the §7 registry, so it cannot download a model the blueprint
+The wheel-installed fetcher is driven by the §7 registry, so it cannot download a model the blueprint
 excludes and refuses a NonCommercial licence before any bytes move. Needs
 `huggingface.co` reachable, `HF_TOKEN` for the gated Community-1 repo, and ~50 GB free.
+Four wheel-packaged `models` locks cover Linux/Windows on Python 3.11/3.12 with one exact wheel
+hash per dependency. The dedicated environment above uses the matching lock; the command then
+audits every locked transitive before importing `huggingface-hub==0.36.2`. It never installs or
+upgrades packages from inside an operator command. The checkout shell file is only a launcher for
+the wheel's Python transaction.
+
+For a wheel-only install, install the local wheel without dependencies, ask that wheel for its
+target lock, then install/audit the lock explicitly (set `PY=.model-fetch/Scripts/python.exe` on
+Windows Git Bash):
+
+```bash
+python -m venv .model-fetch
+PY=.model-fetch/bin/python
+"$PY" -m pip install --no-index --no-deps /path/to/hawedit-0.1.0-py3-none-any.whl
+LOCK="$("$PY" -I -m hawedit.environment --show-lock models)"
+"$PY" -m pip install --require-hashes --only-binary=:all: -r "$LOCK"
+"$PY" -m pip check
+"$PY" -I -m hawedit.environment --extra models --lock "$LOCK"
+"$PY" -m hawedit.model_fetch             # use --status for readiness only
+```
+It plans from verified status rather than directory existence, resumes each pinned revision in a
+private sibling, exact-verifies it, and atomically publishes under a writer lock. Existing resume
+trees are recursively checked for owner, private mode, regular single-link members and
+reparse/symlink objects **before** the Hub client can write through them. Fresh staging is created
+under an unpredictable name and atomically published as the revision-specific resume tree before
+transfer. POSIX uses mode 0700; Windows creates a protected DACL granting only the current user,
+SYSTEM and Administrators, and validates every inherited member ACL. A planted link or
+`Everyone:F` volume cannot turn a failed download into an external-file write. The stable private
+resume name survives Ctrl-C and hard process death without leaking an undiscoverable partial tree.
+An empty, partial
+or corrupt final directory is preserved and refused—move/quarantine it explicitly before retrying.
+Any target failure makes the command exit nonzero after the full status report. Use only the same
+override the runtime reads:
+
+```bash
+HAWEDIT_MODELS_DIR=/absolute/model/root "$PY" -m hawedit.model_fetch
+```
 
 The two Qwen checkpoint names are resolved in tracked `models/sources.json`; the fetcher never
 guesses a repository id. OmniASR is deliberately absent from that file: the pinned official
-`omnilingual-asr` package ships the exact `_v2` model cards and owns their Meta asset URLs and
-cache. Downloading similarly named Hub repositories into `models/` would provision weights the
-runtime never reads.
+`omnilingual-asr` package ships the `_v2` model cards and owns their Meta transport URLs, while
+HawEdit's packaged `omni_assets.py` owns exact URL/cache-key/size/SHA-256 identities, freezes card
+overrides, verifies the effective cards and holds the verified descriptors through both real model
+loads. Empty cache paths and altered bytes are refused before any load. Downloading
+similarly named Hub repositories into `models/` would provision weights the runtime never reads.
+Project-managed Qwen/VideoChat/TimeLens and Qwen-ASR loads hold a shared checkpoint binding from
+exact verification through config/recipe parsing and every `from_pretrained` reopen; constructors
+cannot cache unverified prompts, pooling rules or score-token ids. A custom model root stores only
+checkpoint bytes—trusted source/revision/integrity metadata remains checkout/installed—and final
+publication uses native no-replace rename. The Windows producer also keeps a host lease across the
+complete WSL validator call because DrvFS does not make Windows and Linux advisory locks
+interoperate. See
+`evidence/checkpoint-provisioning.md` and `evidence/checkpoint-load-binding.md`.
 
 Weights themselves never enter the repository: `models/*` and `.ffmpeg/` are git-ignored.
 
-On Linux, install `.[asr]` for the official OmniASR runtime. On Windows, run
-`scripts/setup-wsl-asr.ps1`; the `asr` dependency is intentionally platform-marked away from the
-host venv because `fairseq2n` cannot install there. Model loading is lazy, so a missing package
-or checkpoint is reported without making basic ingest unusable. This checkout has not run the
-full canonical pair on a real labelled Sorani set; wiring is not accuracy evidence.
+On Linux, install `.[asr]` for the official OmniASR + validator runtime. Keep it in a separate
+environment from `.[gpu]`: fairseq2n requires Torch 2.8 while the visual checkpoint stack is
+verified on Torch 2.13, so resolving both extras together is intentionally unsupported. On
+Windows that isolation is automatic through WSL2; run `scripts/setup-wsl-asr.ps1`. Model loading
+is lazy, so a missing package or checkpoint is reported without making basic ingest unusable.
+Provisioning uses reviewed hashes for 137 runtime requirements plus four build requirements and
+the readiness receipt rechecks the exact 140-distribution union. KenLM and Sox remain named source
+builds: source archives are hashed, but compiler, system headers and produced native bytes are not
+yet attested. `security/wsl-asr-vex.json` is a 30-day policy bound to those lock digests, the full
+receipt and the three OmniASR assets. It does not call the runtime vulnerability-free: five Torch
+families remain affected and CVE-2026-24747 is affected-but-mitigated. The policy parser ships in
+the wheel; live `pip-audit==2.10.1` enforcement on the dual-GPU WSL job remains an acceptance task.
+The full canonical pair and rzgar routing have run on hawapc01, including through the real CLI.
+The committed media fixture is synthetic Kurmanji, so this is execution evidence—not Sorani
+accuracy evidence. See `evidence/m1-4-stage1-validator.md`.
 
 ## GPU (§3 Stages 2, 3 Path B, 5)
 
 Stage 0 runs on CPU by design (§6), so `setup.sh` installs the CPU build of torch. For the
 model stages, install the CUDA build **first** — naming the local version, because the CPU wheel
 already satisfies a bare `torch==2.13.0` and pip will report success while changing nothing:
+
+> **Production gap:** this CUDA command is a measured bootstrap, not a hash-locked deployment.
+> The CPU base/gate/model-fetch graphs are locked; a complete Windows CPython 3.11 cu130 lock and
+> clean dual-GPU smoke are still required before calling GPU deployment reproducible.
 
 ```bash
 pip install --index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://pypi.org/simple "torch==2.13.0+cu130" "torchvision==0.28.0+cu130"
@@ -187,7 +345,7 @@ Once a key is stored, verify the real path end to end — this is the only thing
 that spends money, and it says how much before it does:
 
 ```bash
-.venv/bin/python -m hawedit.smoke --video PATH_TO_A_VIDEO_OF_THE_SAMPLE   # two real calls, ~$0.003
+.venv/bin/python -m hawedit.smoke --video PATH_TO_A_VIDEO_OF_THE_SAMPLE  # ~$0.003
 ```
 
 It runs §3 Stage 3 Path A over a built-in Sorani sample and §3 Stage 4 on the top candidate,
@@ -195,15 +353,11 @@ then prints the Kurdish title it got back. It checks what offline tests cannot: 
 `gemini-2.5-pro` is enabled on your key's project, that the structured-output schema survives a
 real response, and that the model actually answers in Kurdish.
 
-**`--video` is required and no matching video ships with this repository.** §3 Stage 4 judges
-real source pixels — text-only visual judging is refused — so the check needs a video of the
-built-in sample, which spans **0..13,000 ms**. The only Kurdish video here,
-`tests/fixtures/kurdish-speech-3cuts.mp4`, is **4.162 s** and does not match it: measured,
-keyframes for `5000..13000 ms` fail outright, and `0..13000 ms` yields only **6** frames — real
-ones covering the first 3.6 s, since D-153 stamps them from the sampling rate — for a candidate
-13 s long. Until such a recording exists the
-live check is not runnable as shipped — `BLOCKED.md` #20. Without `--video` it now refuses at
-**exit 2 before spending anything**; it used to make both Path A calls first (D-152).
+`--video` is required, and no matching video ships in this repository. The built-in sample spans
+13 seconds; the 4.162-second Kurdish fixture is a different recording and cannot supply honest
+pixels for later candidate spans. Until a matching recording exists (`BLOCKED.md` #19), the live
+check is not runnable as shipped. Missing or nonexistent video now returns exit 2 before the
+confirmation prompt and before either billed Path A call.
 
 **Before the first client job**, §3 Stage 3 requires a decision, not a setting: full-transcript
 discovery sends 100% of every transcript to Google, and for COMMS and KAAE material paid-tier
@@ -250,9 +404,16 @@ clock.
 
 A task is DONE when this exits 0 **and** its evidence is recorded in `PROGRESS.md`. Nothing
 is marked done by judgment.
+Remote actions in the gate workflow are pinned to full commits; moving major-version tags are
+rejected by the test suite (`evidence/ci-actions.md`).
 
 The gate is deliberately hard to fool, because it is the only thing that decides DONE:
 
+- **The interpreter is part of the evidence.** Only the path-identical Python inside this
+  checkout's `.venv` is accepted; an arbitrary `PY` executable is refused before it runs. An
+  isolated preflight binds the editable distribution to this checkout and checks the supported
+  Python/project versions plus exact active requirements. A printed token is diagnostic, never an
+  authentication mechanism (`evidence/environment-identity.md`).
 - **Its steps are not configurable.** Setting `TEST_CMD`, `LINT_CMD` or either of the others
   is refused outright (exit 5) before anything runs. A blacklist of ways to run nothing can
   never be complete — `TEST_CMD="echo skipped"` walked past the old one — so the rule is
@@ -266,17 +427,12 @@ The gate is deliberately hard to fool, because it is the only thing that decides
 - **A nested invocation refuses its own test step** — it would otherwise recurse, and once
   did (D-005).
 
-CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the
-ffmpeg archive **at a pinned commit and verifies its SHA-256 before unzipping it** (D-121 — this
-line said "pinned" for a while when the URL was a branch path), and fails if the §4.3 golden render
-or the §3 Stage 0 tests *skip* rather than run. **That job is a required status check on `main`**
-(`BLOCKED.md` #7, resolved 2026-08-08), with `strict: true`, so a branch must also be up to date
-with `main` before it can merge. Measured against the live API:
-`required_status_checks.contexts == ["gate"]`.
-
-**Corrected 2026-08-10 (D-143):** the paragraph above ended "Making that job a required status
-check is a repository setting, and is not done" for two days after #7 was resolved — understating
-the project's own bar, in the one document a reader meets first.
+CI runs the same script on a clean runner (`.github/workflows/gate.yml`), fetches the FFmpeg
+archive **at a pinned commit and verifies its SHA-256 before unzipping it** (D-121 — this line once
+said "pinned" while the URL was a branch path), and fails if the §4.3 golden render or §3 Stage 0
+tests *skip* rather than run. `gate` is a strict required status check on protected `main` and
+is therefore a required status check on `main`;
+force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live setting).
 
 ## Module map
 
@@ -288,9 +444,13 @@ the project's own bar, in the one document a reader meets first.
 | `alignment.py` | §4.2, §8.1 | Alignment accuracy. Kurdish invariant #5. |
 | `metrics.py` | §8.1 | Normalized CER, spacing-free CER, named-entity error, code-switch error. |
 | `corpus.py` | §8.1, §4.4 | The labelled set and its coverage grid — 3 dialects × 7 conditions. |
-| `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, RTF, VRAM and failure rate. Hardware is required. |
+| `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
+| `wsl_asr_locks.py` | §3 Stage 1, §6 | Hash-locked PyPI inputs and exact installed name/version identity for the isolated Linux/Python 3.12 ASR generation; KenLM/Sox remain explicitly disclosed native source builds, not binary reproducibility proof. |
+| `wsl_audit_locks.py` | §6, §7 | Complete wheel hashes and installed identity for the isolated pip-audit 2.10.1 scanner used by the WSL ASR security gate. |
+| `wsl_vex_gate.py` | §6, §7 | Live, source-bound WSL receipt and asset verification, hash-locked OSV scan, VEX evaluation, and write-once evidence publication. |
+| `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
 | `diarization.py` | §8.1, §3 Stage 0 | DER and boundary reconciliation against word alignment. |
@@ -305,6 +465,7 @@ the project's own bar, in the one document a reader meets first.
 | `timelens.py` | §3 Stage 5, §7 | TimeLens2's intervals as evidence, never as cuts — and only the ones that overlap the anchored sentence may move a boundary. |
 | `clip.py` | §5 | The clip contract, validated. Rejection is a first-class type. |
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, font coverage, our own line breaks. |
+| `ffmpeg_setup.py` | §4.3, §7 | Installed-wheel FFmpeg verification and Linux per-user provisioning through the authenticated pinned transaction; Windows/macOS return package-manager remediation. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
 | `path_a.py` | §3 Stage 3 Path A | The Kurdish judge over the **whole** transcript. Refuses to send a subset, and refuses to split one. |
 | `path_b.py` | §3 Stage 3 Path B | `VideoChat3-4B` over scenes. Inputs are packed into ≤256-frame calls; every SV6D label must cite a time **inside the scene it describes**. |
@@ -319,13 +480,22 @@ the project's own bar, in the one document a reader meets first.
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
 | `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, and fail-closed confidential routing. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
-| `delivery.py` | §2 | The SRT sidecar (clip timeline) and the CMX 3600 EDL (source timeline). Refuses NTSC rather than writing timecode that drifts. Shares §4.3.5's line breaks with the ASS — an SRT cue on one line hands the break points to the player. |
+| `delivery.py` | §2 | The SRT sidecar (clip timeline) shares §4.3.5's word-aligned RTL breaks with ASS; the CMX 3600 EDL (source timeline) writes SMPTE drop-frame for NTSC 30000/1001 and refuses other unsupported fractional rates. |
+| `artifact_bundle.py` | §2 | Private staging and atomic, write-once publication of the exact ASS/MP4/SRT/EDL/JSON delivery directory. |
+| `atomic_fs.py` | §2, §7 | Native cross-platform no-replace directory publication shared by delivery bundles and checkpoint provisioning; unsupported POSIX platforms fail closed. |
 | `render.py` | §3 Stage 6 | Cut, 9:16 crop, `shaping=complex` burn-in, encode. Refuses an unusable encoder rather than substituting. |
+| `environment.py` | — | Binds the canonical `.venv`, editable distribution root, supported Python/project versions and active exact requirements to this checkout before the gate runs. |
+| `host_lock_hashes.py` | — | Generated source-bound SHA-256 identities for every supported host dependency lock. |
+| `gpu_runtime.py` | §6 | Exact dual-3090-Ti CUDA/Torch identity plus real bfloat16 compute on both cards; refuses version, visibility, topology, capability or memory drift. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
-| `cli.py` | — | What every entry point does before it writes. `use_utf8_streams` pins stdout and stderr to UTF-8 — the locale's codec is cp1252 on §6's machine and the output is Sorani. `machine_readable_stdout` holds stdout for one JSON document and sends everything a library prints to stderr. `program_name` derives the name `--help` shows from how the process was started, because a console script and `python -m` are different commands. |
+| `release.py` | — | Exact-SHA official main-gate proof, clean-HEAD double-build wheel reproducibility, runtime-data validation and atomic checksummed provenance. |
+| `cli.py` | — | Shared entry-point rules: `use_utf8_streams` pins stdout/stderr to UTF-8; `machine_readable_stdout` reserves stdout for one parseable document; `program_name` makes help name the installed launcher or pasteable `python -m` command. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |
-| `models.py` | §7 | Which §7 components this machine actually has, and the registry-driven fetcher. |
+| `models.py` | §7 | Which §7 components this machine actually has, plus trusted source/revision/byte identities and reader/writer checkpoint binding. |
+| `model_fetch.py` | §7 | Installed-wheel checkpoint planning, private resume validation, exact byte verification and atomic no-replace publication. |
+| `windows_security.py` | §7 | Native protected-DACL creation and inspection for Windows checkpoint staging. |
+| `vex.py` | §6/§7 | Identity-bound WSL-ASR vulnerability disposition gate over pip-audit output and runtime receipts. |
 | `repurposing.py` | §8.2 | Per-path Recall@K, temporal IoU, misleading-edit rate, cost per source hour. |
 
 ## Two conventions worth knowing before reading the code

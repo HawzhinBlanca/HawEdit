@@ -1,5 +1,9 @@
 # M3.6 — §2's delivery set: the two formats that did not exist
 
+> **Status update 2026-08-09:** D-079 adds honest NTSC 30000/1001 drop-frame EDLs.
+> The original implementation and refusal evidence below is retained as history; see
+> `evidence/m3-6-drop-frame-edl.md` for the current contract.
+
 `src/hawedit/delivery.py` · `tests/test_delivery.py` (25 tests) · `tests/test_pipeline.py` ·
 D-042
 
@@ -55,14 +59,11 @@ clip at 84 600 ms yields `00:01:24:15 00:01:26:05 00:00:00:00 00:00:01:15`.
 
 - **A period instead of a comma** in an SRT timestamp is WebVTT. A player expecting SRT
   rejects or mis-parses the cue and the subtitles simply do not appear.
-- **A non-integer frame rate is refused, not rounded.** 29.97 needs SMPTE drop-frame timecode.
-  Non-drop at that rate drifts about 3.6 s per hour against the footage, and the EDL looks
-  correct for the whole conform. `frame_rate()` reports the exact ratio ffprobe gives
-  (`30000/1001`) rather than a rounded one, so the refusal can happen at all.
+- **A fractional frame rate is never rounded.** The current implementation writes SMPTE
+  drop-frame for NTSC 30000/1001 and refuses other fractional rates it cannot represent.
 - **An empty SRT and a video-only EDL are refused.** Both are valid files that deliver nothing
   — an empty subtitle track, or a conform that drops the Kurdish speech the clip exists for.
 - **A clip shorter than one frame** would be a well-formed EDL event that cuts nothing.
 
-An NTSC source therefore produces a correct MP4 and a named `StageSkipped` for delivery, and
-`PipelineRun.complete` goes false. Drop-frame timecode is unimplemented, and that is stated
-rather than approximated.
+The initial implementation named NTSC as a `StageSkipped` rather than approximating it. D-079
+supersedes that limitation: a real 30000/1001 source now produces the complete delivery set.

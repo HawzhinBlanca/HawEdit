@@ -192,7 +192,7 @@ def test_arabic_code_switch_spans_are_supported() -> None:
 # the same value as a name transcribed perfectly. `code_switch_error_rate` already refused the
 # same input; `named_entity_error_rate` did not. Measured: `CorpusItem(named_entities=("",))`
 # constructs without complaint and scores 0.0, so a blank label silently inflated §8.1's
-# accuracy. Found by the second adversarial pass. D-083.
+# accuracy. Found by the second adversarial pass. D-089.
 
 
 def test_a_blank_named_entity_is_refused_not_scored_as_found() -> None:

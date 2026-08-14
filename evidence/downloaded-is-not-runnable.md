@@ -1,10 +1,15 @@
 # The readiness report said OK for a checkpoint nothing on this machine can load
 
+> **Superseded 2026-08-09.** This is the preserved failure measurement that justified adding the
+> loader. `qwen-asr==0.0.6` is now pinned and provisioned, checkpoint access is integrity-bound, and
+> the validator has executed through the Windows→WSL Stage 1 route. The current proof is
+> `evidence/m1-4-stage1-validator.md`; `BLOCKED.md` #16 is resolved.
+
 > Measured 2026-08-09 on hawapc01 against `18e0509`, against a green 1,172 baseline.
 
 M1.4 is PARTIAL, and its named shortfall said the way was clear:
 
-> the real rzgar validator is not yet invoked by this producer — its weights **are** present on this
+> the real rzgar validator is not yet invoked by this producer â€” its weights **are** present on this
 > machine (10.1 GB, `python -m hawedit.models` reports `OK`), so what is missing is the composition,
 > not the download
 
@@ -32,22 +37,22 @@ qwen model modules present: colqwen2, qwen2, qwen2_5_omni, qwen2_5_vl, qwen2_aud
                             qwen3_omni_moe, qwen3_vl, qwen3_vl_moe
 ```
 
-`config.json` names `transformers_version: 4.57.6` — the version that is installed — and that version
+`config.json` names `transformers_version: 4.57.6` â€” the version that is installed â€” and that version
 still cannot load it. The checkpoint's own model card says why:
 
 > `from qwen_asr import Qwen3ASRModel  # pip install qwen-asr`
 
 A separate package. So **the composition is not what is missing**: the loader is, and no amount of
 wiring in `asr.py` would have changed that. Had I written the adapter first, it would have been code
-that cannot run, tested against a stub — the exact shape this repo keeps finding and refusing.
+that cannot run, tested against a stub â€” the exact shape this repo keeps finding and refusing.
 
 Never computed rather than computed-and-discarded: nothing ever tried to import a loader, so there was
 nothing to discard.
 
 ## The root defect
 
-`hawedit.models` classifies each §7 component by how it arrives, and the weights branch asked one
-question — is the directory non-empty. `_PIP_MODULES` already exists for components whose *runtime* is
+`hawedit.models` classifies each Â§7 component by how it arrives, and the weights branch asked one
+question â€” is the directory non-empty. `_PIP_MODULES` already exists for components whose *runtime* is
 the gating fact, but it is consulted only for `Provisioning.PIP` entries. A checkpoint that needs both
 a download **and** a loader had no way to say so.
 
@@ -60,7 +65,7 @@ before:  OK   rzgar/qwen3-asr-sorani-kurdish-ckb-v1   weights   weights from rzg
          10/15 available
 
 after:   MISS rzgar/qwen3-asr-sorani-kurdish-ckb-v1   weights   weights from rzgar/... are on disk,
-              but the loader 'qwen_asr' is not installed — the checkpoint cannot be loaded here, so
+              but the loader 'qwen_asr' is not installed â€” the checkpoint cannot be loaded here, so
               this component cannot run  (10.1 GB)
          9/15 available
 ```
@@ -73,10 +78,10 @@ deciding what to fetch needs to know they need not fetch them again.
 `pip install qwen-asr` would have flipped the report green in one command. It was not run:
 
 * A new runtime dependency needs a licence under D-002 and a pin plus checksum under the supply-chain
-  rule. `BLUEPRINT.md` §7 records the *model's* licence (Apache 2.0); the loader package is a separate
+  rule. `BLUEPRINT.md` Â§7 records the *model's* licence (Apache 2.0); the loader package is a separate
   artifact whose licence I have not read.
 * CI installs `.[dev,media]`, so a locally-installed package would make the local gate and the gate of
-  record disagree about which program they are testing — the exact failure D-092 and D-093 were about.
+  record disagree about which program they are testing â€” the exact failure D-104 and D-125 were about.
 * It is Hawa's call whether this project takes a dependency, and it belongs in a decision with the
   licence quoted, not in a loop iteration's side effect.
 
@@ -96,13 +101,13 @@ CAUGHT   the validator's loader requirement is dropped from the map     FAILED=1
 
 The second is the over-strict direction and it is caught **only** by the control. Without it,
 "every entry in the runtime map reports MISS" satisfies every other test here and would retire three
-components that demonstrably load today — VideoChat3-4B, TimeLens2-4B and the Qwen embedding pair,
+components that demonstrably load today â€” VideoChat3-4B, TimeLens2-4B and the Qwen embedding pair,
 each with decoded-frame evidence behind M5.4 and M6.3.
 
 The fourth matters for a different reason: the map's content is evidence from the model card, and
 dropping the entry is the cheapest way to make the report green again. It is caught by the test that
-asserts the *coupling* — the validator is available exactly when `qwen_asr` imports — rather than
+asserts the *coupling* â€” the validator is available exactly when `qwen_asr` imports â€” rather than
 today's answer, so it holds in CI (where the loader is also absent) and would keep holding the day
 someone installs it.
 
-Gate: `VERIFY OK — 1175 passed, 0 skipped`.
+Gate: `VERIFY OK â€” 1175 passed, 0 skipped`.

@@ -3,7 +3,7 @@
 > Measured 2026-08-09 on hawapc01 against `0758b84`.
 > Source: `ZAR38MinTest.mp4` — 640×360 h264, 25 fps, 2313.8 s.
 
-D-106 measured the constraint: on a 23.99 GiB 3090 Ti, `MCG-NJU/VideoChat3-4B` reads at most **8**
+D-138 measured the constraint: on a 23.99 GiB 3090 Ti, `MCG-NJU/VideoChat3-4B` reads at most **8**
 frames per window, and the demand is quadratic. BLOCKED #17 refused the two easy responses — lowering
 §3's `MAX_FRAMES_PER_WINDOW`, and truncating a planned window at read time — leaving one: plan smaller
 windows.
@@ -58,7 +58,7 @@ CAUGHT   the CLI value never reaches run_pipeline                      FAILED=1
 5/5
 ```
 
-The last two **survived the first audit**, for exactly D-105's reason one iteration earlier: the planner
+The last two **survived the first audit**, for exactly D-137's reason one iteration earlier: the planner
 was tested and the trip from the CLI was not. Both replacements assert the windows the run *reports*,
 not the argument it was handed.
 

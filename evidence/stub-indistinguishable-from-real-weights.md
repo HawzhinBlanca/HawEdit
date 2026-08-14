@@ -1,13 +1,13 @@
-# A stub with no model produced a §8.1 report identical to the real adapter's
+# A stub with no model produced a Â§8.1 report identical to the real adapter's
 
 > Measured 2026-08-09 on hawapc01 against `a3e0d00`, against a green 1,168 baseline.
 
-M0.7's row says "every measurement names its adapter class", and it did — `type(adapter).__name__`.
+M0.7's row says "every measurement names its adapter class", and it did â€” `type(adapter).__name__`.
 The hard rule it is there to satisfy is stronger: *a number carries the hardware and adapter that
 produced it*. A class name asserts an adapter; it does not carry one.
 
-`validate_adapter` resolves `adapter.model_id` against §7, so a stub has to claim a real §7 model id
-— and claiming one is free. After that the class name was the only remaining signal.
+`validate_adapter` resolves `adapter.model_id` against Â§7, so a stub has to claim a real Â§7 model id
+â€” and claiming one is free. After that the class name was the only remaining signal.
 
 ## Measured
 
@@ -20,7 +20,7 @@ class OmniAsrAdapter:
         return ASRResult(text_raw=PERFECT)
 ```
 
-Through `run_benchmark`, the emitted §8.1 report:
+Through `run_benchmark`, the emitted Â§8.1 report:
 
 ```
 the stub's own identity:
@@ -48,7 +48,7 @@ discard.
 
 ## The fix
 
-One site — `asr.py` builds every `Measurement`, and it is the only place in `src/` that derives an
+One site â€” `asr.py` builds every `Measurement`, and it is the only place in `src/` that derives an
 adapter identity (grepped: the other six `type(...).__name__` uses are all error messages).
 
 ```python
@@ -56,8 +56,8 @@ adapter_impl=f"{type(adapter).__module__}.{type(adapter).__name__}",
 ```
 
 `test_bench.OmniAsrAdapter` carries where the code came from; `OmniAsrAdapter` only asserts it. The
-module is a fact about the object in hand, not a lookup, which matters — resolving a revision by
-model id would have made the stub look *more* real, since it claims a genuine §7 id and the pinned
+module is a fact about the object in hand, not a lookup, which matters â€” resolving a revision by
+model id would have made the stub look *more* real, since it claims a genuine Â§7 id and the pinned
 SHA would be returned for it.
 
 Measured, not assumed: under pytest the module reads `test_bench` rather than `tests.test_bench`,
@@ -77,14 +77,14 @@ CAUGHT   the adapter is not named at all                                       F
 
 The two new tests are complementary rather than redundant, which the audit shows precisely:
 
-* The **constant-prefix** mutation — `f"hawedit.asr.{type(adapter).__name__}"`, which satisfies "it
-  has a module now" while identifying nothing — is caught by the stub test and **not** by the
+* The **constant-prefix** mutation â€” `f"hawedit.asr.{type(adapter).__name__}"`, which satisfies "it
+  has a module now" while identifying nothing â€” is caught by the stub test and **not** by the
   control, because for the real class a constant `hawedit.asr.` prefix produces exactly the right
   answer.
 * **Module-without-class** is caught by the control, which pins the real adapter's own qualified
   name so the fix cannot be satisfied by a string that merely looks qualified.
 
-The control is a real measurement of `hawedit.asr.OmniAsrAdapter` with a backend that raises — no
+The control is a real measurement of `hawedit.asr.OmniAsrAdapter` with a backend that raises â€” no
 weights needed, because M0.7's "failures are recorded not raised" means the measurement is still
 produced and still carries its adapter. That property is now load-bearing for this test as well.
 
@@ -97,7 +97,7 @@ not identify the weights.
 
 Recording the backend was rejected rather than forgotten: `backend` is not part of the `ASRAdapter`
 protocol, so reading it would be a special case keyed on one class's internals, and `Measurement`
-sees only the adapter. Identifying the weights properly means the protocol exposing what it loaded —
+sees only the adapter. Identifying the weights properly means the protocol exposing what it loaded â€”
 a design step, not a side effect of this one. Named here so the gap is visible rather than implied.
 
-Gate: `VERIFY OK — 1170 passed, 0 skipped`.
+Gate: `VERIFY OK â€” 1170 passed, 0 skipped`.

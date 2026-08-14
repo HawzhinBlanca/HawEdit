@@ -21,15 +21,17 @@ step "python"
 # `python3` is the right name on POSIX and a Microsoft Store stub on Windows: present on PATH,
 # prints "Python was not found", installs nothing, exits non-zero. Trusting the name puts the
 # one command this README promises face-down on hawapc01. So each candidate is asked whether
-# it is a real 3.11+ and the first that answers yes wins — capability, not spelling. PY_BIN
+# it is a supported 3.11/3.12 and the first that answers yes wins — capability, not spelling.
+# PY_BIN
 # still overrides, and is then the only candidate so a deliberate choice cannot be silently
 # replaced by a fallback.
 if [[ -n "${PY_BIN:-}" ]]; then candidates=("$PY_BIN"); else candidates=(python3 python py); fi
 # Two conditions, and the second is not fussiness. `python` on this box resolves to another
-# tool's virtualenv, and `python -m venv` from inside one died at `ensurepip` — so "is a 3.11+"
+# tool's virtualenv, and `python -m venv` from inside one died at `ensurepip` — so "is supported"
 # was true and "can build the venv this script is about to build" was false. A base
 # interpreter is what the next line actually needs, so that is what gets asked for.
-_usable='import sys; raise SystemExit(0 if sys.version_info >= (3, 11)
+_supported='import sys; raise SystemExit(0 if (3, 11) <= sys.version_info < (3, 13) else 1)'
+_usable='import sys; raise SystemExit(0 if (3, 11) <= sys.version_info < (3, 13)
   and sys.prefix == sys.base_prefix else 1)'
 PY_BIN=""
 for candidate in "${candidates[@]}"; do
@@ -41,7 +43,8 @@ for candidate in "${candidates[@]}"; do
 done
 if [[ -z "$PY_BIN" ]]; then
   echo "✗ no usable Python found. Tried: ${candidates[*]}" >&2
-  echo "  hawedit needs a base (non-virtualenv) Python 3.11+ — pyproject requires-python, and" >&2
+  echo "  hawedit supports base (non-virtualenv) Python 3.11 or 3.12." >&2
+  echo "  Python 3.13 is excluded because the pinned runtime graph does not resolve there;" >&2
   echo "  a venv built from inside another venv fails at ensurepip." >&2
   echo "  Set PY_BIN to one, e.g. PY_BIN=/usr/bin/python3.12 bash scripts/setup.sh" >&2
   exit 2
@@ -61,17 +64,19 @@ if ! venv_python >/dev/null; then
   "$PY_BIN" -m venv .venv
 fi
 VENV_PY="$(venv_python)" || { echo "✗ venv created but no interpreter inside it" >&2; exit 2; }
-# `python -m pip`, not the pip shim: on Windows pip cannot replace its own running .exe.
-"$VENV_PY" -m pip install --quiet --upgrade pip
-
-step "dependencies (including the §3 Stage 0 media stack)"
+if ! "$VENV_PY" -c "$_supported" >/dev/null 2>&1; then
+  echo "✗ existing .venv is not Python 3.11 or 3.12; move it aside and rerun setup" >&2
+  exit 2
+fi
+step "hash-locked dependencies (including the §3 Stage 0 media stack)"
 # CPU wheels on purpose: §6 puts Stage 0 on CPU by design, and the CUDA build of torch is ~2 GB
 # of kernels nothing here calls. A GPU box that wants the CUDA build can install it after.
 # The media extra is NOT optional here even though pyproject makes it optional — without it the
 # Stage 0 tests skip, and a skipped test is the quiet green this project is written against.
-"$VENV_PY" -m pip install --quiet \
-  --extra-index-url https://download.pytorch.org/whl/cpu \
-  -e '.[dev,media]'
+# `install-host.sh` chooses only the lock matching this OS and Python minor, validates its
+# dependency-contract digest before any network request, requires one wheel hash per package,
+# and installs the checkout with no dependency resolution or isolated build environment.
+bash scripts/install-host.sh "$VENV_PY" gate
 
 step "ffmpeg with a verified RTL stack (§4.3)"
 # fetch-ffmpeg.sh is idempotent and refuses a build that cannot shape Arabic script.

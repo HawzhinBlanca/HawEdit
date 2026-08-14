@@ -18,8 +18,11 @@ from hawedit.asr import (
     LONG_AUDIO_THRESHOLD_S,
     OmniAsrBackend,
     OmniSegmentBackend,
+    QwenSoraniValidator,
+    SoraniValidator,
     _assemble_canonical_transcript,
     _PreparedSpeechSegment,
+    _validate_hard_segments,
     transcribe_prepared_segments,
 )
 from hawedit.transcripts import RawTranscript
@@ -48,10 +51,11 @@ def run_request(
     request_path: Path,
     output_path: Path,
     backend: OmniSegmentBackend | None = None,
+    validator: SoraniValidator | None = None,
 ) -> RawTranscript:
     """Execute one strict bridge request; primarily separated for deterministic tests."""
     payload: Any = json.loads(request_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if not isinstance(payload, dict) or payload.get("schema_version") != 2:
         raise ValueError("unsupported OmniASR worker request schema")
     media_id = payload.get("media_id")
     if not isinstance(media_id, str) or not media_id.strip():
@@ -59,6 +63,9 @@ def run_request(
     raw_segments = payload.get("segments")
     if not isinstance(raw_segments, list) or not raw_segments:
         raise ValueError("ASR worker request must contain at least one speech segment")
+    validator_path = payload.get("validator_model_dir")
+    if not isinstance(validator_path, str) or not validator_path.strip():
+        raise ValueError("ASR worker validator_model_dir must be a non-empty path")
 
     root = request_path.resolve().parent
     prepared: list[_PreparedSpeechSegment] = []
@@ -80,7 +87,8 @@ def run_request(
     # An adapter named in the request must reach the weights or stop the run. Ignoring it would
     # transcribe on base weights and publish the result under the adapter's name — the request is
     # the only channel across the WSL boundary, so a field read by nobody is silently wrong
-    # output, not a no-op.
+    # output, not a no-op. Carried across the readiness merge, which added the Sorani validator
+    # to this same request and had no adapter field at all.
     adapter = payload.get("lora_adapter")
     if adapter is not None and not isinstance(adapter, str):
         raise ValueError("ASR worker request lora_adapter must be a path string")
@@ -92,9 +100,28 @@ def run_request(
     model = backend or OmniAsrBackend(lora_adapter=Path(adapter) if adapter is not None else None)
     # The shared helper, not a second generator expression: one unalignable region used to
     # discard every other region's inference. D-103.
-    results, unaligned = transcribe_prepared_segments(model, prepared)
+    initial, unaligned = transcribe_prepared_segments(model, prepared)
+    selected_validator = validator
+
+    def validator_factory() -> SoraniValidator:
+        nonlocal selected_validator
+        if selected_validator is None:
+            model_dir = Path(validator_path)
+            if not model_dir.is_dir():
+                raise FileNotFoundError(f"ASR worker validator weights are missing: {model_dir}")
+            selected_validator = QwenSoraniValidator(model_dir)
+        return selected_validator
+
+    results, validated_by, rejected_corrections = _validate_hard_segments(
+        initial, model, validator_factory
+    )
     transcript = _assemble_canonical_transcript(
-        media_id, results, unaligned, adapter=getattr(model, "adapter_name", None)
+        media_id,
+        results,
+        unaligned,
+        adapter=getattr(model, "adapter_name", None),
+        validated_by=validated_by,
+        rejected_validator_corrections=rejected_corrections,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("x", encoding="utf-8", newline="\n") as stream:

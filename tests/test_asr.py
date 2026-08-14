@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
-from collections.abc import Sequence
+import wave
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -35,8 +38,8 @@ from hawedit.asr import (
     OmniAsrAdapter,
     OmniAsrBackend,
     OmniAsrProducer,
+    QwenSoraniValidator,
     SegmentTranscript,
-    SpeechSegment,
     WslOmniAsrProducer,
     _assemble_canonical_transcript,
     _PreparedSpeechSegment,
@@ -49,11 +52,141 @@ from hawedit.asr import (
 from hawedit.asr_worker import run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
-from hawedit.registry import ModelExcluded, ModelNotInRegistry
-from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from hawedit.omni_assets import CANONICAL_CTC_CARD, CANONICAL_LLM_CARD, OmniAssetError
+from hawedit.registry import ModelEntry, ModelExcluded, ModelNotInRegistry
+from hawedit.transcripts import (
+    AsrProvenance,
+    RawTranscript,
+    RejectedValidatorCorrection,
+    Word,
+)
 
 HAWAPC01 = Hardware(host="hawapc01", accelerator="2x RTX 3090 Ti", notes="Threadripper 3990X")
 AN_A100 = Hardware(host="a100-box", accelerator="A100")
+
+
+def test_omni_backend_refuses_card_or_environment_overrides() -> None:
+    backend = OmniAsrBackend()
+    assert backend.llm_card == CANONICAL_LLM_CARD
+    assert backend.ctc_card == CANONICAL_CTC_CARD
+    with pytest.raises(OmniAssetError, match="environment-disabled"):
+        OmniAsrBackend(llm_card="omniASR_LLM_7B_v2")
+
+
+def test_omni_assets_are_hashed_before_the_pipeline_module_is_imported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RefuseIntegrity:
+        def __enter__(self) -> None:
+            raise OmniAssetError("integrity sentinel")
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr("hawedit.asr.open_verified_omni_assets", RefuseIntegrity)
+    with pytest.raises(OmniAssetError, match="integrity sentinel"):
+        OmniAsrBackend()._load()
+
+
+def test_wsl_runtime_refuses_a_legacy_ready_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr("hawedit.asr.default_wsl_runtime", lambda: runtime)
+    producer = WslOmniAsrProducer()
+    with pytest.raises(RuntimeError, match="runtime receipt is invalid"):
+        producer._runtime()
+
+
+def test_omni_loader_reads_only_held_verified_descriptors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    opened = tuple(
+        SimpleNamespace(
+            asset=SimpleNamespace(filename=filename),
+            descriptor_path=Path(f"/proc/self/fd/{descriptor}"),
+            file_uri=f"file:///held/{filename}",
+        )
+        for filename, descriptor in (
+            ("omniASR-LLM-7B-v2.pt", 10),
+            ("omniASR-CTC-3B-v2.pt", 11),
+            ("omniASR_tokenizer_written_v2.model", 12),
+        )
+    )
+
+    class HeldAssets:
+        def __enter__(self) -> tuple[SimpleNamespace, ...]:
+            events.append("descriptors-open")
+            return opened
+
+        def __exit__(self, *_args: object) -> None:
+            events.append("descriptors-closed")
+
+    class FakeCard:
+        def __init__(self, name: str, metadata: dict[str, object]) -> None:
+            self.name = name
+            self.metadata = metadata
+
+    loaded_uris: list[str] = []
+
+    def load_model(card: FakeCard, **_kwargs: object) -> object:
+        loaded_uris.append(str(card.metadata["checkpoint"]))
+        events.append(f"model:{card.name}")
+        return object()
+
+    def load_tokenizer(card: FakeCard) -> object:
+        loaded_uris.append(str(card.metadata["tokenizer"]))
+        events.append("tokenizer")
+        return object()
+
+    class FakePipeline:
+        def __init__(self, *, model_card: str | None, **_kwargs: object) -> None:
+            assert model_card is None
+            events.append("pipeline")
+
+    fake_torch = ModuleType("torch")
+    fake_torch.device = lambda value: value  # type: ignore[attr-defined]
+    fake_torch.bfloat16 = object()  # type: ignore[attr-defined]
+    fake_assets = ModuleType("fairseq2.assets")
+    fake_assets.AssetCard = FakeCard  # type: ignore[attr-defined]
+    fake_assets.get_asset_store = lambda: object()  # type: ignore[attr-defined]
+    fake_tokenizer_hub = ModuleType("fairseq2.data.tokenizers.hub")
+    fake_tokenizer_hub.load_tokenizer = load_tokenizer  # type: ignore[attr-defined]
+    fake_model_hub = ModuleType("fairseq2.models.hub")
+    fake_model_hub.load_model = load_model  # type: ignore[attr-defined]
+    fake_pipeline = ModuleType("omnilingual_asr.models.inference.pipeline")
+    fake_pipeline.ASRInferencePipeline = FakePipeline  # type: ignore[attr-defined]
+    for name, module in {
+        "torch": fake_torch,
+        "fairseq2": ModuleType("fairseq2"),
+        "fairseq2.assets": fake_assets,
+        "fairseq2.data": ModuleType("fairseq2.data"),
+        "fairseq2.data.tokenizers": ModuleType("fairseq2.data.tokenizers"),
+        "fairseq2.data.tokenizers.hub": fake_tokenizer_hub,
+        "fairseq2.models": ModuleType("fairseq2.models"),
+        "fairseq2.models.hub": fake_model_hub,
+        "omnilingual_asr": ModuleType("omnilingual_asr"),
+        "omnilingual_asr.models": ModuleType("omnilingual_asr.models"),
+        "omnilingual_asr.models.inference": ModuleType("omnilingual_asr.models.inference"),
+        "omnilingual_asr.models.inference.pipeline": fake_pipeline,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr("hawedit.asr.open_verified_omni_assets", HeldAssets)
+    monkeypatch.setattr("hawedit.asr.assert_omni_card_integrity", lambda: None)
+    monkeypatch.setattr("hawedit.asr.freeze_fairseq2_asset_overrides", lambda: Path("private"))
+    monkeypatch.setattr("hawedit.asr.assert_effective_omni_cards", lambda _store: None)
+
+    pipelines = OmniAsrBackend()._load()
+    assert len(pipelines) == 2
+    assert loaded_uris == [
+        "file:///held/omniASR_tokenizer_written_v2.model",
+        "file:///held/omniASR-LLM-7B-v2.pt",
+        "file:///held/omniASR-CTC-3B-v2.pt",
+    ]
+    assert events[0] == "descriptors-open"
+    assert events[-1] == "descriptors-closed"
+    assert events[-3:-1] == ["pipeline", "pipeline"]
 
 
 class StubAdapter:
@@ -201,23 +334,41 @@ def test_long_audio_failure_rate_of_an_empty_run_is_none() -> None:
 
 
 class FakeOmniBackend:
-    """A stand-in for LLM-7B + CTC-3B. `ctc_text` differs from `text_raw` on purpose: the two
-    models are independent, and a fake that returns the same string for both cannot show whether
-    the artifact carries two hypotheses or one string twice (D-135)."""
-
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
         assert audio_path.exists()
         return SegmentTranscript(
             text_raw="کوردی.",
+            ctc_text="کوردی.",
             words=(Word(w="کوردی.", start_ms=50, end_ms=500, conf=0.9),),
             mean_logprob=-0.1,
-            ctc_text="كوردي",
         )
+
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        assert audio_path.exists()
+        return SegmentTranscript(
+            text_raw=text,
+            ctc_text=text,
+            words=(Word(w=text, start_ms=50, end_ms=500, conf=0.9),),
+            mean_logprob=-0.1,
+        )
+
+
+def _write_pcm(path: Path, duration_s: float = 1.0) -> None:
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16_000)
+        stream.writeframes(b"\0\0" * round(duration_s * 16_000))
+
+
+def _write_requested_pcm(args: list[str]) -> None:
+    duration_s = float(args[args.index("-t") + 1])
+    _write_pcm(Path(args[-1]), duration_s)
 
 
 def test_canonical_omni_adapter_is_runnable_by_the_real_benchmark(tmp_path: Path) -> None:
     audio = tmp_path / "clip.wav"
-    audio.write_bytes(b"wav")
+    _write_pcm(audio)
     result = OmniAsrAdapter(FakeOmniBackend()).transcribe(audio, 1.0)
     assert result.text_raw == "کوردی."
     assert result.words[0].w == "کوردی."
@@ -237,10 +388,10 @@ def test_llm_and_ctc_forwards_start_in_parallel() -> None:
         def _load(self) -> tuple[object, object]:
             return Llm(), object()
 
-        def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int]:
+        def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int, str]:
             ctc_started.set()
             assert llm_started.wait(1), "LLM did not start while CTC was running"
-            return object(), 10
+            return object(), 10, "کوردی."
 
         def _align_emissions(
             self,
@@ -252,111 +403,15 @@ def test_llm_and_ctc_forwards_start_in_parallel() -> None:
         ) -> tuple[Word, ...]:
             return (Word(text, 0, round(duration_s * 1_000), 0.9),)
 
-        @staticmethod
-        def _ctc_hypothesis(pipeline: object, log_probs: object) -> str:
-            # Stubbed for the same reason `_align_emissions` is: this test measures only that the
-            # two forwards overlap, and the fake CTC pipeline is a bare object with no tokenizer.
-            return "کوردی."
-
     result = Backend().transcribe_segment(Path("segment.wav"), 1.0)
     assert result.text_raw == "کوردی."
-
-
-def test_transcribe_segment_decodes_ctcs_own_hypothesis_from_the_emissions() -> None:
-    """The real `OmniAsrBackend.transcribe_segment`, faked one layer lower than usual.
-
-    `FakeOmniBackend` and the parallelism test both replace `transcribe_segment` outright, so the
-    call to `_ctc_hypothesis` was never driven — D-135's audit reported "transcribe_segment stops
-    decoding CTC at all" as SURVIVED, the same shape as D-118's `read_scenes`. Here only `_load`
-    and `_ctc_emissions` are faked; the vocabulary projection, the Viterbi alignment and the
-    greedy decode all run for real against a hand-built posterior matrix.
-
-    The acoustic peak spells token 3 — which the LLM's text does **not** contain — so the CTC
-    hypothesis must differ from `text_raw`. A decode confined to the LLM's own token columns
-    (the compaction `_align_emissions` performs) could not produce it.
-    """
-    import torch
-
-    vocabulary = 5  # 0 = blank/pad, 1..4 real symbols
-    surfaces = {"ب": (1,), "ج": (2,)}  # what the LLM said, and how the tokenizer splits it
-    symbols = {1: "ب", 2: "ج", 3: "د", 4: "ن"}
-
-    class Tokenizer:
-        vocab_info = SimpleNamespace(pad_idx=0, bos_idx=None, eos_idx=None)
-
-    class CtcPipeline:
-        tokenizer = Tokenizer()
-
-        @staticmethod
-        def token_encoder(surface: str) -> list[int]:
-            return list(surfaces[surface])
-
-        @staticmethod
-        def token_decoder(tokens: Any) -> str:
-            return "".join(symbols[int(t)] for t in tokens)
-
-    class Llm:
-        @staticmethod
-        def transcribe(*_args: object, **_kwargs: object) -> list[str]:
-            return ["ب ج"]
-
-    def peaked(best: int) -> list[float]:
-        return [0.0 if index == best else -12.0 for index in range(vocabulary)]
-
-    # frames: ب · blank · د(!) · blank · ج  — six frames, enough for the two aligned tokens
-    frames = [1, 0, 3, 0, 2, 2]
-
-    class NoFullMaterialisation:
-        """The posteriors, refusing to be turned into Python floats wholesale.
-
-        Measured on a 200-frame segment against a 32,000-token vocabulary, `.tolist()` on the
-        full matrix costs 183 ms and a Python argmax another 210 ms — about 215 s across this
-        file's 547 segments — against 2.03 ms for `argmax(dim=-1)` in torch. The first version of
-        `_ctc_hypothesis` took the slow route, so the property is pinned here rather than trusted
-        to a comment. `_align_emissions` still calls `.tolist()` on the *compacted* matrix, which
-        is a handful of columns and is allowed.
-        """
-
-        def __init__(self, tensor: Any) -> None:
-            self._tensor = tensor
-
-        def tolist(self) -> list[list[float]]:
-            raise AssertionError(
-                "the full posterior matrix was materialised as Python floats; take the argmax "
-                "in torch instead"
-            )
-
-        def argmax(self, dim: int) -> Any:
-            return self._tensor.argmax(dim=dim)
-
-        def index_select(self, dim: int, index: Any) -> Any:
-            return self._tensor.index_select(dim, index)
-
-    class Backend(OmniAsrBackend):
-        def _load(self) -> tuple[object, object]:
-            return Llm(), CtcPipeline()
-
-        def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int]:
-            return NoFullMaterialisation(torch.tensor([peaked(f) for f in frames])), len(frames)
-
-    result = Backend().transcribe_segment(Path("segment.wav"), 1.2)
-
-    assert result.text_raw == "ب ج"
-    assert result.ctc_text == "بدج", result.ctc_text
-    assert result.ctc_text != result.text_raw.replace(" ", ""), (
-        "CTC returned exactly the LLM's own symbols, so this cannot show the decode ran on the "
-        "full vocabulary"
-    )
-    assert "د" in result.ctc_text, "the symbol only the acoustic model saw did not survive"
-    # The alignment still happened on the LLM's words, from the same emissions.
-    assert [word.w for word in result.words] == ["ب", "ج"]
 
 
 def test_canonical_producer_runs_vad_segments_and_shifts_ctc_words(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        Path(args[-1]).write_bytes(b"wav")
+        _write_requested_pcm(args)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
@@ -380,37 +435,36 @@ def test_canonical_producer_runs_vad_segments_and_shifts_ctc_words(
     assert transcript.asr.aligner == "ctc_viterbi"
 
 
-def test_the_artifact_carries_both_hypotheses_per_segment(
+def test_canonical_producer_scales_alignment_to_the_emitted_pcm_not_vad_overshoot(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """§3 Stage 1's disagreement trigger reads them off the transcript, so they have to survive
-    assembly. Found SURVIVED by D-135's own mutation audit: blanking either hypothesis at the
-    `SegmentConfidence` construction site, or skipping the CTC decode entirely, left every suite
-    green — the decode, the scores and the wiring were all tested and the *carrying* was not.
-    """
+    observed_durations: list[float] = []
 
-    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        Path(args[-1]).write_bytes(b"wav")
+    class DurationBackend(FakeOmniBackend):
+        def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+            observed_durations.append(duration_s)
+            end_ms = round(duration_s * 1_000)
+            return SegmentTranscript(
+                text_raw="کوردی.",
+                ctc_text="کوردی.",
+                words=(Word("کوردی.", 0, end_ms, 0.9),),
+                mean_logprob=-0.1,
+            )
+
+    def shortened_cut(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        _write_pcm(Path(args[-1]), 0.982)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
-    monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
-    transcript = OmniAsrProducer(FakeOmniBackend()).transcribe(
+    monkeypatch.setattr("hawedit.asr.subprocess.run", shortened_cut)
+    transcript = OmniAsrProducer(DurationBackend()).transcribe(
         "media",
         tmp_path / "audio.wav",
         (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
         tmp_path / "stage1",
         ffmpeg=tmp_path / "ffmpeg",
     )
-    (scored,) = transcript.segment_confidence
-    assert scored.llm_text == "کوردی."
-    assert scored.ctc_text == "كوردي"
-    assert scored.llm_text != scored.ctc_text, (
-        "both fields hold the same string, so this cannot tell two hypotheses from one"
-    )
-    # And they survive the artifact's own JSON round-trip, which is what §8.2 would re-read.
-    reloaded = RawTranscript.from_json(transcript.to_json())
-    assert reloaded.segment_confidence[0].ctc_text == "كوردي"
-    assert reloaded.segment_confidence[0].llm_text == "کوردی."
+    assert observed_durations == [pytest.approx(0.982)]
+    assert transcript.words[-1].end_ms == 1_982
 
 
 def test_canonical_producer_refuses_an_empty_vad_result(tmp_path: Path) -> None:
@@ -422,13 +476,14 @@ def test_canonical_producer_refuses_an_empty_vad_result(tmp_path: Path) -> None:
 
 def test_wsl_worker_loads_one_backend_and_publishes_canonical_transcript(tmp_path: Path) -> None:
     segment = tmp_path / "speech-0000.wav"
-    segment.write_bytes(b"wav")
+    _write_pcm(segment)
     request = tmp_path / "request.json"
     request.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "media_id": "episode",
+                "validator_model_dir": "unused-in-agreeing-control",
                 "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
             }
         ),
@@ -444,13 +499,14 @@ def test_wsl_worker_loads_one_backend_and_publishes_canonical_transcript(tmp_pat
 
 def test_wsl_worker_rejects_a_segment_outside_the_shared_directory(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.wav"
-    outside.write_bytes(b"wav")
+    _write_pcm(outside)
     request = tmp_path / "request.json"
     request.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "media_id": "episode",
+                "validator_model_dir": "unused-in-agreeing-control",
                 "segments": [{"path": "../outside.wav", "start_ms": 1_000, "end_ms": 2_000}],
             }
         ),
@@ -464,12 +520,38 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     worker_calls: list[list[str]] = []
+    path_calls: list[str] = []
+    binding_active = False
     stage1 = tmp_path / "stage1"
+    validator_dir = tmp_path / "validator"
+    validator_dir.mkdir()
+
+    class HostModelStore:
+        @staticmethod
+        def assert_available(_model_id: str) -> Path:
+            pytest.fail("WSL validation must not require the qwen-asr loader on Windows")
+
+        @staticmethod
+        def path_for(entry: ModelEntry) -> Path:
+            path_calls.append(entry.model_id)
+            return validator_dir
+
+    @contextmanager
+    def verified(_model_id: str, selected: Path) -> Iterator[Path]:
+        nonlocal binding_active
+        assert selected == validator_dir
+        binding_active = True
+        try:
+            yield selected.resolve()
+        finally:
+            binding_active = False
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         if "wslpath" in args:
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
         if "hawedit.asr_worker" in args:
+            assert binding_active, "the host lease must span the entire WSL worker"
+            assert "PYTHONDONTWRITEBYTECODE=1" in args
             worker_calls.append(args)
             transcript = run_request(
                 stage1 / "omni-asr-request.json",
@@ -478,10 +560,12 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
             )
             assert transcript.media_id == "episode"
             return subprocess.CompletedProcess(args, 0, b"", b"")
-        Path(args[-1]).write_bytes(b"wav")
+        _write_requested_pcm(args)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    monkeypatch.setattr("hawedit.asr.ModelStore", HostModelStore)
+    monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
     transcript = WslOmniAsrProducer(interpreter="/opt/hawedit/python").transcribe(
         "episode",
         tmp_path / "audio.wav",
@@ -490,121 +574,380 @@ def test_windows_wsl_producer_cuts_locally_then_invokes_one_worker(
         ffmpeg=tmp_path / "ffmpeg",
     )
     assert transcript.words[0].start_ms == 1_050
+    assert path_calls == [QwenSoraniValidator.model_id]
     assert len(worker_calls) == 1
     assert worker_calls[0][0] == "wsl.exe"
     assert "/opt/hawedit/python" in worker_calls[0]
+    assert not binding_active
 
 
-def _wsl_producer_run(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    stage1: Path,
-    segments: Sequence[SpeechSegment],
-) -> RawTranscript:
-    """Drive `WslOmniAsrProducer.transcribe` with the worker faked, as the test above does."""
+def test_wsl_worker_boundary_holds_a_real_host_lease_against_checkpoint_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stage1 = tmp_path / "stage1"
+    validator_dir = tmp_path / "validator"
+    validator_dir.mkdir()
+    marker = tmp_path / "writer-acquired.txt"
+    writer: subprocess.Popen[bytes] | None = None
+    writer_code = """
+from pathlib import Path
+import sys
+from hawedit.models import checkpoint_publish_lock
+
+with checkpoint_publish_lock(Path(sys.argv[1])):
+    Path(sys.argv[2]).write_text("acquired", encoding="utf-8")
+"""
+
+    monkeypatch.setattr(
+        "hawedit.models.ModelStore.verify_checkpoint",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        nonlocal writer
         if "wslpath" in args:
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
         if "hawedit.asr_worker" in args:
+            writer = subprocess.Popen(
+                [sys.executable, "-c", writer_code, str(validator_dir), str(marker)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            threading.Event().wait(0.35)
+            if writer.poll() is not None:
+                stdout, stderr = writer.communicate()
+                pytest.fail(
+                    "checkpoint writer entered while the WSL boundary was active: "
+                    f"stdout={stdout!r}, stderr={stderr!r}"
+                )
+            assert not marker.exists()
             run_request(
                 stage1 / "omni-asr-request.json",
                 stage1 / "omni-asr-worker-output.json",
                 FakeOmniBackend(),
             )
             return subprocess.CompletedProcess(args, 0, b"", b"")
-        Path(args[-1]).write_bytes(b"wav")
+        _write_requested_pcm(args)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
-    return WslOmniAsrProducer(interpreter="/opt/hawedit/python").transcribe(
-        "episode", tmp_path / "audio.wav", segments, stage1, ffmpeg=tmp_path / "ffmpeg"
-    )
-
-
-def test_a_killed_run_leaves_a_request_that_does_not_block_the_next_one(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Reproduced on the real 38-minute file: a `--omni-asr` run killed mid-transcription left
-    `stage1/omni-asr-request.json`, and the next attempt died on a bare
-    `[Errno 17] File exists: …omni-asr-request.json` after **78 s** — Stage 0 re-verified, nothing
-    to show, and no instruction in the message. D-132's rule one stage over: a dying run must not
-    leave a record that blocks the next.
-
-    The request describes the same segments, so it is a resumed run and there is nothing to guard.
-    """
-    stage1 = tmp_path / "stage1"
-    segments = (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
-    _wsl_producer_run(monkeypatch, tmp_path, stage1, segments)
-    request = stage1 / "omni-asr-request.json"
-    assert request.is_file()
-    before = request.read_text(encoding="utf-8")
-
-    transcript = _wsl_producer_run(monkeypatch, tmp_path, stage1, segments)
-
-    assert transcript.words[0].start_ms == 1_050
-    assert request.read_text(encoding="utf-8") == before, "the request was rewritten"
-
-
-def test_a_request_describing_different_segments_is_refused_by_name(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The control. Reusing the file whatever it says would let two runs sharing one work
-    directory transcribe each other's segments, and would hide a Stage 0 whose speech regions
-    changed. The refusal has to name the file, which the bare FileExistsError did not.
-    """
-    stage1 = tmp_path / "stage1"
-    _wsl_producer_run(
-        monkeypatch, tmp_path, stage1, (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
-    )
-
-    with pytest.raises(RuntimeError, match="omni-asr-request.json"):
-        _wsl_producer_run(
-            monkeypatch,
-            tmp_path,
+    try:
+        transcript = WslOmniAsrProducer(
+            interpreter="/opt/hawedit/python", validator_model_dir=validator_dir
+        ).transcribe(
+            "episode",
+            tmp_path / "audio.wav",
+            (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
             stage1,
-            (
-                SimpleNamespace(start_ms=1_000, end_ms=2_000),
-                SimpleNamespace(start_ms=3_000, end_ms=4_000),
-            ),
+            ffmpeg=tmp_path / "ffmpeg",
+        )
+        assert transcript.media_id == "episode"
+        assert writer is not None
+        assert writer.wait(timeout=10) == 0
+        assert marker.read_text(encoding="utf-8") == "acquired"
+    finally:
+        if writer is not None and writer.poll() is None:
+            writer.terminate()
+            writer.wait(timeout=5)
+
+
+class FakeValidator:
+    model_id = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
+
+    def __init__(self, text: str = "ڕاستکراوە.") -> None:
+        self.text = text
+        self.calls: list[Path] = []
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> str:
+        self.calls.append(audio_path)
+        return self.text
+
+
+class RoutingBackend:
+    def __init__(self, scores: tuple[float, ...], *, disagree_at: int | None = None) -> None:
+        self.scores = scores
+        self.disagree_at = disagree_at
+        self.align_calls: list[tuple[Path, str]] = []
+
+    @staticmethod
+    def _index(audio_path: Path) -> int:
+        return int(audio_path.stem.rsplit("-", 1)[1])
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+        index = self._index(audio_path)
+        text = f"دەقی{index}."
+        ctc_text = "جیاواز." if index == self.disagree_at else text
+        return SegmentTranscript(
+            text_raw=text,
+            ctc_text=ctc_text,
+            words=(Word(text, 0, 500, 0.9),),
+            mean_logprob=self.scores[index],
+        )
+
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        self.align_calls.append((audio_path, text))
+        return SegmentTranscript(
+            text_raw=text,
+            ctc_text="جیاواز.",
+            words=(Word(text, 10, 510, 0.8),),
+            mean_logprob=-0.2,
         )
 
 
-def test_a_worker_output_for_another_media_is_discarded_not_resumed(
+def _fake_ffmpeg(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+    _write_requested_pcm(args)
+    return subprocess.CompletedProcess(args, 0, b"", b"")
+
+
+def test_stage1_routes_the_bottom_quartile_to_the_real_validator_seam(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The control for resuming a finished output. Reusing whatever file is there would hand this
-    run another episode's transcript — the shape D-136 keeps out of the store, one file earlier.
+    monkeypatch.setattr("hawedit.asr.subprocess.run", _fake_ffmpeg)
+    backend = RoutingBackend((-0.1, -2.0, -0.2, -0.3))
+    validator = FakeValidator()
+    transcript = OmniAsrProducer(backend, validator).transcribe(
+        "episode",
+        tmp_path / "audio.wav",
+        tuple(SimpleNamespace(start_ms=i * 1_000, end_ms=(i + 1) * 1_000) for i in range(4)),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    assert transcript.text_ckb.splitlines() == ["دەقی0.", "ڕاستکراوە.", "دەقی2.", "دەقی3."]
+    assert [path.name for path in validator.calls] == ["speech-0001.wav"]
+    assert [(path.name, text) for path, text in backend.align_calls] == [
+        ("speech-0001.wav", "ڕاستکراوە.")
+    ]
+    assert transcript.words[1].w == "ڕاستکراوە."
+    assert transcript.words[1].start_ms == 1_010
+    assert transcript.asr.validated_by == validator.model_id
 
-    Found SURVIVED by D-136's own audit: dropping the media_id check left every suite green,
-    because no test had ever put a foreign output in the way.
-    """
-    stage1 = tmp_path / "stage1"
-    stage1.mkdir(parents=True)
-    foreign = RawTranscript(
-        media_id="another-episode",
-        text_ckb="ئەمە",
-        words=(Word(w="ئەمە", start_ms=0, end_ms=400, conf=0.9),),
-        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
-    )
-    output = stage1 / "omni-asr-worker-output.json"
-    output.write_text(foreign.to_json(), encoding="utf-8")
 
-    transcript = _wsl_producer_run(
-        monkeypatch, tmp_path, stage1, (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
+def test_stage1_routes_material_disagreement_even_without_a_confidence_quartile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("hawedit.asr.subprocess.run", _fake_ffmpeg)
+    backend = RoutingBackend((-0.1,), disagree_at=0)
+    validator = FakeValidator()
+    transcript = OmniAsrProducer(backend, validator).transcribe(
+        "episode",
+        tmp_path / "audio.wav",
+        (SimpleNamespace(start_ms=0, end_ms=1_000),),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
     )
+    assert transcript.text_ckb == "ڕاستکراوە."
+    assert len(validator.calls) == 1
 
-    assert transcript.media_id == "episode", (
-        "another episode's transcript was resumed as this run's Stage 1 output"
+
+def test_wsl_worker_applies_the_same_validator_routing_contract(tmp_path: Path) -> None:
+    segment = tmp_path / "speech-0000.wav"
+    _write_pcm(segment)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "media_id": "episode",
+                "validator_model_dir": "unused-with-injected-validator",
+                "segments": [{"path": segment.name, "start_ms": 2_000, "end_ms": 3_000}],
+            }
+        ),
+        encoding="utf-8",
     )
-    # And a truncated output is not trusted either — the same fall-through.
-    output.write_text('{"media_id": "epis', encoding="utf-8")
-    assert (
-        _wsl_producer_run(
-            monkeypatch, tmp_path, stage1, (SimpleNamespace(start_ms=1_000, end_ms=2_000),)
-        ).media_id
-        == "episode"
+    backend = RoutingBackend((-0.1,), disagree_at=0)
+    validator = FakeValidator()
+    transcript = run_request(request, tmp_path / "output.json", backend, validator)
+    assert transcript.text_ckb == "ڕاستکراوە."
+    assert transcript.words[0].start_ms == 2_010
+    assert transcript.asr.validated_by == validator.model_id
+
+
+def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_infeasible(
+    tmp_path: Path,
+) -> None:
+    """One rejected correction must not discard a finished 547-region episode."""
+
+    class RefusingCorrectionAlignment(RoutingBackend):
+        def align_segment(
+            self, audio_path: Path, duration_s: float, text: str
+        ) -> SegmentTranscript:
+            raise AlignmentInfeasible("15 frames cannot emit 21 validator tokens")
+
+    segment = tmp_path / "speech-0000.wav"
+    _write_pcm(segment)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "media_id": "episode",
+                "validator_model_dir": "unused-with-injected-validator",
+                "segments": [{"path": segment.name, "start_ms": 2_000, "end_ms": 3_000}],
+            }
+        ),
+        encoding="utf-8",
     )
+    backend = RefusingCorrectionAlignment((-0.1,), disagree_at=0)
+    validator = FakeValidator()
+
+    transcript = run_request(request, tmp_path / "output.json", backend, validator)
+
+    assert transcript.words[0].start_ms == 2_000, "the original canonical alignment was lost"
+    assert transcript.asr.validated_by is None, "a rejected correction did not produce text"
+    assert transcript.unaligned == (), "canonical timed words exist, so this is not a speech gap"
+    assert transcript.rejected_validator_corrections == (
+        RejectedValidatorCorrection(
+            start_ms=2_000,
+            end_ms=3_000,
+            validator=validator.model_id,
+            reason="AlignmentInfeasible: 15 frames cannot emit 21 validator tokens",
+        ),
+    )
+    persisted = RawTranscript.from_json((tmp_path / "output.json").read_text(encoding="utf-8"))
+    assert persisted == transcript
+
+
+def test_stage1_does_not_load_validator_weights_when_no_segment_is_selected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("hawedit.asr.subprocess.run", _fake_ffmpeg)
+    backend = RoutingBackend((-0.1, -0.2, -0.3))
+    transcript = OmniAsrProducer(backend).transcribe(
+        "episode",
+        tmp_path / "audio.wav",
+        tuple(SimpleNamespace(start_ms=i * 1_000, end_ms=(i + 1) * 1_000) for i in range(3)),
+        tmp_path / "stage1",
+        ffmpeg=tmp_path / "ffmpeg",
+    )
+    assert transcript.asr.validated_by is None
+    assert backend.align_calls == []
+
+
+def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hawedit.asr as asr_module
+
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+    verified_dir = tmp_path / "held-validator"
+    verified_dir.mkdir()
+    config = json.dumps({"model_type": "qwen3_asr"})
+    (model_dir / "config.json").write_text(config, encoding="utf-8")
+    (verified_dir / "config.json").write_text(config, encoding="utf-8")
+    audio = tmp_path / "segment.wav"
+    _write_pcm(audio)
+    loaded: dict[str, object] = {}
+
+    class Model:
+        def transcribe(self, **kwargs: object) -> list[SimpleNamespace]:
+            assert not lock_active
+            loaded["transcribe"] = kwargs
+            return [SimpleNamespace(text="سۆرانی.")]
+
+    class Loader:
+        @staticmethod
+        def from_pretrained(path: str, **kwargs: object) -> Model:
+            assert lock_active
+            loaded["path"] = path
+            loaded["kwargs"] = kwargs
+            return Model()
+
+    lock_active = False
+    integrity_calls: list[tuple[str, Path]] = []
+
+    @contextmanager
+    def verified(model_id: str, path: Path) -> Iterator[Path]:
+        nonlocal lock_active
+        integrity_calls.append((model_id, path))
+        lock_active = True
+        try:
+            yield verified_dir.resolve()
+        finally:
+            lock_active = False
+
+    from hawedit.models import assert_transformers_config_safe as real_safe_config
+
+    def safe_config(path: Path, allowed: object) -> None:
+        assert lock_active
+        real_safe_config(path, allowed)  # type: ignore[arg-type]
+
+    def cuda_available() -> bool:
+        assert lock_active
+        return True
+
+    torch = SimpleNamespace(bfloat16="bf16", cuda=SimpleNamespace(is_available=cuda_available))
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "qwen_asr", SimpleNamespace(Qwen3ASRModel=Loader))
+    monkeypatch.setattr(asr_module, "verified_checkpoint_access", verified)
+    monkeypatch.setattr(asr_module, "assert_transformers_config_safe", safe_config)
+    validator = QwenSoraniValidator(model_dir)
+    assert validator.transcribe_segment(audio, 1.0) == "سۆرانی."
+    assert loaded["path"] == str(verified_dir.resolve())
+    assert loaded["kwargs"] == {
+        "dtype": "bf16",
+        "device_map": "cuda:1",
+        "max_inference_batch_size": 1,
+    }
+    assert loaded["transcribe"] == {"audio": str(audio)}
+    assert integrity_calls == [(validator.model_id, model_dir)]
+    assert not lock_active
+
+
+def test_qwen_validator_integrity_failure_precedes_config_parse_and_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("integrity sentinel")
+
+    monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", refuse)
+    monkeypatch.setattr(
+        "hawedit.asr.assert_transformers_config_safe",
+        lambda *_args: pytest.fail("config parsed before checkpoint integrity"),
+    )
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        QwenSoraniValidator(model_dir)._load()
+
+
+def test_qwen_validator_refuses_a_code_loading_config_before_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.models import UnsafeModelConfig
+
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_asr",
+                "_attn_implementation_internal": "attacker/kernel",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "hawedit.asr.verified_checkpoint_access",
+        lambda _model_id, path: nullcontext(path.resolve()),
+    )
+    with pytest.raises(UnsafeModelConfig, match="CVE-2026-4372"):
+        QwenSoraniValidator(model_dir)._load()
+
+
+def test_qwen_validator_uses_the_asr_model_type_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(json.dumps({"model_type": "xclip"}), encoding="utf-8")
+    monkeypatch.setattr(
+        "hawedit.asr.verified_checkpoint_access",
+        lambda _model_id, path: nullcontext(path.resolve()),
+    )
+    with pytest.raises(RuntimeError, match="unapproved"):
+        QwenSoraniValidator(model_dir)._load()
 
 
 def test_omni_runtime_selection_is_explicit() -> None:
@@ -614,7 +957,7 @@ def test_omni_runtime_selection_is_explicit() -> None:
         create_omni_asr_producer("remote")
 
 
-# --- D-103: one unalignable region used to discard a whole 38-minute run ---------------------
+# --- D-135: one unalignable region used to discard a whole 38-minute run ---------------------
 
 
 class _RefusingOnOneSegment:
@@ -636,9 +979,13 @@ class _RefusingOnOneSegment:
             )
         return SegmentTranscript(
             text_raw="کوردی.",
+            ctc_text="کوردی.",
             words=(Word(w="کوردی.", start_ms=50, end_ms=500, conf=0.9),),
             mean_logprob=-0.1,
         )
+
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        raise AssertionError("the region-preservation helper never realigns")
 
 
 def _regions(tmp_path: Path, count: int) -> tuple[_PreparedSpeechSegment, ...]:
@@ -654,7 +1001,7 @@ def test_one_unalignable_region_does_not_discard_the_others(tmp_path: Path) -> N
     """Measured before the fix: the run raised and 38 minutes of Kurdish produced nothing.
 
     `AlignmentInfeasible` is correct — inventing a word boundary is what invariant #5 forbids —
-    so the refusal stays and the blast radius shrinks to the one region. D-103.
+    so the refusal stays and the blast radius shrinks to the one region. D-135.
     """
     prepared = _regions(tmp_path, 5)
     backend = _RefusingOnOneSegment("speech-0002")
@@ -701,6 +1048,11 @@ def test_a_run_where_nothing_aligned_is_refused_rather_than_written_empty(tmp_pa
         def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
             raise AlignmentInfeasible("no frames at all")
 
+        def align_segment(
+            self, audio_path: Path, duration_s: float, text: str
+        ) -> SegmentTranscript:
+            raise AssertionError("no successfully transcribed segment can be realigned")
+
     results, unaligned = transcribe_prepared_segments(RefusingAlways(), prepared)
     assert results == ()
     with pytest.raises(RuntimeError, match="aligned none of 2 speech regions"):
@@ -721,7 +1073,7 @@ def test_a_clean_run_records_no_gaps_at_all(tmp_path: Path) -> None:
     assert json.loads(transcript.to_json())["unaligned"] == []
 
 
-# --- D-109: §3's escalation rule ranks segments, and Stage 1 averaged them away ---------------
+# --- D-144: §3's escalation rule ranks segments, and Stage 1 averaged them away ---------------
 
 
 class _VaryingConfidence:
@@ -733,9 +1085,13 @@ class _VaryingConfidence:
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
         return SegmentTranscript(
             text_raw="کوردی.",
+            ctc_text="کوردی.",
             words=(Word(w="کوردی.", start_ms=50, end_ms=500, conf=0.9),),
             mean_logprob=self.by_stem[audio_path.stem],
         )
+
+    def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
+        raise AssertionError("the confidence-only backend must not be routed to validation")
 
 
 def test_each_segments_own_confidence_survives_into_the_artifact(tmp_path: Path) -> None:
@@ -744,7 +1100,7 @@ def test_each_segments_own_confidence_survives_into_the_artifact(tmp_path: Path)
 
     §3 Stage 1 escalates "any segment in the bottom log-probability quartile", and a quartile of an
     average is nothing — which is why `escalation.select_for_validation` had no caller anywhere in
-    `src/`. Computed and discarded, not never computed. D-109.
+    `src/`. Computed and discarded, not never computed. D-144.
     """
     prepared = _regions(tmp_path, 4)
     backend = _VaryingConfidence(
@@ -913,6 +1269,18 @@ def _capture_wsl_request(
     boundary, so it publishes a valid output directly and reads the request.
     """
     seen: list[dict[str, Any]] = []
+    validator = tmp_path / "validator"
+    validator.mkdir(exist_ok=True)
+
+    class HostModelStore:
+        @staticmethod
+        def path_for(_entry: ModelEntry) -> Path:
+            return validator
+
+    @contextmanager
+    def verified(_model_id: str, selected: Path) -> Iterator[Path]:
+        assert selected == validator
+        yield selected
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         if "wslpath" in args:
@@ -929,10 +1297,12 @@ def _capture_wsl_request(
                 published.to_json() + "\n", encoding="utf-8"
             )
             return subprocess.CompletedProcess(args, 0, b"", b"")
-        Path(args[-1]).write_bytes(b"wav")
+        _write_requested_pcm(args)
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
+    monkeypatch.setattr("hawedit.asr.ModelStore", HostModelStore)
+    monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
     WslOmniAsrProducer(interpreter="/opt/hawedit/python", lora_adapter=adapter).transcribe(
         "zar38",
         tmp_path / "audio.wav",
@@ -958,14 +1328,14 @@ def test_the_wsl_request_carries_the_adapter_across_the_boundary(
     )
 
 
-def test_a_stock_wsl_request_gains_no_field_at_all(
+def test_a_stock_wsl_request_contains_only_the_required_schema_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The control on the test above: D-136 resumes a killed run by comparing the request
-    verbatim, so an unadapted run must not gain a key and orphan every in-flight request."""
+    """A stock request carries the mandatory validator path but no optional adapter key."""
     request = _capture_wsl_request(monkeypatch, tmp_path, tmp_path / "stage1", None)
 
-    assert set(request) == {"schema_version", "media_id", "segments"}
+    assert set(request) == {"schema_version", "media_id", "segments", "validator_model_dir"}
+    assert "lora_adapter" not in request
 
 
 def test_the_worker_refuses_an_adapter_it_would_have_ignored(tmp_path: Path) -> None:
@@ -973,13 +1343,14 @@ def test_the_worker_refuses_an_adapter_it_would_have_ignored(tmp_path: Path) -> 
     a supplied backend cannot be adapted after the fact — so the request must stop rather than
     transcribe on base weights and publish under the adapter's name."""
     segment = tmp_path / "speech-0000.wav"
-    segment.write_bytes(b"wav")
+    _write_pcm(segment, 1.0)
     request = tmp_path / "request.json"
     request.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "media_id": "episode",
+                "validator_model_dir": "unused-with-injected-backend",
                 "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
                 "lora_adapter": "/home/ai/cortex_champion_model",
             }
@@ -994,13 +1365,14 @@ def test_the_worker_refuses_an_adapter_it_would_have_ignored(tmp_path: Path) -> 
 def test_a_request_without_an_adapter_still_runs_the_supplied_backend(tmp_path: Path) -> None:
     """The control: the refusal above must not fire on every ordinary request."""
     segment = tmp_path / "speech-0000.wav"
-    segment.write_bytes(b"wav")
+    _write_pcm(segment, 1.0)
     request = tmp_path / "request.json"
     request.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "media_id": "episode",
+                "validator_model_dir": "unused-with-injected-backend",
                 "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
             }
         ),

@@ -12,21 +12,15 @@ Escalating by length is the cheap proxy everyone reaches for, and it spends the 
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from hawedit.escalation import (
     DEFAULT_DISAGREEMENT_CER,
     SegmentScore,
     materially_disagree,
-    scores_from_transcript,
     select_for_validation,
 )
 from hawedit.metrics import normalized_cer
-from hawedit.transcripts import AsrProvenance, RawTranscript, SegmentConfidence, Word
-
-ROOT = Path(__file__).resolve().parents[1]
 
 CLEAN = "ئەمە زۆر باشە"
 
@@ -227,99 +221,3 @@ def test_a_silent_ctc_segment_reaches_the_validator_through_the_decision() -> No
     decisions = {d.segment_id: d for d in select_for_validation(scores)}
     assert decisions["s0"].escalate
     assert "disagree" in decisions["s0"].reason
-
-
-# --- D-135: the rule reads the artifact, so it has a caller --------------------------------
-
-
-def _transcript(*segments: tuple[int, int, float, str, str]) -> RawTranscript:
-    """A raw transcript carrying §3 Stage 1's per-segment evidence.
-
-    `aligner` is required whenever word timings are present — invariant #5 admits timings from
-    CTC/Viterbi only, and it refused the first version of this fixture. `text_ckb` cannot be
-    whitespace-only either, which the all-empty-hypotheses case would otherwise produce.
-    """
-    return RawTranscript(
-        media_id="m",
-        text_ckb="\n".join(llm for _, _, _, llm, _ in segments if llm.strip()) or "ئەمە",
-        words=(Word(w="ئەمە", start_ms=0, end_ms=400, conf=0.9),),
-        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
-        segment_confidence=tuple(
-            SegmentConfidence(
-                start_ms=start,
-                end_ms=end,
-                mean_logprob=logprob,
-                llm_text=llm,
-                ctc_text=ctc,
-            )
-            for start, end, logprob, llm, ctc in segments
-        ),
-    )
-
-
-def test_scores_come_off_the_artifact_with_both_hypotheses() -> None:
-    """D-109 put each segment's log-probability in the artifact and D-135 put both hypotheses
-    beside it. Without them `select_for_validation` had no possible caller."""
-    transcript = _transcript(
-        (0, 1000, -2.0, "ئەمە زۆر باشە", "ئەمە زۆر باشە"),
-        (1000, 2000, -9.0, "ئەمە زۆر باشە", "ئەمە زۆر خراپە"),
-    )
-    scores = scores_from_transcript(transcript)
-    assert [s.segment_id for s in scores] == ["0-1000", "1000-2000"]
-    assert scores[1].ctc_text == "ئەمە زۆر خراپە"
-    assert scores[0].duration_s == 1.0
-
-
-def test_the_disagreement_trigger_fires_on_a_confident_segment() -> None:
-    """§3's two triggers are independent: "any segment where LLM-7B and CTC-3B disagree
-    materially" is not conditional on low confidence.
-
-    **Three** segments, because `len(scores) // 4` is 0 there — `select_for_validation`'s own
-    docstring says confidence escalates nothing below four — so the only trigger that can fire
-    is disagreement. The first version of this test used four equally confident segments and
-    escalated two: the quartile is 1 even when every log-probability is identical, and sorting
-    stably put segment 0 in it. Equal confidence is not the same as no quartile.
-    """
-    transcript = _transcript(
-        (0, 1000, -1.0, "ئەمە زۆر باشە", "ئەمە زۆر باشە"),
-        (1000, 2000, -1.0, "ئەمە زۆر باشە", "ئەمە زۆر باشە"),
-        (2000, 3000, -1.0, "ئەمە زۆر باشە", "ئەمە زۆر خراپە"),
-    )
-    decisions = {d.segment_id: d for d in select_for_validation(scores_from_transcript(transcript))}
-    assert [d.escalate for d in decisions.values()] == [False, False, True]
-    assert "disagree materially" in decisions["2000-3000"].reason
-    assert "quartile" not in decisions["2000-3000"].reason, (
-        "the quartile fired too, so this is not measuring the disagreement trigger alone"
-    )
-    # The control: with identical hypotheses nothing escalates, so this measures the
-    # disagreement and not merely that the last segment is special.
-    agreeing = _transcript(*[(i * 1000, i * 1000 + 1000, -1.0, "ئەمە", "ئەمە") for i in range(3)])
-    assert not any(d.escalate for d in select_for_validation(scores_from_transcript(agreeing)))
-
-
-def test_a_transcript_with_no_ctc_hypotheses_escalates_on_confidence_alone() -> None:
-    """What every transcript written before D-135 looks like, including the real 38-minute one.
-
-    Both hypotheses are empty, `materially_disagree` reads that as agreement rather than as a
-    difference, and the confidence quartile still applies. Measured on the real artifact: 545
-    segments, **136 escalated = 545 // 4**, every reason naming the quartile.
-    """
-    transcript = _transcript(
-        *[(i * 1000, i * 1000 + 1000, -float(i + 1), "", "") for i in range(8)]
-    )
-    decisions = select_for_validation(scores_from_transcript(transcript))
-    assert sum(1 for d in decisions if d.escalate) == 2  # 8 // 4
-    assert all("quartile" in d.reason for d in decisions if d.escalate)
-
-
-def test_the_runner_runs_the_rule_and_the_report_carries_it() -> None:
-    """The wiring, which is what left the policy dead: it had no caller in `src/` at all.
-
-    Asserted on `pipeline.py`'s source, the shape D-119 and D-133 use for a call whose claim is
-    *where it is*; the emitted-JSON consequence is asserted in `tests/test_pipeline.py`.
-    """
-    source = (ROOT / "src" / "hawedit" / "pipeline.py").read_text(encoding="utf-8")
-    assert "select_for_validation(scores_from_transcript(transcript))" in source, (
-        "the runner no longer applies §3 Stage 1's escalation rule; the policy would be a "
-        "module nothing in the product calls, which is the state D-135 found it in"
-    )

@@ -1,0 +1,307 @@
+name: release
+
+# Attest only artifacts rebuilt from an exact successful canonical gate on protected main.
+# The release command independently queries GitHub and revalidates the run, job, mandatory
+# steps, repository, event, branch and SHA before it creates an output directory.
+on:
+  workflow_run:
+    workflows: [gate]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  build-release:
+    if: >-
+      github.repository == 'HawzhinBlanca/HawEdit' &&
+      github.event.workflow_run.head_repository.full_name == 'HawzhinBlanca/HawEdit' &&
+      github.sha == github.event.workflow_run.head_sha &&
+      github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the exact gated revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Use the supported release Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Build the exact-SHA release bundle and verify its manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ runner.temp }}/hawedit-release
+          GATE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          PYTHONPATH=src python -m hawedit.release \
+            --project-root . \
+            --output-dir "$RELEASE_DIR" \
+            --gate-run-id "$GATE_RUN_ID"
+          (
+            cd "$RELEASE_DIR"
+            sha256sum --check SHA256SUMS
+          )
+          test "$(find "$RELEASE_DIR" -maxdepth 1 -type f | wc -l)" -eq 4
+
+      - name: Transfer the unprivileged build to a fresh runner
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hawedit-release-build-${{ github.event.workflow_run.head_sha }}
+          path: |
+            ${{ runner.temp }}/hawedit-release/*.whl
+            ${{ runner.temp }}/hawedit-release/*.whl.spdx.json
+            ${{ runner.temp }}/hawedit-release/release-provenance.json
+            ${{ runner.temp }}/hawedit-release/SHA256SUMS
+          if-no-files-found: error
+          include-hidden-files: false
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  smoke-release:
+    needs: build-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Use a supported clean Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download the exact unprivileged build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hawedit-release-build-${{ github.event.workflow_run.head_sha }}
+          path: ${{ runner.temp }}/hawedit-release
+
+      - name: Install and execute the wheel outside a checkout
+        env:
+          RELEASE_DIR: ${{ runner.temp }}/hawedit-release
+          SMOKE_ROOT: ${{ runner.temp }}/hawedit-installed-smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' wheels < <(
+            find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.whl' -print0
+          )
+          test "${#wheels[@]}" -eq 1
+          python -m venv "$SMOKE_ROOT"
+          "$SMOKE_ROOT/bin/python" -m pip install \
+            --disable-pip-version-check --no-input --no-index --no-deps "${wheels[0]}"
+          lock="$("$SMOKE_ROOT/bin/python" -I -m hawedit.environment --show-lock base)"
+          "$SMOKE_ROOT/bin/python" -m pip install \
+            --disable-pip-version-check --no-input --require-hashes --only-binary=:all: \
+            -r "$lock"
+          "$SMOKE_ROOT/bin/python" -m pip check
+          "$SMOKE_ROOT/bin/python" -I -m hawedit.environment --lock "$lock"
+          cd "$RUNNER_TEMP"
+          "$SMOKE_ROOT/bin/python" - <<'PY'
+          from hawedit.models import INSTALLED_INTEGRITY, INSTALLED_REVISIONS, INSTALLED_SOURCES
+          from hawedit.environment import resolve_installed_hawedit_data
+          from hawedit.pipeline import FONTS_DIR
+
+          required = (
+              FONTS_DIR / "NotoNaskhArabic-Regular.ttf",
+              FONTS_DIR / "OFL.txt",
+              INSTALLED_SOURCES,
+              INSTALLED_REVISIONS,
+              INSTALLED_INTEGRITY,
+              resolve_installed_hawedit_data("share/hawedit/scripts/fetch-ffmpeg.sh"),
+          )
+          missing = [str(path) for path in required if not path.is_file()]
+          if missing:
+              raise SystemExit(f"installed package data missing: {missing}")
+          PY
+          for command in \
+            hawedit \
+            hawedit-asr-bench \
+            hawedit-editorial-bench \
+            hawedit-asr-setup \
+            hawedit-credentials \
+            hawedit-fetch-models \
+            hawedit-ffmpeg-setup \
+            hawedit-release \
+            hawedit-wsl-vex
+          do
+            "$SMOKE_ROOT/bin/$command" --help >/dev/null
+          done
+
+  attest-release:
+    needs: [build-release, smoke-release]
+    if: >-
+      github.repository == 'HawzhinBlanca/HawEdit' &&
+      github.event.workflow_run.head_repository.full_name == 'HawzhinBlanca/HawEdit' &&
+      github.sha == github.event.workflow_run.head_sha &&
+      github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the immutable build-job transport
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hawedit-release-build-${{ github.event.workflow_run.head_sha }}
+          path: ${{ runner.temp }}/hawedit-release
+
+      - name: Independently validate the exact release set
+        env:
+          RELEASE_DIR: ${{ runner.temp }}/hawedit-release
+          GATED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GATE_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          mapfile -d '' entries < <(find "$RELEASE_DIR" -mindepth 1 -print0)
+          test "${#entries[@]}" -eq 4
+          for entry in "${entries[@]}"; do
+            test -f "$entry"
+            test ! -L "$entry"
+          done
+
+          mapfile -d '' wheels < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.whl' -print0)
+          mapfile -d '' sboms < <(
+            find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.whl.spdx.json' -print0
+          )
+          test "${#wheels[@]}" -eq 1
+          test "${#sboms[@]}" -eq 1
+          test -f "$RELEASE_DIR/release-provenance.json"
+          test -f "$RELEASE_DIR/SHA256SUMS"
+
+          wheel_name="$(basename "${wheels[0]}")"
+          sbom_name="$(basename "${sboms[0]}")"
+          identity_output="$(python3 - "${wheels[0]}" <<'PY'
+          import re
+          import sys
+          import zipfile
+          from email.parser import BytesParser
+          from pathlib import Path
+
+          wheel = Path(sys.argv[1])
+          try:
+              with zipfile.ZipFile(wheel) as archive:
+                  members = [
+                      name
+                      for name in archive.namelist()
+                      if name.endswith(".dist-info/METADATA")
+                  ]
+                  if len(members) != 1:
+                      raise ValueError(
+                          f"release wheel must contain exactly one METADATA, found {len(members)}"
+                      )
+                  metadata = BytesParser().parsebytes(archive.read(members[0]))
+          except (OSError, KeyError, zipfile.BadZipFile) as exc:
+              raise SystemExit(f"release wheel METADATA is unreadable: {exc}") from exc
+
+          distribution = str(metadata.get("Name", "")).strip()
+          version = str(metadata.get("Version", "")).strip()
+          if not distribution or not version or any(
+              character in distribution + version for character in "\r\n\0"
+          ):
+              raise SystemExit("release wheel has an invalid METADATA identity")
+
+          stem = wheel.name.removesuffix(".whl")
+          fields = stem.rsplit("-", 3)
+          identity = fields[0].split("-") if len(fields) == 4 else []
+          if len(identity) not in (2, 3) or any(not field for field in (*fields, *identity)):
+              raise SystemExit(f"release wheel has a malformed filename: {wheel.name}")
+          filename_distribution, filename_version = identity[:2]
+          normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+          if normalize(distribution) != "hawedit":
+              raise SystemExit(f"release distribution must be hawedit, got {distribution!r}")
+          if normalize(filename_distribution) != normalize(distribution):
+              raise SystemExit("release filename distribution does not match METADATA")
+          if filename_version != version:
+              raise SystemExit("release filename version does not match METADATA")
+          print(distribution)
+          print(version)
+          PY
+          )"
+          mapfile -t identity <<< "$identity_output"
+          test "${#identity[@]}" -eq 2
+          distribution="${identity[0]}"
+          version="${identity[1]}"
+          test "$(wc -l < "$RELEASE_DIR/SHA256SUMS")" -eq 3
+          test "$(grep -Ec '^[0-9a-f]{64}  [A-Za-z0-9_.+-]+$' \
+            "$RELEASE_DIR/SHA256SUMS")" -eq 3
+          expected_names="$(printf '%s\n' \
+            "$wheel_name" "$sbom_name" release-provenance.json | sort)"
+          actual_names="$(awk '{print $2}' "$RELEASE_DIR/SHA256SUMS" | sort)"
+          test "$actual_names" = "$expected_names"
+          (
+            cd "$RELEASE_DIR"
+            sha256sum --check --strict SHA256SUMS
+          )
+
+          wheel_sha="$(sha256sum "${wheels[0]}" | awk '{print $1}')"
+          sbom_sha="$(sha256sum "${sboms[0]}" | awk '{print $1}')"
+          jq -e \
+            --arg revision "$GATED_SHA" \
+            --argjson run_id "$GATE_RUN_ID" \
+            --arg wheel "$wheel_name" \
+            --arg wheel_sha "$wheel_sha" \
+            --arg sbom "$sbom_name" \
+            --arg sbom_sha "$sbom_sha" \
+            --arg distribution "$distribution" \
+            --arg version "$version" \
+            '.schema == 5 and
+             .revision == $revision and
+             .distribution == $distribution and
+             .version == $version and
+             .gate.repository == "HawzhinBlanca/HawEdit" and
+             .gate.workflow == ".github/workflows/gate.yml" and
+             .gate.event == "push" and
+             .gate.branch == "main" and
+             .gate.revision == $revision and
+             .gate.run_id == $run_id and
+             .wheel == $wheel and
+             .sha256 == $wheel_sha and
+             .sbom == $sbom and
+             .sbom_sha256 == $sbom_sha' \
+            "$RELEASE_DIR/release-provenance.json" >/dev/null
+
+      - name: Attest every release payload with GitHub OIDC
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: |
+            ${{ runner.temp }}/hawedit-release/*.whl
+            ${{ runner.temp }}/hawedit-release/*.whl.spdx.json
+            ${{ runner.temp }}/hawedit-release/release-provenance.json
+            ${{ runner.temp }}/hawedit-release/SHA256SUMS
+
+      - name: Upload the exact attested release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hawedit-release-${{ github.event.workflow_run.head_sha }}
+          path: |
+            ${{ runner.temp }}/hawedit-release/*.whl
+            ${{ runner.temp }}/hawedit-release/*.whl.spdx.json
+            ${{ runner.temp }}/hawedit-release/release-provenance.json
+            ${{ runner.temp }}/hawedit-release/SHA256SUMS
+          if-no-files-found: error
+          include-hidden-files: false
+          compression-level: 0
+          retention-days: 90
+          overwrite: false

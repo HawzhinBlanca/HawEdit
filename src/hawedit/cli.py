@@ -5,7 +5,7 @@ page — **cp1252** on hawapc01, which is §6's own machine — and this product
 None of that shows on a console, where Python writes UTF-16 to the Windows terminal directly. It
 appears the moment output is redirected, which is the moment someone is keeping it.
 
-Measured on hawapc01 with stdout redirected to a file (D-115):
+Measured on hawapc01 with stdout redirected to a file (D-152):
 
 * Every character **outside** cp1252 raises `UnicodeEncodeError`, and that is all Kurdish plus
   `✓ ✗ →`. `--json` after a 38-minute Stage 0 and ten minutes of GPU work exited 1 having
@@ -32,36 +32,16 @@ __all__ = ["machine_readable_stdout", "program_name", "use_utf8_streams"]
 
 
 def program_name(module: str) -> str:
-    """What `--help` should call this program, from how it was actually started.
+    """Return a pasteable usage name for console-script and ``python -m`` invocation.
 
-    Every entry point here has **two** ways in — an installed console script and `python -m` —
-    and a fixed `prog=` is wrong in one of them. Measured across all five on 2026-08-10, from
-    the real wheel and from `-m`:
-
-    ```
-    console script            python -m
-      hawedit.pipeline  ✗       hawedit.pipeline
-      hawedit-asr-bench         bench.py  ✗
-      hawedit-asr-setup         wsl_setup.py  ✗
-      hawedit.credentials  ✗    hawedit.credentials
-      hawedit-editorial-bench   editorial_bench.py  ✗
-    ```
-
-    Two named a module path the shell cannot run; the other three fell back to argparse's
-    default, `basename(sys.argv[0])`, which under `-m` is a bare source filename — also not a
-    command. So each of the five printed something untypeable in one mode. D-142.
-
-    The rule needs no guessing. Python sets `sys.argv[0]` to the module's *file* under `-m` and
-    to the script itself otherwise, so a `.py` suffix distinguishes them, and each branch returns
-    something a reader can paste:
-
-    * `python -m hawedit.pipeline` — the form this repo's own documentation uses;
-    * `hawedit` — the console script's own name, without the `.exe` Windows adds.
+    Python makes ``sys.argv[0]`` the module's ``.py`` file under ``-m`` and the generated
+    launcher otherwise.  A fixed argparse ``prog`` is therefore wrong in one of the two modes.
+    Windows' generated ``.exe`` suffix is an implementation detail and is removed.
     """
-    argv0 = Path(sys.argv[0] or "")
-    if argv0.suffix.lower() == ".py":
+    invoked = Path(sys.argv[0] or "")
+    if invoked.suffix.lower() == ".py":
         return f"python -m {module}"
-    return argv0.stem or f"python -m {module}"
+    return invoked.stem or f"python -m {module}"
 
 
 def use_utf8_streams() -> None:
