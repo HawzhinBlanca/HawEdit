@@ -74,10 +74,14 @@ P0/P1 severity as assessed against the brief's phases.
 `.codystem-allow-self-edit` before touching them, delete it after. Take readiness's floor value
 (2073) from the merge — do **not** hand-type it.
 
-- **T0** Licence audit, ahead of the merge. **Partially complete — see D-200.** Seven pins
-  cleared from installed wheel metadata, no NonCommercial term. Four could not be read on this
-  host and are `BLOCKED.md` #23: `peft==0.19.1`, `fairseq2==0.6`, `qwen-asr==0.0.6`,
-  `google-auth==2.56.3`. **T0 blocks T1.** *(tests: `test_every_runtime_dependency_has_a_licence_record`)*
+- **T0** Licence audit, ahead of the merge. **COMPLETE — D-200 and D-201.** Twelve dependencies
+  audited, all permissive, no NonCommercial term; `BLOCKED.md` #23 closed. Seven read from
+  installed wheel metadata, five (`peft`, `google-auth`, `fairseq2`, `fairseq2n`, `qwen-asr`)
+  read from published metadata at the **exact pinned version**, which installing could not have
+  given. Two pyproject annotations are wrong and are corrected at T4, not here, because
+  `pyproject.toml` is a conflicted path: `fairseq2` is MIT and annotated BSD-3-Clause; `torch`
+  is a six-term conjunction annotated BSD-3-Clause. **T1 is unblocked.**
+  *(tests: `test_every_runtime_dependency_has_a_licence_record`)*
 - **T0b** Renumber the incoming branch's colliding ADRs. D-200 established that the merge-base
   tops out at D-154 and both branches then assigned **D-155…D-191 independently** — 37 numbers,
   each naming a different decision per side, including all four this plan's §A cites (D-165,

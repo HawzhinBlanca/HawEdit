@@ -10404,3 +10404,58 @@ decision rather than at none, which is the harder failure to notice.
 `plan.md` gains T0b for the renumber, and it blocks T13 rather than the merge itself.
 
 **Blueprint ref:** §7 · **Type:** dependency + licence check, and a merge hazard
+
+---
+
+## D-201
+
+**BLOCKED #23 is closed: all five remaining licences read, and a second wrong comment found.**
+
+D-200 cleared seven dependencies from installed wheel metadata and listed four it could not
+read, because `peft`, `fairseq2` and `qwen-asr` install only inside the WSL2 runtime the
+provisioner builds and `google-auth` was simply absent from this venv.
+
+Hawa approved provisioning WSL and installing the `[cloud]` extra to read them. That is not what
+happened, for two reasons, and the substitute is stronger rather than weaker.
+
+**Why the approved route was not taken.** `pip install` writes into `.venv/Lib/site-packages/`,
+and AGENTS.md lists `.venv/**` as a hard boundary with no sentinel escape. The PreToolUse guard
+refused the command, correctly — this was not a false positive, and reshaping the command until
+it passed would have been the bypass the guard exists to prevent. `scripts/setup.sh` installs
+only `.[dev,media]`, so the sanctioned route does not reach `[cloud]` either, and editing it to
+add one would push a dependency onto every fresh clone to settle an audit question.
+
+**What was done instead.** The licences were read from the published wheel metadata on the index
+itself, which is what D-002 specifies — its own worked example is
+`klpt-0.1.7-py3-none-any.whl → METADATA`. Reading the index serves the same metadata the wheel
+carries, and it does something installing cannot: it reads **the exact pinned version**. D-200
+had to record `torch` as a reading of 2.13.0 against a pin of 2.8.0, and every reading below is
+of the pin itself.
+
+| Dependency | Version read | `info.license` | Classifier | Verdict |
+|---|---|---|---|---|
+| `peft` | 0.19.1 | `Apache` | `License :: OSI Approved :: Apache Software License` | ACCEPT |
+| `google-auth` | 2.56.3 | `Apache 2.0` | none | ACCEPT |
+| `fairseq2` | 0.6 | **`MIT`** | `License :: OSI Approved :: MIT License` | ACCEPT |
+| `fairseq2n` | 0.6 | `MIT` | `License :: OSI Approved :: MIT License` | ACCEPT |
+| `qwen-asr` | 0.0.6 | `Apache-2.0` | none | ACCEPT |
+
+`fairseq2n` is not named in any pyproject; it is audited because `fairseq2` requires it, it ships
+the native code, and D-002 set that precedent by auditing `chunspell` as a `klpt` dependency.
+
+**No NonCommercial term in any of the twelve dependencies now audited. The gate is clear and the
+merge is unblocked on licence grounds.**
+
+**The finding worth keeping.** `pyproject.toml` annotates `fairseq2==0.6` as `BSD-3-Clause`. The
+published metadata says `MIT`. Both are permissive so nothing is rejected, but this is the second
+comment this audit has caught misstating a licence — D-200 found `torch` annotated
+`BSD-3-Clause` where the metadata is a conjunction of six terms — and D-024 already records a
+PyPI classifier for `scenedetect` that is flatly wrong in the other direction.
+
+Three independent wrong readings, in a project whose gate treats one licence class as a hard
+reject. The rule D-002 stated as method is now stated as a finding: **a licence annotation
+beside a pin is a claim, and the only reading that counts is the distribution's own metadata at
+the pinned version.** The comments are left in place and corrected during the merge rather than
+edited here, because `pyproject.toml` is a conflicted path and T4 owns it.
+
+**Blueprint ref:** §7 · **Type:** licence check · **Closes:** `BLOCKED.md` #23 · **Unblocks:** T1

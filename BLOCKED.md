@@ -1167,9 +1167,14 @@ run so far.
 
 ---
 
-## #23
+## #23 — RESOLVED 2026-08-14 (D-201)
 
 **Four dependency licences cannot be read from this host, so they are not cleared.**
+
+> **Resolved.** All five (the four below plus transitive `fairseq2n`) were read from the
+> published wheel metadata at their exact pinned versions. All permissive, no NonCommercial
+> term; `fairseq2` is MIT, not the BSD-3-Clause its pyproject comment claims. See D-201.
+> The original text is kept below because the reasoning that made it a blocker still holds.
 
 D-200 audited every runtime dependency the readiness integration adds, and cleared seven from
 installed wheel metadata using D-002's method. These four have no metadata to read here:
