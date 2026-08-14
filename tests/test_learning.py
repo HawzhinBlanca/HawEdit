@@ -98,6 +98,20 @@ def test_an_unknown_kind_is_refused() -> None:
         )
 
 
+def test_cancel_run_and_resume_run_are_known_kinds() -> None:
+    """D-A20/D-A21 widened the accepted kinds — proven directly rather than only inferred from
+    `test_workflow_control.py`'s real commits succeeding."""
+    for kind in ("cancel_run", "resume_run"):
+        delta = DecisionDelta(
+            media_id="fixture",
+            kind=kind,
+            outcome=DecisionOutcome.REFUSED_INVALID,
+            proposal=_PROPOSAL,
+            sequence=1,
+        )
+        assert delta.kind == kind
+
+
 def test_sequence_must_be_positive() -> None:
     with pytest.raises(ValueError, match="sequence starts at 1"):
         DecisionDelta(

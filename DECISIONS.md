@@ -11039,3 +11039,187 @@ everywhere else (D-A11, D-A15).
 
 VERIFY OK — hawedit gate green: 1893 collected, 1893 passed, 0 skipped (floor ratcheted
 1860 -> 1893).
+
+
+## D-A20
+
+**`cancel_run`, and the prerequisite D-A19 shipped without: a discoverable run ID.**
+`commit_start_pipeline` called `run_durable(argv)` with no explicit `run_id`, so DBOS assigned a
+random UUID nothing outside that one process call ever saw again. A human who started
+`hawedit-workflow start` in one terminal and wanted to stop it from another had no ID to cancel
+*by* — cancellation was unbuildable, not merely undesigned. Asked to design `cancel_or_pause_run`
+and to keep going until the pipeline is "full robust ... at max grade," the honest first step was
+closing that gap rather than building a tool that could never find what it was meant to act on.
+
+**`dbos_run_id_for(work_dir)`: a pure function, not a persisted file.** `f"hawedit-run:
+{work_dir.resolve()}"` — `commit_start_pipeline`, `propose_cancel_run` and `propose_resume_run`
+(D-A21, below) all derive the same ID independently and agree without a discovery round-trip or
+a race between writing one and reading it back. `work_dir` is resolved first so a relative and an
+absolute path to the same directory agree
+(`test_dbos_run_id_for_agrees_across_a_relative_and_an_absolute_path`). This also makes
+`start_pipeline` idempotent in the sense the architecture record requires — "every mutating tool
+must have ... an idempotency key" (line 199) — for the first time: previously the only guard
+against a duplicate submission was `propose_start_pipeline`'s `report.json`-exists check, which
+does not cover the window before a run has produced one. Measured directly, not assumed: reusing
+a `run_id` that is already `CANCELLED` to start a new logical run under it does not silently
+execute — DBOS raises `DBOSAwaitedWorkflowCancelledError` immediately, the step body never runs a
+second time (`_sys_db.py`'s `update_workflow_outcome` guard, confirmed against the real installed
+package before being relied on). `commit_start_pipeline` does not catch and translate that
+exception; it propagates exactly as `_build_and_run`'s own exceptions already do, and the honest
+recovery is `resume_run`, not a second `start_pipeline` into the same `work_dir`.
+
+**What "cancel" actually does, measured against the installed `dbos==2.29.0` source rather than
+read off a docstring** — the same bar `durable_workflow.py` already holds itself to, extended
+here because DBOS's cancel semantics are exactly the kind of thing worth getting wrong quietly.
+`DBOS.cancel_workflow(run_id, cancel_children=False)` marks the workflow `CANCELLED` in the
+system database and fails any `get_result()` awaiting it — it does **not** stop code already
+executing inside a running step. `_run_pipeline_step` is one coarse step; a slow synthetic step
+cancelled mid-execution in a throwaway probe kept running to completion, and its step-level
+output was still checkpointed even though the workflow stayed `CANCELLED`. `propose_cancel_run`
+reports the run's real DBOS status (`get_workflow_status`) so a human approving the cancel sees
+this stated in the confirmation prompt, not just implied by the tool existing.
+`cancel_children=False` is hardcoded, not a parameter: `run_pipeline_workflow` is this codebase's
+only `@DBOS.workflow()` (grepped, not assumed), so there are no children to cascade to, and a
+parameter with one legal value is not a parameter — this is the one real corner of the new
+surface with no behavioural test, since a codebase with zero child workflows cannot exercise the
+`True` branch without inventing one that does not otherwise exist; named here rather than left
+implicit, matching D-A17's own precedent for a narrow, honest coverage gap.
+
+**Same propose/commit split, same decision-delta recording, extended rather than duplicated.**
+`propose_cancel_run` is the one place in this codebase where "propose" legitimately needs `dbos`
+(deferred-imported, same as `commit_start_pipeline`) — determining "is there anything to cancel"
+is inherently a question DBOS's system database answers, unlike `propose_start_pipeline`'s pure
+filesystem checks. It still never *writes*: `DBOS.get_workflow_status` is a read, the same
+guarantee every other `propose_*` in this codebase holds, just extended to a read that happens to
+cross the `dbos` boundary. `commit_cancel_run` records a `DecisionDelta` with `kind="cancel_run"`
+on every outcome (`DecisionDelta.__post_init__` widened to accept it); it is not registered as a
+tool on any agent (`workflow_agent.py` registers only `propose_cancel_run_tool`), so
+`mutating_tool_names()` stays `()`.
+
+**Mutation-audited against the real installed `dbos` package, not merely against hand-written
+fixtures.** Dropping `run_id=dbos_run_id_for(work_dir)` from `commit_start_pipeline` fails
+`test_commit_start_pipeline_registers_the_deterministic_run_id` and the full mid-flight lifecycle
+test, both by name. Removing `propose_cancel_run`'s "already `CANCELLED`" refusal branch fails
+the lifecycle test's own re-check of that state, added specifically because the mutation pass
+found it had no coverage the first time through — the same "the equivalence test's own coverage
+was itself checked by mutation, found incomplete" discipline D-A18 established. Reverting
+`DecisionDelta`'s widened `kind` check fails ten tests across `test_learning.py` and
+`test_workflow_control.py`, not just one.
+
+See D-A21, immediately below, for `resume_run` and the correction to what this branch previously
+believed about it — the two shipped together, in the same commit and the same gate run, so the
+`VERIFY OK` line at the end of that entry covers both.
+
+## D-A21
+
+**`resume_run` — built, correcting D-A19's own stated position that it should not be.** D-A19
+said: "there is no third, distinct 'resume' action DBOS actually exposes" beyond crash
+auto-recovery of a `PENDING` workflow and re-calling `run_durable` under a completed `run_id` to
+fetch a cached result. That claim was reached without checking `DBOS`'s actual API surface for
+`cancel_workflow`/`resume_workflow`/`get_workflow_status` first — a real research gap, not a
+judgment call that later evidence merely refined. `DBOS.resume_workflow(run_id)` is real, in the
+installed `dbos==2.29.0`, and is a genuinely distinct third action: it resets a non-terminal
+workflow's status to `ENQUEUED`, and a background queue thread DBOS's own `_launch()` starts
+(confirmed live in `dbos/_dbos.py`, not inferred from a comment) picks it up and re-executes it.
+Named directly rather than glossed over, because this codebase's own culture (D-A15's "none of
+the five conditions are measurable... so nothing here guesses") treats a wrong claim caught later
+as worth recording, not quietly overwriting.
+
+**What resuming actually does, measured with a real cancel-then-resume round trip before this
+was built, not assumed from the source alone.** A throwaway probe against the installed package:
+start a slow synthetic workflow, cancel it mid-execution (status → `CANCELLED`, `get_result()`
+raises `DBOSAwaitedWorkflowCancelledError`, the step keeps running underneath and its result gets
+checkpointed anyway), then `DBOS.resume_workflow` it. Result: `get_result()` returns the real,
+correct value, the workflow's final status is `SUCCESS`, and the step body is **not** invoked a
+second time — DBOS found the step's already-checkpointed output and reused it. Applied to
+HawEdit's real coarse-step architecture (D-A2/D-A3): if a run is cancelled while genuinely still
+computing and the underlying process finishes anyway (measured in D-A20), resuming afterward
+finalizes that already-completed work as `SUCCESS` without ever re-invoking `_build_and_run`. If
+the process instead died before finishing, resuming re-enters `_run_pipeline_step(argv)` from
+scratch — safe for the same reason crash recovery already is, since the pipeline's own digest
+caches reuse whatever completed.
+
+**Scoped to the two states a human resuming something is actually acting on.**
+`propose_resume_run` is valid only for `CANCELLED` or `MAX_RECOVERY_ATTEMPTS_EXCEEDED`; refused
+for `PENDING`/`ENQUEUED` ("already in flight — nothing to resume", proven against a real run
+still `PENDING` mid-lifecycle-test, not merely asserted) and for `SUCCESS`/`ERROR` (terminal).
+DBOS's own `resume_workflows` would technically also accept a `PENDING`/`ENQUEUED` target — this
+module narrows the exposed surface to what resuming *means* for this codebase, the same
+`start_pipeline`-scoped-to-three-parameters judgment D-A19 already made once.
+
+**`commit_resume_run` returns exactly what `commit_start_pipeline` returns on success** — the
+run's own `PipelineRun.to_dict()` — because a resumed workflow is the same logical run
+continuing, not a new one; there is no separate "resume result" shape to invent.
+
+**Same propose/commit split.** `propose_resume_run` needs `dbos` for the same reason
+`propose_cancel_run` does; `commit_resume_run` records a `DecisionDelta` with
+`kind="resume_run"` on every outcome and is not registered as a tool on any agent
+(`workflow_agent.py` registers only `propose_resume_run_tool`).
+
+**The full lifecycle, proven in one real, expensive test rather than three cheaper ones that
+each trust a different hand-built stand-in.**
+`test_a_run_cancelled_mid_flight_keeps_computing_and_can_then_be_resumed` runs the real
+`kurdish-speech-3cuts.mp4` fixture through `commit_start_pipeline` on a background thread, polls
+for a real DBOS `PENDING` status, cancels it via `commit_cancel_run`, confirms the background
+thread's own call raises `DBOSAwaitedWorkflowCancelledError` once the real pipeline finishes
+anyway, confirms `report.json` was written despite the cancellation, confirms `propose_cancel_run`
+and `propose_resume_run` both report the right refusal for `PENDING` and re-`CANCELLED` states
+along the way, then resumes and confirms the real result and a final `SUCCESS` status. Cheaper
+refusal-path tests (invalid/unattributed/declined, for both `cancel_run` and `resume_run`) use a
+hand-constructed but structurally valid proposal instead of a real running workflow — legal
+because `commit_cancel_run`/`commit_resume_run` only touch DBOS *after* the approval gate passes,
+proven directly by
+`test_commit_cancel_run_approved_calls_the_real_dbos_api_and_no_ops_on_a_missing_id` (cancelling
+an ID DBOS has never seen is a real, measured no-op) and
+`test_commit_resume_run_approved_calls_the_real_dbos_api_and_raises_on_a_missing_id` (resuming
+one raises `DBOSNonExistentWorkflowError` — DBOS's own `resume_workflows` checks existence
+explicitly where `cancel_workflows` does not, a real asymmetry between the two APIs worth having
+a test that would fail if it changed).
+
+**Mutation-audited**: removing `propose_resume_run`'s `PENDING`/`ENQUEUED` refusal branch fails
+the lifecycle test's mid-run re-check of that state, added after the mutation pass found the
+original version had no coverage for it — the same pattern D-A20 already used once in this same
+row, applied a second time rather than trusted to have generalised.
+
+**Not built**: a `queue_name` override for `resume_workflow` (this codebase has exactly one
+queue, DBOS's own internal default — the same "a parameter with one legal value is not a
+parameter" judgment D-A20 made for `cancel_children`), and any change to `propose_start_pipeline`
+to pre-check DBOS status before proposing — D-A20 established that reusing a `CANCELLED` run_id
+already fails loudly and specifically on its own, so a second, DBOS-aware check in
+`propose_start_pipeline` would duplicate a refusal DBOS already produces correctly.
+
+**Amended, after an independent adversarial review pass caught two real bugs before this row
+was committed.** Both fixed at the source rather than worked around, both mutation-audited by
+reverting and confirming the right test fails, matching the discipline every other row in this
+branch holds itself to:
+
+1. `replay_decision_deltas` (`proposals.py`, D-A13) dispatched any `DecisionDelta.kind` that was
+   not literally `"boundary"` into the `"caption"` branch by default, reading
+   `delta.proposal["proposed_caption_style"]` — a key that does not exist on a
+   `"start_pipeline"`/`"cancel_run"`/`"resume_run"` proposal dict. This bug already existed for
+   `"start_pipeline"` since D-A19 and went undiscovered until this row's `kind` widening made it
+   reachable by two more kinds; fixed with an explicit `elif "caption"` /
+   `else: continue` — workflow-lifecycle decisions have no deterministic content validator to
+   replay against, so they are skipped rather than mis-handled. Regression test:
+   `test_replay_skips_workflow_lifecycle_kinds_instead_of_crashing`
+   (`tests/test_proposals.py`), which reproduced the original `KeyError` before the fix.
+2. `commit_cancel_run`/`commit_resume_run` derived their `DecisionDelta.media_id` as
+   `work_dir.name or str(work_dir)` — `work_dir.name` is truthy even when it is only whitespace
+   (`"   "` is a non-empty string), so a work_dir ending in a whitespace-only segment would pass
+   this check, then fail `DecisionDelta.__post_init__`'s `media_id.strip()` requirement with an
+   unhandled `ValueError` instead of this module's own `WorkflowRejected`. Extracted into
+   `_delta_media_id_for(work_dir)`, checking truthiness on the *stripped* value; tested as a
+   pure function (`test_delta_media_id_for_falls_back_to_work_dir_when_the_name_is_whitespace_only`)
+   rather than through a real whitespace-named directory on disk — Windows does not reliably
+   create one via `Path.mkdir` (verified directly: the OS normalizes a trailing-space path
+   component away before the file write, discovered while writing this exact test the first
+   way and getting a `FileNotFoundError` unrelated to the logic under test).
+
+No other issue survived the review — it also independently re-verified, against the real
+installed `dbos` source rather than trusting the prose above, the status-string exhaustiveness in
+`propose_cancel_run`/`propose_resume_run`, that `CancelRunProposal`/`ResumeRunProposal` expose
+only the status string and never DBOS's full `WorkflowStatus` (which can carry `input`/`output`),
+and the `cancel_children=False`/"only `@DBOS.workflow()`" claims above.
+
+VERIFY OK — hawedit gate green: 1924 collected, 1924 passed, 0 skipped (floor ratcheted
+1893 -> 1924).

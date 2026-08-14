@@ -18,7 +18,12 @@ import pytest
 
 from hawedit.boundary import Boundary
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Output
-from hawedit.learning import DecisionOutcome, ReasonCode, read_decision_deltas
+from hawedit.learning import (
+    DecisionOutcome,
+    ReasonCode,
+    read_decision_deltas,
+    record_decision_delta,
+)
 from hawedit.proposals import (
     BoundaryRevisionProposal,
     CaptionRevisionProposal,
@@ -677,6 +682,30 @@ def test_replay_flags_an_approval_the_run_no_longer_supports(tmp_path: Path) -> 
     assert finding.kind == "boundary"
     assert finding.media_id == "fixture"
     assert "mid-sentence" in finding.violation
+
+
+def test_replay_skips_workflow_lifecycle_kinds_instead_of_crashing(tmp_path: Path) -> None:
+    """`start_pipeline`/`cancel_run`/`resume_run` deltas (`workflow_control.py`) have no
+    deterministic content validator to replay against — before the `elif`/`else: continue` fix,
+    any kind that was not literally `"boundary"` fell into the caption branch by default and
+    read a key (`proposed_caption_style`) that does not exist on these proposals' dicts,
+    raising `KeyError` rather than skipping cleanly."""
+    _write_report(tmp_path)
+    for kind, proposal in (
+        ("start_pipeline", {"source": "x.mp4", "media_id": None, "valid": True}),
+        ("cancel_run", {"work_dir": str(tmp_path), "run_id": "r", "valid": True}),
+        ("resume_run", {"work_dir": str(tmp_path), "run_id": "r", "valid": True}),
+    ):
+        record_decision_delta(
+            tmp_path,
+            "fixture",
+            kind,
+            DecisionOutcome.APPROVED,
+            proposal,
+            reason_code=ReasonCode.PREFERENCE,
+            approved_by="hawa",
+        )
+    assert replay_decision_deltas(tmp_path) == ()
 
 
 # --- the CLI, run as a real subprocess so --help never depends on the agentic extra -----------

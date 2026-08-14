@@ -862,6 +862,16 @@ def replay_decision_deltas(work_dir: Path) -> tuple[ReplayFinding, ...]:
     Only `APPROVED` deltas are replayed — a `DECLINED` or `REFUSED_*` decision was never
     applied, so there is no committed state for a validator regression to silently break.
 
+    Only `"boundary"`/`"caption"` deltas are replayed at all. `"start_pipeline"`/`"cancel_run"`/
+    `"resume_run"` (`workflow_control.py`, D-A19/D-A20/D-A21) are workflow-lifecycle decisions,
+    not content revisions — there is no deterministic content validator to re-run them against
+    the way `propose_boundary_revision`/`propose_caption_revision` re-check a span or a style.
+    Before this branch was added, any kind other than `"boundary"` fell into the `"caption"`
+    branch by default and read `delta.proposal["proposed_caption_style"]`, which does not exist
+    on a `start_pipeline` delta's proposal dict — a real `KeyError` on any `work_dir` whose
+    ledger held an approved `start_pipeline` decision, found while widening `DecisionDelta.kind`
+    further for D-A20/D-A21 and fixed here rather than left for the next kind to trip over too.
+
     Raises:
         FileNotFoundError: no `decisions.jsonl` under `work_dir`, or (surfaced from the
             underlying propose call) no `report.json` — the run's own state that a replayed
@@ -881,11 +891,13 @@ def replay_decision_deltas(work_dir: Path) -> tuple[ReplayFinding, ...]:
                 delta.proposal["proposed_final_out_ms"],
             )
             valid, violation = boundary_now.valid, boundary_now.violation
-        else:
+        elif delta.kind == "caption":
             caption_now = propose_caption_revision(
                 work_dir, delta.proposal["proposed_caption_style"]
             )
             valid, violation = caption_now.valid, caption_now.violation
+        else:
+            continue
         if not valid:
             findings.append(
                 ReplayFinding(

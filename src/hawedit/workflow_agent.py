@@ -45,7 +45,14 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import KnownModelName, Model
 
 from hawedit.agent import Deps
-from hawedit.workflow_control import StartPipelineProposal, propose_start_pipeline
+from hawedit.workflow_control import (
+    CancelRunProposal,
+    ResumeRunProposal,
+    StartPipelineProposal,
+    propose_cancel_run,
+    propose_resume_run,
+    propose_start_pipeline,
+)
 
 __all__ = ["build_workflow_agent"]
 
@@ -59,10 +66,13 @@ def build_workflow_agent(model: Model | KnownModelName | str, deps: Deps) -> Age
         system_prompt=(
             "You can propose starting a HawEdit pipeline run on a source file and check "
             "whether it is safe to start — the source must exist, and the run directory must "
-            "not already hold a completed run you would silently overwrite. You cannot start a "
-            "run yourself: only a human running the commit step directly, with their name and "
-            "a stated reason attached, can do that. Report the validation result plainly; do "
-            "not claim a run started unless a human has told you they committed it."
+            "not already hold a completed run you would silently overwrite. You can also check "
+            "whether the run in this work_dir can be cancelled right now, and whether a "
+            "cancelled or stalled run can be resumed. You cannot start, cancel or resume a run "
+            "yourself: only a human running the matching commit step directly, with their name "
+            "and a stated reason attached, can do that. Report the validation result plainly; "
+            "do not claim a run started, was cancelled, or was resumed unless a human has told "
+            "you they committed it."
         ),
     )
 
@@ -82,5 +92,18 @@ def build_workflow_agent(model: Model | KnownModelName | str, deps: Deps) -> Age
             media_id=media_id or None,
             transcript=Path(transcript) if transcript else None,
         )
+
+    @workflow.tool
+    def propose_cancel_run_tool(ctx: RunContext[Deps], /) -> CancelRunProposal:
+        """Check whether the run in this work_dir has a DBOS workflow that can be cancelled
+        right now, and report its current status. Read-only — this does not cancel anything."""
+        return propose_cancel_run(ctx.deps.work_dir)
+
+    @workflow.tool
+    def propose_resume_run_tool(ctx: RunContext[Deps], /) -> ResumeRunProposal:
+        """Check whether the run in this work_dir has a cancelled or stalled DBOS workflow that
+        can be resumed, and report its current status. Read-only — this does not resume
+        anything."""
+        return propose_resume_run(ctx.deps.work_dir)
 
     return workflow

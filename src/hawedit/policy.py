@@ -160,6 +160,25 @@ TOOL_POLICIES: Final[tuple[ToolPolicy, ...]] = (
             "call."
         ),
     ),
+    ToolPolicy(
+        name="propose_cancel_run_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Reads the run's DBOS workflow status (get_workflow_status) and reports whether it "
+            "can be cancelled. A read, not a write, even though it needs dbos: commit_cancel_run "
+            "is a separate function no agent may call."
+        ),
+    ),
+    ToolPolicy(
+        name="propose_resume_run_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Reads the run's DBOS workflow status and reports whether it can be resumed. A "
+            "read, not a write: commit_resume_run is a separate function no agent may call."
+        ),
+    ),
 )
 
 # The architecture record's "never expose to the production creative agent" list. Asserted

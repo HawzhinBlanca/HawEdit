@@ -96,9 +96,10 @@ class DecisionDelta:
     def __post_init__(self) -> None:
         if not self.media_id.strip():
             raise ValueError("a decision delta belongs to a run; media_id is empty")
-        if self.kind not in ("boundary", "caption", "start_pipeline"):
+        if self.kind not in ("boundary", "caption", "start_pipeline", "cancel_run", "resume_run"):
             raise ValueError(
-                f"unknown decision kind {self.kind!r} — expected boundary/caption/start_pipeline"
+                f"unknown decision kind {self.kind!r} — expected boundary/caption/"
+                f"start_pipeline/cancel_run/resume_run"
             )
         if self.sequence < 1:
             raise ValueError(f"decision sequence starts at 1, not {self.sequence}")
