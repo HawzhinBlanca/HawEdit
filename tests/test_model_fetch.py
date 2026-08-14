@@ -107,7 +107,7 @@ def test_plan_accumulates_a_blocked_or_mismatched_manifest_before_network_client
         ModelStore,
         "assert_checkpoint_provisionable",
         lambda *_args: (_ for _ in ()).throw(
-                model_contract.CheckpointIntegrityError("checkpoint verification is blocked")
+            model_contract.CheckpointIntegrityError("checkpoint verification is blocked")
         ),
     )
 

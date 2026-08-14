@@ -534,6 +534,7 @@ def test_a_store_that_fails_partway_leaves_no_readable_cache_file(
     cache = _EmbeddingCache(tmp_path / "embeddings", "Qwen3-VL-Embedding-2B", "a" * 40, "abc")
     window = windows(1)[0]
     embedding = VisualEmbedding(window, (1.0, 0.5), "Qwen3-VL-Embedding-2B")
+
     # The readiness merge replaced `staging.write_text(...); staging.replace(path)` with a
     # NamedTemporaryFile staged in binary, fsynced, then `os.replace`d - so patching
     # `Path.write_text` no longer intercepts anything and the store would quietly succeed. The
