@@ -40,7 +40,8 @@ prepare_install_root() {
     refuse "${dest} exists and is not a directory."
   fi
   if [[ ! -e "$dest" ]]; then
-    mkdir -m 700 -p -- "$dest"
+    mkdir -p -- "$dest"
+    chmod 700 -- "$dest"
   fi
   if [[ -L "$dest" || ! -d "$dest" ]]; then
     refuse "${dest} changed while the install root was being prepared."
@@ -92,6 +93,8 @@ verify_pair() {
 launcher_matches() {
   local launcher="$1" generation_name="$2" program="$3" expected actual
   [[ -f "$launcher" && ! -L "$launcher" ]] || return 1
+  # The launcher evaluates these variables when it runs, not while this template is built.
+  # shellcheck disable=SC2016
   expected="$(printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
@@ -244,7 +247,8 @@ generations="${dest}/generations"
 if [[ -L "$generations" || ( -e "$generations" && ! -d "$generations" ) ]]; then
   refuse "${generations} is not a safe generation directory."
 fi
-mkdir -m 700 -p -- "$generations"
+mkdir -p -- "$generations"
+chmod 700 -- "$generations"
 generation_owner="$(stat -c '%u' -- "$generations")"
 generation_mode="$(stat -c '%a' -- "$generations")"
 if [[ "$generation_owner" != "$(id -u)" || $((8#$generation_mode & 0022)) -ne 0 ]]; then
@@ -255,6 +259,8 @@ generation="${generations}/${generation_name}"
 
 make_launcher() {
   local output="$1" program="$2"
+  # The generated launcher evaluates this line from its own installed location.
+  # shellcheck disable=SC2016
   printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
