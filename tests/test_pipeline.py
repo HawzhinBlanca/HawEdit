@@ -1309,6 +1309,42 @@ def test_requested_speaker_tracking_refuses_missing_diarization_without_calling_
     assert run.clip is None
 
 
+def test_requested_speaker_tracking_refuses_when_no_measured_turn_overlaps_the_clip(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import SpeakerFocusPoint
+
+    class NonOverlappingDiarizer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            assert audio.name == "audio.wav"
+            return (Segment(2_800, 4_162, "SPEAKER_01"),)
+
+    class MustNotRun:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            pytest.fail("speaker association cannot run without an overlapping measured turn")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-no-overlap",
+        transcript=a_transcript("speaker-no-overlap"),
+        diarizer=NonOverlappingDiarizer(),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-no-overlap-0"),
+        speaker_tracker=MustNotRun(),
+    )
+    assert isinstance(run.render, StageSkipped)
+    assert "no measured diarization turn" in run.render.reason
+    assert "overlapping the final clip" in run.render.reason
+    assert run.clip is None
+
+
 def test_invalid_or_failed_speaker_association_is_not_silently_treated_as_ambiguity(
     tmp_path: Path,
 ) -> None:
