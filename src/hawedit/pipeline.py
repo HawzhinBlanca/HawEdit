@@ -88,8 +88,14 @@ from hawedit.keyframes import KeyframeError, extract_judge_frames
 from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
 from hawedit.qwen_visual import EmbedderUnavailable
-from hawedit.reframe import SubjectTracker
-from hawedit.render import RenderError, RenderResult, frame_rate, render_clip
+from hawedit.reframe import (
+    FocusPoint,
+    SpeakerAssociationError,
+    SpeakerSubjectTracker,
+    SubjectTracker,
+    validate_speaker_focus_points,
+)
+from hawedit.render import Reframe, RenderError, RenderResult, frame_rate, render_clip
 from hawedit.sentences import (
     Sentence,
     UndeliverableOrder,
@@ -1141,6 +1147,7 @@ def run_pipeline(
     visual_fps: float | None = None,
     visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
+    speaker_tracker: SpeakerSubjectTracker | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1178,6 +1185,10 @@ def run_pipeline(
             §8.2 calls the second of those the metric that matters for a media organisation.
             So without a verdict the pipeline builds a clip and stops — which is the gate
             working, not a limitation to route around.
+        speaker_tracker: an active-speaker/face associator. It receives only exclusive turns
+            overlapping the final clip. A non-empty validated result is labelled speaker
+            tracked; an explicitly empty result may fall back to face-only tracking, while a
+            missing diarization input or invalid/failed association is refused visibly.
 
     Raises:
         FileNotFoundError: `source` does not exist.
@@ -1636,18 +1647,89 @@ def run_pipeline(
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
-    try:
-        focus_points = (
-            subject_tracker.track(source, boundary.final_in_ms, boundary.final_out_ms)
-            if subject_tracker is not None
-            else ()
+    focus_points: tuple[FocusPoint, ...] = ()
+    reframe_mode = Reframe.STATIC_CENTRE
+    if speaker_tracker is not None:
+        if ingested.diarization is None:
+            return replace(
+                run,
+                boundary=boundary,
+                render=StageSkipped(
+                    stage="render",
+                    reason=(
+                        "requested speaker/face association needs measured diarization for "
+                        "the final clip; no validated Stage 0 turns are available"
+                    ),
+                    blocked_by=("Stage 0 measured diarization",),
+                ),
+            )
+        overlapping_turns = tuple(
+            turn
+            for turn in ingested.diarization
+            if turn.start_ms < boundary.final_out_ms and turn.end_ms > boundary.final_in_ms
         )
-    except RuntimeError as exc:
-        return replace(
-            run,
-            boundary=boundary,
-            render=_operational_failure("render", "requested subject tracking", exc),
-        )
+        if not overlapping_turns:
+            return replace(
+                run,
+                boundary=boundary,
+                render=StageSkipped(
+                    stage="render",
+                    reason=(
+                        "requested speaker/face association has no measured diarization turn "
+                        f"overlapping the final clip {boundary.final_in_ms}.."
+                        f"{boundary.final_out_ms} ms"
+                    ),
+                    blocked_by=("overlapping measured diarization",),
+                ),
+            )
+        try:
+            speaker_points = speaker_tracker.track_speakers(
+                source,
+                boundary.final_in_ms,
+                boundary.final_out_ms,
+                overlapping_turns,
+            )
+        except RuntimeError as exc:
+            return replace(
+                run,
+                boundary=boundary,
+                render=_operational_failure("render", "speaker/face association", exc),
+            )
+        try:
+            focus_points = validate_speaker_focus_points(
+                speaker_points,
+                overlapping_turns,
+                boundary.final_in_ms,
+                boundary.final_out_ms,
+            )
+        except (SpeakerAssociationError, TypeError, ValueError) as exc:
+            return replace(
+                run,
+                boundary=boundary,
+                render=_operational_failure("render", "speaker/face association", exc),
+            )
+        if focus_points:
+            reframe_mode = Reframe.SPEAKER_TRACKED
+
+    if not focus_points and subject_tracker is not None:
+        try:
+            focus_points = subject_tracker.track(
+                source, boundary.final_in_ms, boundary.final_out_ms
+            )
+        except RuntimeError as exc:
+            return replace(
+                run,
+                boundary=boundary,
+                render=_operational_failure("render", "requested subject tracking", exc),
+            )
+        if focus_points:
+            reframe_mode = Reframe.FACE_TRACKED
+
+    crop_target = {
+        Reframe.STATIC_CENTRE: "static_centre",
+        Reframe.FACE_TRACKED: "face_tracked",
+        Reframe.SPEAKER_TRACKED: "speaker_face",
+    }[reframe_mode]
     clip = Clip(
         clip_id=_clip_id(identifier, select_sentences),
         media_id=identifier,
@@ -1671,7 +1753,7 @@ def run_pipeline(
         editorial=editorial,
         output=(
             verdict.to_output(
-                crop_target="face_tracked" if focus_points else "static_centre",
+                crop_target=crop_target,
                 durations=(max(1, round((boundary.final_out_ms - boundary.final_in_ms) / 1000)),),
             )
             if verdict is not None
@@ -1759,6 +1841,7 @@ def run_pipeline(
             source_width=width,
             source_height=height,
             focus_points=tuple((point.at_ms, point.center_x) for point in focus_points),
+            reframe=reframe_mode,
             ffmpeg=ffmpeg,
         )
     except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:

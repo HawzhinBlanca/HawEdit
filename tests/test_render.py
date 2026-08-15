@@ -781,6 +781,55 @@ def test_real_render_accepts_a_time_varying_face_track(tmp_path: Path) -> None:
     assert output.exists() and output.stat().st_size > 1_000
 
 
+@needs_ffmpeg
+def test_real_render_preserves_validated_speaker_tracking_provenance(tmp_path: Path) -> None:
+    clip = _clip()
+    output = tmp_path / "speaker-tracked.mp4"
+    result = render_clip(
+        clip=clip,
+        source=FIXTURE,
+        ass_path=_write_ass(tmp_path),
+        output=output,
+        source_width=SOURCE_WIDTH,
+        source_height=SOURCE_HEIGHT,
+        fonts_dir=FONTS,
+        focus_points=((clip.in_ms, 50), (clip.out_ms - 1, 600)),
+        reframe=Reframe.SPEAKER_TRACKED,
+    )
+    assert result.reframe is Reframe.SPEAKER_TRACKED
+    assert output.exists() and output.stat().st_size > 1_000
+
+
+def test_render_refuses_a_reframe_label_that_contradicts_its_points(tmp_path: Path) -> None:
+    kwargs = {
+        "clip": _clip(),
+        "source": FIXTURE,
+        "ass_path": tmp_path / "unused.ass",
+        "fonts_dir": FONTS,
+        "source_width": SOURCE_WIDTH,
+        "source_height": SOURCE_HEIGHT,
+    }
+    with pytest.raises(ValueError, match="dynamic reframe mode needs focus points"):
+        render_clip(
+            output=tmp_path / "speaker-without-points.mp4",
+            reframe=Reframe.SPEAKER_TRACKED,
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="dynamic reframe mode needs focus points"):
+        render_clip(
+            output=tmp_path / "face-without-points.mp4",
+            reframe=Reframe.FACE_TRACKED,
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="static reframe mode cannot carry focus points"):
+        render_clip(
+            output=tmp_path / "static-with-points.mp4",
+            focus_points=((500, 100),),
+            reframe=Reframe.STATIC_CENTRE,
+            **kwargs,
+        )
+
+
 def test_the_burn_refuses_an_ass_whose_stamps_fall_outside_the_clip(tmp_path: Path) -> None:
     """`assert_captions_within_clip`'s LOGIC was tested; its wiring into `render_clip` was not.
 

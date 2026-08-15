@@ -1196,6 +1196,168 @@ def test_subject_tracking_marks_output_for_dynamic_reframing(tmp_path: Path) -> 
     assert run.clip.output.crop_target == "face_tracked"
 
 
+@needs_ffmpeg
+def test_speaker_tracking_receives_only_overlapping_turns_and_labels_the_artifact(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import FocusPoint, SpeakerFocusPoint
+    from hawedit.render import Reframe
+
+    class SpeakerTracker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            assert source == FIXTURE
+            assert (in_ms, out_ms) == (0, 1_950)
+            assert turns == (Segment(0, 1_950, "SPEAKER_00"),)
+            return (
+                SpeakerFocusPoint(100, 120, "SPEAKER_00"),
+                SpeakerFocusPoint(1_700, 520, "SPEAKER_00"),
+            )
+
+    class FaceFallback:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+            pytest.fail("validated speaker evidence must win before the face-only fallback")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-tracked",
+        transcript=a_transcript("speaker-tracked"),
+        diarizer=_MeasuredDiarizer(),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-tracked-0"),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        speaker_tracker=SpeakerTracker(),
+        subject_tracker=FaceFallback(),
+    )
+    assert run.clip is not None and run.clip.output is not None
+    assert run.clip.output.crop_target == "speaker_face"
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    assert run.render.reframe is Reframe.SPEAKER_TRACKED
+
+
+@needs_ffmpeg
+def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenance(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import FocusPoint, SpeakerFocusPoint
+    from hawedit.render import Reframe
+
+    class AmbiguousSpeakerTracker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            return ()
+
+    class FaceFallback:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+            return (FocusPoint(in_ms, 120), FocusPoint(out_ms - 1, 520))
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-ambiguous",
+        transcript=a_transcript("speaker-ambiguous"),
+        diarizer=_MeasuredDiarizer(),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-ambiguous-0"),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        speaker_tracker=AmbiguousSpeakerTracker(),
+        subject_tracker=FaceFallback(),
+    )
+    assert run.clip is not None and run.clip.output is not None
+    assert run.clip.output.crop_target == "face_tracked"
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    assert run.render.reframe is Reframe.FACE_TRACKED
+
+
+def test_requested_speaker_tracking_refuses_missing_diarization_without_calling_provider(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import SpeakerFocusPoint
+
+    class MustNotRun:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            pytest.fail("speaker association cannot run without measured diarization")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-no-diarization",
+        transcript=a_transcript("speaker-no-diarization"),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-no-diarization-0"),
+        speaker_tracker=MustNotRun(),
+    )
+    assert isinstance(run.render, StageSkipped)
+    assert "measured diarization" in run.render.reason
+    assert run.clip is None
+
+
+def test_invalid_or_failed_speaker_association_is_not_silently_treated_as_ambiguity(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import FocusPoint, SpeakerFocusPoint
+
+    class FaceFallback:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+            pytest.fail("invalid or failed association is not an ambiguous empty result")
+
+    class WrongSpeaker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            return (SpeakerFocusPoint(100, 320, "SPEAKER_01"),)
+
+    class Broken:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            raise RuntimeError("association backend unavailable")
+
+    for media_id, tracker, detail in (
+        ("speaker-invalid", WrongSpeaker(), "active speaker is 'SPEAKER_00'"),
+        ("speaker-failed", Broken(), "association backend unavailable"),
+    ):
+        run = run_pipeline(
+            FIXTURE,
+            tmp_path / media_id,
+            media_id=media_id,
+            transcript=a_transcript(media_id),
+            diarizer=_MeasuredDiarizer(),
+            select_sentences=(0,),
+            verdict=replace(a_verdict(100, 1_700), candidate_id=f"{media_id}-0"),
+            speaker_tracker=tracker,
+            subject_tracker=FaceFallback(),
+        )
+        assert isinstance(run.render, StageSkipped)
+        assert detail in run.render.reason
+        assert run.clip is None
+
+
 # =========================================================================================
 # §3 Stage 5's fifth out-point signal
 #
