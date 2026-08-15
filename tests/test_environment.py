@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from hawedit import environment as environment_module
 from hawedit.environment import (
     EnvironmentAuditError,
     _audit_environment,
@@ -662,5 +663,59 @@ def test_packaged_models_lock_is_resolved_and_runtime_drift_is_refused(
 
     hawedit_records[:] = [hawedit]
     packaged.write_bytes(packaged.read_bytes().replace(b"certifi==", b"certifx==", 1))
+    with pytest.raises(EnvironmentAuditError, match="bytes do not match trusted SHA-256"):
+        audit_installed_profile("models")
+
+
+def test_editable_models_profile_uses_the_code_bound_checkout_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_project(tmp_path)
+    system = platform.system().lower()
+    python = f"{sys.version_info.major}.{sys.version_info.minor}"
+    packages = (
+        ("fonttools", "4.60.2"),
+        ("huggingface-hub", "0.36.2"),
+        ("klpt", "0.1.7"),
+    )
+    lock_path = _write_lock(
+        tmp_path,
+        extras=("models",),
+        packages=packages,
+        platform_name=system,
+        python=python,
+    )
+    monkeypatch.setitem(
+        environment_module.HOST_LOCK_SHA256,
+        lock_path.name,
+        hashlib.sha256(lock_path.read_bytes()).hexdigest(),
+    )
+
+    # A real PEP 660 editable distribution has no wheel data-file entry for the host lock.
+    hawedit = _Distribution(tmp_path, direct_url=_editable(tmp_path), located_files=None)
+    companion = _Distribution(
+        tmp_path,
+        direct_url=None,
+        metadata_path=tmp_path / "src" / "hawedit.egg-info",
+    )
+    hawedit_records = (hawedit, companion)
+    inventory = [
+        *hawedit_records,
+        *(
+            _Distribution(tmp_path, direct_url=None, name=name, version=version)
+            for name, version in packages
+        ),
+        _Distribution(tmp_path, direct_url=None, name="unrelated", version="9.0"),
+    ]
+
+    def distributions(*, name: str | None = None) -> tuple[metadata.Distribution, ...]:
+        return hawedit_records if name == "hawedit" else tuple(inventory)
+
+    monkeypatch.setattr(metadata, "distributions", distributions)
+    audited = audit_installed_profile("models")
+    assert audited.path == lock_path.resolve()
+    assert audited.requirements == tuple(sorted(packages))
+
+    lock_path.write_bytes(lock_path.read_bytes() + b"# hostile editable lock drift\n")
     with pytest.raises(EnvironmentAuditError, match="bytes do not match trusted SHA-256"):
         audit_installed_profile("models")
