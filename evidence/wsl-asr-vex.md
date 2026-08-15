@@ -13,7 +13,7 @@ The exact result and artifact digest are recorded in
 `security/wsl-asr-vex.json` is a 30-day disposition expiring 2026-09-08, not a claim that the
 dependency graph is vulnerability-free. It binds CPython 3.12, exact dependency locks, package
 versions, all three OmniASR asset identities, and the reviewed HawEdit source SHA-256
-`bb2864b4addd70ebc6b638fdd39fa54f168b9738ef1f3e4bdbcb8fb5e17707c7`. Any later source change
+`8dc112b148061b69c76d6a2cda5c83913a6fe0e684b23ace7802142227f97519`. Any later source change
 must trigger disposition review and a new digest; code mitigations cannot be carried onto old or
 modified worker bytes by matching only dependencies and assets.
 
@@ -29,6 +29,12 @@ That host-only dependency-audit correction changes no WSL package, advisory disp
 checkpoint, asset, or mitigation. The policy is therefore rebound to the reviewed package digest
 above, but it still gains no live acceptance by inheritance; a new receipt and live run remain
 required.
+
+The runtime-composition reconciliation then made the already-correct `--exec` behavior a single
+public implementation consumed by setup, Stage 1, and this live VEX gate. It removed the VEX
+gate's duplicate prefix builder and changed no WSL dependency, advisory disposition, checkpoint,
+asset, or mitigation. The policy is rebound to the reviewed package digest above, again without
+inheriting live acceptance; the current source still needs its own receipt and live audit.
 
 The live command validates the current receipt and live runtime before and after the audit,
 rehashes the canonical assets through the existing probe, captures the VEX bytes once to prevent

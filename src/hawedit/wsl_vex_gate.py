@@ -52,6 +52,7 @@ from hawedit.wsl_setup import (
     load_wsl_runtime_receipt,
     probe_wsl_runtime,
     wsl_path,
+    wsl_prefix,
 )
 
 PIP_AUDIT_VERSION: Final = "2.10.1"
@@ -106,10 +107,6 @@ class ProcessOutput:
     returncode: int
     stdout: bytes
     stderr: bytes
-
-
-def _wsl_prefix(distro: str, executable: str) -> list[str]:
-    return [executable, "--distribution", distro, "--exec"]
 
 
 def _run_bounded(
@@ -205,7 +202,7 @@ def _find_uv(
     )
     for candidate in candidates:
         result = _run_bounded(
-            [*_wsl_prefix(receipt.distro, executable), "test", "-x", candidate],
+            [*wsl_prefix(receipt.distro, executable), "test", "-x", candidate],
             timeout_seconds=min(timeout_seconds, 30),
             stdout_limit=_SMALL_OUTPUT_LIMIT,
             stderr_limit=_SMALL_OUTPUT_LIMIT,
@@ -226,7 +223,7 @@ def _verify_uv(
     timeout_seconds: int,
 ) -> str:
     uv_result = _run_bounded(
-        [*_wsl_prefix(receipt.distro, executable), uv, "--version"],
+        [*wsl_prefix(receipt.distro, executable), uv, "--version"],
         timeout_seconds=min(timeout_seconds, 60),
         stdout_limit=_SMALL_OUTPUT_LIMIT,
         stderr_limit=_SMALL_OUTPUT_LIMIT,
@@ -279,7 +276,7 @@ def _run_hash_locked_audit(
 ) -> tuple[str, str, ProcessOutput, str]:
     """Create an ephemeral scanner from reviewed wheels, verify it, and audit the runtime."""
     uv_version = _verify_uv(receipt, uv=uv, executable=executable, timeout_seconds=timeout_seconds)
-    prefix = _wsl_prefix(receipt.distro, executable)
+    prefix = wsl_prefix(receipt.distro, executable)
     created = _run_bounded(
         [
             *prefix,

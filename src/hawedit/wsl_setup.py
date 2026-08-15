@@ -51,6 +51,7 @@ __all__ = [
     "probe_wsl_runtime",
     "provision_wsl_runtime",
     "wsl_path",
+    "wsl_prefix",
 ]
 
 
@@ -441,7 +442,7 @@ def default_wsl_source(package_dir: Path | None = None, runtime_root: Path | Non
     )
 
 
-def _prefix(distro: str | None, executable: str = "wsl.exe") -> list[str]:
+def wsl_prefix(distro: str | None, executable: str = "wsl.exe") -> list[str]:
     """Every `wsl.exe` invocation this project makes, built once.
 
     `--exec`, not `--`. `--` only ends option parsing: the command line still goes through the
@@ -471,7 +472,7 @@ def _prefix(distro: str | None, executable: str = "wsl.exe") -> list[str]:
 def wsl_path(path: Path, distro: str | None = None, executable: str = "wsl.exe") -> str:
     """Translate without the backslash-loss bug in ``wsl.exe`` argument forwarding."""
     result = subprocess.run(
-        [*_prefix(distro, executable), "wslpath", "-a", "-u", path.resolve().as_posix()],
+        [*wsl_prefix(distro, executable), "wslpath", "-a", "-u", path.resolve().as_posix()],
         capture_output=True,
         check=False,
     )
@@ -578,7 +579,7 @@ def _remove_incomplete_generation(
         # themselves and does not follow them; the exact direct child was validated above.
         translated = wsl_path(generation_root, distro, executable)
         result = subprocess.run(
-            [*_prefix(distro, executable), "rm", "-rf", "--", translated],
+            [*wsl_prefix(distro, executable), "rm", "-rf", "--", translated],
             capture_output=True,
             check=False,
         )
@@ -1197,7 +1198,7 @@ def load_wsl_runtime_receipt(
         translated_lock_directory = f"{translated_generation}/.hawedit-dependency-locks"
         interpreter_probe = subprocess.run(
             [
-                *_prefix(actual_distro, executable),
+                *wsl_prefix(actual_distro, executable),
                 "env",
                 f"HAWEDIT_WSL_BUILD_LOCK={translated_lock_directory}/build-requirements.txt",
                 f"HAWEDIT_WSL_RUNTIME_LOCK={translated_lock_directory}/runtime-requirements.txt",
@@ -1331,7 +1332,7 @@ def probe_wsl_runtime(
     runtime_source = wsl_path(receipt.source_root, receipt.distro, executable)
     result = subprocess.run(
         [
-            *_prefix(receipt.distro, executable),
+            *wsl_prefix(receipt.distro, executable),
             "env",
             "PYTHONDONTWRITEBYTECODE=1",
             f"PYTHONPATH={runtime_source}",
@@ -1409,7 +1410,7 @@ def provision_wsl_runtime(
             translated_candidate = wsl_path(candidate, distro)
             result = subprocess.run(
                 [
-                    *_prefix(distro),
+                    *wsl_prefix(distro),
                     "env",
                     f"HAWEDIT_WSL_RUNTIME={translated}",
                     f"HAWEDIT_WSL_SOURCE={translated_source}",
