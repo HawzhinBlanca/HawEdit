@@ -384,6 +384,33 @@ def test_key_validation_authenticates_by_header_never_by_url() -> None:
     assert seen[0][1].get("x-goog-api-key") == FAKE_KEY
 
 
+@pytest.mark.parametrize(
+    "unsafe_key",
+    [
+        "",
+        "contains a space",
+        "contains\ta-tab",
+        "header\r\nInjected: value",
+        "unicode-کلیل",
+        "A" * 513,
+    ],
+)
+def test_header_unsafe_keys_are_refused_before_transport(unsafe_key: str) -> None:
+    calls = 0
+
+    def transport(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("a header-unsafe key reached the transport")
+
+    check = validate_gemini_key(unsafe_key, transport=transport)
+    assert not check.valid
+    assert calls == 0
+    assert "header-safe" in check.detail
+    if unsafe_key:
+        assert unsafe_key not in check.detail
+
+
 def test_a_malformed_success_body_is_not_treated_as_valid() -> None:
     check = validate_gemini_key(FAKE_KEY, transport=lambda _u, _h: (200, "not json"))
     assert not check.valid
@@ -676,6 +703,34 @@ def test_the_panel_prints_the_mask_and_never_the_key(
 
     _, _, _, rejected = _drive_main(monkeypatch, FAKE_KEY, KeyCheck(False, "no"), capsys)
     assert FAKE_KEY not in rejected
+
+
+def test_the_panel_refuses_a_header_unsafe_key_without_printing_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unsafe_key = "AIzaSy-THIS-MUST-NOT-PRINT\nInjected: value"
+
+    monkeypatch.delenv(GEMINI_API_KEY, raising=False)
+    monkeypatch.setattr("hawedit.credentials.read_credential", lambda *a, **k: None)
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": unsafe_key)
+
+    def no_network(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the panel constructed a request for a header-unsafe key")
+
+    def no_write(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("the panel stored a header-unsafe key")
+
+    monkeypatch.setattr(urllib.request, "urlopen", no_network)
+    monkeypatch.setattr("hawedit.credentials.write_credential", no_write)
+
+    code = credentials_main([])
+    output = capsys.readouterr()
+    combined = output.out + output.err
+    assert code == 1
+    assert "THIS-MUST-NOT-PRINT" not in combined
+    assert "Injected" not in combined
+    assert "Traceback" not in combined
+    assert "nothing was written" in combined
 
 
 def test_a_blank_entry_changes_nothing(
