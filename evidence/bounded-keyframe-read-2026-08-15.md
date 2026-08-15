@@ -34,5 +34,14 @@ Before the production change, the new tests measured:
   `24a5b6e65ef9501425cad508e650ed6ebd4faea4`: Ruff, strict mypy across 134 files, format,
   **2,524 collected / 2,524 passed / 0 skipped** in 345.51 seconds, fresh JUnit grading, and
   `VERIFY OK`. The gate ratcheted `scripts/test-count.floor` from 2,520 to 2,524.
+- Source-bound WSL setup: accepted in 278.9 seconds with Python 3.12.0, 140 exact packages,
+  Ubuntu, UID 1000, two CUDA devices, and all three Omni assets totaling 43,546,500,168 bytes.
+- Live WSL VEX gate: accepted 12 findings against 12 matched dispositions in 123.5 seconds. Runtime
+  source SHA-256 was `86fc8237d08e0037320e692e243d2ba74cf83ec93ba30612e3c32f97bb003fd3`;
+  receipt SHA-256 was `6e0c135e8404540ba07e0ea47c89b256dc11876b2a2883b2aa32a54608b03ffb`.
+  The non-overwriting external artifact is
+  `C:\Users\Wareen\AppData\Local\Temp\hawedit-wsl-vex-bounded-keyframe-20260815-174154.json`,
+  10,383 bytes, SHA-256
+  `e068d6080537074d6cc2ff4d0d4282588f600af37184d9e9b80ca4c0f1b5567b`.
 
 No external image bytes, credentials, or provider calls were used for this unit.
