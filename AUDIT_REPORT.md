@@ -81,8 +81,11 @@ These cannot be truthfully solved from the checkout alone:
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.
-- The WSL2 setup installs pinned PyPI packages but package-manager integrity is not the same as
-  vendored/checksummed model assets; Meta's model-card downloader still owns those remote bytes.
+- The WSL2 setup hash-locks the complete 140-distribution identity and independently verifies the
+  installed OmniASR card, effective fairseq cards, tokenizer and both checkpoints against exact
+  reviewed sizes and SHA-256 values before loading them. The remaining native boundary is different:
+  KenLM and Sox are built from hashed source archives, but compiler, system headers and produced
+  native bytes are not bit-reproducibly attested.
 - **Hugging Face model revisions are pinned as of 2026-08-09** (D-073). `models/revisions.json`
   fixes **all six** downloadable repositories to commit SHAs that were read from the Hub and then
   verified against the weights on this machine, and `fetch-models.sh` refuses a repository with
@@ -107,9 +110,11 @@ These cannot be truthfully solved from the checkout alone:
 
 ## Honest release call
 
-Call this a hardened, composed candidate pipeline. Do not call it production-ready until a real
-Sorani ASR run, a real human editorial regression run and an authorized Vertex job have all
-produced recorded evidence. Anything stronger would be marketing, not engineering.
+Call this a hardened, composed candidate pipeline. A dated real 38-minute Sorani Stage 1 run exists,
+but the latest source still needs its planned rerun and no labelled accuracy claim comes from that
+execution. Do not call the application production-ready until the current-SHA run, a real human
+editorial regression run and an authorized Vertex job have all produced recorded evidence. Anything
+stronger would be marketing, not engineering.
 
 ## Verification evidence
 
