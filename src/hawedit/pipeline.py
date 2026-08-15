@@ -23,7 +23,7 @@ misleading-edit risk, and §8.2 calls the second of those the metric that matter
 organisation. Without a verdict this builds a clip and stops. Given both, it runs six stages
 of the blueprint against real media:
 
-    Stage 0  ingest      16 kHz audio, 1 fps proxy, shot cuts, VAD          ingest.py
+    Stage 0  ingest      audio, proxy, cuts, VAD, optional diarization      ingest.py
     §4.1     normalize   five collisions, raw written once and never again  transcripts.py
     Stage 2  index       BM25 + character 3-grams over the *normalized*     index.py
     Stage 2  windows     scenes segmented to ~1 fps × 64 frames             visual_index.py
@@ -58,6 +58,7 @@ from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
+from hawedit.diarization import turn_bounds_for_anchors
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.escalation import (
     DEFAULT_DISAGREEMENT_CER,
@@ -67,7 +68,15 @@ from hawedit.escalation import (
 )
 from hawedit.gemini import GeminiUnavailable, JudgeUnusable
 from hawedit.index import Bm25Index
-from hawedit.ingest import IngestError, IngestResult, ingest, probe_stream
+from hawedit.ingest import (
+    DiarizationUnavailable,
+    Diarizer,
+    IngestError,
+    IngestResult,
+    attach_diarization,
+    ingest,
+    probe_stream,
+)
 from hawedit.judge import (
     EditorialJudge,
     JudgeRequest,
@@ -192,6 +201,9 @@ class PipelineRun:
     source: str
     work_dir: str
     ingest: IngestResult | StageSkipped | None = None
+    # ``None`` is success only when ``ingest.diarization`` contains the measured result.
+    # A ``StageSkipped`` names either an unconfigured producer or an operational refusal.
+    diarization: StageSkipped | None = None
     transcript: NormalizedTranscript | StageSkipped | None = None
     # Speech the canonical transcript does not contain, carried up from the raw artifact.
     #
@@ -271,6 +283,20 @@ class PipelineRun:
             return None
         return {"skipped": False, "stage": "editorial", "judge": self.clip.editorial.judge}
 
+    def _diarization_ran(self) -> dict[str, Any] | None:
+        """Stage 0 diarization success, derived from its measured turn artifact."""
+        if self.diarization is not None or not isinstance(self.ingest, IngestResult):
+            return None
+        turns = self.ingest.diarization
+        if turns is None:
+            return None
+        return {
+            "skipped": False,
+            "stage": "diarization",
+            "turns": len(turns),
+            "speakers": len({turn.speaker for turn in turns}),
+        }
+
     def skipped(self) -> tuple[tuple[str, StageSkipped], ...]:
         """Every stage that did not run, in pipeline order.
 
@@ -306,6 +332,7 @@ class PipelineRun:
         return (
             not self.skipped()
             and isinstance(self.ingest, IngestResult)
+            and self.ingest.diarization is not None
             and isinstance(self.transcript, NormalizedTranscript)
             and isinstance(self.index, Bm25Index)
             and bool(self.visual_windows)
@@ -333,6 +360,7 @@ class PipelineRun:
             "complete": self.complete,
             "skipped": [name for name, _ in self.skipped()],
             "ingest": encode(self.ingest),
+            "diarization": encode(self.diarization) or self._diarization_ran(),
             "transcript_gaps": [
                 {
                     "start_ms": gap.start_ms,
@@ -458,6 +486,15 @@ class PipelineRun:
 
 # The stages that need something this machine does not have. Written once, here, so the run
 # report and the README cannot drift apart about what is missing.
+_STAGE_0_DIARIZATION = StageSkipped(
+    stage="diarization",
+    reason=(
+        "no Stage 0 diarization producer was enabled. Community-1 remains gated; enable only "
+        "an authenticated, integrity-verified producer rather than treating no result as zero "
+        "speakers."
+    ),
+    blocked_by=("Stage 0 diarization producer not enabled",),
+)
 _STAGE_1_ASR = StageSkipped(
     stage="transcript",
     reason=(
@@ -593,6 +630,7 @@ def _ingest_failure_run(
         source=str(source),
         work_dir=str(work_dir),
         ingest=_operational_failure("ingest", dependency, exc),
+        diarization=_not_reached("diarization", dependency),
         transcript=_not_reached("transcript", dependency),
         index=_not_reached("index", dependency),
         visual_index=_not_reached("visual_index", dependency),
@@ -1088,6 +1126,7 @@ def run_pipeline(
     media_id: str | None = None,
     transcript: RawTranscript | None = None,
     asr: CanonicalTranscriptProducer | None = None,
+    diarizer: Diarizer | None = None,
     select_sentences: tuple[int, ...] = (),
     qc: Qc | None = None,
     verdict: JudgeVerdict | None = None,
@@ -1114,6 +1153,9 @@ def run_pipeline(
             §3 Stage 3's job and Stage 3 has no producers.
         qc: §5's QC block. Absent means the clip is built but never rendered: §2 puts a human
             gate before output, always, and a runner is not a human.
+        diarizer: an authenticated Stage 0 exclusive-turn producer. Omitted is an explicit
+            diarization skip; an enabled operational refusal preserves base ingest and is
+            reported independently rather than aborting unrelated stages.
         discover: §3 Stage 3 Path A. Supply `PathADiscovery(...).discover` and the runner
             stops standing in for discovery and actually runs it.
         read_scenes: retired unsafe injection seam. Any non-``None`` value is refused because a
@@ -1164,6 +1206,17 @@ def run_pipeline(
         ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
     except (IngestError, OSError) as exc:
         return _ingest_failure_run(identifier, source, work_dir, exc)
+
+    diarization_stage: StageSkipped | None = _STAGE_0_DIARIZATION
+    if diarizer is not None:
+        try:
+            ingested = attach_diarization(ingested, diarizer)
+        except DiarizationUnavailable as exc:
+            diarization_stage = _operational_failure(
+                "diarization", "Stage 0 diarization runtime", exc
+            )
+        else:
+            diarization_stage = None
 
     asr_failure: StageSkipped | None = None
     audio_digest: str | None = None
@@ -1228,6 +1281,7 @@ def run_pipeline(
         source=str(source),
         work_dir=str(work_dir),
         ingest=ingested,
+        diarization=diarization_stage,
         transcript=_STAGE_1_ASR,
         index=_not_reached("index", "a transcript"),
         visual_windows=windows,
@@ -1478,6 +1532,9 @@ def run_pipeline(
         )
 
     anchor_in, anchor_out = anchors
+    speaker_turn_start, speaker_turn_end = turn_bounds_for_anchors(
+        ingested.diarization or (), anchor_in, anchor_out
+    )
     if (
         verdict is not None
         and judge is None
@@ -1532,11 +1589,12 @@ def run_pipeline(
             # §3 Stage 5 takes the latest of five out-point signals. This runner computed the
             # VAD silences a few hundred lines above (`_pauses_between`), spent them on §4.2's
             # sentence segmentation and then never handed Stage 5 its own — so `fuse_boundary`
-            # had a `natural_silence` branch no caller could reach, and the fused out point was
-            # three of the five. Four now; the fifth is `speaker_turn_end`, which needs the
-            # gated diarization model (`BLOCKED.md` #4) and is absent for a stated reason
-            # rather than by omission. D-070.
+            # had a `natural_silence` branch no caller could reach. Speaker-turn signals now
+            # come only from an enabled, validated exclusive diarizer; an absent producer stays
+            # an explicit StageSkipped rather than an invented boundary. D-070.
             natural_silence_ms=_natural_silence_for_anchor(ingested, anchor_out),
+            speaker_turn_start_ms=speaker_turn_start,
+            speaker_turn_end_ms=speaker_turn_end,
             timelens_interval_start_ms=(
                 timelens_interval.start_ms if timelens_interval is not None else None
             ),
@@ -2205,9 +2263,15 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
 def _print_report(run: PipelineRun) -> None:
     print(f"media   {run.media_id}")
     if not isinstance(run.ingest, StageSkipped) and run.ingest is not None:
+        turns = run.ingest.diarization
+        diarization = (
+            f"{len(turns)} diarization turn(s) / {len({turn.speaker for turn in turns})} speaker(s)"
+            if turns is not None
+            else "diarization unavailable"
+        )
         print(
             f"stage 0 {run.ingest.duration_ms} ms · {len(run.ingest.shot_cuts_ms)} shot cut(s) · "
-            f"{len(run.ingest.speech)} speech region(s) · diarization: not run"
+            f"{len(run.ingest.speech)} speech region(s) · {diarization}"
         )
     if run.visual_windows:
         # Printed even though `visual_index` is skipped just below. Stage 2's visual half is

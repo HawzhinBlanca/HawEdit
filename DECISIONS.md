@@ -10839,6 +10839,34 @@ attestations verify.
 
 `evidence/versioned-immutable-release.md`.
 
+## D-240 - Diarization failure is an independent Stage 0 result, not an ingest eraser
+
+Stage 0 already produced durable audio, proxy, media-clock, VAD and shot-cut artifacts before an
+optional diarizer could run. Treating an enabled diarizer failure as a failure of the whole ingest
+would discard those valid facts and block independent ASR/discovery work. Treating an absent or
+failed diarizer as an empty tuple would make the opposite false claim: that the model ran and found
+no turns.
+
+The base ingest therefore remains unchanged and records `diarization=None`. A separate injected
+producer attaches only strict, deterministic, exclusive `Segment` values within the media clock.
+The pipeline exposes diarization as its own success/`StageSkipped` result, continues independent
+work after the declared operational error, and refuses to call a run complete unless measured
+diarization exists. Persisted JSON is checked at the same boundary, so model-output rules cannot be
+bypassed by reloading an unordered, overlapping, coercible or out-of-range artifact.
+
+Stage 5 uses only the turn containing the first anchor for `speaker_turn_start` and the turn
+containing the last anchor for `speaker_turn_end`. At an exact turn boundary the in-point belongs
+to the following turn and the out-point to the preceding turn. A diarization gap supplies no
+signal; choosing a nearest turn would invent evidence. The existing uncaptioned-speech refusal
+still decides whether any soft expansion is deliverable.
+
+This closes the composition seam, not the production acceptance. No pyannote dependency or gated
+weight is added, and face tracking retains its honest `FACE_TRACKED`/`STATIC_CENTRE` labels. The
+production adapter, exact authenticated bytes, CC-BY attribution, Kurdish DER/boundary benchmark,
+speaker-to-face association and crop-quality review remain AC-9 work.
+
+`evidence/stage0-diarization-boundary-fusion.md`.
+
 ## D-237 - Adapt main's audit correction to the atomic delivery publisher
 
 Protected main corrected an audit statement that contradicted its flat-file recovery guard: an

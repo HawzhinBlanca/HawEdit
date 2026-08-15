@@ -36,9 +36,10 @@ import pytest
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import DiscoveryPath, Qc
+from hawedit.diarization import Segment
 from hawedit.discovery import MergedCandidate
 from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
-from hawedit.ingest import IngestError
+from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
@@ -106,6 +107,15 @@ def a_verdict(clip_in_ms: int, clip_out_ms: int) -> JudgeVerdict:
     )
 
 
+class _MeasuredDiarizer:
+    def diarize(self, audio: Path) -> tuple[Segment, ...]:
+        assert audio.name == "audio.wav"
+        return (
+            Segment(0, 1_950, "SPEAKER_00"),
+            Segment(1_950, 4_162, "SPEAKER_01"),
+        )
+
+
 # --- the honest report --------------------------------------------------------------------
 
 
@@ -131,7 +141,7 @@ def test_a_run_without_a_transcript_is_incomplete_and_says_which_stage_stopped_i
 def test_the_report_names_every_stage_that_did_not_run(tmp_path: Path) -> None:
     run = run_pipeline(FIXTURE, tmp_path / "work")
     skipped = {name for name, _ in run.skipped()}
-    assert {"transcript", "visual_index", "discovery", "editorial"} <= skipped, skipped
+    assert {"diarization", "transcript", "visual_index", "discovery", "editorial"} <= skipped
     for _, skip in run.skipped():
         assert skip.blocked_by, f"{skip} names no blocker"
 
@@ -150,6 +160,66 @@ def test_an_empty_run_object_cannot_claim_completion() -> None:
     run = PipelineRun(media_id="m", source="m.mp4", work_dir="work")
     assert not run.complete
     assert run.to_dict()["complete"] is False
+
+
+@needs_ffmpeg
+def test_an_enabled_diarizer_records_a_measured_success(tmp_path: Path) -> None:
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="diarized",
+        transcript=a_transcript("diarized"),
+        diarizer=_MeasuredDiarizer(),
+    )
+    assert not isinstance(run.ingest, StageSkipped)
+    assert run.ingest is not None
+    assert run.ingest.diarization == (
+        Segment(0, 1_950, "SPEAKER_00"),
+        Segment(1_950, 4_162, "SPEAKER_01"),
+    )
+    assert run.diarization is None
+    assert run.to_dict()["diarization"] == {
+        "skipped": False,
+        "stage": "diarization",
+        "turns": 2,
+        "speakers": 2,
+    }
+
+
+@needs_ffmpeg
+def test_diarizer_operational_failure_retains_base_ingest_and_continues(tmp_path: Path) -> None:
+    class FailingDiarizer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            raise DiarizationUnavailable("gated model is unavailable")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="diarizer-failed",
+        transcript=a_transcript("diarizer-failed"),
+        diarizer=FailingDiarizer(),
+    )
+    assert not isinstance(run.ingest, StageSkipped)
+    assert run.ingest is not None and run.ingest.diarization is None
+    assert isinstance(run.diarization, StageSkipped)
+    assert "gated model is unavailable" in run.diarization.reason
+    assert run.sentences, "independent transcript segmentation must still run"
+    assert run.to_dict()["diarization"]["skipped"] is True
+
+
+@needs_ffmpeg
+def test_stage_5_fuses_the_speaker_turn_containing_the_selected_anchor(tmp_path: Path) -> None:
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-boundary",
+        transcript=a_transcript("speaker-boundary"),
+        diarizer=_MeasuredDiarizer(),
+        select_sentences=(0,),
+    )
+    assert run.clip is not None
+    assert run.clip.boundary.final_out_ms == 1_950
+    assert run.clip.boundary.out_extended_by == "speaker_turn_end"
 
 
 # --- the end-to-end path that does run ----------------------------------------------------
@@ -2135,6 +2205,7 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         tmp_path_factory.mktemp("whole"),
         media_id="whole",
         transcript=a_transcript("whole"),
+        diarizer=_MeasuredDiarizer(),
         select_sentences=(0, 1),
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         discover=lambda _n: [Candidate("best", "whole", 100, 4_100, DiscoveryPath.VERBAL, 1, 0.9)],
@@ -2220,6 +2291,14 @@ def test_a_run_missing_any_material_evidence_is_never_complete(
     behind, and each was deletable without reddening anything.
     """
     assert strip(whole_run).complete is False, f"a run with no {missing} claimed completeness"
+
+
+@needs_ffmpeg
+def test_a_run_without_measured_diarization_is_never_complete(whole_run: PipelineRun) -> None:
+    assert not isinstance(whole_run.ingest, StageSkipped)
+    assert whole_run.ingest is not None
+    without_turns = replace(whole_run.ingest, diarization=None)
+    assert replace(whole_run, ingest=without_turns).complete is False
 
 
 @needs_ffmpeg
@@ -3309,6 +3388,7 @@ def test_an_operational_ingest_failure_is_a_complete_structured_refusal(
     assert not run.complete
     assert [name for name, _ in run.skipped()] == [
         "ingest",
+        "diarization",
         "transcript",
         "index",
         "visual_index",
