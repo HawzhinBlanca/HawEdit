@@ -21,7 +21,6 @@ from __future__ import annotations
 import base64
 import json
 import sys
-import urllib.request
 from collections.abc import Callable, Mapping
 from types import ModuleType
 from typing import Any
@@ -415,8 +414,7 @@ def test_https_refuses_oversized_response_before_json_parsing(
             return b"x" * size
 
     monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
+        "hawedit.gemini.open_without_redirects",
         lambda *_args, **_kwargs: OversizedResponse(),
     )
     with pytest.raises(GeminiUnavailable, match="exceeded 1048576 bytes"):

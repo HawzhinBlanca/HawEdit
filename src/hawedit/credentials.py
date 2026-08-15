@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Final
 
 from hawedit.cli import program_name, use_utf8_streams
+from hawedit.http_transport import open_without_redirects
 
 __all__ = [
     "ENV_FILE",
@@ -373,7 +374,7 @@ def _https_get(url: str, headers: Mapping[str, str] | None = None) -> tuple[int,
 
     request = urllib.request.Request(url, headers=dict(headers or {}))
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with open_without_redirects(request, timeout=30) as response:
             return response.status, _bounded_key_check_response(response)
     except urllib.error.HTTPError as exc:
         try:
