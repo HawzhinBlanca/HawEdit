@@ -50,6 +50,7 @@ from hawedit.visual_index import SceneWindow
 
 __all__ = [
     "MAX_FRAMES_PER_CALL",
+    "MAX_UNREADABLE_REASON_CHARS",
     "PATH_B_MODEL",
     "PathBDiscovery",
     "PathBError",
@@ -67,6 +68,11 @@ _DISCOVERY_ROLE: Final = frozenset({"visual_discovery"})
 # 512." 256 is the figure the note is written about and the one that fits a 24 GB card with
 # room; 512 does not. This is a ceiling on a single call, which is what VRAM responds to.
 MAX_FRAMES_PER_CALL: Final = 256
+
+# Keep one partial Path B refusal within the same exception-detail budget as the runner's
+# `StageSkipped` record. Unlike a stage failure, an unreadable survivor is serialized inside a
+# successful visual-discovery result, so it never passes through `pipeline._operational_failure`.
+MAX_UNREADABLE_REASON_CHARS: Final = 1_024
 
 
 class PathBError(RuntimeError):
@@ -125,12 +131,24 @@ class UnreadableScene:
     reason: str
 
     def __post_init__(self) -> None:
-        if not self.reason.strip():
+        if not isinstance(self.reason, str):
+            raise TypeError(
+                f"unreadable scene reason must be a string, got {type(self.reason).__name__}"
+            )
+        normalized_reason = " ".join(
+            "".join(
+                character if character.isprintable() else " " for character in self.reason
+            ).split()
+        )
+        if not normalized_reason:
             raise ValueError(
                 f"unreadable scene {self.window_id} carries no reason. A window dropped for no "
                 f"stated reason is a window silently dropped, which is what this type exists "
                 f"to prevent."
             )
+        if len(normalized_reason) > MAX_UNREADABLE_REASON_CHARS:
+            normalized_reason = normalized_reason[: MAX_UNREADABLE_REASON_CHARS - 1] + "…"
+        object.__setattr__(self, "reason", normalized_reason)
         if self.out_ms <= self.in_ms:
             raise ValueError(
                 f"unreadable scene {self.window_id} spans {self.in_ms}..{self.out_ms} ms, which "
