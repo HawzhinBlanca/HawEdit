@@ -57,3 +57,12 @@ at 1,900 ms. This proves the runtime join, not diarization accuracy.
 - AC-9 and M1.3 remain partial until gated bytes, licence attribution, real multi-speaker material,
   and human-reviewed crop evidence exist.
 
+## WSL VEX source binding
+
+The source snapshot digest changed because this unit edits `diarization.py`, `ingest.py`, and
+`pipeline.py`. The ASR dependency versions, assets, loader controls, worker protocol, model-card
+checks, and every advisory disposition are unchanged. The checked-in VEX applicability was
+therefore re-bound to package digest
+`f2007b91a325d8453a519b32b6ffcb545e5ef81611b8761e07256911d16f1476`; its original
+2026-08-09 advisory review and 2026-09-08 expiry remain unchanged rather than being silently
+extended by unrelated composition work.
