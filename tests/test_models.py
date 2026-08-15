@@ -470,7 +470,7 @@ def test_missing_omniasr_is_not_misreported_as_a_fetch_models_problem(
     monkeypatch.setattr(
         "hawedit.models._probe_canonical_omni_runtime", _missing_canonical_omni_runtime
     )
-    with pytest.raises(ModelNotProvisioned) as raised:
+    with pytest.raises(models.ModelNotProvisioned) as raised:
         store(tmp_path).assert_available("omniASR_LLM_7B_v2")
     assert "fetch-models" not in str(raised.value)
 
@@ -1433,6 +1433,15 @@ def _accept_fixture_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _write_fixture_checkpoint(
+    model_store: ModelStore, entry: ModelEntry, *, size: int = 1_024
+) -> Path:
+    checkpoint = model_store.path_for(entry)
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "model.safetensors").write_bytes(b"x" * size)
+    return checkpoint
+
+
 def test_a_downloaded_checkpoint_whose_loader_is_missing_is_not_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1482,22 +1491,181 @@ def test_the_same_checkpoint_is_available_once_its_loader_can_be_imported(
     assert "cannot be loaded" not in status.detail
 
 
-def test_the_validators_readiness_tracks_whether_its_loader_is_installed(
+def test_the_validators_readiness_uses_the_canonical_wsl_route_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The real entry, asserted as a coupling rather than as today's answer.
+    """The loader intentionally lives in WSL, so host importability is the wrong question."""
+    entry = REGISTRY["rzgar/qwen3-asr-sorani-kurdish-ckb-v1"]
+    model_store = store(tmp_path)
+    checkpoint = _write_fixture_checkpoint(model_store, entry)
+    _accept_fixture_checkpoint(monkeypatch)
+    monkeypatch.setattr(models, "_canonical_validator_uses_wsl", lambda: True, raising=False)
+    monkeypatch.setattr(
+        models,
+        "_probe_canonical_omni_runtime",
+        lambda: ("WSL Ubuntu: receipt and qwen-asr verified", tmp_path / "runtime", 43_546),
+    )
+    host_imports: list[str] = []
+
+    def missing_host_loader(module: str) -> bool:
+        host_imports.append(module)
+        return False
+
+    monkeypatch.setattr(models, "_is_importable", missing_host_loader)
+
+    status = model_store._status_for(entry)
+
+    assert status.available is True
+    assert status.path == checkpoint
+    assert status.size_bytes == 1_024
+    assert "WSL Ubuntu" in status.detail
+    assert host_imports == [], "canonical reporting must not consult the Windows host loader"
+
+    with pytest.raises(models.ModelNotProvisioned) as raised:
+        model_store.assert_available(entry.model_id)
+    assert host_imports == ["qwen_asr"], "local adapter readiness must remain local"
+    assert "qwen_asr" in str(raised.value)
+    assert "hawedit-fetch-models" not in str(raised.value)
+
+
+def test_an_invalid_wsl_runtime_does_not_turn_exact_validator_bytes_into_a_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runtime repair and checkpoint fetching are different operations."""
+    entry = REGISTRY["rzgar/qwen3-asr-sorani-kurdish-ckb-v1"]
+    model_store = store(tmp_path)
+    checkpoint = _write_fixture_checkpoint(model_store, entry)
+    _accept_fixture_checkpoint(monkeypatch)
+    monkeypatch.setattr(models, "_canonical_validator_uses_wsl", lambda: True, raising=False)
+
+    def invalid_runtime() -> tuple[str, Path, int]:
+        raise RuntimeError("source-bound WSL receipt is invalid")
+
+    monkeypatch.setattr(models, "_probe_canonical_omni_runtime", invalid_runtime)
+
+    status = model_store._status_for(entry)
+    missing = {candidate.model_id for candidate in model_store.missing_weights()}
+
+    assert status.available is False
+    assert status.path == checkpoint
+    assert "source-bound WSL receipt is invalid" in status.detail
+    assert entry.model_id not in missing
+
+    with pytest.raises(models.ModelNotProvisioned) as raised:
+        model_store.assert_available(entry.model_id)
+    assert "qwen_asr" in str(raised.value)
+    assert "hawedit-fetch-models" not in str(raised.value)
+
+
+def test_a_corrupt_validator_checkpoint_remains_fetchable_even_with_a_valid_wsl_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = REGISTRY["rzgar/qwen3-asr-sorani-kurdish-ckb-v1"]
+    model_store = store(tmp_path)
+    _write_fixture_checkpoint(model_store, entry)
+    monkeypatch.setattr(models, "_canonical_validator_uses_wsl", lambda: True, raising=False)
+    monkeypatch.setattr(
+        models,
+        "_probe_canonical_omni_runtime",
+        lambda: ("valid WSL", tmp_path / "runtime", 43_546),
+    )
+    monkeypatch.setattr(
+        ModelStore,
+        "verify_checkpoint",
+        lambda *_args: (_ for _ in ()).throw(models.CheckpointIntegrityError("digest mismatch")),
+    )
+
+    status = model_store._status_for(entry)
+    missing = {candidate.model_id for candidate in model_store.missing_weights()}
+
+    assert status.available is False
+    assert "digest mismatch" in status.detail
+    assert entry.model_id in missing
+
+
+def test_the_validator_retains_local_loader_readiness_off_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Linux canonical Stage 1 runs in-process and therefore still needs the local import."""
+    entry = REGISTRY["rzgar/qwen3-asr-sorani-kurdish-ckb-v1"]
+    model_store = store(tmp_path)
+    _write_fixture_checkpoint(model_store, entry)
+    _accept_fixture_checkpoint(monkeypatch)
+    monkeypatch.setattr(models, "_canonical_validator_uses_wsl", lambda: False, raising=False)
+    monkeypatch.setattr(models, "_is_importable", lambda module: module == "qwen_asr")
+    monkeypatch.setattr(
+        models,
+        "_probe_canonical_omni_runtime",
+        lambda: pytest.fail("WSL probe used on the local validator route"),
+    )
+
+    assert model_store._status_for(entry).available is True
+
+    monkeypatch.setattr(models, "_is_importable", lambda _module: False)
+    refused = store(tmp_path)._status_for(entry)
+    assert refused.available is False
+    assert "qwen_asr" in refused.detail
+
+
+def test_exact_generic_checkpoint_bytes_are_not_missing_when_the_host_loader_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = REGISTRY["MCG-NJU/VideoChat3-4B"]
+    model_store = store(tmp_path)
+    _write_fixture_checkpoint(model_store, entry)
+    _accept_fixture_checkpoint(monkeypatch)
+    monkeypatch.setattr(models, "_WEIGHTS_RUNTIMES", {entry.model_id: "missing_video_runtime"})
+    monkeypatch.setattr(models, "_is_importable", lambda _module: False)
+
+    status = model_store._status_for(entry)
+    missing = {candidate.model_id for candidate in model_store.missing_weights()}
+
+    assert status.available is False
+    assert "missing_video_runtime" in status.detail
+    assert entry.model_id not in missing
+
+
+def test_one_model_report_reuses_one_wsl_runtime_proof_for_omni_and_validator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = REGISTRY["rzgar/qwen3-asr-sorani-kurdish-ckb-v1"]
+    model_store = store(tmp_path)
+    _write_fixture_checkpoint(model_store, entry)
+    _accept_fixture_checkpoint(monkeypatch)
+    monkeypatch.setattr(models, "_canonical_validator_uses_wsl", lambda: True, raising=False)
+    calls = 0
+
+    def probe() -> tuple[str, Path, int]:
+        nonlocal calls
+        calls += 1
+        return "WSL proof", tmp_path / "runtime", 43_546
+
+    monkeypatch.setattr(models, "_probe_canonical_omni_runtime", probe)
+
+    statuses = {status.model_id: status for status in model_store.status()}
+
+    assert statuses[entry.model_id].available is True
+    assert statuses["omniASR_LLM_7B_v2"].available is True
+    assert statuses["omniASR_CTC_3B_v2"].available is True
+    assert calls == 1
+
+
+def test_the_validators_readiness_tracks_the_local_loader_when_wsl_is_not_the_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legacy control remains explicit for a local-only execution context.
 
     `qwen_asr` is absent here and in CI, so hardcoding "unavailable" would pass for the wrong
     reason and flip the day someone installs it. This states the property instead: the validator
     is available exactly when the loader its model card names can be imported.
     """
     entry = REGISTRY["rzgar/qwen3-asr-sorani-kurdish-ckb-v1"]
-    weights = store(tmp_path).path_for(entry)
-    weights.mkdir(parents=True)
-    (weights / "model.safetensors").write_bytes(b"x" * 1024)
+    model_store = store(tmp_path)
+    _write_fixture_checkpoint(model_store, entry)
     _accept_fixture_checkpoint(monkeypatch)
+    monkeypatch.setattr(models, "_canonical_validator_uses_wsl", lambda: False, raising=False)
 
-    status = next(s for s in store(tmp_path).status() if s.model_id == entry.model_id)
+    status = model_store._status_for(entry)
     assert status.available is models._is_importable("qwen_asr")
     if not status.available:
         assert "qwen_asr" in status.detail
