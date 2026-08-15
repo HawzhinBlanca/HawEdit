@@ -45,8 +45,8 @@ from typing import Final
 
 from hawedit.captions import (
     FontCoverageError,
+    assert_ass_fonts_cover_kurdish,
     assert_captions_within_clip,
-    assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
     find_ffmpeg,
     subtitle_filter,
@@ -424,15 +424,19 @@ def render_clip(
     if not ass_path.exists():
         raise RenderError(f"no subtitle file at {ass_path} — §4.3 captions are not optional")
     try:
-        assert_fonts_dir_covers_kurdish(fonts_dir)
-    except FontCoverageError as exc:
-        raise RenderError(str(exc)) from exc
+        ass_text = ass_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise RenderError(f"cannot read subtitle file {ass_path}: {exc}") from exc
 
     duration_ms = clip.out_ms - clip.in_ms
     # Subtitles are burned into a stream ffmpeg has already cut, so t=0 is the start of the
     # clip. A file carrying source-absolute stamps draws nothing and ships a caption-free MP4;
     # checked here on whatever file arrives, not only where `build_ass` writes one.
-    assert_captions_within_clip(ass_path.read_text(encoding="utf-8"), duration_ms)
+    assert_captions_within_clip(ass_text, duration_ms)
+    try:
+        assert_ass_fonts_cover_kurdish(ass_text, fonts_dir)
+    except FontCoverageError as exc:
+        raise RenderError(str(exc)) from exc
     # Measured on the real fixture: asking for 0..8000 ms of a 4162 ms source makes ffmpeg
     # exit 0 and write 4180 ms. Nothing in the numbers is wrong — the clip is internally
     # consistent — so the only place to catch it is against the media itself, before encoding.

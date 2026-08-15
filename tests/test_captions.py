@@ -35,6 +35,7 @@ from hawedit.captions import (
     FontCoverageError,
     GoldenReferenceMissing,
     MissingRtlStack,
+    assert_ass_fonts_cover_kurdish,
     assert_captions_within_clip,
     assert_font_covers_kurdish,
     assert_fonts_dir_covers_kurdish,
@@ -873,6 +874,78 @@ def test_one_covering_font_beside_a_broken_one_is_accepted(tmp_path: Path) -> No
     assert assert_fonts_dir_covers_kurdish(maimed.parent) == shipped_copy
 
 
+def _font_with_family(directory: Path, family: str, filename: str = "covering.ttf") -> Path:
+    """Copy the shipped font while changing only its authoritative family names."""
+    from fontTools.ttLib import TTFont
+
+    output = directory / filename
+    font = TTFont(FONT)
+    names = font["name"]
+    names.removeNames(nameID=1)
+    names.removeNames(nameID=16)
+    names.setName(family, 1, 3, 1, 0x409)
+    font.save(output)
+    font.close()
+    return output
+
+
+def test_the_shipped_ass_family_binds_to_the_shipped_covering_font() -> None:
+    ass = build_ass((_golden_sentence(),), font_name="Noto Naskh Arabic")
+    assert assert_ass_fonts_cover_kurdish(ass, FONTS_DIR) == (FONT,)
+
+
+def test_an_unrelated_covering_font_cannot_certify_the_requested_broken_family(
+    tmp_path: Path,
+) -> None:
+    """The exact D-133 shortfall: directory coverage and selected-font coverage differ."""
+    requested_but_broken = _font_without(tmp_path, 0x06A9)
+    unrelated_covering = _font_with_family(
+        requested_but_broken.parent, "Unrelated Covering Family", "ZZ-covering.ttf"
+    )
+    assert assert_fonts_dir_covers_kurdish(requested_but_broken.parent) == unrelated_covering
+
+    ass = build_ass((_golden_sentence(),), font_name="Noto Naskh Arabic")
+    with pytest.raises(FontCoverageError, match=r"Noto Naskh Arabic.*U\+06A9"):
+        assert_ass_fonts_cover_kurdish(ass, requested_but_broken.parent)
+
+
+def test_a_missing_ass_family_is_refused_instead_of_using_host_fallback(tmp_path: Path) -> None:
+    _font_with_family(tmp_path, "Another Family")
+    ass = build_ass((_golden_sentence(),), font_name="Missing Family")
+    with pytest.raises(FontCoverageError, match="no font.*Missing Family"):
+        assert_ass_fonts_cover_kurdish(ass, tmp_path)
+
+
+def test_two_files_claiming_the_used_family_are_refused_as_ambiguous(tmp_path: Path) -> None:
+    _font_with_family(tmp_path, "Noto Naskh Arabic", "first.ttf")
+    _font_with_family(tmp_path, "Noto Naskh Arabic", "second.ttf")
+    ass = build_ass((_golden_sentence(),), font_name="Noto Naskh Arabic")
+    with pytest.raises(FontCoverageError, match="multiple directory fonts.*first.ttf.*second.ttf"):
+        assert_ass_fonts_cover_kurdish(ass, tmp_path)
+
+
+def test_an_undefined_dialogue_style_is_refused_before_font_resolution() -> None:
+    ass = build_ass((_golden_sentence(),)).replace(",Kurdish,,0,0,0,,", ",Undefined,,0,0,0,,")
+    with pytest.raises(FontCoverageError, match="undefined style.*Undefined"):
+        assert_ass_fonts_cover_kurdish(ass, FONTS_DIR)
+
+
+def test_a_malformed_style_format_is_refused() -> None:
+    ass = build_ass((_golden_sentence(),)).replace(
+        "Format: Name, Fontname, Fontsize", "Format: Name, Name, Fontsize"
+    )
+    with pytest.raises(FontCoverageError, match="style Format.*Fontname"):
+        assert_ass_fonts_cover_kurdish(ass, FONTS_DIR)
+
+
+def test_an_inline_font_family_override_is_refused() -> None:
+    ass = build_ass((_golden_sentence(),)).replace(
+        GOLDEN_CAPTION_TEXT, rf"{{\fnAnother Family}}{GOLDEN_CAPTION_TEXT}"
+    )
+    with pytest.raises(FontCoverageError, match=r"inline \\fn"):
+        assert_ass_fonts_cover_kurdish(ass, FONTS_DIR)
+
+
 def test_the_burn_verifies_the_font_directory_it_was_handed() -> None:
     """This is the whole point of D-133: `assert_font_covers_kurdish` had **no caller in
     `src/`**. It ran in one test against one hard-coded path while `render_clip` burned
@@ -882,9 +955,9 @@ def test_the_burn_verifies_the_font_directory_it_was_handed() -> None:
     Asserted on the source, in the shape D-119's entry-point test uses: the call has to be
     in `render_clip`, not merely imported somewhere in the module.
     """
-    assert "assert_fonts_dir_covers_kurdish(fonts_dir)" in _render_clip_source(), (
-        "render_clip does not verify the font directory it burns from; §4.3.4's check would "
-        "again be a function nothing in the product calls"
+    assert "assert_ass_fonts_cover_kurdish(ass_text, fonts_dir)" in _render_clip_source(), (
+        "render_clip does not bind the ASS family to a covering font in its fonts directory; "
+        "§4.3.4's check would certify a font libass never selects"
     )
 
 
