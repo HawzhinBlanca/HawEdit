@@ -29,7 +29,10 @@ Before the production change, the new tests measured:
 - Stage 4, pipeline, smoke, and VEX adjacency: 394 passed, then 357 passed.
 - Focused Ruff, format, and strict mypy: green.
 - The first full-suite attempt reached 2,520 passes plus the four new test cases; four release-build
-  cases then refused the intentionally dirty checkout, as designed. The authoritative canonical
-  clean-commit result is appended after the explicit source commit.
+  cases then refused the intentionally dirty checkout, as designed.
+- Authoritative post-commit canonical gate at source commit
+  `24a5b6e65ef9501425cad508e650ed6ebd4faea4`: Ruff, strict mypy across 134 files, format,
+  **2,524 collected / 2,524 passed / 0 skipped** in 345.51 seconds, fresh JUnit grading, and
+  `VERIFY OK`. The gate ratcheted `scripts/test-count.floor` from 2,520 to 2,524.
 
 No external image bytes, credentials, or provider calls were used for this unit.
