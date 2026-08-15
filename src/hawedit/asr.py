@@ -61,7 +61,7 @@ from hawedit.transcripts import (
 )
 from hawedit.wsl_setup import (
     WslRuntimeError,
-    default_wsl_runtime,
+    configured_wsl_runtime,
     load_wsl_runtime_receipt,
     wsl_path,
 )
@@ -1090,7 +1090,7 @@ class WslOmniAsrProducer:
         configured_source = os.environ.get("HAWEDIT_WSL_SOURCE")
         repo_root = Path(__file__).resolve().parents[2]
         checkout_source = repo_root / "src"
-        runtime = Path(os.environ.get("HAWEDIT_WSL_RUNTIME", default_wsl_runtime()))
+        runtime = configured_wsl_runtime()
         if configured_python:
             if configured_source:
                 source = Path(configured_source)

@@ -417,9 +417,28 @@ def default_wsl_runtime(package_dir: Path | None = None) -> Path:
     return base / "HawEdit" / "wsl-asr"
 
 
+def configured_wsl_runtime(explicit: Path | None = None, package_dir: Path | None = None) -> Path:
+    """Resolve one host runtime root for setup and consumption, without touching the filesystem."""
+    if explicit is not None:
+        raw = os.fspath(explicit)
+    else:
+        configured = os.environ.get("HAWEDIT_WSL_RUNTIME")
+        raw = os.fspath(default_wsl_runtime(package_dir)) if configured is None else configured
+    if not raw.strip():
+        raise WslRuntimeError("HAWEDIT_WSL_RUNTIME must be a non-empty absolute path")
+    selected = Path(raw)
+    if not selected.is_absolute():
+        raise WslRuntimeError("HAWEDIT_WSL_RUNTIME must be a non-empty absolute path")
+    return selected
+
+
 def default_wsl_source(package_dir: Path | None = None, runtime_root: Path | None = None) -> Path:
     """Fingerprint-specific Python source; the multi-GB Linux venv remains shared."""
-    return (runtime_root or default_wsl_runtime()) / "sources" / package_fingerprint(package_dir)
+    return (
+        configured_wsl_runtime(runtime_root, package_dir)
+        / "sources"
+        / package_fingerprint(package_dir)
+    )
 
 
 def _prefix(distro: str | None, executable: str = "wsl.exe") -> list[str]:
@@ -1104,7 +1123,7 @@ def load_wsl_runtime_receipt(
 ) -> WslRuntimeReceipt:
     """Validate the current source receipt and versioned WSL environment generation."""
     source = (package_source or Path(__file__).resolve().parent).resolve()
-    runtime = _runtime_root_path(runtime_root or default_wsl_runtime(source), create=False)
+    runtime = _runtime_root_path(configured_wsl_runtime(runtime_root, source), create=False)
     source_root = default_wsl_source(source, runtime)
     marker = source_root / ".ready"
     receipt = _read_json(marker, "OmniASR WSL readiness receipt")
@@ -1351,7 +1370,7 @@ def provision_wsl_runtime(
     if (platform_name or os.name) != "nt":
         raise RuntimeError("the WSL2 OmniASR setup command is only for Windows hosts")
     source = (package_source or Path(__file__).resolve().parent).resolve()
-    runtime = _runtime_root_path(runtime_root or default_wsl_runtime(source), create=True)
+    runtime = _runtime_root_path(configured_wsl_runtime(runtime_root, source), create=True)
     with _runtime_transaction_lock(runtime):
         sources_root = runtime / "sources"
         _ensure_plain_directory(sources_root, "OmniASR sources directory")
@@ -1455,8 +1474,17 @@ def main(argv: list[str] | None = None) -> int:
         description="Provision HawEdit's official OmniASR runtime inside WSL2",
     )
     parser.add_argument("--distribution", help="optional WSL distribution name")
+    parser.add_argument(
+        "--runtime-root",
+        type=Path,
+        help="absolute host path for the receipt-bound WSL runtime",
+    )
     args = parser.parse_args(argv)
-    runtime = provision_wsl_runtime(distro=args.distribution)
+    try:
+        runtime_root = configured_wsl_runtime(args.runtime_root)
+    except WslRuntimeError as exc:
+        parser.error(str(exc))
+    runtime = provision_wsl_runtime(distro=args.distribution, runtime_root=runtime_root)
     print(f"READY: OmniASR WSL2 runtime at {runtime}")
     return 0
 

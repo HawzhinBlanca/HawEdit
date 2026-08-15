@@ -47,7 +47,7 @@ from hawedit.wsl_audit_locks import (
 from hawedit.wsl_setup import (
     WslRuntimeError,
     WslRuntimeReceipt,
-    default_wsl_runtime,
+    configured_wsl_runtime,
     default_wsl_source,
     load_wsl_runtime_receipt,
     probe_wsl_runtime,
@@ -614,10 +614,10 @@ def run_live_gate(
         raise LiveVexGateError("timeout_seconds must be between 1 and 1800")
     _preflight_new_evidence(evidence_path)
     source = (package_source or Path(__file__).resolve().parent).resolve()
-    runtime = (runtime_root or default_wsl_runtime(source)).absolute()
     policy_path = (vex_path or _default_vex_path()).resolve()
 
     try:
+        runtime = configured_wsl_runtime(runtime_root, source)
         before = load_wsl_runtime_receipt(
             distro=distro,
             runtime_root=runtime,
