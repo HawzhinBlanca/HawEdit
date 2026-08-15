@@ -622,8 +622,10 @@ def _runtime_hawedit_distribution() -> metadata.Distribution:
     return records[0]
 
 
-def resolve_installed_hawedit_data(relative_path: str) -> Path:
-    """Locate and authenticate exactly one installed HawEdit wheel data file."""
+def _resolve_installed_hawedit_data(
+    distribution: metadata.Distribution, relative_path: str
+) -> Path:
+    """Locate and authenticate wheel data for one already-authoritative distribution."""
 
     if "\\" in relative_path:
         raise EnvironmentAuditError("installed HawEdit data path must use forward slashes")
@@ -636,7 +638,6 @@ def resolve_installed_hawedit_data(relative_path: str) -> Path:
         raise EnvironmentAuditError(
             "installed HawEdit data path must be normalized beneath share/hawedit"
         )
-    distribution = _runtime_hawedit_distribution()
     try:
         raw_record = distribution.read_text("RECORD")
     except (OSError, UnicodeError) as exc:
@@ -704,16 +705,26 @@ def resolve_installed_hawedit_data(relative_path: str) -> Path:
     return candidates[0]
 
 
-def resolve_installed_host_lock(profile: str) -> Path:
-    """Return this installed wheel's host lock for the current OS and Python minor."""
+def resolve_installed_hawedit_data(relative_path: str) -> Path:
+    """Locate and authenticate exactly one installed HawEdit wheel data file."""
 
+    return _resolve_installed_hawedit_data(_runtime_hawedit_distribution(), relative_path)
+
+
+def _host_lock_name(profile: str) -> str:
     if profile not in _PROFILE_EXTRAS:
         raise EnvironmentAuditError(f"unknown host-lock profile {profile!r}")
     target = _target_platform(platform.system())
     version = (sys.version_info.major, sys.version_info.minor)
     if version not in {(3, 11), (3, 12)}:
         raise EnvironmentAuditError(f"no installed host lock for Python {version[0]}.{version[1]}")
-    name = f"host-{profile}-{target}-py{version[0]}{version[1]}.txt"
+    return f"host-{profile}-{target}-py{version[0]}{version[1]}.txt"
+
+
+def resolve_installed_host_lock(profile: str) -> Path:
+    """Return this installed wheel's host lock for the current OS and Python minor."""
+
+    name = _host_lock_name(profile)
     return resolve_installed_hawedit_data(f"share/hawedit/requirements/{name}")
 
 
@@ -727,20 +738,30 @@ def audit_installed_profile(profile: str) -> HostLock:
     extras = _PROFILE_EXTRAS.get(profile)
     if extras is None:
         raise EnvironmentAuditError(f"unknown host-lock profile {profile!r}")
+    distribution = _runtime_hawedit_distribution()
+    if _has_editable_direct_url(distribution):
+        project_root = _editable_root(distribution)
+        lock_path = project_root / "requirements" / _host_lock_name(profile)
+        manifest = _read_project_manifest(project_root, extras)
+    else:
+        project_root = None
+        lock_path = _resolve_installed_hawedit_data(
+            distribution,
+            f"share/hawedit/requirements/{_host_lock_name(profile)}",
+        )
+        manifest = _read_installed_manifest(distribution, extras)
     lock = validate_host_lock(
-        resolve_installed_host_lock(profile),
-        project_root=None,
+        lock_path,
+        project_root=project_root,
         extras=extras,
         python_version=(sys.version_info.major, sys.version_info.minor),
         platform_name=platform.system(),
     )
-    distribution = _runtime_hawedit_distribution()
     if distribution.version != lock.project_version:
         raise EnvironmentAuditError(
             f"installed HawEdit {distribution.version} does not match host lock project version "
             f"{lock.project_version}"
         )
-    manifest = _read_installed_manifest(distribution, extras)
     direct = _declared_versions(
         manifest.requirements, (sys.version_info.major, sys.version_info.minor)
     )
