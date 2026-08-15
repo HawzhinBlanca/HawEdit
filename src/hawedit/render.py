@@ -366,6 +366,7 @@ def render_clip(
     focus_points: Sequence[tuple[int, int]] = (),
     ffmpeg: Path | None = None,
     crf: int = 20,
+    reframe: Reframe | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -379,6 +380,18 @@ def render_clip(
         RenderError: no ffmpeg, the requested encoder is absent, or the encode failed.
     """
     clip.assert_renderable()
+
+    effective_reframe = (
+        (Reframe.FACE_TRACKED if focus_points else Reframe.STATIC_CENTRE)
+        if reframe is None
+        else reframe
+    )
+    if not isinstance(effective_reframe, Reframe):
+        raise TypeError("reframe must be a Reframe value")
+    if effective_reframe is Reframe.STATIC_CENTRE and focus_points:
+        raise ValueError("static reframe mode cannot carry focus points")
+    if effective_reframe is not Reframe.STATIC_CENTRE and not focus_points:
+        raise ValueError("dynamic reframe mode needs focus points")
 
     # The final name is a write-once publication target, never ffmpeg's working file. Checking
     # before the expensive probes/encode gives deterministic reruns, while the atomic link at
@@ -508,9 +521,9 @@ def render_clip(
         height=VERTICAL_HEIGHT,
         requested_duration_ms=duration_ms,
         measured_duration_ms=measured_ms,
-        # Named for what it is. §3 Stage 6's speaker tracking needs diarization, which does
-        # not run (`BLOCKED.md` #4), so no clip this function produces may claim it.
-        reframe=Reframe.FACE_TRACKED if focus_points else Reframe.STATIC_CENTRE,
+        # The explicit mode was validated against the crop evidence before any encode work,
+        # so the artifact cannot claim speaker/face tracking without time-varying points.
+        reframe=effective_reframe,
         encoder=encoder,
         captions_burned_in=True,
         ffmpeg_version=version,
