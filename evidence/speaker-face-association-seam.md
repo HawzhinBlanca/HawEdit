@@ -49,3 +49,18 @@ external approval (`BLOCKED.md` #4), and the checked-in media fixture contains n
 Association accuracy, off-screen-speaker behavior, shot-change behavior, multi-face stability and
 crop quality therefore remain unmeasured until authorised labelled multi-speaker footage and human
 review are available (`BLOCKED.md` #1). M3.3 and M8.1 remain PARTIAL.
+
+## Protected promotion
+
+- pull request: `https://github.com/HawzhinBlanca/HawEdit/pull/6`
+- reviewed head: `ab21fb9981f83cca575f5cacb567556396d8c87a`
+- exact-head workflow: `31862276925`
+- hosted `python-312-compat`: success
+- hosted canonical `gate`: success
+- merge commit on protected `main`: `006f02ebc12814684e14473990d328ff4658212d`
+
+The main-push workflow `31862649204` was queued at measurement time because the repository API
+reported zero registered self-hosted runners. That external main-only WSL/GPU acceptance was not
+bypassed, cancelled, or described as successful. The required pull-request checks were green and
+GitHub reported the PR `CLEAN` before the normal merge commit; no admin merge or force operation
+was used.
