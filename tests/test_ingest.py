@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from hawedit.captions import find_ffmpeg
+from hawedit.diarization import Segment
 from hawedit.ingest import (
     LOUDNORM_FILTER,
     MAX_SPEECH_DURATION_S,
@@ -38,10 +39,13 @@ from hawedit.ingest import (
     PROXY_FPS,
     PROXY_HEIGHT,
     TARGET_SAMPLE_RATE,
+    DiarizationInvalidOutput,
+    Diarizer,
     IngestError,
     IngestResult,
     SpeechSegment,
     assert_within_asr_ceiling,
+    attach_diarization,
     detect_shots,
     detect_speech,
     extract_audio,
@@ -392,6 +396,96 @@ def test_a_round_trip_does_not_turn_absent_diarization_into_an_empty_result() ->
         speech=(),
     )
     assert IngestResult.from_dict(json.loads(original.to_json())).diarization is None
+
+
+def _base_ingest_result(duration_ms: int = 4_162) -> IngestResult:
+    return IngestResult(
+        media_id="m",
+        source="s.mp4",
+        audio_path="a.wav",
+        proxy_path="p.mp4",
+        duration_ms=duration_ms,
+        shot_cuts_ms=(1_400, 2_800),
+        speech=(SpeechSegment(start_ms=0, end_ms=1_790),),
+    )
+
+
+def test_diarization_attachment_records_a_sorted_exclusive_result() -> None:
+    class Producer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            assert audio == Path("a.wav")
+            return (Segment(2_000, 4_000, "SPEAKER_01"), Segment(0, 1_800, "SPEAKER_00"))
+
+    result = attach_diarization(_base_ingest_result(), Producer())
+    assert isinstance(Producer(), Diarizer)
+    assert result.diarization == (
+        Segment(0, 1_800, "SPEAKER_00"),
+        Segment(2_000, 4_000, "SPEAKER_01"),
+    )
+    assert result.to_dict()["diarization"] == [
+        {"start_ms": 0, "end_ms": 1_800, "speaker": "SPEAKER_00"},
+        {"start_ms": 2_000, "end_ms": 4_000, "speaker": "SPEAKER_01"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("turns", "message"),
+    [
+        ((Segment(0, 2_000, "A"), Segment(1_000, 3_000, "B")), "overlap"),
+        ((Segment(0, 4_163, "A"),), "media duration"),
+        ((object(),), "Segment"),
+    ],
+)
+def test_diarization_attachment_refuses_untrusted_invalid_output(
+    turns: tuple[object, ...], message: str
+) -> None:
+    class Producer:
+        def diarize(self, audio: Path) -> tuple[object, ...]:
+            return turns
+
+    with pytest.raises(DiarizationInvalidOutput, match=message):
+        attach_diarization(_base_ingest_result(), Producer())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"start_ms": False, "end_ms": 10, "speaker": "A"},
+        {"start_ms": 0, "end_ms": True, "speaker": "A"},
+        {"start_ms": 0, "end_ms": 10, "speaker": []},
+    ],
+)
+def test_ingest_json_refuses_coercible_diarization_fields(bad: dict[str, object]) -> None:
+    payload = _base_ingest_result().to_dict()
+    payload["diarization"] = [bad]
+    with pytest.raises((TypeError, ValueError)):
+        IngestResult.from_dict(payload)
+
+
+def test_ingest_json_refuses_noncanonical_or_overlapping_turns() -> None:
+    payload = _base_ingest_result().to_dict()
+    payload["diarization"] = [
+        {"start_ms": 2_000, "end_ms": 3_000, "speaker": "B"},
+        {"start_ms": 0, "end_ms": 1_000, "speaker": "A"},
+    ]
+    with pytest.raises(ValueError, match="canonical order"):
+        IngestResult.from_dict(payload)
+
+    payload["diarization"] = [
+        {"start_ms": 0, "end_ms": 2_000, "speaker": "A"},
+        {"start_ms": 1_000, "end_ms": 3_000, "speaker": "B"},
+    ]
+    with pytest.raises(ValueError, match="overlap"):
+        IngestResult.from_dict(payload)
+
+
+def test_ingest_json_refuses_a_turn_past_the_media_clock() -> None:
+    payload = _base_ingest_result().to_dict()
+    payload["diarization"] = [
+        {"start_ms": 0, "end_ms": 4_163, "speaker": "A"},
+    ]
+    with pytest.raises(ValueError, match="media duration"):
+        IngestResult.from_dict(payload)
 
 
 def test_missing_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -38,6 +38,7 @@ __all__ = [
     "Segment",
     "boundary_reconciliation",
     "diarization_error_rate",
+    "turn_bounds_for_anchors",
 ]
 
 # The optimal speaker mapping is found by exhaustive search. Interview and podcast material
@@ -60,6 +61,19 @@ class Segment:
     speaker: str
 
     def __post_init__(self) -> None:
+        if type(self.start_ms) is not int or type(self.end_ms) is not int:
+            raise TypeError("speaker-turn bounds must be exact integer milliseconds")
+        if self.start_ms < 0:
+            raise ValueError(f"speaker turn starts before the media clock: {self.start_ms} ms")
+        if not isinstance(self.speaker, str):
+            raise TypeError("speaker label must be a string")
+        if (
+            not self.speaker
+            or self.speaker.strip() != self.speaker
+            or not self.speaker.isprintable()
+            or self.speaker.splitlines() != [self.speaker]
+        ):
+            raise ValueError("speaker label must be non-empty, trimmed, printable, and one line")
         if self.end_ms <= self.start_ms:
             raise ValueError(
                 f"segment for {self.speaker!r} ends at or before it starts "
@@ -89,6 +103,39 @@ def assert_exclusive(segments: Sequence[Segment]) -> None:
                 f"{later.speaker!r} starts at {later.start_ms} ms. §3 Stage 0 expects "
                 f"exclusive diarization."
             )
+
+
+def turn_bounds_for_anchors(
+    turns: Sequence[Segment], anchor_in_ms: int, anchor_out_ms: int
+) -> tuple[int | None, int | None]:
+    """Return only the measured turns containing the selected anchor edges.
+
+    Speaker labels are irrelevant to Stage 5's boundary arithmetic; exclusivity is what makes
+    each edge map to at most one turn. Intervals are half-open on the media clock. An anchor at
+    a turn boundary therefore uses the following turn for its in-point and the preceding turn
+    for its out-point, never crossing speakers by accident.
+
+    A gap produces ``None`` for that edge. Selecting the nearest turn would invent evidence
+    where the diarizer explicitly found none.
+    """
+    if type(anchor_in_ms) is not int or type(anchor_out_ms) is not int:
+        raise TypeError("anchor bounds must be exact integer milliseconds")
+    if anchor_in_ms < 0 or anchor_out_ms <= anchor_in_ms:
+        raise ValueError(
+            f"anchor span has no positive media duration: {anchor_in_ms}..{anchor_out_ms}"
+        )
+    assert_exclusive(turns)
+    ordered = sorted(turns, key=lambda turn: (turn.start_ms, turn.end_ms, turn.speaker))
+    start_turn = next(
+        (turn for turn in ordered if turn.start_ms <= anchor_in_ms < turn.end_ms), None
+    )
+    end_turn = next(
+        (turn for turn in ordered if turn.start_ms < anchor_out_ms <= turn.end_ms), None
+    )
+    return (
+        start_turn.start_ms if start_turn is not None else None,
+        end_turn.end_ms if end_turn is not None else None,
+    )
 
 
 @dataclass(frozen=True, slots=True)

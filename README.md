@@ -45,12 +45,12 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 
 | §3 Stage | State | What is missing |
 |---|---|---|
-| 0 · Ingest | **runs** | Diarization — Community-1 is a gated repo (`BLOCKED.md` #4). |
+| 0 · Ingest | **partial** | Audio/proxy/cuts/VAD run. A strict injected exclusive-diarization seam now preserves base ingest on model refusal and feeds measured turns to Stage 5; the production Community-1 adapter and bytes remain gated (`BLOCKED.md` #4). |
 | 1 · Speech | **runs** | `--omni-asr` runs official OmniASR LLM/CTC in parallel, decodes the CTC hypothesis, routes the bottom confidence quartile and material disagreement to rzgar, and CTC-realigns validator corrections. A source-bound 38.56-minute Sorani run published 5,897 timed words while retaining canonical segments for two explicitly rejected corrections; labelled Sorani accuracy remains external. |
 | 2 · Index | **wired** | `--visual` extracts each scene once, embeds all windows, retrieves top 50, reranks all hits and retains 5–10. Media with fewer scenes than the survivor count is **refused**, not silently shortened — measured on the 3-scene fixture, `evidence/unlisted-modules.md`. |
 | 3 · Discovery | **wired** | Path A and composed Path B union without promoting non-survivor scenes; `--auto-select` anchors complete contiguous sentences. |
 | 4 · Editorial judge | **wired** | Requests carry actual source JPEG bytes. Developer API handles non-confidential work; Vertex uses ADC bearer auth and an attributed ZDR gate. Credentials/billing remain external. |
-| 5 · Boundary fusion | **wired** | `--timelens` runs TimeLens2 per overlapping scene window and fuses only relevant media-clock intervals. |
+| 5 · Boundary fusion | **wired** | `--timelens` fuses only relevant media-clock intervals; an enabled validated diarizer additionally supplies only the turns containing the selected anchor edges. |
 | 6 · Render | **wired** | `--face-reframe` tracks a dominant continuous face and drives a time-varying vertical crop. It is face-aware, not active-speaker diarization. |
 
 "Runs" means: on real media, in a test, in the gate. Nothing here is marked done because it
@@ -466,7 +466,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
-| `diarization.py` | §8.1, §3 Stage 0 | DER and boundary reconciliation against word alignment. |
+| `diarization.py` | §8.1, §3 Stages 0 and 5 | DER, boundary reconciliation, strict exclusive turns, and anchor-edge-to-turn selection without nearest-turn invention. |
 | `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
 | `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |

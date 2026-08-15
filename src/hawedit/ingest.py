@@ -22,9 +22,10 @@ every event to a full second — and §3 Stage 5 matches shot cuts against a **4
 Detecting on the proxy would feed boundary fusion cuts coarser than the tolerance they are
 compared against, so every cut would either miss or match by accident. See D-023.
 
-Diarization is deliberately **absent rather than faked**: Community-1 is a gated repo
-(`BLOCKED.md` #4), and `IngestResult.diarization` is `None` when it has not run. A
-zero-speaker result would read as "one speaker throughout", which is a claim about the audio.
+Diarization is deliberately **injected rather than faked**: Community-1 is a gated repo
+(`BLOCKED.md` #4), so base ingest records `IngestResult.diarization=None`. An authenticated
+adapter may later attach a strictly validated exclusive result; an empty tuple then means the
+model ran and found no turns, while `None` still means it did not run.
 """
 
 from __future__ import annotations
@@ -41,12 +42,12 @@ import time
 import wave
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, BinaryIO, Final
+from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 
 from hawedit.captions import ffprobe_for, find_ffmpeg
-from hawedit.diarization import Segment
+from hawedit.diarization import OverlappingSegments, Segment, assert_exclusive
 
 __all__ = [
     "CONTENT_DETECTOR_THRESHOLD",
@@ -57,9 +58,13 @@ __all__ = [
     "PROXY_FPS",
     "PROXY_HEIGHT",
     "TARGET_SAMPLE_RATE",
+    "DiarizationInvalidOutput",
+    "DiarizationUnavailable",
+    "Diarizer",
     "IngestResult",
     "SpeechSegment",
     "assert_within_asr_ceiling",
+    "attach_diarization",
     "detect_shots",
     "detect_speech",
     "extract_audio",
@@ -89,6 +94,21 @@ _EXTRACT_LOCKS: dict[Path, threading.Lock] = {}
 
 class IngestError(RuntimeError):
     """Raised when Stage 0 cannot produce what later stages require."""
+
+
+class DiarizationUnavailable(RuntimeError):
+    """An enabled Stage 0 diarizer could not produce a trustworthy result."""
+
+
+class DiarizationInvalidOutput(DiarizationUnavailable):
+    """An enabled diarizer returned output outside HawEdit's strict schema."""
+
+
+@runtime_checkable
+class Diarizer(Protocol):
+    """Least-trusted Stage 0 producer seam; concrete model adapters implement this."""
+
+    def diarize(self, audio: Path) -> Sequence[Segment]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,6 +603,38 @@ class IngestResult:
     # the audio contains no speaker turns (BLOCKED.md #4).
     diarization: tuple[Segment, ...] | None = None
 
+    def __post_init__(self) -> None:
+        if type(self.duration_ms) is not int:
+            raise TypeError("ingest duration must be exact integer milliseconds")
+        if self.duration_ms <= 0:
+            raise ValueError(f"ingest duration must be positive, got {self.duration_ms} ms")
+        if self.diarization is None:
+            return
+        if not isinstance(self.diarization, tuple) or any(
+            not isinstance(turn, Segment) for turn in self.diarization
+        ):
+            raise TypeError("ingest diarization must be a tuple of Segment values or None")
+        ordered = tuple(
+            sorted(
+                self.diarization,
+                key=lambda turn: (turn.start_ms, turn.end_ms, turn.speaker),
+            )
+        )
+        if self.diarization != ordered:
+            raise ValueError(
+                "ingest diarization turns are not in canonical order on the media clock"
+            )
+        assert_exclusive(self.diarization)
+        outside = next(
+            (turn for turn in self.diarization if turn.end_ms > self.duration_ms),
+            None,
+        )
+        if outside is not None:
+            raise ValueError(
+                f"diarization turn {outside.start_ms}..{outside.end_ms} ms is outside media "
+                f"duration {self.duration_ms} ms"
+            )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "media_id": self.media_id,
@@ -622,6 +674,38 @@ class IngestResult:
         )
 
 
+def attach_diarization(result: IngestResult, producer: Diarizer) -> IngestResult:
+    """Run and validate an injected diarizer without discarding base ingest artifacts.
+
+    The model boundary accepts no coercion. Only concrete ``Segment`` values within this
+    media's clock survive, the output must be exclusive, and ordering is canonical before it
+    enters the run record. Operational producer failures remain ``DiarizationUnavailable``;
+    arbitrary programmer exceptions are deliberately not hidden here.
+    """
+    raw_turns = producer.diarize(Path(result.audio_path))
+    try:
+        turns = tuple(raw_turns)
+    except TypeError as exc:
+        raise DiarizationInvalidOutput("diarization output must be an iterable of Segment") from exc
+    if any(not isinstance(turn, Segment) for turn in turns):
+        raise DiarizationInvalidOutput("diarization output must contain only Segment values")
+    ordered = tuple(sorted(turns, key=lambda turn: (turn.start_ms, turn.end_ms, turn.speaker)))
+    try:
+        assert_exclusive(ordered)
+    except OverlappingSegments as exc:
+        raise DiarizationInvalidOutput(f"diarization turns overlap: {exc}") from exc
+    outside = next(
+        (turn for turn in ordered if turn.start_ms < 0 or turn.end_ms > result.duration_ms),
+        None,
+    )
+    if outside is not None:
+        raise DiarizationInvalidOutput(
+            f"diarization turn {outside.start_ms}..{outside.end_ms} ms is outside media "
+            f"duration {result.duration_ms} ms"
+        )
+    return replace(result, diarization=ordered)
+
+
 def ingest(
     source: Path,
     work_dir: Path,
@@ -634,8 +718,9 @@ def ingest(
     consume, shot cuts from the source, and VAD speech regions verified against OmniASR's
     ceiling.
 
-    Diarization is not run here — Community-1 is gated (`BLOCKED.md` #4) — and its absence is
-    recorded as `None` rather than as an empty result.
+    Diarization is attached separately through `attach_diarization`: Community-1 is gated
+    (`BLOCKED.md` #4), and base ingest must remain usable when that optional producer is absent
+    or operationally unavailable. Its absence is recorded as `None`, never an empty result.
 
     Raises:
         IngestError: ffmpeg is unavailable, a pass failed, the audio is the wrong format, or
