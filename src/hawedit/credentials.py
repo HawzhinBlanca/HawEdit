@@ -89,6 +89,7 @@ _IS_WINDOWS: Final = os.name == "nt"
 # provider-controlled error from becoming an unbounded terminal/log record.
 _MAX_KEY_CHECK_RESPONSE_BYTES: Final = 1 * 1024 * 1024
 _MAX_KEY_CHECK_DETAIL_CHARS: Final = 512
+_MAX_GEMINI_KEY_CHARS: Final = 512
 
 
 def restrict_to_owner(path: Path) -> None:
@@ -357,6 +358,15 @@ def _response_exceeds_limit(body: str) -> bool:
     return len(body.encode("utf-8", "replace")) > _MAX_KEY_CHECK_RESPONSE_BYTES
 
 
+def _is_header_safe_key(key: object) -> bool:
+    """Whether `key` can become one bounded HTTP header value without library exceptions."""
+    return (
+        isinstance(key, str)
+        and 0 < len(key) <= _MAX_GEMINI_KEY_CHARS
+        and all(0x21 <= ord(character) <= 0x7E for character in key)
+    )
+
+
 def _https_get(url: str, headers: Mapping[str, str] | None = None) -> tuple[int, str]:
     import urllib.error
     import urllib.request
@@ -386,6 +396,12 @@ def validate_gemini_key(key: str, transport: Transport = _https_get) -> KeyCheck
     logging in clients, proxies, exception traces, or access logs.
     """
     import json
+
+    if not _is_header_safe_key(key):
+        return KeyCheck(
+            False,
+            "key is not a header-safe bounded printable ASCII value; nothing was sent",
+        )
 
     status, body = transport(
         "https://generativelanguage.googleapis.com/v1beta/models", {"x-goog-api-key": key}
