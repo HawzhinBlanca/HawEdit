@@ -500,6 +500,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
+| `http_transport.py` | — | Shared authenticated HTTP boundary: redirects are refused before API-key or bearer headers can reach another origin. |
 | `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, and fail-closed confidential routing. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |
 | `delivery.py` | §2 | The SRT sidecar (clip timeline) shares §4.3.5's word-aligned RTL breaks with ASS; the CMX 3600 EDL (source timeline) writes SMPTE drop-frame for NTSC 30000/1001 and refuses other unsupported fractional rates. |

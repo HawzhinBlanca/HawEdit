@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from hawedit.credentials import GEMINI_API_KEY, read_credential
+from hawedit.http_transport import open_without_redirects
 from hawedit.judge import (
     KURDISH_EDITORIAL_JUDGE,
     InputMode,
@@ -285,7 +286,7 @@ def _https(
         method="POST" if body else "GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with open_without_redirects(request, timeout=120) as response:
             return response.status, _bounded_response_text(response)
     except urllib.error.HTTPError as exc:
         return exc.code, _bounded_response_text(exc)

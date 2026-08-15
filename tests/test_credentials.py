@@ -19,7 +19,6 @@ import os
 import stat
 import subprocess
 import urllib.error
-import urllib.request
 from collections.abc import Mapping
 from email.message import Message
 from pathlib import Path
@@ -491,8 +490,7 @@ def test_the_live_key_probe_refuses_an_oversized_response_without_reading_it_all
             return b"x" * size
 
     monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
+        "hawedit.credentials.open_without_redirects",
         lambda _request, timeout: OversizedResponse(),
     )
 
@@ -525,7 +523,7 @@ def test_the_live_key_probe_bounds_an_oversized_http_error_body(
             OversizedErrorBody(),
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", reject)
+    monkeypatch.setattr("hawedit.credentials.open_without_redirects", reject)
 
     check = validate_gemini_key(FAKE_KEY)
     assert not check.valid
@@ -720,7 +718,7 @@ def test_the_panel_refuses_a_header_unsafe_key_without_printing_it(
     def no_write(*_args: object, **_kwargs: object) -> Path:
         raise AssertionError("the panel stored a header-unsafe key")
 
-    monkeypatch.setattr(urllib.request, "urlopen", no_network)
+    monkeypatch.setattr("hawedit.credentials.open_without_redirects", no_network)
     monkeypatch.setattr("hawedit.credentials.write_credential", no_write)
 
     code = credentials_main([])
