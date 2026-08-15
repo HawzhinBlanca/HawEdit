@@ -305,3 +305,214 @@ jobs:
           compression-level: 0
           retention-days: 90
           overwrite: false
+
+  publish-release:
+    needs: attest-release
+    if: >-
+      github.repository == 'HawzhinBlanca/HawEdit' &&
+      github.event.workflow_run.head_repository.full_name == 'HawzhinBlanca/HawEdit' &&
+      github.sha == github.event.workflow_run.head_sha &&
+      github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - name: Download the independently checked and attested bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hawedit-release-${{ github.event.workflow_run.head_sha }}
+          path: ${{ runner.temp }}/hawedit-release
+
+      - name: Publish only an exact pre-tagged immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ runner.temp }}/hawedit-release
+          GATED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GATE_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          mapfile -d '' entries < <(find "$RELEASE_DIR" -mindepth 1 -print0)
+          test "${#entries[@]}" -eq 4
+          for entry in "${entries[@]}"; do
+            test -f "$entry"
+            test ! -L "$entry"
+          done
+          mapfile -d '' wheels < <(
+            find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.whl' -print0
+          )
+          mapfile -d '' sboms < <(
+            find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.whl.spdx.json' -print0
+          )
+          test "${#wheels[@]}" -eq 1
+          test "${#sboms[@]}" -eq 1
+          test -f "$RELEASE_DIR/release-provenance.json"
+          test -f "$RELEASE_DIR/SHA256SUMS"
+          (
+            cd "$RELEASE_DIR"
+            sha256sum --check --strict SHA256SUMS
+          )
+
+          test "$(jq -r .distribution "$RELEASE_DIR/release-provenance.json")" = hawedit
+          version="$(jq -er '.version | select(type == "string")' \
+            "$RELEASE_DIR/release-provenance.json")"
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "release version must be strict MAJOR.MINOR.PATCH, got: $version" >&2
+            exit 1
+          fi
+          jq -e \
+            --arg revision "$GATED_SHA" \
+            --argjson run_id "$GATE_RUN_ID" \
+            --arg version "$version" \
+            '.schema == 5 and
+             .distribution == "hawedit" and
+             .version == $version and
+             .revision == $revision and
+             .gate.repository == "HawzhinBlanca/HawEdit" and
+             .gate.workflow == ".github/workflows/gate.yml" and
+             .gate.event == "push" and
+             .gate.branch == "main" and
+             .gate.revision == $revision and
+             .gate.run_id == $run_id' \
+            "$RELEASE_DIR/release-provenance.json" >/dev/null
+          tag="v$version"
+
+          for file in "${entries[@]}"; do
+            gh attestation verify "$file" \
+              --repo HawzhinBlanca/HawEdit \
+              --signer-workflow HawzhinBlanca/HawEdit/.github/workflows/release.yml \
+              --source-ref refs/heads/main \
+              --source-digest "$GATED_SHA" \
+              --signer-digest "$GATED_SHA" \
+              --deny-self-hosted-runners >/dev/null
+          done
+
+          refs_json="$(gh api \
+            "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag")"
+          tag_count="$(jq --arg ref "refs/tags/$tag" \
+            '[.[] | select(.ref == $ref)] | length' <<<"$refs_json")"
+          if [[ "$tag_count" == 0 ]]; then
+            echo "No exact $tag tag exists; attested build retained without public release."
+            exit 0
+          fi
+          test "$tag_count" = 1
+          tag_type="$(jq -r --arg ref "refs/tags/$tag" \
+            '.[] | select(.ref == $ref) | .object.type' <<<"$refs_json")"
+          tag_object_sha="$(jq -r --arg ref "refs/tags/$tag" \
+            '.[] | select(.ref == $ref) | .object.sha' <<<"$refs_json")"
+          case "$tag_type" in
+            commit)
+              tag_commit="$tag_object_sha"
+              ;;
+            tag)
+              tag_json="$(gh api \
+                "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+              test "$(jq -r .object.type <<<"$tag_json")" = commit
+              tag_commit="$(jq -r .object.sha <<<"$tag_json")"
+              ;;
+            *)
+              echo "unsupported tag target type: $tag_type" >&2
+              exit 1
+              ;;
+          esac
+          test "$tag_commit" = "$GATED_SHA"
+
+          verify_release_assets() {
+            local destination="$1"
+            mkdir "$destination"
+            gh release download "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$destination"
+            mapfile -d '' downloaded < <(find "$destination" -mindepth 1 -print0)
+            test "${#downloaded[@]}" -eq 4
+            for entry in "${downloaded[@]}"; do
+              test -f "$entry"
+              test ! -L "$entry"
+            done
+            diff -u \
+              <(cd "$RELEASE_DIR" && cat SHA256SUMS) \
+              <(cd "$destination" && cat SHA256SUMS)
+            (
+              cd "$destination"
+              sha256sum --check --strict SHA256SUMS
+            )
+            for source in "${entries[@]}"; do
+              cmp --silent "$source" "$destination/$(basename "$source")"
+            done
+          }
+
+          if release_json="$(gh release view "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isImmutable,isPrerelease,tagName,targetCommitish)"; then
+            if [[ "$(jq -r .isDraft <<<"$release_json")" == true ]]; then
+              echo "existing release is a draft; refusing to adopt or overwrite it" >&2
+              exit 1
+            fi
+            test "$(jq -r .isPrerelease <<<"$release_json")" = false
+            test "$(jq -r .tagName <<<"$release_json")" = "$tag"
+            published_target="$(jq -r .targetCommitish <<<"$release_json")"
+            test "$published_target" = "$GATED_SHA"
+            test "$(jq -r .isImmutable <<<"$release_json")" = true
+            verify_release_assets "$RUNNER_TEMP/existing-release"
+            echo "Existing immutable $tag release matches the accepted bytes; no mutation made."
+            exit 0
+          fi
+
+          notes="HawEdit $version from accepted main SHA $GATED_SHA. Every attached payload is checksum-bound and has GitHub OIDC provenance from the exact release workflow."
+          gh release create "$tag" \
+            "${wheels[0]}" \
+            "${sboms[0]}" \
+            "$RELEASE_DIR/release-provenance.json" \
+            "$RELEASE_DIR/SHA256SUMS" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --target "$GATED_SHA" \
+            --title "HawEdit $version" \
+            --notes "$notes" \
+            --draft
+
+          draft_json="$(gh release view "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName,targetCommitish,assets)"
+          test "$(jq -r .isDraft <<<"$draft_json")" = true
+          test "$(jq -r .isPrerelease <<<"$draft_json")" = false
+          test "$(jq -r .tagName <<<"$draft_json")" = "$tag"
+          test "$(jq -r .targetCommitish <<<"$draft_json")" = "$GATED_SHA"
+          expected_assets="$(printf '%s\n' \
+            "$(basename "${wheels[0]}")" \
+            "$(basename "${sboms[0]}")" \
+            release-provenance.json SHA256SUMS | sort)"
+          draft_assets="$(jq -r '.assets[].name' <<<"$draft_json" | sort)"
+          if [[ "$draft_assets" != "$expected_assets" ]]; then
+            echo "release draft asset set does not match the exact four-file bundle" >&2
+            exit 1
+          fi
+          verify_release_assets "$RUNNER_TEMP/draft-release"
+
+          gh release edit "$tag" --draft=false --latest \
+            --repo "$GITHUB_REPOSITORY"
+          published_json="$(gh release view "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isImmutable,isPrerelease,tagName,targetCommitish,assets,url)"
+          test "$(jq -r .isDraft <<<"$published_json")" = false
+          test "$(jq -r .isPrerelease <<<"$published_json")" = false
+          test "$(jq -r .tagName <<<"$published_json")" = "$tag"
+          published_target="$(jq -r .targetCommitish <<<"$published_json")"
+          test "$published_target" = "$GATED_SHA"
+          if [[ "$(jq -r .isImmutable <<<"$published_json")" != true ]]; then
+            echo "published release is not immutable" >&2
+            exit 1
+          fi
+          published_assets="$(jq -r '.assets[].name' <<<"$published_json" | sort)"
+          if [[ "$published_assets" != "$expected_assets" ]]; then
+            echo "published release asset set does not match the exact four-file bundle" >&2
+            exit 1
+          fi
+          echo "Published immutable release: $(jq -r .url <<<"$published_json")"

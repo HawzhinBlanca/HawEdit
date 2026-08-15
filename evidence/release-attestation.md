@@ -105,6 +105,23 @@ post-merge protected-`main` push:
 `--repo` alone is intentionally insufficient: another workflow in the same repository is a
 different signer policy. These flags require the exact release workflow, source ref, source SHA,
 workflow-definition SHA and GitHub-hosted runner. The attestation then proves the GitHub Actions
-identity and workflow provenance of those exact bytes. It does **not** create a version/tag policy,
-a durable GitHub Release, a transitive runtime hash lock, or evidence that real
-deployment/model/benchmark gates passed. Those remain separate work.
+identity and workflow provenance of those exact bytes.
+
+## Versioned immutable publication
+
+D-239 adds a fourth, fresh no-checkout job. A strict `vMAJOR.MINOR.PATCH` tag derived from the
+provenance version must already point to the exact accepted main SHA. The job verifies all four
+local attestations with the policy above, stages the exact files on a draft release, downloads and
+byte-compares them, then publishes only when the draft is exact. The repository's immutable
+releases setting is enabled; the published result must report immutable. Automation never creates,
+moves, deletes, reuses, uploads to, or clobbers an existing production tag/release. An exact
+existing public release is only re-accepted after byte and identity verification.
+
+No tag is a successful no-publication outcome. If an approved tag is created after the original
+workflow finished, use `gh run rerun RELEASE_RUN_ID` on that exact release workflow. Operators must
+never move, delete, or reuse a production tag; rollback is a new patch version that records which
+release it supersedes. Full policy and live setting evidence:
+`evidence/versioned-immutable-release.md`.
+
+The remaining work is the live hosted run, exact release URL, downloaded attestation verification,
+and the separate deployment/model/benchmark acceptance gates.

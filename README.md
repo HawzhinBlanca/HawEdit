@@ -173,7 +173,7 @@ wheel, or existing release directory is refused.
 On the default branch, `.github/workflows/release.yml` consumes only a successful official
 `gate` **push** run on `main`, checks out that run's exact SHA, invokes the same fail-closed release
 verifier in a read-only job, then requires fresh no-checkout Python 3.11 and 3.12 runners to install
-the exact wheel, run `pip check`, resolve installed package data and start all seven CLIs. Only after
+the exact wheel, run `pip check`, resolve installed package data and start all nine CLIs. Only after
 both pass does it transfer the four explicit payloads to a fresh runner. Only that isolated job has
 OIDC/attestation authority; it refuses any extra, nested,
 linked, malformed or digest-mismatched entry, independently requires the wheel to identify the
@@ -183,7 +183,20 @@ before attesting and uploading the same explicit four-file set. The workflow act
 full-commit pinned and neither job has repository-content write permission. Verify a downloaded
 run artifact rather than trusting its filename. If `main` advances before an older gate is
 promoted, the workflow refuses that stale run so GitHub's OIDC/SLSA commit claim cannot name newer
-source than the bytes being attested:
+source than the bytes being attested.
+
+Public releases add one deliberate promotion input. A strict `vMAJOR.MINOR.PATCH` tag derived from
+the wheel version must already point to the exact accepted main SHA. With no tag, the workflow
+keeps the attested Actions artifact and publishes nothing. After all acceptance gates pass, create
+the exact tag; if the release workflow already completed, rerun that same immutable event with
+`gh run rerun RELEASE_RUN_ID`. A fresh no-checkout job re-verifies the four attestations, creates a
+draft, downloads and byte-compares its exact assets, and only then publishes. Repository-level
+**immutable releases** are enabled, and the workflow refuses a published result unless GitHub
+reports it immutable. Operators must never move, delete, or reuse a production tag. Rollback is a
+new patch version, never a rewritten release. See `evidence/versioned-immutable-release.md`.
+
+Verify either the Actions artifact or downloaded GitHub Release assets with the exact signer
+policy:
 
 ```bash
 cd PATH/TO/DOWNLOADED/hawedit-release-SHA
@@ -202,12 +215,12 @@ done
 
 This proves repeatable source-to-wheel bytes and defines a keyless publisher-identity check. The
 hosted workflow still needs one post-merge protected-`main` run before the Python 3.12 prerequisite,
-installed-wheel matrix and attestation path have live evidence; a feature branch cannot supply it.
-It also does not create a version/tag policy, a
-durable GitHub Release, or a resolved transitive deployment lock. Separately, OmniASR's
+installed-wheel matrix, attestation path, and versioned immutable publication have live evidence;
+a feature branch cannot supply it. The policy and automation exist, but no production tag or
+release is created before that acceptance. Separately, OmniASR's
 package-managed assets and the project-managed Hugging Face snapshots have application-owned byte
 identities and pre-load verification; those runtime proofs are not implied by a green wheel. See
-`evidence/release-attestation.md`.
+`evidence/release-attestation.md` and `evidence/versioned-immutable-release.md`.
 
 ## Models and weights
 

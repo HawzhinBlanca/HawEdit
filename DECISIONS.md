@@ -10812,6 +10812,33 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-239 - Production releases are pre-tagged, draft-verified, immutable, and forward-only
+
+The attestation workflow had an authenticated four-file artifact but no durable publication
+identity. Publishing every accepted `main` commit would make the unchanged `0.1.0` project version
+ambiguous; allowing the workflow to create a missing tag would also turn a CI event into an
+implicit release decision.
+
+Production intent is therefore a pre-existing strict `vMAJOR.MINOR.PATCH` tag derived exactly from
+the wheel/provenance version. It must resolve to the exact accepted main SHA. No tag means the
+workflow keeps its attested Actions artifact and exits without a public release; an operator may
+create the approved tag and rerun that same release workflow event. The publisher is a fresh
+no-checkout job with only `contents: write` and attestation-read authority. It verifies the exact
+signer/source policy, creates a draft with four explicit assets, downloads and byte-compares the
+draft, then publishes. Repository-level immutable releases were enabled before any tag existed.
+
+Rejected auto-tagging: it collapses version approval into CI and would try to reuse `v0.1.0` on
+later main commits. Rejected direct public upload: GitHub's own immutable-release guidance stages
+all assets on a draft before publication. Rejected delete-and-retry or clobber: production history
+is an audit record. Operators must never move, delete, or reuse a published tag; rollback is a new
+patch release that records the superseded version.
+
+The automation and repository setting close the policy/code gap, not live acceptance. M3.7 stays
+PARTIAL until an approved exact tag produces an immutable release URL whose downloaded assets and
+attestations verify.
+
+`evidence/versioned-immutable-release.md`.
+
 ## D-237 - Adapt main's audit correction to the atomic delivery publisher
 
 Protected main corrected an audit statement that contradicted its flat-file recovery guard: an
