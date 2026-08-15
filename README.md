@@ -314,34 +314,38 @@ builds: source archives are hashed, but compiler, system headers and produced na
 yet attested. `security/wsl-asr-vex.json` is a 30-day policy bound to those lock digests, the full
 receipt and the three OmniASR assets. It does not call the runtime vulnerability-free: five Torch
 families remain affected and CVE-2026-24747 is affected-but-mitigated. The policy parser ships in
-the wheel; live `pip-audit==2.10.1` enforcement on the dual-GPU WSL job remains an acceptance task.
+the wheel. Protected-main run `31874928483` executed the live, hash-locked
+`pip-audit==2.10.1` boundary on the dual-GPU WSL runner and uploaded its accepted evidence for
+exact source `ef40ff7c`; the 30-day policy still expires on 2026-09-08 and must be renewed rather
+than treated as a permanent clean bill of health.
 The full canonical pair and rzgar routing have run on hawapc01, including through the real CLI.
 The committed media fixture is synthetic Kurmanji, so this is execution evidence—not Sorani
-accuracy evidence. See `evidence/m1-4-stage1-validator.md`.
+accuracy evidence. See `evidence/m1-4-stage1-validator.md` and
+`evidence/current-main-acceptance-2026-08-15.md`.
 
 ## GPU (§3 Stages 2, 3 Path B, 5)
 
-Stage 0 runs on CPU by design (§6), so `setup.sh` installs the CPU build of torch. For the
-model stages, install the CUDA build **first** — naming the local version, because the CPU wheel
-already satisfies a bare `torch==2.13.0` and pip will report success while changing nothing:
-
-> **Production gap:** this CUDA command is a measured bootstrap, not a hash-locked deployment.
-> The CPU base/gate/model-fetch graphs are locked; a complete Windows CPython 3.11 cu130 lock and
-> clean dual-GPU smoke are still required before calling GPU deployment reproducible.
+Stage 0 runs on CPU by design (§6), so the ordinary setup remains CPU-only. The measured visual
+host is narrower and fail-closed: Windows x86-64, CPython 3.11, two 24 GiB RTX 3090 Ti cards and
+CUDA 13.0. Create a dedicated environment and install the exact 46-wheel graph rather than asking
+pip to resolve a live CUDA stack:
 
 ```bash
-pip install --index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://pypi.org/simple "torch==2.13.0+cu130" "torchvision==0.28.0+cu130"
+PY311=/absolute/path/to/cpython-3.11/python.exe
+"$PY311" -m venv .gpu
+bash scripts/install-host.sh .gpu/Scripts/python.exe gpu
 ```
 
-Then the extra:
+The installer uses `requirements/host-gpu-windows-py311.txt` with `--require-hashes` and
+`--only-binary`, audits the exact inventory, runs `pip check`, imports the pinned Torch,
+Torchvision and Torchaudio builds, and performs bfloat16 work on both cards. An installed wheel
+contains the same authenticated lock; resolve it with `python -I -m hawedit.environment
+--show-lock gpu`, install it in hash mode, then run `python -I -m hawedit.gpu_runtime`.
 
-```bash
-pip install -e '.[dev,media,gpu]'
-```
-
-Verified on hawapc01: both RTX 3090 Ti doing bfloat16 work, and `Qwen3-VL-Embedding-2B`
-returning 2048-d vectors for Kurdish text at 3.98 GiB. See `evidence/gpu-stack.md` — it also
-records two traps that decide how Stage 2 must be written (D-048).
+This qualifies dependency and hardware identity, not the application quality ceiling:
+VideoChat3-4B still reads at most eight frames on one card while the frozen blueprint describes a
+64-frame unit. See `evidence/gpu-dependency-lock.md`, `evidence/gpu-stack.md`, and
+`BLOCKED.md` #17.
 
 ## Gemini access (§3 Stage 4)
 
