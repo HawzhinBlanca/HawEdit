@@ -1,7 +1,7 @@
 # Tasks — speaker-boundary-fusion
 
 - [x] T1 Strict injected diarization producer and artifact validation
-- [ ] T2 Structured pipeline stage, honest completeness, and Stage 5 turn fusion
+- [x] T2 Structured pipeline stage, honest completeness, and Stage 5 turn fusion
 - [ ] T3 Exact-path commit, hosted CI, and evidence-backed promotion
 
 ## Definition of Done
