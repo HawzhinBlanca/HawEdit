@@ -19,11 +19,12 @@ def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def _jobs(workflow: str) -> tuple[str, str, str]:
+def _jobs(workflow: str) -> tuple[str, str, str, str]:
     build = workflow.split("  build-release:\n", 1)[1].split("\n  smoke-release:\n", 1)[0]
     smoke = workflow.split("\n  smoke-release:\n", 1)[1].split("\n  attest-release:\n", 1)[0]
-    attest = workflow.split("\n  attest-release:\n", 1)[1]
-    return build, smoke, attest
+    attest = workflow.split("\n  attest-release:\n", 1)[1].split("\n  publish-release:\n", 1)[0]
+    publish = workflow.split("\n  publish-release:\n", 1)[1]
+    return build, smoke, attest, publish
 
 
 def _literal_paths(section: str, field: str) -> tuple[str, ...]:
@@ -64,7 +65,7 @@ def _identity_wheel(
 
 def test_release_workflow_only_promotes_an_official_successful_main_push_gate() -> None:
     workflow = _workflow()
-    build, smoke, attest = _jobs(workflow)
+    build, smoke, attest, publish = _jobs(workflow)
     assert "workflow_run:" in workflow
     assert "workflows: [gate]" in workflow
     assert "types: [completed]" in workflow
@@ -82,8 +83,10 @@ def test_release_workflow_only_promotes_an_official_successful_main_push_gate() 
     for condition in required_conditions:
         assert condition in build
         assert condition in attest
-        assert workflow.count(condition) == 2
+        assert condition in publish
+        assert workflow.count(condition) == 3
     assert "needs: build-release" in smoke
+    assert "needs: attest-release" in publish
 
 
 def test_documented_verifier_pins_the_complete_signer_policy() -> None:
@@ -99,14 +102,28 @@ def test_documented_verifier_pins_the_complete_signer_policy() -> None:
         assert "--deny-self-hosted-runners" in document
 
 
+def test_documented_release_policy_is_explicitly_versioned_immutable_and_forward_only() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    evidence = (ROOT / "evidence" / "versioned-immutable-release.md").read_text(encoding="utf-8")
+    for document in (readme, evidence):
+        assert "vMAJOR.MINOR.PATCH" in document
+        assert "must already point to the exact accepted main SHA" in document
+        assert "immutable releases" in document.lower()
+        assert "never move, delete, or reuse" in document
+        assert "new patch version" in document
+        assert "gh run rerun" in document
+
+
 def test_release_workflow_has_only_the_permissions_needed_for_oidc_attestation() -> None:
     workflow = _workflow()
-    build, smoke, attest = _jobs(workflow)
+    build, smoke, attest, publish = _jobs(workflow)
     assert "permissions: {}" in workflow.split("jobs:\n", 1)[0]
     assert "id-token: write" not in build
     assert "attestations: write" not in build
     assert "id-token: write" not in smoke
     assert "attestations: write" not in smoke
+    assert "id-token: write" not in publish
+    assert "attestations: write" not in publish
     build_permissions = build.split("    permissions:\n", 1)[1].split("    steps:\n", 1)[0]
     assert build_permissions.strip().splitlines() == [
         "contents: read",
@@ -119,13 +136,20 @@ def test_release_workflow_has_only_the_permissions_needed_for_oidc_attestation()
         "      id-token: write",
         "      attestations: write",
     ]
-    assert "contents: write" not in workflow
+    publish_permissions = publish.split("    permissions:\n", 1)[1].split("    steps:\n", 1)[0]
+    assert publish_permissions.strip().splitlines() == [
+        "contents: write",
+        "      attestations: read",
+    ]
+    assert "contents: write" not in build
+    assert "contents: write" not in smoke
+    assert "contents: write" not in attest
     assert "packages: write" not in workflow
 
 
 def test_release_workflow_rebuilds_and_attests_the_exact_gated_sha() -> None:
     workflow = _workflow()
-    build, smoke, attest_job = _jobs(workflow)
+    build, smoke, attest_job, publish = _jobs(workflow)
     checkout = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     setup_python = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
     download = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
@@ -148,6 +172,8 @@ def test_release_workflow_rebuilds_and_attests_the_exact_gated_sha() -> None:
     assert "actions/checkout" not in attest_job
     assert "python -m hawedit.release" not in attest_job
     assert "GITHUB_TOKEN:" not in attest_job
+    assert "actions/checkout" not in publish
+    assert "python -m hawedit.release" not in publish
 
     subject_paths = _literal_paths(attest_job, "subject-path")
     upload_paths = _literal_paths(attest_job, "path")
@@ -174,7 +200,7 @@ def test_release_workflow_rebuilds_and_attests_the_exact_gated_sha() -> None:
 
 
 def test_release_attestation_waits_for_clean_installed_wheel_smoke() -> None:
-    _, smoke, attest = _jobs(_workflow())
+    _, smoke, attest, _ = _jobs(_workflow())
     assert 'python-version: ["3.11", "3.12"]' in smoke
     assert "actions/checkout" not in smoke
     assert "--only-binary=:all:" in smoke
@@ -205,7 +231,7 @@ def test_release_attestation_waits_for_clean_installed_wheel_smoke() -> None:
 
 
 def test_privileged_job_independently_refuses_any_noncanonical_transport() -> None:
-    _, _, attest = _jobs(_workflow())
+    _, _, attest, _ = _jobs(_workflow())
     assert 'find "$RELEASE_DIR" -mindepth 1 -print0' in attest
     assert 'test "${#entries[@]}" -eq 4' in attest
     assert 'test ! -L "$entry"' in attest
@@ -281,7 +307,55 @@ def test_privileged_identity_verifier_accepts_canonical_wheel(tmp_path: Path) ->
     assert result.stdout.splitlines() == ["hawedit", "1.2.3"]
 
 
+def test_durable_release_requires_an_exact_preexisting_version_tag() -> None:
+    _, _, _, publish = _jobs(_workflow())
+    assert "needs: attest-release" in publish
+    assert (
+        'test "$(jq -r .distribution "$RELEASE_DIR/release-provenance.json")" = hawedit' in publish
+    )
+    assert "version must be strict MAJOR.MINOR.PATCH" in publish
+    assert 'tag="v$version"' in publish
+    assert "git/matching-refs/tags/$tag" in publish
+    assert "refs/tags/$tag" in publish
+    assert "git/tags/$tag_object_sha" in publish
+    assert 'test "$tag_commit" = "$GATED_SHA"' in publish
+    assert "gh release create" in publish
+    assert "--verify-tag" in publish
+    assert '--target "$GATED_SHA"' in publish
+    assert "--draft" in publish
+
+
+def test_durable_release_verifies_before_publish_and_never_clobbers() -> None:
+    _, _, _, publish = _jobs(_workflow())
+    assert 'find "$RELEASE_DIR" -mindepth 1 -print0' in publish
+    assert 'test "${#entries[@]}" -eq 4' in publish
+    assert "sha256sum --check --strict SHA256SUMS" in publish
+    assert "gh attestation verify" in publish
+    assert "--signer-workflow HawzhinBlanca/HawEdit/.github/workflows/release.yml" in publish
+    assert '--source-digest "$GATED_SHA"' in publish
+    assert '--signer-digest "$GATED_SHA"' in publish
+    assert "--deny-self-hosted-runners" in publish
+    assert "--clobber" not in publish
+    assert "gh release delete" not in publish
+    assert "gh release upload" not in publish
+    create_at = publish.index("gh release create")
+    local_attest_at = publish.index("gh attestation verify")
+    draft_validate_at = publish.index("release draft asset set does not match")
+    publish_at = publish.index('gh release edit "$tag" --draft=false --latest')
+    assert local_attest_at < create_at < draft_validate_at < publish_at
+
+
+def test_existing_public_release_is_only_accepted_after_exact_byte_verification() -> None:
+    _, _, _, publish = _jobs(_workflow())
+    assert "existing release is a draft; refusing to adopt or overwrite it" in publish
+    assert 'gh release download "$tag"' in publish
+    assert "diff -u" in publish
+    assert "published release asset set does not match" in publish
+    assert "published release is not immutable" in publish
+    assert 'test "$published_target" = "$GATED_SHA"' in publish
+
+
 def test_release_workflow_pins_every_remote_action_to_a_full_commit() -> None:
     actions = re.findall(r"^\s*uses:\s*([^\s#]+)", _workflow(), re.MULTILINE)
-    assert len(actions) == 8
+    assert len(actions) == 9
     assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in actions)
