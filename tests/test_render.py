@@ -801,32 +801,38 @@ def test_real_render_preserves_validated_speaker_tracking_provenance(tmp_path: P
 
 
 def test_render_refuses_a_reframe_label_that_contradicts_its_points(tmp_path: Path) -> None:
-    kwargs = {
-        "clip": _clip(),
-        "source": FIXTURE,
-        "ass_path": tmp_path / "unused.ass",
-        "fonts_dir": FONTS,
-        "source_width": SOURCE_WIDTH,
-        "source_height": SOURCE_HEIGHT,
-    }
-    with pytest.raises(ValueError, match="dynamic reframe mode needs focus points"):
+    def attempt(
+        output: Path,
+        reframe: Reframe,
+        focus_points: tuple[tuple[int, int], ...] = (),
+    ) -> None:
         render_clip(
-            output=tmp_path / "speaker-without-points.mp4",
-            reframe=Reframe.SPEAKER_TRACKED,
-            **kwargs,
+            clip=_clip(),
+            source=FIXTURE,
+            ass_path=tmp_path / "unused.ass",
+            fonts_dir=FONTS,
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+            focus_points=focus_points,
+            reframe=reframe,
+        )
+
+    with pytest.raises(ValueError, match="dynamic reframe mode needs focus points"):
+        attempt(
+            tmp_path / "speaker-without-points.mp4",
+            Reframe.SPEAKER_TRACKED,
         )
     with pytest.raises(ValueError, match="dynamic reframe mode needs focus points"):
-        render_clip(
-            output=tmp_path / "face-without-points.mp4",
-            reframe=Reframe.FACE_TRACKED,
-            **kwargs,
+        attempt(
+            tmp_path / "face-without-points.mp4",
+            Reframe.FACE_TRACKED,
         )
     with pytest.raises(ValueError, match="static reframe mode cannot carry focus points"):
-        render_clip(
-            output=tmp_path / "static-with-points.mp4",
-            focus_points=((500, 100),),
-            reframe=Reframe.STATIC_CENTRE,
-            **kwargs,
+        attempt(
+            tmp_path / "static-with-points.mp4",
+            Reframe.STATIC_CENTRE,
+            ((500, 100),),
         )
 
 
