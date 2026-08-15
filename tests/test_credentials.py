@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import errno
 import getpass
+import io
 import json
 import os
 import stat
 import subprocess
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -410,6 +414,96 @@ def test_the_rejection_message_does_not_contain_the_key() -> None:
 def test_an_unreachable_api_message_does_not_contain_the_key() -> None:
     check = validate_gemini_key(FAKE_KEY, transport=offline_transport)
     assert FAKE_KEY not in check.detail
+
+
+def test_key_validation_bounds_and_redacts_an_untrusted_provider_error() -> None:
+    hostile = f"provider echoed {FAKE_KEY}\x00\n" + ("X" * 1_000_000) + " secret-tail"
+    check = validate_gemini_key(
+        FAKE_KEY,
+        transport=lambda _url, _headers: (
+            400,
+            json.dumps({"error": {"message": hostile}}),
+        ),
+    )
+
+    assert not check.valid
+    assert FAKE_KEY not in check.detail
+    assert "\x00" not in check.detail and "\n" not in check.detail
+    assert len(check.detail) <= credentials._MAX_KEY_CHECK_DETAIL_CHARS
+    assert "secret-tail" not in check.detail
+
+
+def test_key_validation_bounds_an_untrusted_network_error() -> None:
+    check = validate_gemini_key(
+        FAKE_KEY,
+        transport=lambda _url, _headers: (0, "offline\x00\n" + ("N" * 1_000_000)),
+    )
+
+    assert not check.valid
+    assert "\x00" not in check.detail and "\n" not in check.detail
+    assert len(check.detail) <= credentials._MAX_KEY_CHECK_DETAIL_CHARS
+
+
+def test_the_live_key_probe_refuses_an_oversized_response_without_reading_it_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[int] = []
+
+    class OversizedResponse:
+        status = 200
+
+        def __enter__(self) -> OversizedResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            requested.append(size)
+            assert size == credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1
+            return b"x" * size
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda _request, timeout: OversizedResponse(),
+    )
+
+    check = validate_gemini_key(FAKE_KEY)
+    assert not check.valid
+    assert "exceeded" in check.detail
+    assert requested == [credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1]
+
+
+def test_the_live_key_probe_bounds_an_oversized_http_error_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[int] = []
+
+    class OversizedErrorBody(io.BytesIO):
+        def __init__(self) -> None:
+            super().__init__(b"e" * (credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1))
+
+        def read(self, size: int | None = -1) -> bytes:
+            requested.append(-1 if size is None else size)
+            return super().read(size)
+
+    def reject(_request: object, timeout: int) -> object:
+        assert timeout == 30
+        raise urllib.error.HTTPError(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            429,
+            "too many requests",
+            Message(),
+            OversizedErrorBody(),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", reject)
+
+    check = validate_gemini_key(FAKE_KEY)
+    assert not check.valid
+    assert "exceeded" in check.detail
+    assert requested == [credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1]
 
 
 # --- reading: environment first, then .env -------------------------------------------------

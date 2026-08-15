@@ -83,6 +83,13 @@ _O_NOFOLLOW: Final = getattr(os, "O_NOFOLLOW", 0)
 # a test reach that branch anywhere, the way `_O_NOFOLLOW` is patched to 0 rather than skipped.
 _IS_WINDOWS: Final = os.name == "nt"
 
+# The credential panel is a security boundary, not a general-purpose HTTP client. A model-list
+# response is tiny in normal operation, while an unbounded proxy/provider body can consume memory
+# before the panel has decided whether a key is safe to store. The detail ceiling also prevents a
+# provider-controlled error from becoming an unbounded terminal/log record.
+_MAX_KEY_CHECK_RESPONSE_BYTES: Final = 1 * 1024 * 1024
+_MAX_KEY_CHECK_DETAIL_CHARS: Final = 512
+
 
 def restrict_to_owner(path: Path) -> None:
     """Narrow `path` so no other local account can read it.
@@ -316,6 +323,40 @@ class KeyCheck:
 Transport = Callable[[str, Mapping[str, str]], tuple[int, str]]
 
 
+def _bounded_key_check_response(stream: object) -> str:
+    reader = getattr(stream, "read", None)
+    if not callable(reader):
+        raise CredentialError("credential validation response has no readable body")
+    body: bytes = reader(_MAX_KEY_CHECK_RESPONSE_BYTES + 1)
+    if len(body) > _MAX_KEY_CHECK_RESPONSE_BYTES:
+        raise CredentialError(
+            f"credential validation response exceeded {_MAX_KEY_CHECK_RESPONSE_BYTES} bytes"
+        )
+    return body.decode("utf-8", "replace")
+
+
+def _safe_key_check_detail(prefix: str, message: object, key: str) -> str:
+    """Bound one untrusted diagnostic and remove the submitted credential from it."""
+    raw = message if isinstance(message, str) else type(message).__name__
+    # Only this prefix can reach the bounded result. Limiting before normalization avoids a second
+    # large allocation when an injected transport returns an already-materialized hostile string.
+    sample = raw[: _MAX_KEY_CHECK_DETAIL_CHARS * 4]
+    if key:
+        sample = sample.replace(key, "[REDACTED]")
+    printable = "".join(character if character.isprintable() else " " for character in sample)
+    normalized = " ".join(printable.split())
+    detail = f"{prefix}{normalized}"
+    if len(detail) > _MAX_KEY_CHECK_DETAIL_CHARS:
+        detail = detail[: _MAX_KEY_CHECK_DETAIL_CHARS - 1] + "…"
+    return detail
+
+
+def _response_exceeds_limit(body: str) -> bool:
+    if len(body) > _MAX_KEY_CHECK_RESPONSE_BYTES:
+        return True
+    return len(body.encode("utf-8", "replace")) > _MAX_KEY_CHECK_RESPONSE_BYTES
+
+
 def _https_get(url: str, headers: Mapping[str, str] | None = None) -> tuple[int, str]:
     import urllib.error
     import urllib.request
@@ -323,9 +364,14 @@ def _https_get(url: str, headers: Mapping[str, str] | None = None) -> tuple[int,
     request = urllib.request.Request(url, headers=dict(headers or {}))
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            return response.status, response.read().decode("utf-8", "replace")
+            return response.status, _bounded_key_check_response(response)
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", "replace")
+        try:
+            return exc.code, _bounded_key_check_response(exc)
+        except CredentialError as oversized:
+            return 0, str(oversized)
+    except CredentialError as exc:
+        return 0, str(exc)
     except OSError as exc:
         return 0, str(exc)
 
@@ -344,21 +390,39 @@ def validate_gemini_key(key: str, transport: Transport = _https_get) -> KeyCheck
     status, body = transport(
         "https://generativelanguage.googleapis.com/v1beta/models", {"x-goog-api-key": key}
     )
+    if _response_exceeds_limit(body):
+        return KeyCheck(
+            False,
+            _safe_key_check_detail(
+                "could not validate the Gemini key: ",
+                f"response exceeded {_MAX_KEY_CHECK_RESPONSE_BYTES} bytes",
+                key,
+            ),
+        )
     if status == 0:
-        return KeyCheck(False, f"could not reach the Gemini API: {body}")
+        return KeyCheck(
+            False,
+            _safe_key_check_detail("could not reach the Gemini API: ", body, key),
+        )
     if status != 200:
         try:
             message = json.loads(body)["error"]["message"]
         except (ValueError, KeyError, TypeError):
             message = body[:200]
-        return KeyCheck(False, f"the API rejected this key (HTTP {status}): {message}")
+        return KeyCheck(
+            False,
+            _safe_key_check_detail(f"the API rejected this key (HTTP {status}): ", message, key),
+        )
 
     try:
         names = tuple(
             str(model["name"]).removeprefix("models/") for model in json.loads(body)["models"]
         )
     except (ValueError, KeyError, TypeError) as exc:
-        return KeyCheck(False, f"unreadable response from the API: {exc}")
+        return KeyCheck(
+            False,
+            _safe_key_check_detail("unreadable response from the API: ", exc, key),
+        )
     return KeyCheck(True, f"key accepted; {len(names)} model(s) visible", names)
 
 
