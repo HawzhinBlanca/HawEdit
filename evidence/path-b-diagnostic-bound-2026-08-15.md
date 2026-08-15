@@ -46,5 +46,9 @@ both CUDA GPUs. The live VEX gate completed in 146.4 seconds and accepted all 12
 all 12 current reviewed dispositions. Its write-once 10,382-byte local artifact has SHA-256
 `c6632369f31ea5b1b7bb0fc69a7ea0399a023529ae0b213dc16db6337871c52f`.
 
-The host-local JSON remains outside the repository. A protected-main hosted artifact and the
-canonical full gate are still required before promotion.
+The clean canonical gate then passed Ruff, strict mypy over 132 source files, formatting, and
+2,501/2,501 tests with zero skipped in 308.31 seconds. Its freshness/count grader accepted the
+JUnit evidence and printed `VERIFY OK`.
+
+The host-local JSON remains outside the repository. A protected-main hosted artifact is still
+required before promotion.
