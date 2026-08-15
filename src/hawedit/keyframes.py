@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from hawedit.captions import find_ffmpeg
-from hawedit.judge import JudgeFrame
+from hawedit.judge import MAX_JUDGE_FRAME_BYTES, JudgeFrame
 
 __all__ = ["KeyframeError", "extract_judge_frames"]
 
@@ -20,9 +20,15 @@ class KeyframeError(RuntimeError):
 
 def _read_keyframe(path: Path) -> bytes:
     try:
-        return path.read_bytes()
+        with path.open("rb") as stream:
+            payload = stream.read(MAX_JUDGE_FRAME_BYTES + 1)
     except OSError as exc:
         raise KeyframeError(f"could not read extracted Stage 4 keyframe {path}: {exc}") from exc
+    if not payload:
+        raise KeyframeError(f"extracted Stage 4 keyframe {path} is empty")
+    if len(payload) > MAX_JUDGE_FRAME_BYTES:
+        raise KeyframeError(f"extracted Stage 4 keyframe {path} exceeds the 5 MiB ceiling")
+    return payload
 
 
 def _remove_private_keyframes(extraction_dir: Path) -> None:
