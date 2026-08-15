@@ -92,10 +92,43 @@ def test_wsl_runtime_refuses_a_legacy_ready_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     runtime = tmp_path / "runtime"
-    monkeypatch.setattr("hawedit.asr.default_wsl_runtime", lambda: runtime)
+    monkeypatch.setattr("hawedit.asr.configured_wsl_runtime", lambda: runtime)
     producer = WslOmniAsrProducer()
     with pytest.raises(RuntimeError, match="runtime receipt is invalid"):
         producer._runtime()
+
+
+def test_wsl_producer_loads_the_receipt_from_the_shared_configured_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime = (tmp_path / "runtime").absolute()
+    receipt = SimpleNamespace(
+        distro="Ubuntu",
+        generation_root=tmp_path / "generation",
+        source_root=tmp_path / "source",
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr("hawedit.asr.configured_wsl_runtime", lambda: runtime)
+
+    def load_receipt(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return receipt
+
+    monkeypatch.setattr("hawedit.asr.load_wsl_runtime_receipt", load_receipt)
+    producer = WslOmniAsrProducer(distro="Ubuntu")
+    monkeypatch.setattr(producer, "_wsl_path", lambda path: f"/wsl/{Path(path).name}")
+
+    interpreter, source = producer._runtime()
+
+    assert calls == [
+        {
+            "distro": "Ubuntu",
+            "runtime_root": runtime,
+            "executable": "wsl.exe",
+        }
+    ]
+    assert interpreter == "/wsl/generation/bin/python"
+    assert source == "/wsl/source"
 
 
 def test_omni_loader_reads_only_held_verified_descriptors(

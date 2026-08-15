@@ -211,6 +211,29 @@ def test_live_gate_runs_exact_pinned_contract_and_publishes_bound_evidence(
     assert persisted["audit"]["report"] == _audit_report()
 
 
+def test_live_gate_uses_the_same_environment_runtime_root_as_setup_and_stage_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, runtime, receipt, _commands = _install_success_mocks(monkeypatch, tmp_path)
+    monkeypatch.setenv("HAWEDIT_WSL_RUNTIME", str(runtime))
+    receipt_calls: list[dict[str, object]] = []
+
+    def load_receipt(**kwargs: object) -> WslRuntimeReceipt:
+        receipt_calls.append(kwargs)
+        return receipt
+
+    monkeypatch.setattr(gate, "load_wsl_runtime_receipt", load_receipt)
+
+    gate.run_live_gate(
+        evidence_path=tmp_path / "environment-root-evidence.json",
+        package_source=source,
+        distro="Ubuntu",
+        vex_path=POLICY,
+    )
+
+    assert receipt_calls[0]["runtime_root"] == runtime
+
+
 def test_missing_current_receipt_fails_before_tools_or_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

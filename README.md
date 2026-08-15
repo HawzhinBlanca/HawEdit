@@ -97,6 +97,8 @@ Linux/macOS only):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup-wsl-asr.ps1
+# When the default LocalAppData volume is unsuitable:
+powershell -ExecutionPolicy Bypass -File scripts/setup-wsl-asr.ps1 -RuntimeRoot D:\HawEdit-runtime\wsl-asr
 ```
 
 That creates a source-fingerprinted runtime below `%LOCALAPPDATA%\HawEdit\wsl-asr`, using Python
@@ -107,9 +109,12 @@ before model construction. Rerunning setup revalidates or repairs missing assets
 trusting an old `.ready` marker. It then imports both stacks and probes both CUDA GPUs. The host
 runner still owns Stage 0, cuts every VAD-bounded WAV
 locally, invokes one WSL worker so both models load once, then validates the returned immutable
-transcript. An installed wheel exposes the same operation as `hawedit-asr-setup`. Override the
-distribution with `-Distribution Ubuntu`; advanced deployments can set
-`HAWEDIT_WSL_RUNTIME`, `HAWEDIT_WSL_PYTHON` and `HAWEDIT_WSL_SOURCE` explicitly.
+transcript. An installed wheel exposes the same operation as `hawedit-asr-setup`, including
+`--runtime-root D:\HawEdit-runtime\wsl-asr`. Override the distribution with
+`-Distribution Ubuntu`. An explicit runtime-root argument takes precedence over
+`HAWEDIT_WSL_RUNTIME`; setup, the Stage 1 worker and the live VEX gate share that same absolute,
+non-empty host-path contract. Advanced deployments can also set `HAWEDIT_WSL_PYTHON` and
+`HAWEDIT_WSL_SOURCE` explicitly.
 
 The WSL receipt also owns the exact checkpoint source/revision/integrity manifests used by the
 validator; it does not resolve trust metadata from mutable weight storage. Reprovisioning stages a

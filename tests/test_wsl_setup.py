@@ -34,6 +34,7 @@ from hawedit.wsl_setup import (
     _read_bound_regular_file,
     _remove_incomplete_generation,
     _runtime_transaction_lock,
+    configured_wsl_runtime,
     default_wsl_source,
     load_wsl_runtime_receipt,
     package_digest,
@@ -42,6 +43,7 @@ from hawedit.wsl_setup import (
     provision_wsl_runtime,
     wsl_path,
 )
+from hawedit.wsl_setup import main as wsl_setup_main
 
 
 def _candidate_payload() -> dict[str, object]:
@@ -69,6 +71,78 @@ def _candidate_payload() -> dict[str, object]:
             for asset in OMNI_ASSETS
         ],
     }
+
+
+def test_runtime_root_configuration_has_one_explicit_environment_default_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment = (tmp_path / "environment-runtime").absolute()
+    explicit = (tmp_path / "explicit-runtime").absolute()
+    fallback = (tmp_path / "default-runtime").absolute()
+    monkeypatch.setenv("HAWEDIT_WSL_RUNTIME", str(environment))
+    monkeypatch.setattr("hawedit.wsl_setup.default_wsl_runtime", lambda _source=None: fallback)
+
+    assert configured_wsl_runtime(explicit) == explicit
+    assert configured_wsl_runtime() == environment
+
+    monkeypatch.delenv("HAWEDIT_WSL_RUNTIME")
+    assert configured_wsl_runtime() == fallback
+
+
+@pytest.mark.parametrize("configured", ["", "relative/runtime"])
+def test_runtime_root_configuration_refuses_empty_or_relative_values(
+    monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    monkeypatch.setenv("HAWEDIT_WSL_RUNTIME", configured)
+
+    with pytest.raises(WslRuntimeError, match="non-empty absolute path"):
+        configured_wsl_runtime()
+
+
+def test_runtime_root_configuration_refuses_an_explicit_relative_path() -> None:
+    with pytest.raises(WslRuntimeError, match="non-empty absolute path"):
+        configured_wsl_runtime(Path("relative/runtime"))
+
+
+def test_setup_cli_forwards_the_exact_runtime_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runtime = (tmp_path / "runtime with spaces").absolute()
+    calls: list[dict[str, object]] = []
+
+    def provision(**kwargs: object) -> Path:
+        calls.append(kwargs)
+        return runtime
+
+    monkeypatch.setattr("hawedit.wsl_setup.provision_wsl_runtime", provision)
+
+    assert wsl_setup_main(["--distribution", "Ubuntu", "--runtime-root", str(runtime)]) == 0
+    assert calls == [{"distro": "Ubuntu", "runtime_root": runtime}]
+    assert capsys.readouterr().out == f"READY: OmniASR WSL2 runtime at {runtime}\n"
+
+
+@pytest.mark.parametrize("operation", ["load", "provision"])
+def test_direct_runtime_apis_honor_the_environment_root_before_filesystem_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, operation: str
+) -> None:
+    runtime = (tmp_path / "external-runtime").absolute()
+    package = tmp_path / "hawedit"
+    package.mkdir()
+    monkeypatch.setenv("HAWEDIT_WSL_RUNTIME", str(runtime))
+    seen: list[tuple[Path, bool]] = []
+
+    def stop_at_root(path: Path, *, create: bool) -> Path:
+        seen.append((path, create))
+        raise WslRuntimeError("root sentinel")
+
+    monkeypatch.setattr("hawedit.wsl_setup._runtime_root_path", stop_at_root)
+
+    with pytest.raises(WslRuntimeError, match="root sentinel"):
+        if operation == "load":
+            load_wsl_runtime_receipt(package_source=package)
+        else:
+            provision_wsl_runtime(package_source=package, platform_name="nt")
+    assert seen == [(runtime, operation == "provision")]
 
 
 def _write_candidate(

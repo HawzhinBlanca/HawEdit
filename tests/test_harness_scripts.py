@@ -37,6 +37,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER_FLIPPER = ROOT / "scripts" / "update-ledger.sh"
 STOP_HOOK = ROOT / "scripts" / "claude-stop-verify.sh"
+WSL_SETUP_WRAPPER = ROOT / "scripts" / "setup-wsl-asr.ps1"
 
 
 def _native_bash() -> str | None:
@@ -62,6 +63,15 @@ needs_bash = pytest.mark.skipif(BASH is None, reason="needs bash")
 # The stub gate appends to this on every invocation. Its absence is the evidence that a refusal
 # fired before `update-ledger.sh:78` rather than after it.
 GATE_MARKER = "gate-ran"
+
+
+def test_wsl_setup_wrapper_forwards_an_explicit_runtime_root() -> None:
+    source = WSL_SETUP_WRAPPER.read_text(encoding="utf-8")
+
+    assert '[string]$RuntimeRoot = ""' in source
+    assert "if ($RuntimeRoot)" in source
+    assert '$commandArguments += @("--runtime-root", $RuntimeRoot)' in source
+
 
 DEMO_LEDGER = """# Tasks ledger — demo
 
