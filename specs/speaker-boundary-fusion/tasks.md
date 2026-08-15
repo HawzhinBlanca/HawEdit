@@ -1,6 +1,6 @@
 # Tasks — speaker-boundary-fusion
 
-- [ ] T1 Strict injected diarization producer and artifact validation
+- [x] T1 Strict injected diarization producer and artifact validation
 - [ ] T2 Structured pipeline stage, honest completeness, and Stage 5 turn fusion
 - [ ] T3 Exact-path commit, hosted CI, and evidence-backed promotion
 
