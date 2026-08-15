@@ -25,12 +25,14 @@ codebase keeps finding.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import pytest
 
 from hawedit.clip import DiscoveryPath, Sv6d, assert_sv6d_within_window, parse_timestamps_ms
 from hawedit.path_b import (
     MAX_FRAMES_PER_CALL,
+    MAX_UNREADABLE_REASON_CHARS,
     PATH_B_MODEL,
     PathBError,
     SceneReading,
@@ -510,6 +512,42 @@ def test_a_refusal_with_no_reason_is_refused_at_construction() -> None:
     """A window dropped for no stated reason is a window silently dropped."""
     with pytest.raises(ValueError, match="carries no reason"):
         UnreadableScene(window_id="m1:s0:w0", in_ms=0, out_ms=1_000, reason="   ")
+
+
+def test_unreadable_reason_is_a_bounded_printable_line_without_losing_short_detail() -> None:
+    ordinary = UnreadableScene(
+        window_id="m1:s0:w0",
+        in_ms=0,
+        out_ms=1_000,
+        reason="PathBError: useful model refusal",
+    )
+    assert ordinary.reason == "PathBError: useful model refusal"
+
+    discarded_tail = "AIza" + ("S" * 64)
+    huge = UnreadableScene(
+        window_id="m1:s0:w1",
+        in_ms=1_000,
+        out_ms=2_000,
+        reason="PathBError: private\x00\n\t" + ("x" * 1_000_000) + discarded_tail,
+    )
+    serialized = huge.to_dict()["reason"]
+
+    assert isinstance(serialized, str)
+    assert len(serialized) == MAX_UNREADABLE_REASON_CHARS
+    assert serialized.startswith("PathBError: private ")
+    assert serialized.endswith("…")
+    assert discarded_tail not in serialized
+    assert not any(character in serialized for character in ("\x00", "\n", "\t"))
+
+
+def test_unreadable_reason_refuses_a_non_string_runtime_value() -> None:
+    with pytest.raises(TypeError, match="reason must be a string"):
+        UnreadableScene(
+            window_id="m1:s0:w0",
+            in_ms=0,
+            out_ms=1_000,
+            reason=cast(str, 7),
+        )
 
 
 @pytest.mark.parametrize(("in_ms", "out_ms"), [(1_000, 1_000), (2_000, 1_000)])

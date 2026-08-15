@@ -552,6 +552,33 @@ def test_read_scenes_reports_nothing_unreadable_when_every_window_reads(tmp_path
     assert produced.unreadable == ()
 
 
+def test_read_scenes_bounds_and_single_lines_a_path_b_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.path_b import MAX_UNREADABLE_REASON_CHARS
+
+    reader, _, _ = a_reader(tmp_path)
+    original = reader.read_window
+    secret_tail = "hf_" + ("S" * 64)
+
+    def refuse_one(window: SceneWindow) -> Any:
+        if window.scene_index == 1:
+            raise PathBError("private\x00\n" + ("x" * 1_000_000) + secret_tail)
+        return original(window)
+
+    monkeypatch.setattr(reader, "read_window", refuse_one)
+    produced = reader.read_scenes(_three_windows())
+
+    assert len(produced.readings) == 2
+    assert len(produced.unreadable) == 1
+    reason = produced.unreadable[0].reason
+    assert len(reason) == MAX_UNREADABLE_REASON_CHARS
+    assert reason.startswith("PathBError: private ")
+    assert reason.endswith("…")
+    assert secret_tail not in reason
+    assert not any(character in reason for character in ("\x00", "\n", "\t"))
+
+
 # --- a span in the time field, measured on the real 38-minute run (D-182) --------------------
 
 # Verbatim from `path_b_result.json`, the one window of seven that came back unreadable. Every
