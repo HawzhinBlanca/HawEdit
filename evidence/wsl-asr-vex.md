@@ -13,9 +13,26 @@ The exact result and artifact digest are recorded in
 `security/wsl-asr-vex.json` is a 30-day disposition expiring 2026-09-08, not a claim that the
 dependency graph is vulnerability-free. It binds CPython 3.12, exact dependency locks, package
 versions, all three OmniASR asset identities, and the reviewed HawEdit source SHA-256
-`8dc112b148061b69c76d6a2cda5c83913a6fe0e684b23ace7802142227f97519`. Any later source change
+`d8547bdc2421b3853ba02e050d76cf055ca6f3ebb27f4df45759c9b6bea896bf`. Any later source change
 must trigger disposition review and a new digest; code mitigations cannot be carried onto old or
 modified worker bytes by matching only dependencies and assets.
+
+On 2026-08-15 protected `main` commit `bd055e19dc15f9dc4380d149ed3a4184ea77873d`
+(package digest `8dc112b148061b69c76d6a2cda5c83913a6fe0e684b23ace7802142227f97519`)
+completed GitHub run 31868434251 attempt 2: Python 3.12 compatibility, the canonical gate, and the
+self-hosted `wsl-asr-security` job all passed. GitHub artifact
+`hawedit-wsl-asr-vex-bd055e19dc15f9dc4380d149ed3a4184ea77873d` has service-reported digest
+`sha256:00c8f2d51da9b6831abc5e4cb4a067fcf495974a58c99fa6f43b78cbb66ff194`;
+the extracted 10,382-byte JSON hashes to
+`c1d682c072d8c64b546711b78ca50144a35fea6ef44d3776e86da0573bba1c82` and records `accepted`,
+140 packages, 12 findings, 12 matched dispositions, three assets / 43,546,500,168 bytes, and two
+CUDA devices.
+
+The following validator-readiness correction separates exact checkpoint bytes from loader
+placement and changes no dependency, advisory disposition, checkpoint, asset, deserialization
+path, descriptor binding, or mitigation. Review therefore rebinds the policy to the current
+`d8547bdc…` package digest above. It does **not** inherit the accepted `8dc112b…` run: after merge,
+the new exact source still requires its own receipt and hosted live audit.
 
 The 2026-08-15 review rebound the policy after setup, Stage 1, and this live gate were composed
 through one fail-closed external runtime-root resolver. The change does not alter an advisory

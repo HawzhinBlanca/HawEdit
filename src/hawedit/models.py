@@ -106,9 +106,13 @@ _PIP_MODULES: Final[Mapping[str, str]] = {
 # map the config's `model_type`, and `Qwen3ASRForConditionalGeneration` is not importable — while
 # the checkpoint's own model card says `from qwen_asr import Qwen3ASRModel  # pip install
 # qwen-asr`. The import name comes from that card, not from a guess. D-131.
-_WEIGHTS_RUNTIMES: Final[Mapping[str, str]] = {
-    "rzgar/qwen3-asr-sorani-kurdish-ckb-v1": "qwen_asr",
-}
+_WSL_VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
+_WEIGHTS_RUNTIMES: Final[Mapping[str, str]] = {_WSL_VALIDATOR_MODEL_ID: "qwen_asr"}
+
+
+def _canonical_validator_uses_wsl() -> bool:
+    """Whether the supported validator route loads outside the calling interpreter."""
+    return os.name == "nt"
 
 
 class ModelNotProvisioned(RuntimeError):
@@ -809,6 +813,106 @@ class ModelStore:
             statuses.append(self._status_for(entry))
         return tuple(statuses)
 
+    def _checkpoint_byte_status(self, entry: ModelEntry) -> ModelStatus:
+        """Prove immutable checkpoint bytes without conflating them with loader placement."""
+        path = self.path_for(entry)
+        present = path.is_dir() and any(path.iterdir())
+        try:
+            source = self.source_for(entry)
+        except SourceNotConfigured:
+            source = "<source not configured>"
+        if not present:
+            return ModelStatus(
+                model_id=entry.model_id,
+                component=entry.component,
+                provisioning=entry.provisioning,
+                available=False,
+                detail=f"not downloaded ({source})",
+            )
+
+        size_bytes = None
+        try:
+            with _checkpoint_lock_stream(path, exclusive=False):
+                size_bytes = _directory_size(path)
+                integrity = self.verify_checkpoint(entry.model_id, path)
+        except (CheckpointIntegrityError, RevisionNotPinned, SourceNotConfigured) as exc:
+            return ModelStatus(
+                model_id=entry.model_id,
+                component=entry.component,
+                provisioning=entry.provisioning,
+                available=False,
+                detail=f"checkpoint integrity failed: {exc}",
+                path=path,
+                size_bytes=size_bytes,
+            )
+        return ModelStatus(
+            model_id=entry.model_id,
+            component=entry.component,
+            provisioning=entry.provisioning,
+            available=True,
+            detail=(
+                f"verified {integrity.files_verified} files from "
+                f"{integrity.repository}@{integrity.revision}"
+            ),
+            path=path,
+            size_bytes=size_bytes,
+        )
+
+    def _weights_execution_status(
+        self, entry: ModelEntry, *, canonical_route: bool
+    ) -> tuple[ModelStatus, bool]:
+        """Layer the supported execution runtime over one exact checkpoint-byte proof."""
+        checkpoint = self._checkpoint_byte_status(entry)
+        if not checkpoint.available:
+            return checkpoint, False
+
+        runtime = _WEIGHTS_RUNTIMES.get(entry.model_id)
+        if runtime is None:
+            return checkpoint, True
+        if (
+            canonical_route
+            and entry.model_id == _WSL_VALIDATOR_MODEL_ID
+            and _canonical_validator_uses_wsl()
+        ):
+            runtime_available, runtime_detail, _runtime_path, _runtime_bytes = (
+                self._omni_runtime_status()
+            )
+            qualifier = "available through" if runtime_available else "unavailable through"
+            return (
+                ModelStatus(
+                    model_id=checkpoint.model_id,
+                    component=checkpoint.component,
+                    provisioning=checkpoint.provisioning,
+                    available=runtime_available,
+                    detail=(
+                        f"{checkpoint.detail}; loader {runtime!r} {qualifier} "
+                        f"the canonical Windows WSL route: {runtime_detail}"
+                    ),
+                    path=checkpoint.path,
+                    size_bytes=checkpoint.size_bytes,
+                ),
+                True,
+            )
+
+        runtime_available = _is_importable(runtime)
+        if runtime_available:
+            return checkpoint, True
+        return (
+            ModelStatus(
+                model_id=checkpoint.model_id,
+                component=checkpoint.component,
+                provisioning=checkpoint.provisioning,
+                available=False,
+                detail=(
+                    f"{checkpoint.detail}, but the loader {runtime!r} is not installed — the "
+                    "checkpoint cannot be loaded here, so this component cannot run"
+                ),
+                path=checkpoint.path,
+                size_bytes=checkpoint.size_bytes,
+            ),
+            True,
+        )
+
     def _status_for(self, entry: ModelEntry) -> ModelStatus:
         if entry.provisioning is Provisioning.PIP:
             module = _PIP_MODULES.get(entry.model_id)
@@ -863,57 +967,16 @@ class ModelStore:
                 path=ffmpeg,
             )
 
-        path = self.path_for(entry)
-        present = path.is_dir() and any(path.iterdir())
-        try:
-            source = self.source_for(entry)
-        except SourceNotConfigured:
-            source = "<source not configured>"
-        size_bytes = None
-        runtime = _WEIGHTS_RUNTIMES.get(entry.model_id)
-        runtime_missing = runtime is not None and not _is_importable(runtime)
-        if present:
-            try:
-                with _checkpoint_lock_stream(path, exclusive=False):
-                    size_bytes = _directory_size(path)
-                    integrity = self.verify_checkpoint(entry.model_id, path)
-            except (CheckpointIntegrityError, RevisionNotPinned, SourceNotConfigured) as exc:
-                return ModelStatus(
-                    model_id=entry.model_id,
-                    component=entry.component,
-                    provisioning=entry.provisioning,
-                    available=False,
-                    detail=f"checkpoint integrity failed: {exc}",
-                    path=path,
-                    size_bytes=size_bytes,
-                )
-            detail = (
-                f"verified {integrity.files_verified} files from "
-                f"{integrity.repository}@{integrity.revision}"
-            )
-            if runtime_missing:
-                detail = (
-                    f"{detail}, but the loader {runtime!r} is not installed — the checkpoint "
-                    "cannot be loaded here, so this component cannot run"
-                )
-        else:
-            detail = f"not downloaded ({source})"
-        return ModelStatus(
-            model_id=entry.model_id,
-            component=entry.component,
-            provisioning=entry.provisioning,
-            available=present and not runtime_missing,
-            detail=detail,
-            path=path if present else None,
-            size_bytes=size_bytes,
-        )
+        status, _checkpoint_available = self._weights_execution_status(entry, canonical_route=True)
+        return status
 
     def missing_weights(self) -> tuple[ModelEntry, ...]:
         """§7 checkpoints that do not pass exact byte-manifest verification."""
         return tuple(
             entry
             for entry in REGISTRY.values()
-            if entry.provisioning is Provisioning.WEIGHTS and not self._status_for(entry).available
+            if entry.provisioning is Provisioning.WEIGHTS
+            and not self._checkpoint_byte_status(entry).available
         )
 
     def unconfigured_sources(self) -> tuple[ModelEntry, ...]:
@@ -936,9 +999,15 @@ class ModelStore:
             raise ModelNotProvisioned(f"{model_id!r} is not in §7")
         # Do not build the whole readiness report here. That would hash every 37 GB checkpoint
         # before a stage asking for one of them could start.
-        status = self._status_for(entry)
+        checkpoint_available: bool | None = None
+        if entry.provisioning is Provisioning.WEIGHTS:
+            status, checkpoint_available = self._weights_execution_status(
+                entry, canonical_route=False
+            )
+        else:
+            status = self._status_for(entry)
         if not status.available:
-            if status.provisioning is Provisioning.WEIGHTS:
+            if status.provisioning is Provisioning.WEIGHTS and not checkpoint_available:
                 remedy = "Run hawedit-fetch-models (install `hawedit[models]` first)."
             elif status.provisioning is Provisioning.SYSTEM:
                 remedy = "Run hawedit-ffmpeg-setup."

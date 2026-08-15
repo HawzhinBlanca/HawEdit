@@ -95,6 +95,39 @@ def test_plan_uses_registry_source_revision_and_destination(
     assert plan.items == (_item(tmp_path),)
 
 
+def test_plan_does_not_redownload_exact_validator_bytes_for_a_runtime_only_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The WSL loader and the immutable checkpoint are repaired by different commands."""
+    model_id = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
+    entry = REGISTRY[model_id]
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+    checkpoint = store.path_for(entry)
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "model.safetensors").write_bytes(b"exact validator bytes")
+    monkeypatch.setattr(
+        ModelStore,
+        "verify_checkpoint",
+        lambda _self, selected_id, selected=None: CheckpointIntegrityReport(
+            model_id=selected_id,
+            repository=model_id,
+            revision="b" * 40,
+            files_verified=1,
+            size_bytes=21,
+        ),
+    )
+    monkeypatch.setattr(model_contract, "_is_importable", lambda _module: False)
+    monkeypatch.setattr(ModelStore, "source_for", lambda _self, _entry: model_id)
+    monkeypatch.setattr(ModelStore, "revision_for", lambda _self, _source: "b" * 40)
+    monkeypatch.setattr(ModelStore, "assert_checkpoint_provisionable", lambda *_args: None)
+
+    plan = build_fetch_plan(store, model_id)
+
+    assert plan.items == ()
+    assert plan.unconfigured == ()
+    assert plan.refused == ()
+
+
 def test_plan_accumulates_a_blocked_or_mismatched_manifest_before_network_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
