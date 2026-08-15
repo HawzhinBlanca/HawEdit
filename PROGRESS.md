@@ -344,6 +344,18 @@ face-centred attempt is M8's own prerequisite rather than a substitute for it, a
 |---|---|---|---|
 | M8.1 | Face-centred vertical tracking — §3 Stage 6's prerequisite for judging whether SAM 3 is needed | PARTIAL | `src/hawedit/reframe.py` + `tests/test_reframe.py`. `OpenCvFaceTracker` samples at 2 fps, picks a continuous dominant face through `choose_face`, smooths the path over 5 samples and drives a time-varying crop expression; `render_clip` labels the result `Reframe.FACE_TRACKED` when points come back and `Reframe.STATIC_CENTRE` when they do not, so the artifact never claims tracking it did not do. Wired into `pipeline.py` behind `--face-reframe`. **This row previously existed only as a prose amendment under M3.3 with no status and no filename** — invisible to the tally and to any test, which is what D-069 closes. **Shortfall (two).** Measured on the only footage in this checkout — `tests/fixtures/kurdish-speech-3cuts.mp4` — the tracker returns **0 focus points**, correctly, because the fixture is coloured digits and contains no face. So the fallback is exercised on real pixels and the tracked path is not; whether the smoothing holds on a real speaker is unmeasured and needs `BLOCKED.md` #1 (`evidence/unlisted-modules.md`). And `choose_face` associates nothing to *speech*: with two faces it follows the larger/more continuous one, which §3 Stage 6 explicitly does not sanction — active-speaker association needs Community-1 (`BLOCKED.md` #4). Not a SAM 3 substitute; §9's M8 stays blocked. |
 
+**M3.3 / M8.1 amendment — 2026-08-15 (D-241):** the code-solvable association seam now
+exists. `SpeakerSubjectTracker` receives only exclusive turns overlapping the fused final clip;
+every returned point must match the speaker active at that media-clock instant. Valid evidence is
+recorded as `crop_target=speaker_face` and `Reframe.SPEAKER_TRACKED`. An empty result is explicit
+ambiguity and may fall back to face-only/static; invalid output, runtime failure, missing
+diarization, or no overlapping turn refuses visibly. The renderer independently rejects a mode
+whose points contradict it. The canonical Windows/Python 3.12 gate passed **2,478/2,478, zero
+skipped** twice, including all six named integration/render cases. Status remains **PARTIAL**:
+there is no production associator or CLI path, the Community-1 checkpoint is still gated, and no
+labelled multi-speaker footage has measured association or crop accuracy.
+`evidence/speaker-face-association-seam.md`.
+
 ## Production-hardening amendments - 2026-08-09
 
 - **M0.1 / D-117:** the earlier import-token repair was insufficient: a purpose-built executable

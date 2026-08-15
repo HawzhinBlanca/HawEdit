@@ -10812,6 +10812,32 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-241 - Speaker-tracked provenance requires speaker-labelled crop evidence
+
+§3 Stage 6 requires the vertical crop to follow the active speaker using diarization plus face
+detection. The existing `SubjectTracker` proves only that a face centre was followed; enabling a
+diarizer elsewhere in the run does not prove that the face belongs to the person speaking.
+
+Use a separate `SpeakerSubjectTracker` protocol. Give it only exclusive diarization turns that
+overlap the fused final clip, and require every returned point to name the turn's active speaker at
+that exact media-clock instant. Only a non-empty validated result may produce
+`crop_target=speaker_face` and `Reframe.SPEAKER_TRACKED`. The renderer validates mode/point
+consistency again at the artifact boundary.
+
+An empty result has one precise meaning: the provider ran and found no unambiguous association. It
+may fall back to face-only tracking or static centre without claiming speaker provenance. Invalid
+evidence, provider failure, missing diarization, or no overlapping turn is not ambiguity and is a
+structured refusal. Rejected silently falling back after an error because it would turn a broken
+or untrusted provider into an apparently successful face-tracked clip. Rejected overloading
+`SubjectTracker`, because a tuple of unlabelled points cannot prove that speech evidence
+participated.
+
+This decision defines the composition and evidence boundary, not a production model claim. The
+Community-1 checkpoint and labelled multi-speaker footage remain external, so M3.3/M8.1 remain
+PARTIAL and no association-accuracy number is reported.
+
+`evidence/speaker-face-association-seam.md`.
+
 ## D-239 - Production releases are pre-tagged, draft-verified, immutable, and forward-only
 
 The attestation workflow had an authenticated four-file artifact but no durable publication

@@ -51,7 +51,7 @@ and supply `--confidential --zero-data-retention --zdr-confirmed-by NAME`.
 | 3 · Discovery | **wired** | Path A and composed Path B union without promoting non-survivor scenes; `--auto-select` anchors complete contiguous sentences. |
 | 4 · Editorial judge | **wired** | Requests carry actual source JPEG bytes. Developer API handles non-confidential work; Vertex uses ADC bearer auth and an attributed ZDR gate. Credentials/billing remain external. |
 | 5 · Boundary fusion | **wired** | `--timelens` fuses only relevant media-clock intervals; an enabled validated diarizer additionally supplies only the turns containing the selected anchor edges. |
-| 6 · Render | **wired** | `--face-reframe` tracks a dominant continuous face and drives a time-varying vertical crop. It is face-aware, not active-speaker diarization. |
+| 6 · Render | **wired, production speaker adapter pending** | `--face-reframe` tracks a dominant continuous face. The runner also has a strict injected active-speaker seam: only validated focus points matching measured overlapping diarization turns may produce `speaker_face` / `SPEAKER_TRACKED`; explicit ambiguity falls back, while invalid or failed association refuses. No production associator, CLI flag, or accuracy claim exists yet (`BLOCKED.md` #1 and #4). |
 
 "Runs" means: on real media, in a test, in the gate. Nothing here is marked done because it
 compiles. `PROGRESS.md` carries the per-task evidence and `BLOCKED.md` carries what needs Hawa.
@@ -486,7 +486,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `video_grounding.py` | §3 Stage 5 | `MCG-NJU/TimeLens2-4B` grounding a query in one scene. It answers in seconds from the window's start; `VisualEvidenceInterval.from_window` moves that onto the media's clock, because an unshifted span can overlap the anchored sentence and extend the clip on footage from elsewhere. |
 | `visual_pipeline.py` | §3 Stages 2–3B | Extract once → Qwen embed → top-50 retrieve → rerank every hit → bounded survivors → VideoChat3 only on those survivors, with exact ID/score provenance. |
 | `keyframes.py` | §3 Stage 4 | Real source-timestamped JPEG extraction for the multimodal judge, capped at 20. |
-| `reframe.py` | §3 Stage 6 | Dominant-face continuity tracking that drives the render crop over time. |
+| `reframe.py` | §3 Stage 6 | Dominant-face continuity plus strict speaker-labelled focus evidence reconciled to exclusive diarization turns; the production active-speaker associator remains external. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |
