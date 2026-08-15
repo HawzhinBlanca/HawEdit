@@ -1,0 +1,1 @@
+TS=2026-08-15T02:34:02Z FEATURE=speaker-face-association TASK=T1 TESTS=test_speaker_focus_evidence_is_exact_and_carries_a_safe_label,test_speaker_focus_points_must_match_the_exclusive_turn_active_at_that_instant,test_speaker_focus_points_are_strictly_ordered_and_inside_the_final_clip VERIFY=pass REPORT=.gate/last-test-run.xml
