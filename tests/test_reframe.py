@@ -7,7 +7,15 @@ from typing import Any, cast
 
 import pytest
 
-from hawedit.reframe import FocusPoint, OpenCvFaceTracker, choose_face
+from hawedit.diarization import Segment
+from hawedit.reframe import (
+    FocusPoint,
+    OpenCvFaceTracker,
+    SpeakerAssociationError,
+    SpeakerFocusPoint,
+    choose_face,
+    validate_speaker_focus_points,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -18,6 +26,62 @@ def test_face_choice_prefers_area_then_preserves_subject_continuity() -> None:
     far = (500, 10, 100, 100)
     assert choose_face((near, far), previous_x=None) == far
     assert choose_face((near, far), previous_x=115) == near
+
+
+def test_speaker_focus_evidence_is_exact_and_carries_a_safe_label() -> None:
+    assert SpeakerFocusPoint(100, 320, "SPEAKER_00").speaker == "SPEAKER_00"
+
+    for bad in (True, 1.0, "1"):
+        with pytest.raises(TypeError, match="exact integer"):
+            SpeakerFocusPoint(cast(Any, bad), 320, "SPEAKER_00")
+        with pytest.raises(TypeError, match="exact integer"):
+            SpeakerFocusPoint(100, cast(Any, bad), "SPEAKER_00")
+
+    for bad in ("", " SPEAKER_00", "SPEAKER_00\n"):
+        with pytest.raises(ValueError, match="speaker label"):
+            SpeakerFocusPoint(100, 320, bad)
+
+
+def test_speaker_focus_points_must_match_the_exclusive_turn_active_at_that_instant() -> None:
+    turns = (
+        Segment(0, 1_000, "SPEAKER_00"),
+        Segment(1_200, 2_000, "SPEAKER_01"),
+    )
+    points = (
+        SpeakerFocusPoint(100, 200, "SPEAKER_00"),
+        SpeakerFocusPoint(1_200, 500, "SPEAKER_01"),
+    )
+    assert validate_speaker_focus_points(points, turns, 50, 1_900) == (
+        FocusPoint(100, 200),
+        FocusPoint(1_200, 500),
+    )
+
+    with pytest.raises(SpeakerAssociationError, match="no active diarization turn"):
+        validate_speaker_focus_points(
+            (SpeakerFocusPoint(1_100, 300, "SPEAKER_00"),), turns, 50, 1_900
+        )
+    with pytest.raises(SpeakerAssociationError, match="active speaker is 'SPEAKER_01'"):
+        validate_speaker_focus_points(
+            (SpeakerFocusPoint(1_300, 300, "SPEAKER_00"),), turns, 50, 1_900
+        )
+
+
+def test_speaker_focus_points_are_strictly_ordered_and_inside_the_final_clip() -> None:
+    turns = (Segment(0, 2_000, "SPEAKER_00"),)
+    with pytest.raises(SpeakerAssociationError, match="strictly increasing"):
+        validate_speaker_focus_points(
+            (
+                SpeakerFocusPoint(500, 100, "SPEAKER_00"),
+                SpeakerFocusPoint(500, 120, "SPEAKER_00"),
+            ),
+            turns,
+            100,
+            1_000,
+        )
+    with pytest.raises(SpeakerAssociationError, match="outside the final clip"):
+        validate_speaker_focus_points(
+            (SpeakerFocusPoint(1_000, 100, "SPEAKER_00"),), turns, 100, 1_000
+        )
 
 
 def test_face_tracker_runs_on_real_media_and_reports_no_invented_subject() -> None:
