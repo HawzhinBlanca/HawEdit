@@ -64,8 +64,8 @@ from hawedit.wsl_setup import (
     configured_wsl_runtime,
     load_wsl_runtime_receipt,
     wsl_path,
+    wsl_prefix,
 )
-from hawedit.wsl_setup import _prefix as wsl_prefix
 
 __all__ = [
     "LONG_AUDIO_THRESHOLD_S",

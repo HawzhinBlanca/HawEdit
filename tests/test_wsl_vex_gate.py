@@ -211,6 +211,40 @@ def test_live_gate_runs_exact_pinned_contract_and_publishes_bound_evidence(
     assert persisted["audit"]["report"] == _audit_report()
 
 
+def test_uv_probe_uses_the_shared_wsl_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+    prefix_calls: list[tuple[str | None, str]] = []
+
+    def shared_prefix(distro: str | None, executable: str = "wsl.exe") -> list[str]:
+        prefix_calls.append((distro, executable))
+        return ["shared-prefix", distro or "default", executable]
+
+    def run(command: list[str], **_kwargs: object) -> gate.ProcessOutput:
+        commands.append(command)
+        return gate.ProcessOutput(0, b"", b"")
+
+    monkeypatch.setattr(gate, "wsl_prefix", shared_prefix)
+    monkeypatch.setattr(gate, "_run_bounded", run)
+
+    assert (
+        gate._find_uv(_receipt(tmp_path), executable="custom-wsl.exe", timeout_seconds=90)
+        == "/home/ai/.local/bin/uv"
+    )
+    assert prefix_calls == [("Ubuntu", "custom-wsl.exe")]
+    assert commands == [
+        [
+            "shared-prefix",
+            "Ubuntu",
+            "custom-wsl.exe",
+            "test",
+            "-x",
+            "/home/ai/.local/bin/uv",
+        ]
+    ]
+
+
 def test_live_gate_uses_the_same_environment_runtime_root_as_setup_and_stage_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

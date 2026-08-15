@@ -28,7 +28,6 @@ from hawedit.wsl_setup import (
     WSL_MODEL_METADATA_DIRECTORY,
     WslRuntimeError,
     _parse_runtime_payload,
-    _prefix,
     _publish_runtime_candidate,
     _publish_source_snapshot,
     _read_bound_regular_file,
@@ -42,6 +41,7 @@ from hawedit.wsl_setup import (
     probe_wsl_runtime,
     provision_wsl_runtime,
     wsl_path,
+    wsl_prefix,
 )
 from hawedit.wsl_setup import main as wsl_setup_main
 
@@ -1247,9 +1247,9 @@ def test_every_wsl_invocation_bypasses_the_default_shell() -> None:
     `hawedit-asr-setup` could provision nothing — which is why M1.4 recorded the runtime as
     absent on this machine. With `--exec` it provisions: "OmniASR import OK; CUDA GPUs visible: 2".
     """
-    assert _prefix(None) == ["wsl.exe", "--exec"]
-    assert _prefix("Ubuntu") == ["wsl.exe", "--distribution", "Ubuntu", "--exec"]
-    assert "--" not in _prefix("Ubuntu"), (
+    assert wsl_prefix(None) == ["wsl.exe", "--exec"]
+    assert wsl_prefix("Ubuntu") == ["wsl.exe", "--distribution", "Ubuntu", "--exec"]
+    assert "--" not in wsl_prefix("Ubuntu"), (
         "a bare `--` routes the command through the default shell, which drops every `env VAR=`"
     )
 
@@ -1265,5 +1265,5 @@ def test_the_asr_producer_uses_the_shared_prefix_rather_than_its_own() -> None:
     from hawedit.asr import WslOmniAsrProducer
 
     producer = WslOmniAsrProducer(distro="Ubuntu")
-    assert producer._prefix() == _prefix("Ubuntu", producer.wsl_executable)
+    assert producer._prefix() == wsl_prefix("Ubuntu", producer.wsl_executable)
     assert "--exec" in producer._prefix()
