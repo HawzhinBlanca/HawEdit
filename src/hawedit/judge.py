@@ -56,6 +56,7 @@ __all__ = [
     "FULL_TRANSCRIPT_TOKENS_PER_HOUR",
     "JUDGE_ROLES",
     "KURDISH_EDITORIAL_JUDGE",
+    "MAX_JUDGE_FRAME_BYTES",
     "MIN_REGRESSION_ITEMS",
     "NARRATIVE_ROLES",
     "PRO_TIER_TOKEN_CEILING",
@@ -82,6 +83,7 @@ __all__ = [
 KURDISH_EDITORIAL_JUDGE: Final = "gemini-2.5-pro"
 JUDGE_SHADOW: Final = "gemini-3.1-pro"
 JUDGE_ROLES: Final = frozenset({"kurdish_editorial_judge", "judge_shadow"})
+MAX_JUDGE_FRAME_BYTES: Final = 5 * 1024 * 1024
 
 # §3 Stage 4's input-mode table, verbatim.
 FULL_TRANSCRIPT_TOKENS_PER_HOUR: Final = 20_000  # Path A discovery
@@ -434,7 +436,7 @@ class JudgeFrame:
             raise ValueError(f"unsupported judge keyframe MIME type {self.mime_type!r}")
         if not isinstance(self.data, bytes) or not self.data:
             raise ValueError("judge keyframe data must be non-empty bytes")
-        if len(self.data) > 5 * 1024 * 1024:
+        if len(self.data) > MAX_JUDGE_FRAME_BYTES:
             raise ValueError("one judge keyframe exceeds the 5 MiB inline-data ceiling")
 
 

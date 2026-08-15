@@ -3,11 +3,14 @@ from __future__ import annotations
 import shutil
 import subprocess
 from collections.abc import Iterator
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
+from hawedit import keyframes as keyframes_module
 from hawedit.captions import find_ffmpeg
+from hawedit.judge import MAX_JUDGE_FRAME_BYTES
 from hawedit.keyframes import KeyframeError, extract_judge_frames
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -340,19 +343,77 @@ def test_keyframe_payload_read_failure_is_normalized_and_private_frames_are_remo
         Path(command[-1].replace("%03d", "001")).write_bytes(b"jpeg")
         return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
 
-    real_read_bytes = Path.read_bytes
+    real_open = Path.open
 
-    def fail_keyframe_read(path: Path) -> bytes:
-        if path.suffix == ".jpg" and path.parent.name.startswith(".judge-"):
+    def fail_keyframe_read(path: Path, mode: str = "r", **_: object) -> object:
+        if mode == "rb" and path.suffix == ".jpg" and path.parent.name.startswith(".judge-"):
             raise PermissionError("scanner locked the frame")
-        return real_read_bytes(path)
+        return real_open(path, mode)
 
     monkeypatch.setattr("hawedit.keyframes.subprocess.run", fake_run)
-    monkeypatch.setattr(Path, "read_bytes", fail_keyframe_read)
+    monkeypatch.setattr(Path, "open", fail_keyframe_read)
     with pytest.raises(KeyframeError, match="could not read extracted Stage 4 keyframe") as caught:
         extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=1, ffmpeg=Path("ffmpeg"))
 
     assert isinstance(caught.value.__cause__, PermissionError)
+    assert not list(tmp_path.glob(".judge-*"))
+
+
+def test_keyframe_reader_limits_the_single_read_to_one_byte_past_the_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_sizes: list[int | None] = []
+
+    class RecordingReader(BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            requested_sizes.append(size)
+            return b"jpeg"
+
+    def open_reader(path: Path, mode: str = "r", *args: object, **kwargs: object) -> BytesIO:
+        assert path == Path("judge-001.jpg")
+        assert mode == "rb"
+        return RecordingReader()
+
+    monkeypatch.setattr(Path, "open", open_reader)
+
+    assert keyframes_module._read_keyframe(Path("judge-001.jpg")) == b"jpeg"
+    assert requested_sizes == [MAX_JUDGE_FRAME_BYTES + 1]
+
+
+def test_keyframe_reader_accepts_a_payload_exactly_at_the_ceiling(tmp_path: Path) -> None:
+    path = tmp_path / "judge-001.jpg"
+    path.write_bytes(b"x" * MAX_JUDGE_FRAME_BYTES)
+
+    assert len(keyframes_module._read_keyframe(path)) == MAX_JUDGE_FRAME_BYTES
+
+
+@pytest.mark.parametrize(
+    ("payload_size", "message"),
+    ((0, "is empty"), (MAX_JUDGE_FRAME_BYTES + 1, "exceeds the 5 MiB")),
+    ids=("empty", "oversize"),
+)
+def test_oversized_and_empty_extracted_keyframes_are_domain_failures_and_cleaned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload_size: int,
+    message: str,
+) -> None:
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1].replace("%03d", "001")).write_bytes(b"x" * payload_size)
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", fake_run)
+
+    with pytest.raises(KeyframeError, match=message):
+        extract_judge_frames(
+            FIXTURE,
+            100,
+            4_100,
+            tmp_path,
+            count=1,
+            ffmpeg=Path("ffmpeg"),
+        )
+
     assert not list(tmp_path.glob(".judge-*"))
 
 

@@ -44,6 +44,7 @@ from hawedit.discovery import Candidate, merge_candidates
 from hawedit.judge import (
     CANDIDATE_SLICE_TOKENS_PER_HOUR,
     FULL_TRANSCRIPT_TOKENS_PER_HOUR,
+    MAX_JUDGE_FRAME_BYTES,
     PRO_TIER_TOKEN_CEILING,
     VIDEO_TOKENS_PER_SECOND,
     WITH_VIDEO_TOKENS_PER_HOUR,
@@ -682,10 +683,12 @@ def test_a_keyframe_over_the_inline_data_ceiling_is_refused() -> None:
     """
     with pytest.raises(ValueError, match="5 MiB inline-data ceiling"):
         JudgeFrame(
-            timestamp_ms=0, mime_type="image/jpeg", data=b"\xff\xd8" + b"x" * (5 * 1024 * 1024)
+            timestamp_ms=0,
+            mime_type="image/jpeg",
+            data=b"\xff\xd8" + b"x" * MAX_JUDGE_FRAME_BYTES,
         )
     # The control: exactly at the ceiling is accepted, so the boundary is `>` and not `>=`.
-    JudgeFrame(timestamp_ms=0, mime_type="image/jpeg", data=b"x" * (5 * 1024 * 1024))
+    JudgeFrame(timestamp_ms=0, mime_type="image/jpeg", data=b"x" * MAX_JUDGE_FRAME_BYTES)
 
 
 def test_a_negative_keyframe_timestamp_is_refused() -> None:

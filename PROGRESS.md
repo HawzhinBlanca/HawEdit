@@ -516,6 +516,15 @@ Partial ffmpeg output is stamped from the requested cadence rather than stretche
 span. A real 13-second request over 4.162-second media returns genuine partial JPEGs with no
 timestamp beyond source end. `evidence/keyframe-timestamp-cadence-2026-08-10.md`.
 
+## M2.9 bounded-keyframe-read amendment (2026-08-15)
+
+The Stage 4 extractor now applies the judge's authoritative 5 MiB per-image ceiling while reading
+each private ffmpeg artifact, using one `limit + 1` read rather than allocating the whole file and
+rejecting it afterward. Empty and oversized ffmpeg outputs are `KeyframeError` domain failures, so
+the pipeline can report them structurally, and the owned extraction directory is still removed on
+both paths. Direct `JudgeFrame` construction independently enforces the same exported ceiling.
+The acceptance evidence is recorded in `evidence/bounded-keyframe-read-2026-08-15.md`.
+
 ## Delivery-audit claim binding (2026-08-10, D-190)
 
 Protected main corrected a stale statement about its older flat-file recovery path. Readiness
