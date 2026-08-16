@@ -312,6 +312,11 @@ def _model_metadata_bytes(package_dir: Path) -> dict[str, bytes]:
     }
 
 
+def _canonical_text_bytes(payload: bytes) -> bytes:
+    """Return the cross-platform identity bytes for reviewed text inputs."""
+    return payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def package_digest(package_dir: Path | None = None, *, reject_bytecode_cache: bool = False) -> str:
     """SHA-256 identity of worker code and metadata with universal newlines canonicalized.
 
@@ -324,12 +329,12 @@ def package_digest(package_dir: Path | None = None, *, reject_bytecode_cache: bo
     for path in _package_files(source, reject_bytecode_cache=reject_bytecode_cache):
         digest.update(path.relative_to(source).as_posix().encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+        digest.update(_canonical_text_bytes(path.read_bytes()))
         digest.update(b"\0")
     for filename, payload in _model_metadata_bytes(source).items():
         digest.update(f"{WSL_MODEL_METADATA_DIRECTORY}/{filename}".encode())
         digest.update(b"\0")
-        digest.update(payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+        digest.update(_canonical_text_bytes(payload))
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -365,8 +370,14 @@ def _validate_source_snapshot(source: Path, snapshot: Path) -> None:
             f"missing={sorted(expected_top_level - actual_top_level)}, "
             f"extra={sorted(actual_top_level - expected_top_level)}"
         )
-    expected_metadata = _model_metadata_bytes(source)
-    copied_metadata = _model_metadata_bytes(snapshot)
+    expected_metadata = {
+        filename: _canonical_text_bytes(payload)
+        for filename, payload in _model_metadata_bytes(source).items()
+    }
+    copied_metadata = {
+        filename: _canonical_text_bytes(payload)
+        for filename, payload in _model_metadata_bytes(snapshot).items()
+    }
     if copied_metadata != expected_metadata:
         raise RuntimeError("copied HawEdit checkpoint metadata does not match the host package")
 
