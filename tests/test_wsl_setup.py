@@ -33,6 +33,7 @@ from hawedit.wsl_setup import (
     _read_bound_regular_file,
     _remove_incomplete_generation,
     _runtime_transaction_lock,
+    _validate_source_snapshot,
     configured_wsl_runtime,
     default_wsl_source,
     load_wsl_runtime_receipt,
@@ -228,6 +229,37 @@ def test_package_digest_is_stable_across_platform_text_line_endings(tmp_path: Pa
     (windows / "worker.py").write_bytes(b"first = 1\r\nsecond = 2\r\n")
 
     assert package_digest(linux) == package_digest(windows)
+
+
+def test_source_snapshot_metadata_validation_is_portable_across_line_endings(
+    tmp_path: Path,
+) -> None:
+    linux = tmp_path / "linux" / "src" / "hawedit"
+    windows = tmp_path / "windows" / "src" / "hawedit"
+    linux.mkdir(parents=True)
+    windows.mkdir(parents=True)
+    (linux / "worker.py").write_bytes(b"first = 1\nsecond = 2\n")
+    (windows / "worker.py").write_bytes(b"first = 1\r\nsecond = 2\r\n")
+    for package, newline in ((linux, b"\n"), (windows, b"\r\n")):
+        metadata = package.parents[1] / "models"
+        metadata.mkdir()
+        for filename in ("sources.json", "revisions.json", "integrity.json"):
+            metadata.joinpath(filename).write_bytes(
+                b"{" + newline + b'  "schema": 1' + newline + b"}" + newline
+            )
+
+    source_root = tmp_path / "runtime" / "sources" / "identity"
+    source_root.mkdir(parents=True)
+    snapshot = _publish_source_snapshot(windows, source_root)
+
+    assert package_digest(linux) == package_digest(windows)
+    _validate_source_snapshot(linux, snapshot / "hawedit")
+
+    (linux.parents[1] / "models" / "revisions.json").write_text(
+        '{\n  "schema": 2\n}\n', encoding="utf-8"
+    )
+    with pytest.raises(RuntimeError, match="metadata does not match"):
+        _validate_source_snapshot(linux, snapshot / "hawedit")
 
 
 def test_identity_probe_is_self_contained_and_executable(
