@@ -11223,3 +11223,176 @@ and the `cancel_children=False`/"only `@DBOS.workflow()`" claims above.
 
 VERIFY OK — hawedit gate green: 1924 collected, 1924 passed, 0 skipped (floor ratcheted
 1893 -> 1924).
+
+## D-A22
+
+**`inspect_artifact` and `compare_versions`, and why "artifact" is a real concept here rather
+than an imported one.** The architecture record's recommended tool list (line 180) names
+`inspect_artifact` and `compare_versions` beside a full Artifact Ledger with `derived_from`/
+`supersedes` relations over a Postgres graph. This branch has no such graph and does not build
+one here — `durable_workflow.py`'s docstring already records why two flat files are the whole
+ledger while the only reader replays a single run. What this codebase *does* have is exactly two
+addressable things: the run's own clip, and each `revisions/<id>.json` record. `artifact_id` is
+therefore either the literal `"original"` or a `revision_id`, and there is deliberately no third
+kind — an `ArtifactInspection` names what actually exists on disk rather than modelling a
+lineage nothing produces yet.
+
+**Resolution mirrors the render functions rather than re-deriving.** For a revision,
+`inspect_artifact` reconstructs the effective span/style the same way `render_boundary_revision`/
+`render_caption_revision` do: the original clip with only the one field that kind of revision
+changes replaced. A boundary revision reports the *original's* caption style; a caption revision
+reports the *original's* span. A second derivation that could disagree with what would actually
+be encoded would be worse than no tool at all — the whole point of asking "what is this
+artifact" is to get the answer the render would give.
+
+**`compare_versions` is built on `inspect_artifact`, not a parallel lookup**, so a comparison
+can never disagree with inspecting either side alone. `both_found` gates `span_changed`/
+`caption_style_changed`: an unfound artifact has `None` in every field, so a naive inequality
+against a real one would report both dimensions as "changed" — a confident, wrong answer where
+"one of these does not exist" is the honest one.
+
+**Two real bugs an adversarial review pass caught here before this landed**, both fixed at the
+source and both now pinned by a regression test that was mutation-audited (revert the fix, watch
+exactly that test fail):
+
+1. **A failed render reported as `"rendered"`.** `status` was
+   `"rendered" if isinstance(report.get("render"), dict)` — but `StageSkipped.to_dict()` is
+   *also* a dict (`{"skipped": true, "stage": "render", ...}`), and `pipeline.py` sets `clip`
+   *before* the render stage, so a run whose encode failed or whose QC gate stopped it has a
+   populated clip, a skipped-shaped `render`, and no file on disk. `agent.py`'s own `inspect_run`
+   already guards the identical trap with `"path" in render`, and `_load_boundary` with
+   `boundary.get("skipped")`. The tests missed it because this file's fixtures used
+   `"render": None` — a shape the real pipeline never writes once a clip exists — while the same
+   fixture helper deliberately used the `StageSkipped` shape for `transcript` two fields away.
+2. **A `KeyError` on an unknown `kind`.** `revision.get("kind") or "boundary"` followed by an
+   `else` branch meant any *future* kind fell through to the caption path and read
+   `proposed_caption_style` off a record with no such key — breaking this module's own "an
+   identifier that resolves to something is never an exception" contract. This is the same
+   defect `replay_decision_deltas` already records having been found once, for `start_pipeline`
+   deltas; recording it twice is the point, since the shared cause is a widening `kind` field
+   with more than one consumer.
+
+## D-A23
+
+**`inspect_project`, the one new tool that fits `agent.py`'s own toolset.** Zero parameters —
+which is not a coincidence but the entire reason it lives there while its four siblings do not
+(D-A24). It answers "what is in this directory as a whole": the run's completion state, whether
+an event ledger exists, how many decisions have been recorded, and every revision with its kind
+and status. `inspect_run` already answers "what did the original run reach"; this is the run
+*plus everything done to it since*, which nothing could see before.
+
+**`decision_count` reuses `learning.read_decision_deltas`** rather than parsing
+`decisions.jsonl` a second time, and inherits its tolerance for a crash-torn last line for free.
+A second parser here could disagree with the ledger's own reader about how many decisions a
+directory holds, which is exactly the drift `test_claims.py` exists to catch elsewhere.
+
+**Not built**: cross-project or cross-run inspection. The architecture record's `inspect_project`
+sits beside a multi-project world model; `Deps.work_dir` is one directory, bound at construction
+and never model-suppliable (D-A5's security boundary), so a tool that could see *other* projects
+would need that boundary redesigned, not extended. `AppManifest.known_limitations` already
+states "Reads one run's own artifacts only; cannot see other runs or projects" — this row keeps
+that true rather than quietly widening it.
+
+## D-A24
+
+**`list_candidates` and `preview_candidate`, and the third agent module the existing tests
+forced.** Both need a caller-supplied parameter — a limit, a path filter, a `candidate_id` — and
+`agent.py`'s toolset is pinned to *zero* parameters by
+`test_injected_paths_cannot_move_the_agent_outside_its_work_dir`, which asserts against the real
+tool schemas that no read-only inspection tool takes an argument an injected instruction could
+try to control. Registering them there would have made that test wrong about what it checks.
+`editor_agent.py`'s weaker guarantee (integer or closed enum, D-A12) does not fit either:
+`candidate_id`/`artifact_id` cannot honestly be closed enums. So `explorer_agent.py` is a fourth
+agent holding a third, explicitly weaker and separately tested guarantee — every parameter is an
+integer, a closed enum, or one of a named, enumerated set of lookup identifiers. **The split was
+forced by tests that already existed, not chosen for tidiness**, and the alternative was
+loosening a stronger guarantee that already shipped.
+
+**`preview_candidate` is the first tool in this codebase to return transcript content to an
+agent, and that is a deliberate scope decision rather than an accident.** Every other read-only
+tool summarizes into narrow typed fields — spans, scores, statuses — and never the underlying
+Kurdish speech. But an editorial agent's whole purpose is proposing revisions to content it
+otherwise cannot read, and the text is already fully persisted in `report.json`'s own
+`transcript` field; this introduces no new disk read, only a new *exposure*. Scoped to one
+candidate's own `[in_ms, out_ms)` — a word counts if its own span overlaps at all, matching how a
+caption cue is timed rather than requiring exact containment, which would silently drop a word
+straddling either edge. Mutation-audited by replacing the span filter with "every word": three
+tests fail, including the one asserting a word outside the span never appears.
+
+**`list_candidates` refuses to rank across discovery paths, one level removed from where
+`discovery.py` refuses it.** That module's own words: "There is no defensible arithmetic between
+[`verbal_score` and `visual_score`]... A fused ranking is a §8.2 tuning question against the
+labelled set, not something to guess here." So: a single-path filter (`"verbal"`/`"visual"`)
+orders by *that path's own* 1-based rank, which is a comparison within one scale and defensible;
+`"both"` and the unfiltered case keep the run's recorded order. Mutation-audited by adding a
+`verbal_score + visual_score` sort — exactly the fusion `discovery.py` refuses — which fails the
+dedicated test by name.
+
+**Two ordering bugs the review pass caught**, both mutation-audited after fixing: `"both"` was
+documented as rank-sorted but silently was not (now documented and tested as recorded-order,
+because a `DiscoveryPath.BOTH` candidate carries *both* ranks and choosing between them is the
+same refused arithmetic); and a missing rank sorted via `or 0` landed *ahead* of the real rank 1,
+which combined with `limit` would evict the top candidate from a truncated list — `math.inf`
+instead, since `discovery.py`'s ranks are 1-based.
+
+**A contract all of these had to learn, and did not have at first.** None may raise for a
+caller-supplied identifier that resolves to nothing. `TestModel` probes every registered tool
+with the placeholder string `"a"`, and the first version's `ValueError`/`FileNotFoundError`
+failed five existing prompt-injection tests immediately. `found=False` throughout instead —
+including for a run that has no clip at all, an ordinary state `run_quality_checks` (D-A18)
+already treats as a reportable value rather than an error. `limit` is clamped rather than
+refused for the same reason; `discovery_path` still raises, because the tool schema closes it to
+a real enum before a model could supply a bad one, so reaching the function with one is a
+genuine direct-caller error.
+
+## D-A25
+
+**`request_render`, built as `propose_render`/`commit_render` — the one new tool that touches
+the invariant this branch has held since D-A6.** The architecture record lists `request_render`
+as an agent tool. Rendering writes a real MP4, so it gets the same split every mutating
+capability here has: `propose_render` validates and never touches `ffmpeg` or disk;
+`commit_render` is the only write, requires a named approver, a reason code, and an explicit
+confirmation, and is registered as a tool on no agent. `mutating_tool_names()` stays `()` after
+this row — the strongest statement this branch makes, unweakened for a capability that only
+re-encodes an already-approved revision.
+
+**A fifth agent (`render_agent.py`) rather than a tool on `editor_agent.py`**, for the same
+reason D-A24 needed a fourth: `revision_id` cannot be a closed enum, and
+`test_the_editor_agents_parameters_are_integers_or_closed_enums` pins that module's whole
+parameter surface. Confirmed by actually adding it there first and watching the test fail, not
+by reading the test and predicting it. The AST no-commit scan on this module checks
+`commit_render`, `render_boundary_revision` *and* `render_caption_revision` — the agent that is
+*about* rendering is precisely the one whose inability to render needs a structural proof rather
+than a promise in its prompt.
+
+**`propose_render` mirrors the render functions' own preconditions rather than inventing a
+weaker set**: the exact `approved_pending_render` status string, a clip, persisted
+`selected_sentences` (D-A7), an output block for a caption revision, and a re-check of the real
+`assert_boundary_invariant` for a boundary revision so a hand-edited record cannot be called
+renderable. Plus one neither render function can check for free: whether `ffmpeg` is findable at
+all. It can be wrong only in the direction of "looked renderable, then genuinely failed to
+render" — a source probe error, an ffmpeg crash — never in calling something renderable that the
+render gate would refuse.
+
+**A third bug the review pass caught, in exactly that claim.** `revision.get("kind") or
+"boundary"` treated a *present but falsy* kind (`""`, `null`) as a boundary revision, while
+`render_boundary_revision` refuses anything whose kind is not literally `None` or `"boundary"`.
+`commit_render` records its APPROVED delta *before* dispatching, so the ledger would have held an
+approved render that then raised a bare `ValueError` — and the caller would get `ValueError`
+rather than `RevisionRejected`. Only an *absent* kind now defaults (a genuine pre-D-A12 record);
+a present one must be real. Pinned in both directions: the falsy case is refused, and the
+pre-D-A12 no-`kind` case still resolves to `boundary`, so the fix could not have silently broken
+every record written before that field existed.
+
+**`commit_render` records its `DecisionDelta` under the *revision's* id, not the run's
+`media_id`** (`kind="render"`, `DecisionDelta.kind` widened again). A render decision is about
+one specific revision; recording it under the run's media would make two renders of two
+different revisions indistinguishable in the ledger. It dispatches to the two existing render
+functions by kind rather than reimplementing either.
+
+**`hawedit-revise --render-only`** closes a gap the module docstring already promised:
+`--no-render` leaves a revision at `approved_pending_render` "for a later render call", and
+until now there was no such call from the CLI. Also the retry path after a `render_failed`.
+
+VERIFY OK — hawedit gate green: 1973 collected, 1973 passed, 0 skipped (floor ratcheted
+1924 -> 1973).

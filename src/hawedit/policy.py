@@ -179,6 +179,63 @@ TOOL_POLICIES: Final[tuple[ToolPolicy, ...]] = (
             "read, not a write: commit_resume_run is a separate function no agent may call."
         ),
     ),
+    ToolPolicy(
+        name="inspect_project",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Reads report.json, events.jsonl and decisions.jsonl presence, plus every "
+            "revisions/*.json record's kind and status. A directory-level manifest, not a write."
+        ),
+    ),
+    ToolPolicy(
+        name="inspect_artifact_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Resolves one artifact (the original clip or a revision_id) to its effective "
+            "span/style/status. Reads report.json and revisions/*.json; writes nothing."
+        ),
+    ),
+    ToolPolicy(
+        name="compare_versions_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Resolves two artifacts via inspect_artifact and reports what differs between "
+            "them. Writes nothing."
+        ),
+    ),
+    ToolPolicy(
+        name="list_candidates_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "A lighter, cappable, optionally path-filtered view of report.json's candidates — "
+            "no rejections, no cross-path score/rank fusion. Writes nothing."
+        ),
+    ),
+    ToolPolicy(
+        name="preview_candidate_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "The first tool in this codebase to return transcript content: one candidate's "
+            "span plus the Kurdish text its span covers, derived from report.json's own "
+            "already-persisted transcript field. Writes nothing."
+        ),
+    ),
+    ToolPolicy(
+        name="propose_render_tool",
+        approval=ApprovalClass.NONE,
+        mutating=False,
+        note=(
+            "Validates that an approved revision is ready to render (status, clip, "
+            "selected_sentences, boundary invariant if applicable, ffmpeg availability) and "
+            "returns the verdict. Writes nothing and never touches ffmpeg: commit_render is a "
+            "separate function no agent may call."
+        ),
+    ),
 )
 
 # The architecture record's "never expose to the production creative agent" list. Asserted

@@ -132,6 +132,7 @@ def test_the_built_agent_has_exactly_the_read_only_tools(tmp_path: Path) -> None
         "compare_candidates",
         "run_timeline",
         "run_quality_checks",
+        "inspect_project",
     }
 
 

@@ -62,6 +62,7 @@ avoiding. Deferred, not forgotten — see PROGRESS.md.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
@@ -73,17 +74,22 @@ from pydantic_ai.models import KnownModelName, Model
 
 from hawedit.boundary import Boundary, BoundaryInvariantViolated, assert_boundary_invariant
 from hawedit.events import read_events
+from hawedit.learning import read_decision_deltas
 from hawedit.policy import BLOCKED_OPERATIONS, POLICY_VERSION
 
 __all__ = [
     "TOOL_NAMES",
     "AppManifest",
     "CandidateComparison",
+    "CandidateList",
+    "CandidatePreview",
     "CandidateRecord",
     "Deps",
+    "ProjectManifest",
     "QualityCheck",
     "QualityReport",
     "RejectionRecord",
+    "RevisionSummary",
     "RunExplanation",
     "RunInspection",
     "RunTimeline",
@@ -92,7 +98,10 @@ __all__ = [
     "build_agent",
     "compare_candidates",
     "explain_run_state",
+    "inspect_project",
     "inspect_run",
+    "list_candidates",
+    "preview_candidate",
     "run_quality_checks",
     "run_timeline",
 ]
@@ -101,12 +110,22 @@ __all__ = [
 # and the toolset it can actually call cannot disagree. `tests/test_agent.py` asserts this
 # equals the agent's real registered tool names — a manifest that lists a tool the agent does
 # not have (or omits one it does) is worse than no manifest, since the model plans against it.
+#
+# Every tool here is zero-parameter, deliberately: `tests/test_prompt_injection.py::
+# test_injected_paths_cannot_move_the_agent_outside_its_work_dir` pins this agent's whole
+# toolset to no arguments at all — the strongest of this codebase's three parameter guarantees
+# (`editor_agent.py`'s is "integer or closed enum"; `workflow_agent.py`'s/`render_agent.py`'s is
+# "closed, or a named, accepted free-form identifier"). `inspect_artifact`/`compare_versions`/
+# `list_candidates`/`preview_candidate` all inherently need a caller-supplied identifier or
+# filter, so they are not registered here — see `explorer_agent.py`, which holds the weaker
+# guarantee those tools actually need instead of loosening this one for them.
 TOOL_NAMES: Final = (
     "inspect_run",
     "explain_run_state",
     "compare_candidates",
     "run_timeline",
     "run_quality_checks",
+    "inspect_project",
 )
 
 # §3's stage order, for "which stage stopped this run" — the first name in this tuple that
@@ -256,6 +275,55 @@ class QualityReport(BaseModel):
     media_id: str
     checks: tuple[QualityCheck, ...]
     all_passed: bool
+
+
+class RevisionSummary(BaseModel):
+    """One `revisions/<id>.json` record, itemized for `inspect_project` — the file's own kind
+    and status, not the resolved span `inspect_artifact` reports for one artifact in detail."""
+
+    revision_id: str
+    kind: str
+    status: str
+
+
+class ProjectManifest(BaseModel):
+    """Everything `work_dir` holds, at a glance — `inspect_run`'s own report, but zoomed out to
+    the whole directory rather than the original run's final state alone."""
+
+    media_id: str
+    complete: bool
+    has_events: bool
+    decision_count: int
+    revisions: tuple[RevisionSummary, ...] = ()
+
+
+class CandidateList(BaseModel):
+    """A lightweight, cappable, optionally path-filtered view — see `list_candidates` for why
+    this is not `compare_candidates` again under a new name."""
+
+    media_id: str
+    candidates: tuple[CandidateRecord, ...]
+    total_available: int
+
+
+class CandidatePreview(BaseModel):
+    """One candidate's span and score, plus the transcript text it actually covers — see
+    `preview_candidate` for why this is the one tool in this codebase that returns transcript
+    content.
+
+    `found=False` reports a `candidate_id` that names no surviving candidate — every other
+    field is `None`/`False` rather than the lookup raising, the same contract
+    `ArtifactInspection` holds for an `artifact_id` that resolves to nothing."""
+
+    candidate_id: str
+    found: bool
+    in_ms: int | None
+    out_ms: int | None
+    discovery_path: str | None
+    verbal_score: float | None
+    visual_score: float | None
+    transcript_available: bool
+    preview_text: str | None
 
 
 def app_manifest() -> AppManifest:
@@ -521,6 +589,184 @@ def run_quality_checks(work_dir: Path) -> QualityReport:
     )
 
 
+def inspect_project(work_dir: Path) -> ProjectManifest:
+    """Everything `work_dir` holds: the run's own completion state, whether it has an event
+    ledger, how many decisions have been recorded, and every revision that exists.
+
+    `inspect_run` answers "what did the original run reach"; this answers "what is in this
+    directory as a whole" — the run plus everything a human or agent has done to it since.
+    `decision_count` reuses `learning.read_decision_deltas` rather than hand-parsing
+    `decisions.jsonl` a second time, and inherits its own tolerance for a crash-torn last line.
+
+    Raises:
+        FileNotFoundError: no `report.json` under `work_dir` — no run exists here at all.
+    """
+    report = _load_report(work_dir)
+    decisions_path = work_dir / "decisions.jsonl"
+    decision_count = len(read_decision_deltas(decisions_path)) if decisions_path.is_file() else 0
+    revisions_dir = work_dir / "revisions"
+    revisions: list[RevisionSummary] = []
+    if revisions_dir.is_dir():
+        for path in sorted(revisions_dir.glob("*.json")):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            revisions.append(
+                RevisionSummary(
+                    revision_id=path.stem,
+                    kind=data.get("kind") or "boundary",
+                    status=str(data.get("status", "unknown")),
+                )
+            )
+    return ProjectManifest(
+        media_id=report["media_id"],
+        complete=report["complete"],
+        has_events=(work_dir / "events.jsonl").is_file(),
+        decision_count=decision_count,
+        revisions=tuple(revisions),
+    )
+
+
+_VALID_DISCOVERY_PATHS: Final = ("verbal", "visual", "both")
+
+
+def list_candidates(
+    work_dir: Path, limit: int = 10, discovery_path: str | None = None
+) -> CandidateList:
+    """A lightweight, cappable view of §3 Stage 3's survivors — candidates only, no rejections,
+    unlike `compare_candidates`' fuller diagnostic report.
+
+    **Deliberately does not rank across discovery paths.** `discovery.py`'s own words: "There is
+    no defensible arithmetic between [`verbal_score` and `visual_score`]... A fused ranking is a
+    §8.2 tuning question against the labelled set, not something to guess here." Ordering
+    therefore depends on the filter:
+
+    - `discovery_path="verbal"` or `"visual"` — ordered by *that path's own* rank
+      (`verbal_rank`/`visual_rank`, the pipeline's per-path ordinal, "1-based because §8.2
+      counts Recall@K that way", `discovery.py`'s `Candidate.rank`). A comparison within one
+      path's own scale, which is defensible.
+    - `discovery_path="both"` — recorded order, *not* rank-sorted. A `DiscoveryPath.BOTH`
+      candidate carries both ranks, and picking or combining them is the cross-path arithmetic
+      `discovery.py` refuses.
+    - No filter — recorded order, uninterleaved, for the same reason.
+
+    Args:
+        limit: the most candidates to return. A value below 1 is clamped to 1 rather than
+            raised — `limit` is agent-suppliable, and an ordinary out-of-range value should be
+            a reportable, recoverable outcome (a shorter-than-expected list), not an exception
+            that ends the conversation; `discovery_path`'s wrong-value case still raises because
+            the tool schema closes it to a real enum (`Literal`, D-A12's own pattern) before a
+            model could ever supply a bad one, so reaching this function with one is a genuine
+            direct-caller error.
+        discovery_path: `"verbal"`, `"visual"`, or `"both"` to filter to one path; `None` for
+            every candidate, in the run's own order.
+
+    Raises:
+        FileNotFoundError: no `report.json` under `work_dir`.
+        ValueError: `discovery_path` is not a real path value.
+    """
+    limit = max(1, limit)
+    if discovery_path is not None and discovery_path not in _VALID_DISCOVERY_PATHS:
+        raise ValueError(
+            f"discovery_path must be one of {_VALID_DISCOVERY_PATHS}, got {discovery_path!r}"
+        )
+    report = _load_report(work_dir)
+    raw_candidates: list[dict[str, Any]] = list(report["candidates"])
+    if discovery_path is not None:
+        raw_candidates = [c for c in raw_candidates if c["discovery_path"] == discovery_path]
+        # `"both"` is deliberately not rank-sorted, unlike the two single-path cases: a
+        # `DiscoveryPath.BOTH` candidate carries *both* a `verbal_rank` and a `visual_rank`
+        # (`discovery.py`'s merge sets each from the path that contributed it), and choosing
+        # between them — or combining them — is the cross-path arithmetic `discovery.py`
+        # explicitly refuses. Recorded order is the honest answer there.
+        if discovery_path in ("verbal", "visual"):
+            rank_field = "verbal_rank" if discovery_path == "verbal" else "visual_rank"
+            # `math.inf`, not `0`, for a missing rank: ranks are 1-based (`discovery.py`'s
+            # `Candidate.rank`, "1-based because §8.2 counts Recall@K that way"), so `or 0`
+            # would sort an unranked candidate *ahead* of the real rank 1 and, combined with
+            # `limit`, evict the top candidate from a truncated list.
+            raw_candidates.sort(key=lambda c: c.get(rank_field) or math.inf)
+    total_available = len(raw_candidates)
+    selected = raw_candidates[:limit]
+    return CandidateList(
+        media_id=report["media_id"],
+        candidates=tuple(
+            CandidateRecord(
+                candidate_id=c["candidate_id"],
+                in_ms=c["in_ms"],
+                out_ms=c["out_ms"],
+                discovery_path=c["discovery_path"],
+                verbal_score=c["verbal_score"],
+                visual_score=c["visual_score"],
+            )
+            for c in selected
+        ),
+        total_available=total_available,
+    )
+
+
+def preview_candidate(work_dir: Path, candidate_id: str) -> CandidatePreview:
+    """One candidate's span and score, plus the actual Kurdish transcript text it covers.
+
+    **The first tool in this codebase to return transcript content to an agent.** Every other
+    read-only tool deliberately summarizes into narrow typed fields (spans, scores, statuses)
+    and never the underlying speech — but this agent's entire purpose is proposing revisions to
+    Kurdish content it cannot otherwise read, and the text is already fully persisted in
+    `report.json`'s own `transcript` field (`PipelineRun.to_dict()`), not a new disk read this
+    tool introduces. Scoped narrowly: one candidate's own `[in_ms, out_ms)`, not the transcript
+    at large — a word counts if its own span overlaps the candidate's at all, matching how a
+    caption cue is timed rather than requiring exact containment.
+
+    Only looks up surviving candidates (`report["candidates"]`), not rejections: a rejection is
+    no longer a candidate, and `RejectedCandidate` does not carry a `candidate_id` a caller could
+    look up by (`discovery.py`) — `explain_run_state`/`compare_candidates` already report why a
+    rejection lost, in its own recorded words.
+
+    A `candidate_id` that names no surviving candidate reports `found=False` rather than
+    raising — `candidate_id` is agent-suppliable, and the same "not found is a value, not an
+    exception" contract `inspect_artifact` holds applies here for the same reason.
+
+    Raises:
+        FileNotFoundError: no `report.json` under `work_dir`.
+    """
+    report = _load_report(work_dir)
+    match = next(
+        (c for c in report["candidates"] if c["candidate_id"] == candidate_id),
+        None,
+    )
+    if match is None:
+        return CandidatePreview(
+            candidate_id=candidate_id,
+            found=False,
+            in_ms=None,
+            out_ms=None,
+            discovery_path=None,
+            verbal_score=None,
+            visual_score=None,
+            transcript_available=False,
+            preview_text=None,
+        )
+    in_ms, out_ms = match["in_ms"], match["out_ms"]
+
+    transcript = report.get("transcript")
+    words = transcript.get("words") if isinstance(transcript, dict) else None
+    transcript_available = isinstance(words, list)
+    preview_text: str | None = None
+    if isinstance(words, list):
+        covered = [w["w"] for w in words if w["end_ms"] > in_ms and w["start_ms"] < out_ms]
+        preview_text = " ".join(covered) if covered else ""
+
+    return CandidatePreview(
+        candidate_id=candidate_id,
+        found=True,
+        in_ms=in_ms,
+        out_ms=out_ms,
+        discovery_path=match["discovery_path"],
+        verbal_score=match["verbal_score"],
+        visual_score=match["visual_score"],
+        transcript_available=transcript_available,
+        preview_text=preview_text,
+    )
+
+
 def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, str]:
     """Construct the read-only creative-director agent, scoped to `deps.work_dir`.
 
@@ -537,9 +783,10 @@ def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, 
             "You are a read-only creative-director assistant for one HawEdit repurposing run. "
             "You can inspect what the run produced, explain why it stopped where it did, "
             "compare the candidates §3 Stage 3 found against the ones it rejected, read the "
-            "run's own event timeline, and run the deterministic quality gates against its "
-            "current clip. You cannot change anything — there is no tool for that, and none "
-            "will be added to this conversation."
+            "run's own event timeline, run the deterministic quality gates against its current "
+            "clip, and see everything this project directory holds (revisions included). You "
+            "cannot change anything — there is no tool for that, and none will be added to "
+            "this conversation."
         ),
     )
 
@@ -580,5 +827,11 @@ def build_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent[Deps, 
     def run_quality_checks_tool(ctx: RunContext[Deps], /) -> QualityReport:
         """Run every deterministic quality gate against this run's current clip, itemized."""
         return run_quality_checks(ctx.deps.work_dir)
+
+    @creative_director.tool(name="inspect_project")
+    def inspect_project_tool(ctx: RunContext[Deps], /) -> ProjectManifest:
+        """See everything this project directory holds: the run's own state, whether it has an
+        event ledger, how many decisions are recorded, and every revision that exists."""
+        return inspect_project(ctx.deps.work_dir)
 
     return creative_director

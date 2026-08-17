@@ -117,6 +117,7 @@ from hawedit.captions import (
     CaptionStyle,
     assert_captions_within_clip,
     build_ass,
+    find_ffmpeg,
 )
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.clip import Clip, Qc
@@ -135,15 +136,22 @@ from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.transcripts import Word
 
 __all__ = [
+    "ArtifactInspection",
     "BoundaryRevisionProposal",
     "CaptionRevisionProposal",
     "ReasonCode",
+    "RenderProposal",
     "ReplayFinding",
     "RevisionRejected",
+    "VersionComparison",
     "commit_boundary_revision",
     "commit_caption_revision",
+    "commit_render",
+    "compare_versions",
+    "inspect_artifact",
     "propose_boundary_revision",
     "propose_caption_revision",
+    "propose_render",
     "render_boundary_revision",
     "render_caption_revision",
     "replay_decision_deltas",
@@ -182,6 +190,25 @@ class BoundaryRevisionProposal:
             "valid": self.valid,
             "violation": self.violation,
         }
+
+
+def _load_report(work_dir: Path) -> dict[str, Any]:
+    """The run's `report.json`, read raw. Same shape and same error message as `agent.py`'s own
+    `_load_report` — deliberately not imported from there: `agent.py` will import read-only
+    functions from this module for tool registration (`inspect_artifact`, `compare_versions`),
+    and importing back the other way would make the two modules circular.
+
+    Raises:
+        FileNotFoundError: no run has completed under `work_dir` yet.
+    """
+    path = work_dir / "report.json"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"no report.json under {work_dir} — durable_workflow.py writes this once a run "
+            f"completes or stops; has one run here yet?"
+        )
+    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return data
 
 
 def _load_boundary(work_dir: Path) -> tuple[str, Boundary]:
@@ -849,6 +876,386 @@ def render_caption_revision(
 # change what an already-approved edit is allowed to do?
 
 
+# --- inspect_artifact / compare_versions (D-A22) ------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactInspection:
+    """One addressable artifact's effective span/style/status, read-only.
+
+    `artifact_id` is either the literal string `"original"` (the run's own clip, as produced —
+    never revised) or a `revision_id` naming `work_dir/revisions/{revision_id}.json`. There is
+    no third kind: every addressable thing this codebase can point at is one or the other.
+
+    `found=False` with every other field `None` reports an `artifact_id` that resolves to
+    nothing — never an exception. `propose_cancel_run`/`propose_resume_run`/`propose_render`
+    already hold this contract for a caller-supplied identifier that turns out not to exist;
+    `artifact_id` is exactly as agent-suppliable as `run_id`/`revision_id` are there, and an
+    agent tool that raises on an ordinary "not found" cannot be recovered from mid-conversation
+    the way a reported value can (`tests/test_prompt_injection.py`'s `TestModel`-driven suite
+    caught this directly: it probes every tool with a placeholder string, and a first version of
+    this function raised on it).
+    """
+
+    artifact_id: str
+    found: bool
+    kind: str | None
+    in_ms: int | None
+    out_ms: int | None
+    caption_style: str | None
+    status: str | None
+    approved_by: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "found": self.found,
+            "kind": self.kind,
+            "in_ms": self.in_ms,
+            "out_ms": self.out_ms,
+            "caption_style": self.caption_style,
+            "status": self.status,
+            "approved_by": self.approved_by,
+        }
+
+
+def _not_found_artifact(artifact_id: str) -> ArtifactInspection:
+    return ArtifactInspection(
+        artifact_id=artifact_id,
+        found=False,
+        kind=None,
+        in_ms=None,
+        out_ms=None,
+        caption_style=None,
+        status=None,
+        approved_by=None,
+    )
+
+
+def inspect_artifact(work_dir: Path, artifact_id: str) -> ArtifactInspection:
+    """Resolve one addressable artifact to its effective span/style/status.
+
+    For a revision, this mirrors the reconstruction `render_boundary_revision`/
+    `render_caption_revision` perform — the original clip with only the one field that kind of
+    revision changes replaced — minus the actual encode. A boundary revision's `caption_style`
+    is therefore the *original* clip's (unchanged); a caption revision's `in_ms`/`out_ms` are
+    likewise the original's. This is deliberately the same read every render function already
+    trusts, not a second derivation that could disagree with what would actually be rendered.
+
+    A run that has not reached §3 Stage 5 yet has no clip at all — an ordinary, common state
+    (`run_quality_checks`, D-A18, already treats it as a reportable value, not an exception, for
+    the same reason) — so this reports `found=False` for every `artifact_id` rather than
+    raising, the same as an `artifact_id` that names nothing real.
+
+    Raises:
+        FileNotFoundError: no `report.json` under `work_dir` — `work_dir` is never
+            agent-suppliable (`Deps.work_dir` is fixed at construction), so this is a genuine
+            caller/setup error, the same case every other report-reading tool in this codebase
+            already raises for.
+    """
+    report = _load_report(work_dir)
+    clip_data = report.get("clip")
+    if not clip_data:
+        return _not_found_artifact(artifact_id)
+    original = Clip.from_dict(clip_data)
+    original_style = original.output.caption_style if original.output else None
+
+    if artifact_id == "original":
+        # `StageSkipped.to_dict()` is *also* a dict (`{"skipped": true, "stage": "render", ...}`)
+        # and `pipeline.py` sets `clip` before the render stage, so a run whose render failed or
+        # was gated has a populated clip and a skipped-shaped `render` with no file on disk.
+        # `isinstance(..., dict)` alone would call that "rendered". `agent.py`'s own
+        # `inspect_run` already guards the same trap with `"path" in render`, and
+        # `_load_boundary` below with `boundary.get("skipped")` — found by an adversarial review
+        # pass, not by a test, because this file's fixtures used `"render": None`, a shape the
+        # real pipeline never writes once a clip exists.
+        render = report.get("render")
+        rendered = isinstance(render, dict) and not render.get("skipped")
+        return ArtifactInspection(
+            artifact_id="original",
+            found=True,
+            kind="original",
+            in_ms=original.in_ms,
+            out_ms=original.out_ms,
+            caption_style=original_style,
+            status="rendered" if rendered else "not_rendered",
+            approved_by=None,
+        )
+
+    path = work_dir / "revisions" / f"{artifact_id}.json"
+    if not path.is_file():
+        return _not_found_artifact(artifact_id)
+    revision: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    # A record written before D-A12 added "kind" has none and is always a boundary revision —
+    # the same backward-compatible default `render_boundary_revision` already relies on. An
+    # explicitly *unknown* kind is a different case: falling through to the caption branch would
+    # read `proposed_caption_style` off a record that has no such key, raising `KeyError` and
+    # breaking this module's own "an identifier that resolves to something is never an
+    # exception" contract. `propose_render` guards the identical spot; `replay_decision_deltas`
+    # records this exact defect being found once already, for `start_pipeline` deltas.
+    kind = revision.get("kind") or "boundary"
+    if kind == "boundary":
+        in_ms = int(revision["proposed_final_in_ms"])
+        out_ms = int(revision["proposed_final_out_ms"])
+        caption_style = original_style
+    elif kind == "caption":
+        in_ms = original.in_ms
+        out_ms = original.out_ms
+        caption_style = str(revision["proposed_caption_style"])
+    else:
+        return _not_found_artifact(artifact_id)
+    return ArtifactInspection(
+        artifact_id=artifact_id,
+        found=True,
+        kind=kind,
+        in_ms=in_ms,
+        out_ms=out_ms,
+        caption_style=caption_style,
+        status=str(revision.get("status", "unknown")),
+        approved_by=revision.get("approved_by"),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VersionComparison:
+    """Two artifacts, resolved side by side, and whether each dimension actually differs.
+
+    `span_changed`/`caption_style_changed` are only meaningful when `both_found` is true — an
+    artifact that was not found compares as "unchanged" against anything rather than raising,
+    the same `found`-not-an-exception contract `ArtifactInspection` holds; check `both_found`
+    (or `a.found`/`b.found` directly) before trusting either flag.
+    """
+
+    a: ArtifactInspection
+    b: ArtifactInspection
+    both_found: bool
+    span_changed: bool
+    caption_style_changed: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "a": self.a.to_dict(),
+            "b": self.b.to_dict(),
+            "both_found": self.both_found,
+            "span_changed": self.span_changed,
+            "caption_style_changed": self.caption_style_changed,
+        }
+
+
+def compare_versions(work_dir: Path, artifact_id_a: str, artifact_id_b: str) -> VersionComparison:
+    """Resolve two artifacts and report what actually differs between them.
+
+    Built on `inspect_artifact` rather than a parallel lookup, so a comparison can never
+    disagree with what inspecting either artifact alone would report.
+
+    Raises:
+        FileNotFoundError: no `report.json` under `work_dir` — see `inspect_artifact`. Neither
+            a missing clip nor an `artifact_id` failing to resolve raises; `both_found` reports
+            that instead.
+    """
+    a = inspect_artifact(work_dir, artifact_id_a)
+    b = inspect_artifact(work_dir, artifact_id_b)
+    both_found = a.found and b.found
+    return VersionComparison(
+        a=a,
+        b=b,
+        both_found=both_found,
+        span_changed=both_found and (a.in_ms, a.out_ms) != (b.in_ms, b.out_ms),
+        caption_style_changed=both_found and a.caption_style != b.caption_style,
+    )
+
+
+# --- request_render, as propose_render/commit_render (D-A25) ------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RenderProposal:
+    """Whether `revision_id` under `work_dir` is ready to render, and why not if it is not.
+
+    Every check here mirrors a real precondition `render_boundary_revision`/
+    `render_caption_revision` themselves enforce (same status string, same clip/
+    selected_sentences/output-block requirements, same `assert_boundary_invariant` re-check for
+    a boundary revision) plus one neither of those functions can check for free: whether ffmpeg
+    is even findable, the same `find_ffmpeg() is None` gate `tests/`'s own `needs_ffmpeg` marker
+    uses. `propose_render` never calls either render function and never touches `ffmpeg` itself
+    — it can be wrong only in the direction of "looked renderable, then genuinely failed to
+    render" (a source probe error, an ffmpeg crash), never in reporting something unrenderable
+    as ready.
+    """
+
+    work_dir: str
+    revision_id: str
+    kind: str | None
+    valid: bool
+    violation: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "work_dir": self.work_dir,
+            "revision_id": self.revision_id,
+            "kind": self.kind,
+            "valid": self.valid,
+            "violation": self.violation,
+        }
+
+
+def propose_render(work_dir: Path, revision_id: str) -> RenderProposal:
+    """Check whether `revision_id` is ready to render. Never touches `ffmpeg` or writes
+    anything — the same "propose never mutates" guarantee every other proposal in this codebase
+    holds."""
+    revision_path = work_dir / "revisions" / f"{revision_id}.json"
+    if not revision_path.is_file():
+        return RenderProposal(
+            str(work_dir), revision_id, None, False, f"no revision record at {revision_path}"
+        )
+    revision: dict[str, Any] = json.loads(revision_path.read_text(encoding="utf-8"))
+    # Only an *absent* `kind` defaults to boundary (a pre-D-A12 record). A present-but-falsy one
+    # (`""`, `null`) must not: `render_boundary_revision` refuses anything whose `kind` is not
+    # literally `None` or `"boundary"`, so `or "boundary"` here would call `""` renderable and
+    # then `commit_render` would record an APPROVED delta before the render raised a bare
+    # `ValueError` — a ledger entry for a render that never happened. Only reachable via a
+    # hand-edited record, which is exactly the case this function claims to cover.
+    raw_kind = revision.get("kind")
+    kind = "boundary" if raw_kind is None else raw_kind
+    if kind not in ("boundary", "caption"):
+        return RenderProposal(
+            str(work_dir), revision_id, str(kind), False, f"unknown revision kind {kind!r}"
+        )
+    if revision.get("status") != "approved_pending_render":
+        return RenderProposal(
+            str(work_dir),
+            revision_id,
+            kind,
+            False,
+            f"revision has status {revision.get('status')!r}, not 'approved_pending_render' — "
+            f"only an approved, not-yet-rendered revision can be rendered.",
+        )
+    report_path = work_dir / "report.json"
+    if not report_path.is_file():
+        return RenderProposal(
+            str(work_dir), revision_id, kind, False, f"no report.json under {work_dir}"
+        )
+    report: dict[str, Any] = json.loads(report_path.read_text(encoding="utf-8"))
+    clip_data = report.get("clip")
+    if not clip_data:
+        return RenderProposal(
+            str(work_dir), revision_id, kind, False, "the run has no clip to revise"
+        )
+    if not (report.get("selected_sentences") or []):
+        return RenderProposal(
+            str(work_dir),
+            revision_id,
+            kind,
+            False,
+            "the run has no persisted selected sentences (predates D-A7) — captions cannot be "
+            "rebuilt for this span.",
+        )
+    original_clip = Clip.from_dict(clip_data)
+    if kind == "caption" and original_clip.output is None:
+        return RenderProposal(
+            str(work_dir),
+            revision_id,
+            kind,
+            False,
+            "the run has no output block to revise a caption on",
+        )
+    if kind == "boundary":
+        try:
+            new_boundary = Boundary(
+                anchor_in_ms=original_clip.boundary.anchor_in_ms,
+                anchor_out_ms=original_clip.boundary.anchor_out_ms,
+                final_in_ms=int(revision["proposed_final_in_ms"]),
+                final_out_ms=int(revision["proposed_final_out_ms"]),
+                in_extended_by="approved_revision",
+                out_extended_by="approved_revision",
+                sentence_complete=original_clip.boundary.sentence_complete,
+            )
+            assert_boundary_invariant(new_boundary)
+        except BoundaryInvariantViolated as exc:
+            return RenderProposal(
+                str(work_dir),
+                revision_id,
+                kind,
+                False,
+                f"revised boundary is no longer legal: {exc}",
+            )
+    if find_ffmpeg() is None:
+        return RenderProposal(
+            str(work_dir),
+            revision_id,
+            kind,
+            False,
+            "no ffmpeg available on this machine (set HAWEDIT_FFMPEG)",
+        )
+    return RenderProposal(str(work_dir), revision_id, kind, True, None)
+
+
+def commit_render(
+    work_dir: Path,
+    proposal: RenderProposal,
+    approved_by: str,
+    reason_code: ReasonCode,
+    confirm: Callable[[str], bool] = _interactive_confirm,
+) -> dict[str, Any]:
+    """Render `proposal`'s revision. The only write in this section.
+
+    Dispatches to `render_boundary_revision`/`render_caption_revision` by `proposal.kind` —
+    neither is reimplemented here. `revision_id` is the recorded `DecisionDelta.media_id`: a
+    render decision is about one specific revision, not the run's own media, and `revision_id`
+    is always non-blank (`commit_boundary_revision`/`commit_caption_revision` already require it
+    to name the revision file).
+
+    Raises:
+        RevisionRejected: the proposal is invalid, `approved_by` is blank, or `confirm` returns
+            a refusal.
+    """
+    if not proposal.valid:
+        record_decision_delta(
+            work_dir,
+            proposal.revision_id,
+            "render",
+            DecisionOutcome.REFUSED_INVALID,
+            proposal.to_dict(),
+        )
+        raise RevisionRejected(f"cannot render {proposal.revision_id!r}: {proposal.violation}")
+    if not approved_by.strip():
+        record_decision_delta(
+            work_dir,
+            proposal.revision_id,
+            "render",
+            DecisionOutcome.REFUSED_UNATTRIBUTED,
+            proposal.to_dict(),
+        )
+        raise RevisionRejected(
+            "rendering needs a named approver; an unattributed approval is not one."
+        )
+    prompt = f"render revision {proposal.revision_id!r} ({proposal.kind}) in {work_dir}?"
+    if not confirm(prompt):
+        record_decision_delta(
+            work_dir,
+            proposal.revision_id,
+            "render",
+            DecisionOutcome.DECLINED,
+            proposal.to_dict(),
+            reason_code=reason_code,
+            approved_by=approved_by,
+        )
+        raise RevisionRejected(f"{approved_by!r} declined rendering")
+
+    record_decision_delta(
+        work_dir,
+        proposal.revision_id,
+        "render",
+        DecisionOutcome.APPROVED,
+        proposal.to_dict(),
+        reason_code=reason_code,
+        approved_by=approved_by,
+    )
+    if proposal.kind == "boundary":
+        return render_boundary_revision(work_dir, proposal.revision_id)
+    return render_caption_revision(work_dir, proposal.revision_id)
+
+
 def replay_decision_deltas(work_dir: Path) -> tuple[ReplayFinding, ...]:
     """Re-propose every recorded *approved* decision under `work_dir` and flag any today's real
     validator no longer accepts.
@@ -863,9 +1270,10 @@ def replay_decision_deltas(work_dir: Path) -> tuple[ReplayFinding, ...]:
     applied, so there is no committed state for a validator regression to silently break.
 
     Only `"boundary"`/`"caption"` deltas are replayed at all. `"start_pipeline"`/`"cancel_run"`/
-    `"resume_run"` (`workflow_control.py`, D-A19/D-A20/D-A21) are workflow-lifecycle decisions,
-    not content revisions — there is no deterministic content validator to re-run them against
-    the way `propose_boundary_revision`/`propose_caption_revision` re-check a span or a style.
+    `"resume_run"` (`workflow_control.py`, D-A19/D-A20/D-A21) are workflow-lifecycle decisions
+    and `"render"` (D-A25) is an encode of an already-approved revision — none is a content
+    revision, and there is no deterministic content validator to re-run any of them against the
+    way `propose_boundary_revision`/`propose_caption_revision` re-check a span or a style.
     Before this branch was added, any kind other than `"boundary"` fell into the `"caption"`
     branch by default and read `delta.proposal["proposed_caption_style"]`, which does not exist
     on a `start_pipeline` delta's proposal dict — a real `KeyError` on any `work_dir` whose
@@ -996,6 +1404,33 @@ def _main_caption(args: argparse.Namespace) -> int:
     return 0
 
 
+def _main_render(args: argparse.Namespace) -> int:
+    proposal = propose_render(args.work_dir, args.revision_id)
+    print(f"{proposal.revision_id}: {'valid' if proposal.valid else 'invalid'}")
+    if not proposal.valid:
+        print(f"✗ invalid — {proposal.violation}", file=sys.stderr)
+        return 1
+
+    try:
+        record = commit_render(
+            args.work_dir,
+            proposal,
+            args.approved_by,
+            ReasonCode(args.reason_code),
+        )
+    except RevisionRejected as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 1
+    except (FileNotFoundError, ValueError, RenderError, IngestError) as exc:
+        print(f"✗ render failed — {exc}", file=sys.stderr)
+        return 1
+
+    print(f"{record['status']}: {record.get('render_path')}")
+    if record["status"] == "rendered_without_delivery_sidecars":
+        print(f"✗ delivery sidecars: {record.get('delivery_error')}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """`hawedit-revise <work_dir> --revision-id ID --approved-by NAME --reason-code CODE`, plus
     exactly one of `--final-in-ms N --final-out-ms N` (a boundary revision) or `--caption-style
@@ -1029,6 +1464,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--final-in-ms", type=int)
     parser.add_argument("--final-out-ms", type=int)
     parser.add_argument("--caption-style", choices=[member.value for member in CaptionStyle])
+    parser.add_argument(
+        "--render-only",
+        action="store_true",
+        help=(
+            "render an already-committed, not-yet-rendered revision (D-A25) instead of "
+            "proposing a new one — for the --no-render case, or a retry after render_failed"
+        ),
+    )
     parser.add_argument("--revision-id", required=True)
     parser.add_argument("--approved-by", required=True)
     parser.add_argument(
@@ -1045,6 +1488,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     boundary_given = args.final_in_ms is not None or args.final_out_ms is not None
+    if args.render_only:
+        if boundary_given or args.caption_style is not None:
+            parser.error("--render-only cannot be combined with a new proposal")
+        if args.no_render:
+            parser.error("--render-only and --no-render are contradictory")
+        return _main_render(args)
     if boundary_given and args.caption_style is not None:
         parser.error("--final-in-ms/--final-out-ms and --caption-style are mutually exclusive")
     if boundary_given and (args.final_in_ms is None or args.final_out_ms is None):
