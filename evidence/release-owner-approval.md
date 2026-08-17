@@ -13,16 +13,20 @@ hosted workflow. Preparation independently requires:
 - strict `gh attestation verify` policy for every payload, canonicalized before evidence hashing;
 - current `BLOCKED.md`, `PROGRESS.md` and forward-only rollback evidence hashes.
 
+External attestation and signature tools consume private exact-byte snapshots rather than mutable
+operator paths, with public/private post-call identity checks.
+
 The four-file approval packet is deterministic and write-once. Its owner template leaves the
 principal, action, timestamp, rationale and all risk acknowledgements JSON `null`. Verification
 recomputes every input, requires the instruction/template/tag-command bytes to remain exact, and
 accepts only canonical OpenSSH armor verified under namespace `hawedit-release-approval`. It returns
 commands but has no tag, push or publish operation.
 
-Focused adversarial verification at this checkpoint: **15 passed**, covering linked/tampered/extra
+Focused adversarial verification at this checkpoint: **17 passed**, covering linked/tampered/extra
 bundle entries, wrong hosted identity, missing jobs, failed attestations, equivalent-JSON
 determinism, overwrite refusal, exact signed approval, incomplete risks, signature/bundle drift and
-modified human-facing packet files. The installed-wheel command and hosted smoke are part of the
+modified human-facing packet files, path-swap resistance and canonical approval bytes. The
+installed-wheel command and hosted smoke are part of the
 canonical gate/release workflow contract and still require the subsequent clean commit and hosted
 run before this evidence is accepted.
 

@@ -218,6 +218,8 @@ def test_prepare_binds_exact_bundle_run_attestations_and_leaves_owner_unset(
     assert len(attestations.commands) == 4
     for command in attestations.commands:
         assert command[:3] == ("gh", "attestation", "verify")
+        assert Path(command[3]).parent != release
+        assert Path(command[3]).name in manifest["payloads"]
         assert "--source-digest" in command and revision in command
         assert "--signer-digest" in command and "--deny-self-hosted-runners" in command
     assert template["packet_manifest_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
@@ -397,7 +399,7 @@ def test_packet_is_deterministic_across_equivalent_attestation_json(tmp_path: Pa
 
 
 def _signed_approval(
-    tmp_path: Path, template: Path, *, complete: bool = True
+    tmp_path: Path, template: Path, *, complete: bool = True, canonical: bool = True
 ) -> tuple[Path, Path, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     approval = tmp_path / "owner-approval.json"
@@ -410,7 +412,11 @@ def _signed_approval(
         risk["acknowledged"] = True
     if not complete:
         document["risk_acknowledgements"][0]["acknowledged"] = None
-    approval.write_bytes(_canonical(document))
+    approval.write_bytes(
+        _canonical(document)
+        if canonical
+        else json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode()
+    )
     key = tmp_path / "owner-key"
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
     allowed = tmp_path / "allowed_signers"
@@ -491,6 +497,23 @@ def test_verify_refuses_changed_bundle_or_signature(tmp_path: Path) -> None:
             attestation_verifier=_Attestations(),
         )
 
+    approval, signature, allowed = _signed_approval(
+        tmp_path / "second-signature", prepared.approval_template_path
+    )
+    checksum = release / "SHA256SUMS"
+    checksum.write_bytes(checksum.read_bytes() + b"changed")
+    with pytest.raises(ReleaseApprovalError):
+        verify_release_approval(
+            project_root=project,
+            packet_dir=prepared.directory,
+            release_dir=release,
+            approval_path=approval,
+            signature_path=signature,
+            allowed_signers_path=allowed,
+            github_json=_github(revision),
+            attestation_verifier=_Attestations(),
+        )
+
 
 @pytest.mark.parametrize("name", ["INSTRUCTIONS.txt", "tag-commands.txt"])
 def test_verify_refuses_changed_human_facing_packet_files(tmp_path: Path, name: str) -> None:
@@ -511,12 +534,41 @@ def test_verify_refuses_changed_human_facing_packet_files(tmp_path: Path, name: 
             attestation_verifier=_Attestations(),
         )
 
+
+def test_prepare_refuses_public_payload_changed_during_private_attestation(tmp_path: Path) -> None:
+    project, revision = _project(tmp_path)
+    release = _bundle(tmp_path, revision)
+    calls = 0
+
+    def mutate_original(command: Sequence[str]) -> str:
+        nonlocal calls
+        calls += 1
+        private_payload = Path(command[3])
+        assert private_payload.parent != release
+        assert private_payload.is_file()
+        if calls == 1:
+            public_payload = release / private_payload.name
+            public_payload.write_bytes(public_payload.read_bytes() + b"changed-after-private-copy")
+        return json.dumps({"verificationResult": "verified"})
+
+    with pytest.raises(ReleaseApprovalError, match="changed during attestation"):
+        prepare_release_approval(
+            project_root=project,
+            release_dir=release,
+            output_dir=tmp_path / "packet",
+            release_run_id=RELEASE_RUN_ID,
+            github_json=_github(revision),
+            attestation_verifier=mutate_original,
+        )
+
+
+def test_verify_refuses_signed_noncanonical_approval_json(tmp_path: Path) -> None:
+    project, release, revision, _, prepared = _prepare(tmp_path)
     approval, signature, allowed = _signed_approval(
-        tmp_path / "second-signature", prepared.approval_template_path
+        tmp_path, prepared.approval_template_path, canonical=False
     )
-    checksum = release / "SHA256SUMS"
-    checksum.write_bytes(checksum.read_bytes() + b"changed")
-    with pytest.raises(ReleaseApprovalError):
+
+    with pytest.raises(ReleaseApprovalError, match="canonical JSON"):
         verify_release_approval(
             project_root=project,
             packet_dir=prepared.directory,

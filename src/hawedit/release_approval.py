@@ -659,15 +659,35 @@ def _attestations(
         (candidate.wheel, candidate.sbom, candidate.provenance, candidate.checksums),
         key=lambda value: value.path.name,
     ):
-        command = _attestation_command(item.path, candidate.revision)
-        try:
-            output = verifier(command)
-        except ReleaseApprovalError:
-            raise
-        except (OSError, subprocess.SubprocessError) as exc:
+        payload = _read_bound(
+            item.path, f"release attestation payload {item.path.name}", max_bytes=_MAX_WHEEL_BYTES
+        )
+        if len(payload) != item.size_bytes or hashlib.sha256(payload).hexdigest() != item.sha256:
             raise ReleaseApprovalError(
-                f"attestation verification failed for {item.path.name}"
-            ) from exc
+                f"release payload {item.path.name} changed before attestation"
+            )
+        with tempfile.TemporaryDirectory(prefix="hawedit-release-attestation-") as temp_root:
+            private_path = Path(temp_root) / item.path.name
+            _write(private_path, payload)
+            command = _attestation_command(private_path, candidate.revision)
+            try:
+                output = verifier(command)
+            except ReleaseApprovalError:
+                raise
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise ReleaseApprovalError(
+                    f"attestation verification failed for {item.path.name}"
+                ) from exc
+            private_after = _digest(private_path, f"private attestation payload {item.path.name}")
+            if private_after.sha256 != item.sha256 or private_after.size_bytes != item.size_bytes:
+                raise ReleaseApprovalError(
+                    f"private attestation payload {item.path.name} changed during verification"
+                )
+        public_after = _digest(item.path, f"release attestation payload {item.path.name}")
+        if public_after.sha256 != item.sha256 or public_after.size_bytes != item.size_bytes:
+            raise ReleaseApprovalError(
+                f"release payload {item.path.name} changed during attestation"
+            )
         try:
             parsed = json.loads(output)
         except json.JSONDecodeError as exc:
@@ -910,30 +930,45 @@ def _verify_signature(
         is None
     ):
         raise ReleaseApprovalError("release approval signature is not canonical OpenSSH armor")
-    try:
-        result = subprocess.run(
-            [
-                ssh_keygen,
-                "-Y",
-                "verify",
-                "-f",
-                str(allowed_signers_path),
-                "-I",
-                principal,
-                "-n",
-                "hawedit-release-approval",
-                "-s",
-                str(signature_path),
-            ],
-            input=approval_bytes,
-            capture_output=True,
-            timeout=30,
-            check=False,
+    with tempfile.TemporaryDirectory(prefix="hawedit-release-signature-") as temp_root:
+        private_signature = Path(temp_root) / "approval.sig"
+        private_allowed = Path(temp_root) / "allowed_signers"
+        _write(private_signature, signature)
+        _write(private_allowed, allowed)
+        try:
+            result = subprocess.run(
+                [
+                    ssh_keygen,
+                    "-Y",
+                    "verify",
+                    "-f",
+                    str(private_allowed),
+                    "-I",
+                    principal,
+                    "-n",
+                    "hawedit-release-approval",
+                    "-s",
+                    str(private_signature),
+                ],
+                input=approval_bytes,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ReleaseApprovalError(
+                f"release approval signature verification failed: {exc}"
+            ) from exc
+        signature_after = _read_bound(
+            private_signature, "private release approval signature", max_bytes=1024 * 1024
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ReleaseApprovalError(
-            f"release approval signature verification failed: {exc}"
-        ) from exc
+        allowed_after = _read_bound(
+            private_allowed, "private release allowed signers", max_bytes=1024 * 1024
+        )
+        if signature_after != signature or allowed_after != allowed:
+            raise ReleaseApprovalError(
+                "private release signature evidence changed during verification"
+            )
     if result.returncode != 0:
         raise ReleaseApprovalError("release approval signature verification failed")
     return (
@@ -1004,6 +1039,8 @@ def verify_release_approval(
     if tag_commands != _tag_commands(candidate):
         raise ReleaseApprovalError("release approval packet tag commands changed")
     approval, approval_bytes = _json_file(approval_path, "release owner approval")
+    if approval_bytes != _canonical_json(approval):
+        raise ReleaseApprovalError("release owner approval must use canonical JSON bytes")
     if set(approval) != set(template):
         raise ReleaseApprovalError("release owner approval fields differ from the template")
     fixed_fields = {
