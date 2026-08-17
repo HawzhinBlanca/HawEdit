@@ -78,6 +78,7 @@ from hawedit.ingest import (
     probe_stream,
 )
 from hawedit.judge import (
+    MAX_PERSISTED_VERDICT_BYTES,
     EditorialJudge,
     JudgeRequest,
     JudgeVerdict,
@@ -2209,6 +2210,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_persisted_verdict(path: Path) -> JudgeVerdict:
+    """Read one local verdict within the same byte budget as a live provider response."""
+    try:
+        with path.open("rb") as stream:
+            payload = stream.read(MAX_PERSISTED_VERDICT_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"cannot read persisted verdict {path}: {exc}") from exc
+    if len(payload) > MAX_PERSISTED_VERDICT_BYTES:
+        raise ValueError(
+            f"persisted verdict exceeds {MAX_PERSISTED_VERDICT_BYTES} bytes; refusing "
+            "oversized Stage 4 evidence"
+        )
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"persisted verdict is not valid UTF-8: {exc}") from exc
+    return JudgeVerdict.from_json(text)
+
+
 def main(argv: list[str] | None = None) -> int:
     """`python -m hawedit.pipeline <video> [--transcript t.json] [--sentences 0,1]`.
 
@@ -2288,11 +2308,7 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
             if args.transcript
             else None
         )
-        verdict = (
-            JudgeVerdict.from_dict(json.loads(args.verdict.read_text(encoding="utf-8")))
-            if args.verdict
-            else None
-        )
+        verdict = _load_persisted_verdict(args.verdict) if args.verdict else None
         selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
 
         discover = None

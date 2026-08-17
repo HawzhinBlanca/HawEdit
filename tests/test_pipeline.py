@@ -42,7 +42,7 @@ from hawedit.diarization import Segment
 from hawedit.discovery import MergedCandidate
 from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
 from hawedit.ingest import DiarizationUnavailable, IngestError
-from hawedit.judge import JudgeVerdict
+from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
     StageSkipped,
@@ -726,6 +726,116 @@ def test_the_cli_can_load_the_documented_stage_4_verdict(
     )
     assert isinstance(captured["verdict"], JudgeVerdict)
     assert captured["qc"] == Qc(auto_pass=False, flags=(), human_reviewed=True)
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (', "hook_score": 0.1', "duplicate JSON key"),
+        (', "unexpected": true', "invalid fields"),
+        (', "future_score": NaN', "non-standard JSON numeric constant"),
+    ],
+)
+def test_cli_refuses_ambiguous_persisted_verdict_json_without_a_traceback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    extra: str,
+    message: str,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(a_transcript("source").to_json(), encoding="utf-8")
+    verdict = json.dumps(a_verdict(0, 4_300).to_dict(), ensure_ascii=False)
+    verdict_path = tmp_path / "verdict.json"
+    verdict_path.write_text(verdict[:-1] + extra + "}", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                str(source),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--transcript",
+                str(transcript_path),
+                "--verdict",
+                str(verdict_path),
+                "--sentences",
+                "0,1",
+            ]
+        )
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert message in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+def test_cli_bounds_persisted_verdict_before_parsing_or_media_work(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(a_transcript("source").to_json(), encoding="utf-8")
+    verdict_path = tmp_path / "verdict.json"
+    verdict_path.write_bytes(b"{" + b" " * MAX_PERSISTED_VERDICT_BYTES + b"}")
+
+    assert (
+        main(
+            [
+                str(source),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--transcript",
+                str(transcript_path),
+                "--verdict",
+                str(verdict_path),
+                "--sentences",
+                "0,1",
+            ]
+        )
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert "exceeds 1048576 bytes" in captured.err
+    assert "Traceback" not in captured.err
+    assert "ffmpeg" not in captured.err
+    assert captured.out == ""
+
+
+def test_cli_refuses_non_utf8_persisted_verdict_without_media_work(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(a_transcript("source").to_json(), encoding="utf-8")
+    verdict_path = tmp_path / "verdict.json"
+    verdict_path.write_bytes(b"\xff\xfe")
+
+    assert (
+        main(
+            [
+                str(source),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--transcript",
+                str(transcript_path),
+                "--verdict",
+                str(verdict_path),
+                "--sentences",
+                "0,1",
+            ]
+        )
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert "not valid UTF-8" in captured.err
+    assert "Traceback" not in captured.err
+    assert "ffmpeg" not in captured.err
+    assert captured.out == ""
 
 
 # --- §3 Stages 3 and 4, wired in ------------------------------------------------------------

@@ -19,7 +19,7 @@ import json
 
 import pytest
 
-from hawedit.boundary import BoundaryInputs, BoundaryInvariantViolated, fuse_boundary
+from hawedit.boundary import Boundary, BoundaryInputs, BoundaryInvariantViolated, fuse_boundary
 from hawedit.clip import (
     Clip,
     ClipTranscript,
@@ -332,6 +332,107 @@ def test_the_clip_round_trips_through_json() -> None:
     original = a_clip()
     restored = Clip.from_dict(json.loads(json.dumps(original.to_dict())))
     assert restored == original
+
+
+@pytest.mark.parametrize(
+    ("label", "payload", "rebuild"),
+    [
+        (
+            "editorial score",
+            {**an_editorial().to_dict(), "hook_score": True},
+            Editorial.from_dict,
+        ),
+        (
+            "editorial payoff",
+            {**an_editorial().to_dict(), "payoff_at_ms": False},
+            Editorial.from_dict,
+        ),
+        (
+            "editorial oversized score",
+            {**an_editorial().to_dict(), "hook_score": 10**1_000},
+            Editorial.from_dict,
+        ),
+        (
+            "output duration",
+            {**a_clip().output.to_dict(), "durations": [True]},  # type: ignore[union-attr]
+            Output.from_dict,
+        ),
+        (
+            "rejection bounds",
+            {
+                "media_id": "m-1",
+                "in_ms": False,
+                "out_ms": True,
+                "discovery_path": "verbal",
+                "reject_reason": "not selected",
+            },
+            RejectedCandidate.from_dict,
+        ),
+    ],
+)
+def test_section_5_json_refuses_bool_as_number(
+    label: str, payload: dict[str, object], rebuild: object
+) -> None:
+    with pytest.raises(ValueError, match="JSON (integer|number)|at most"):
+        rebuild(payload)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    ("label", "payload", "rebuild"),
+    [
+        ("boundary", {**a_boundary().to_dict(), "future": 1}, Boundary.from_dict),
+        ("editorial", {**an_editorial().to_dict(), "future": 1}, Editorial.from_dict),
+        (
+            "output",
+            {**a_clip().output.to_dict(), "future": 1},  # type: ignore[union-attr]
+            Output.from_dict,
+        ),
+        ("qc", {**Qc(True).to_dict(), "future": 1}, Qc.from_dict),
+        ("transcript", {**a_transcript().to_dict(), "future": 1}, ClipTranscript.from_dict),
+        (
+            "rejection",
+            {
+                **RejectedCandidate("m-1", 0, 1, DiscoveryPath.VERBAL, "x").to_dict(),
+                "future": 1,
+            },
+            RejectedCandidate.from_dict,
+        ),
+        ("clip", {**a_clip().to_dict(), "future": 1}, Clip.from_dict),
+    ],
+)
+def test_section_5_json_refuses_unknown_members(
+    label: str, payload: dict[str, object], rebuild: object
+) -> None:
+    with pytest.raises(ValueError, match="extra=.*future"):
+        rebuild(payload)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize("field", ("boundary", "transcript", "editorial", "output", "qc"))
+def test_section_5_nested_blocks_require_objects(field: str) -> None:
+    payload = a_clip().to_dict()
+    payload[field] = []
+
+    with pytest.raises(ValueError, match=field):
+        Clip.from_dict(payload)
+
+
+def test_section_5_arrays_are_not_coerced_from_other_iterables() -> None:
+    output = a_clip().output
+    assert output is not None
+    with pytest.raises(ValueError, match="durations must be a JSON array"):
+        Output.from_dict({**output.to_dict(), "durations": "15"})
+    with pytest.raises(ValueError, match="hashtags_ckb must be a JSON array"):
+        Output.from_dict({**output.to_dict(), "hashtags_ckb": "#کوردی"})
+    with pytest.raises(ValueError, match="transcript.words must be a JSON array"):
+        ClipTranscript.from_dict({**a_transcript().to_dict(), "words": {}})
+
+
+def test_clip_transcript_asr_requires_exact_object_members() -> None:
+    payload = a_transcript().to_dict()
+    payload["asr"]["future"] = "ignored model provenance"
+
+    with pytest.raises(ValueError, match="transcript.asr.*extra=.*future"):
+        ClipTranscript.from_dict(payload)
 
 
 def test_the_raw_transcript_survives_serialisation_unmodified() -> None:

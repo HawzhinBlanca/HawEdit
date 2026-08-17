@@ -396,6 +396,45 @@ def test_a_negative_anchor_is_refused() -> None:
         fuse_boundary(inputs(anchor_in_ms=-1))
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("anchor_in_ms", True),
+        ("anchor_out_ms", "112400"),
+        ("final_in_ms", 84_600.5),
+        ("final_out_ms", None),
+        ("confidence", True),
+        ("confidence", float("nan")),
+        ("confidence", float("inf")),
+        ("confidence", "0.91"),
+        ("confidence", 10**1_000),
+    ],
+)
+def test_boundary_json_refuses_non_schema_numbers(field: str, value: object) -> None:
+    payload = fuse_boundary(inputs(), confidence=0.91).to_dict()
+    payload[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        Boundary.from_dict(payload)
+
+
+def test_boundary_json_refuses_unknown_members() -> None:
+    payload = fuse_boundary(inputs()).to_dict()
+    payload["ignored_constraint"] = "do not cut here"
+
+    with pytest.raises(ValueError, match="extra=.*ignored_constraint"):
+        Boundary.from_dict(payload)
+
+
+def test_boundary_shape_validation_does_not_replace_the_render_gate() -> None:
+    payload = fuse_boundary(inputs()).to_dict()
+    payload["final_in_ms"] = payload["anchor_in_ms"] + 1
+    boundary = Boundary.from_dict(payload)
+
+    with pytest.raises(BoundaryInvariantViolated):
+        assert_boundary_invariant(boundary)
+
+
 def test_an_in_point_never_goes_below_zero() -> None:
     """A clip cannot start before the media does, however far a soft input reaches back."""
     boundary = fuse_boundary(

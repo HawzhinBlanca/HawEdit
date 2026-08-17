@@ -45,6 +45,7 @@ from hawedit.judge import (
     CANDIDATE_SLICE_TOKENS_PER_HOUR,
     FULL_TRANSCRIPT_TOKENS_PER_HOUR,
     MAX_JUDGE_FRAME_BYTES,
+    MAX_PERSISTED_VERDICT_BYTES,
     PRO_TIER_TOKEN_CEILING,
     VIDEO_TOKENS_PER_SECOND,
     WITH_VIDEO_TOKENS_PER_HOUR,
@@ -308,6 +309,61 @@ def test_the_verdict_fills_section_5s_output_block_titles() -> None:
 def test_the_verdict_round_trips_through_json() -> None:
     verdict = a_verdict()
     assert JudgeVerdict.from_dict(json.loads(json.dumps(verdict.to_dict()))) == verdict
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ('"hook_score": 0.2, "hook_score": 0.8', "duplicate JSON key"),
+        ('"hook_score": NaN', "non-standard JSON numeric constant"),
+        ('"hook_score": 0.8, "unexpected": true', "extra=.*unexpected"),
+    ],
+)
+def test_persisted_verdict_json_is_an_exact_document(mutation: str, match: str) -> None:
+    payload = json.dumps(a_verdict().to_dict(), ensure_ascii=False)
+    payload = payload.replace('"hook_score": 0.88', mutation)
+
+    with pytest.raises(ValueError, match=match):
+        JudgeVerdict.from_json(payload)
+
+
+@pytest.mark.parametrize("payload", ("[]", "null", "true", "1"))
+def test_persisted_verdict_json_requires_an_object(payload: str) -> None:
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        JudgeVerdict.from_json(payload)
+
+
+def test_persisted_verdict_json_refuses_excessive_nesting() -> None:
+    nested = "[" * 10_000 + "]" * 10_000
+    assert len(nested.encode("utf-8")) < MAX_PERSISTED_VERDICT_BYTES
+
+    with pytest.raises(ValueError, match="nesting limit"):
+        JudgeVerdict.from_json(nested)
+
+
+@pytest.mark.parametrize("field", ("hook_score", "meaning_fidelity", "payoff_at_ms"))
+def test_persisted_verdict_refuses_non_schema_numbers(field: str) -> None:
+    payload = a_verdict().to_dict()
+    payload[field] = True
+
+    with pytest.raises(ValueError, match=field):
+        JudgeVerdict.from_dict(payload)
+
+
+def test_persisted_verdict_dict_refuses_unknown_members() -> None:
+    payload = a_verdict().to_dict()
+    payload["unexpected"] = "a producer believes this constraint is enforced"
+
+    with pytest.raises(ValueError, match="extra=.*unexpected"):
+        JudgeVerdict.from_dict(payload)
+
+
+def test_persisted_verdict_dict_refuses_missing_required_members() -> None:
+    payload = a_verdict().to_dict()
+    payload.pop("candidate_id")
+
+    with pytest.raises(ValueError, match="missing=.*candidate_id"):
+        JudgeVerdict.from_dict(payload)
 
 
 def test_a_persisted_verdict_refuses_scalar_hashtags() -> None:
