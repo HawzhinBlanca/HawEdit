@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from hawedit.release_approval import (
+    PreparedReleaseApproval,
     ReleaseApprovalError,
     prepare_release_approval,
     verify_release_approval,
@@ -166,7 +167,7 @@ class _Attestations:
 
 def _prepare(
     tmp_path: Path,
-) -> tuple[Path, Path, str, _Attestations, object]:
+) -> tuple[Path, Path, str, _Attestations, PreparedReleaseApproval]:
     project, revision = _project(tmp_path)
     release = _bundle(tmp_path, revision)
     attestations = _Attestations()
@@ -304,7 +305,10 @@ def test_prepare_refuses_missing_job_or_failed_attestation(tmp_path: Path) -> No
     def missing_job(url: str) -> Mapping[str, object]:
         document = dict(healthy(url))
         if url.endswith("/jobs?per_page=100"):
-            document["jobs"] = list(document["jobs"])[1:]
+            jobs = document.get("jobs")
+            if not isinstance(jobs, list):
+                raise AssertionError("healthy fixture lost its jobs array")
+            document["jobs"] = jobs[1:]
             document["total_count"] = 4
         return document
 
@@ -450,7 +454,9 @@ def test_verify_requires_complete_signed_approval_and_revalidates_everything(
     assert authorization["status"] == "signed-owner-authorization-verified"
     assert authorization["revision"] == revision
     assert authorization["tag"] == "v0.1.0"
-    assert authorization["commands"][-1] == "git push origin refs/tags/v0.1.0"
+    commands = authorization["commands"]
+    assert isinstance(commands, list)
+    assert commands[-1] == "git push origin refs/tags/v0.1.0"
     assert _git(project, "tag", "--list") == ""
 
     incomplete, incomplete_signature, incomplete_allowed = _signed_approval(
