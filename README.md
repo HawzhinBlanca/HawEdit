@@ -395,16 +395,35 @@ longer masquerades as source pixels.
 ## Benchmarks
 
 `bench.py` remains the §8.1 ASR harness: normalized/spacing-free CER, named entities,
-code-switching, alignment, RTF, VRAM and per-dialect coverage. `hawedit-editorial-bench`
+code-switching, alignment, RTF, VRAM and per-dialect coverage. A production run now requires a
+content-bound acceptance manifest plus a human approval signed with OpenSSH's detached-signature
+format. The guard re-hashes each audio item before and after every model measurement, and the
+benchmark report records the manifest, approval, signature and allowed-signers SHA-256 identities.
+Synthetic, interim, changed, linked, duplicate, path-escaping or declared training audio is refused.
+`hawedit-editorial-bench`
 validates and scores a blind human regression manifest, requiring at least 20 items, at least
 five per dialect, two named reviewers per item, exact candidate/span equality and source media
 on disk.
 
 ```bash
+python -m hawedit.corpus_acceptance prepare sorani-corpus.json \
+  --audio-root /secure/audio --output-dir /secure/asr-acceptance \
+  --dataset-owner "<owner>" --authorized-by "<signer identity>" \
+  --licence "<licence>" --consent-basis "<recorded consent basis>" \
+  --permitted-use "HawEdit internal model evaluation and acceptance" \
+  --redistribution-forbidden --exclude-hashes /secure/training-audio.sha256
+# Review and fill approval.template.json, then sign it exactly as INSTRUCTIONS.txt specifies.
 hawedit-asr-bench sorani-corpus.json --audio-root /secure/audio \
-  --host hawapc01 --accelerator "RTX 3090 Ti" --output asr-report.json
+  --acceptance-manifest /secure/asr-acceptance/corpus-acceptance.json \
+  --approval /secure/approval.json --signature /secure/approval.json.sig \
+  --allowed-signers /secure/allowed_signers --host hawapc01 \
+  --accelerator "2x RTX 3090 Ti" --output asr-report.json
 hawedit-editorial-bench editorial.json --media-root /secure/media --output report.json
 ```
+
+The private signing key, allowed-signers trust file, client audio, signed approval and training
+hash inventory stay outside Git. The preparation command emits an unsigned template; it is not
+approval and cannot make the blocked benchmark complete by itself.
 
 No production benchmark number ships in this repository. The required client/archive Sorani
 audio and 200–500 human-reviewed editorial candidates have not been supplied, so claiming a CER,
@@ -466,6 +485,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `alignment.py` | §4.2, §8.1 | Alignment accuracy. Kurdish invariant #5. |
 | `metrics.py` | §8.1 | Normalized CER, spacing-free CER, named-entity error, code-switch error. |
 | `corpus.py` | §8.1, §4.4 | The labelled set and its coverage grid — 3 dialects × 7 conditions. |
+| `corpus_acceptance.py` | §8.1 | Canonical corpus/audio/reference hashes, rights and exclusion binding, detached human approval verification, and per-measurement byte guards for real AC-7 evidence. |
 | `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |

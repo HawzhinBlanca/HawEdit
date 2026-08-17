@@ -31,9 +31,10 @@ import argparse
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 from hawedit.alignment import AlignmentAccuracy, score_alignment
 from hawedit.asr import (
@@ -47,6 +48,7 @@ from hawedit.asr import (
 )
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.corpus import Corpus, CorpusItem, Coverage, Dialect, Provenance
+from hawedit.corpus_acceptance import verify_corpus_acceptance
 from hawedit.metrics import (
     code_switch_error_rate,
     named_entity_error_rate,
@@ -238,9 +240,10 @@ class BenchmarkReport:
     coverage: Coverage
     models: Mapping[str, ModelReport]
     provenance: Provenance
+    acceptance: Mapping[str, str] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        document: dict[str, object] = {
             "provenance": {
                 "name": self.provenance.name,
                 "licence": self.provenance.licence,
@@ -262,6 +265,9 @@ class BenchmarkReport:
             },
             "models": {mid: m.to_dict() for mid, m in self.models.items()},
         }
+        if self.acceptance is not None:
+            document["acceptance"] = dict(self.acceptance)
+        return document
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
@@ -295,10 +301,18 @@ def _score_item(item: CorpusItem, measurement: Measurement) -> ItemScore | None:
     )
 
 
+class BenchmarkAcceptance(Protocol):
+    @property
+    def evidence(self) -> Mapping[str, str]: ...
+
+    def guard(self, item: CorpusItem) -> AbstractContextManager[None]: ...
+
+
 def run_benchmark(
     corpus: Corpus,
     adapters: Sequence[ASRAdapter],
     session: MeasurementSession,
+    acceptance: BenchmarkAcceptance | None = None,
 ) -> BenchmarkReport:
     """Run every candidate over the labelled set and report comparably.
 
@@ -313,7 +327,9 @@ def run_benchmark(
         measurements: list[Measurement] = []
         scores: list[ItemScore] = []
         for item in corpus.items:
-            measurement = session.measure(adapter, item)
+            guard = acceptance.guard(item) if acceptance is not None else nullcontext()
+            with guard:
+                measurement = session.measure(adapter, item)
             measurements.append(measurement)
             score = _score_item(item, measurement)
             if score is not None:
@@ -334,6 +350,7 @@ def run_benchmark(
         coverage=corpus.coverage(),
         models=models,
         provenance=corpus.provenance,
+        acceptance=acceptance.evidence if acceptance is not None else None,
     )
 
 
@@ -489,32 +506,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--audio-root", type=Path, required=True)
+    parser.add_argument("--acceptance-manifest", type=Path, required=True)
+    parser.add_argument("--approval", type=Path, required=True)
+    parser.add_argument("--signature", type=Path, required=True)
+    parser.add_argument("--allowed-signers", type=Path, required=True)
     parser.add_argument("--host", required=True, help="machine on which RTF is measured")
     parser.add_argument("--accelerator", required=True, help="exact GPU/accelerator identity")
     parser.add_argument("--notes", default="")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        corpus = Corpus.load(args.manifest)
-        corpus.assert_section_8_1_coverage()
-        missing = corpus.missing_audio(args.audio_root)
-        if missing:
-            raise FileNotFoundError(
-                f"missing corpus audio for item(s): {[item.item_id for item in missing]}"
-            )
+        acceptance = verify_corpus_acceptance(
+            manifest_path=args.acceptance_manifest,
+            corpus_path=args.manifest,
+            audio_root=args.audio_root,
+            approval_path=args.approval,
+            signature_path=args.signature,
+            allowed_signers_path=args.allowed_signers,
+        )
         if args.output.exists():
             raise FileExistsError(f"refusing to overwrite benchmark report {args.output}")
-        rooted = Corpus(
-            tuple(
-                replace(item, audio_path=str(args.audio_root / item.audio_path))
-                for item in corpus.items
-            ),
-            provenance=corpus.provenance,
-        )
         report = run_benchmark(
-            rooted,
+            acceptance.corpus,
             (OmniAsrAdapter(),),
             MeasurementSession(Hardware(args.host, args.accelerator, args.notes)),
+            acceptance,
         )
         args.output.write_text(report.to_json() + "\n", encoding="utf-8")
     except (FileExistsError, FileNotFoundError, KeyError, TypeError, ValueError) as exc:
