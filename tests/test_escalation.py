@@ -159,6 +159,19 @@ def test_a_segment_with_no_ctc_confidence_is_refused() -> None:
         )
 
 
+@pytest.mark.parametrize("value", [True, "-1", float("nan"), float("inf"), -float("inf")])
+def test_segment_score_refuses_non_numeric_or_non_finite_confidence(value: object) -> None:
+    """The downstream public boundary must remain strict even if a caller bypasses JSON."""
+    with pytest.raises(ValueError, match="finite log-probability"):
+        SegmentScore(
+            segment_id="s",
+            mean_logprob=value,  # type: ignore[arg-type]
+            llm_text=CLEAN,
+            ctc_text=CLEAN,
+            duration_s=10.0,
+        )
+
+
 # --- what adversarial pass #10 found revertible (D-122) ---------------------------------
 
 # Measured, not chosen: normalized CER divides by the *reference* length, so it is asymmetric,

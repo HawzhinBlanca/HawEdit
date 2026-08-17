@@ -27,6 +27,7 @@ duration produce identical decisions.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
@@ -61,11 +62,16 @@ class SegmentScore:
     duration_s: float
 
     def __post_init__(self) -> None:
-        if self.mean_logprob > 0.0:
+        if (
+            not isinstance(self.mean_logprob, int | float)
+            or isinstance(self.mean_logprob, bool)
+            or not math.isfinite(float(self.mean_logprob))
+            or self.mean_logprob > 0.0
+        ):
             raise ValueError(
-                f"{self.segment_id}: mean_logprob must be a log-probability (<= 0), got "
-                f"{self.mean_logprob}. Escalation ranks on CTC posteriors; a wrong scale here "
-                f"silently inverts the quartile."
+                f"{self.segment_id}: mean_logprob must be a finite log-probability <= 0. "
+                "Escalation ranks on CTC posteriors; a wrong scale or non-finite value "
+                "silently inverts the quartile."
             )
 
 

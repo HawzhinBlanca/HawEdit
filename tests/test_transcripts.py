@@ -516,6 +516,62 @@ def test_a_real_reason_and_span_are_accepted() -> None:
     assert "15 tokens" in gap.reason
 
 
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms"),
+    [(False, 1), (0, True), (0.0, 1), (0, 1.0), (-1, 1)],
+)
+def test_unaligned_speech_refuses_non_integer_or_negative_media_clock_bounds(
+    start_ms: object, end_ms: object
+) -> None:
+    """JSON booleans are Python integers; they must not become a 0..1 ms speech gap."""
+    with pytest.raises(ValueError, match="integer milliseconds|non-negative"):
+        UnalignedSpeech(
+            start_ms=start_ms,  # type: ignore[arg-type]
+            end_ms=end_ms,  # type: ignore[arg-type]
+            reason="AlignmentInfeasible",
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [42, "line one\nline two", "control\x00byte", "x" * 1_025],
+)
+def test_unaligned_speech_refuses_unreportable_reasons(reason: object) -> None:
+    with pytest.raises(ValueError, match="reason"):
+        UnalignedSpeech(
+            start_ms=0,
+            end_ms=1,
+            reason=reason,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms"),
+    [(False, 1), (0, True), (0.0, 1), (0, 1.0), (-1, 1)],
+)
+def test_rejected_validator_correction_refuses_invalid_media_clock_bounds(
+    start_ms: object, end_ms: object
+) -> None:
+    with pytest.raises(ValueError, match="integer milliseconds|non-negative"):
+        RejectedValidatorCorrection(
+            start_ms=start_ms,  # type: ignore[arg-type]
+            end_ms=end_ms,  # type: ignore[arg-type]
+            validator=VALIDATOR_ID,
+            reason="alignment refused",
+        )
+
+
+@pytest.mark.parametrize("reason", [None, "a\nb", "a\x00b", "x" * 1_025])
+def test_rejected_validator_correction_refuses_unreportable_reasons(reason: object) -> None:
+    with pytest.raises(ValueError, match="reason"):
+        RejectedValidatorCorrection(
+            start_ms=0,
+            end_ms=1,
+            validator=VALIDATOR_ID,
+            reason=reason,  # type: ignore[arg-type]
+        )
+
+
 # --- D-107: the raw file's own write-once layer was never reached by a test ------------------
 
 
@@ -602,6 +658,36 @@ def test_a_real_segment_confidence_is_accepted() -> None:
     scored = SegmentConfidence(start_ms=1_000, end_ms=1_316, mean_logprob=-6.523425833753913)
     assert scored.end_ms - scored.start_ms == 316
     assert SegmentConfidence(start_ms=0, end_ms=1, mean_logprob=0.0).mean_logprob == 0.0
+
+
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms"),
+    [(False, 1), (0, True), (0.0, 1), (0, 1.0), (-1, 1)],
+)
+def test_segment_confidence_refuses_invalid_media_clock_bounds(
+    start_ms: object, end_ms: object
+) -> None:
+    with pytest.raises(ValueError, match="integer milliseconds|non-negative"):
+        SegmentConfidence(
+            start_ms=start_ms,  # type: ignore[arg-type]
+            end_ms=end_ms,  # type: ignore[arg-type]
+            mean_logprob=-1.0,
+        )
+
+
+@pytest.mark.parametrize("value", [True, "-1", float("nan"), float("inf"), -float("inf"), 0.1])
+def test_segment_confidence_requires_one_finite_log_probability(value: object) -> None:
+    with pytest.raises(ValueError, match="finite log-probability"):
+        SegmentConfidence(start_ms=0, end_ms=1, mean_logprob=value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [True, "-1", float("nan"), float("inf"), -float("inf"), 0.1])
+def test_asr_provenance_requires_one_finite_aggregate_log_probability(value: object) -> None:
+    with pytest.raises(ValueError, match="finite log-probability"):
+        AsrProvenance(
+            canonical=CANONICAL_ASR_ID,
+            mean_logprob=value,  # type: ignore[arg-type]
+        )
 
 
 # --- D-136: Stage 1 is the expensive stage, and it was re-run every time -------------------
@@ -947,6 +1033,59 @@ def _raw_file(**overrides: object) -> str:
     data = json.loads(a_raw().to_json())
     data.update(overrides)
     return json.dumps(data, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("payload", ["null", "[]", "1", '"transcript"'])
+def test_raw_transcript_json_requires_an_object(payload: str) -> None:
+    with pytest.raises(ValueError, match="JSON object"):
+        RawTranscript.from_json(payload)
+
+
+def test_raw_transcript_json_refuses_duplicate_keys() -> None:
+    payload = (
+        a_raw()
+        .to_json()
+        .replace(
+            '"media_id": "media-001"',
+            '"media_id": "other", "media_id": "media-001"',
+            1,
+        )
+    )
+    with pytest.raises(ValueError, match="duplicate JSON key.*media_id"):
+        RawTranscript.from_json(payload)
+
+
+def test_raw_transcript_json_refuses_nonstandard_numeric_constants() -> None:
+    payload = json.loads(a_raw().to_json())
+    payload["segment_confidence"] = [{"start_ms": 0, "end_ms": 1, "mean_logprob": float("nan")}]
+    with pytest.raises(ValueError, match="non-standard JSON numeric constant"):
+        RawTranscript.from_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("words", {}),
+        ("words", ["not an object"]),
+        ("asr", []),
+        ("unaligned", {}),
+        ("segment_confidence", {}),
+        ("rejected_validator_corrections", {}),
+    ],
+)
+def test_raw_transcript_json_refuses_wrong_container_and_member_shapes(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        RawTranscript.from_json(_raw_file(**{field: value}))
+
+
+def test_normalized_transcript_json_uses_the_same_strict_decoder() -> None:
+    duplicate = (
+        '{"media_id":"m","media_id":"other","text_ckb":"کوردی","source_sha256":"abc","words":[]}'
+    )
+    with pytest.raises(ValueError, match="duplicate JSON key.*media_id"):
+        NormalizedTranscript.from_json(duplicate)
 
 
 @pytest.mark.parametrize(

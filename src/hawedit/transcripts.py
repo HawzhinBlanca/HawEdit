@@ -289,6 +289,100 @@ def validate_media_id(media_id: str) -> str:
 
 
 _WORD_EDGE_PUNCTUATION = ".,!?;:،؛؟۔…"
+_STAGE1_REASON_LIMIT: Final = 1_024
+
+
+def _assert_media_clock_span(start_ms: object, end_ms: object, *, label: str) -> None:
+    if (
+        not isinstance(start_ms, int)
+        or isinstance(start_ms, bool)
+        or not isinstance(end_ms, int)
+        or isinstance(end_ms, bool)
+    ):
+        raise ValueError(f"{label} bounds must be integer milliseconds")
+    if start_ms < 0 or end_ms < 0:
+        raise ValueError(f"{label} bounds must be non-negative")
+
+
+def _assert_reportable_reason(reason: object, *, label: str) -> None:
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError(f"{label} needs a reason")
+    if len(reason) > _STAGE1_REASON_LIMIT:
+        raise ValueError(
+            f"{label} reason exceeds the {_STAGE1_REASON_LIMIT}-character report bound"
+        )
+    if reason.splitlines() != [reason] or any(not character.isprintable() for character in reason):
+        raise ValueError(f"{label} reason must be one printable line")
+
+
+def _assert_log_probability(value: object, *, label: str) -> None:
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(float(value))
+        or value > 0.0
+    ):
+        raise ValueError(
+            f"{label} must be a finite log-probability <= 0; a wrong scale or non-finite "
+            "value silently inverts the bottom quartile"
+        )
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    decoded: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError(f"duplicate JSON key {key!r} in transcript")
+        decoded[key] = value
+    return decoded
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON numeric constant {value!r} in transcript")
+
+
+def _decode_transcript_json(payload: str, *, label: str) -> dict[str, Any]:
+    if not isinstance(payload, str):
+        raise ValueError(f"{label} payload must be text")
+    try:
+        decoded: object = json.loads(
+            payload,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_json_constant,
+        )
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is not valid JSON: {exc.msg}") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return decoded
+
+
+def _json_object_fields(
+    value: object,
+    *,
+    field: str,
+    required: frozenset[str],
+    optional: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be a JSON object")
+    keys = set(value)
+    missing = sorted(required - keys)
+    extra = sorted(keys - required - optional)
+    if missing or extra:
+        raise ValueError(f"{field} has invalid fields; missing={missing}, extra={extra}")
+    return value
+
+
+def _json_object_array(value: object, *, field: str) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a JSON array")
+    objects: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(f"{field}[{index}] must be a JSON object")
+        objects.append(item)
+    return tuple(objects)
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,15 +449,12 @@ class UnalignedSpeech:
     reason: str
 
     def __post_init__(self) -> None:
+        _assert_media_clock_span(self.start_ms, self.end_ms, label="unaligned speech")
         if self.end_ms <= self.start_ms:
             raise ValueError(
                 f"unaligned speech spans {self.start_ms}..{self.end_ms} ms, which has no length"
             )
-        if not self.reason.strip():
-            raise ValueError(
-                "unaligned speech needs a reason: an unexplained gap in a transcript that ships "
-                "to a client is indistinguishable from silence that was never there"
-            )
+        _assert_reportable_reason(self.reason, label="unaligned speech")
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,13 +472,17 @@ class RejectedValidatorCorrection:
     reason: str
 
     def __post_init__(self) -> None:
+        _assert_media_clock_span(
+            self.start_ms,
+            self.end_ms,
+            label="rejected validator correction",
+        )
         if self.end_ms <= self.start_ms:
             raise ValueError(
                 "rejected validator correction must span a positive-duration speech region"
             )
         resolve_role(self.validator, frozenset({"asr_validator"}), "the ASR validator")
-        if not self.reason.strip():
-            raise ValueError("rejected validator correction needs a reason")
+        _assert_reportable_reason(self.reason, label="rejected validator correction")
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,19 +508,14 @@ class SegmentConfidence:
     ctc_text: str = ""
 
     def __post_init__(self) -> None:
+        _assert_media_clock_span(self.start_ms, self.end_ms, label="segment confidence")
         if self.end_ms <= self.start_ms:
             raise ValueError(
                 f"segment confidence spans {self.start_ms}..{self.end_ms} ms, which has no length"
             )
         if not isinstance(self.llm_text, str) or not isinstance(self.ctc_text, str):
             raise ValueError("segment hypotheses must be strings")
-        if self.mean_logprob > 0.0:
-            # The same refusal `SegmentScore` makes, for the same reason: escalation ranks on log
-            # probabilities, and a wrong scale here silently inverts the quartile.
-            raise ValueError(
-                f"segment at {self.start_ms} ms reports mean_logprob {self.mean_logprob}, which is "
-                f"not a log-probability (<= 0). A wrong scale inverts the bottom quartile."
-            )
+        _assert_log_probability(self.mean_logprob, label="segment mean_logprob")
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,8 +539,12 @@ class AsrProvenance:
         # Role-checked, not merely registry-checked: a scene detector is in §7 but did not
         # transcribe anything (audit finding #8).
         resolve_role(self.canonical, frozenset({"canonical_asr"}), "the canonical ASR")
-        if self.adapter is not None and not self.adapter.strip():
+        if self.adapter is not None and (
+            not isinstance(self.adapter, str) or not self.adapter.strip()
+        ):
             raise ValueError("AsrProvenance.adapter must name the fine-tune or be None")
+        if self.mean_logprob is not None:
+            _assert_log_probability(self.mean_logprob, label="ASR aggregate mean_logprob")
         if self.validated_by is not None:
             resolve_role(self.validated_by, frozenset({"asr_validator"}), "the ASR validator")
         if self.aligner is not None:
@@ -564,22 +658,81 @@ class RawTranscript:
 
     @staticmethod
     def from_json(payload: str) -> RawTranscript:
-        data: dict[str, Any] = json.loads(payload)
+        data = _json_object_fields(
+            _decode_transcript_json(payload, label="raw transcript"),
+            field="raw transcript",
+            required=frozenset({"media_id", "text_ckb", "words", "asr"}),
+            optional=frozenset(
+                {
+                    "media_sha256",
+                    "unaligned",
+                    "segment_confidence",
+                    "rejected_validator_corrections",
+                }
+            ),
+        )
+        word_objects = _json_object_array(data["words"], field="words")
+        asr_object = _json_object_fields(
+            data["asr"],
+            field="asr",
+            required=frozenset({"canonical"}),
+            optional=frozenset({"aligner", "validated_by", "mean_logprob", "adapter"}),
+        )
+        unaligned_objects = _json_object_array(data.get("unaligned", []), field="unaligned")
+        confidence_objects = _json_object_array(
+            data.get("segment_confidence", []), field="segment_confidence"
+        )
+        rejected_objects = _json_object_array(
+            data.get("rejected_validator_corrections", []),
+            field="rejected_validator_corrections",
+        )
         return RawTranscript(
             media_id=data["media_id"],
             text_ckb=data["text_ckb"],
-            words=tuple(Word(**w) for w in data["words"]),
-            asr=AsrProvenance(**data["asr"]),
+            words=tuple(
+                Word(
+                    **_json_object_fields(
+                        word,
+                        field=f"words[{index}]",
+                        required=frozenset({"w", "start_ms", "end_ms", "conf"}),
+                    )
+                )
+                for index, word in enumerate(word_objects)
+            ),
+            asr=AsrProvenance(**asr_object),
             media_sha256=data.get("media_sha256"),
             # `.get`: transcripts written before D-103 have no such key, and refusing to read
             # them would make an old canonical artifact unreadable to satisfy a new field.
-            unaligned=tuple(UnalignedSpeech(**u) for u in data.get("unaligned", ())),
+            unaligned=tuple(
+                UnalignedSpeech(
+                    **_json_object_fields(
+                        item,
+                        field=f"unaligned[{index}]",
+                        required=frozenset({"start_ms", "end_ms", "reason"}),
+                    )
+                )
+                for index, item in enumerate(unaligned_objects)
+            ),
             segment_confidence=tuple(
-                SegmentConfidence(**c) for c in data.get("segment_confidence", ())
+                SegmentConfidence(
+                    **_json_object_fields(
+                        item,
+                        field=f"segment_confidence[{index}]",
+                        required=frozenset({"start_ms", "end_ms", "mean_logprob"}),
+                        optional=frozenset({"llm_text", "ctc_text"}),
+                    )
+                )
+                for index, item in enumerate(confidence_objects)
             ),
             rejected_validator_corrections=tuple(
-                RejectedValidatorCorrection(**item)
-                for item in data.get("rejected_validator_corrections", ())
+                RejectedValidatorCorrection(
+                    **_json_object_fields(
+                        item,
+                        field=f"rejected_validator_corrections[{index}]",
+                        required=frozenset({"start_ms", "end_ms", "validator", "reason"}),
+                    )
+                )
+                for index, item in enumerate(rejected_objects)
             ),
         )
 
@@ -601,12 +754,27 @@ class NormalizedTranscript:
 
     @staticmethod
     def from_json(payload: str) -> NormalizedTranscript:
-        data: dict[str, Any] = json.loads(payload)
+        data = _json_object_fields(
+            _decode_transcript_json(payload, label="normalized transcript"),
+            field="normalized transcript",
+            required=frozenset({"media_id", "text_ckb", "source_sha256"}),
+            optional=frozenset({"words"}),
+        )
+        word_objects = _json_object_array(data.get("words", []), field="words")
         return NormalizedTranscript(
             media_id=data["media_id"],
             text_ckb=data["text_ckb"],
             source_sha256=data["source_sha256"],
-            words=tuple(Word(**w) for w in data.get("words", ())),
+            words=tuple(
+                Word(
+                    **_json_object_fields(
+                        word,
+                        field=f"words[{index}]",
+                        required=frozenset({"w", "start_ms", "end_ms", "conf"}),
+                    )
+                )
+                for index, word in enumerate(word_objects)
+            ),
         )
 
 

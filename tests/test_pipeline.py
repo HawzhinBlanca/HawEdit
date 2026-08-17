@@ -612,6 +612,25 @@ def test_the_cli_reports_malformed_transcript_json_without_a_traceback(tmp_path:
     assert main([str(source), "--transcript", str(transcript)]) == 2
 
 
+def test_the_cli_refuses_non_finite_stage1_evidence_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from hawedit.pipeline import main
+
+    source = tmp_path / "source.mp4"
+    source.touch()
+    transcript = tmp_path / "transcript.json"
+    document = json.loads(a_transcript("source", media_sha256=None).to_json())
+    document["segment_confidence"] = [{"start_ms": 0, "end_ms": 1, "mean_logprob": float("nan")}]
+    transcript.write_text(json.dumps(document), encoding="utf-8")
+
+    assert main([str(source), "--transcript", str(transcript)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "non-standard JSON numeric constant" in captured.err
+    assert "Traceback" not in captured.err
+
+
 # `main`'s except tuple has ten members. Measured by deleting each and running this file plus
 # tests/test_cli.py: FileNotFoundError, KeyError and ValueError were held; FileExistsError,
 # RuntimeError and TypeError were not.
