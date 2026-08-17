@@ -605,6 +605,19 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _assert_source_unchanged(source: Path, expected_sha256: str, boundary: str) -> None:
+    """Refuse when a later pixel consumer would reopen different source bytes."""
+    try:
+        actual = _file_digest(source)
+    except OSError as exc:
+        raise ValueError(f"cannot verify source media before {boundary}: {exc}") from exc
+    if actual != expected_sha256:
+        raise ValueError(
+            f"source media changed before {boundary}: Stage 0 measured {expected_sha256}, "
+            f"but the current bytes hash to {actual}"
+        )
+
+
 def _operational_failure(stage: str, component: str, exc: Exception) -> StageSkipped:
     """A known runtime/domain refusal, retaining its concrete cause in the run report."""
     detail = _safe_exception_text(str(exc), budget=1_024)
@@ -1218,6 +1231,19 @@ def run_pipeline(
     except (IngestError, OSError) as exc:
         return _ingest_failure_run(identifier, source, work_dir, exc)
 
+    if transcript is not None:
+        if transcript.media_sha256 is None:
+            raise ValueError(
+                "supplied transcript has no source-media SHA-256; this legacy artifact cannot be "
+                "matched to this source video's bytes. Regenerate it from this media."
+            )
+        if transcript.media_sha256 != ingested.source_sha256:
+            raise ValueError(
+                f"supplied transcript was created for source media SHA-256 "
+                f"{transcript.media_sha256}, "
+                f"but {source} hashes to {ingested.source_sha256}"
+            )
+
     diarization_stage: StageSkipped | None = _STAGE_0_DIARIZATION
     if diarizer is not None:
         try:
@@ -1251,7 +1277,7 @@ def run_pipeline(
         if model_identity:
             producer_id = f"{producer_id}+{model_identity}"
         reused = TranscriptStore(work_dir / "transcripts").reusable_raw(
-            identifier, audio_digest, producer_id
+            identifier, audio_digest, producer_id, ingested.source_sha256
         )
         transcript = reused
         if transcript is None:
@@ -1269,6 +1295,14 @@ def run_pipeline(
             raise ValueError(
                 f"canonical ASR returned media_id {transcript.media_id!r} for {identifier!r}"
             )
+        if transcript is not None:
+            if transcript.media_sha256 is None:
+                transcript = replace(transcript, media_sha256=ingested.source_sha256)
+            elif transcript.media_sha256 != ingested.source_sha256:
+                raise ValueError(
+                    "canonical ASR returned a transcript bound to media SHA-256 "
+                    f"{transcript.media_sha256}, not {ingested.source_sha256}"
+                )
 
     # --- §3 Stage 2 (visual half, the part that needs no weights) --------------------------
     # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
@@ -1389,6 +1423,7 @@ def run_pipeline(
                 )
             else:
                 query, visual_query_source = query_with_source
+                _assert_source_unchanged(source, ingested.source_sha256, "Path B visual retrieval")
                 try:
                     visual_result = visual_composer.discover(
                         source,
@@ -1406,6 +1441,9 @@ def run_pipeline(
                     )
                 else:
                     visual_candidates_tuple = visual_result.candidates
+                _assert_source_unchanged(
+                    source, ingested.source_sha256, "Path B visual retrieval completion"
+                )
         merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
@@ -1479,6 +1517,7 @@ def run_pipeline(
             else survivor
         )
         candidate_work_component = _candidate_work_component(request_candidate.candidate_id)
+        _assert_source_unchanged(source, ingested.source_sha256, "Stage 4 keyframe extraction")
         try:
             judge_frames = (
                 extract_judge_frames(
@@ -1496,6 +1535,9 @@ def run_pipeline(
                 run,
                 editorial=_operational_failure("editorial", "Stage 4 keyframe extraction", exc),
             )
+        _assert_source_unchanged(
+            source, ingested.source_sha256, "Stage 4 keyframe extraction completion"
+        )
         request = JudgeRequest.for_survivor(
             request_candidate,
             text_ckb=_candidate_slice_text(
@@ -1573,6 +1615,7 @@ def run_pipeline(
                 f"no visual window overlaps the Stage 5 span {temporal_span[0]}.."
                 f"{temporal_span[1]} ms"
             )
+        _assert_source_unchanged(source, ingested.source_sha256, "TimeLens grounding")
         try:
             with _release_grounder_after_use(temporal_grounder):
                 timelens_intervals = temporal_grounder.ground_all(
@@ -1584,6 +1627,7 @@ def run_pipeline(
                 run,
                 boundary=_operational_failure("boundary", "TimeLens temporal grounding", exc),
             )
+        _assert_source_unchanged(source, ingested.source_sha256, "TimeLens grounding completion")
         timelens_interval = interval_for_fusion(
             timelens_intervals, anchor_in, anchor_out, identifier
         )
@@ -1683,6 +1727,7 @@ def run_pipeline(
                 ),
             )
         try:
+            _assert_source_unchanged(source, ingested.source_sha256, "speaker/face association")
             speaker_points = speaker_tracker.track_speakers(
                 source,
                 boundary.final_in_ms,
@@ -1695,6 +1740,9 @@ def run_pipeline(
                 boundary=boundary,
                 render=_operational_failure("render", "speaker/face association", exc),
             )
+        _assert_source_unchanged(
+            source, ingested.source_sha256, "speaker/face association completion"
+        )
         try:
             focus_points = validate_speaker_focus_points(
                 speaker_points,
@@ -1712,6 +1760,7 @@ def run_pipeline(
             reframe_mode = Reframe.SPEAKER_TRACKED
 
     if not focus_points and subject_tracker is not None:
+        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
         try:
             focus_points = subject_tracker.track(
                 source, boundary.final_in_ms, boundary.final_out_ms
@@ -1722,6 +1771,7 @@ def run_pipeline(
                 boundary=boundary,
                 render=_operational_failure("render", "requested subject tracking", exc),
             )
+        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
         if focus_points:
             reframe_mode = Reframe.FACE_TRACKED
 
@@ -1733,6 +1783,7 @@ def run_pipeline(
     clip = Clip(
         clip_id=_clip_id(identifier, select_sentences),
         media_id=identifier,
+        media_sha256=ingested.source_sha256,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         # §3 Stage 3 discovers candidates and did not run. VERBAL records where this clip
@@ -1787,6 +1838,7 @@ def run_pipeline(
     # stages, this one runs immediately before the first write. Anything that appeared in the
     # work directory while the models were running is still caught here.
     _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
+    _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render")
     try:
         clip.assert_renderable()
     except (ValueError, IncompleteSentence) as exc:
@@ -1844,6 +1896,7 @@ def run_pipeline(
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
         )
+        _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:
         try:
             bundle.discard()
@@ -1865,6 +1918,7 @@ def run_pipeline(
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
     # Nothing is public yet: the render and all sidecars live in one private sibling directory.
     try:
+        _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         # Build all three before writing any. This used to write the JSON, then the SRT, then
         # build the EDL — formerly an NTSC 29.97 fps source legitimately refused because
         # drop-frame support did not exist. The build-first ordering remains load-bearing for
@@ -1884,8 +1938,16 @@ def run_pipeline(
         bundle.write_text("json", editing_json)
         bundle.write_text("srt", srt)
         bundle.write_text("edl", edl)
+        _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         bundle.publish()
-    except (DeliveryError, UndeliverableOrder, RenderError, BundleError, OSError) as exc:
+    except (
+        DeliveryError,
+        UndeliverableOrder,
+        RenderError,
+        BundleError,
+        OSError,
+        ValueError,
+    ) as exc:
         try:
             bundle.discard()
         except BundleError as cleanup_error:

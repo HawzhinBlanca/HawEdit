@@ -20,6 +20,7 @@ measured, so it is measured.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -60,6 +61,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.mp4"
+FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
 
 # How the fixture was built: three 1.4 s segments, so two cuts.
 
@@ -353,6 +355,27 @@ def test_ingest_produces_every_stage_0_artifact(tmp_path: Path) -> None:
     assert result.duration_ms == pytest.approx(4_162, abs=50)
     assert len(result.shot_cuts_ms) == 2
     assert len(result.speech) == 2
+    assert result.source_sha256 == FIXTURE_SHA256
+
+
+@needs_ffmpeg
+@needs_media_stack
+def test_ingest_refuses_source_bytes_changed_during_stage_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit import ingest as ingest_module
+
+    source = tmp_path / "mutable.mp4"
+    source.write_bytes(FIXTURE.read_bytes())
+
+    def mutate_after_measurement(_source: Path) -> tuple[int, ...]:
+        with source.open("ab") as stream:
+            stream.write(b"changed-during-stage-zero")
+        return ()
+
+    monkeypatch.setattr(ingest_module, "detect_shots", mutate_after_measurement)
+    with pytest.raises(IngestError, match="source changed"):
+        ingest(source, tmp_path / "work", media_id="mutable")
 
 
 @needs_ffmpeg
@@ -379,6 +402,7 @@ def test_the_result_round_trips_through_json() -> None:
         duration_ms=4_162,
         shot_cuts_ms=(1_400, 2_800),
         speech=(SpeechSegment(start_ms=0, end_ms=1_790),),
+        source_sha256="a" * 64,
     )
     assert IngestResult.from_dict(json.loads(original.to_json())) == original
 
@@ -394,6 +418,7 @@ def test_a_round_trip_does_not_turn_absent_diarization_into_an_empty_result() ->
         duration_ms=1,
         shot_cuts_ms=(),
         speech=(),
+        source_sha256="a" * 64,
     )
     assert IngestResult.from_dict(json.loads(original.to_json())).diarization is None
 
@@ -407,6 +432,7 @@ def _base_ingest_result(duration_ms: int = 4_162) -> IngestResult:
         duration_ms=duration_ms,
         shot_cuts_ms=(1_400, 2_800),
         speech=(SpeechSegment(start_ms=0, end_ms=1_790),),
+        source_sha256="a" * 64,
     )
 
 

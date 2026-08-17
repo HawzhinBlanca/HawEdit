@@ -24,7 +24,9 @@ shot cuts (§3 Stage 5), and renders a vertical clip with burned-in Kurdish capt
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -62,6 +64,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
 
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
@@ -78,12 +81,15 @@ WORDS = (
 )
 
 
-def a_transcript(media_id: str = "fixture") -> RawTranscript:
+def a_transcript(
+    media_id: str = "fixture", *, media_sha256: str | None = FIXTURE_SHA256
+) -> RawTranscript:
     return RawTranscript(
         media_id=media_id,
         text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
         words=WORDS,
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=media_sha256,
     )
 
 
@@ -411,6 +417,7 @@ def test_a_selection_with_no_complete_sentence_produces_no_clip(tmp_path: Path) 
         text_ckb="ڕۆژنامەوانی",
         words=(Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=900, conf=0.9),),
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
     )
     run = run_pipeline(
         FIXTURE, tmp_path / "work", media_id="frag", transcript=fragment, select_sentences=(0,)
@@ -451,6 +458,38 @@ def test_a_transcript_for_different_media_is_refused(tmp_path: Path) -> None:
 
 
 @needs_ffmpeg
+def test_a_legacy_unbound_supplied_transcript_is_refused_before_downstream_work(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="has no source-media SHA-256"):
+        run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            transcript=a_transcript(media_sha256=None),
+            media_id="fixture",
+        )
+
+
+@needs_ffmpeg
+def test_same_media_id_cannot_bind_a_transcript_to_different_video_bytes(tmp_path: Path) -> None:
+    other = tmp_path / "other" / FIXTURE.name
+    other.parent.mkdir()
+    shutil.copyfile(FIXTURE, other)
+    with other.open("ab") as stream:
+        stream.write(b"different-source-bytes")
+
+    assert other.stem == FIXTURE.stem
+    assert hashlib.sha256(other.read_bytes()).hexdigest() != FIXTURE_SHA256
+    with pytest.raises(ValueError, match="was created for source media"):
+        run_pipeline(
+            other,
+            tmp_path / "work",
+            transcript=a_transcript(FIXTURE.stem),
+            media_id=FIXTURE.stem,
+        )
+
+
+@needs_ffmpeg
 def test_rendering_refuses_a_partial_or_punctuation_changed_alignment(tmp_path: Path) -> None:
     transcript = RawTranscript(
         media_id="partial",
@@ -460,6 +499,7 @@ def test_rendering_refuses_a_partial_or_punctuation_changed_alignment(tmp_path: 
             Word(w="دووەم.", start_ms=800, end_ms=1_700, conf=0.9),
         ),
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
     )
     with pytest.raises(ValueError, match="token-for-token"):
         run_pipeline(
@@ -525,6 +565,7 @@ def test_soft_boundary_expansion_cannot_swallow_uncaptioned_speech(tmp_path: Pat
             Word(w="دووەم.", start_ms=1_800, end_ms=2_400, conf=0.9),
         ),
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
     )
     run = run_pipeline(
         FIXTURE,
@@ -926,6 +967,7 @@ def test_vad_onset_is_selected_for_the_anchor_not_the_episode_start() -> None:
     ingested = IngestResult(
         media_id="m",
         source="m.mp4",
+        source_sha256="a" * 64,
         audio_path="audio.wav",
         proxy_path="proxy.mp4",
         duration_ms=200_000,
@@ -963,6 +1005,7 @@ def test_the_run_writes_section_2s_whole_delivery_set(full_run: PipelineRun) -> 
     # The EDL's record timeline starts at zero; its source timecodes do not have to.
     assert "00:00:00:00" in body
     assert json.loads(editing_json.read_text(encoding="utf-8"))["clip_id"] == full_run.clip.clip_id
+    assert json.loads(editing_json.read_text(encoding="utf-8"))["media_sha256"] == FIXTURE_SHA256
 
 
 @needs_ffmpeg
@@ -1140,6 +1183,82 @@ def test_composed_visual_path_uses_measured_fps_and_best_verbal_slice_as_query(
         visual_composer=Composer(),  # type: ignore[arg-type]
     )
     assert observed == {"query": "لە هەولێر.", "fps": 2.0, "media_id": "composed"}
+
+
+@needs_ffmpeg
+def test_visual_retrieval_refuses_source_changed_after_stage_zero(tmp_path: Path) -> None:
+    from hawedit.discovery import Candidate
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    source = tmp_path / "visual-drift.mp4"
+    source.write_bytes(FIXTURE.read_bytes())
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    class MutatingComposer:
+        def discover(
+            self,
+            source_path: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            with source_path.open("ab") as stream:
+                stream.write(b"changed-during-visual-retrieval")
+            return VisualDiscoveryResult(
+                media_id,
+                query,
+                len(windows),
+                len(windows),
+                (),
+                (Candidate("scene", media_id, 0, 1_700, DiscoveryPath.VISUAL, 1, 0.8),),
+            )
+
+    with pytest.raises(ValueError, match="Path B visual retrieval completion"):
+        run_pipeline(
+            source,
+            tmp_path / "work",
+            media_id="visual-drift",
+            transcript=a_transcript("visual-drift", media_sha256=source_sha256),
+            visual_composer=MutatingComposer(),  # type: ignore[arg-type]
+            visual_query="ڕۆژنامەوانی",
+        )
+
+
+@needs_ffmpeg
+def test_render_refuses_and_discards_if_source_changes_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.render import render_clip as real_render_clip
+
+    source = tmp_path / "render-drift.mp4"
+    source.write_bytes(FIXTURE.read_bytes())
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    def mutate_after_render(*args: Any, **kwargs: Any) -> Any:
+        rendered = real_render_clip(*args, **kwargs)
+        with source.open("ab") as stream:
+            stream.write(b"changed-after-render")
+        return rendered
+
+    monkeypatch.setattr("hawedit.pipeline.render_clip", mutate_after_render)
+    work = tmp_path / "work"
+    run = run_pipeline(
+        source,
+        work,
+        media_id="render-drift",
+        transcript=a_transcript("render-drift", media_sha256=source_sha256),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="render-drift-0"),
+    )
+
+    assert isinstance(run.render, StageSkipped)
+    assert "source media changed" in run.render.reason
+    assert not (work / "render-drift-s0-0").exists()
+    assert not tuple(work.glob(".render-drift-s0-0.*.staging"))
 
 
 @needs_ffmpeg
@@ -1425,6 +1544,7 @@ def _transcript_ending_speech_early(media_id: str) -> RawTranscript:
         text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
         words=words,
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
     )
 
 
@@ -1934,6 +2054,7 @@ def test_the_report_says_which_speech_has_no_transcription(tmp_path: Path) -> No
         text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
         words=WORDS,
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
         unaligned=(
             UnalignedSpeech(
                 start_ms=226_754,
@@ -4384,7 +4505,9 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
         ntsc,
         work,
         media_id=media_id,
-        transcript=a_transcript(media_id),
+        transcript=a_transcript(
+            media_id, media_sha256=hashlib.sha256(ntsc.read_bytes()).hexdigest()
+        ),
         select_sentences=(0,),
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         verdict=a_verdict(100, 1_700),
@@ -4456,7 +4579,9 @@ def test_an_unsupported_fractional_edl_never_writes_a_sidecar_at_all(
         fractional,
         work,
         media_id="fractional",
-        transcript=a_transcript("fractional"),
+        transcript=a_transcript(
+            "fractional", media_sha256=hashlib.sha256(fractional.read_bytes()).hexdigest()
+        ),
         select_sentences=(0,),
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         verdict=a_verdict(100, 1_700),

@@ -542,7 +542,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 |---|---|---|
 | `registry.py` | §7 | The model allowlist, checked against §7 by parsing the blueprint. NC licences hard-rejected. |
 | `normalize.py` | §4.1 | Sorani normalization: KLPT for four collisions, a dictionary-backed rule for conjunctive `و`. Failure mode #1 in §0. |
-| `transcripts.py` | §4.1, §5 | The raw/norm artifact pair. Kurdish invariants #1 and #3. |
+| `transcripts.py` | §4.1, §5 | The raw/norm artifact pair, exact source-media SHA-256 binding, and Kurdish invariants #1 and #3. |
 | `alignment.py` | §4.2, §8.1 | Alignment accuracy. Kurdish invariant #5. |
 | `metrics.py` | §8.1 | Normalized CER, spacing-free CER, named-entity error, code-switch error. |
 | `corpus.py` | §8.1, §4.4 | The labelled set and its coverage grid — 3 dialects × 7 conditions. |

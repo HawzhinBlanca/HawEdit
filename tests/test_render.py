@@ -20,6 +20,7 @@ producing something plausible.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import tempfile
 from dataclasses import replace
@@ -52,6 +53,7 @@ from hawedit.transcripts import AsrProvenance, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
 FONTS = ROOT / "assets" / "fonts"
 
 # The fixture is 640x360 — see tests/test_ingest.py for how it is built.
@@ -80,6 +82,7 @@ def _clip(*, qc: Qc | None = None, complete: bool = True) -> Clip:
     return Clip(
         clip_id="m2-4",
         media_id="kurdish-speech-3cuts",
+        media_sha256=FIXTURE_SHA256,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         discovery_path=DiscoveryPath.VERBAL,

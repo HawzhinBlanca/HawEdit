@@ -65,6 +65,7 @@ __all__ = [
     "assert_model_input",
     "normalize_transcript",
     "validate_media_id",
+    "validate_media_sha256",
 ]
 
 
@@ -78,6 +79,24 @@ class RawTranscriptTampered(RuntimeError):
 
 class StaleNormalizedTranscript(RuntimeError):
     """Raised when a normalized artifact was derived from a different raw transcript."""
+
+
+def validate_media_sha256(value: str | None) -> str | None:
+    """Validate the exact lowercase SHA-256 binding of a transcript or clip to its media.
+
+    ``None`` is retained solely so pre-binding JSON remains readable. Pipeline and render
+    boundaries reject that legacy state; accepting it here avoids destroying old canonical
+    transcripts merely because their schema predates the binding.
+    """
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError("media_sha256 must be exactly 64 lowercase hexadecimal characters")
+    return value
 
 
 _RAW_LOCKS_GUARD = threading.Lock()
@@ -446,6 +465,9 @@ class RawTranscript:
     text_ckb: str
     words: tuple[Word, ...]
     asr: AsrProvenance
+    # Exact source-video bytes this transcript describes. ``None`` reads legacy artifacts;
+    # the runner refuses to use or render them until they are regenerated from known media.
+    media_sha256: str | None = None
     # Stage 0 speech regions canonical ASR could not turn into timed words. Empty on a clean run.
     #
     # Measured 2026-08-09 on a real 38-minute file: Stage 0 cut 547 speech regions and one 316 ms
@@ -469,6 +491,7 @@ class RawTranscript:
 
     def __post_init__(self) -> None:
         validate_media_id(self.media_id)
+        validate_media_sha256(self.media_sha256)
         if not isinstance(self.text_ckb, str):
             raise ValueError("text_ckb must be a string")
         if self.text_ckb and not self.text_ckb.strip():
@@ -547,6 +570,7 @@ class RawTranscript:
             text_ckb=data["text_ckb"],
             words=tuple(Word(**w) for w in data["words"]),
             asr=AsrProvenance(**data["asr"]),
+            media_sha256=data.get("media_sha256"),
             # `.get`: transcripts written before D-103 have no such key, and refusing to read
             # them would make an old canonical artifact unreadable to satisfy a new field.
             unaligned=tuple(UnalignedSpeech(**u) for u in data.get("unaligned", ())),
@@ -686,7 +710,9 @@ class TranscriptStore:
     def _audio_provenance_path(self, media_id: str) -> Path:
         return self.root / f"{self._safe(media_id)}.transcript.raw.provenance.json"
 
-    def reusable_raw(self, media_id: str, audio_sha256: str, producer: str) -> RawTranscript | None:
+    def reusable_raw(
+        self, media_id: str, audio_sha256: str, producer: str, media_sha256: str
+    ) -> RawTranscript | None:
         """The stored canonical transcript, if this exact audio and producer made it.
 
         Stage 1 is the expensive stage - measured 1,547 s for 545 segments on hawapc01's two
@@ -695,11 +721,15 @@ class TranscriptStore:
         complete transcript transcribed it again, and if the second pass differed by one
         character, the immutability guard refused *after* the full spend.
 
-        Reuse is verified rather than assumed, on two keys: the digest of the audio it was made
+        Reuse is verified rather than assumed, on three keys: the digest of the audio it was made
         from, so a different recording under the same media_id re-transcribes instead of
         shipping another video's words; and the producer, because a run driven by a test double
-        can never be read as a run on real weights. Absent sidecar, either key mismatched, or a
-        failed integrity check all return None - the expensive answer, never the wrong one.
+        can never be read as a run on real weights; and the source-video digest, because matching
+        extracted audio does not prove that the pixels later sent to retrieval, judging and
+        rendering are the same bytes. Absent sidecar, an audio/producer key mismatch, or a failed
+        integrity check all return None - the expensive answer, never the wrong one. A matching
+        audio/producer record whose transcript is legacy-unbound or media-mismatched is refused
+        before inference rather than spending hours only to collide with immutable raw storage.
 
         D-136. Restored across the readiness merge, which dropped it with no conflict because
         HEAD's additions lived inside regions that branch had rewritten.
@@ -717,7 +747,13 @@ class TranscriptStore:
         if recorded.get("audio_sha256") != audio_sha256 or recorded.get("producer") != producer:
             return None
         self.verify_raw_integrity(media_id)
-        return self.read_raw(media_id)
+        raw = self.read_raw(media_id)
+        if raw.media_sha256 != media_sha256:
+            raise RawTranscriptImmutable(
+                f"{path} is not bound to source media SHA-256 {media_sha256}. The canonical "
+                "raw transcript cannot be rewritten; use a new work directory or media_id."
+            )
+        return raw
 
     def write_raw(
         self,

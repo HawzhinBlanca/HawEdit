@@ -35,6 +35,7 @@ from hawedit.registry import ModelNotInRegistry
 from hawedit.transcripts import AsrProvenance, Word
 
 ANCHOR_IN, ANCHOR_OUT = 84_600, 112_400
+MEDIA_SHA256 = "a" * 64
 
 
 def a_boundary(**overrides: object):  # type: ignore[no-untyped-def]
@@ -88,6 +89,7 @@ def a_clip(**overrides: object) -> Clip:
     payload: dict[str, object] = {
         "clip_id": "c-1",
         "media_id": "m-1",
+        "media_sha256": MEDIA_SHA256,
         "in_ms": boundary.final_in_ms,
         "out_ms": boundary.final_out_ms,
         "discovery_path": DiscoveryPath.VERBAL,
@@ -132,6 +134,21 @@ def test_a_well_formed_clip_is_accepted() -> None:
 
 def test_a_renderable_clip_passes_the_gate() -> None:
     a_clip().assert_renderable()
+
+
+def test_an_unbound_legacy_clip_is_readable_but_not_renderable() -> None:
+    payload = a_clip().to_dict()
+    payload.pop("media_sha256")
+    legacy = Clip.from_dict(payload)
+    assert legacy.media_sha256 is None
+    with pytest.raises(ValueError, match="source-media SHA-256"):
+        legacy.assert_renderable()
+
+
+@pytest.mark.parametrize("value", [True, "A" * 64, "0" * 63, "g" * 64])
+def test_a_clip_refuses_a_noncanonical_media_digest(value: object) -> None:
+    with pytest.raises(ValueError, match="media_sha256"):
+        a_clip(media_sha256=value)
 
 
 def test_a_clip_whose_boundary_violates_the_invariant_is_not_renderable() -> None:
@@ -293,6 +310,7 @@ def test_the_clip_serialises_to_the_section_5_shape() -> None:
     assert set(record) == {
         "clip_id",
         "media_id",
+        "media_sha256",
         "in_ms",
         "out_ms",
         "discovery_path",

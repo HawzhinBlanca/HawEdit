@@ -30,7 +30,7 @@ from typing import Any, ClassVar, Final
 
 from hawedit.boundary import Boundary, _strict_bool, assert_boundary_invariant
 from hawedit.registry import resolve_role
-from hawedit.transcripts import AsrProvenance, Word
+from hawedit.transcripts import AsrProvenance, Word, validate_media_sha256
 
 __all__ = [
     "Clip",
@@ -423,6 +423,8 @@ class Clip:
 
     clip_id: str
     media_id: str
+    # ``None`` reads legacy editing JSON, but cannot clear the render gate.
+    media_sha256: str | None
     in_ms: int
     out_ms: int
     discovery_path: DiscoveryPath
@@ -434,6 +436,7 @@ class Clip:
     qc: Qc | None = None
 
     def __post_init__(self) -> None:
+        validate_media_sha256(self.media_sha256)
         if self.in_ms != self.boundary.final_in_ms:
             raise ValueError(
                 f"in_ms ({self.in_ms}) does not match the boundary's final_in_ms "
@@ -454,6 +457,11 @@ class Clip:
             ValueError: the clip has not cleared QC.
         """
         assert_boundary_invariant(self.boundary)
+        if self.media_sha256 is None:
+            raise ValueError(
+                f"clip {self.clip_id!r} has no source-media SHA-256 binding; legacy "
+                "editing JSON cannot be rendered safely"
+            )
         # A clip with no QC record has not passed QC — it has skipped it. §2's diagram puts
         # the gate before output "(always)", so absence is refusal, not permission. The
         # same for the judge: an unjudged clip has no meaning-fidelity or misleading-edit
@@ -486,6 +494,7 @@ class Clip:
         return {
             "clip_id": self.clip_id,
             "media_id": self.media_id,
+            "media_sha256": self.media_sha256,
             "in_ms": self.in_ms,
             "out_ms": self.out_ms,
             "discovery_path": self.discovery_path.value,
@@ -505,6 +514,7 @@ class Clip:
         return Clip(
             clip_id=data["clip_id"],
             media_id=data["media_id"],
+            media_sha256=data.get("media_sha256"),
             in_ms=data["in_ms"],
             out_ms=data["out_ms"],
             discovery_path=DiscoveryPath(data["discovery_path"]),

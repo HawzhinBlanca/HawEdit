@@ -23,6 +23,7 @@ Each fix here is the *content* check its shape check was standing in for.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -404,6 +405,7 @@ def test_a_non_contiguous_sentence_selection_is_refused(tmp_path: Path) -> None:
             Word(w="سێ.", start_ms=3_000, end_ms=3_900, conf=0.9),
         ),
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(),
     )
     with pytest.raises(ValueError, match="contiguous"):
         run_pipeline(
