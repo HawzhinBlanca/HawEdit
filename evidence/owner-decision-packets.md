@@ -22,7 +22,7 @@ operator directory.
 The operator command is:
 
 ```bash
-python -m hawedit.decision_packets prepare --project-root . \
+hawedit-owner-decisions prepare --project-root . \
   --output-dir /secure/hawedit-owner-decisions
 ```
 

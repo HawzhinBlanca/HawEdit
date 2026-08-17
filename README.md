@@ -178,7 +178,8 @@ wheel, or existing release directory is refused.
 On the default branch, `.github/workflows/release.yml` consumes only a successful official
 `gate` **push** run on `main`, checks out that run's exact SHA, invokes the same fail-closed release
 verifier in a read-only job, then requires fresh no-checkout Python 3.11 and 3.12 runners to install
-the exact wheel, run `pip check`, resolve installed package data and start all nine CLIs. Only after
+  the exact wheel, run `pip check`, resolve installed package data and start all twelve CLIs. Only
+  after
 both pass does it transfer the four explicit payloads to a fresh runner. Only that isolated job has
 OIDC/attestation authority; it refuses any extra, nested,
 linked, malformed or digest-mismatched entry, independently requires the wheel to identify the
@@ -199,6 +200,25 @@ draft, downloads and byte-compares its exact assets, and only then publishes. Re
 **immutable releases** are enabled, and the workflow refuses a published result unless GitHub
 reports it immutable. Operators must never move, delete, or reuse a production tag. Rollback is a
 new patch version, never a rewritten release. See `evidence/versioned-immutable-release.md`.
+
+Before creating that tag, produce the owner handoff from the downloaded four-file Actions artifact:
+
+```bash
+hawedit-release-approval prepare \
+  --project-root . \
+  --release-dir PATH/TO/DOWNLOADED/hawedit-release-SHA \
+  --output-dir PATH/TO/release-owner-packet \
+  --release-run-id RELEASE_WORKFLOW_RUN_ID
+```
+
+The command independently rechecks the clean protected-main SHA, schema-5 provenance, exact bundle
+digests, all five hosted release jobs and the strict `gh attestation verify` policy. It emits a
+write-once packet whose owner, action, timestamp, rationale and four risk acknowledgements are all
+unset. The owner reviews and fills a separate copy, signs its canonical bytes with OpenSSH namespace
+`hawedit-release-approval`, and passes that copy, signature and an allowed-signers file to
+`hawedit-release-approval verify`. Verification reopens every artifact and packet byte. A valid
+approval returns the exact fetch/check/tag/push commands as JSON; a rejection returns no commands.
+Neither operation creates a tag, pushes Git, publishes a release, or chooses for the owner.
 
 Verify either the Actions artifact or downloaded GitHub Release assets with the exact signer
 policy:
@@ -392,7 +412,7 @@ Stage 4 samples up to 20 JPEG keyframes from the exact candidate span and sends 
 parts to `countTokens` and `generateContent`. Textual SV6D remains supporting evidence; it no
 longer masquerades as source pixels.
 
-`hawedit.vertex_acceptance` is the confidential-route acceptance coordinator. Its preparation
+`hawedit-vertex-acceptance` is the confidential-route acceptance coordinator. Its preparation
 phase performs no cloud request: it binds one authorised video, normalized transcript, candidate
 slice, retained ZDR-policy digest, approved project/location, ADC identity, billing account and
 owner token/cost ceilings, then emits an unsigned approval template. Execution requires the exact
@@ -404,7 +424,7 @@ full transcript text, raw frame bytes, generated title/description/hashtags or r
 text. This code does not prove a customer's contractual ZDR assertion: a responsible human still
 has to sign it, and no live Vertex acceptance has been run in this repository.
 
-`hawedit.decision_packets` prepares the six remaining owner choices (#9, #13, #14, #15, #18 and
+`hawedit-owner-decisions` prepares the six remaining owner choices (#9, #13, #14, #15, #18 and
 #21) without silently choosing for Hawa. It authenticates the frozen blueprint, each exact blocker
 section and the reviewed evidence behind each recommendation, then publishes deterministic pages,
 a machine-readable manifest and a self-contained JSON template whose owner, timestamp, rationale
@@ -453,11 +473,13 @@ python -m hawedit.diarization_acceptance prepare diarization-reference.json \
 # Run pinned Community-1 and the non-routable 3.1 control after accepting both gated repositories;
 # fill and sign the generated documents exactly as INSTRUCTIONS.txt specifies, then run
 # `python -m hawedit.diarization_acceptance evaluate --help` for the bound evaluation inputs.
-python -m hawedit.decision_packets prepare --project-root . \
+hawedit-owner-decisions prepare --project-root . \
   --output-dir /secure/hawedit-owner-decisions
 # Read all six pages; filling the template is an owner decision, not automated acceptance.
-# Confidential Vertex preparation/execution is currently a typed library API in
-# `hawedit.vertex_acceptance`; Task 5 adds the installed CLI after this manifest format settles.
+hawedit-vertex-acceptance prepare --source-manifest /secure/vertex-source.json \
+  --private-root /secure/vertex-client-inputs --output-dir /secure/vertex-approval
+# Fill/sign the generated approval exactly as INSTRUCTIONS.txt specifies. `run --help` lists the
+# bound execution inputs; it reserves one paid attempt and therefore is never run by setup or CI.
 ```
 
 The private signing key, allowed-signers trust file, client audio, signed approval and training
@@ -575,6 +597,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `gpu_runtime.py` | §6 | Exact dual-3090-Ti CUDA/Torch identity plus real bfloat16 compute on both cards; refuses version, visibility, topology, capability or memory drift. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `release.py` | — | Exact-SHA official main-gate proof, clean-HEAD double-build wheel reproducibility, runtime-data validation and atomic checksummed provenance. |
+| `release_approval.py` | — | Independent four-payload, hosted-run and attestation verification; deterministic unset owner packet; detached OpenSSH decision verification; never tags, pushes or publishes. |
 | `cli.py` | — | Shared entry-point rules: `use_utf8_streams` pins stdout/stderr to UTF-8; `machine_readable_stdout` reserves stdout for one parseable document; `program_name` makes help name the installed launcher or pasteable `python -m` command. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |

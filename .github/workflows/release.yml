@@ -136,7 +136,10 @@ jobs:
             hawedit-credentials \
             hawedit-fetch-models \
             hawedit-ffmpeg-setup \
+            hawedit-owner-decisions \
             hawedit-release \
+            hawedit-release-approval \
+            hawedit-vertex-acceptance \
             hawedit-wsl-vex
           do
             "$SMOKE_ROOT/bin/$command" --help >/dev/null

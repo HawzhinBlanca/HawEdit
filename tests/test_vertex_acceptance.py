@@ -25,6 +25,7 @@ from hawedit.vertex_acceptance import (
     PreparedVertexAcceptance,
     VertexAcceptanceError,
     VertexEnvironment,
+    main,
     prepare_vertex_acceptance,
     probe_vertex_environment,
     run_vertex_acceptance,
@@ -288,6 +289,58 @@ def _run(
         now_utc=lambda: "2026-08-17T10:02:00Z",
     )
     return result, selected_judge, events
+
+
+def test_prepare_cli_is_machine_readable_and_transport_free(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source, private, document = _private_inputs(tmp_path)
+
+    assert (
+        main(
+            [
+                "prepare",
+                "--source-manifest",
+                str(source),
+                "--private-root",
+                str(private),
+                "--output-dir",
+                str(tmp_path / "prepared-cli"),
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert captured.err == ""
+    assert report["status"] == "prepared-no-client-content-sent"
+    published = Path(report["directory"])
+    assert published.is_dir()
+    assert document["request"]["text_ckb"] not in captured.out
+    assert document["billing"]["billing_account_reference"] not in captured.out
+
+
+def test_cli_refuses_missing_private_input_without_machine_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        main(
+            [
+                "prepare",
+                "--source-manifest",
+                str(tmp_path / "missing.json"),
+                "--private-root",
+                str(tmp_path),
+                "--output-dir",
+                str(tmp_path / "prepared"),
+            ]
+        )
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("REFUSED:")
 
 
 def test_prepare_is_transport_free_and_emits_only_sanitized_templates(tmp_path: Path) -> None:

@@ -785,6 +785,8 @@ _NUMBER_WORDS = {
     "eight": 8,
     "nine": 9,
     "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
 }
 
 
@@ -1219,6 +1221,9 @@ def test_the_audit_report_states_how_many_console_scripts_there_are() -> None:
         7: "seven",
         8: "eight",
         9: "nine",
+        10: "ten",
+        11: "eleven",
+        12: "twelve",
     }
     stated = words[len(declared)]
     assert f"**all {stated}** declared console scripts" in section, (

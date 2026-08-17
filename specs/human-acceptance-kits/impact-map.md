@@ -45,6 +45,19 @@ Task 4 Vertex symbol/caller map:
 | New `decision_packets.prepare_decision_packets` | human product owner only | Reads the six exact `BLOCKED.md` sections plus frozen blueprint/evidence bytes and publishes deterministic pages, an unset owner template and a machine-readable manifest. It has no runtime pipeline caller and makes no decision itself. |
 | `BLOCKED.md`, `BLUEPRINT.md`, named `evidence/*.md` inputs | claims and human review | Read-only authorities. Their section/file digests are emitted so a packet becomes stale rather than silently carrying old measurements after any source changes. |
 
+Task 5 release symbol/caller map:
+
+| Symbol/surface | Current callers | Task 5 treatment |
+|---|---|---|
+| `release.build_reproducible_wheel`, `ReleaseArtifact` | `hawedit-release`, release workflow, release tests | Unchanged. The approval kit consumes the four published files and schema-5 provenance; it never invokes the builder. |
+| `.github/workflows/release.yml` build/smoke/attest/publish jobs | successful protected-main `workflow_run` only | Remains the sole build, attestation and immutable-publication authority. The kit verifies its exact run/jobs and prints no workflow substitute. |
+| `evidence/versioned-immutable-release.md` | release operators and claims tests | Bound into the packet as the forward-only rollback policy; the kit does not invent a delete/move/overwrite rollback. |
+| New `release_approval.prepare_release_approval` | human release owner before tag creation | Verifies the exact bundle, official hosted release run and four attestations; publishes an unset, write-once approval packet. |
+| New `release_approval.verify_release_approval` | human release owner after filling/signing | Revalidates the packet/bundle/hosted evidence and detached OpenSSH signature, requires every residual risk acknowledgment, and emits exact tag commands without running Git. |
+| New release-approval installed CLI | release operator only | Exposes prepare/verify with machine-readable stdout and bounded refusal; adds no network credential to a URL and makes no GitHub mutation. |
+| Existing `decision_packets.main` | installed owner operator | Add only the wheel entry-point name; the existing parser and prepare-only semantics remain the sole caller. |
+| New `vertex_acceptance.main` | installed privacy/media owner | Map `prepare` and `run` directly to the settled library functions. Live execution still requires the signed approval and uses the existing single counted, non-retried Vertex operation. |
+
 The first bounded implementation shall add a companion Sorani acceptance manifest/verifier rather
 than broadening `CorpusItem`. This avoids changing every benchmark fixture and keeps the canonical
 raw transcript schema stable. It will call `Corpus.load`, `Corpus.assert_section_8_1_coverage`, and

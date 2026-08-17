@@ -14,6 +14,11 @@ changed, malformed, non-video, duration-mismatched, non-normalized, unbounded or
 refused. The published preparation packet contains hashes and an unset approval template, not
 client content.
 
+The installed `hawedit-vertex-acceptance prepare` and `run` subcommands are thin mappings to those
+same two library boundaries. The prepare command emits one machine-readable report and performs no
+cloud request. The run command has no confirmation bypass: it still requires the exact filled,
+detached-signed approval before live ADC/billing checks or the sole paid generation attempt.
+
 Execution recomputes those inputs, verifies an OpenSSH detached signature, refreshes ADC, requires
 the exact ADC project/type/principal, checks Cloud Billing and `aiplatform.googleapis.com` live,
 extracts 1–20 exact-span frames in an owned temporary workspace, and creates a write-once attempt

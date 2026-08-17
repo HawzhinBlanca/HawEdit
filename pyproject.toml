@@ -120,7 +120,10 @@ hawedit-credentials = "hawedit.credentials:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
 hawedit-fetch-models = "hawedit.model_fetch:main"
 hawedit-ffmpeg-setup = "hawedit.ffmpeg_setup:main"
+hawedit-owner-decisions = "hawedit.decision_packets:main"
 hawedit-release = "hawedit.release:main"
+hawedit-release-approval = "hawedit.release_approval:main"
+hawedit-vertex-acceptance = "hawedit.vertex_acceptance:main"
 hawedit-wsl-vex = "hawedit.wsl_vex_gate:main"
 
 [tool.pytest.ini_options]

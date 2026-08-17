@@ -10812,6 +10812,31 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-246 - Release evidence can prepare authorization but cannot become the authorizer
+
+**Date:** 2026-08-17 · **Blueprint ref:** §2 delivery/release boundary · **Type:** human authorization
+
+Creating the strict version tag is the remaining public-release authorization. It is neither safe
+to ask an owner to reconstruct several hosted checks by hand nor legitimate for automation to infer
+approval from a green gate. `hawedit.release_approval` therefore separates evidence preparation
+from the decision itself.
+
+Preparation accepts only the exact four-file release set. It binds their bytes, schema-5
+provenance, wheel identity/version, clean protected-main checkout, current blocker/progress/rollback
+documents, all five successful hosted release jobs and an independent strict GitHub attestation
+verification. It publishes one deterministic, write-once packet with owner, action, timestamp,
+rationale and every residual-risk acknowledgement explicitly unset.
+
+Verification reopens all of that evidence, requires the packet's instructions/template/tag commands
+to remain canonical, and verifies a detached OpenSSH signature under the dedicated
+`hawedit-release-approval` namespace. An approval yields commands for the owner to run; a rejection
+yields none. Neither path invokes mutating Git or GitHub commands. Rejected auto-tagging after a
+green build because software evidence is not rights, risk or publication authority. Rejected a
+checkbox stored only in GitHub UI because it does not bind the reviewed bytes or survive as portable
+evidence. Rollback remains forward-only through a reviewed new patch version.
+
+`evidence/release-owner-approval.md`.
+
 ## D-245 - Recommendation packets authenticate their facts and cannot approve themselves
 
 **Date:** 2026-08-17 · **Blueprint refs:** §§3, 4.1, 4.2, 5, 7, 8.2 · **Type:** human-decision boundary

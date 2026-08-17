@@ -7,6 +7,7 @@ delegating the sole counted generation to :class:`hawedit.gemini.VertexGeminiJud
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -16,10 +17,11 @@ import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -27,6 +29,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Final, Protocol
 
 from hawedit.atomic_fs import rename_directory_noreplace
+from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.gemini import Governance, VertexGeminiJudge
 from hawedit.http_transport import open_without_redirects
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
@@ -55,6 +58,7 @@ __all__ = [
     "VerifiedVertexAcceptance",
     "VertexAcceptanceError",
     "VertexEnvironment",
+    "main",
     "prepare_vertex_acceptance",
     "probe_vertex_environment",
     "run_vertex_acceptance",
@@ -1443,3 +1447,71 @@ def run_vertex_acceptance(
         evidence_path=directory / "vertex-evidence.json",
         attempt_path=attempt_path,
     )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Prepare or execute the signed one-attempt confidential Vertex acceptance."""
+    use_utf8_streams()
+    parser = argparse.ArgumentParser(
+        prog=program_name("hawedit.vertex_acceptance"),
+        description=(
+            "Prepare an offline Vertex approval packet or run its signed one-attempt acceptance"
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    prepare = subparsers.add_parser(
+        "prepare", help="validate private inputs without sending client content"
+    )
+    prepare.add_argument("--source-manifest", type=Path, required=True)
+    prepare.add_argument("--private-root", type=Path, required=True)
+    prepare.add_argument("--output-dir", type=Path, required=True)
+    run = subparsers.add_parser(
+        "run", help="verify signed approval and reserve exactly one paid generation attempt"
+    )
+    run.add_argument("--source-manifest", type=Path, required=True)
+    run.add_argument("--private-root", type=Path, required=True)
+    run.add_argument("--prepared-manifest", type=Path, required=True)
+    run.add_argument("--approval", type=Path, required=True)
+    run.add_argument("--approval-signature", type=Path, required=True)
+    run.add_argument("--allowed-signers", type=Path, required=True)
+    run.add_argument("--output-dir", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        with machine_readable_stdout() as report_stream:
+            if args.command == "prepare":
+                prepared = prepare_vertex_acceptance(
+                    source_manifest_path=args.source_manifest,
+                    private_root=args.private_root,
+                    output_dir=args.output_dir,
+                )
+                document: dict[str, object] = {
+                    "approval_template": str(prepared.approval_template_path),
+                    "directory": str(prepared.directory),
+                    "manifest": str(prepared.manifest_path),
+                    "status": "prepared-no-client-content-sent",
+                }
+            else:
+                verified = run_vertex_acceptance(
+                    source_manifest_path=args.source_manifest,
+                    private_root=args.private_root,
+                    prepared_manifest_path=args.prepared_manifest,
+                    approval_path=args.approval,
+                    approval_signature_path=args.approval_signature,
+                    allowed_signers_path=args.allowed_signers,
+                    output_dir=args.output_dir,
+                )
+                document = {
+                    "attempt": str(verified.attempt_path),
+                    "directory": str(verified.directory),
+                    "evidence": str(verified.evidence_path),
+                    "status": "verified-one-paid-attempt-complete",
+                }
+            print(json.dumps(document, ensure_ascii=False, sort_keys=True), file=report_stream)
+    except (VertexAcceptanceError, OSError) as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

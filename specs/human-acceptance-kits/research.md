@@ -160,6 +160,39 @@ exact-SHA reproducible building, installed-wheel smoke, OIDC attestation, and im
 publication. Humans still need concise decision forms for #13/#14/#15/#18/#9/#21 and an explicit
 version/tag approval. The final release kit must verify rather than recreate these controls.
 
+Task 5 release caller research separates four authorities. `hawedit.release` authenticates one
+successful official main-branch gate, exports the immutable Git object twice, and creates the exact
+wheel/SBOM/provenance/checksum bundle. `.github/workflows/release.yml` owns the unprivileged build,
+two-version installed-wheel smoke, fresh privileged attestation, strict pre-existing tag check,
+draft byte comparison and immutable publication. `evidence/versioned-immutable-release.md` owns the
+forward-only rollback rule. The new approval coordinator must consume and independently verify those
+facts; calling the builder, creating/moving a tag, pushing Git, uploading an asset or publishing a
+release would duplicate or bypass the existing authority.
+
+The human handoff therefore has two phases. Preparation takes one downloaded four-file release
+artifact plus the exact successful release-workflow run id. It reopens every member through a
+stable no-follow/single-link read, requires the exact file set, validates strict SHA256SUMS grammar,
+binds wheel/SBOM/provenance bytes, requires schema-5 provenance for one strict SemVer HawEdit version
+and official successful main gate, then queries the official GitHub release run and independently
+runs the same signer-workflow/source-ref/source-digest/signer-digest/hosted-runner attestation policy
+for all four payloads. The candidate tag is derived as `v<version>`; it is never supplied or guessed.
+
+The packet also binds `BLOCKED.md`, `PROGRESS.md` and the immutable-release policy from the exact
+clean candidate checkout. It emits all residual blocker text by hash, the payload hashes, run/job
+facts, exact attestation commands, forward-only rollback text and an approval template with no owner,
+timestamp, decision, rationale or risk acknowledgements selected. Verification reopens the packet,
+bundle and exact hosted evidence, requires an OpenSSH signature over the completed approval, and
+returns a tag-authorization record containing pasteable commands. It still makes no repository
+mutation: the human act is creating and pushing the exact annotated tag, after which the existing
+workflow alone can publish.
+
+Installed-operator research found that `hawedit.decision_packets` already has a prepare-only,
+machine-readable `main`, while `hawedit.vertex_acceptance` exposes the settled prepare/run library
+boundary but no parser. The integrated handoff therefore adds thin launchers only: owner decisions
+map directly to the existing transport-free prepare call; Vertex maps `prepare` to the offline
+packet function and `run` to the signed one-attempt function. The CLI must not introduce a second
+Google transport, hidden confirmation flag, credential value, retry, or alternate evidence writer.
+
 Search found no production decision-packet type or writer. The authoritative inputs are the six
 open `BLOCKED.md` sections named by HK-8 and wave D5, plus the frozen `BLUEPRINT.md` and the
 measurement records each blocker already cites. The generator therefore must not restate those
