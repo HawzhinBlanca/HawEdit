@@ -42,6 +42,8 @@ Task 4 Vertex symbol/caller map:
 | `NormalizedTranscript` | Path A, indexes and model boundaries | Parsed from the exact private artifact; raw transcripts and non-normalised request text remain refused. |
 | New `vertex_acceptance` coordinator | human operator only | Owns private manifest validation, approval signature, ADC/billing preflight, durable one-attempt reservation, redacted evidence and no transport during preparation. |
 | `windows_security.create_private_directory`, `assert_private_windows_path` | model-fetch staging and the new Vertex coordinator | Reused without signature changes so confidential frame/evidence workspaces receive a real protected Windows DACL; POSIX uses owner-only mode 0700. |
+| New `decision_packets.prepare_decision_packets` | human product owner only | Reads the six exact `BLOCKED.md` sections plus frozen blueprint/evidence bytes and publishes deterministic pages, an unset owner template and a machine-readable manifest. It has no runtime pipeline caller and makes no decision itself. |
+| `BLOCKED.md`, `BLUEPRINT.md`, named `evidence/*.md` inputs | claims and human review | Read-only authorities. Their section/file digests are emitted so a packet becomes stale rather than silently carrying old measurements after any source changes. |
 
 The first bounded implementation shall add a companion Sorani acceptance manifest/verifier rather
 than broadening `CorpusItem`. This avoids changing every benchmark fixture and keeps the canonical

@@ -160,6 +160,35 @@ exact-SHA reproducible building, installed-wheel smoke, OIDC attestation, and im
 publication. Humans still need concise decision forms for #13/#14/#15/#18/#9/#21 and an explicit
 version/tag approval. The final release kit must verify rather than recreate these controls.
 
+Search found no production decision-packet type or writer. The authoritative inputs are the six
+open `BLOCKED.md` sections named by HK-8 and wave D5, plus the frozen `BLUEPRINT.md` and the
+measurement records each blocker already cites. The generator therefore must not restate those
+facts without a byte binding: it should extract each exact blocker section, authenticate each named
+evidence file, bind the complete frozen blueprint, and emit both a machine-readable manifest and a
+human-readable page.
+
+The six decisions share one trust contract but have different consequences:
+
+- #13 asks whether Latin-script Kurdish is in the current `ckb_Arab` product scope and explicitly
+  forbids folding phonemically distinct `ř/ł` to guessed ASCII forms.
+- #14 chooses a VAD/alignment relationship for sentence boundaries; any choice changes §5 anchors,
+  so a conservative recommendation remains only a recommendation until labelled audio measures it.
+- #15 chooses whether and how TimeLens may extend a clip. Evidence-only operation is the safest
+  production recommendation until labelled footage supplies a relevance threshold.
+- #18 resolves the conflict between §3's full-transcript Gemini call and M2's BM25 arrow. The least
+  lossy recommendation keeps full-transcript Path A and gives BM25 an explicit brief/operator query
+  consumer rather than silently filtering model context.
+- #9 is a two-gate decision: real footage must first show face-centred cropping is insufficient,
+  then every added model must pass the §7 commercial-licence boundary. Deferral is the only option
+  currently supported by evidence.
+- #21 is an owner licence assertion for locally trained weights. The generator can recommend
+  internal-only use until the owner selects terms; it cannot infer copyright or training-data rights.
+
+An unset template is part of the output, not a failure to finish it. Accepted values must be
+enumerated option identifiers, with owner identity, rationale and UTC timestamp left JSON `null`.
+Preparation performs no model, cloud or GitHub call. Publication is a write-once exact file set so
+two operators cannot silently overwrite the questions or their evidence bindings.
+
 ## Design conclusion
 
 Each kit must have three layers:

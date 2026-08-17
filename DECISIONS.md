@@ -10812,6 +10812,31 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-245 - Recommendation packets authenticate their facts and cannot approve themselves
+
+**Date:** 2026-08-17 · **Blueprint refs:** §§3, 4.1, 4.2, 5, 7, 8.2 · **Type:** human-decision boundary
+
+The six remaining product-owner decisions in `BLOCKED.md` #9, #13, #14, #15, #18 and #21 are not
+engineering blanks that an agent may fill. They determine product scope, boundary semantics,
+grounding authority, retrieval composition, model admission and release rights. A green test can
+prepare the choice but cannot become the chooser.
+
+`hawedit.decision_packets` therefore binds every recommendation to the complete frozen
+`BLUEPRINT.md`, the exact blocker section and each reviewed evidence file by SHA-256. It emits the
+question, current behaviour, consequences, implementation requirements, allowed option identifiers
+and one explicitly labelled recommendation. The companion template repeats the exact allowed and
+recommended identifiers but leaves owner, UTC timestamp, rationale and selected option JSON `null`.
+Every rendered page says `OWNER DECISION: UNSET`.
+
+The packet is deterministic, transport-free and published as an exact write-once directory.
+Changed, linked or hardlinked authorities are refused, as is an existing output. Rejected embedding
+a default selection in the template: a recommendation that becomes a serialized selection has
+already made the decision. Rejected copying prose without hashes: it could remain plausible after
+the source measurement changed. Rejected reopening these six questions during each implementation
+task: the packet is the bounded handoff, and the filled owner response must drive the later
+ADR/blueprint/code change explicitly.
+
+
 ## D-244 - Confidential Vertex acceptance is one signed, reserved counted operation
 
 **Date:** 2026-08-17 · **Blueprint ref:** §3 Stages 3 and 4 · **Type:** governance/evidence boundary

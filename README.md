@@ -404,6 +404,13 @@ full transcript text, raw frame bytes, generated title/description/hashtags or r
 text. This code does not prove a customer's contractual ZDR assertion: a responsible human still
 has to sign it, and no live Vertex acceptance has been run in this repository.
 
+`hawedit.decision_packets` prepares the six remaining owner choices (#9, #13, #14, #15, #18 and
+#21) without silently choosing for Hawa. It authenticates the frozen blueprint, each exact blocker
+section and the reviewed evidence behind each recommendation, then publishes deterministic pages,
+a machine-readable manifest and a self-contained JSON template whose owner, timestamp, rationale
+and selected option remain unset. Publication is write-once; changed or linked authority files are
+refused.
+
 ## Benchmarks
 
 `bench.py` remains the §8.1 ASR harness: normalized/spacing-free CER, named entities,
@@ -446,6 +453,9 @@ python -m hawedit.diarization_acceptance prepare diarization-reference.json \
 # Run pinned Community-1 and the non-routable 3.1 control after accepting both gated repositories;
 # fill and sign the generated documents exactly as INSTRUCTIONS.txt specifies, then run
 # `python -m hawedit.diarization_acceptance evaluate --help` for the bound evaluation inputs.
+python -m hawedit.decision_packets prepare --project-root . \
+  --output-dir /secure/hawedit-owner-decisions
+# Read all six pages; filling the template is an owner decision, not automated acceptance.
 # Confidential Vertex preparation/execution is currently a typed library API in
 # `hawedit.vertex_acceptance`; Task 5 adds the installed CLI after this manifest format settles.
 ```
@@ -528,6 +538,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `diarization.py` | §8.1, §3 Stages 0 and 5 | Production-exclusive DER, benchmark-only overlap-aware DER for the 3.1 control, boundary reconciliation, and anchor-edge-to-turn selection without nearest-turn invention. |
 | `diarization_acceptance.py` | §8.1, §3 Stages 0 and 6 | Content-bound real multi-speaker references and media, exact Community-1/control receipts, signed rights/access/crop approval, raw DER/boundary/association/crop metrics, explicit fallbacks, attribution, and atomic write-once reports. |
 | `vertex_acceptance.py` | §3 Stages 3 and 4 | Transport-free confidential packet preparation, exact private-content and signed ZDR/spend binding, live ADC/billing/API preflight, one counted non-retried generation reservation, private-frame cleanup, and redacted write-once evidence. |
+| `decision_packets.py` | §§3, 4.1, 4.2, 5, 7, 8.2 | Content-bound, deterministic, write-once recommendation packets for blockers #9/#13/#14/#15/#18/#21; every human decision field stays explicitly unset. |
 | `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
 | `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |
