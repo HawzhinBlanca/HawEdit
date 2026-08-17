@@ -485,6 +485,14 @@ def test_existing_output_refuses_before_cloud_probe_or_private_pixels(tmp_path: 
     sentinel.write_text("operator-owned", encoding="utf-8")
     events: list[str] = []
 
+    def environment_probe(_project: str) -> VertexEnvironment:
+        events.append("environment")
+        return _environment()
+
+    def frame_extractor(*_args: object, **_kwargs: object) -> tuple[JudgeFrame, ...]:
+        events.append("frames")
+        return _frames()
+
     with pytest.raises(VertexAcceptanceError, match="already exists"):
         run_vertex_acceptance(
             source_manifest_path=source,
@@ -494,8 +502,8 @@ def test_existing_output_refuses_before_cloud_probe_or_private_pixels(tmp_path: 
             approval_signature_path=signature,
             allowed_signers_path=allowed,
             output_dir=destination,
-            environment_probe=lambda _project: events.append("environment") or _environment(),
-            frame_extractor=lambda *_args, **_kwargs: events.append("frames") or _frames(),
+            environment_probe=environment_probe,
+            frame_extractor=frame_extractor,
             media_probe=_probe_video,
         )
 
