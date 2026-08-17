@@ -9,6 +9,16 @@
 | Decisions | `BLUEPRINT.md`, `BLOCKED.md`, `DECISIONS.md` | implementation owners and acceptance report | claims/ledger plus packet snapshot tests |
 | Release | release builder and hosted workflows | protected main, tag, GitHub Release | release/workflow/environment plus packet tests |
 
+Task 2 symbol/caller map:
+
+| Symbol | Current callers | Task 2 treatment |
+|---|---|---|
+| `EditorialRegressionSet.load/evaluate` | `editorial_bench.main`, `tests/test_editorial_bench.py` | Unchanged; the new kit may emit a compatible final set but does not redefine its 20-item floor. |
+| `JudgeVerdict.from_dict/to_dict` | provider adapters, pipeline persistence, editorial tests | Reused for strict incumbent/shadow inventory validation; no symbol change. |
+| `decide_judge` | editorial regression evaluation and judge tests | Called independently for training and holdout summaries; never with combined labels. |
+| `recall_at_k_by_path`, `path_unique_wins`, `temporal_iou`, `misleading_edit_rate`, `sentence_completeness_rate`, `cost_per_source_hour`, `wallclock_per_source_hour` | metric tests and future acceptance reports | Reused by the new final report; existing call behavior remains unchanged. |
+| New `editorial_acceptance` coordinator | human study operator only | Owns strict input parsing, byte binding, deterministic sampling/blinding/split, signatures, adjudication, and atomic reports. |
+
 The first bounded implementation shall add a companion Sorani acceptance manifest/verifier rather
 than broadening `CorpusItem`. This avoids changing every benchmark fixture and keeps the canonical
 raw transcript schema stable. It will call `Corpus.load`, `Corpus.assert_section_8_1_coverage`, and

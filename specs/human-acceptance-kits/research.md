@@ -40,6 +40,37 @@ sampling artifact, concealed A/B identity, independent reviewer records, disagre
 record, immutable training/holdout split, leakage check, or one command that produces the §8.2
 promotion report.
 
+Caller mapping for Task 2 found no production caller that can safely be broadened in place.
+`EditorialRegressionSet.load/evaluate` is the 20-item judge-promotion surface used only by its CLI
+and tests. `decide_judge` consumes aggregate incumbent/shadow/tie counts, while the complete §8.2
+metrics live separately in `repurposing.py`. The acceptance kit should therefore be a new coordinator
+boundary which consumes strict candidate inventory, calls the existing verdict and metric types, and
+emits a compatibility regression set only after signed human labels are complete. This preserves the
+20-item model-regression meaning rather than quietly redefining it as the 200–500-item threshold set.
+
+The deterministic design is content-derived rather than operator-seeded: the exact inventory bytes,
+study id, and fixed namespaces rank candidates within each dialect, assign a near-equal stratified
+sample, freeze a per-dialect 80/20 training/holdout split, and choose A/B order. The coordinator-only
+manifest carries the answer key and split; the reviewer packet carries only opaque options. Two
+distinct signed reviewer documents cover the exact sampled item set. A third, distinct signed
+adjudicator resolves exactly the fields on which reviewers disagree. Every signature names the same
+manifest and reviewer-packet digests, so labels cannot be moved between studies.
+
+Adversarial implementation review sharpened those boundaries. Evaluation must reopen the exact
+inventory and recompute the sample, opaque ids, A/B order, holdout and manifest; trusting only an
+`inventory_sha256` field would allow a balanced but hand-picked set. Candidate files must be
+probeable video, match their declared duration, and keep the same digest across ffprobe. The source
+hour denominator must equal the unique media identities. Signature independence is four distinct
+OpenSSH key fingerprints, not merely four role-name strings, and the one allowed-signers snapshot is
+captured before all verification. Coordinator approval precedes both reviews; adjudication follows
+both and preserves each disagreement, both signed positions and the reason.
+
+The final report shall keep training and holdout slices separate and shall expose pairwise preference,
+Recall@20 by discovery path, path-unique wins, temporal IoU to the adjudicated gold span, sentence
+completeness, misleading-edit rate, reviewer disagreement, and cost/wall-clock per source hour. It
+does not invent thresholds or claim that the absent humans have tuned them; it produces immutable
+training and holdout inputs for that later human-enabled step.
+
 ### Diarization and speaker-aware reframing
 
 - `hawedit.diarization` implements exclusive-turn validation, exact DER speaker mapping, and word-

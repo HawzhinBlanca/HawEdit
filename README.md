@@ -400,10 +400,16 @@ content-bound acceptance manifest plus a human approval signed with OpenSSH's de
 format. The guard re-hashes each audio item before and after every model measurement, and the
 benchmark report records the manifest, approval, signature and allowed-signers SHA-256 identities.
 Synthetic, interim, changed, linked, duplicate, path-escaping or declared training audio is refused.
-`hawedit-editorial-bench`
-validates and scores a blind human regression manifest, requiring at least 20 items, at least
-five per dialect, two named reviewers per item, exact candidate/span equality and source media
-on disk.
+`hawedit-editorial-bench` validates and scores a blind human regression manifest, requiring at
+least 20 items, at least five per dialect, two named reviewers per item, exact candidate/span
+equality and source media on disk. The separate `hawedit.editorial_acceptance` coordinator prepares
+the larger §8.2 study: it deterministically selects 200–500 candidates, conceals incumbent/shadow
+identity, freezes a dialect-balanced training/holdout split before labelling, and emits unsigned
+review/adjudication templates. Preparation and evaluation require probeable video whose measured
+duration matches the inventory; evaluation reopens the exact inventory and recomputes sampling,
+blinding, split and media identities. Detached OpenSSH evidence must come from a coordinator, two
+distinct reviewers and a separate adjudicator using four distinct signing keys. Training and
+holdout labels/reports are published separately. Preparing a packet is not human acceptance.
 
 ```bash
 python -m hawedit.corpus_acceptance prepare sorani-corpus.json \
@@ -419,6 +425,10 @@ hawedit-asr-bench sorani-corpus.json --audio-root /secure/audio \
   --allowed-signers /secure/allowed_signers --host hawapc01 \
   --accelerator "2x RTX 3090 Ti" --output asr-report.json
 hawedit-editorial-bench editorial.json --media-root /secure/media --output report.json
+python -m hawedit.editorial_acceptance prepare editorial-inventory.json \
+  --media-root /secure/media --output-dir /secure/editorial-study --sample-size 200
+# Complete and sign the generated coordinator/reviewer/adjudication documents as INSTRUCTIONS.txt
+# specifies, then run `python -m hawedit.editorial_acceptance evaluate --help` for the exact inputs.
 ```
 
 The private signing key, allowed-signers trust file, client audio, signed approval and training
@@ -495,6 +505,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
+| `editorial_acceptance.py` | §8.2 | Deterministic 200–500-item blinded A/B preparation, predeclared dialect-balanced holdout, independent signed review/adjudication import, content revalidation, and separate training/holdout evidence. |
 | `diarization.py` | §8.1, §3 Stages 0 and 5 | DER, boundary reconciliation, strict exclusive turns, and anchor-edge-to-turn selection without nearest-turn invention. |
 | `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
