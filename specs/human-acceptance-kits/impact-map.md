@@ -31,6 +31,18 @@ Task 3 symbol/caller map:
 | Registry Community-1 entry and 3.1 benchmark control | model readiness, licence/claims tests | Read-only trust anchors for exact ids, role and licences; gated acceptance/checkpoint bytes and the control revision remain human/runtime evidence. |
 | New `diarization_acceptance` coordinator | human study operator only | Owns strict media/reference/model-run manifests, signatures, content revalidation, per-system DER/boundary/association/crop metrics, fallback reporting and atomic result publication. It does not load gated models. |
 
+Task 4 Vertex symbol/caller map:
+
+| Symbol | Current callers | Task 4 treatment |
+|---|---|---|
+| `VertexGeminiJudge` | pipeline CLI, Path A, Stage 4 and Gemini tests | Reused as the only model transport. Its regional URL, ADC header, governance, response validation and no-retry policy remain authoritative. |
+| `GeminiJudge.judge` | pipeline editorial judge and adapter tests | Delegates to a new counted operation so ordinary behavior is unchanged while acceptance can bind the exact authorising count to one generation. |
+| New `GeminiJudge.judge_with_count` | Vertex acceptance coordinator and Gemini tests | Counts once, enforces both §3 and owner-approved ceilings, attempts generation once, and returns the exact count with the validated verdict. |
+| `extract_judge_frames` | pipeline Stage 4 and smoke | Reused after all local, signed, ADC and billing checks; no second frame extraction policy is introduced. |
+| `NormalizedTranscript` | Path A, indexes and model boundaries | Parsed from the exact private artifact; raw transcripts and non-normalised request text remain refused. |
+| New `vertex_acceptance` coordinator | human operator only | Owns private manifest validation, approval signature, ADC/billing preflight, durable one-attempt reservation, redacted evidence and no transport during preparation. |
+| `windows_security.create_private_directory`, `assert_private_windows_path` | model-fetch staging and the new Vertex coordinator | Reused without signature changes so confidential frame/evidence workspaces receive a real protected Windows DACL; POSIX uses owner-only mode 0700. |
+
 The first bounded implementation shall add a companion Sorani acceptance manifest/verifier rather
 than broadening `CorpusItem`. This avoids changing every benchmark fixture and keeps the canonical
 raw transcript schema stable. It will call `Corpus.load`, `Corpus.assert_section_8_1_coverage`, and

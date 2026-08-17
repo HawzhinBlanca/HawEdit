@@ -10812,6 +10812,45 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-244 - Confidential Vertex acceptance is one signed, reserved counted operation
+
+**Date:** 2026-08-17 · **Blueprint ref:** §3 Stages 3 and 4 · **Type:** governance/evidence boundary
+
+Preparation must not contact Google. It reopens one private, authorised video, its normalized
+transcript and retained ZDR policy; measures and hashes the content; binds the exact project,
+location, model, ADC identity, billing account and owner token/cost ceiling; then emits an unsigned
+approval template. Contractual retention configuration, media rights and spend authority are facts
+code cannot infer, so execution requires an OpenSSH signature from the recorded media authorizer.
+
+Before client content leaves the machine, execution recomputes the prepared manifest, verifies the
+signature, refreshes ADC, requires its project/type/principal to match, and queries Cloud Billing
+plus Service Usage for live billing and Vertex API enablement. The production transport remains
+`VertexGeminiJudge`; there is no second Vertex client, frame sampler, schema parser or retry policy.
+
+One operation must own the authoritative token count and generation. Counting in the coordinator
+and calling ordinary `judge()` would count twice and could approve a number different from the one
+that authorises billing. `GeminiJudge.judge_with_count` counts once, applies §3's 200K ceiling and
+the stricter signed ceiling, then attempts `generateContent` once without retry. Ordinary `judge`
+delegates to the same operation.
+
+The executor publishes a content-derived attempt receipt before that operation. It is retained on
+success, refusal, crash or ambiguous provider outcome, so rerunning the same output identity cannot
+create another paid call. Extracted frames live only in a private temporary workspace and cleanup
+cannot mask the primary error. The public result records hashes, route/environment facts, exact
+count/cost and non-editorial numeric verdict fields; it omits the transcript, source pixels,
+generated Kurdish copy, access token, billing-account name and retained policy text.
+
+Rejected treating a manifest boolean as ZDR proof: it becomes evidence only when signed by the
+responsible owner and mechanically bound to the live route. Rejected automatic retry or deletion of
+the attempt after failure: both turn an ambiguous first call into an untracked second bill. Rejected
+adding an installed CLI in this unit; the approved plan adds it only after the library format is
+settled with the release/handoff packet.
+
+This closes engineering preparation, not external acceptance. No paid confidential run was made;
+the approved project, ADC, contractual ZDR record and matching authorised video remain external.
+
+`evidence/confidential-vertex-acceptance-kit.md`.
+
 ## D-243 - The 3.1 benchmark may overlap; the production diarizer may not
 
 **Date:** 2026-08-17 · **Blueprint ref:** §3 Stage 0, §8.1 · **Type:** metric boundary

@@ -392,6 +392,18 @@ Stage 4 samples up to 20 JPEG keyframes from the exact candidate span and sends 
 parts to `countTokens` and `generateContent`. Textual SV6D remains supporting evidence; it no
 longer masquerades as source pixels.
 
+`hawedit.vertex_acceptance` is the confidential-route acceptance coordinator. Its preparation
+phase performs no cloud request: it binds one authorised video, normalized transcript, candidate
+slice, retained ZDR-policy digest, approved project/location, ADC identity, billing account and
+owner token/cost ceilings, then emits an unsigned approval template. Execution requires the exact
+OpenSSH-signed approval, revalidates all private bytes, refreshes ADC, mechanically checks the ADC
+project plus live Cloud Billing and Vertex API state, removes its private extracted pixels, and
+retains a durable no-replay receipt before the one non-retried paid generation attempt. The public
+result contains hashes and numeric operational facts, never access tokens, billing-account names,
+full transcript text, raw frame bytes, generated title/description/hashtags or retained policy
+text. This code does not prove a customer's contractual ZDR assertion: a responsible human still
+has to sign it, and no live Vertex acceptance has been run in this repository.
+
 ## Benchmarks
 
 `bench.py` remains the §8.1 ASR harness: normalized/spacing-free CER, named entities,
@@ -434,6 +446,8 @@ python -m hawedit.diarization_acceptance prepare diarization-reference.json \
 # Run pinned Community-1 and the non-routable 3.1 control after accepting both gated repositories;
 # fill and sign the generated documents exactly as INSTRUCTIONS.txt specifies, then run
 # `python -m hawedit.diarization_acceptance evaluate --help` for the bound evaluation inputs.
+# Confidential Vertex preparation/execution is currently a typed library API in
+# `hawedit.vertex_acceptance`; Task 5 adds the installed CLI after this manifest format settles.
 ```
 
 The private signing key, allowed-signers trust file, client audio, signed approval and training
@@ -513,6 +527,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `editorial_acceptance.py` | §8.2 | Deterministic 200–500-item blinded A/B preparation, predeclared dialect-balanced holdout, independent signed review/adjudication import, content revalidation, and separate training/holdout evidence. |
 | `diarization.py` | §8.1, §3 Stages 0 and 5 | Production-exclusive DER, benchmark-only overlap-aware DER for the 3.1 control, boundary reconciliation, and anchor-edge-to-turn selection without nearest-turn invention. |
 | `diarization_acceptance.py` | §8.1, §3 Stages 0 and 6 | Content-bound real multi-speaker references and media, exact Community-1/control receipts, signed rights/access/crop approval, raw DER/boundary/association/crop metrics, explicit fallbacks, attribution, and atomic write-once reports. |
+| `vertex_acceptance.py` | §3 Stages 3 and 4 | Transport-free confidential packet preparation, exact private-content and signed ZDR/spend binding, live ADC/billing/API preflight, one counted non-retried generation reservation, private-frame cleanup, and redacted write-once evidence. |
 | `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
 | `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |

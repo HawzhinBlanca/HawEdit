@@ -54,6 +54,7 @@ from hawedit.judge import (
     InputMode,
     JudgeRequest,
     JudgeVerdict,
+    RequestTooLarge,
     route,
 )
 
@@ -490,6 +491,19 @@ class GeminiJudge:
             RequestTooLarge: the request exceeds §3's 200K tier ceiling.
             JudgeUnusable: the model answered with something that is not a usable verdict.
         """
+        return self.judge_with_count(request)[1]
+
+    def judge_with_count(
+        self, request: JudgeRequest, *, max_tokens: int | None = None
+    ) -> tuple[int, JudgeVerdict]:
+        """Count once, enforce every ceiling, and attempt generation exactly once.
+
+        `max_tokens` is an optional stricter owner-approved ceiling used by the confidential
+        acceptance coordinator. It is checked against the same provider count that authorises
+        generation; a caller cannot accidentally approve one count and bill another request.
+        """
+        if max_tokens is not None and (type(max_tokens) is not int or max_tokens <= 0):
+            raise ValueError("max_tokens must be a positive JSON integer")
         self._assert_governance()
         self._assert_keyframes(request)
         # Count before sending. The ceiling is about money, so it is checked against the real
@@ -503,7 +517,13 @@ class GeminiJudge:
         )
         from dataclasses import replace
 
-        replace(request, tokens=counted).assert_within_tier()
+        counted_request = replace(request, tokens=counted)
+        counted_request.assert_within_tier()
+        if max_tokens is not None and counted > max_tokens:
+            raise RequestTooLarge(
+                f"request for {request.candidate_id!r} is {counted:,} tokens, above the "
+                f"owner-approved ceiling of {max_tokens:,}; no billed request was sent"
+            )
 
         payload = json.dumps(
             {
@@ -520,7 +540,7 @@ class GeminiJudge:
         ).encode("utf-8")
 
         body = self._post(self._url("generateContent"), payload)
-        return self._to_verdict(body, request)
+        return counted, self._to_verdict(body, request)
 
     def _post(self, url: str, payload: bytes) -> str:
         status, body = self._transport(url, payload, self._headers())

@@ -121,6 +121,38 @@ billing controls exist. The missing item is an operator-safe acceptance packet: 
 ADC and billing preflight, approved retention record, exact media/transcript binding, bounded-cost
 confirmation, one live request, and a redacted non-secret evidence artifact.
 
+Task 4 caller research keeps the acceptance boundary separate from the ordinary pipeline. The
+existing `VertexGeminiJudge` is the authority for the regional URL, ADC bearer header,
+confidential-governance check, real `countTokens`, lower-tier ceiling, schema validation and the
+single non-retried `generateContent` call. `extract_judge_frames` is the authority for sourcing at
+most twenty real JPEG frames from the exact candidate span. `NormalizedTranscript` remains the
+only model-input transcript type. The coordinator must compose those surfaces rather than create a
+second Vertex client, frame sampler, token estimator or verdict parser.
+
+The live acceptance has two distinct boundaries. A local preparation phase binds one authorised
+video, its measured duration, one exact normalised transcript, the candidate slice, project,
+location, model, cost limits, billing assertion and retained ZDR-policy digest, then emits an
+unsigned approval template without transport. Execution reopens and re-hashes every private input,
+requires the owner-signed approval, refreshes ADC and checks its project plus the live Cloud Billing
+state before client content leaves the machine, extracts the exact frames, and reserves a
+content-derived attempt identity before the first model request. The reservation is retained even
+when counting or generation fails: an ambiguous crash cannot turn a rerun into a second paid call.
+
+The model boundary should expose one counted judgment operation. Calling `countTokens` in the
+coordinator and then ordinary `judge()` would count the same content twice, and worse, the count
+used for the human-approved limit would not necessarily be the count that authorises generation.
+`GeminiJudge.judge_with_count` therefore owns count, the project ceiling, the stricter approved
+ceiling and exactly one generation attempt as one operation; ordinary `judge` delegates to it.
+
+The public evidence contains only hashes and non-content operational facts: media/transcript/frame
+digests, clip bounds, model/project/location, ADC credential class and project, a hash of the billing
+account reference and ZDR policy, token count, estimated input price, numeric verdict fields,
+signature identity and timestamps. It excludes access tokens, account names, the full transcript,
+source frame bytes, generated Kurdish title/description/hashtags and any retained policy text.
+Billing enablement and ADC can be mechanically checked. Contractual ZDR configuration, media
+rights and the permitted spend remain signed human assertions; the kit binds them but cannot make
+them true.
+
 ### Decisions and release
 
 The repository already records the facts behind the unresolved semantic choices and implements
@@ -135,6 +167,13 @@ Each kit must have three layers:
 1. a canonical, strict, versioned input manifest with content hashes and path containment;
 2. a deterministic verifier/report generator that refuses missing or contradictory evidence; and
 3. a short human guide containing only the fields or decisions an operator must supply.
+
+The confidential workspaces also inherit the repository's existing Win32 trust boundary rather
+than relying on `tempfile` permissions: `hawedit.windows_security.create_private_directory` creates
+an owner/SYSTEM/Administrators-only protected DACL, and `assert_private_windows_path` verifies it.
+On POSIX, the corresponding workspace is owner-created mode 0700. This matters for both extracted
+client pixels and the staged evidence directory; a random name under a readable parent is not a
+privacy boundary.
 
 Human names, licences, consent, cloud approvals, model-gate acceptance, expert judgments, and
 release approval remain assertions by the responsible human. HawEdit binds those assertions to
