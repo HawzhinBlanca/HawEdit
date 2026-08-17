@@ -329,8 +329,8 @@ def _assert_private_directory(
         info = os.lstat(path)
         if os.name == "nt":
             assert_private_windows_path(path, require_protected=require_protected)
-        elif (info.st_mode & 0o077) != 0 or (
-            hasattr(os, "geteuid") and info.st_uid != os.geteuid()
+        elif (hasattr(os, "geteuid") and info.st_uid != os.geteuid()) or (
+            require_protected and (info.st_mode & 0o077) != 0
         ):
             raise VertexAcceptanceError(f"{label} is not private to the current user: {path}")
     except WindowsSecurityError as exc:
