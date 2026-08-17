@@ -13,7 +13,9 @@ The exact result and artifact digest are recorded in
 `security/wsl-asr-vex.json` is a 30-day disposition expiring 2026-09-08, not a claim that the
 dependency graph is vulnerability-free. It binds CPython 3.12, exact dependency locks, package
 versions, all three OmniASR asset identities, and the reviewed HawEdit source SHA-256
-`d8547bdc2421b3853ba02e050d76cf055ca6f3ebb27f4df45759c9b6bea896bf`. Any later source change
+`fdde9053ea0164f29d21069e62904373a9c1e589eff4bb144ec5142c1fc1aae5`. The applicability digest
+was refreshed on 2026-08-17 after reviewing the acceptance-kit-only source delta; the vulnerability
+dispositions and 2026-09-08 expiry were not extended. Any later source change
 must trigger disposition review and a new digest; code mitigations cannot be carried onto old or
 modified worker bytes by matching only dependencies and assets.
 
