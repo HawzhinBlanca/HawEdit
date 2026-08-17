@@ -11,14 +11,21 @@ Approved-by: Hawa — 2026-08-15; autonomy-first ordering reaffirmed by Hawa —
 ## Current anchor
 
 - Working branch: `codex/visual-short-window-provenance`
-- Planning anchor revision: `17f2fc722d5a572e5ce31f397afaa5678980a99c`
+- Planning anchor revision: `8b04515b924a7e23cc39a219157fbe28f70e044c`
 - Base revision: `4dbffa2585e50e60d4dcebf6c508699aac0a35ad`
 - Draft pull request: #21
-- Canonical local gate at the planning anchor: 2,525 passed, zero skipped, `VERIFY OK`
+- Canonical local gate at the planning anchor: 2,793 passed, zero skipped, `VERIFY OK`
+- Hosted pull-request gate for the planning anchor: running as GitHub Actions run `32004370587`;
+  do not treat the anchor as accepted until that exact-SHA run succeeds.
 - Canonical Stage 1 evidence: the rights-cleared 38-minute source completed from the base revision;
   545 regions were retained, two gaps were recorded, and a reuse run preserved the raw artifact.
-- Current code-solvable critical path: `BLOCKED.md` #22, the truthful representation of scenes
-  that yield fewer than two frames at the measured 1 fps / 8-frame operating point.
+- Most recent autonomous closure: persisted editorial and clip evidence now uses bounded, duplicate-
+  rejecting, exact-type JSON at the planning anchor.
+- Current CPU critical path: strict persisted benchmark/worker/cache inputs and the remaining
+  reproducibility/security boundaries that can be tested without model execution.
+- Current GPU critical path: `BLOCKED.md` #22 and D-242, the truthful representation of scenes that
+  yield fewer than two frames at the measured 1 fps / 8-frame operating point. Both GPUs are in use
+  by unrelated jobs; the plan waits for an observed safe lease instead of interfering with them.
 
 The current branch is a candidate, not an accepted production revision. The hosted pull-request
 checks, protected-main checks, main-only WSL security job, and final accepted-SHA reruns remain
@@ -40,6 +47,27 @@ authoritative even when a local run is green.
    GPU lease and record exact environment, memory, timing, model, source, and artifact identities.
 7. A task is accepted only when its focused tests, full gate, exact-SHA hosted checks, real evidence
    where required, and documentation all agree.
+
+## Current execution board
+
+The waves below remain the acceptance contract. Execute their currently reachable work in this
+cost- and risk-ordered sequence:
+
+| Order | Lane | Runs now without human input? | Exit evidence |
+|---|---|---:|---|
+| 1 | Exact-SHA branch acceptance | Yes | Clean tree, canonical local gate, and hosted PR gate green for the same SHA |
+| 2 | CPU persisted-boundary audit | Yes | Strict benchmark, worker, cache and sidecar parsers; malformed/oversized/duplicate/coercive inputs refused before expensive work |
+| 3 | Offline supply-chain and recovery audit | Yes | Locks, VEX, model roots, crash/retry, clean installs, release provenance and installed-data resolution agree |
+| 4 | Current-source WSL/ASR acceptance | Yes, when GPUs are idle | Receipt and source identity match; VEX passes; canonical Stage 1 and reuse evidence are current |
+| 5 | Short-scene visual decision and composed Path B | Yes, when GPUs are idle | D-242 evidence, exact extraction/indexing, top-50 retrieval, rerank, 5–10 survivors, survivor-only reading, sequential unload |
+| 6 | Complete no-cloud real-media acceptance | Yes, when GPUs are idle | One source-bound run through delivery, plus exact cache miss/hit and bounded failure evidence |
+| 7 | Independent final adversarial/soak pass | Yes | No reproducible autonomous P0/P1; retries, interruption, privacy cleanup and artifact checks survive |
+| 8 | Immutable release candidate | Yes except merge/tag approval | Exact protected SHA, current hardware evidence, reproducible wheel, clean 3.11/3.12 smokes, verified attestations |
+| 9 | Consolidated external acceptance | No | Licensed Sorani labels, editorial review, pyannote/reference turns, Vertex/ZDR, owner decisions and release approval |
+
+Do not wait on row 9 while any work in rows 1–8 remains reachable. Do not run rows 4–6 while the
+GPUs are leased by another process. Do not merge, tag, publish, spend cloud money, accept a gated
+licence, or manufacture human labels without the corresponding owner action.
 
 ## Autonomous wave A — close the short-scene visual blocker
 
