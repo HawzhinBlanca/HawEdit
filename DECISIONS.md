@@ -10812,6 +10812,32 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-243 - The 3.1 benchmark may overlap; the production diarizer may not
+
+**Date:** 2026-08-17 · **Blueprint ref:** §3 Stage 0, §8.1 · **Type:** metric boundary
+
+HawEdit selected Community-1 specifically for its exclusive diarization, and the production
+`Diarizer`/Stage 5 contract correctly refuses overlapping turns. The §8.1 comparison separately
+requires `speaker-diarization-3.1`, whose ordinary output can contain simultaneous speakers. Using
+the production refusal for both systems would make the required control unmeasurable; accepting
+overlap at the production boundary would discard the property Community-1 was selected for.
+
+The boundaries therefore remain separate. `diarization_error_rate` still requires exclusive
+reference and hypothesis turns. `overlap_aware_diarization_error_rate` is benchmark-only: on each
+atomic interval it counts missing reference speaker-time as missed speech, extra hypothesis
+speaker-time as false alarm, and incorrectly mapped matched speaker slots as confusion. Its exact
+global one-to-one label mapping and eight-speaker search bound match the production metric. With an
+exclusive reference it reduces to the production result whenever the hypothesis is also exclusive.
+
+Speaker-labelled crop points still require an unambiguous exclusive active turn. A control run with
+overlap can be scored for DER and boundary placement, but its crop mode must remain an explicit
+fallback rather than inventing which simultaneous speaker owns a face.
+
+No threshold or model decision follows from this definition. The signed acceptance report exposes
+the raw components for human review; the real gated runs and Kurdish references remain required.
+
+`evidence/diarization-acceptance-kit.md`.
+
 ## D-241 - Speaker-tracked provenance requires speaker-labelled crop evidence
 
 §3 Stage 6 requires the vertical crop to follow the active speaker using diarization plus face

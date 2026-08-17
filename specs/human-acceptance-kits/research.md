@@ -84,6 +84,36 @@ gated pyannote model identity; no benchmark command combines DER, boundary quali
 association, and crop stability; and no acceptance record distinguishes a measured speaker-tracked
 result from the explicit fallback.
 
+Task 3 caller research confirms that the core measurements and production composition seams already
+exist and should not be broadened. `attach_diarization` is the least-trusted exclusive-turn boundary;
+`diarization_error_rate` performs the exact optimal speaker mapping and preserves missed speech,
+false alarm and confusion; `boundary_reconciliation` measures turn edges against aligned words;
+`validate_speaker_focus_points` proves a claimed focus point names the speaker active in the same
+system's measured turn. The missing artifact is a coordinator that binds all four to one authorised
+real-media study and compares them with human reference turns and face centres.
+
+The acceptance schema must keep two identities separate: the production Community-1 model pinned at
+revision `3533c8cf8e369892e6b79ff1bf80f7b0286a54ee` and the non-routable 3.1 benchmark control. It
+must require a human gated-access/licence assertion and verified checkpoint receipt rather than
+converting the public metadata pin into access. Each media item must be probeable video with at
+least two reference speakers, strict exclusive turns, aligned reference words, and reference
+speaker-face points on exact timestamps. Each system run must be content-bound to the same media and
+model receipt. Community-1 and every production consumer remain strictly exclusive. The 3.1
+benchmark control may emit ordinary overlapping diarization, so its benchmark-only DER uses speaker
+time and counts extra simultaneous speakers as false alarm instead of either rejecting the required
+control or weakening production's exclusive-turn boundary. A run may say `speaker_tracked` only
+when attributed focus points validate against exclusive turns; ambiguous/overlapping visual
+association is an explicit fallback.
+
+No accuracy threshold is specified in the frozen blueprint, so the autonomous report must expose
+raw per-system/per-item facts instead of inventing a pass line: DER and its components, boundary
+mean absolute error and within-the-recorded-tolerance rate, mapped active-speaker association error,
+horizontal centre MAE/normalised MAE, crop step/jitter statistics, speaker-tracked versus fallback
+counts, and the exact attribution/model/media/signature evidence. Human reference creation, gated
+licence acceptance, qualified pyannote runtime/model execution and the final crop-quality judgment
+remain external. The packet removes schema, recomputation and reporting discovery; it does not
+pretend the absent production adapter or dependency lock exists.
+
 ### Confidential Vertex
 
 Gemini/Vertex adapters, governance routing, bounded errors, no-redirect transport, and no-retry

@@ -429,6 +429,11 @@ python -m hawedit.editorial_acceptance prepare editorial-inventory.json \
   --media-root /secure/media --output-dir /secure/editorial-study --sample-size 200
 # Complete and sign the generated coordinator/reviewer/adjudication documents as INSTRUCTIONS.txt
 # specifies, then run `python -m hawedit.editorial_acceptance evaluate --help` for the exact inputs.
+python -m hawedit.diarization_acceptance prepare diarization-reference.json \
+  --media-root /secure/multispeaker-media --output-dir /secure/diarization-study
+# Run pinned Community-1 and the non-routable 3.1 control after accepting both gated repositories;
+# fill and sign the generated documents exactly as INSTRUCTIONS.txt specifies, then run
+# `python -m hawedit.diarization_acceptance evaluate --help` for the bound evaluation inputs.
 ```
 
 The private signing key, allowed-signers trust file, client audio, signed approval and training
@@ -506,7 +511,8 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
 | `editorial_acceptance.py` | §8.2 | Deterministic 200–500-item blinded A/B preparation, predeclared dialect-balanced holdout, independent signed review/adjudication import, content revalidation, and separate training/holdout evidence. |
-| `diarization.py` | §8.1, §3 Stages 0 and 5 | DER, boundary reconciliation, strict exclusive turns, and anchor-edge-to-turn selection without nearest-turn invention. |
+| `diarization.py` | §8.1, §3 Stages 0 and 5 | Production-exclusive DER, benchmark-only overlap-aware DER for the 3.1 control, boundary reconciliation, and anchor-edge-to-turn selection without nearest-turn invention. |
+| `diarization_acceptance.py` | §8.1, §3 Stages 0 and 6 | Content-bound real multi-speaker references and media, exact Community-1/control receipts, signed rights/access/crop approval, raw DER/boundary/association/crop metrics, explicit fallbacks, attribution, and atomic write-once reports. |
 | `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
 | `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |

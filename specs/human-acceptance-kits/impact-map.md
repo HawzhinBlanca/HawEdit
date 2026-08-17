@@ -19,6 +19,18 @@ Task 2 symbol/caller map:
 | `recall_at_k_by_path`, `path_unique_wins`, `temporal_iou`, `misleading_edit_rate`, `sentence_completeness_rate`, `cost_per_source_hour`, `wallclock_per_source_hour` | metric tests and future acceptance reports | Reused by the new final report; existing call behavior remains unchanged. |
 | New `editorial_acceptance` coordinator | human study operator only | Owns strict input parsing, byte binding, deterministic sampling/blinding/split, signatures, adjudication, and atomic reports. |
 
+Task 3 symbol/caller map:
+
+| Symbol | Current callers | Task 3 treatment |
+|---|---|---|
+| `Diarizer.diarize`, `attach_diarization` | `pipeline.run_pipeline`, ingest and pipeline tests | Unchanged; the kit measures strict exclusive output but does not create a gated production adapter. |
+| `diarization_error_rate`, new `overlap_aware_diarization_error_rate` | diarization and acceptance tests | Production/community scoring keeps strict exclusive turns; the separate control scorer handles 3.1 overlap as speaker-time false alarm/confusion without becoming a pipeline route. |
+| `boundary_reconciliation` | diarization tests only | Reused against the same signed aligned reference words for each system; its tolerance is reported, not tuned here. |
+| `SpeakerSubjectTracker.track_speakers`, `validate_speaker_focus_points` | `pipeline.run_pipeline` and injected seam tests | The kit validates each system's claimed points against its measured exclusive turns, then compares mapped speaker identity and centre positions with human reference points. |
+| `OpenCvFaceTracker` | pipeline CLI and reframe tests | Remains the explicit non-speaker fallback; its output is not relabelled as speaker-tracked evidence. |
+| Registry Community-1 entry and 3.1 benchmark control | model readiness, licence/claims tests | Read-only trust anchors for exact ids, role and licences; gated acceptance/checkpoint bytes and the control revision remain human/runtime evidence. |
+| New `diarization_acceptance` coordinator | human study operator only | Owns strict media/reference/model-run manifests, signatures, content revalidation, per-system DER/boundary/association/crop metrics, fallback reporting and atomic result publication. It does not load gated models. |
+
 The first bounded implementation shall add a companion Sorani acceptance manifest/verifier rather
 than broadening `CorpusItem`. This avoids changing every benchmark fixture and keeps the canonical
 raw transcript schema stable. It will call `Corpus.load`, `Corpus.assert_section_8_1_coverage`, and
