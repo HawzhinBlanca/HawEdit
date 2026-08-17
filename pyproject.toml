@@ -2,16 +2,16 @@
 name = "hawedit"
 version = "0.1.0"
 description = "Kurdish (Sorani/ckb) video repurposing system — implements BLUEPRINT.md v1.1"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 # Licences audited in DECISIONS.md D-002. NonCommercial licences are a hard reject.
 dependencies = [
     "klpt==0.1.7",      # CC BY-SA 4.0 — attribution required, share-alike on adaptation
-    "fonttools==4.55.3", # MIT — §4.3.4 font coverage assertion
+    "fonttools==4.60.2", # MIT — §4.3.4 font coverage; CVE-2025-66034 fixed
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.3.4", # MIT
+    "pytest==9.1.1", # MIT; PYSEC-2026-1845 fixed in 9.0.3
     "ruff==0.9.6",   # MIT
     "mypy==1.15.0",  # MIT
 ]
@@ -57,16 +57,28 @@ gpu = [
     # final order differs. §8.1's rule that a number carries the hardware it was measured on
     # extends to the library that produced it. See D-055.
     "transformers==4.57.6",         # Apache-2.0
-    "accelerate>=1.0",              # Apache-2.0 — device placement for the 4B models
-    "pillow>=10",                   # MIT-CMU (HPND) — frames between ffmpeg and the processor
-    "torchvision>=0.28",            # BSD-3-Clause — required by Qwen3VLVideoProcessor
+    "accelerate==1.14.0",           # Apache-2.0 — measured GPU device placement
+    "pillow==12.3.0",               # MIT-CMU (HPND) — measured frame transport
+    "torchvision==0.28.0",          # BSD-3-Clause — measured Qwen3VLVideoProcessor runtime
 ]
 asr = [
     # fairseq2n has no Windows wheel. The Windows runner invokes this extra inside WSL2.
+    # omnilingual-asr forces torch 2.8 but only floors torchaudio; without the explicit
+    # matching pin uv selected torchaudio 2.11 (CUDA 13), which failed to import on hawapc01.
+    "torch==2.8.0; platform_system != 'Windows'",            # Apache-2.0 AND BSD-2/3-Clause AND BSL-1.0 AND MIT (D-200)
+    "torchaudio==2.8.0; platform_system != 'Windows'",       # BSD-2-Clause
     "omnilingual-asr==0.2.0; platform_system != 'Windows'", # Apache-2.0
+    "fairseq2==0.6; platform_system != 'Windows'",          # MIT (D-201; the wheel metadata, not BSD-3-Clause)
+    "qwen-asr==0.0.6; platform_system != 'Windows'",        # Apache-2.0
 ]
 cloud = [
-    "google-auth>=2.40,<3", # Apache-2.0 — Vertex ADC bearer authentication
+    "google-auth==2.56.3", # Apache-2.0 — measured Vertex ADC bearer authentication
+]
+
+models = [
+    # Download code is optional, but its version is part of the checkpoint publication boundary.
+    # The command refuses drift instead of installing into its own environment at runtime.
+    "huggingface-hub==0.36.2", # Apache-2.0
 ]
 # AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md Phase 1: the coarse durable workflow around
 # run_pipeline (D-A3). MIT. Pulls in psycopg (Postgres, unused until a later phase),
@@ -86,7 +98,7 @@ agentic = [
 ]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -97,17 +109,38 @@ where = ["src"]
     "assets/fonts/NotoNaskhArabic-Regular.ttf",
     "assets/fonts/OFL.txt",
 ]
-"share/hawedit/models" = ["models/sources.json", "models/revisions.json"]
+"share/hawedit/models" = [
+    "models/sources.json",
+    "models/revisions.json",
+    "models/integrity.json",
+]
+"share/hawedit/requirements" = [
+    "requirements/host-base-linux-py311.txt",
+    "requirements/host-base-linux-py312.txt",
+    "requirements/host-base-windows-py311.txt",
+    "requirements/host-base-windows-py312.txt",
+    "requirements/host-models-linux-py311.txt",
+    "requirements/host-models-linux-py312.txt",
+    "requirements/host-models-windows-py311.txt",
+    "requirements/host-models-windows-py312.txt",
+    "requirements/host-gpu-windows-py311.txt",
+]
+"share/hawedit/security" = ["security/wsl-asr-vex.json"]
+"share/hawedit/scripts" = ["scripts/fetch-ffmpeg.sh"]
 
 [project.scripts]
 hawedit = "hawedit.pipeline:main"
 hawedit-asr-bench = "hawedit.bench:main"
 hawedit-asr-setup = "hawedit.wsl_setup:main"
 hawedit-credentials = "hawedit.credentials:main"
-hawedit-editorial-bench = "hawedit.editorial_bench:main"
 hawedit-durable = "hawedit.durable:main"
+hawedit-editorial-bench = "hawedit.editorial_bench:main"
+hawedit-fetch-models = "hawedit.model_fetch:main"
+hawedit-ffmpeg-setup = "hawedit.ffmpeg_setup:main"
+hawedit-release = "hawedit.release:main"
 hawedit-revise = "hawedit.proposals:main"
 hawedit-workflow = "hawedit.workflow_control:main"
+hawedit-wsl-vex = "hawedit.wsl_vex_gate:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -134,6 +167,10 @@ strict = true
 # Must stay equal to verify.sh's LINT_CMD/FORMAT_CMD path list; tests/test_gate.py asserts it
 # both ways, and that every .py file in the repository falls under one of these roots. D-161.
 files = ["src", "tests", "scripts"]
+# google-auth 2.56.3 ships Credentials.refresh without a typed signature.  The call is checked
+# by HawEdit's own credential contract tests; exclude exactly that external API rather than
+# weakening disallow_untyped_calls for gemini.py or the optional-dependency environment.
+untyped_calls_exclude = ["google.auth.credentials.Credentials.refresh"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -144,12 +181,16 @@ module = [
   "torch.*",
   "google.*",
   "omnilingual_asr.*",
+  "qwen_asr.*",
   "fairseq2.*",
   # `peft`, like the two above, lives only in the WSL2 runtime `hawedit-asr-setup` provisions —
   # never in the Windows or CI environment. `--omni-asr-adapter` imports it inside a function
   # behind `try: ... except ImportError`, which is what makes it optional at runtime; this says
   # the same thing to the type checker. D-181.
   "peft.*",
+  # Imported lazily only when auditing marked optional requirements; base-only wheel installs
+  # deliberately do not require packaging at runtime.
+  "packaging.*",
   # The `gpu` extra. CI installs `.[dev,media]` only — §6 puts Stage 0 on CPU and the CUDA
   # build of torch is ~2 GB of runner disk for kernels nothing in the gate calls — so these
   # resolve on hawapc01 and not on a clean runner. Every import of them is already inside a

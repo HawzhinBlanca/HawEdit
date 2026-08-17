@@ -397,7 +397,11 @@ _GOOD_BOUNDARY: dict[str, object] = {
 }
 
 
-_GOOD_QC: dict[str, object] = {"auto_pass": True, "flags": [], "human_reviewed": False}
+# `human_reviewed: True` is what makes this "good": `Clip.assert_renderable()` requires
+# human review specifically, so an auto_pass-only record is a clip the render gate
+# refuses. It read `human_reviewed: False` until the agentic merge met the tightened
+# gate. D-A26.
+_GOOD_QC: dict[str, object] = {"auto_pass": True, "flags": [], "human_reviewed": True}
 _PRESENT: dict[str, object] = {"present": True}
 
 
@@ -534,7 +538,7 @@ def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> Non
             caption_style="line",
             durations=(30,),
         ),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=False),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
     )
     illegal_boundary = replace(boundary, final_out_ms=3000)  # ends before anchor_out_ms=4100
     for clip, should_raise in (

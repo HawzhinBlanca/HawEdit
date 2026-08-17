@@ -2,7 +2,7 @@
 
 > Measured 2026-08-09 on hawapc01 against `cca72fe`.
 
-D-105, D-108 and D-112 were the same shape: a guard function is unit-tested, and the single call site
+D-137, D-143 and D-147 were the same shape: a guard function is unit-tested, and the single call site
 that reaches it can be neutered with the suite staying green. Three is a pattern, so this iteration
 swept for the rest deliberately instead of waiting for a fourth adversarial pass.
 

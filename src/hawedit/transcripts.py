@@ -31,13 +31,20 @@ blueprint does not permit is refused rather than stored and discovered later.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
 import os
+import stat
+import tempfile
+import threading
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, Final
 
 from hawedit.alignment import CTC_VITERBI, assert_ctc_viterbi
 from hawedit.normalize import normalize_sorani
@@ -49,6 +56,7 @@ __all__ = [
     "RawTranscript",
     "RawTranscriptImmutable",
     "RawTranscriptTampered",
+    "RejectedValidatorCorrection",
     "SegmentConfidence",
     "StaleNormalizedTranscript",
     "TranscriptStore",
@@ -56,6 +64,7 @@ __all__ = [
     "Word",
     "assert_model_input",
     "normalize_transcript",
+    "validate_media_id",
 ]
 
 
@@ -69,6 +78,195 @@ class RawTranscriptTampered(RuntimeError):
 
 class StaleNormalizedTranscript(RuntimeError):
     """Raised when a normalized artifact was derived from a different raw transcript."""
+
+
+_RAW_LOCKS_GUARD = threading.Lock()
+_RAW_LOCKS: dict[Path, threading.Lock] = {}
+_RAW_LOCK_TIMEOUT_S = 60.0
+_RAW_LOCK_RETRY_S = 0.05
+_WINDOWS_HOST: Final = os.name == "nt"
+
+
+def _invalid_lock_metadata(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or bool(getattr(metadata, "st_file_attributes", 0) & reparse_flag)
+    )
+
+
+def _invalid_store_root_metadata(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return not stat.S_ISDIR(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & reparse_flag
+    )
+
+
+@contextmanager
+def _exclusive_file_lock(path: Path) -> Iterator[None]:
+    """Serialize a transcript publication across threads and processes."""
+    try:
+        resolved = path.parent.resolve() / path.name
+    except OSError as exc:
+        raise RuntimeError(f"cannot prepare transcript publication lock {path}: {exc}") from exc
+    with _RAW_LOCKS_GUARD:
+        local_lock = _RAW_LOCKS.setdefault(resolved, threading.Lock())
+    with local_lock, _open_lock_file(resolved) as stream:
+        try:
+            if stream.seek(0, os.SEEK_END) == 0:
+                stream.write(b"\0")
+                stream.flush()
+                os.fsync(stream.fileno())
+            stream.seek(0)
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot initialize transcript publication lock {resolved}: {exc}"
+            ) from exc
+        if _WINDOWS_HOST:
+            msvcrt = importlib.import_module("msvcrt")
+            deadline = time.monotonic() + _RAW_LOCK_TIMEOUT_S
+            while True:
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            f"timed out after {_RAW_LOCK_TIMEOUT_S:.0f}s waiting for transcript "
+                            f"publication lock {resolved}"
+                        ) from exc
+                    time.sleep(_RAW_LOCK_RETRY_S)
+            try:
+                _assert_lock_path_identity(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                raise
+            else:
+                try:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"cannot release transcript publication lock {resolved}: {exc}"
+                    ) from exc
+        else:
+            fcntl = importlib.import_module("fcntl")
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"cannot acquire transcript publication lock {resolved}: {exc}"
+                ) from exc
+            try:
+                _assert_lock_path_identity(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                raise
+            else:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"cannot release transcript publication lock {resolved}: {exc}"
+                    ) from exc
+
+
+def _open_lock_file(path: Path) -> BinaryIO:
+    """Open one unshared regular lock inode without following a final-component link."""
+    try:
+        checked = os.lstat(path)
+    except FileNotFoundError:
+        checked = None
+    except OSError as exc:
+        raise RuntimeError(f"cannot inspect transcript publication lock {path}: {exc}") from exc
+    if checked is not None and _invalid_lock_metadata(checked):
+        raise RuntimeError(
+            "transcript publication lock must be one regular link without symlink or "
+            f"reparse indirection: {path}"
+        )
+
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise RuntimeError(f"cannot safely open transcript publication lock {path}: {exc}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if _invalid_lock_metadata(opened):
+            raise RuntimeError(
+                "transcript publication lock must be one regular link without symlink or "
+                f"reparse indirection: {path}"
+            )
+        current = os.lstat(path)
+        if checked is not None and (checked.st_dev, checked.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise RuntimeError(f"transcript publication lock was replaced before open: {path}")
+        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            raise RuntimeError(f"transcript publication lock path changed during open: {path}")
+        return os.fdopen(descriptor, "r+b")
+    except BaseException as exc:
+        with suppress(OSError):
+            os.close(descriptor)
+        if isinstance(exc, OSError):
+            raise RuntimeError(
+                f"cannot initialize transcript publication lock {path}: {exc}"
+            ) from exc
+        raise
+
+
+def _assert_lock_path_identity(path: Path, stream: BinaryIO) -> None:
+    try:
+        opened = os.fstat(stream.fileno())
+        current = os.lstat(path)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"transcript publication lock disappeared while waiting: {path}"
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot inspect transcript publication lock after waiting {path}: {exc}"
+        ) from exc
+    if (
+        _invalid_lock_metadata(opened)
+        or _invalid_lock_metadata(current)
+        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        raise RuntimeError(f"transcript publication lock changed while waiting: {path}")
+
+
+def validate_media_id(media_id: str) -> str:
+    """Return a cross-platform path-safe identifier or refuse it before any work starts."""
+    if not isinstance(media_id, str) or not media_id.strip():
+        raise ValueError("media_id must be a non-empty string")
+    if media_id != media_id.strip():
+        raise ValueError(f"media_id {media_id!r} contains leading or trailing whitespace")
+    if len(media_id.encode("utf-8")) > 180:
+        raise ValueError("media_id is longer than the 180-byte portable filename limit")
+    invalid = '<>:"/\\|?*\x00'
+    if any(character in invalid or ord(character) < 32 for character in media_id):
+        raise ValueError(
+            f"media_id {media_id!r} contains a control, path separator, or reserved filename "
+            "character"
+        )
+    if media_id.startswith("."):
+        raise ValueError(f"media_id {media_id!r} would create a hidden delivery")
+    if media_id in {".", ".."} or ".." in media_id:
+        raise ValueError(f"media_id {media_id!r} contains a parent reference")
+    stem = media_id.split(".", 1)[0].upper()
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
+    }
+    if stem in reserved or media_id.endswith((".", " ")):
+        raise ValueError(f"media_id {media_id!r} is a reserved filename on Windows")
+    return media_id
 
 
 _WORD_EDGE_PUNCTUATION = ".,!?;:،؛؟۔…"
@@ -150,6 +348,30 @@ class UnalignedSpeech:
 
 
 @dataclass(frozen=True, slots=True)
+class RejectedValidatorCorrection:
+    """One hard segment whose validator correction was not safe to use.
+
+    The canonical OmniASR alignment remains in the transcript. This record prevents that
+    fallback from looking like a successful validator pass while also avoiding the opposite
+    error: dropping speech that already had admissible timed words.
+    """
+
+    start_ms: int
+    end_ms: int
+    validator: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.end_ms <= self.start_ms:
+            raise ValueError(
+                "rejected validator correction must span a positive-duration speech region"
+            )
+        resolve_role(self.validator, frozenset({"asr_validator"}), "the ASR validator")
+        if not self.reason.strip():
+            raise ValueError("rejected validator correction needs a reason")
+
+
+@dataclass(frozen=True, slots=True)
 class SegmentConfidence:
     """One Stage 0 speech region's own mean log-probability, on the media clock.
 
@@ -160,16 +382,14 @@ class SegmentConfidence:
 
     Measured on the real 38-minute run: 547 segments produced 547 values, and the artifact kept
     `-6.523425833753913`. A quartile cannot be taken of an average. Computed and discarded is a
-    different defect from never computed, and this is the fix for the first. D-109.
+    different defect from never computed, and this is the fix for the first. D-144.
     """
 
     start_ms: int
     end_ms: int
     mean_logprob: float
-    # The two hypotheses §3's *other* trigger compares. `select_for_validation` needs both, and
-    # `ctc_text` was never computed anywhere — the CTC pass produced emissions, spent them on
-    # timing the LLM's words, and decoded nothing. D-135. Empty strings mean a producer that does
-    # not run CTC separately, which is readable rather than silently agreeing.
+    # The two same-audio hypotheses used by §3's disagreement trigger. Empty defaults preserve
+    # compatibility with artifacts produced before the CTC hypothesis was persisted.
     llm_text: str = ""
     ctc_text: str = ""
 
@@ -178,6 +398,8 @@ class SegmentConfidence:
             raise ValueError(
                 f"segment confidence spans {self.start_ms}..{self.end_ms} ms, which has no length"
             )
+        if not isinstance(self.llm_text, str) or not isinstance(self.ctc_text, str):
+            raise ValueError("segment hypotheses must be strings")
         if self.mean_logprob > 0.0:
             # The same refusal `SegmentScore` makes, for the same reason: escalation ranks on log
             # probabilities, and a wrong scale here silently inverts the quartile.
@@ -239,12 +461,14 @@ class RawTranscript:
     unaligned: tuple[UnalignedSpeech, ...] = ()
     # Each transcribed region's own confidence, kept because §3 Stage 1's escalation rule ranks
     # segments and `asr.mean_logprob` is their average. 547 values became one on the real run.
-    # D-109.
+    # D-144.
     segment_confidence: tuple[SegmentConfidence, ...] = ()
+    # Hard segments whose canonical timed words were retained because a validator correction
+    # could not itself be aligned. These are not transcript gaps: speech remains represented.
+    rejected_validator_corrections: tuple[RejectedValidatorCorrection, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.media_id, str) or not self.media_id.strip():
-            raise ValueError("media_id must be a non-empty string")
+        validate_media_id(self.media_id)
         if not isinstance(self.text_ckb, str):
             raise ValueError("text_ckb must be a string")
         if self.text_ckb and not self.text_ckb.strip():
@@ -271,6 +495,13 @@ class RawTranscript:
             if not isinstance(scored, SegmentConfidence):
                 raise ValueError(
                     f"raw transcript segment_confidence[{position}] is not a SegmentConfidence"
+                )
+
+        for position, rejected in enumerate(self.rejected_validator_corrections):
+            if not isinstance(rejected, RejectedValidatorCorrection):
+                raise ValueError(
+                    "raw transcript rejected_validator_corrections"
+                    f"[{position}] is not a RejectedValidatorCorrection"
                 )
 
         previous: Word | None = None
@@ -322,6 +553,10 @@ class RawTranscript:
             segment_confidence=tuple(
                 SegmentConfidence(**c) for c in data.get("segment_confidence", ())
             ),
+            rejected_validator_corrections=tuple(
+                RejectedValidatorCorrection(**item)
+                for item in data.get("rejected_validator_corrections", ())
+            ),
         )
 
 
@@ -333,6 +568,9 @@ class NormalizedTranscript:
     text_ckb: str
     source_sha256: str
     words: tuple[Word, ...] = field(default=())
+
+    def __post_init__(self) -> None:
+        validate_media_id(self.media_id)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
@@ -348,17 +586,26 @@ class NormalizedTranscript:
         )
 
 
-def normalize_transcript(raw: RawTranscript) -> NormalizedTranscript:
+def normalize_transcript(
+    raw: RawTranscript, source_sha256: str | None = None
+) -> NormalizedTranscript:
     """Derive the normalized artifact from `raw`, recording which raw it came from.
 
     Word timings are carried across with their *raw* surface forms: alignment keys off the
     tokens the acoustic model actually emitted (§4.2), and normalization strips and rewrites
     characters in ways that would not survive a re-tokenization.
+
+    `source_sha256` must be the digest of the raw **file** when there is one —
+    `TranscriptStore.raw_digest`. `raw.sha256()` re-serialises the parsed object, so it answers
+    with today's schema rather than the bytes that were stored: adding one optional field to
+    `AsrProvenance` changed that answer for every transcript ever written, and `read_norm` then
+    rejected artifacts whose raw file was provably untouched. The default remains the object
+    hash because an in-memory transcript has no file, and there it is the only identity there is.
     """
     return NormalizedTranscript(
         media_id=raw.media_id,
         text_ckb=normalize_sorani(raw.text_ckb),
-        source_sha256=raw.sha256(),
+        source_sha256=source_sha256 if source_sha256 is not None else raw.sha256(),
         words=raw.words,
     )
 
@@ -381,8 +628,40 @@ class TranscriptStore:
     """On-disk home of the §4.1 artifact triple for one working directory."""
 
     def __init__(self, root: Path) -> None:
-        self.root = root
-        self.root.mkdir(parents=True, exist_ok=True)
+        # Keep a lexical absolute path: ``resolve`` would follow precisely the final-component
+        # symlink/junction this boundary must refuse.
+        self.root = Path(os.path.abspath(root))
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            metadata = os.lstat(self.root)
+        except OSError as exc:
+            raise RuntimeError(f"cannot prepare transcript store root {self.root}: {exc}") from exc
+        if _invalid_store_root_metadata(metadata):
+            raise RuntimeError(
+                "transcript store root must be a real directory without symlink or reparse "
+                f"indirection: {self.root}"
+            )
+        self._root_identity = metadata.st_dev, metadata.st_ino
+
+    def _assert_root_identity(self) -> None:
+        try:
+            current = os.lstat(self.root)
+        except OSError as exc:
+            raise RuntimeError(
+                f"transcript store root disappeared or became unreadable: {self.root}: {exc}"
+            ) from exc
+        if (
+            _invalid_store_root_metadata(current)
+            or (
+                current.st_dev,
+                current.st_ino,
+            )
+            != self._root_identity
+        ):
+            raise RuntimeError(
+                "transcript store root changed identity or became a symlink/reparse point: "
+                f"{self.root}"
+            )
 
     @staticmethod
     def _safe(media_id: str) -> str:
@@ -393,15 +672,7 @@ class TranscriptStore:
         write-once guarantee means nothing if the path it guards is attacker-chosen. Audit
         finding #9.
         """
-        if not media_id or media_id in {".", ".."}:
-            raise ValueError("media_id must not be empty or a path component")
-        if any(sep in media_id for sep in ("/", "\\", "\x00")) or ".." in media_id:
-            raise ValueError(
-                f"media_id {media_id!r} contains a path separator or parent reference. "
-                f"Transcript paths are derived from it, so this would write outside the "
-                f"store (Kurdish invariant #1)."
-            )
-        return media_id
+        return validate_media_id(media_id)
 
     def raw_path(self, media_id: str) -> Path:
         return self.root / f"{self._safe(media_id)}.transcript.raw.json"
@@ -418,26 +689,20 @@ class TranscriptStore:
     def reusable_raw(self, media_id: str, audio_sha256: str, producer: str) -> RawTranscript | None:
         """The stored canonical transcript, if this exact audio and producer made it.
 
-        §3 Stage 1 is the expensive stage — measured **1,547 s** for 545 segments on hawapc01's
-        two 3090 Ti — and `run_pipeline` called `asr.transcribe` before it looked at this store at
+        Stage 1 is the expensive stage - measured 1,547 s for 545 segments on hawapc01's two
+        3090 Ti - and `run_pipeline` called `asr.transcribe` before it looked at this store at
         all. Measured with a counting producer: a second run over a work directory holding a
         complete transcript transcribed it again, and if the second pass differed by one
-        character, `write_raw`'s immutability guard refused **after** the full spend. That is
-        D-071's shape one stage over, where a billed Gemini call happened before an overwrite
-        refusal.
+        character, the immutability guard refused *after* the full spend.
 
-        Reuse is verified rather than assumed, in D-132's shape, on **two** keys:
+        Reuse is verified rather than assumed, on two keys: the digest of the audio it was made
+        from, so a different recording under the same media_id re-transcribes instead of
+        shipping another video's words; and the producer, because a run driven by a test double
+        can never be read as a run on real weights. Absent sidecar, either key mismatched, or a
+        failed integrity check all return None - the expensive answer, never the wrong one.
 
-        * the digest of the audio it was made from, so a different recording under the same
-          media_id re-transcribes instead of shipping another video's words;
-        * the **producer**, because this project's rule is that a run driven by a test double "can
-          never be read as a run on real weights" (`asr.py`). Keyed on audio alone, a transcript
-          stored by a stub would be reused by a real `--omni-asr` run and the report would claim
-          OmniASR output. It is also what makes a changed Stage 1 re-transcribe rather than keep
-          the old answer — D-132's "same command" clause, one stage over.
-
-        Absent sidecar, either key mismatched, or a failed integrity check all return `None` — the
-        expensive answer, never the wrong one. D-136.
+        D-136. Restored across the readiness merge, which dropped it with no conflict because
+        HEAD's additions lived inside regions that branch had rewritten.
         """
         path = self.raw_path(media_id)
         provenance = self._audio_provenance_path(media_id)
@@ -460,11 +725,31 @@ class TranscriptStore:
         audio_sha256: str | None = None,
         producer: str | None = None,
     ) -> Path:
-        """Write the canonical transcript once.
+        """Publish the canonical transcript once.
 
-        `audio_sha256` and `producer` record what made it, so `reusable_raw` can answer. Optional
-        because a caller that cannot say must not be able to claim a match by omission: with
-        either missing there is no sidecar and no reuse, which is the behaviour before D-136.
+        `audio_sha256` and `producer` record what made it so `reusable_raw` can answer. Both
+        optional, and both required together: half a key cannot decide reuse. The sidecar is
+        written inside the same lock that publishes the raw, so a killed publish cannot leave a
+        reuse record pointing at a transcript that never appeared. D-136.
+        """
+        self._assert_root_identity()
+        lock = self.root / f".{self._safe(raw.media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            self._assert_root_identity()
+            path = self._write_raw_locked(raw)
+            if audio_sha256 is not None and producer is not None:
+                self._audio_provenance_path(raw.media_id).write_text(
+                    json.dumps(
+                        {"audio_sha256": audio_sha256, "producer": producer},
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+            return path
+
+    def _write_raw_locked(self, raw: RawTranscript) -> Path:
+        """Write the canonical transcript once.
 
         Raises:
             RawTranscriptImmutable: a raw transcript for this media_id already exists.
@@ -526,22 +811,34 @@ class TranscriptStore:
             staging.unlink(missing_ok=True)
             digest_staging.unlink(missing_ok=True)
         path.chmod(0o444)  # advisory: root ignores this, the digest is the real evidence
-        if audio_sha256 is not None and producer is not None:
-            # Written last, after the transcript is published: a sidecar that outlived a failed
-            # write would claim a match for a transcript that is not there. D-132's ordering.
-            self._audio_provenance_path(raw.media_id).write_text(
-                json.dumps({"audio_sha256": audio_sha256, "producer": producer}, indent=2) + "\n",
-                encoding="utf-8",
-            )
         return path
 
     def read_raw(self, media_id: str) -> RawTranscript:
-        return RawTranscript.from_json(self.raw_path(media_id).read_text(encoding="utf-8"))
+        self._assert_root_identity()
+        lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            self._assert_root_identity()
+            path = self.raw_path(media_id)
+            try:
+                content = path.read_text(encoding="utf-8")
+            except FileNotFoundError as exc:
+                if self._digest_path(media_id).exists():
+                    raise RawTranscriptTampered(
+                        f"{path} is missing while its write-once digest exists. A previous "
+                        "publication was interrupted or the canonical raw was removed; use a "
+                        "new work directory rather than reconstructing immutable evidence."
+                    ) from exc
+                raise
+            return RawTranscript.from_json(content)
 
     def raw_digest(self, media_id: str) -> str:
         """The digest of the raw file as it is on disk right now."""
-        content = self.raw_path(media_id).read_bytes()
-        return hashlib.sha256(content).hexdigest()
+        self._assert_root_identity()
+        lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            self._assert_root_identity()
+            content = self.raw_path(media_id).read_bytes()
+            return hashlib.sha256(content).hexdigest()
 
     def verify_raw_integrity(self, media_id: str) -> None:
         """Check the raw transcript against the digest recorded when it was written.
@@ -549,6 +846,13 @@ class TranscriptStore:
         Raises:
             RawTranscriptTampered: the file no longer matches.
         """
+        self._assert_root_identity()
+        lock = self.root / f".{self._safe(media_id)}.transcript.raw.lock"
+        with _exclusive_file_lock(lock):
+            self._assert_root_identity()
+            self._verify_raw_integrity_locked(media_id)
+
+    def _verify_raw_integrity_locked(self, media_id: str) -> None:
         path = self.raw_path(media_id)
         try:
             recorded = self._digest_path(media_id).read_text(encoding="ascii").strip()
@@ -557,7 +861,14 @@ class TranscriptStore:
                 f"{path} has no readable digest recorded at write time. The canonical "
                 "transcript cannot be verified — Kurdish invariant #1."
             ) from exc
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            content = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise RawTranscriptTampered(
+                f"{path} is missing while its write-once digest exists. The canonical "
+                "transcript cannot be verified — Kurdish invariant #1."
+            ) from exc
+        actual = hashlib.sha256(content).hexdigest()
         if actual != recorded:
             raise RawTranscriptTampered(
                 f"{path} no longer matches the digest recorded at write "
@@ -566,10 +877,67 @@ class TranscriptStore:
             )
 
     def write_norm(self, norm: NormalizedTranscript) -> Path:
-        """Write the derived artifact. Unlike raw this may be rewritten — re-normalizing
-        after a KLPT upgrade is a legitimate operation."""
+        """Atomically publish a derived artifact only for this store's verified raw.
+
+        Unlike raw, norm may be replaced: re-normalizing after a KLPT upgrade is legitimate.
+        Replacement must still be content-bound and atomic. Writing directly to the predictable
+        final name follows a planted hardlink/symlink and exposes half-written JSON to readers.
+        """
         path = self.norm_path(norm.media_id)
-        path.write_text(norm.to_json(), encoding="utf-8")
+        self._assert_root_identity()
+        lock = self.root / f".{self._safe(norm.media_id)}.transcript.raw.lock"
+        staging: Path | None = None
+        with _exclusive_file_lock(lock):
+            self._assert_root_identity()
+            self._verify_raw_integrity_locked(norm.media_id)
+            source_digest = hashlib.sha256(self.raw_path(norm.media_id).read_bytes()).hexdigest()
+            if norm.source_sha256 != source_digest:
+                raise StaleNormalizedTranscript(
+                    f"refusing to publish {path}: it was derived from raw "
+                    f"{norm.source_sha256[:12]}… but the digest of the file in this store is "
+                    f"{source_digest[:12]}…. "
+                    "Normalize the verified raw from this store before publishing its derived "
+                    "artifact."
+                )
+
+            payload = norm.to_json().encode("utf-8")
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    dir=self.root,
+                    delete=False,
+                ) as stream:
+                    staging = Path(stream.name)
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+
+                # Recheck immediately before publication. Raw is write-once for HawEdit writers,
+                # but an out-of-band mutation must not race a valid first check and make the
+                # newly published norm stale on arrival.
+                self._verify_raw_integrity_locked(norm.media_id)
+                current_digest = hashlib.sha256(
+                    self.raw_path(norm.media_id).read_bytes()
+                ).hexdigest()
+                if current_digest != source_digest:
+                    raise RawTranscriptTampered(
+                        f"{self.raw_path(norm.media_id)} changed while its normalized artifact "
+                        "was being staged. The derived artifact was not published."
+                    )
+                os.replace(staging, path)
+                staging = None
+            except BaseException as primary:
+                if staging is not None:
+                    try:
+                        staging.unlink(missing_ok=True)
+                    except OSError as cleanup:
+                        primary.add_note(
+                            f"normalized-transcript staging cleanup also failed for {staging}: "
+                            f"{cleanup}"
+                        )
+                raise
         return path
 
     def read_norm(self, media_id: str) -> NormalizedTranscript:
@@ -578,8 +946,17 @@ class TranscriptStore:
         Raises:
             StaleNormalizedTranscript: `source_sha256` does not match the stored raw.
         """
+        self._assert_root_identity()
         norm = NormalizedTranscript.from_json(self.norm_path(media_id).read_text(encoding="utf-8"))
-        expected = self.read_raw(media_id).sha256()
+        self._assert_root_identity()
+        # The digest of the raw FILE, not of the parsed object. `read_raw(...).sha256()`
+        # walks the JSON back through today's dataclasses, so it reports what this release
+        # *would* write rather than what was written: `AsrProvenance` gaining one optional
+        # field re-dated every stored transcript, and this check then called four untouched
+        # real artifacts stale — including the 38-minute run — while `verify_raw_integrity`,
+        # which hashes the bytes, passed on all of them. Bytes are the identity; a schema is
+        # not. Kept across the readiness merge, which had reverted to the re-serialisation.
+        expected = self.raw_digest(media_id)
         if norm.source_sha256 != expected:
             raise StaleNormalizedTranscript(
                 f"{self.norm_path(media_id)} was derived from raw {norm.source_sha256[:12]}… "

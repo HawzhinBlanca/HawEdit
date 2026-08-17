@@ -111,6 +111,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from hawedit.atomic_fs import write_text_atomic
 from hawedit.boundary import Boundary, BoundaryInvariantViolated, assert_boundary_invariant
 from hawedit.captions import (
     CaptionsOutsideClip,
@@ -130,7 +131,7 @@ from hawedit.learning import (
     read_decision_deltas,
     record_decision_delta,
 )
-from hawedit.pipeline import FONTS_DIR, _proxy_dimensions, _write_atomic
+from hawedit.pipeline import FONTS_DIR, _proxy_dimensions
 from hawedit.render import RenderError, frame_rate, render_clip
 from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.transcripts import Word
@@ -380,7 +381,7 @@ def commit_boundary_revision(
     revisions_dir = work_dir / "revisions"
     revisions_dir.mkdir(parents=True, exist_ok=True)
     path = revisions_dir / f"{revision_id}.json"
-    _write_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
+    write_text_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
     return path
 
 
@@ -487,7 +488,7 @@ def render_boundary_revision(
     edl_path = revisions_dir / f"{revision_id}.edl"
     clip_duration_ms = revised_clip.out_ms - revised_clip.in_ms
 
-    _write_atomic(
+    write_text_atomic(
         ass_path,
         build_ass(
             selected,
@@ -513,7 +514,7 @@ def render_boundary_revision(
         render_path.unlink(missing_ok=True)
         revision["status"] = "render_failed"
         revision["render_error"] = str(exc)
-        _write_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
+        write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
         raise
 
     revision["ass_path"] = str(ass_path)
@@ -527,8 +528,8 @@ def render_boundary_revision(
             fps=frame_rate(source, ffmpeg),
             title=f"{report['media_id']} {revised_clip.clip_id}",
         )
-        _write_atomic(srt_path, srt)
-        _write_atomic(edl_path, edl)
+        write_text_atomic(srt_path, srt)
+        write_text_atomic(edl_path, edl)
         revision["srt_path"] = str(srt_path)
         revision["edl_path"] = str(edl_path)
         revision["status"] = "rendered"
@@ -540,7 +541,7 @@ def render_boundary_revision(
         revision["status"] = "rendered_without_delivery_sidecars"
         revision["delivery_error"] = str(exc)
 
-    _write_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
+    write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
     return revision
 
 
@@ -740,7 +741,7 @@ def commit_caption_revision(
     revisions_dir = work_dir / "revisions"
     revisions_dir.mkdir(parents=True, exist_ok=True)
     path = revisions_dir / f"{revision_id}.json"
-    _write_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
+    write_text_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
     return path
 
 
@@ -817,7 +818,7 @@ def render_caption_revision(
     edl_path = revisions_dir / f"{revision_id}.edl"
     clip_duration_ms = revised_clip.out_ms - revised_clip.in_ms
 
-    _write_atomic(
+    write_text_atomic(
         ass_path,
         build_ass(
             selected, style=style, clip_in_ms=revised_clip.in_ms, clip_duration_ms=clip_duration_ms
@@ -840,7 +841,7 @@ def render_caption_revision(
         render_path.unlink(missing_ok=True)
         revision["status"] = "render_failed"
         revision["render_error"] = str(exc)
-        _write_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
+        write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
         raise
 
     revision["ass_path"] = str(ass_path)
@@ -854,8 +855,8 @@ def render_caption_revision(
             fps=frame_rate(source, ffmpeg),
             title=f"{report['media_id']} {revised_clip.clip_id}",
         )
-        _write_atomic(srt_path, srt)
-        _write_atomic(edl_path, edl)
+        write_text_atomic(srt_path, srt)
+        write_text_atomic(edl_path, edl)
         revision["srt_path"] = str(srt_path)
         revision["edl_path"] = str(edl_path)
         revision["status"] = "rendered"
@@ -863,7 +864,7 @@ def render_caption_revision(
         revision["status"] = "rendered_without_delivery_sidecars"
         revision["delivery_error"] = str(exc)
 
-    _write_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
+    write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
     return revision
 
 

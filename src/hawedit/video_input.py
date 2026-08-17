@@ -36,10 +36,14 @@ model into fusion is off by the window's start. See D-049.
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 import subprocess
+import sys
+import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
@@ -47,6 +51,7 @@ from hawedit.captions import find_ffmpeg
 from hawedit.visual_index import TEMPORAL_PATCH_FRAMES, SceneWindow
 
 __all__ = [
+    "TEMPORAL_PATCH_FRAMES",
     "TIMESTAMP_TOKEN",
     "FrameCountMismatch",
     "TimestampsOutsideWindow",
@@ -74,6 +79,8 @@ PRINTED_PRECISION_S: Final = 0.05
 # The rate a Qwen3-VL processor falls back to when it is told nothing — the defect D-049 is
 # about. Kept as a constant so the guard's message can name the counterfactual it is refusing.
 _ASSUMED_FPS: Final = 24.0
+_REPARSE_FLAG: Final = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+_DirectoryIdentity = tuple[int, int]
 
 
 def _last_stamp_floor(frames: WindowFrames) -> float:
@@ -116,6 +123,49 @@ class TimestampsOutsideWindow(VideoInputError):
     """The prompt places the window's frames somewhere the window is not."""
 
 
+def _owned_directory_identity(path: Path) -> _DirectoryIdentity:
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise VideoInputError(f"could not inspect private frame directory {path}: {exc}") from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or bool(getattr(metadata, "st_file_attributes", 0) & _REPARSE_FLAG)
+    ):
+        raise VideoInputError(f"private frame directory is a link or reparse point: {path}")
+    return metadata.st_dev, metadata.st_ino
+
+
+def _remove_private_frames(path: Path, identity: _DirectoryIdentity) -> bool:
+    """Remove only one extraction directory still owned by this call."""
+    active_error = sys.exception()
+    try:
+        if _owned_directory_identity(path) != identity:
+            raise VideoInputError(f"private frame directory identity changed: {path}")
+        children = tuple(path.iterdir())
+        for child in children:
+            metadata = os.lstat(child)
+            if stat.S_ISDIR(metadata.st_mode) or bool(
+                getattr(metadata, "st_file_attributes", 0) & _REPARSE_FLAG
+            ):
+                raise VideoInputError(
+                    f"refusing to recursively remove unexpected frame content: {child}"
+                )
+        for child in children:
+            child.unlink()
+        path.rmdir()
+        return True
+    except (OSError, VideoInputError) as cleanup_error:
+        message = f"private visual frame cleanup failed for {path}: {cleanup_error}"
+        if active_error is not None:
+            active_error.add_note(message)
+            return False
+        raise VideoInputError(message) from cleanup_error
+
+
 @dataclass(frozen=True, slots=True)
 class WindowFrames:
     """The frames actually extracted for one window, and how many there really are.
@@ -136,6 +186,9 @@ class WindowFrames:
 
     window: SceneWindow
     paths: tuple[Path, ...]
+    _owner_dir: Path | None = None
+    _owner_identity: _DirectoryIdentity | None = None
+    _cleaned: bool = field(default=False, init=False, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         if not self.paths:
@@ -143,11 +196,24 @@ class WindowFrames:
                 f"no frames were extracted for {self.window.window_id}. An empty window "
                 f"embeds to nothing, and 'nothing' is not a description of that footage."
             )
+        if (self._owner_dir is None) != (self._owner_identity is None):
+            raise ValueError("owned WindowFrames need both a directory and its identity")
 
     @property
     def count(self) -> int:
         """Frames that exist on disk — not `window.frame_count`, which is the plan."""
         return len(self.paths)
+
+    def cleanup(self) -> None:
+        """Delete extracted source pixels when this value owns them; injected frames are inert."""
+        if self._cleaned:
+            return
+        if (
+            self._owner_dir is not None
+            and self._owner_identity is not None
+            and _remove_private_frames(self._owner_dir, self._owner_identity)
+        ):
+            object.__setattr__(self, "_cleaned", True)
 
 
 def extract_window_frames(
@@ -172,99 +238,104 @@ def extract_window_frames(
     """
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
-        raise VideoInputError("no ffmpeg available — run scripts/fetch-ffmpeg.sh")
+        raise VideoInputError("no ffmpeg available — run hawedit-ffmpeg-setup")
 
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    # Clear this window's frames before extracting, so the count below grades what ffmpeg just
-    # produced and nothing else. ffmpeg overwrites 1..N but leaves anything above N behind, so a
-    # re-run with a *smaller* plan inherits the old tail and the guard reads it as ffmpeg
-    # overshooting. That is the documented recovery from an OOM — D-108 makes
-    # `--visual-max-frames` lowerable precisely so a 3090 Ti can retry at 8 — and it failed on
-    # the first window every time. Measured 2026-08-11 on the real 38-minute file: run at 64
-    # left 16 jpgs in `s0:w0`, the retry at 8 wrote 8 and the glob counted 16. Second half of
-    # D-104, which fixed this same count being taken over the parity step's output.
-    for stale in dest_dir.glob(f"{window.window_index:03d}_*.jpg"):
-        stale.unlink()
-    pattern = dest_dir / f"{window.window_index:03d}_%04d.jpg"
-    result = subprocess.run(
-        [
-            str(binary),
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            f"{window.in_ms / 1000:.3f}",
-            "-t",
-            f"{window.duration_ms / 1000:.3f}",
-            "-i",
-            str(video),
-            "-vf",
-            f"fps={window.fps}",
-            "-frames:v",
-            str(window.frame_count),
-            "-y",
-            str(pattern),
-        ],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        extraction_dir = Path(tempfile.mkdtemp(prefix=f".{window.window_index:03d}-", dir=dest_dir))
+        extraction_identity = _owned_directory_identity(extraction_dir)
+    except (OSError, VideoInputError) as exc:
         raise VideoInputError(
-            f"ffmpeg failed extracting {window.window_id} "
-            f"({result.returncode}): {result.stderr.decode('utf-8', 'replace')[-400:]}"
-        )
+            f"could not create a private frame directory under {dest_dir}: {exc}"
+        ) from exc
+    succeeded = False
+    try:
+        pattern = extraction_dir / f"{window.window_index:03d}_%04d.jpg"
+        try:
+            result = subprocess.run(
+                [
+                    str(binary),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-ss",
+                    f"{window.in_ms / 1000:.3f}",
+                    "-t",
+                    f"{window.duration_ms / 1000:.3f}",
+                    "-i",
+                    str(video),
+                    "-vf",
+                    f"fps={window.fps}",
+                    "-frames:v",
+                    str(window.frame_count),
+                    "-y",
+                    str(pattern),
+                ],
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise VideoInputError(f"cannot launch ffmpeg for {window.window_id}: {exc}") from exc
+        if result.returncode != 0:
+            raise VideoInputError(
+                f"ffmpeg failed extracting {window.window_id} "
+                f"({result.returncode}): {result.stderr.decode('utf-8', 'replace')[-400:]}"
+            )
 
-    extracted = tuple(sorted(dest_dir.glob(f"{window.window_index:03d}_*.jpg")))
+        # Judge what this invocation's ffmpeg actually delivered before HawEdit drops a parity
+        # frame. The old order graded the trimmed tuple and refused the valid 36-planned /
+        # 35-delivered / 34-kept case measured on the 38-minute file. D-136.
+        extracted = tuple(sorted(extraction_dir.glob(f"{window.window_index:03d}_*.jpg")))
+        if len(extracted) > window.frame_count:
+            raise FrameCountMismatch(
+                f"{window.window_id} planned {window.frame_count} frames and ffmpeg produced "
+                f"{len(extracted)}. More frames than the plan means the ceiling §3 Stage 2 sets "
+                f"is not the ceiling being enforced."
+            )
+        if len(extracted) < window.frame_count - 1:
+            raise FrameCountMismatch(
+                f"{window.window_id} planned {window.frame_count} frames over "
+                f"{window.duration_ms} ms and ffmpeg produced {len(extracted)}. One frame of tail "
+                f"rounding is normal; this is {window.frame_count - len(extracted)}. The window "
+                f"likely runs past the end of the media, and an embedding of whatever frames "
+                f"existed would describe less footage than the window claims."
+            )
 
-    # What ffmpeg delivered, judged before this function drops anything of its own. The two checks
-    # below used to run on the *truncated* tuple, so they graded the parity step's output as though
-    # ffmpeg had produced it — and refused a perfectly good extraction. Measured 2026-08-09 on a
-    # real 38-minute file: `s2:w0` planned 36 frames over 17,720 ms, ffmpeg wrote **35** (the one
-    # tail frame the message itself calls normal), the parity step dropped a second, and the guard
-    # then compared 34 against 36-1 and raised "the window likely runs past the end of the media".
-    # It does not; the window sits early in a 2313.8 s file and every frame it asked for existed.
-    # Any window whose planned count is even and whose delivered count is odd hit this, which is
-    # about half of them — the visual path got through three windows before stopping. D-104.
-    if len(extracted) > window.frame_count:
-        raise FrameCountMismatch(
-            f"{window.window_id} planned {window.frame_count} frames and ffmpeg produced "
-            f"{len(extracted)}. More frames than the plan means the ceiling §3 Stage 2 sets is "
-            f"not the ceiling being enforced."
+        # An odd count is padded by the processor **repeating the last frame** (D-060), so the
+        # model would see a frame that was never filmed at the moment the window ends. Dropping
+        # the last real frame instead costs at most one sampling interval and preserves reality.
+        paths = extracted
+        if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
+            paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
+        frames = WindowFrames(
+            window=window,
+            paths=paths,
+            _owner_dir=extraction_dir,
+            _owner_identity=extraction_identity,
         )
-    if len(extracted) < window.frame_count - 1:
-        raise FrameCountMismatch(
-            f"{window.window_id} planned {window.frame_count} frames over "
-            f"{window.duration_ms} ms and ffmpeg produced {len(extracted)}. One frame of tail "
-            f"rounding is normal; this is {window.frame_count - len(extracted)}. The window "
-            f"likely runs past the end of the media, and an embedding of whatever frames "
-            f"existed would describe less footage than the window claims."
-        )
-
-    # An odd count is padded by the processor **repeating the last frame** (D-060), so the model
-    # would see a frame that was never filmed, at the moment the window ends — which biases a
-    # temporal reading toward its own tail. Dropping the last real frame instead costs at most one
-    # sampling interval of footage and leaves every frame the model sees a frame that existed.
-    # Measured: 2 frames is always delivered intact at every rate, so the floor here is 2 and
-    # `WindowFrames` / the one-frame refusal below still catch anything shorter.
-    paths = extracted
-    if len(paths) % TEMPORAL_PATCH_FRAMES and len(paths) > TEMPORAL_PATCH_FRAMES:
-        paths = paths[: len(paths) - len(paths) % TEMPORAL_PATCH_FRAMES]
-    frames = WindowFrames(window=window, paths=paths)
-    # A window the plan says is temporal, arriving as a single still, is the exact failure §7
-    # excludes CLIP for — "frame-averaging loses temporal structure" — reached from the other
-    # direction: there is no structure left to lose. It is also invisible downstream, because
-    # `video_content` will wrap one frame in a video block and the embedding looks like any
-    # other. Measured: the fixture's 1400 ms scenes plan 2 frames at 1 fps and yield 1.
-    if window.frame_count >= 2 and frames.count < 2:
-        raise FrameCountMismatch(
-            f"{window.window_id} is {window.duration_ms} ms and planned {window.frame_count} "
-            f"frames at {window.fps} fps, but only {frames.count} frame exists. A one-frame "
-            f"video has no temporal structure at all, and its embedding is indistinguishable "
-            f"from an honest window's. Raise the window's fps — `SceneWindow` permits any rate "
-            f"at or above §3 Stage 2's reference {window.fps} and enforces the 64-frame ceiling "
-            f"against it — or treat this scene as a still deliberately."
-        )
-    return frames
+        # A window the plan says is temporal, arriving as a single still, is the exact failure
+        # §7 excludes CLIP for — "frame-averaging loses temporal structure" — reached from the
+        # other direction: there is no structure left to lose. It is also invisible downstream,
+        # because `video_content` will wrap one frame in a video block and the embedding looks
+        # like any other. Measured: the fixture's 1400 ms scenes plan 2 frames at 1 fps and
+        # yields 1.
+        if window.frame_count >= 2 and frames.count < 2:
+            raise FrameCountMismatch(
+                f"{window.window_id} is {window.duration_ms} ms and planned "
+                f"{window.frame_count} frames at {window.fps} fps, but only {frames.count} frame "
+                f"exists. A one-frame video has no temporal structure at all, and its embedding "
+                f"is indistinguishable from an honest window's. Raise the window's fps — "
+                f"`SceneWindow` permits any rate at or above §3 Stage 2's reference "
+                f"{window.fps} and enforces the 64-frame ceiling against it — or treat this "
+                f"scene as a still deliberately."
+            )
+        succeeded = True
+        return frames
+    finally:
+        if not succeeded:
+            # The unique directory is this call's ownership boundary. Cleanup cannot consume a
+            # prior call's valid frames or caller-owned files with a matching name.
+            _remove_private_frames(extraction_dir, extraction_identity)
 
 
 def window_video_metadata(frames: WindowFrames) -> dict[str, Any]:

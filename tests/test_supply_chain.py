@@ -13,9 +13,11 @@ unzipped or executed, and `verify-sha256.sh` gives both answers on three bytes.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,7 +25,25 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 FETCH = ROOT / "scripts" / "fetch-ffmpeg.sh"
 VERIFY = ROOT / "scripts" / "verify-sha256.sh"
-BASH = shutil.which("bash")
+
+
+def _bash() -> str | None:
+    """Prefer Git Bash on Windows; command lookup commonly returns the WSL launcher."""
+    candidates: list[Path] = []
+    if configured := os.environ.get("HAWEDIT_BASH"):
+        candidates.append(Path(configured))
+    if git := shutil.which("git"):
+        candidates.append(Path(git).resolve().parent.parent / "bin" / "bash.exe")
+    if program_files := os.environ.get("PROGRAMFILES"):
+        candidates.append(Path(program_files) / "Git" / "bin" / "bash.exe")
+    if local_app_data := os.environ.get("LOCALAPPDATA"):
+        candidates.append(Path(local_app_data) / "Programs" / "Git" / "bin" / "bash.exe")
+    if sys.platform != "win32" and (found := shutil.which("bash")):
+        candidates.append(Path(found))
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+
+
+BASH = _bash()
 
 needs_bash = pytest.mark.skipif(BASH is None, reason="needs bash")
 
@@ -46,8 +66,8 @@ def test_the_ffmpeg_archive_is_fetched_from_a_commit_not_a_branch() -> None:
     body = FETCH.read_text(encoding="utf-8")
     url = re.search(r'^\s*url="(?P<url>https://media\.githubusercontent\.com[^"]+)"', body, re.M)
     assert url is not None, "no ffmpeg archive URL found in fetch-ffmpeg.sh"
-    assert "${ref}" in url.group("url"), url.group("url")
-    ref = re.search(r'^\s*ref="(?P<ref>[0-9a-f]{40})"', body, re.M)
+    assert "${ffmpeg_bins_commit}" in url.group("url"), url.group("url")
+    ref = re.search(r'^\s*ffmpeg_bins_commit="(?P<ref>[0-9a-f]{40})"', body, re.M)
     assert ref is not None, "the ref is not a full 40-character commit SHA"
 
 
@@ -70,12 +90,16 @@ def test_the_archive_digest_is_recorded_and_checked_before_anything_runs() -> No
             i for i, line in enumerate(lines) if needle in line and not line.strip().startswith("#")
         )
 
-    digest = re.search(r'^\s*sha256="(?P<d>[0-9a-f]{64})"', "\n".join(lines), re.M)
+    digest = re.search(r'^\s*linux_zip_sha256="(?P<d>[0-9a-f]{64})"', "\n".join(lines), re.M)
     assert digest is not None, "no lowercase 64-hex archive digest recorded"
     verified = line_of("verify-sha256.sh")
-    assert verified < line_of("unzip -oq"), "the digest is checked after the archive is unpacked"
-    assert verified < line_of("chmod +x"), "the digest is checked after the file is made runnable"
-    assert verified > line_of("curl -sSL"), "the digest is checked before the download finishes"
+    assert verified < line_of('unzip -q "$archive"'), (
+        "the digest is checked after the archive is unpacked"
+    )
+    assert verified < line_of("install -m 700"), (
+        "the digest is checked after the file is made runnable"
+    )
+    assert verified > line_of("curl --fail"), "the digest is checked before the download finishes"
 
 
 def test_the_download_fails_loudly_on_an_http_error() -> None:

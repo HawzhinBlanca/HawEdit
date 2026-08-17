@@ -71,9 +71,11 @@ than returning an empty tuple that would read as 'no frames here'." Only the cou
 tested. Now: the zero-length and inverted span, `count=0`, a monkeypatched-away ffmpeg, and a source
 ffmpeg cannot decode — the last two because `()` is exactly what a text-only request looks like.
 
-`len(paths) > count` guards a state the work directory makes reachable: it is named after the
-candidate, so a re-run asking for fewer frames finds the earlier run's JPEGs in the glob. The test
-extracts 8, then asks for 2.
+This readiness branch already carries D-107's stronger namespace boundary: every ffmpeg call writes
+into a unique private directory and enumerates only that call's files. The adapted product-path test
+extracts 8 frames and then 2 through the same caller work directory, requires exact counts for both,
+and proves no private frame directory remains. Caller-owned stale files are independently pinned by
+`test_keyframes_never_promote_stale_outputs_from_a_prior_call`.
 
 ## The gate's other direction
 

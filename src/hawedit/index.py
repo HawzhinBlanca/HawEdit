@@ -11,21 +11,9 @@ Query the stem against a word-only index and it returns nothing, for a match any
 speaker considers obvious. The two fields are scored separately and combined, so the
 contribution of each is visible on every hit and the balance is tunable — see D-016.
 
-**Kurdish invariant #3 lives here.** An index reads `transcript.norm.json`, never raw. Both
-factories are typed to accept only a `NormalizedTranscript`, so mypy rejects raw at the call
-site, and `assert_model_input` catches the dynamic paths. Queries are normalized on the way in
-for the same reason §4.1 exists: a query typed on an Arabic keyboard and a transcript typed on
-a Kurdish one are the same Kurdish, and an index that scores them as different documents fails
-silently.
-
-**One document per sentence, never one for the episode.** BM25's idf is
-`log(1 + (N - df + 0.5)/(df + 0.5))`; at N=1 that is `log(1 + 0.5/1.5)` for every term, so a
-single-document index carries no information about rarity — and there is only ever one document
-to return, whose window is the whole media. Measured on the real 38-minute transcript,
-`from_transcript` gave 2,784 terms sharing **one** idf against the per-sentence index's 37 values
-over 0.855..4.826, and its single hit spanned 322..2,313,729 ms. `from_sentences` is what the
-runner builds (D-134); `from_transcript` remains for indexing one transcript on purpose, and its
-docstring says what that costs.
+**Kurdish invariant #3 lives here.** Both factories accept a `NormalizedTranscript`, never
+raw. The runner uses one document per sentence: a one-document episode index has no passages
+to rank and its only hit spans the whole media (D-164).
 
 Everything here is exact and in-memory — §6 notes the 256 GB is load-bearing and expects the
 transcript index to live in RAM. No approximate structures, and no dependency: BM25 over an
@@ -217,13 +205,10 @@ class Bm25Index:
         k1: float = DEFAULT_K1,
         b: float = DEFAULT_B,
     ) -> Bm25Index:
-        """Index a normalized transcript as a single document.
+        """Index one normalized transcript only for episode-level mention checks.
 
-        **This index cannot order results.** With N=1 every term's idf is `log(1 + 0.5/1.5)`, so
-        rarity is invisible; length normalization compares the document to itself; and every query
-        returns the same one document, whose window is the whole media. Use it to ask "does this
-        episode mention X", never to retrieve a passage — `from_sentences` is the retrieval shape,
-        and D-134 records what this one measured on the real 38-minute transcript.
+        This shape cannot retrieve a passage: every query can return only the same document,
+        whose window is the whole episode. Use `from_sentences` for ranked retrieval.
 
         Raises:
             TypeError: a raw transcript was passed (Kurdish invariant #3).
@@ -258,13 +243,8 @@ class Bm25Index:
         `Sentence.text` holds raw surface forms — invariant #1 keeps them that way — so the
         normalization happens here, explicitly, rather than being assumed upstream. One
         document per sentence is what lets a hit hand Stage 5 a real time window instead of
-        a whole episode, and it is the only shape in which BM25 can rank at all: with a single
-        document every term's idf is `log(1 + 0.5/1.5)` and there is nothing to compare.
-
-        Takes the transcript rather than a bare `media_id` so invariant #3's type guard is on
-        this path too — this is the factory the runner uses, and D-134 moved it here from
-        `from_transcript`, which was where the guard lived. A `media_id` string cannot be
-        refused; a `RawTranscript` can.
+        a whole episode. The normalized transcript—not a bare media id—keeps invariant #3 on
+        the factory the runner actually uses.
 
         Raises:
             TypeError: a raw transcript was passed (Kurdish invariant #3).
@@ -296,19 +276,12 @@ class Bm25Index:
         Ties break on document id, so re-running a query never reshuffles a candidate list.
 
         Raises:
-            ValueError: the query has no indexable terms, or `limit` cannot return a document.
+            ValueError: the query has no indexable terms, or `limit` cannot return a hit.
         """
         if limit < 1:
-            # D-090 fixed exactly this in `visual_index.retrieve` and the sibling here kept it.
-            # Measured on a 10-document index: `limit=-1` returned **9** hits and `limit=-10`
-            # returned none, because a negative slice drops the tail instead of keeping a head —
-            # so the caller gets the best documents minus some, which looks like an answer.
-            # Arithmetic, not a threshold: a retrieval that cannot return one document is not a
-            # retrieval, and 0 or less is a bug in the caller rather than a request.
             raise ValueError(
-                f"limit={limit} cannot return a document. A negative slice silently drops the "
-                f"worst hits instead of keeping the best ones, which is indistinguishable from "
-                f"a shorter index."
+                f"limit={limit} cannot return a document; negative slicing silently drops "
+                "tail hits instead of selecting a best-prefix"
             )
         query_tokens = index_tokens(query)
         if not query_tokens:

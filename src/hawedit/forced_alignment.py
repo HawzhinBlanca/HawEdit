@@ -70,6 +70,60 @@ class TokenSpan:
         return self.end_frame - self.start_frame + 1
 
 
+def collapse_ctc_path(best_path: Sequence[int], blank_id: int) -> tuple[int, ...]:
+    """Collapse a per-frame best path into CTC's output: repeats merged, blanks dropped.
+
+    Split out of `greedy_ctc_tokens` so the argmax can happen where the tensor lives. Measured on
+    a 200-frame segment against a 32,000-token vocabulary, taking the argmax in Python costs
+    **210 ms** and materialising the matrix with `.tolist()` another **183 ms** — about **215 s**
+    across the real 38-minute file's 547 segments — where `tensor.argmax(dim=-1).tolist()` costs
+    **2.03 ms**, or **1.1 s** over the same run. This half is O(frames) and stays pure. D-135.
+    """
+    decoded: list[int] = []
+    previous: int | None = None
+    for best in best_path:
+        if best != previous and best != blank_id:
+            decoded.append(best)
+        previous = best
+    return tuple(decoded)
+
+
+def greedy_ctc_tokens(emissions: Sequence[Sequence[float]], blank_id: int) -> tuple[int, ...]:
+    """CTC's own hypothesis from the same posteriors Viterbi aligns against.
+
+    Best path per frame, consecutive repeats collapsed, blanks dropped — the standard CTC
+    greedy decode. `viterbi_align` answers "where is *this* text"; this answers "what does the
+    acoustic model say on its own", which is the other half of §3 Stage 1's escalation rule:
+    route "any segment where LLM-7B and CTC-3B disagree materially".
+
+    **The emissions must span the full vocabulary.** `asr._align_emissions` compacts them to
+    the columns the LLM's own tokens occupy, because Viterbi never needs the rest. Decoding from
+    that compacted matrix would confine CTC to the LLM's vocabulary and the two hypotheses could
+    then only differ in order — the disagreement trigger would be structurally unable to fire on
+    a substituted word, which is the case it exists for. D-135.
+
+    No threshold and no model: an argmax and two filters over data Stage 1 already holds.
+
+    Raises:
+        ValueError: the matrix is empty or ragged, or `blank_id` is outside the vocabulary.
+    """
+    if not emissions:
+        raise ValueError("no emissions: cannot decode an empty posterior matrix")
+    vocabulary = len(emissions[0])
+    for index, row in enumerate(emissions):
+        if len(row) != vocabulary:
+            raise ValueError(
+                f"emissions frame {index} has width {len(row)}, expected {vocabulary}. A ragged "
+                f"matrix means frames and vocabulary were transposed upstream."
+            )
+    if not 0 <= blank_id < vocabulary:
+        raise ValueError(f"blank_id {blank_id} is outside the vocabulary of {vocabulary}")
+
+    return collapse_ctc_path(
+        [max(range(vocabulary), key=row.__getitem__) for row in emissions], blank_id
+    )
+
+
 def minimum_frames(tokens: Sequence[int]) -> int:
     """Fewest frames that could emit `tokens` under CTC.
 
@@ -120,60 +174,6 @@ def _infeasible(frames: int, tokens: Sequence[int], needed: int) -> None:
         f"would invent timings, and a wrong word boundary becomes a clip that starts "
         f"mid-word with nothing downstream able to detect it."
     )
-
-
-def greedy_ctc_tokens(emissions: Sequence[Sequence[float]], blank_id: int) -> tuple[int, ...]:
-    """CTC's own hypothesis from the same posteriors Viterbi aligns against.
-
-    Best path per frame, consecutive repeats collapsed, blanks dropped — the standard CTC
-    greedy decode. `viterbi_align` answers "where is *this* text"; this answers "what does the
-    acoustic model say on its own", which is the other half of §3 Stage 1's escalation rule:
-    route "any segment where LLM-7B and CTC-3B disagree materially".
-
-    **The emissions must span the full vocabulary.** `asr._align_emissions` compacts them to
-    the columns the LLM's own tokens occupy, because Viterbi never needs the rest. Decoding from
-    that compacted matrix would confine CTC to the LLM's vocabulary and the two hypotheses could
-    then only differ in order — the disagreement trigger would be structurally unable to fire on
-    a substituted word, which is the case it exists for. D-135.
-
-    No threshold and no model: an argmax and two filters over data Stage 1 already holds.
-
-    Raises:
-        ValueError: the matrix is empty or ragged, or `blank_id` is outside the vocabulary.
-    """
-    if not emissions:
-        raise ValueError("no emissions: cannot decode an empty posterior matrix")
-    vocabulary = len(emissions[0])
-    for index, row in enumerate(emissions):
-        if len(row) != vocabulary:
-            raise ValueError(
-                f"emissions frame {index} has width {len(row)}, expected {vocabulary}. A ragged "
-                f"matrix means frames and vocabulary were transposed upstream."
-            )
-    if not 0 <= blank_id < vocabulary:
-        raise ValueError(f"blank_id {blank_id} is outside the vocabulary of {vocabulary}")
-
-    return collapse_ctc_path(
-        [max(range(vocabulary), key=row.__getitem__) for row in emissions], blank_id
-    )
-
-
-def collapse_ctc_path(best_path: Sequence[int], blank_id: int) -> tuple[int, ...]:
-    """Collapse a per-frame best path into CTC's output: repeats merged, blanks dropped.
-
-    Split out of `greedy_ctc_tokens` so the argmax can happen where the tensor lives. Measured on
-    a 200-frame segment against a 32,000-token vocabulary, taking the argmax in Python costs
-    **210 ms** and materialising the matrix with `.tolist()` another **183 ms** — about **215 s**
-    across the real 38-minute file's 547 segments — where `tensor.argmax(dim=-1).tolist()` costs
-    **2.03 ms**, or **1.1 s** over the same run. This half is O(frames) and stays pure. D-135.
-    """
-    decoded: list[int] = []
-    previous: int | None = None
-    for best in best_path:
-        if best != previous and best != blank_id:
-            decoded.append(best)
-        previous = best
-    return tuple(decoded)
 
 
 def viterbi_align(

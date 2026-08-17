@@ -22,24 +22,32 @@ every event to a full second — and §3 Stage 5 matches shot cuts against a **4
 Detecting on the proxy would feed boundary fusion cuts coarser than the tolerance they are
 compared against, so every cut would either miss or match by accident. See D-023.
 
-Diarization is deliberately **absent rather than faked**: Community-1 is a gated repo
-(`BLOCKED.md` #4), and `IngestResult.diarization` is `None` when it has not run. A
-zero-speaker result would read as "one speaker throughout", which is a claim about the audio.
+Diarization is deliberately **injected rather than faked**: Community-1 is a gated repo
+(`BLOCKED.md` #4), so base ingest records `IngestResult.diarization=None`. An authenticated
+adapter may later attach a strictly validated exclusive result; an empty tuple then means the
+model ran and found no turns, while `None` still means it did not run.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
+import os
+import stat
 import subprocess
+import tempfile
+import threading
+import time
 import wave
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 
 from hawedit.captions import ffprobe_for, find_ffmpeg
-from hawedit.diarization import Segment
+from hawedit.diarization import OverlappingSegments, Segment, assert_exclusive
 
 __all__ = [
     "CONTENT_DETECTOR_THRESHOLD",
@@ -50,9 +58,13 @@ __all__ = [
     "PROXY_FPS",
     "PROXY_HEIGHT",
     "TARGET_SAMPLE_RATE",
+    "DiarizationInvalidOutput",
+    "DiarizationUnavailable",
+    "Diarizer",
     "IngestResult",
     "SpeechSegment",
     "assert_within_asr_ceiling",
+    "attach_diarization",
     "detect_shots",
     "detect_speech",
     "extract_audio",
@@ -74,10 +86,29 @@ MAX_SPEECH_DURATION_S: Final = 38.0
 
 # §3 Stage 1's interface limit. VAD's 38 s leaves the margin §3 Stage 0 describes.
 OMNIASR_CEILING_S: Final = 40.0
+_EXTRACT_LOCK_TIMEOUT_S: Final = 60.0
+_EXTRACT_LOCK_RETRY_S: Final = 0.05
+_EXTRACT_LOCKS_GUARD = threading.Lock()
+_EXTRACT_LOCKS: dict[Path, threading.Lock] = {}
 
 
 class IngestError(RuntimeError):
     """Raised when Stage 0 cannot produce what later stages require."""
+
+
+class DiarizationUnavailable(RuntimeError):
+    """An enabled Stage 0 diarizer could not produce a trustworthy result."""
+
+
+class DiarizationInvalidOutput(DiarizationUnavailable):
+    """An enabled diarizer returned output outside HawEdit's strict schema."""
+
+
+@runtime_checkable
+class Diarizer(Protocol):
+    """Least-trusted Stage 0 producer seam; concrete model adapters implement this."""
+
+    def diarize(self, audio: Path) -> Sequence[Segment]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,9 +136,7 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
 def _ffmpeg(ffmpeg: Path | None) -> Path:
     resolved = ffmpeg or find_ffmpeg()
     if resolved is None:
-        raise IngestError(
-            "no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT_FFMPEG."
-        )
+        raise IngestError("no ffmpeg available — run hawedit-ffmpeg-setup or set HAWEDIT_FFMPEG.")
     return resolved
 
 
@@ -149,77 +178,220 @@ def probe_duration_ms(source: Path, ffmpeg: Path | None = None) -> int:
     return round(float(probe_stream(source, "format=duration", ffmpeg)) * 1000)
 
 
-def _source_digest(source: Path) -> str:
-    """SHA-256 of the whole source file.
+def _invalid_lock(metadata: os.stat_result) -> bool:
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or bool(getattr(metadata, "st_file_attributes", 0) & reparse)
+    )
 
-    A content digest rather than size-and-mtime, because it needed no guessing and cost
-    nothing worth saving: measured on `ZAR38MinTest.mp4` (82,446,418 bytes) it takes **0.1 s**
-    against the **100.2 s** of re-extraction it lets us skip. It also catches a source replaced
-    by a different file of the same length, which a timestamp does not.
-    """
+
+def _open_extract_lock(path: Path) -> BinaryIO:
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        before = None
+    except OSError as exc:
+        raise IngestError(f"cannot inspect Stage 0 extraction lock {path}: {exc}") from exc
+    if before is not None and _invalid_lock(before):
+        raise IngestError(f"Stage 0 extraction lock is not one regular private link: {path}")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        opened = os.fstat(descriptor)
+        current = os.lstat(path)
+        if _invalid_lock(opened) or _invalid_lock(current):
+            raise IngestError(f"Stage 0 extraction lock is not one regular private link: {path}")
+        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise IngestError(f"Stage 0 extraction lock changed while opening: {path}")
+        if before is not None and (before.st_dev, before.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise IngestError(f"Stage 0 extraction lock was replaced before opening: {path}")
+        return os.fdopen(descriptor, "r+b")
+    except BaseException:
+        with suppress(UnboundLocalError, OSError):
+            os.close(descriptor)
+        raise
+
+
+def _assert_extract_lock(path: Path, stream: BinaryIO) -> None:
+    try:
+        opened = os.fstat(stream.fileno())
+        current = os.lstat(path)
+    except OSError as exc:
+        raise IngestError(f"cannot revalidate Stage 0 extraction lock {path}: {exc}") from exc
+    if (
+        _invalid_lock(opened)
+        or _invalid_lock(current)
+        or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+    ):
+        raise IngestError(f"Stage 0 extraction lock changed while waiting: {path}")
+
+
+@contextmanager
+def _exclusive_extract_lock(path: Path) -> Iterator[None]:
+    """Serialize one artifact across threads and processes without trusting a linked lock."""
+    resolved = path.parent.resolve() / path.name
+    with _EXTRACT_LOCKS_GUARD:
+        local = _EXTRACT_LOCKS.setdefault(resolved, threading.Lock())
+    with local, _open_extract_lock(resolved) as stream:
+        try:
+            if stream.seek(0, os.SEEK_END) == 0:
+                stream.write(b"\0")
+                stream.flush()
+                os.fsync(stream.fileno())
+            stream.seek(0)
+        except OSError as exc:
+            raise IngestError(
+                f"cannot initialize Stage 0 extraction lock {resolved}: {exc}"
+            ) from exc
+        if os.name == "nt":
+            msvcrt = importlib.import_module("msvcrt")
+            deadline = time.monotonic() + _EXTRACT_LOCK_TIMEOUT_S
+            while True:
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise IngestError(
+                            f"timed out waiting for Stage 0 extraction lock {resolved}"
+                        ) from exc
+                    time.sleep(_EXTRACT_LOCK_RETRY_S)
+            try:
+                _assert_extract_lock(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                raise
+            else:
+                try:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    raise IngestError(
+                        f"cannot release Stage 0 extraction lock {resolved}: {exc}"
+                    ) from exc
+        else:
+            fcntl = importlib.import_module("fcntl")
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            except OSError as exc:
+                raise IngestError(
+                    f"cannot acquire Stage 0 extraction lock {resolved}: {exc}"
+                ) from exc
+            try:
+                _assert_extract_lock(resolved, stream)
+                yield
+            except BaseException:
+                with suppress(OSError):
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                raise
+            else:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                except OSError as exc:
+                    raise IngestError(
+                        f"cannot release Stage 0 extraction lock {resolved}: {exc}"
+                    ) from exc
+
+
+def _source_digest(source: Path) -> str:
     digest = hashlib.sha256()
-    with source.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
+    try:
+        with source.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise IngestError(f"cannot hash Stage 0 source {source}: {exc}") from exc
     return digest.hexdigest()
 
 
+def _atomic_json(path: Path, document: dict[str, object]) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(document, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    except OSError as exc:
+        raise IngestError(f"cannot publish Stage 0 provenance {path}: {exc}") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
-    """Run `command` unless `dest` is already the output of exactly this command on this source.
-
-    §1: "Every stage emits and consumes JSON — stages are independently testable, replaceable,
-    **re-runnable**." Measured on the real 38-minute file, Stage 0 took 151.4 s and a second run
-    into the same work directory spent 100.2 s of it re-extracting audio and proxy that were
-    already on disk: `extract_audio` 69.9 s then 69.5 s, `extract_proxy` 30.3 s then 30.3 s,
-    both files rewritten byte-for-byte. Two thirds of the stage, redone.
-
-    Reuse is verified rather than assumed, in the shape D-121 uses for the ffmpeg archive and
-    invariant #1 uses for `transcript.raw.json`:
-
-    * the recorded source digest must match the source **now**, so editing or replacing the
-      input re-extracts;
-    * the recorded command must match, so changing the sample rate, the filter or the CRF
-      re-extracts rather than silently keeping output from the old settings;
-    * the recorded output size must match the file on disk, so a run killed mid-write is not
-      trusted.
-
-    The sidecar is written **after** the output, so a truncated output has no matching record
-    and cannot be reused. Every failure mode falls through to extracting again — the expensive
-    answer, never the wrong one. D-132.
-    """
+    """Reuse exact verified output, otherwise encode privately and publish atomically (D-162)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     sidecar = dest.with_suffix(dest.suffix + ".provenance.json")
-    digest = _source_digest(source)
-    recorded = {
-        "source": str(source),
-        "source_sha256": digest,
-        "command": [part for part in command if part != str(dest)],
-    }
-    if dest.exists() and sidecar.exists():
-        try:
-            previous = json.loads(sidecar.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            previous = None
-        if isinstance(previous, dict):
-            same_input = previous.get("source_sha256") == digest
-            same_command = previous.get("command") == recorded["command"]
-            intact = previous.get("output_bytes") == dest.stat().st_size
-            if same_input and same_command and intact:
+    lock = dest.with_suffix(dest.suffix + ".lock")
+    with _exclusive_extract_lock(lock):
+        digest = _source_digest(source)
+        command_key = [part for part in command if part != str(dest)]
+        if dest.is_file() and sidecar.is_file():
+            try:
+                previous = json.loads(sidecar.read_text(encoding="utf-8"))
+                output_bytes = previous.get("output_bytes")
+                intact = (
+                    isinstance(output_bytes, int)
+                    and not isinstance(output_bytes, bool)
+                    and output_bytes > 0
+                    and output_bytes == dest.stat().st_size
+                )
+            except (AttributeError, OSError, json.JSONDecodeError):
+                previous, intact = None, False
+            if (
+                isinstance(previous, dict)
+                and set(previous) == {"schema", "source_sha256", "command", "output_bytes"}
+                and previous.get("schema") == 1
+                and previous.get("source_sha256") == digest
+                and previous.get("command") == command_key
+                and intact
+            ):
                 return dest
-    sidecar.unlink(missing_ok=True)  # a run that dies now must leave no record to reuse
-    _run(list(command))
-    # ffmpeg can exit 0 and write nothing, the shape `--fail` exists for in D-121. Named here
-    # because the alternative is the bare FileNotFoundError the sidecar's own stat() raised.
-    if not dest.exists() or dest.stat().st_size == 0:
-        raise IngestError(
-            f"{command[0]} reported success and produced no {dest.name}. A pass that writes "
-            f"nothing has to say so here, not leave the next stage opening an absent file."
-        )
-    sidecar.write_text(
-        json.dumps({**recorded, "output_bytes": dest.stat().st_size}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return dest
+
+        staging: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=dest.parent, prefix=f".{dest.stem}.", suffix=dest.suffix, delete=False
+            ) as handle:
+                staging = Path(handle.name)
+            staged_command = [str(staging) if part == str(dest) else part for part in command]
+            _run(staged_command)
+            if not staging.is_file() or staging.stat().st_size == 0:
+                raise IngestError(f"{command[0]} reported success and produced no {dest.name}")
+            if _source_digest(source) != digest:
+                raise IngestError(f"Stage 0 source changed while extracting {dest.name}")
+            output_bytes = staging.stat().st_size
+            os.replace(staging, dest)
+            staging = None
+            _atomic_json(
+                sidecar,
+                {
+                    "schema": 1,
+                    "source_sha256": digest,
+                    "command": command_key,
+                    "output_bytes": output_bytes,
+                },
+            )
+        except OSError as exc:
+            raise IngestError(f"cannot publish Stage 0 artifact {dest}: {exc}") from exc
+        finally:
+            if staging is not None:
+                staging.unlink(missing_ok=True)
+        return dest
 
 
 def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
@@ -254,8 +426,6 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             str(dest),
         ],
     )
-    # Checked on every call, reused or not: the format Stage 1 and the VAD both assume is a
-    # property of the file that arrives, not of the run that happened to write it.
     _assert_audio_format(dest)
     return dest
 
@@ -391,6 +561,33 @@ def assert_within_asr_ceiling(
         )
 
 
+def _clip_speech_to_media(
+    segments: tuple[SpeechSegment, ...], duration_ms: int
+) -> tuple[SpeechSegment, ...]:
+    """Intersect VAD output with the video media clock.
+
+    Audio decoders and VAD padding may expose samples a few milliseconds past the duration
+    ffprobe reports for the video. Those samples have no corresponding frame and therefore
+    cannot become canonical words, evidence timestamps, or clip boundaries in a video
+    repurposing system. Regions wholly outside the media clock are omitted; overlapping regions
+    retain exactly their in-range portion.
+    """
+    if duration_ms <= 0:
+        raise IngestError(f"media duration must be positive, got {duration_ms} ms")
+
+    clipped: list[SpeechSegment] = []
+    for segment in segments:
+        if segment.end_ms <= segment.start_ms:
+            raise IngestError(
+                f"VAD emitted an invalid speech region {segment.start_ms}..{segment.end_ms} ms"
+            )
+        start_ms = max(0, segment.start_ms)
+        end_ms = min(duration_ms, segment.end_ms)
+        if end_ms > start_ms:
+            clipped.append(SpeechSegment(start_ms=start_ms, end_ms=end_ms))
+    return tuple(clipped)
+
+
 @dataclass(frozen=True, slots=True)
 class IngestResult:
     """Everything Stage 0 produces, as JSON-serialisable data (§1)."""
@@ -405,6 +602,38 @@ class IngestResult:
     # `None` means diarization did not run — never an empty tuple, which would assert that
     # the audio contains no speaker turns (BLOCKED.md #4).
     diarization: tuple[Segment, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.duration_ms) is not int:
+            raise TypeError("ingest duration must be exact integer milliseconds")
+        if self.duration_ms <= 0:
+            raise ValueError(f"ingest duration must be positive, got {self.duration_ms} ms")
+        if self.diarization is None:
+            return
+        if not isinstance(self.diarization, tuple) or any(
+            not isinstance(turn, Segment) for turn in self.diarization
+        ):
+            raise TypeError("ingest diarization must be a tuple of Segment values or None")
+        ordered = tuple(
+            sorted(
+                self.diarization,
+                key=lambda turn: (turn.start_ms, turn.end_ms, turn.speaker),
+            )
+        )
+        if self.diarization != ordered:
+            raise ValueError(
+                "ingest diarization turns are not in canonical order on the media clock"
+            )
+        assert_exclusive(self.diarization)
+        outside = next(
+            (turn for turn in self.diarization if turn.end_ms > self.duration_ms),
+            None,
+        )
+        if outside is not None:
+            raise ValueError(
+                f"diarization turn {outside.start_ms}..{outside.end_ms} ms is outside media "
+                f"duration {self.duration_ms} ms"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -445,6 +674,38 @@ class IngestResult:
         )
 
 
+def attach_diarization(result: IngestResult, producer: Diarizer) -> IngestResult:
+    """Run and validate an injected diarizer without discarding base ingest artifacts.
+
+    The model boundary accepts no coercion. Only concrete ``Segment`` values within this
+    media's clock survive, the output must be exclusive, and ordering is canonical before it
+    enters the run record. Operational producer failures remain ``DiarizationUnavailable``;
+    arbitrary programmer exceptions are deliberately not hidden here.
+    """
+    raw_turns = producer.diarize(Path(result.audio_path))
+    try:
+        turns = tuple(raw_turns)
+    except TypeError as exc:
+        raise DiarizationInvalidOutput("diarization output must be an iterable of Segment") from exc
+    if any(not isinstance(turn, Segment) for turn in turns):
+        raise DiarizationInvalidOutput("diarization output must contain only Segment values")
+    ordered = tuple(sorted(turns, key=lambda turn: (turn.start_ms, turn.end_ms, turn.speaker)))
+    try:
+        assert_exclusive(ordered)
+    except OverlappingSegments as exc:
+        raise DiarizationInvalidOutput(f"diarization turns overlap: {exc}") from exc
+    outside = next(
+        (turn for turn in ordered if turn.start_ms < 0 or turn.end_ms > result.duration_ms),
+        None,
+    )
+    if outside is not None:
+        raise DiarizationInvalidOutput(
+            f"diarization turn {outside.start_ms}..{outside.end_ms} ms is outside media "
+            f"duration {result.duration_ms} ms"
+        )
+    return replace(result, diarization=ordered)
+
+
 def ingest(
     source: Path,
     work_dir: Path,
@@ -457,8 +718,9 @@ def ingest(
     consume, shot cuts from the source, and VAD speech regions verified against OmniASR's
     ceiling.
 
-    Diarization is not run here — Community-1 is gated (`BLOCKED.md` #4) — and its absence is
-    recorded as `None` rather than as an empty result.
+    Diarization is attached separately through `attach_diarization`: Community-1 is gated
+    (`BLOCKED.md` #4), and base ingest must remain usable when that optional producer is absent
+    or operationally unavailable. Its absence is recorded as `None`, never an empty result.
 
     Raises:
         IngestError: ffmpeg is unavailable, a pass failed, the audio is the wrong format, or
@@ -470,7 +732,8 @@ def ingest(
 
     audio = extract_audio(source, work_dir / "audio.wav", ffmpeg=binary)
     proxy = extract_proxy(source, work_dir / "proxy.mp4", ffmpeg=binary)
-    speech = detect_speech(audio)
+    duration_ms = probe_duration_ms(source, ffmpeg=binary)
+    speech = _clip_speech_to_media(detect_speech(audio), duration_ms)
     assert_within_asr_ceiling(speech)
 
     return IngestResult(
@@ -478,7 +741,7 @@ def ingest(
         source=str(source),
         audio_path=str(audio),
         proxy_path=str(proxy),
-        duration_ms=probe_duration_ms(source, ffmpeg=binary),
+        duration_ms=duration_ms,
         shot_cuts_ms=detect_shots(source),
         speech=speech,
         diarization=None,

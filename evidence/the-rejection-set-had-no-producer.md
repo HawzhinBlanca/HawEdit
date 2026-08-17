@@ -35,7 +35,7 @@ Meanwhile the runner throws the answer away twice:
 * `_candidate_for_judging` builds `containing` — the candidates that hold the selected span — and
   returns the smallest. The rest are dropped.
 
-On the real 38-minute run recorded in D-108: **7 candidates, 1 chosen, 6 with no trace.**
+On the real 38-minute run recorded in D-143: **7 candidates, 1 chosen, 6 with no trace.**
 
 ## What was changed
 
@@ -66,7 +66,7 @@ Two controls, because the positive test passes for wrong answers:
 * **a run that chose nothing rejects nothing** — no judge, no selection. Recording every candidate
   but one would satisfy every positive assertion and be false whenever no decision was made.
 * **the empty set and every path are still reported** — `{"visual": 0}` on a run that lost none. An
-  absent key reads as a build that does not record rejections (D-110's rule).
+  absent key reads as a build that does not record rejections (D-145's rule).
 
 ```
 baseline fails: False
@@ -83,7 +83,7 @@ RED  the empty rejection set is omitted rather than reported
 
 ## What this could not measure, and why
 
-The intent was a fresh 38-minute number rather than D-108's. That run died in Stage 2:
+The intent was a fresh 38-minute number rather than D-143's. That run died in Stage 2:
 
 ```
 $ hawedit ZAR38MinTest.mp4 --transcript … --visual --visual-max-frames 8 --visual-keep 7 --auto-select
@@ -96,6 +96,6 @@ With no `--gemini` there is no verbal candidate, so the retrieval query falls ba
 with its own iteration. Recorded here so the missing number is visibly missing rather than quietly
 replaced.
 
-One thing that run did prove: the `✗` arrived readable rather than as `\u2717`. D-115 holds.
+One thing that run did prove: the `✗` arrived readable rather than as `\u2717`. D-152 holds.
 
 Gate: `VERIFY OK — 1252 passed, 0 skipped`.

@@ -178,7 +178,7 @@ def assert_sv6d_within_window(sv6d: Sv6d, in_ms: int, out_ms: int) -> None:
         # is a small *duration* (3 000 ms) and the in-window one is the *moment* (304 000 ms).
         # In the defect it is reversed: the out-of-window number is vastly larger than the
         # scene. So a cited time outside the window is admissible only if it is shorter than
-        # the window itself, which is the longest duration anything inside it can have. D-088.
+        # the window itself, which is the longest duration anything inside it can have. D-098.
         window_ms = out_ms - in_ms
         implausible = [t for t in cited if not (in_ms <= t <= out_ms) and t >= window_ms]
         if implausible:
@@ -463,11 +463,12 @@ class Clip:
                 f"clip {self.clip_id!r} carries no QC record. §2 puts a human QC gate before "
                 f"output, always — a missing record is not a pass."
             )
-        if not (self.qc.auto_pass or self.qc.human_reviewed):
+        if not self.qc.human_reviewed:
             raise ValueError(
-                f"clip {self.clip_id!r} has not cleared QC (flags: {list(self.qc.flags)}). "
-                f"§2 puts a human QC gate before output, always — low confidence routes to "
-                f"review, never to silent acceptance."
+                f"clip {self.clip_id!r} has not cleared human QC "
+                f"(auto_pass={self.qc.auto_pass}, flags: {list(self.qc.flags)}). "
+                f"§2 puts a human QC gate before output, always — automation may inform "
+                f"review, but it cannot replace it."
             )
         if self.editorial is None:
             raise ValueError(

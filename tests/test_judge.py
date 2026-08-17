@@ -44,6 +44,7 @@ from hawedit.discovery import Candidate, merge_candidates
 from hawedit.judge import (
     CANDIDATE_SLICE_TOKENS_PER_HOUR,
     FULL_TRANSCRIPT_TOKENS_PER_HOUR,
+    MAX_JUDGE_FRAME_BYTES,
     PRO_TIER_TOKEN_CEILING,
     VIDEO_TOKENS_PER_SECOND,
     WITH_VIDEO_TOKENS_PER_HOUR,
@@ -63,9 +64,14 @@ from hawedit.judge import (
 from hawedit.registry import WrongRole
 
 JUDGE = "gemini-2.5-pro"
+
+
 SHADOW = "gemini-3.1-pro"
 
+
 TITLE = "ڕۆژنامەوانی کوردی لە هەولێر"
+
+
 DESCRIPTION = "بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی"
 
 
@@ -624,3 +630,100 @@ def test_more_keyframes_than_section_3_prescribes_are_refused() -> None:
         clip_in_ms=0,
         clip_out_ms=2_100,
     )
+
+
+# The five tests below pin the rest of the Stage 4 request boundary. Measured by mutation against
+# a shadow copy of `src/hawedit`: of the six refusals in `JudgeFrame.__post_init__` and
+# `JudgeRequest.__post_init__`, only the >20 count above was held by any test. Neutralising each of
+# the other five left tests/test_judge.py, tests/test_gemini.py and tests/test_keyframes.py green.
+
+
+def test_a_keyframe_from_outside_the_candidate_is_refused() -> None:
+    """This is the only place anything checks a frame is evidence for *this* candidate.
+
+    `keyframes.py` stamps timestamps arithmetically from a clip's own in/out, so a frame is
+    always in-span for the extraction that produced it. The check exists for a request assembled
+    from a *different* extraction — reuse, a cache hit, a retry at fewer frames — which is D-126's
+    failure class and the reason the docstring above names it.
+    """
+    with pytest.raises(ValueError, match="fall outside candidate"):
+        JudgeRequest(
+            candidate_id="frame-from-elsewhere",
+            mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
+            tokens=1_000,
+            keyframes=(
+                JudgeFrame(timestamp_ms=900_000, mime_type="image/jpeg", data=b"\xff\xd8jpeg"),
+            ),
+            clip_in_ms=1_000,
+            clip_out_ms=5_000,
+        )
+
+
+def test_a_keyframe_that_is_not_an_image_is_refused() -> None:
+    """The MIME type is sent to the model as the part's declared kind (§3 Stage 4).
+
+    A payload declared as something the API will not read multimodally is a text-only judgment
+    wearing an image's clothes — which is exactly what `gemini.py`'s `_assert_keyframes` exists
+    to prevent, and cannot see, because it only counts the tuple.
+    """
+    for mime in ("application/pdf", "text/plain", "image/webp", ""):
+        with pytest.raises(ValueError, match="unsupported judge keyframe MIME type"):
+            JudgeFrame(timestamp_ms=0, mime_type=mime, data=b"\xff\xd8jpeg")
+
+
+def test_an_empty_keyframe_payload_is_refused() -> None:
+    """Zero bytes defeats the no-text-only-judgment gate precisely.
+
+    `gemini.py:378-383` refuses a request with no keyframes by checking the tuple is non-empty.
+    A tuple of one empty-bytes frame passes that check, the prompt then asserts source keyframes
+    are attached, and the model scores a clip it was shown nothing of.
+    """
+    with pytest.raises(ValueError, match="non-empty bytes"):
+        JudgeFrame(timestamp_ms=0, mime_type="image/jpeg", data=b"")
+
+
+def test_a_keyframe_over_the_inline_data_ceiling_is_refused() -> None:
+    """The per-frame half of §3 Stage 4's cost discipline.
+
+    `assert_within_tier` covers the token ceiling, but it is called after `_parts` has been built
+    and posted to countTokens — so an oversized body is already on the wire by the time tokens are
+    counted. This refusal is what keeps it off.
+    """
+    with pytest.raises(ValueError, match="5 MiB inline-data ceiling"):
+        JudgeFrame(
+            timestamp_ms=0,
+            mime_type="image/jpeg",
+            data=b"\xff\xd8" + b"x" * MAX_JUDGE_FRAME_BYTES,
+        )
+    # The control: exactly at the ceiling is accepted, so the boundary is `>` and not `>=`.
+    JudgeFrame(timestamp_ms=0, mime_type="image/jpeg", data=b"x" * MAX_JUDGE_FRAME_BYTES)
+
+
+def test_a_negative_keyframe_timestamp_is_refused() -> None:
+    """A negative stamp cannot be in any candidate's span, so it would be caught downstream by
+    the span check — but only when a span is supplied, and `clip_in_ms`/`clip_out_ms` are
+    optional. This is the refusal that holds when they are absent.
+    """
+    with pytest.raises(ValueError, match="timestamp must be non-negative"):
+        JudgeFrame(timestamp_ms=-1, mime_type="image/jpeg", data=b"\xff\xd8jpeg")
+
+
+@pytest.mark.parametrize("value", (True, "0.8", float("nan"), float("inf"), 10**1_000))
+def test_verdict_scores_require_finite_json_numbers(value: object) -> None:
+    with pytest.raises(ValueError, match="finite JSON number|within"):
+        a_verdict(hook_score=value)
+
+
+@pytest.mark.parametrize("field", ("payoff_at_ms", "clip_in_ms", "clip_out_ms"))
+def test_verdict_times_require_json_integers(field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        a_verdict(**{field: True})
+
+
+def test_direct_verdict_construction_rejects_schema_invalid_structures() -> None:
+    with pytest.raises(ValueError, match="self_contained"):
+        a_verdict(self_contained=1)
+    with pytest.raises(ValueError, match="title_ckb"):
+        a_verdict(title_ckb={"کورد": "not a string"})
+    with pytest.raises(ValueError, match="hashtags_ckb"):
+        a_verdict(hashtags_ckb=({"کورد": True},))

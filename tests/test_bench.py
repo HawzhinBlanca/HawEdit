@@ -381,9 +381,6 @@ _MODEL_REPORT_KEYS = {
     "code_switch_error",
     "mean_rtf",
     "worst_rtf",
-    # §8.1's last metric. Added by D-131: it was computed per item and emitted nowhere,
-    # and this recorded schema is what makes adding it a deliberate change rather than a
-    # silent one.
     "alignment",
     "long_audio_failure_rate",
     "peak_vram_bytes",
@@ -510,6 +507,11 @@ def test_the_real_canonical_adapter_reports_its_own_module() -> None:
         def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
             raise RuntimeError("no weights on this host")
 
+        def align_segment(
+            self, audio_path: Path, duration_s: float, text: str
+        ) -> SegmentTranscript:
+            raise RuntimeError("no weights on this host")
+
     measurement = a_session().measure(
         OmniAsrAdapterReal(backend=RefusingBackend()), an_item("hew-1", Dialect.HEWLER)
     )
@@ -518,21 +520,11 @@ def test_the_real_canonical_adapter_reports_its_own_module() -> None:
     assert measurement.result is None
 
 
-# --- what adversarial pass #17 found revertible (D-130) ---------------------------------
-
-# "Unmeasured is None, never 0.0 — and never a score." The per-measurement layer holds it:
-# `peak_vram_bytes=self._vram_probe() if self._vram_probe else None` is CAUGHT when the `None`
-# becomes `0`. The **aggregate** layer did not, and the aggregate is what gets written and read.
-# Both of these left the whole suite green:
-#     peak_vram_bytes=max(vram) if vram else 0
-#     mean_rtf … if self.scores else 0.0
-# RTF 0.0 is not a missing number, it is *infinitely fast* — the most flattering wrong answer in
-# the one field §3 Stage 1 warns about: "Do not derive wall-clock promises for hawapc01 … put
-# *that* number in the capacity plan."
+# --- what adversarial pass #17 found revertible (D-160) ---------------------------------
 
 
 def _a_score(rtf: float) -> ItemScore:
-    """One scored item. Only `rtf` matters here; the accuracy fields are real but incidental."""
+    """One scored item; only RTF is material to these aggregate controls."""
     return ItemScore(
         item_id=f"item-{rtf}",
         dialect=None,
@@ -547,7 +539,6 @@ def _a_score(rtf: float) -> ItemScore:
 
 
 def _unmeasured_report() -> ModelReport:
-    """A model whose adapter ran nothing: no scores, no VRAM probe."""
     return ModelReport(
         model_id=INCUMBENT,
         adapter_impls=("hawedit.asr.OmniAsrAdapter",),
@@ -559,12 +550,7 @@ def _unmeasured_report() -> ModelReport:
 
 
 def test_an_unmeasured_throughput_is_none_in_the_written_report_not_zero() -> None:
-    """The artifact, not the property: this is what a capacity plan would be read off.
-
-    `mean_rtf: 0.0` claims the model transcribed instantly, and `worst_rtf: 0.0` claims it never
-    did worse. Both are numbers nobody measured, and neither is distinguishable from a real
-    figure once it is in the JSON.
-    """
+    """Zero RTF means instantaneous transcription, not an absent measurement."""
     emitted = _unmeasured_report().to_dict()
     for field in ("mean_rtf", "worst_rtf"):
         assert emitted[field] is None, f"{field} is {emitted[field]!r}, which reads as measured"
@@ -572,17 +558,7 @@ def test_an_unmeasured_throughput_is_none_in_the_written_report_not_zero() -> No
 
 
 def test_an_unprobed_peak_vram_is_none_in_the_written_report_not_zero() -> None:
-    """`peak_vram_bytes: 0` reads as "measured, and it used none" — for a 17 GiB model.
-
-    §6 sizes the whole two-GPU layout off this figure, so a zero here is not a gap in a report,
-    it is a capacity plan that fits anything.
-
-    Driven through `run_benchmark`, because that is where the aggregation lives:
-    `peak_vram_bytes=max(vram) if vram else 0` was the surviving mutation, and a directly
-    constructed `ModelReport` only exercises `to_dict`'s passthrough — the proof would have sat
-    one call away from the defect.
-    """
-    # `a_session()` supplies no `vram_probe`, so every measurement carries `None`.
+    """Drive the aggregation layer where an empty VRAM set could become a plausible zero."""
     report = a_run({"hew-1": PERFECT, "muk-1": PERFECT})
     emitted = report.models[INCUMBENT].to_dict()
     assert emitted["peak_vram_bytes"] is None, emitted["peak_vram_bytes"]
@@ -590,8 +566,7 @@ def test_an_unprobed_peak_vram_is_none_in_the_written_report_not_zero() -> None:
 
 
 def test_a_probed_peak_vram_reaches_the_report() -> None:
-    """The control for it: returning `None` regardless would satisfy the test above and throw
-    away the figure §6's layout is sized from."""
+    """Control: refusing invented zeroes must not erase a real VRAM measurement."""
     session = MeasurementSession(
         hardware=HAWAPC01,
         clock=iter([0.0, 6.0, 6.0, 12.0]).__next__,
@@ -606,9 +581,7 @@ def test_a_probed_peak_vram_reaches_the_report() -> None:
 
 
 def test_a_measured_throughput_is_still_a_number() -> None:
-    """The control. Returning `None` unconditionally satisfies both tests above and would erase
-    every real measurement — the harness exists to produce these figures, not to withhold them.
-    """
+    """Control: returning None unconditionally would throw away the measurements."""
     report = ModelReport(
         model_id=INCUMBENT,
         adapter_impls=("hawedit.asr.OmniAsrAdapter",),
@@ -623,12 +596,7 @@ def test_a_measured_throughput_is_still_a_number() -> None:
     assert emitted["peak_vram_bytes"] == 17 * 1024**3
 
 
-# --- D-131: §8.1's last metric was computed and then dropped ----------------------------
-
-# `_score_item` scores alignment for every item that has reference timings and a timed
-# hypothesis, and `ModelReport.to_dict()` emitted no alignment key at all. Measured before the
-# fix: every item carried `matched 2/2, onset 30.0 ms, offset 30.0 ms, within 1.00 @ 50 ms,
-# coverage 1.00`, and the substring `align` appeared **nowhere** in the written document.
+# --- D-161: §8.1 alignment was computed per item and dropped at publication --------------
 
 _REF_WORDS = (
     Word(w="ڕۆژنامەوانی", start_ms=0, end_ms=800, conf=0.95),
@@ -637,10 +605,9 @@ _REF_WORDS = (
 
 
 def _timed_hypothesis(shift_ms: int) -> tuple[Word, ...]:
-    """The same two words, every boundary off by `shift_ms`."""
     return tuple(
-        Word(w=w.w, start_ms=w.start_ms + shift_ms, end_ms=w.end_ms + shift_ms, conf=0.9)
-        for w in _REF_WORDS
+        Word(w=word.w, start_ms=word.start_ms + shift_ms, end_ms=word.end_ms + shift_ms, conf=0.9)
+        for word in _REF_WORDS
     )
 
 
@@ -658,35 +625,35 @@ def _a_reference_of(count: int) -> tuple[Word, ...]:
 
 
 class _TimedAdapter:
-    """Returns word timings, which is what makes alignment scorable at all."""
-
     def __init__(self, model_id: str, shift_ms: int) -> None:
         self.model_id = model_id
-        self._shift = shift_ms
+        self._shift_ms = shift_ms
 
     def transcribe(self, audio_path: Path, duration_s: float) -> ASRResult:
-        return ASRResult(text_raw=PERFECT, words=_timed_hypothesis(self._shift))
+        return ASRResult(text_raw=PERFECT, words=_timed_hypothesis(self._shift_ms))
 
 
 def _timed_corpus() -> Corpus:
-    items = tuple(
-        CorpusItem(
-            item_id=f"{dialect.value}-{index}",
-            audio_path=f"{dialect.value}-{index}.wav",
-            reference_ckb=PERFECT,
-            dialect=dialect,
-            conditions=frozenset({Condition.FORMAL_NEWS}),
-            duration_s=60.0,
-            reference_words=_REF_WORDS,
-        )
-        for dialect in (Dialect.HEWLER, Dialect.SLEMANI, Dialect.MUKRIYAN)
-        for index in (1, 2)
+    return Corpus(
+        items=tuple(
+            CorpusItem(
+                item_id=f"{dialect.value}-{index}",
+                audio_path=f"{dialect.value}-{index}.wav",
+                reference_ckb=PERFECT,
+                dialect=dialect,
+                conditions=frozenset({Condition.FORMAL_NEWS}),
+                duration_s=60.0,
+                reference_words=_REF_WORDS,
+            )
+            for dialect in (Dialect.HEWLER, Dialect.SLEMANI, Dialect.MUKRIYAN)
+            for index in (1, 2)
+        ),
+        provenance=TWO_DIALECT_CORPUS.provenance,
     )
-    return Corpus(items=items, provenance=TWO_DIALECT_CORPUS.provenance)
 
 
 def _timed_report(shift_ms: int = 30) -> ModelReport:
-    times = iter([float(i) * 6.0 for i in range(200)])
+    times = iter(float(index) * 6.0 for index in range(200))
     session = MeasurementSession(hardware=HAWAPC01, clock=lambda: next(times))
     report = run_benchmark(_timed_corpus(), [_TimedAdapter(INCUMBENT, shift_ms)], session)
     return report.models[INCUMBENT]
@@ -745,22 +712,13 @@ def _unevenly_timed_corpus() -> Corpus:
 
 
 def _emitted_alignment(report: ModelReport) -> dict[str, float | int]:
-    """The aggregate as the JSON carries it. `to_dict` is `dict[str, object]`, so narrow once."""
     alignment = report.to_dict()["alignment"]
     assert isinstance(alignment, dict), alignment
     return alignment
 
 
 def test_the_written_report_carries_section_8_1s_alignment_metric() -> None:
-    """M0.8's whole deliverable, in the document §8.1 is.
-
-    It was computed per item and dropped here — `align` appeared nowhere in the JSON — which is
-    the same shape as D-070's `natural_silence_ms` and D-109's `mean_logprob`: measured, then
-    spent on nothing.
-    """
-    report = _timed_report(shift_ms=30)
-    assert "alignment" in report.to_dict(), sorted(report.to_dict())
-    alignment = _emitted_alignment(report)
+    alignment = _emitted_alignment(_timed_report(shift_ms=30))
     assert alignment["matched_words"] == 12
     assert alignment["mean_onset_abs_error_ms"] == pytest.approx(30.0)
     assert alignment["mean_offset_abs_error_ms"] == pytest.approx(30.0)
@@ -768,8 +726,6 @@ def test_the_written_report_carries_section_8_1s_alignment_metric() -> None:
 
 
 def test_the_alignment_aggregate_reports_coverage_beside_its_errors() -> None:
-    """`AlignmentAccuracy` says why: "a tiny mean error over two matched words out of sixty is
-    not a good alignment, it is a bad transcription." An aggregate without coverage hides it."""
     alignment = _emitted_alignment(_timed_report())
     assert alignment["coverage"] == pytest.approx(1.0)
     assert alignment["reference_words"] == 12
@@ -822,17 +778,12 @@ def test_the_alignment_aggregate_weights_by_matched_words_not_by_item() -> None:
 
 
 def test_an_unmeasured_alignment_is_none_in_the_report_not_zero() -> None:
-    """0.0 ms of error is the **best possible score**, so a zero here is the most flattering
-    number the report could invent. The scripted adapter returns no word timings, so no item
-    can be aligned — which is the ordinary case until `BLOCKED.md` #1 supplies timed labels."""
     emitted = a_run({"hew-1": PERFECT, "muk-1": PERFECT}).models[INCUMBENT].to_dict()
-    assert "alignment" in emitted, "the key must be present so its absence is readable"
+    assert "alignment" in emitted
     assert emitted["alignment"] is None
 
 
 def test_the_within_tolerance_rate_tracks_the_error_it_measures() -> None:
-    """The control. Emitting the same numbers whatever the timings measured would satisfy the
-    tests above; a shift past the 50 ms bar has to move the rate off 1.0."""
     inside = _emitted_alignment(_timed_report(shift_ms=30))
     outside = _emitted_alignment(_timed_report(shift_ms=120))
     assert inside["within_tolerance_rate"] == pytest.approx(1.0)
@@ -841,8 +792,6 @@ def test_the_within_tolerance_rate_tracks_the_error_it_measures() -> None:
 
 
 def test_two_tolerances_in_one_report_are_refused_rather_than_averaged() -> None:
-    """A within-tolerance rate mixed across a 50 ms and a 200 ms bar was measured at neither —
-    `assert_one_hardware`'s objection, one metric over."""
     report = _timed_report()
     second = report.scores[1].alignment
     assert second is not None

@@ -12,8 +12,8 @@ Everything here follows from that. The option flag is necessary and **not suffic
   lack the backing library", and a distro can link HarfBuzz into libass without an ffmpeg
   configure flag naming it.
 * Captions go through `ass`/`subtitles`, never `drawtext` (§4.3.3).
-* The font is referenced by directory, not resolved through fontconfig on the render host,
-  and its Kurdish coverage is asserted rather than assumed (§4.3.4).
+* Every used ASS font family is bound to one font inside the supplied directory, and that
+  exact font's Kurdish coverage is asserted rather than assumed (§4.3.4).
 * Line breaks are ours, computed from the word alignment, and `WrapStyle: 2` turns libass's
   own wrapping off entirely (§4.3.5). Automatic wrapping on RTL text produces bad break
   points regardless of engine.
@@ -47,6 +47,7 @@ __all__ = [
     "GoldenReferenceMissing",
     "MissingRtlStack",
     "RtlStackReport",
+    "assert_ass_fonts_cover_kurdish",
     "assert_captions_within_clip",
     "assert_font_covers_kurdish",
     "assert_fonts_dir_covers_kurdish",
@@ -61,17 +62,9 @@ __all__ = [
     "wrap_caption_lines",
 ]
 
-# §4.3.4's list, plus the two heh forms, plus the two letters §4.1's normalizer *produces*.
-#
-# `ھ` U+06BE is not in §4.3's list but appears in ordinary Kurdish words — measured at 204
-# entries in the real lexicon (D-013) — and a font missing it renders boxes in words like دھۆک.
-#
-# `ک` U+06A9 and `ی` U+06CC are not in §4.3's list either, and they are the two characters
-# `normalize_sorani` converts Arabic `ك`/`ي` *into*: §4.1 calls them "the Farsi forms Kurdish
-# uses", so every normalized transcript is written in them. They are not the Arabic kaf and yeh
-# a font is likely to have — measured, the shipped Noto subset to drop only U+06A9 keeps U+0643
-# and passed this check, and rendering the golden line with it broke `کوردی` into a detached
-# fallback `ک` and `وردی`. D-133.
+# §4.3.4's list, the two heh forms, and the two letters §4.1 normalizes Arabic `ك`/`ي`
+# into. A font can contain Arabic kaf/yeh and still lack Kurdish `ک` U+06A9 / `ی` U+06CC;
+# measured, libass then split `کوردی` across fallback fonts (D-163).
 KURDISH_REQUIRED_GLYPHS: Final[frozenset[str]] = frozenset("ڕڵۆێچژپگە" + "هھ" + "کی")
 
 # Caption line width. Long RTL lines are hard to read on a vertical crop; this is a
@@ -82,8 +75,7 @@ _ASS_OVERRIDE = re.compile(r"[{}]")
 
 # The fixed Kurdish line §4.3.6's golden render uses. Chosen to exercise the joining
 # behaviour that `shaping=simple` gets wrong — `لە` and the initial form of `هەولێر` — plus
-# ڕ ۆ ژ ە ی ک from KURDISH_REQUIRED_GLYPHS. This comment said "ی from §4.3.4's required set"
-# while the set contained no ی, which is how D-133's gap stayed readable and unnoticed.
+# ڕ ۆ ژ ە ی from §4.3.4's required set.
 GOLDEN_CAPTION_TEXT: Final = "ڕۆژنامەوانی کوردی لە هەولێر."
 
 
@@ -191,9 +183,15 @@ def assert_font_covers_kurdish(
     if not font_path.exists():
         raise FileNotFoundError(f"no font at {font_path}")
 
-    from fontTools.ttLib import TTFont  # imported lazily: only the render path needs it
+    from fontTools.ttLib import TTFont, TTLibError  # imported lazily: only rendering needs it
 
-    cmap = TTFont(font_path).getBestCmap()
+    try:
+        with TTFont(font_path, lazy=True) as font:
+            cmap = font.getBestCmap()
+    except (OSError, TypeError, ValueError, TTLibError) as exc:
+        raise FontCoverageError(f"cannot inspect font {font_path.name}: {exc}") from exc
+    if cmap is None:
+        raise FontCoverageError(f"{font_path.name} has no usable Unicode character map")
     missing = sorted(char for char in required if ord(char) not in cmap)
     if missing:
         raise FontCoverageError(
@@ -207,46 +205,215 @@ def assert_fonts_dir_covers_kurdish(
     fonts_dir: Path,
     required: frozenset[str] = KURDISH_REQUIRED_GLYPHS,
 ) -> Path:
-    """Verify the directory libass will search holds a font that can draw Kurdish.
-
-    §4.3.4's check is per-file and had **no caller in `src/`** — it ran in one test, against one
-    hard-coded path, while `render_clip` burned whatever font sat in the `fonts_dir` it was
-    handed. Its own docstring says this "runs at build time rather than being trusted", and it
-    ran at neither build time nor the burn. This is the directory-level form, called where every
-    burn already routes, in the same place and for the same reason as `assert_rtl_stack`. D-133.
-
-    Returns the first covering font, so the caller can report which file answered.
-
-    Raises:
-        FontCoverageError: the directory has no font files, or none covers `required`. The
-            message names the closest candidate's missing characters, because "no usable font"
-            does not say which glyph to go and find.
-    """
-    candidates = sorted(
-        path for path in fonts_dir.glob("*") if path.suffix.lower() in (".ttf", ".otf", ".ttc")
-    )
+    """Return one font libass can use for every required glyph, or fail before encoding."""
+    try:
+        candidates = sorted(
+            path
+            for path in fonts_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".ttf", ".otf", ".ttc"}
+        )
+    except OSError as exc:
+        raise FontCoverageError(f"cannot inspect fonts directory {fonts_dir}: {exc}") from exc
     if not candidates:
         raise FontCoverageError(
-            f"{fonts_dir} holds no font file, so libass falls back to whatever the render host "
-            f"happens to have — §4.3.4 forbids relying on that. Kurdish captions would ship as "
-            f"boxes or in another font's shapes."
+            f"{fonts_dir} holds no font file; §4.3.4 forbids host font fallback"
         )
 
-    shortfalls: dict[Path, list[str]] = {}
+    failures: list[str] = []
     for candidate in candidates:
         try:
             assert_font_covers_kurdish(candidate, required=required)
-        except FontCoverageError as error:
-            shortfalls[candidate] = sorted(re.findall(r"U\+[0-9A-F]{4,6}", str(error)))
-            continue
-        return candidate
+        except (FontCoverageError, OSError) as exc:
+            failures.append(f"{candidate.name}: {exc}")
+        else:
+            return candidate
+    detail = failures[0] if failures else "no readable candidate"
+    raise FontCoverageError(f"no font in {fonts_dir} covers Kurdish; closest failure: {detail}")
 
-    closest = min(shortfalls, key=lambda path: len(shortfalls[path]))
-    raise FontCoverageError(
-        f"no font in {fonts_dir} covers the Kurdish set. Closest is {closest.name}, missing "
-        f"{' '.join(shortfalls[closest])}. §4.3.4: missing glyphs render as boxes, and a box in "
-        f"a burned-in caption cannot be fixed after delivery."
-    )
+
+_INLINE_FONT_OVERRIDE = re.compile(r"\{[^}]*\\fn", re.IGNORECASE)
+
+
+def _ass_format(line: str, *, section: str, required: frozenset[str]) -> tuple[str, ...]:
+    fields = tuple(part.strip().casefold() for part in line.split(":", 1)[1].split(","))
+    if not fields or any(not field for field in fields):
+        raise FontCoverageError(f"ASS {section} Format has an empty field")
+    missing = sorted(required - set(fields))
+    if missing:
+        raise FontCoverageError(
+            f"ASS {section} Format has no {', '.join(name.title() for name in missing)} field"
+        )
+    if len(fields) != len(set(fields)):
+        raise FontCoverageError(f"ASS {section} Format has duplicate fields")
+    return fields
+
+
+def _ass_record(line: str, fields: tuple[str, ...], *, kind: str) -> dict[str, str]:
+    values = tuple(part.strip() for part in line.split(":", 1)[1].split(",", len(fields) - 1))
+    if len(values) != len(fields):
+        raise FontCoverageError(
+            f"ASS {kind} has {len(values)} field(s), but its Format declares {len(fields)}"
+        )
+    return dict(zip(fields, values, strict=True))
+
+
+def _used_ass_font_families(ass_text: str) -> tuple[str, ...]:
+    """Return the declared family for every style used by a Dialogue event."""
+    section = ""
+    style_fields: tuple[str, ...] | None = None
+    event_fields: tuple[str, ...] | None = None
+    styles: dict[str, tuple[str, str]] = {}
+    used_styles: list[tuple[str, str]] = []
+
+    for raw_line in ass_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line.casefold()
+            continue
+        folded = line.casefold()
+        if section == "[v4+ styles]":
+            if folded.startswith("format:"):
+                if style_fields is not None:
+                    raise FontCoverageError("ASS has more than one V4+ Styles Format declaration")
+                style_fields = _ass_format(
+                    line, section="style", required=frozenset({"name", "fontname"})
+                )
+            elif folded.startswith("style:"):
+                if style_fields is None:
+                    raise FontCoverageError("ASS Style appears before its V4+ Styles Format")
+                record = _ass_record(line, style_fields, kind="Style")
+                style_name = record["name"]
+                family = record["fontname"]
+                if not style_name or not family:
+                    raise FontCoverageError("ASS Style name and Fontname must be non-empty")
+                key = style_name.casefold()
+                if key in styles:
+                    raise FontCoverageError(f"ASS defines style {style_name!r} more than once")
+                styles[key] = (style_name, family)
+        elif section == "[events]":
+            if folded.startswith("format:"):
+                if event_fields is not None:
+                    raise FontCoverageError("ASS has more than one Events Format declaration")
+                event_fields = _ass_format(
+                    line, section="event", required=frozenset({"style", "text"})
+                )
+                if event_fields[-1] != "text":
+                    raise FontCoverageError(
+                        "ASS Events Format must put Text last so commas in captions are unambiguous"
+                    )
+            elif folded.startswith("dialogue:"):
+                if event_fields is None:
+                    raise FontCoverageError("ASS Dialogue appears before its Events Format")
+                record = _ass_record(line, event_fields, kind="Dialogue")
+                if _INLINE_FONT_OVERRIDE.search(record["text"]):
+                    raise FontCoverageError(
+                        "ASS Dialogue contains an inline \\fn family override; the burn cannot "
+                        "prove which directory font libass will select"
+                    )
+                style_name = record["style"]
+                if not style_name:
+                    raise FontCoverageError("ASS Dialogue style must be non-empty")
+                used_styles.append((style_name.casefold(), style_name))
+
+    if style_fields is None or not styles:
+        raise FontCoverageError("ASS has no usable V4+ Styles table")
+    if event_fields is None or not used_styles:
+        raise FontCoverageError("ASS has no usable Dialogue event")
+
+    families: list[str] = []
+    for key, original in used_styles:
+        try:
+            _declared_name, family = styles[key]
+        except KeyError as exc:
+            raise FontCoverageError(f"ASS Dialogue uses undefined style {original!r}") from exc
+        if family not in families:
+            families.append(family)
+    return tuple(families)
+
+
+def _font_family_names(font_path: Path) -> frozenset[str]:
+    from fontTools.ttLib import TTFont, TTLibError
+
+    try:
+        with TTFont(font_path, lazy=True) as font:
+            names = {
+                record.toUnicode().strip()
+                for record in font["name"].names
+                if record.nameID in {1, 16} and record.toUnicode().strip()
+            }
+    except (KeyError, OSError, TypeError, UnicodeError, ValueError, TTLibError) as exc:
+        raise FontCoverageError(
+            f"cannot read font family names from {font_path.name}: {exc}"
+        ) from exc
+    if not names:
+        raise FontCoverageError(f"{font_path.name} has no family name in name-table ID 1 or 16")
+    return frozenset(names)
+
+
+def assert_ass_fonts_cover_kurdish(
+    ass_text: str,
+    fonts_dir: Path,
+    required: frozenset[str] = KURDISH_REQUIRED_GLYPHS,
+) -> tuple[Path, ...]:
+    """Bind each used ASS family to one directory font and verify that exact font's glyphs.
+
+    This is intentionally stricter than imitating fontconfig fallback. More than one file claiming
+    the same family is ambiguous without reproducing libass's weight/style selection, and an inline
+    `\\fn` can switch families inside one event; both are refused before a client can see fallback.
+    """
+    families = _used_ass_font_families(ass_text)
+    try:
+        candidates = sorted(
+            path
+            for path in fonts_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".ttf", ".otf", ".ttc"}
+        )
+    except OSError as exc:
+        raise FontCoverageError(f"cannot inspect fonts directory {fonts_dir}: {exc}") from exc
+    if not candidates:
+        raise FontCoverageError(
+            f"{fonts_dir} holds no font file; §4.3.4 forbids host font fallback"
+        )
+
+    by_family: dict[str, list[Path]] = {}
+    unreadable: list[str] = []
+    for candidate in candidates:
+        try:
+            names = _font_family_names(candidate)
+        except FontCoverageError as exc:
+            unreadable.append(str(exc))
+            continue
+        for name in names:
+            by_family.setdefault(name.casefold(), []).append(candidate)
+
+    resolved: list[Path] = []
+    for family in families:
+        matches = by_family.get(family.casefold(), [])
+        if not matches:
+            detail = f"; unreadable candidate: {unreadable[0]}" if unreadable else ""
+            raise FontCoverageError(
+                f"no font in {fonts_dir} declares ASS family {family!r}{detail}; refusing host "
+                "font fallback"
+            )
+        if len(matches) != 1:
+            match_names = ", ".join(path.name for path in matches)
+            raise FontCoverageError(
+                f"ASS family {family!r} is declared by multiple directory fonts ({match_names}); "
+                "libass style selection would be ambiguous"
+            )
+        match = matches[0]
+        try:
+            assert_font_covers_kurdish(match, required=required)
+        except (FontCoverageError, OSError) as exc:
+            raise FontCoverageError(
+                f"ASS family {family!r} resolves to {match.name}, but that font fails Kurdish "
+                f"coverage: {exc}"
+            ) from exc
+        if match not in resolved:
+            resolved.append(match)
+    return tuple(resolved)
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -507,7 +674,7 @@ def build_ass(
 
 
 def find_ffmpeg() -> Path | None:
-    """Locate an ffmpeg binary: `HAWEDIT_FFMPEG`, then `.ffmpeg/`, then `PATH`.
+    """Locate ffmpeg: explicit path, source generation, installed-user generation, then PATH.
 
     Returns `None` rather than raising — the caller decides whether a missing ffmpeg is a
     skipped render test or a failed deploy check.
@@ -516,14 +683,22 @@ def find_ffmpeg() -> Path | None:
     from shutil import which
 
     configured = environ.get("HAWEDIT_FFMPEG")
-    if configured and Path(configured).exists():
+    if configured and Path(configured).is_file():
         return Path(configured)
     # Where scripts/fetch-ffmpeg.sh puts it, so the readiness report and the gate agree
     # without anyone having to remember an environment variable.
     vendored = Path(__file__).resolve().parents[2] / ".ffmpeg"
     for name in ("ffmpeg", "ffmpeg.exe"):
-        if (vendored / name).exists():
+        if (vendored / name).is_file():
             return vendored / name
+    # A wheel has no checkout-local scripts directory. hawedit-ffmpeg-setup installs into a
+    # per-user cache and this shared resolver makes the next process discover it automatically.
+    from hawedit.ffmpeg_setup import default_ffmpeg_dir
+
+    installed = default_ffmpeg_dir()
+    for name in ("ffmpeg", "ffmpeg.exe"):
+        if (installed / name).is_file():
+            return installed / name
     located = which("ffmpeg")
     return Path(located) if located else None
 

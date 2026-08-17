@@ -10,15 +10,83 @@ on:
   workflow_dispatch:
 
 jobs:
-  gate:
+  python-312-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"   # pyproject requires-python = ">=3.11"
+          python-version: "3.12"
+
+      - name: install the complete gate environment on Python 3.12
+        run: |
+          python -m venv .venv
+          bash scripts/install-host.sh .venv/bin/python gate
+
+      - name: fetch the pinned ffmpeg for Python 3.12 coverage
+        run: bash scripts/fetch-ffmpeg.sh
+
+      - name: the full gate must pass on Python 3.12
+        run: bash scripts/verify.sh
+
+  wsl-asr-security:
+    if: >-
+      github.repository == 'HawzhinBlanca/HawEdit' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, hawedit-gpu]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact source whose WSL receipt must be live
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Use the WSL receipt's host-side Python minor
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: the current WSL ASR runtime must pass the source-bound live VEX gate
+        shell: powershell
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP "wsl-asr-vex-$env:GITHUB_SHA.json"
+          python -m hawedit.wsl_vex_gate --distro Ubuntu --evidence $evidence
+
+      - name: Preserve the exact accepted WSL evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hawedit-wsl-asr-vex-${{ github.sha }}
+          path: ${{ runner.temp }}/wsl-asr-vex-${{ github.sha }}.json
+          if-no-files-found: error
+          include-hidden-files: false
+          compression-level: 0
+          retention-days: 30
+          overwrite: false
+
+  gate:
+    needs: [python-312-compat, wsl-asr-security]
+    if: >-
+      always() &&
+      needs.python-312-compat.result == 'success' &&
+      (needs.wsl-asr-security.result == 'success' ||
+       needs.wsl-asr-security.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Full commits, not moving major-version tags. The tag-to-commit evidence is recorded in
+      # evidence/ci-actions.md and the test suite refuses any unpinned remote action.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"   # lower bound; prerequisite proves the 3.12 ceiling
 
       # `verify.sh` lints `src tests scripts` with ruff, which reads Python and ignores the seven
       # shell scripts beside it — including this gate's own script, and the fetchers that
@@ -33,29 +101,20 @@ jobs:
           shellcheck --version
           shellcheck scripts/*.sh
 
+      # The CODYSTEM PreToolUse guard is the one piece of the harness that *allows* — hundreds
+      # of times a session, silently. A broken glob in it does not announce itself, it just
+      # stops covering `.gate/`, and `.gate/` is where D-093 put the evidence that the gate ran
+      # anything at all. Before the install step on purpose: the guard needs no venv and no
+      # project import, so this stays outside the committed test-count floor.
+      - name: the CODYSTEM guard must hold its boundary
+        run: bash scripts/guard-test.sh
+
       - name: install
         run: |
           python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          # Every distribution the gate installs, pinned to a version AND verified against a
-          # recorded SHA-256 before it is unpacked. `-e '.[dev,media]'` resolved fresh on every
-          # run: 17 of this project's dependencies are pinned in pyproject.toml and **54 more
-          # arrive transitively with no version and no checksum at all** — measured, 70
-          # distributions installed against 17 declared. §10/10 asks for a "pinned and
-          # checksummed supply chain"; that was the ffmpeg archive (D-121) and the wheel build
-          # (D-120), and not the Python packages the gate itself runs on. D-139.
-          #
-          # Two commands because `--require-hashes` forbids an editable install in the same
-          # one; `--no-deps` is safe because the line above installed every dependency.
-          #
           # CPU wheels: §6 puts Stage 0 (ffmpeg, scene detect, VAD) on CPU by design, and the
-          # CUDA build of torch is ~2 GB of runner disk for kernels nothing here calls. The
-          # index is still needed to *find* torch==2.13.0+cpu; the hash decides which file is
-          # accepted once found.
-          .venv/bin/pip install --require-hashes \
-            --extra-index-url https://download.pytorch.org/whl/cpu \
-            -r requirements/gate-linux-py311.txt
-          .venv/bin/pip install -e . --no-deps
+          # CUDA build of torch is ~2 GB of runner disk for kernels nothing here calls.
+          bash scripts/install-host.sh .venv/bin/python gate
 
       # §4.3.6's golden render is a pixel comparison, so it needs the *pinned* build the
       # reference was rendered from — a distro ffmpeg is a different libass and would fail on
@@ -65,7 +124,7 @@ jobs:
       #
       # Required, not best-effort: `skipif(find_ffmpeg() is None)` means a failed fetch would
       # silently retire Kurdish invariant #4 from CI.
-      - name: fetch the pinned, checksummed ffmpeg (libass + HarfBuzz + FriBidi)
+      - name: fetch the pinned ffmpeg (libass + HarfBuzz + FriBidi)
         run: bash scripts/fetch-ffmpeg.sh
 
       - name: gate

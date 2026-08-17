@@ -1,0 +1,265 @@
+{
+  "schema": 1,
+  "product": "hawedit-wsl-asr",
+  "reviewed": "2026-08-09",
+  "expires": "2026-09-08",
+  "applicability": {
+    "python": "3.12",
+    "source_sha256": "99f36c36a2fc65494cacf68cd2fcaa5836c2dc1a0fb7f9cf3da30531ac2f044e",
+    "packages": {
+      "omnilingual-asr": "0.2.0",
+      "torch": "2.8.0",
+      "transformers": "4.57.6"
+    },
+    "build_lock_sha256": "b153285953b96583bf60945783364662f6ab58f8fc1cb6f58fbdd2caa454a9a9",
+    "runtime_lock_sha256": "190844f326d409b8d6b7b9536a880e2a77a9eebfe056369688337ce6386f5aea",
+    "assets": [
+      {
+        "name": "omniASR LLM-7B v2 weights",
+        "size": 31220488063,
+        "sha256": "1b29a4045ddfbe9125e6c9d465d5bc29063eea256ace37c129742edc07aed17a"
+      },
+      {
+        "name": "omniASR CTC-3B v2 weights",
+        "size": 12325920624,
+        "sha256": "fa7f662c326842bb80561db97631ae3c48d911aec579654a1e8414c26caf9089"
+      },
+      {
+        "name": "omniASR written-v2 tokenizer",
+        "size": 91481,
+        "sha256": "8aa11a1092142ef472537476ef6e76541123e2f0d789b79f3ebd119008240b1e"
+      }
+    ]
+  },
+  "dispositions": [
+    {
+      "advisory_ids": [
+        "GHSA-qfhq-4f3w-5fph",
+        "CVE-2025-3001",
+        "PYSEC-2025-195",
+        "BIT-pytorch-2025-3001"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "affected",
+      "justification": "The locked version remains in the scanner's affected range. The reviewed OmniASR route does not intentionally call torch.lstm_cell, but the transitive model graph is too large to claim that the primitive is unreachable.",
+      "controls": [
+        "The worker exposes only bounded audio transcription, not a Python or tensor-operation API.",
+        "Canonical model bytes and the complete dependency graph are identity-bound before use."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/issues/149626",
+        "https://github.com/pytorch/pytorch/commit/999d94b5ede5f4ec111ba7dd144129e2c2725b03"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-rrmf-rvhw-rf47",
+        "CVE-2025-3000",
+        "PYSEC-2025-194",
+        "BIT-pytorch-2025-3000"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "affected",
+      "justification": "The locked version remains scanner-affected. HawEdit does not accept TorchScript programs, but absence of every internal torch.jit.script call in the transitive graph has not been proven.",
+      "controls": [
+        "No caller can submit Python, TorchScript, model code, or a model repository to the WSL worker.",
+        "Only HawEdit's fingerprinted worker snapshot and reviewed dependency lock execute."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/issues/149623",
+        "https://github.com/pytorch/pytorch/commit/b90c94991cdf8b87c8f7439f79518e0ef2c4ca4f"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-vgrw-7cvw-pwgx",
+        "CVE-2025-2999",
+        "PYSEC-2025-193",
+        "BIT-pytorch-2025-2999"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "affected",
+      "justification": "The locked version remains scanner-affected. Sequence tensors exist in ASR and the review does not prove that torch.nn.utils.rnn.unpack_sequence is absent from all transitive execution.",
+      "controls": [
+        "Stage 0 bounds every speech segment below the OmniASR 40-second interface ceiling.",
+        "The worker accepts media through one schema-validated request instead of arbitrary tensor shapes."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/issues/149622",
+        "https://github.com/pytorch/pytorch/commit/494518046816d29099b7d056a74ffa5c244fdcdd"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "PYSEC-2025-203",
+        "CVE-2025-55551",
+        "BIT-pytorch-2025-55551"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "affected",
+      "justification": "PyTorch 2.8.0 is explicitly named. The canonical ASR path does not intentionally call torch.linalg.lu, but the review does not elevate that observation into an unreachable claim for the full dependency graph.",
+      "controls": [
+        "Untrusted callers cannot invoke linear-algebra operations or provide tensor slices directly.",
+        "ASR work is isolated in the dedicated WSL worker and segment duration is bounded."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/issues/151401"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "PYSEC-2025-204",
+        "CVE-2025-55552",
+        "BIT-pytorch-2025-55552"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "not_affected",
+      "justification": "The reported interaction is between torch.rot90 and torch.randn_like. The WSL product route is audio-only, has no image augmentation or rotation stage, and exposes neither operation to callers.",
+      "controls": [
+        "The product boundary is the canonical audio ASR worker; visual pipelines do not execute inside this environment.",
+        "The worker request schema contains media paths and transcript output, not tensor operations."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/issues/147847"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "PYSEC-2025-206",
+        "CVE-2025-55554",
+        "BIT-pytorch-2025-55554"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "affected",
+      "justification": "PyTorch 2.8.0 is explicitly named. No HawEdit call to nan_to_num followed by long conversion was found, but tensor-value influence from decoded audio makes a categorical unreachable claim unjustified.",
+      "controls": [
+        "Callers cannot submit tensors or select operations; input is decoded media split to bounded speech segments.",
+        "The ASR response is schema-validated and cannot promote arbitrary worker objects into the host process."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/issues/151510"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "PYSEC-2026-139",
+        "CVE-2026-4538",
+        "BIT-pytorch-2026-4538"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "not_affected",
+      "justification": "The advisory targets deserialization by the PT2 loading handler. HawEdit never accepts or loads a PT2 archive; the worker constructs the fixed OmniASR pipelines from the three separately verified canonical assets.",
+      "controls": [
+        "No user-selected compiled model, export archive, package, or checkpoint path reaches a PyTorch loader.",
+        "The three permitted model assets are exact-size and SHA-256 allowlisted."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/pull/176791"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "PYSEC-2026-2286",
+        "PYSEC-2026-1856",
+        "GHSA-63cw-57p8-fm3p",
+        "CVE-2026-24747",
+        "BIT-pytorch-2026-24747"
+      ],
+      "package": "torch",
+      "version": "2.8.0",
+      "status": "affected",
+      "justification": "PyTorch 2.8.0 contains the affected weights_only unpickler and OmniASR loads .pt checkpoints. This is affected-but-mitigated, not unreachable: only the exact reviewed 43.5 GB checkpoint/tokenizer byte set may reach the loaders.",
+      "controls": [
+        "All three OmniASR assets are bound by exact size and SHA-256 in this disposition and in the runtime receipt.",
+        "The worker rehashes no-follow regular-file descriptors before model construction and rejects symlinks, hardlinks, extra members, mutation, and card drift.",
+        "Verified descriptors remain open through pipeline construction, closing pathname replacement between verification and load."
+      ],
+      "sources": [
+        "https://github.com/pytorch/pytorch/security/advisories/GHSA-63cw-57p8-fm3p",
+        "https://github.com/pytorch/pytorch/releases/tag/v2.10.0",
+        "https://github.com/pytorch/pytorch/issues/163105"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-29pf-2h5f-8g72",
+        "CVE-2026-4372",
+        "PYSEC-2026-2289"
+      ],
+      "package": "transformers",
+      "version": "4.57.6",
+      "status": "affected",
+      "justification": "Transformers 4.57.6 is affected by config-driven remote-kernel loading. HawEdit uses this version, so the disposition relies on application controls rather than claiming the vulnerable library code is absent.",
+      "controls": [
+        "Every HawEdit-owned Transformers loader recursively rejects private implementation fields and repository-shaped public implementation fields before any loader call.",
+        "Remote code is disabled and model/config identities are fixed by the reviewed WSL lock and canonical asset/card checks."
+      ],
+      "sources": [
+        "https://github.com/huggingface/transformers/commit/a7f8e7ff37d87d1a1a0c8cf607971c607741452f",
+        "https://github.com/huggingface/transformers"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-69w3-r845-3855",
+        "CVE-2026-1839",
+        "PYSEC-2026-2288"
+      ],
+      "package": "transformers",
+      "version": "4.57.6",
+      "status": "not_affected",
+      "justification": "The vulnerable operation is Trainer._load_rng_state with PyTorch below 2.6. HawEdit never imports or constructs Trainer, and the identity-bound WSL runtime uses PyTorch 2.8.0.",
+      "controls": [
+        "The product is inference-only and has no Trainer or training-checkpoint restore path.",
+        "The exact runtime lock refuses PyTorch versions below 2.8.0."
+      ],
+      "sources": [
+        "https://github.com/huggingface/transformers/commit/03c8082ba4594c9b8d6fe190ca9bed0e5f8ca396",
+        "https://github.com/huggingface/transformers/releases/tag/v5.0.0rc3"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-fgcw-684q-jj6r",
+        "CVE-2026-5241",
+        "PYSEC-2026-2290"
+      ],
+      "package": "transformers",
+      "version": "4.57.6",
+      "status": "not_affected",
+      "justification": "The vulnerable nested loader belongs to the LightGlue model path. HawEdit's WSL audio product has no LightGlue model, and its recursive configuration guard rejects config-supplied trust_remote_code and non-allowlisted model types before dispatch.",
+      "controls": [
+        "Only the measured audio model types are accepted; LightGlue is outside the allowlist.",
+        "Nested trust_remote_code and repository-shaped implementation fields are rejected recursively."
+      ],
+      "sources": [
+        "https://github.com/huggingface/transformers/commit/676559d5022b74aaa0cee1cee0842b7f27c5320e",
+        "https://github.com/huggingface/transformers"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "PYSEC-2025-217",
+        "CVE-2025-14929"
+      ],
+      "package": "transformers",
+      "version": "4.57.6",
+      "status": "not_affected",
+      "justification": "The flaw is in X-CLIP checkpoint conversion. The isolated product is audio ASR, contains no X-CLIP import or conversion call, and refuses non-allowlisted model types.",
+      "controls": [
+        "No checkpoint conversion utility or user-selected model type is exposed by the worker.",
+        "Canonical OmniASR asset and card identities are enforced before model construction."
+      ],
+      "sources": [
+        "https://www.zerodayinitiative.com/advisories/ZDI-25-1144/"
+      ]
+    }
+  ]
+}

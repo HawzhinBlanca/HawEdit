@@ -24,7 +24,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hawedit.cli import program_name
 from hawedit.credentials import GEMINI_API_KEY, mask, read_credential
 from hawedit.gemini import GeminiJudge, GeminiUnavailable, JudgeUnusable
 from hawedit.judge import InputMode, JudgeRequest, estimate_cost_usd
@@ -77,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog=program_name("hawedit.smoke"),
+        prog="hawedit.smoke",
         description="Live check against the real Gemini API. Spends a fraction of a cent.",
     )
     parser.add_argument(
@@ -95,16 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✗ no {GEMINI_API_KEY}. Run `python -m hawedit.credentials` first.", file=sys.stderr)
         return 2
 
-    # Before anything is billed. §3 Stage 4 is refused without real source pixels, and this used
-    # to be checked *after* Path A's two calls — so the command the README documents spent money,
-    # printed candidates, and then stopped without ever running the stage it promised. The
-    # condition needs `argv` and nothing else, which is D-071's reasoning about the overwrite
-    # guard. Refusing here also means the confirmation prompt below is never asked for a run that
-    # cannot finish. D-152.
+    # Refuse from argv before confirmation and before either billed Path A call.
     if args.video is None:
         print(
-            "✗ Stage 4 needs --video: this check judges real source pixels, and text-only "
-            "visual judging is refused. Pass a video matching the built-in Sorani sample.",
+            "✗ Stage 4 needs --video: pass a video matching the built-in Sorani sample; "
+            "text-only visual judging is refused.",
             file=sys.stderr,
         )
         return 2

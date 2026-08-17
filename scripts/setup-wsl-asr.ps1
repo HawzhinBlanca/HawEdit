@@ -1,5 +1,6 @@
 param(
-    [string]$Distribution = ""
+    [string]$Distribution = "",
+    [string]$RuntimeRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,9 @@ if (-not (Test-Path -LiteralPath $python)) {
 $commandArguments = @("-m", "hawedit.wsl_setup")
 if ($Distribution) {
     $commandArguments += @("--distribution", $Distribution)
+}
+if ($RuntimeRoot) {
+    $commandArguments += @("--runtime-root", $RuntimeRoot)
 }
 & $python @commandArguments
 if ($LASTEXITCODE -ne 0) {

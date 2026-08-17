@@ -85,8 +85,9 @@ from typing import Any
 
 from dbos import DBOS, SetWorkflowID
 
+from hawedit.atomic_fs import write_text_atomic
 from hawedit.events import JsonlEventSink, read_events
-from hawedit.pipeline import _build_and_run, _write_atomic, build_parser
+from hawedit.pipeline import _build_and_run, build_parser
 
 __all__ = [
     "configure_dbos",
@@ -144,10 +145,13 @@ def _run_pipeline_step(argv: list[str]) -> dict[str, Any]:
     # `report.json`, beside `events.jsonl`: DBOS checkpoints this dict in its own opaque system
     # database, which answers "what did the workflow return" but not "what is on disk for this
     # run" — and the agent framework (`agent.py`, Phase 2) is a separate process that has only
-    # the work directory to read. Same atomic staging-file-and-rename `_write_atomic` already
-    # uses for §2's sidecars, so a process killed mid-write leaves no half-written report for a
-    # reader to trust.
-    _write_atomic(args.work_dir / "report.json", json.dumps(payload, ensure_ascii=False, indent=2))
+    # the work directory to read. Written through `atomic_fs.write_text_atomic`'s staging-file-
+    # and-rename, so a process killed mid-write leaves no half-written report for a reader to
+    # trust. (That helper lived in `pipeline.py` as `_write_atomic` until the merge that brought
+    # directory-shaped `artifact_bundle.py` publication in — D-A26.)
+    write_text_atomic(
+        args.work_dir / "report.json", json.dumps(payload, ensure_ascii=False, indent=2)
+    )
     return payload
 
 

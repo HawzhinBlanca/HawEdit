@@ -40,6 +40,7 @@ of being a field nobody noticed was missing. See D-030.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
@@ -55,6 +56,7 @@ __all__ = [
     "FULL_TRANSCRIPT_TOKENS_PER_HOUR",
     "JUDGE_ROLES",
     "KURDISH_EDITORIAL_JUDGE",
+    "MAX_JUDGE_FRAME_BYTES",
     "MIN_REGRESSION_ITEMS",
     "NARRATIVE_ROLES",
     "PRO_TIER_TOKEN_CEILING",
@@ -81,6 +83,7 @@ __all__ = [
 KURDISH_EDITORIAL_JUDGE: Final = "gemini-2.5-pro"
 JUDGE_SHADOW: Final = "gemini-3.1-pro"
 JUDGE_ROLES: Final = frozenset({"kurdish_editorial_judge", "judge_shadow"})
+MAX_JUDGE_FRAME_BYTES: Final = 5 * 1024 * 1024
 
 # §3 Stage 4's input-mode table, verbatim.
 FULL_TRANSCRIPT_TOKENS_PER_HOUR: Final = 20_000  # Path A discovery
@@ -179,15 +182,54 @@ class JudgeVerdict:
     sv6d: Sv6d | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.self_contained, bool):
+            raise ValueError(
+                "self_contained must be a JSON boolean, got "
+                f"{self.self_contained!r} ({type(self.self_contained).__name__})"
+            )
+        for field in (
+            "candidate_id",
+            "narrative_role",
+            "title_ckb",
+            "description_ckb",
+            "judge",
+        ):
+            value = getattr(self, field)
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"{field} must be a JSON string, got {value!r} ({type(value).__name__})"
+                )
+        if not isinstance(self.hashtags_ckb, tuple) or not all(
+            isinstance(tag, str) for tag in self.hashtags_ckb
+        ):
+            raise ValueError("hashtags_ckb must be a tuple of strings")
+        if self.sv6d is not None and not isinstance(self.sv6d, Sv6d):
+            raise ValueError("sv6d must be an Sv6d value or None")
+
         for field in (
             "hook_score",
             "meaning_fidelity",
             "misleading_edit_risk",
             "cultural_landing",
         ):
-            value: float = getattr(self, field)
+            value = getattr(self, field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or (isinstance(value, float) and not math.isfinite(value))
+            ):
+                raise ValueError(
+                    f"{field} must be a finite JSON number, got {value!r} ({type(value).__name__})"
+                )
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field} must be within [0, 1], got {value}")
+
+        for field in ("payoff_at_ms", "clip_in_ms", "clip_out_ms"):
+            value = getattr(self, field)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"{field} must be a JSON integer, got {value!r} ({type(value).__name__})"
+                )
 
         if not self.clip_in_ms <= self.payoff_at_ms <= self.clip_out_ms:
             raise ValueError(
@@ -405,7 +447,7 @@ class JudgeFrame:
             raise ValueError(f"unsupported judge keyframe MIME type {self.mime_type!r}")
         if not isinstance(self.data, bytes) or not self.data:
             raise ValueError("judge keyframe data must be non-empty bytes")
-        if len(self.data) > 5 * 1024 * 1024:
+        if len(self.data) > MAX_JUDGE_FRAME_BYTES:
             raise ValueError("one judge keyframe exceeds the 5 MiB inline-data ceiling")
 
 

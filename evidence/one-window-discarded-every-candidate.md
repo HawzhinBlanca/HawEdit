@@ -3,7 +3,7 @@
 > Measured 2026-08-09 on hawapc01 against `889468d`.
 > Source: `ZAR38MinTest.mp4`, the real 38-minute Sorani file.
 
-D-117 gave Stage 2 a bounded query, and the composed run reached VideoChat3 for the first time on
+D-154 gave Stage 2 a bounded query, and the composed run reached VideoChat3 for the first time on
 real media. It then produced nothing:
 
 ```

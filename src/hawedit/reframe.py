@@ -8,7 +8,41 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-__all__ = ["FocusPoint", "OpenCvFaceTracker", "SubjectTracker", "choose_face"]
+from hawedit.diarization import Segment, assert_exclusive
+
+__all__ = [
+    "FocusPoint",
+    "OpenCvFaceTracker",
+    "SpeakerAssociationError",
+    "SpeakerFocusPoint",
+    "SpeakerSubjectTracker",
+    "SubjectTracker",
+    "choose_face",
+    "validate_speaker_focus_points",
+]
+
+
+class SpeakerAssociationError(RuntimeError):
+    """Speaker-labelled visual evidence contradicts the measured diarization or clip."""
+
+
+def _exact_non_negative_int(value: object, field: str) -> None:
+    if type(value) is not int:
+        raise TypeError(f"{field} must be an exact integer")
+    if value < 0:
+        raise ValueError(f"{field} must be non-negative")
+
+
+def _safe_speaker_label(value: object) -> None:
+    if not isinstance(value, str):
+        raise TypeError("speaker label must be a string")
+    if (
+        not value
+        or value.strip() != value
+        or not value.isprintable()
+        or value.splitlines() != [value]
+    ):
+        raise ValueError("speaker label must be non-empty, trimmed, printable, and one line")
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,12 +51,90 @@ class FocusPoint:
     center_x: int
 
     def __post_init__(self) -> None:
-        if self.at_ms < 0 or self.center_x < 0:
-            raise ValueError("focus point coordinates must be non-negative")
+        _exact_non_negative_int(self.at_ms, "focus point timestamp")
+        _exact_non_negative_int(self.center_x, "focus point horizontal centre")
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerFocusPoint:
+    """One face centre explicitly attributed to a diarized speaker at a media-clock instant."""
+
+    at_ms: int
+    center_x: int
+    speaker: str
+
+    def __post_init__(self) -> None:
+        _exact_non_negative_int(self.at_ms, "speaker focus timestamp")
+        _exact_non_negative_int(self.center_x, "speaker focus horizontal centre")
+        _safe_speaker_label(self.speaker)
 
 
 class SubjectTracker(Protocol):
     def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]: ...
+
+
+class SpeakerSubjectTracker(Protocol):
+    """Associate visible face centres with exclusive diarization turns.
+
+    This is deliberately distinct from :class:`SubjectTracker`: a class name or a non-empty
+    point tuple is not proof that speech evidence participated in the crop.
+    """
+
+    def track_speakers(
+        self,
+        source: Path,
+        in_ms: int,
+        out_ms: int,
+        turns: Sequence[Segment],
+    ) -> tuple[SpeakerFocusPoint, ...]: ...
+
+
+def validate_speaker_focus_points(
+    points: Sequence[SpeakerFocusPoint],
+    turns: Sequence[Segment],
+    in_ms: int,
+    out_ms: int,
+) -> tuple[FocusPoint, ...]:
+    """Bind every claimed face centre to the exclusive speaker active at that instant.
+
+    Empty output is valid and means the associator found no unambiguous subject. Invalid output
+    is not ambiguity: it is refused so callers cannot silently fall back and hide a broken or
+    untrusted association provider.
+    """
+    _exact_non_negative_int(in_ms, "speaker-tracking in-point")
+    _exact_non_negative_int(out_ms, "speaker-tracking out-point")
+    if out_ms <= in_ms:
+        raise ValueError(f"speaker-tracking span has no duration: {in_ms}..{out_ms}ms")
+    assert_exclusive(turns)
+
+    validated: list[FocusPoint] = []
+    previous_at: int | None = None
+    for point in points:
+        if not isinstance(point, SpeakerFocusPoint):
+            raise SpeakerAssociationError(
+                "speaker tracker output must contain only SpeakerFocusPoint values"
+            )
+        if previous_at is not None and point.at_ms <= previous_at:
+            raise SpeakerAssociationError("speaker focus timestamps must be strictly increasing")
+        if not in_ms <= point.at_ms < out_ms:
+            raise SpeakerAssociationError(
+                f"speaker focus point at {point.at_ms} ms is outside the final clip "
+                f"{in_ms}..{out_ms} ms"
+            )
+        active = [turn for turn in turns if turn.start_ms <= point.at_ms < turn.end_ms]
+        if not active:
+            raise SpeakerAssociationError(
+                f"speaker focus point at {point.at_ms} ms has no active diarization turn"
+            )
+        active_speaker = active[0].speaker
+        if point.speaker != active_speaker:
+            raise SpeakerAssociationError(
+                f"speaker focus point at {point.at_ms} ms claims {point.speaker!r}, but the "
+                f"active speaker is {active_speaker!r}"
+            )
+        validated.append(FocusPoint(point.at_ms, point.center_x))
+        previous_at = point.at_ms
+    return tuple(validated)
 
 
 def choose_face(

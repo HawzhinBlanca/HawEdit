@@ -143,7 +143,7 @@ def import_common_voice(
             # *parameter* and never from the data. Measured: two Kurmanji rows imported with
             # `reference_ckb='Ev pir bas e'` under a `ckb` provenance. An unreadable locale is
             # not "no objection" — it is the file failing to confirm the language this importer
-            # is about to assert on its behalf. D-091.
+            # is about to assert on its behalf. D-103.
             if row_locale != locale:
                 raise WrongLocale(
                     f"row for clip {row.get('path')!r} has locale {row_locale!r}, expected "

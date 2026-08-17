@@ -1,5 +1,9 @@
 # NTSC footage shipped four fifths of a delivery set, and it looked whole
 
+> **Historical defect, fixed in two stages.** D-072 made sidecar publication all-or-none;
+> D-079 now writes an honest drop-frame EDL for 30000/1001. The reproduction below is retained
+> because it proves why both controls exist. Current evidence: `evidence/m3-6-drop-frame-edl.md`.
+
 > Measured 2026-08-09 on hawapc01 against `7fa15b6`, real ffmpeg 8.1.1, real transcode.
 
 §2's delivery set is an MP4, an ASS, an SRT, an editing JSON and an EDL. `run_pipeline` wrote
@@ -99,10 +103,11 @@ measures the test against nothing, which is the same failure as a green baseline
 sidecars by suffix, and Stage 1 writes `transcript.raw.json` under the work directory too. It
 compares exact paths now.
 
-## What this does not fix
+## Resolution
 
-An NTSC source still produces no EDL. That is correct behaviour — `delivery.py` refuses drop-frame
-rather than shipping a conform that drifts — and the run says so. Writing real drop-frame
-timecode is a separate piece of work and is not claimed here.
+D-079 implements 30000/1001 drop-frame conversion and preserves D-072's build-before-write
+ordering for unsupported rates and write failures. A real NTSC pipeline run now writes all three
+sidecars. High-frame-rate 59.94 CMX behavior and a transaction spanning MP4/ASS plus all sidecars
+remain explicitly outside this evidence.
 
 Gate: `VERIFY OK — 1083 passed, 0 skipped`.

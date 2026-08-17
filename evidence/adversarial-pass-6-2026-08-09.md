@@ -1,13 +1,13 @@
-# Adversarial pass #6 — the artifacts that ship to a client
+# Adversarial pass #6 â€” the artifacts that ship to a client
 
 > Run 2026-08-09 on hawapc01 against `3ad7157`, against a green 1,181 baseline.
 > By hand, one mutation at a time, each reverted before the next.
 
-Two consecutive iterations had found the same class — a written artifact whose renderer nothing read
-(D-094's §8.1 report JSON, D-100's readiness text). SRT, EDL and `editing.json` are the files an editor
+Two consecutive iterations had found the same class â€” a written artifact whose renderer nothing read
+(D-126's Â§8.1 report JSON, D-132's readiness text). SRT, EDL and `editing.json` are the files an editor
 actually opens, so they got the same treatment.
 
-## Part 1 — SRT, timecode and EDL: 9 of 10 red
+## Part 1 â€” SRT, timecode and EDL: 9 of 10 red
 
 ```
 baseline FAILED=0
@@ -28,7 +28,7 @@ names the property.
 
 ### The one survivor, and why nothing was added for it
 
-Dropping the blank line between cues. The obvious claim — "that is malformed SRT, players will fail" —
+Dropping the blank line between cues. The obvious claim â€” "that is malformed SRT, players will fail" â€”
 did not survive measurement against the only real parser on this machine:
 
 ```
@@ -39,7 +39,7 @@ no_blank_line   cues ffmpeg read: 3   (3 were written)
 ffmpeg 8.1.1 accepted both and **re-emitted the missing blank lines**, repairing the file. So I looked
 for the case where the separator is load-bearing: a cue whose own text is a numeral, where without a
 blank line the next cue's index is indistinguishable from a continuation of the previous cue's text.
-§4.1 has a numeral rule, so a subtitle that is just "2" is ordinary Kurdish content.
+Â§4.1 has a numeral rule, so a subtitle that is just "2" is ordinary Kurdish content.
 
 ```
 numeral_with_blank      ffmpeg read 2 cue(s) of 2
@@ -50,7 +50,7 @@ Identical output. **No test was written**, because the loop's rule is that a pre
 reproduce is not a finding, and I have no stricter parser here to reproduce it with. Recorded so the
 next reader knows this was examined rather than missed.
 
-## Part 2 — `editing.json`: one real survivor
+## Part 2 â€” `editing.json`: one real survivor
 
 ```
 baseline FAILED=0
@@ -69,15 +69,15 @@ Hardcoding `DiscoveryPath.VERBAL.value` in `Clip.to_dict` left `test_clip.py`, `
 
 The reason is the shared fixture: `a_clip()` at `tests/test_clip.py:93` builds a verbal clip, so the
 shape test and the round-trip test compared `"verbal"` against `"verbal"`. Correct tests, blind because
-the fixture happened to satisfy the rule — D-086 and D-088's shape, in a third place.
+the fixture happened to satisfy the rule â€” D-095 and D-098's shape, in a third place.
 
-It matters past the label. §8.2's `recall_at_k_by_path` and `path_unique_wins` partition on
+It matters past the label. Â§8.2's `recall_at_k_by_path` and `path_unique_wins` partition on
 `discovery_path in (path, DiscoveryPath.BOTH)`, and `Clip.from_dict` rebuilds the enum from this field,
 so a run resumed from a mislabelled artifact carries the wrong attribution into the numbers M2.5's row
 says still mean something.
 
-Fixed by parametrizing over every member on both emitting sites — `Clip` and `RejectedCandidate`, whose
-docstring quotes §5: "that set is your only measure of recall" — plus a control that three members
+Fixed by parametrizing over every member on both emitting sites â€” `Clip` and `RejectedCandidate`, whose
+docstring quotes Â§5: "that set is your only measure of recall" â€” plus a control that three members
 render as three **distinct** strings, since a faithful copy of colliding members would satisfy the
 parametrized tests and still lose the distinction.
 
@@ -90,4 +90,4 @@ CAUGHT   two enum members render identically (the control)    FAILED=2
 3/3
 ```
 
-Gate: `VERIFY OK — 1188 passed, 0 skipped`.
+Gate: `VERIFY OK â€” 1188 passed, 0 skipped`.

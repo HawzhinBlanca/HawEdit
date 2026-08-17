@@ -11,22 +11,28 @@ past both.
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import stat
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
+from types import SimpleNamespace
 
 import pytest
 
-from hawedit.registry import ModelExcluded, ModelNotInRegistry
+from hawedit.registry import ModelExcluded, ModelNotInRegistry, WrongRole
 from hawedit.transcripts import (
     AsrProvenance,
     NormalizedTranscript,
     RawTranscript,
     RawTranscriptImmutable,
     RawTranscriptTampered,
+    RejectedValidatorCorrection,
     SegmentConfidence,
     StaleNormalizedTranscript,
     TranscriptStore,
@@ -34,9 +40,19 @@ from hawedit.transcripts import (
     Word,
     assert_model_input,
     normalize_transcript,
+    validate_media_id,
 )
 
 CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
+
+# The two §7 model ids by role, for D-197's tests. Named apart from `CANONICAL` above, which is a
+# whole provenance record rather than a model id.
+
+
+CANONICAL_ASR_ID = "omniASR_LLM_7B_v2"
+
+
+VALIDATOR_ID = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 
 
 def a_raw(text: str = "ئه‌مه‌ زۆر باشه‌") -> RawTranscript:
@@ -290,13 +306,53 @@ def test_normalized_is_derived_and_records_its_source() -> None:
 
 
 def test_a_stale_normalized_transcript_is_detected(tmp_path: Path) -> None:
-    """A norm derived from a different raw is worse than no norm — it looks right."""
+    """A norm derived from a different raw is worse than no norm — it looks right.
+
+    Refused at both ends since D-192. The write refuses because a producer that got the digest
+    wrong should hear about it while it still has the right one to hand; the read refuses
+    because a norm can reach the directory without going through this store at all.
+    """
     store = TranscriptStore(tmp_path)
     store.write_raw(a_raw())
     other = normalize_transcript(a_raw("a completely different transcript"))
-    store.write_norm(other)
+
+    with pytest.raises(StaleNormalizedTranscript):
+        store.write_norm(other)
+    assert not store.norm_path("media-001").exists(), "the refused norm was stored anyway"
+
+    store.norm_path("media-001").write_text(other.to_json(), encoding="utf-8")
     with pytest.raises(StaleNormalizedTranscript):
         store.read_norm("media-001")
+
+
+def test_storing_a_norm_stamped_from_the_parsed_object_is_refused(tmp_path: Path) -> None:
+    """The producer half of D-192, at the boundary every producer shares.
+
+    `normalize_transcript(store.read_raw(id))` — no digest passed — is the line the pipeline
+    used to run and the obvious thing to write. It is right until the raw on disk predates a
+    schema field, and then it stamps what this release would have written. Same hand-built
+    pre-`adapter` artifact as above; here the norm derived from it must be refused at write.
+    """
+    import hashlib
+
+    store = TranscriptStore(tmp_path)
+    payload = json.loads(a_raw().to_json())
+    payload["asr"].pop("adapter")
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
+    store.raw_path("media-001").write_bytes(body)
+    store._digest_path("media-001").write_text(hashlib.sha256(body).hexdigest(), encoding="ascii")
+
+    careless = normalize_transcript(store.read_raw("media-001"))
+    with pytest.raises(StaleNormalizedTranscript, match="digest of the file"):
+        store.write_norm(careless)
+
+    # The control: the same derivation, given the file's digest, is stored and reads back — so
+    # this measures where the value came from and not that `write_norm` refuses everything.
+    correct = normalize_transcript(
+        store.read_raw("media-001"), source_sha256=store.raw_digest("media-001")
+    )
+    store.write_norm(correct)
+    assert store.read_norm("media-001") == correct
 
 
 def test_norm_written_from_the_matching_raw_reads_back(tmp_path: Path) -> None:
@@ -305,6 +361,43 @@ def test_norm_written_from_the_matching_raw_reads_back(tmp_path: Path) -> None:
     norm = normalize_transcript(store.read_raw("media-001"))
     store.write_norm(norm)
     assert store.read_norm("media-001") == norm
+
+
+def test_a_transcript_written_before_a_field_existed_is_not_called_stale(tmp_path: Path) -> None:
+    """`read_norm` compared the stored `source_sha256` against a **re-serialised** raw.
+
+    So it answered with today's schema rather than with the bytes on disk, and D-181 adding one
+    optional `adapter` field to `AsrProvenance` re-dated every transcript ever written. Measured
+    on the real 38-minute run and three other artifacts in `work/`: `verify_raw_integrity`
+    passed — the files are byte-identical to what was stored — while `read_norm` refused them as
+    *"derived from raw 7912e7bd1d35… but the stored raw is 4748ac2a3e02…"* and told the operator
+    to re-normalize. Re-normalizing would have written the same unstable value again.
+
+    The pre-D-181 shape is written by hand here, because `write_raw` necessarily writes today's.
+    """
+    import hashlib
+
+    store = TranscriptStore(tmp_path)
+    payload = json.loads(a_raw().to_json())
+    assert payload["asr"].pop("adapter", "absent") is None, (
+        "this reproduces a transcript stored before `adapter` existed — the field is now gone "
+        "from AsrProvenance, so the artifact being simulated is not the one that broke"
+    )
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
+    store.raw_path("media-001").write_bytes(body)
+    store._digest_path("media-001").write_text(hashlib.sha256(body).hexdigest(), encoding="ascii")
+
+    stored = store.read_raw("media-001")
+    # The control. If the two digests agreed, this file would not exhibit the drift and every
+    # assertion below would hold for a `read_norm` that still re-hashed the parsed object.
+    assert stored.sha256() != store.raw_digest("media-001"), (
+        "the hand-written artifact serialises identically under today's schema, so it cannot "
+        "measure the defect"
+    )
+    store.verify_raw_integrity("media-001")  # invariant #1: the bytes are what was written
+
+    store.write_norm(normalize_transcript(stored, source_sha256=store.raw_digest("media-001")))
+    assert store.read_norm("media-001").text_ckb == "ئەمە زۆر باشە"
 
 
 def test_norm_may_be_rewritten_because_it_is_derived(tmp_path: Path) -> None:
@@ -337,6 +430,50 @@ def test_transcript_from_an_excluded_model_is_refused() -> None:
             words=(),
             asr=AsrProvenance(canonical="RevgeAI/vekol-stt-ckb-small"),
         )
+
+
+# --- D-197: the validator's reading is evidence, never a replacement ----------------------
+#
+# §3 Stage 1 says "route the bottom quartile, and any segment where LLM-7B and CTC-3B disagree
+# materially, to the validator" and stops there — it never says what the validator's answer DOES
+# to the canonical text. D-197 specifies it, and the rule is one-directional: the validator can
+# flag a span, never rewrite it. These pin the place the type already enforces that.
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        ("the validator in the canonical slot", {"canonical": VALIDATOR_ID}),
+        ("the emissions model in the canonical slot", {"canonical": "omniASR_CTC_3B_v2"}),
+        (
+            "the canonical model validating itself",
+            {"canonical": CANONICAL_ASR_ID, "validated_by": CANONICAL_ASR_ID},
+        ),
+    ],
+)
+def test_a_model_cannot_take_the_asr_role_it_is_not_section_7s_model_for(
+    label: str, kwargs: dict[str, str]
+) -> None:
+    """The enforcement point of D-197's merge rule.
+
+    If the validator could occupy `canonical`, "the canonical transcript" would mean whichever
+    model happened to be written there, and Kurdish invariant #1 — raw is *exactly as canonical
+    ASR emitted*, write-once — would be guarding a field that no longer says what produced it.
+    The self-validation case is the same defect turned around: a model that validates its own
+    output has validated nothing, and `validated_by` would be a field that always agreed.
+    """
+    with pytest.raises(WrongRole):
+        AsrProvenance(**kwargs)  # type: ignore[arg-type]
+
+
+def test_the_canonical_and_validator_pairing_section_7_names_is_accepted() -> None:
+    """The control. Three refusals above are only meaningful if the legitimate pairing — §7's
+    canonical ASR read, §7's validator second-opinion — is the one thing that passes."""
+    provenance = AsrProvenance(
+        canonical=CANONICAL_ASR_ID, validated_by=VALIDATOR_ID, aligner="ctc_viterbi"
+    )
+    assert provenance.canonical == CANONICAL_ASR_ID
+    assert provenance.validated_by == VALIDATOR_ID
 
 
 def test_validator_model_must_also_be_registered() -> None:
@@ -412,7 +549,8 @@ def test_deleting_the_digest_does_not_open_the_raw_file_to_a_second_write(tmp_pa
         "a refused write published a digest for content it did not write, which would "
         "authenticate the wrong bytes"
     )
-    assert sorted(path.name for path in tmp_path.iterdir()) == [raw_path.name], (
+    lock_name = ".media-001.transcript.raw.lock"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [lock_name, raw_path.name], (
         "the refused write left staging files behind"
     )
 
@@ -590,6 +728,8 @@ def _a_directory(sidecar: Path) -> None:
 # it, because the failure a test cannot catch is the two drifting apart. Found by mutation: with
 # the state list spelled out separately, dropping "deleted" from it left the suite green while the
 # code that produces that state sat there unused.
+
+
 _SIDECAR_BREAKERS: dict[str, Callable[[Path], None]] = {
     "deleted": _delete,
     "empty": _empty,
@@ -597,6 +737,8 @@ _SIDECAR_BREAKERS: dict[str, Callable[[Path], None]] = {
     "not ASCII": _not_ascii,
     "a directory": _a_directory,
 }
+
+
 _SIDECAR_STATES = tuple(_SIDECAR_BREAKERS)
 
 
@@ -684,6 +826,8 @@ def test_every_way_of_breaking_the_sidecar_is_actually_exercised() -> None:
 # Every break `str.splitlines` recognises, plus the position that a length check would miss.
 # `Word` is the chokepoint: seven construction sites route through `__post_init__`, two of them
 # reading JSON off disk, and one guard here covers all of them.
+
+
 _NOT_ONE_LINE = (
     "a\nb",
     "a\r\nb",
@@ -748,3 +892,719 @@ def test_a_supplied_transcript_carrying_a_broken_word_is_refused_at_the_door() -
     )
     with pytest.raises(ValueError, match="one line"):
         RawTranscript.from_json(payload)
+
+
+# --- the constructor's checks, and the file that reaches them --------------------------------
+#
+# Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file
+# together with the eighteen others that import `hawedit.transcripts`. The wider scope is the
+# point: `:259` read unheld against this file alone and is held by another of the eighteen, so
+# a narrower run would have reported a gap that is not there. The nine below survived it.
+#
+# They divide in two, and the division matters more than the count. `from_json` is the trust
+# boundary — it reads `transcript.raw.json` off disk and hands `data["media_id"]` straight to
+# the constructor — so the first group is reachable by a file. The second is not: `from_json`
+# builds `tuple(Word(**w) …)` and `AsrProvenance(**…)`, so those types are already right by the
+# time the constructor sees them. That group is the contract with a caller that ignores the
+# annotations, which mypy checks statically and nothing checks at runtime.
+
+
+def _raw_file(**overrides: object) -> str:
+    """A valid `transcript.raw.json` with one field replaced.
+
+    Serialised from a real `RawTranscript` rather than hand-written, so a schema change breaks
+    this loudly instead of leaving it testing a document the code no longer reads.
+    """
+    data = json.loads(a_raw().to_json())
+    data.update(overrides)
+    return json.dumps(data, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (42, "media_id must be a non-empty string"),
+        (None, "media_id must be a non-empty string"),
+        ("", "media_id must be a non-empty string"),
+        ("   ", "media_id must be a non-empty string"),
+    ],
+)
+def test_a_raw_transcript_file_whose_media_id_is_not_a_name_is_refused(
+    value: object, message: str
+) -> None:
+    """`media_id` is what the artifact is stored and looked up under, so an empty or non-string
+    one is not a cosmetic problem: `TranscriptStore` would key a file on it.
+    """
+    with pytest.raises(ValueError, match=message):
+        RawTranscript.from_json(_raw_file(media_id=value))
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (None, "text_ckb must be a string"),
+        (["ئه‌مه‌"], "text_ckb must be a string"),
+        (12, "text_ckb must be a string"),
+        ("   ", "text_ckb must not contain only whitespace"),
+        ("\n\t ", "text_ckb must not contain only whitespace"),
+    ],
+)
+def test_a_raw_transcript_file_whose_text_is_not_text_is_refused(
+    value: object, message: str
+) -> None:
+    """Two different failures, and the second is the quiet one.
+
+    A non-string `text_ckb` is caught the moment anything reads it — but only if something
+    does: with no words the surface scan never runs, and `null` would be written straight back
+    out by `to_json` as a canonical artifact of nothing. Whitespace-only is worse still,
+    because it is a perfectly valid string that says a Kurdish clip contains no speech.
+    """
+    with pytest.raises(ValueError, match=message):
+        RawTranscript.from_json(_raw_file(text_ckb=value))
+
+
+def test_the_empty_transcript_is_still_readable() -> None:
+    """The control for the pair above. `text_ckb` is checked with `if self.text_ckb and …`, so
+    the empty string is deliberately allowed — a file that transcribed to nothing is a real
+    outcome and is not the same as one whose text is whitespace. A refusal that swept both up
+    would pass those tests and reject a legitimate artifact.
+    """
+    empty = RawTranscript.from_json(_raw_file(text_ckb="", words=[]))
+    assert empty.text_ckb == ""
+
+
+def test_an_asr_provenance_whose_adapter_is_named_but_blank_is_refused() -> None:
+    """D-181: the adapter field exists because "a transcript decoded by adapted weights and one
+    decoded by stock weights are different transcripts, and only this field says which is
+    which". `None` says there was no fine-tune. `""` says there was one and it has no name —
+    precisely the ambiguity the field was added to remove, and it arrives through the file.
+    """
+    payload = json.loads(a_raw().to_json())
+    payload["asr"]["adapter"] = "   "
+    with pytest.raises(ValueError, match="adapter must name the fine-tune or be None"):
+        RawTranscript.from_json(json.dumps(payload, ensure_ascii=False))
+
+    # The control: `None` is how the same file says there was no fine-tune, and must still load.
+    payload["asr"]["adapter"] = None
+    assert RawTranscript.from_json(json.dumps(payload, ensure_ascii=False)).asr.adapter is None
+
+
+def test_the_constructor_refuses_the_element_types_its_annotations_promise() -> None:
+    """Not reachable through `from_json`; every ignore below marks a state mypy already forbids.
+
+    They are checked at runtime anyway because `RawTranscript` is frozen, hashed, and declared
+    "never modified after write" by Kurdish invariant #1. A list where a tuple belongs is a
+    mutable field inside that artifact, and `sha256()` would go on answering for it while it
+    changed — a mutation invariant #1 exists to make detectable, made undetectable.
+    """
+    with pytest.raises(ValueError, match="words must be a tuple"):
+        RawTranscript(media_id="m", text_ckb="ئه‌مه‌", words=[], asr=CANONICAL)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="asr must be AsrProvenance"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=(),
+            asr={"canonical": CANONICAL_ASR_ID},  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match=r"word 0 is not a Word"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=("ئه‌مه‌",),  # type: ignore[arg-type]
+            asr=CANONICAL,
+        )
+
+    with pytest.raises(ValueError, match=r"unaligned\[0\] is not an UnalignedSpeech"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=(),
+            asr=CANONICAL,
+            unaligned=({"start_ms": 0, "end_ms": 1, "reason": "x"},),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match=r"segment_confidence\[0\] is not a SegmentConfidence"):
+        RawTranscript(
+            media_id="m",
+            text_ckb="ئه‌مه‌",
+            words=(),
+            asr=CANONICAL,
+            segment_confidence=(-0.5,),  # type: ignore[arg-type]
+        )
+
+
+# --- audit finding #9: the path invariant #1 guards is derived from a media_id ----------------
+#
+# Both refusals in `_safe` are held — `test_audit_regressions.py` reaches each with one input,
+# `raw_path("a/b")` and `raw_path("")`. What is *not* held is most of what they say, and the
+# reason is worth recording because it bounds the instrument rather than this module: the
+# guard-revert matrix neutralises a whole `if` line, so a compound condition reports HELD as
+# soon as any one disjunct is covered. These two lines carry six between them:
+#
+#     if not media_id or media_id in {".", ".."}:                       # 1 of 2 covered
+#     if any(sep in media_id for sep in ("/", "\\", "\x00")) or ".." in media_id:   # 1 of 4
+#
+# So this block adds no new refusal. It covers the five disjuncts that were reachable and
+# untested, on a path-traversal guard, which is not somewhere to accept a one-input sample.
+
+
+@pytest.mark.parametrize("media_id", [".", ".."])
+def test_a_media_id_that_is_only_a_path_component_is_refused(tmp_path: Path, media_id: str) -> None:
+    """The second disjunct of the first refusal; `""` is the one already covered elsewhere.
+
+    Neither escapes the store, which is why they are stated apart from the separator check
+    below — `"."` contains no separator and no parent reference, so that check would pass it
+    through, and it becomes `..transcript.raw.json` in the root. Every media_id of that shape
+    collides there, and invariant #1 refuses a *second* write to a path: the collision does not
+    surface as a naming bug but as the next clip being rejected for tampering with the first.
+    """
+    store = TranscriptStore(tmp_path)
+    with pytest.raises(ValueError, match="would create a hidden delivery"):
+        store.raw_path(media_id)
+
+
+@pytest.mark.parametrize(
+    "media_id",
+    [
+        "../../etc/passwd",
+        "a\\b",  # the separator that matters on the box §6 names, and `/` is the covered one
+        "a\x00b",
+        "clip..1",  # no separator at all — the `".." in media_id` clause, on its own
+    ],
+)
+def test_a_media_id_that_would_escape_the_store_is_refused(tmp_path: Path, media_id: str) -> None:
+    """ "`media_id` reaches here from filenames and job payloads." That is the whole argument:
+    the value is not the program's own, and the path is interpolated from it.
+
+    Invariant #1's write-once guarantee is a promise about a path, so a caller who chooses the
+    path has the guarantee for nothing. `a/b` is the case already covered; these are the other
+    three, and `clip..1` is the one furthest from it — it is caught by a different clause of
+    the same line, so no amount of separator testing would have reached it.
+    """
+    store = TranscriptStore(tmp_path)
+    with pytest.raises(
+        ValueError,
+        match=r"contains a (control, path separator, or reserved filename character|"
+        r"parent reference)",
+    ):
+        store.raw_path(media_id)
+
+
+def test_an_ordinary_media_id_still_resolves_inside_the_store(tmp_path: Path) -> None:
+    """The control. A refusal that rejected every media_id would satisfy both tests above and
+    leave the store unable to hold a transcript; `norm_path` is checked too because it derives
+    its path from the same helper and would be the way around it.
+    """
+    store = TranscriptStore(tmp_path)
+    for path in (store.raw_path("media-001"), store.norm_path("media-001")):
+        assert path.parent == tmp_path
+        assert path.name.startswith("media-001.")
+
+
+# --- what clause-level revert found that line-level could not ---------------------------------
+#
+# `guardsweep` neutralises a whole `if` line, so a compound condition reads HELD as soon as any
+# one clause is covered. Replacing one operand at a time instead — `or` operands with False,
+# `and` operands with True, so the rest of the expression still decides — reopened two guards in
+# this module that the line-level run had already passed.
+
+
+@pytest.mark.parametrize("surface", [42, None, ["word"], b"word"])
+def test_a_word_whose_surface_is_not_a_string_is_refused_by_type(surface: object) -> None:
+    """`not isinstance(self.w, str)` in `if not isinstance(self.w, str) or not self.w.strip():`.
+
+    `bytes` is the case that shows why the clause is there rather than merely tidy: `b"word"`
+    has a `.strip()`, it is truthy, and `b"word".splitlines() == [b"word"]`, so without the
+    isinstance check it passes every remaining guard and becomes a `Word`. `to_json` then fails
+    on it much later, in a different module, about a type nobody chose. The numeric and `None`
+    cases fail earlier but no better — `.strip()` on them is an AttributeError from inside the
+    constructor rather than a sentence about the word.
+
+    `RawTranscript.from_json` builds `Word(**w)` straight from `transcript.raw.json`, so none of
+    these values has to be the program's own.
+    """
+    with pytest.raises(ValueError, match="surface form must be a non-empty string"):
+        Word(w=surface, start_ms=0, end_ms=1, conf=0.5)  # type: ignore[arg-type]
+
+
+def test_a_transcript_decoded_with_a_fine_tune_is_not_the_same_transcript() -> None:
+    """`not self.adapter.strip()` in `if self.adapter is not None and not self.adapter.strip():`.
+
+    The clause was uncovered because nothing here had ever built a provenance with a *real*
+    adapter — only a blank one and `None`. Neutralised, the guard fires for every non-None
+    adapter, so a mis-written check would reject every fine-tuned transcript in the system and
+    the suite would stay green.
+
+    Asserted on the digests rather than on the field, because that is the claim D-181 actually
+    makes: the adapter lives in the artifact and not in a log precisely so that "a transcript
+    decoded by adapted weights and one decoded by stock weights are different transcripts". If
+    the two hash alike, the field is decoration.
+    """
+    adapter = "lora:3f5a1c9d2e7b4068"
+    adapted = AsrProvenance(canonical=CANONICAL_ASR_ID, aligner="ctc_viterbi", adapter=adapter)
+    with_lora = RawTranscript(media_id="m", text_ckb="ئه‌مه‌", words=(), asr=adapted)
+    stock = RawTranscript(media_id="m", text_ckb="ئه‌مه‌", words=(), asr=CANONICAL)
+
+    assert with_lora.asr.adapter == adapter
+    assert RawTranscript.from_json(with_lora.to_json()).asr.adapter == adapter
+    assert with_lora.sha256() != stock.sha256(), (
+        "a transcript decoded with a fine-tune hashes identically to one decoded with stock "
+        "weights — D-181 put the adapter in the artifact so that cannot be true"
+    )
+
+
+CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "",
+        "../escape",
+        "a/b",
+        "a\\b",
+        "clip:one",
+        "NUL",
+        "COM1.json",
+        " trailing",
+        ".hidden",
+        "a" * 181,
+    ],
+)
+def test_media_ids_are_refused_before_they_can_become_paths(unsafe: str) -> None:
+    with pytest.raises(ValueError, match="media_id"):
+        validate_media_id(unsafe)
+
+
+def test_sorani_and_spaces_inside_a_media_id_remain_legal() -> None:
+    assert validate_media_id("هەوا episode-12") == "هەوا episode-12"
+
+
+def test_transcript_store_refuses_a_symlink_root_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = os.lstat
+
+    def symlink_root(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) == tmp_path:
+            values = list(result)
+            values[0] = stat.S_IFLNK | 0o777
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "lstat", symlink_root)
+    with pytest.raises(RuntimeError, match="root must be.*symlink"):
+        TranscriptStore(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_transcript_store_refuses_a_windows_reparse_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = os.lstat
+
+    def reparse_root(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> object:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) != tmp_path:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_file_attributes=0x400,
+        )
+
+    monkeypatch.setattr(os, "lstat", reparse_root)
+    with pytest.raises(RuntimeError, match="root must be.*reparse"):
+        TranscriptStore(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_transcript_store_refuses_a_replaced_root_before_publication(tmp_path: Path) -> None:
+    root = tmp_path / "store"
+    store = TranscriptStore(root)
+    displaced = tmp_path / "displaced"
+    root.rename(displaced)
+    root.mkdir()
+
+    with pytest.raises(RuntimeError, match="root changed identity"):
+        store.write_raw(a_raw())
+
+    assert list(root.iterdir()) == []
+    assert list(displaced.iterdir()) == []
+
+
+# --- invariant #1: raw is written once and never mutated ------------------------------
+
+
+def test_losing_writer_cannot_observe_digest_before_raw_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pipeline loser reads immediately after RawTranscriptImmutable; that must be safe."""
+    store = TranscriptStore(tmp_path)
+    winner = RawTranscript(media_id="race", text_ckb="first", words=(), asr=CANONICAL)
+    loser = RawTranscript(media_id="race", text_ckb="second", words=(), asr=CANONICAL)
+    digest_path = tmp_path / "race.transcript.raw.sha256"
+    digest_published = Event()
+    permit_raw_publication = Event()
+    real_link = os.link
+
+    def gated_link(source: Path, destination: Path) -> None:
+        real_link(source, destination)
+        if Path(destination) == digest_path and not digest_published.is_set():
+            digest_published.set()
+            assert permit_raw_publication.wait(timeout=5)
+
+    monkeypatch.setattr(os, "link", gated_link)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winning_write = pool.submit(store.write_raw, winner)
+        assert digest_published.wait(timeout=5)
+        losing_write = pool.submit(store.write_raw, loser)
+        try:
+            with pytest.raises(FutureTimeoutError):
+                losing_write.result(timeout=0.05)
+        finally:
+            permit_raw_publication.set()
+
+        assert winning_write.result(timeout=5) == store.raw_path("race")
+        with pytest.raises(RawTranscriptImmutable):
+            losing_write.result(timeout=5)
+
+    assert store.read_raw("race") == winner
+    store.verify_raw_integrity("race")
+
+
+def test_an_orphan_digest_is_reported_as_interrupted_publication(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    (tmp_path / "media-001.transcript.raw.sha256").write_text("0" * 64, encoding="ascii")
+
+    with pytest.raises(RawTranscriptTampered, match="publication was interrupted"):
+        store.read_raw("media-001")
+    with pytest.raises(RawTranscriptTampered, match="missing while its write-once digest"):
+        store.verify_raw_integrity("media-001")
+
+
+def test_windows_lock_retries_contention_instead_of_using_crt_short_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.transcripts as transcript_module
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self) -> None:
+            self.attempts = 0
+            self.unlocked = False
+
+        def locking(self, _fd: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                self.unlocked = True
+                return
+            self.attempts += 1
+            if self.attempts < 3:
+                raise OSError("lock held")
+
+    fake = FakeMsvcrt()
+    real_import = importlib.import_module
+    monkeypatch.setattr("hawedit.transcripts._WINDOWS_HOST", True)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    with transcript_module._exclusive_file_lock(tmp_path / "retry.lock"):
+        assert fake.attempts == 3
+    assert fake.unlocked
+
+
+@pytest.mark.parametrize("body_fails", (False, True))
+def test_transcript_unlock_failure_is_normalized_without_masking_the_body(
+    body_fails: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.transcripts as transcript_module
+
+    class FailingUnlock:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def locking(self, _fd: int, mode: int, _count: int) -> None:
+            if mode == self.LK_UNLCK:
+                raise OSError("unlock failed")
+
+    fake = FailingUnlock()
+    real_import = importlib.import_module
+    monkeypatch.setattr("hawedit.transcripts._WINDOWS_HOST", True)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: fake if name == "msvcrt" else real_import(name),
+    )
+
+    expected = LookupError if body_fails else RuntimeError
+    message = "body failed" if body_fails else "cannot release transcript"
+    with (
+        pytest.raises(expected, match=message),
+        transcript_module._exclusive_file_lock(tmp_path / f"unlock-{body_fails}.lock"),
+    ):
+        if body_fails:
+            raise LookupError("body failed")
+
+
+def test_a_hardlinked_transcript_lock_cannot_modify_its_other_name(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"")
+    os.link(victim, tmp_path / ".media-001.transcript.raw.lock")
+
+    with pytest.raises(RuntimeError, match="one regular link"):
+        store.write_raw(a_raw())
+    assert victim.read_bytes() == b""
+
+
+def test_a_symlinked_transcript_lock_is_refused_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    lock = tmp_path / ".media-001.transcript.raw.lock"
+    real_lstat = os.lstat
+
+    def fake_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> os.stat_result:
+        result = real_lstat(tmp_path)
+        if Path(os.fsdecode(path)) == lock:
+            values = list(result)
+            values[0] = stat.S_IFLNK | 0o777
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(RuntimeError, match="symlink"):
+        store.write_raw(a_raw())
+
+
+def test_a_reparse_transcript_lock_is_refused_before_modification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    lock = tmp_path / ".media-001.transcript.raw.lock"
+    lock.write_bytes(b"do-not-touch")
+    real_lstat = os.lstat
+
+    def fake_lstat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> object:
+        result = real_lstat(path)
+        if Path(os.fsdecode(path)) != lock:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_nlink=result.st_nlink,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_file_attributes=0x400,
+        )
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(RuntimeError, match="reparse"):
+        store.write_raw(a_raw())
+    assert lock.read_bytes() == b"do-not-touch"
+
+
+def _delete_sidecar(path: Path) -> None:
+    path.unlink()
+
+
+def _empty_sidecar(path: Path) -> None:
+    path.write_text("", encoding="ascii")
+
+
+def _whitespace_sidecar(path: Path) -> None:
+    path.write_text("   \n", encoding="ascii")
+
+
+def _non_ascii_sidecar(path: Path) -> None:
+    path.write_bytes(b"\xff\xfe not a digest")
+
+
+def _directory_sidecar(path: Path) -> None:
+    path.unlink()
+    path.mkdir()
+
+
+_DIGEST_EVIDENCE_BREAKERS: dict[str, Callable[[Path], None]] = {
+    "deleted": _delete_sidecar,
+    "empty": _empty_sidecar,
+    "whitespace": _whitespace_sidecar,
+    "non-ASCII": _non_ascii_sidecar,
+    "directory": _directory_sidecar,
+}
+
+
+_DIGEST_EVIDENCE_STATES = tuple(_DIGEST_EVIDENCE_BREAKERS)
+
+
+_UNREADABLE_DIGEST_EVIDENCE = frozenset({"deleted", "non-ASCII", "directory"})
+
+
+@pytest.mark.parametrize("state", _DIGEST_EVIDENCE_STATES)
+@pytest.mark.parametrize("entry_point", ("verify", "write_norm"))
+def test_missing_or_invalid_digest_evidence_refuses_both_verification_doors(
+    tmp_path: Path, state: str, entry_point: str
+) -> None:
+    """Invariant #1 cannot become green by deleting the file that would contradict it."""
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    _DIGEST_EVIDENCE_BREAKERS[state](store._digest_path("media-001"))
+
+    expected_reason = (
+        "no readable digest"
+        if state in _UNREADABLE_DIGEST_EVIDENCE
+        else "no longer matches the digest"
+    )
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        if entry_point == "verify":
+            store.verify_raw_integrity("media-001")
+        else:
+            store.write_norm(normalize_transcript(raw))
+
+
+@pytest.mark.parametrize("state", _DIGEST_EVIDENCE_STATES)
+def test_tampered_raw_stays_refused_after_its_digest_evidence_is_destroyed(
+    tmp_path: Path, state: str
+) -> None:
+    store = TranscriptStore(tmp_path)
+    original = a_raw()
+    normalized = normalize_transcript(original)
+    path = store.write_raw(original)
+    path.chmod(0o644)
+    path.write_text(a_raw("TAMPERED canonical transcript").to_json(), encoding="utf-8")
+    _DIGEST_EVIDENCE_BREAKERS[state](store._digest_path("media-001"))
+
+    expected_reason = (
+        "no readable digest"
+        if state in _UNREADABLE_DIGEST_EVIDENCE
+        else "no longer matches the digest"
+    )
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        store.verify_raw_integrity("media-001")
+    with pytest.raises(RawTranscriptTampered, match=expected_reason):
+        store.write_norm(normalized)
+
+
+def test_intact_digest_evidence_still_verifies_and_reuses(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    expected = a_raw()
+    normalized = normalize_transcript(expected)
+    store.write_raw(expected)
+
+    store.verify_raw_integrity("media-001")
+    store.write_norm(normalized)
+    assert store.read_norm("media-001") == normalized
+
+
+def test_every_declared_digest_evidence_breaker_is_parametrized() -> None:
+    assert set(_DIGEST_EVIDENCE_STATES) == set(_DIGEST_EVIDENCE_BREAKERS)
+    assert set(_DIGEST_EVIDENCE_BREAKERS) > _UNREADABLE_DIGEST_EVIDENCE
+
+
+def test_norm_publication_replaces_a_hardlink_without_touching_its_victim(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path / "store")
+    raw = a_raw()
+    store.write_raw(raw)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("ORIGINAL", encoding="utf-8")
+    os.link(victim, store.norm_path(raw.media_id))
+
+    norm = normalize_transcript(raw)
+    store.write_norm(norm)
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL"
+    assert store.read_norm(raw.media_id) == norm
+    assert not store.norm_path(raw.media_id).samefile(victim)
+
+
+def test_failed_norm_publication_preserves_the_previous_complete_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    norm = normalize_transcript(raw)
+    store.write_norm(norm)
+    before = store.norm_path(raw.media_id).read_bytes()
+
+    def refuse_replace(_source: Path, _destination: Path) -> None:
+        raise PermissionError("simulated publication refusal")
+
+    monkeypatch.setattr(os, "replace", refuse_replace)
+    with pytest.raises(PermissionError, match="publication refusal"):
+        store.write_norm(norm)
+
+    assert store.norm_path(raw.media_id).read_bytes() == before
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_norm_staging_cleanup_failure_does_not_mask_the_publication_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TranscriptStore(tmp_path)
+    raw = a_raw()
+    store.write_raw(raw)
+    norm = normalize_transcript(raw)
+    original_unlink = Path.unlink
+
+    def refuse_replace(_source: Path, _destination: Path) -> None:
+        raise PermissionError("PRIMARY publication refusal")
+
+    def refuse_staging_unlink(path: Path, missing_ok: bool = False) -> None:
+        if path.name.endswith(".tmp"):
+            raise OSError("SECONDARY cleanup refusal")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "replace", refuse_replace)
+    monkeypatch.setattr(Path, "unlink", refuse_staging_unlink)
+    with pytest.raises(PermissionError, match="PRIMARY") as caught:
+        store.write_norm(norm)
+
+    notes = getattr(caught.value, "__notes__", ())
+    assert any("SECONDARY cleanup refusal" in note for note in notes)
+
+
+# --- provenance must name a model §7 permits ------------------------------------------
+
+
+def test_rejected_validator_correction_round_trips_without_becoming_a_gap() -> None:
+    rejected = RejectedValidatorCorrection(
+        start_ms=1_000,
+        end_ms=1_316,
+        validator="rzgar/qwen3-asr-sorani-kurdish-ckb-v1",
+        reason="AlignmentInfeasible: 15 frames cannot emit 21 validator tokens",
+    )
+    raw = RawTranscript(
+        media_id="validator-fallback",
+        text_ckb="canonical words remain",
+        words=(),
+        asr=CANONICAL,
+        rejected_validator_corrections=(rejected,),
+    )
+
+    restored = RawTranscript.from_json(raw.to_json())
+
+    assert restored == raw
+    assert restored.unaligned == ()
+    assert restored.rejected_validator_corrections == (rejected,)
+
+
+# --- D-139: the raw file's own write-once layer was never reached by a test ------------------

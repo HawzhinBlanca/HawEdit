@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
+from collections.abc import Iterator
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
+from hawedit import keyframes as keyframes_module
 from hawedit.captions import find_ffmpeg
+from hawedit.judge import MAX_JUDGE_FRAME_BYTES
 from hawedit.keyframes import KeyframeError, extract_judge_frames
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg")
 
@@ -27,6 +36,36 @@ def test_keyframes_refuse_more_than_the_stage_4_ceiling(tmp_path: Path) -> None:
         extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=21)
 
 
+def test_more_frames_than_were_asked_for_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal in this module no test held — measured by neutralising each in a shadow copy
+    of src/hawedit and running this file with tests/test_judge.py and tests/test_review_findings.py.
+
+    `-frames:v count` tells ffmpeg how many to write and the glob is what actually comes back;
+    the two are separate facts, and the guard is where they are reconciled. The count is not
+    cosmetic: the timestamps are computed from the cadence ffmpeg was *told* to sample at, so a
+    surplus frame is stamped with a time that belongs to a different frame, and every stamp
+    after it is wrong too. §3 Stage 4 then judges a clip on evidence labelled with the wrong
+    moments — D-126's failure class, one layer further in.
+
+    The extraction is stubbed rather than provoked: no ffmpeg invocation this project makes
+    produces a surplus, so the only way to reach the reconciliation is to supply one.
+    """
+    import subprocess
+
+    def extra_frames(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        work_dir = Path(argv[-1]).parent
+        work_dir.mkdir(parents=True, exist_ok=True)
+        for index in range(1, 5):  # four, where two were asked for
+            (work_dir / f"judge-{index:03d}.jpg").write_bytes(b"\xff\xd8" + b"x" * 2_000)
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", extra_frames)
+    with pytest.raises(KeyframeError, match="asked for 2 keyframes and ffmpeg produced 4"):
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=2)
+
+
 # --- what adversarial pass #13 found unprotected (D-126) --------------------------------
 
 # The fixture is three static shots, so each one's span has its own pixels. Measured:
@@ -36,6 +75,8 @@ def test_keyframes_refuse_more_than_the_stage_4_ceiling(tmp_path: Path) -> None:
 # The test above asserts the *timestamps*, and those are arithmetic over `in_ms`/`out_ms` — the
 # request echoed back, M3.4's lesson. Replacing `-ss in_ms` with `-ss 0` left them unchanged and
 # the suite green, so the bytes reaching a billed judge could come from anywhere in the media.
+
+
 SHOT_SPANS = ((0, 1_400), (1_400, 2_800), (2_800, 4_162))
 
 
@@ -105,17 +146,18 @@ def test_an_ffmpeg_failure_is_refused_rather_than_returning_no_frames(tmp_path: 
 
 
 @needs_ffmpeg
-def test_frames_left_in_the_work_directory_by_an_earlier_run_are_refused(tmp_path: Path) -> None:
-    """`len(paths) > count` had no test, and the state it guards is reachable: the work
-    directory is named after the candidate, so asking for fewer frames than a previous run
-    leaves that run's extra JPEGs behind for `glob` to find and send."""
+def test_frames_from_an_earlier_run_cannot_contaminate_a_smaller_retry(tmp_path: Path) -> None:
+    """A retry owns a private extraction directory and returns only its requested fresh frames."""
     work = tmp_path / "stage4"
     extract_judge_frames(FIXTURE, 100, 4_100, work, count=8)
-    with pytest.raises(KeyframeError, match="from an earlier run"):
-        extract_judge_frames(FIXTURE, 100, 4_100, work, count=2)
+    retry = extract_judge_frames(FIXTURE, 100, 4_100, work, count=2)
+
+    assert len(retry) == 2
+    assert all(frame.data.startswith(b"\xff\xd8") for frame in retry)
+    assert not list(work.glob(".judge-*"))
 
 
-def test_an_earlier_runs_frames_are_refused_even_when_the_count_is_unchanged(
+def test_an_earlier_runs_frames_cannot_fill_a_partial_retry_to_the_requested_count(
     tmp_path: Path,
 ) -> None:
     """The hole the `len(paths) > count` form left open, and it is the reachable one.
@@ -128,8 +170,11 @@ def test_an_earlier_runs_frames_are_refused_even_when_the_count_is_unchanged(
     """
     work = tmp_path / "stage4"
     extract_judge_frames(FIXTURE, 0, 4_000, work, count=20)
-    with pytest.raises(KeyframeError, match="from an earlier run"):
-        extract_judge_frames(FIXTURE, 0, 13_000, work, count=20)
+    retry = extract_judge_frames(FIXTURE, 0, 13_000, work, count=20)
+
+    assert 2 <= len(retry) < 20
+    assert max(frame.timestamp_ms for frame in retry) <= FIXTURE_DURATION_MS
+    assert not list(work.glob(".judge-*"))
 
 
 # --- D-153: a frame must carry the time it came from -----------------------------------------
@@ -141,6 +186,7 @@ def test_an_earlier_runs_frames_are_refused_even_when_the_count_is_unchanged(
 # 11917 — four past the end of the file, and two pairs were the same image.
 # `evidence/frames-stamped-with-times-they-did-not-come-from.md`.
 # =========================================================================================
+
 
 FIXTURE_DURATION_MS = 4_162
 
@@ -191,3 +237,287 @@ def test_a_span_past_the_source_yields_fewer_frames_rather_than_invented_ones(
     assert 2 <= len(frames) < 20, f"expected a partial extraction, got {len(frames)}"
     assert all(frame.data.startswith(b"\xff\xd8") for frame in frames), "not JPEG payloads"
     assert max(frame.timestamp_ms for frame in frames) <= FIXTURE_DURATION_MS
+
+
+def test_keyframes_never_promote_stale_outputs_from_a_prior_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale = tuple(tmp_path / f"judge-{index:03d}.jpg" for index in range(1, 21))
+    for path in stale:
+        path.write_bytes(b"stale")
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        pattern = command[-1]
+        for index in range(1, 6):
+            Path(pattern.replace("%03d", f"{index:03d}")).write_bytes(f"new-{index}".encode())
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", fake_run)
+    frames = extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=5, ffmpeg=Path("ffmpeg"))
+
+    assert [frame.data for frame in frames] == [f"new-{index}".encode() for index in range(1, 6)]
+    assert all(path.read_bytes() == b"stale" for path in stale)
+    assert not list(tmp_path.glob(".judge-*"))
+
+
+def test_keyframe_ffmpeg_launch_failure_is_normalized_and_cleans_owned_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_: object, **__: object) -> subprocess.CompletedProcess[bytes]:
+        raise FileNotFoundError("binary disappeared")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", refuse)
+    with pytest.raises(KeyframeError, match="cannot launch ffmpeg") as caught:
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=5, ffmpeg=Path("missing-ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
+    assert not list(tmp_path.glob(".judge-*"))
+
+
+@pytest.mark.parametrize("failure_at", ["work-dir", "private-dir"])
+def test_keyframe_directory_creation_failures_are_normalized_before_any_pixels_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_at: str
+) -> None:
+    work_dir = tmp_path / "work"
+    if failure_at == "work-dir":
+        work_dir.write_bytes(b"not a directory")
+    else:
+        monkeypatch.setattr(
+            "hawedit.keyframes.tempfile.mkdtemp",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                PermissionError("private directory denied")
+            ),
+        )
+
+    with pytest.raises(KeyframeError, match="private Stage 4 keyframe directory") as caught:
+        extract_judge_frames(FIXTURE, 100, 4_100, work_dir, count=1, ffmpeg=Path("ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, OSError)
+    assert not list(tmp_path.glob(".judge-*"))
+    private = list(work_dir.glob(".judge-*")) if work_dir.is_dir() else []
+    assert not private
+
+
+def test_keyframe_directory_creation_programmer_error_still_escapes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failure = AssertionError("tempfile invariant broke")
+    monkeypatch.setattr(
+        "hawedit.keyframes.tempfile.mkdtemp",
+        lambda *args, **kwargs: (_ for _ in ()).throw(failure),
+    )
+
+    with pytest.raises(AssertionError) as caught:
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path / "work", count=1, ffmpeg=Path("ffmpeg"))
+
+    assert caught.value is failure
+
+
+def test_keyframe_enumeration_failure_is_normalized_and_cleans_owned_pixels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1].replace("%03d", "001")).write_bytes(b"jpeg")
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    real_glob = Path.glob
+
+    def fail_private_enumeration(path: Path, pattern: str) -> Iterator[Path]:
+        if path.name.startswith(".judge-") and pattern == "judge-*.jpg":
+            raise PermissionError("directory enumeration denied")
+        return real_glob(path, pattern)
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", fake_run)
+    monkeypatch.setattr(Path, "glob", fail_private_enumeration)
+    with pytest.raises(KeyframeError, match="could not enumerate") as caught:
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=1, ffmpeg=Path("ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert not list(real_glob(tmp_path, ".judge-*"))
+
+
+def test_keyframe_payload_read_failure_is_normalized_and_private_frames_are_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1].replace("%03d", "001")).write_bytes(b"jpeg")
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    real_open = Path.open
+
+    def fail_keyframe_read(path: Path, mode: str = "r", **_: object) -> object:
+        if mode == "rb" and path.suffix == ".jpg" and path.parent.name.startswith(".judge-"):
+            raise PermissionError("scanner locked the frame")
+        return real_open(path, mode)
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", fake_run)
+    monkeypatch.setattr(Path, "open", fail_keyframe_read)
+    with pytest.raises(KeyframeError, match="could not read extracted Stage 4 keyframe") as caught:
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=1, ffmpeg=Path("ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert not list(tmp_path.glob(".judge-*"))
+
+
+def test_keyframe_reader_limits_the_single_read_to_one_byte_past_the_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_sizes: list[int | None] = []
+
+    class RecordingReader(BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            requested_sizes.append(size)
+            return b"jpeg"
+
+    def open_reader(path: Path, mode: str = "r", *args: object, **kwargs: object) -> BytesIO:
+        assert path == Path("judge-001.jpg")
+        assert mode == "rb"
+        return RecordingReader()
+
+    monkeypatch.setattr(Path, "open", open_reader)
+
+    assert keyframes_module._read_keyframe(Path("judge-001.jpg")) == b"jpeg"
+    assert requested_sizes == [MAX_JUDGE_FRAME_BYTES + 1]
+
+
+def test_keyframe_reader_accepts_a_payload_exactly_at_the_ceiling(tmp_path: Path) -> None:
+    path = tmp_path / "judge-001.jpg"
+    path.write_bytes(b"x" * MAX_JUDGE_FRAME_BYTES)
+
+    assert len(keyframes_module._read_keyframe(path)) == MAX_JUDGE_FRAME_BYTES
+
+
+@pytest.mark.parametrize(
+    ("payload_size", "message"),
+    ((0, "is empty"), (MAX_JUDGE_FRAME_BYTES + 1, "exceeds the 5 MiB")),
+    ids=("empty", "oversize"),
+)
+def test_oversized_and_empty_extracted_keyframes_are_domain_failures_and_cleaned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload_size: int,
+    message: str,
+) -> None:
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1].replace("%03d", "001")).write_bytes(b"x" * payload_size)
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", fake_run)
+
+    with pytest.raises(KeyframeError, match=message):
+        extract_judge_frames(
+            FIXTURE,
+            100,
+            4_100,
+            tmp_path,
+            count=1,
+            ffmpeg=Path("ffmpeg"),
+        )
+
+    assert not list(tmp_path.glob(".judge-*"))
+
+
+def test_cleanup_failure_after_success_refuses_to_return_frames_and_names_retained_pixels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1].replace("%03d", "001")).write_bytes(b"jpeg")
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    real_rmtree = shutil.rmtree
+
+    def fail_cleanup(path: Path) -> None:
+        raise PermissionError("directory is locked")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", fake_run)
+    monkeypatch.setattr("hawedit.keyframes.shutil.rmtree", fail_cleanup)
+    with pytest.raises(KeyframeError, match="private Stage 4 keyframe cleanup failed") as caught:
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=1, ffmpeg=Path("ffmpeg"))
+
+    assert isinstance(caught.value.__cause__, PermissionError)
+    private = list(tmp_path.glob(".judge-*"))
+    assert len(private) == 1
+    real_rmtree(private[0])
+
+
+def test_cleanup_failure_adds_privacy_note_without_masking_active_body_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body_error = KeyframeError("ffmpeg produced no usable frame")
+
+    def fail_body(*_: object, **__: object) -> subprocess.CompletedProcess[bytes]:
+        raise body_error
+
+    real_rmtree = shutil.rmtree
+
+    def fail_cleanup(path: Path) -> None:
+        raise PermissionError("directory is locked")
+
+    monkeypatch.setattr("hawedit.keyframes.subprocess.run", fail_body)
+    monkeypatch.setattr("hawedit.keyframes.shutil.rmtree", fail_cleanup)
+    with pytest.raises(KeyframeError) as caught:
+        extract_judge_frames(FIXTURE, 100, 4_100, tmp_path, count=1, ffmpeg=Path("ffmpeg"))
+
+    assert caught.value is body_error
+    assert str(caught.value) == "ffmpeg produced no usable frame"
+    assert any("private Stage 4 keyframe cleanup failed" in note for note in caught.value.__notes__)
+    private = list(tmp_path.glob(".judge-*"))
+    assert len(private) == 1
+    real_rmtree(private[0])
+
+
+# --- what adversarial pass #13 found unprotected (D-126) --------------------------------
+
+# The fixture is three static shots, so each one's span has its own pixels. Measured:
+#   0..1400 -> sha 46f2c52ce626999c, 3,332 bytes
+#   1400..2800 -> sha 51f35b218c7a4534, 2,624 bytes
+#   2800..4162 -> sha d700e83a931dfb52, 3,424 bytes
+# The test above asserts the *timestamps*, and those are arithmetic over `in_ms`/`out_ms` — the
+# request echoed back, M3.4's lesson. Replacing `-ss in_ms` with `-ss 0` left them unchanged and
+# the suite green, so the bytes reaching a billed judge could come from anywhere in the media.
+
+
+def _expected_frame_stamps(in_ms: int, out_ms: int, count: int, produced: int) -> list[int]:
+    step_ms = (out_ms - in_ms) / count
+    return [round(in_ms + (index + 0.5) * step_ms) for index in range(produced)]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("in_ms", "out_ms", "count"),
+    ((0, 13_000, 20), (0, 4_000, 20), (100, 4_100, 5)),
+)
+def test_keyframe_timestamps_follow_the_requested_sampling_cadence(
+    tmp_path: Path, in_ms: int, out_ms: int, count: int
+) -> None:
+    frames = extract_judge_frames(FIXTURE, in_ms, out_ms, tmp_path, count=count)
+    stamps = [frame.timestamp_ms for frame in frames]
+
+    assert stamps == _expected_frame_stamps(in_ms, out_ms, count, len(frames))
+    assert not [stamp for stamp in stamps if stamp > FIXTURE_DURATION_MS]
+
+
+@needs_ffmpeg
+def test_a_span_past_the_source_returns_real_partial_frames_without_invented_times(
+    tmp_path: Path,
+) -> None:
+    frames = extract_judge_frames(FIXTURE, 0, 13_000, tmp_path, count=20)
+    assert 2 <= len(frames) < 20
+    assert all(frame.data.startswith(b"\xff\xd8") for frame in frames)
+    assert max(frame.timestamp_ms for frame in frames) <= FIXTURE_DURATION_MS
+
+
+@needs_ffmpeg
+def test_an_earlier_larger_run_cannot_inflate_a_later_result(tmp_path: Path) -> None:
+    """Every invocation owns a private namespace, so stale output is never enumerated.
+
+    The upstream adversarial test expected a second call to refuse because both calls shared one
+    directory. HawEdit's stronger D-107 implementation instead gives each ffmpeg invocation a
+    unique private directory: the later call must succeed with exactly the requested fresh count.
+    """
+    work = tmp_path / "stage4"
+    first = extract_judge_frames(FIXTURE, 100, 4_100, work, count=8)
+    second = extract_judge_frames(FIXTURE, 100, 4_100, work, count=2)
+    assert len(first) == 8
+    assert len(second) == 2
+    assert not list(work.glob(".judge-*")), "private Stage 4 frames must be removed after copying"

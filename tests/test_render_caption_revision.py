@@ -18,7 +18,7 @@ from hawedit.captions import find_ffmpeg
 from hawedit.clip import Qc
 from hawedit.judge import JudgeVerdict
 from hawedit.learning import ReasonCode
-from hawedit.pipeline import PipelineRun, run_pipeline
+from hawedit.pipeline import PipelineRun, StageSkipped, run_pipeline
 from hawedit.proposals import (
     RevisionRejected,
     commit_caption_revision,
@@ -132,7 +132,13 @@ def test_the_revised_ass_actually_changes_style(real_run: tuple[Path, PipelineRu
     real `.ass` file `build_ass` wrote, not assumed from the requested style string."""
     work, run = real_run
     assert run.clip is not None
-    original_ass_path = work / f"{run.clip.clip_id}.ass"
+    # Derived from the path the run itself reports, not rebuilt from `work` and the clip id:
+    # delivery became a published *directory* (`artifact_bundle.py`) rather than flat files in
+    # the work dir, and a test that reconstructs a path cannot notice that move — this one
+    # broke at the agentic merge for exactly that reason. D-A26.
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    published_dir = Path(run.render.path).parent
+    (original_ass_path,) = published_dir.glob("*.ass")
     original_ass = original_ass_path.read_text(encoding="utf-8")
     assert "\\kf" in original_ass, "the fixture's own default style must be word_highlight"
 

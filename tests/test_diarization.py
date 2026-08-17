@@ -15,6 +15,7 @@ from hawedit.diarization import (
     Segment,
     boundary_reconciliation,
     diarization_error_rate,
+    turn_bounds_for_anchors,
 )
 from hawedit.transcripts import Word
 
@@ -102,6 +103,46 @@ def test_a_reference_with_no_speech_is_none_not_zero() -> None:
 def test_a_zero_length_segment_is_refused() -> None:
     with pytest.raises(ValueError, match="before it starts"):
         Segment(1_000, 1_000, "A")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        (-1, 1_000, "A"),
+        (False, 1_000, "A"),
+        (0, True, "A"),
+        (0, 1_000, ""),
+        (0, 1_000, " A"),
+        (0, 1_000, "A\nB"),
+    ],
+)
+def test_a_segment_refuses_untrusted_coercible_or_unsafe_fields(
+    bad: tuple[object, object, object],
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        Segment(*bad)  # type: ignore[arg-type]
+
+
+def test_anchor_bounds_use_the_turns_that_contain_each_anchor_edge() -> None:
+    assert turn_bounds_for_anchors(REFERENCE, 1_000, 19_000) == (0, 20_000)
+    assert turn_bounds_for_anchors(REFERENCE, 1_000, 9_000) == (0, 10_000)
+
+
+def test_anchor_bounds_at_an_exact_turn_boundary_do_not_cross_speakers() -> None:
+    assert turn_bounds_for_anchors(REFERENCE, 10_000, 20_000) == (10_000, 20_000)
+    assert turn_bounds_for_anchors(REFERENCE, 0, 10_000) == (0, 10_000)
+
+
+def test_anchor_bounds_omit_a_signal_when_that_edge_is_in_a_gap() -> None:
+    turns = (Segment(0, 9_000, "A"), Segment(11_000, 20_000, "B"))
+    assert turn_bounds_for_anchors(turns, 10_000, 19_000) == (None, 20_000)
+    assert turn_bounds_for_anchors(turns, 1_000, 10_000) == (0, None)
+
+
+def test_anchor_bounds_refuse_an_empty_or_inverted_selection() -> None:
+    for anchors in ((1_000, 1_000), (2_000, 1_000)):
+        with pytest.raises(ValueError, match="anchor span"):
+            turn_bounds_for_anchors(REFERENCE, *anchors)
 
 
 # --- boundary reconciliation ----------------------------------------------------------

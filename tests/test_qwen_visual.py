@@ -13,6 +13,7 @@ The recipe fixtures below are written by hand rather than read from `models/`, s
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,15 +23,19 @@ import pytest
 from hawedit.normalize import normalize_sorani
 from hawedit.qwen_visual import (
     EMBEDDING_MODEL_ID,
+    BinaryScoreTokens,
     EmbedderUnavailable,
+    PoolingRecipe,
     QwenVisualEmbedder,
     QwenVisualReranker,
+    load_processor_and_model,
+    read_pooling_prompt,
     read_pooling_recipe,
     read_score_tokens,
 )
 from hawedit.registry import WrongRole
 from hawedit.video_input import TimestampsOutsideWindow, WindowFrames
-from hawedit.visual_index import SceneWindow, VisualHit, rerank_and_keep
+from hawedit.visual_index import SceneWindow, VisualEmbedding, VisualHit, rerank_and_keep
 
 
 def a_checkpoint(
@@ -40,6 +45,7 @@ def a_checkpoint(
     prompt: str | None = "Represent the user's input.",
 ) -> Path:
     """A directory shaped like the checkpoint, carrying only what the recipe is read from."""
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}), encoding="utf-8")
     (tmp_path / "1_Pooling").mkdir(parents=True, exist_ok=True)
     (tmp_path / "1_Pooling" / "config.json").write_text(
         json.dumps({"pooling_mode": pooling_mode, "embedding_dimension": dimension}),
@@ -51,6 +57,39 @@ def a_checkpoint(
             encoding="utf-8",
         )
     return tmp_path
+
+
+def test_qwen_adapters_release_loaded_gpu_state_idempotently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    released: list[str] = []
+    monkeypatch.setattr("hawedit.qwen_visual.release_cuda_model_memory", released.append)
+    checkpoint = a_checkpoint(tmp_path)
+    embedder = QwenVisualEmbedder(checkpoint, device="cuda:1")
+    embedder._loaded = (object(), object())
+    embedder._recipe = PoolingRecipe("lasttoken", 2048, "prompt")
+
+    def unused_reader(_window: SceneWindow) -> WindowFrames:
+        raise AssertionError("close must not read frames")
+
+    reranker = QwenVisualReranker(checkpoint, unused_reader, device="cuda:1")
+    reranker._loaded = (object(), object())
+    reranker._direction = object()
+    reranker._tokens = BinaryScoreTokens(1, 2)
+    reranker._instruct = "instruction"
+
+    embedder.close()
+    embedder.close()
+    reranker.close()
+    reranker.close()
+
+    assert released == ["cuda:1", "cuda:1"]
+    assert embedder._loaded is None
+    assert embedder._recipe is None
+    assert reranker._loaded is None
+    assert reranker._direction is None
+    assert reranker._tokens is None
+    assert reranker._instruct is None
 
 
 # --- the recipe comes from the checkpoint ---------------------------------------------------
@@ -75,8 +114,9 @@ def test_a_pooling_mode_this_module_does_not_implement_is_refused(tmp_path: Path
     check `VisualEmbedding` makes — so nothing downstream could tell. Without this test the
     recipe would be read and then ignored, which is the same as not reading it.
     """
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path, pooling_mode="mean"))
     with pytest.raises(EmbedderUnavailable, match="pools by 'mean'"):
-        QwenVisualEmbedder(a_checkpoint(tmp_path, pooling_mode="mean"))
+        embedder._cache_verified_recipe(embedder.model_dir)
 
 
 def test_the_declared_prompt_is_carried_even_without_the_sentence_transformers_file(
@@ -86,6 +126,62 @@ def test_the_declared_prompt_is_carried_even_without_the_sentence_transformers_f
     has to be that string and not something reasonable-looking."""
     recipe = read_pooling_recipe(a_checkpoint(tmp_path, prompt=None))
     assert recipe.prompt == "Represent the user's input."
+
+
+def test_malformed_pooling_recipe_is_a_domain_refusal(tmp_path: Path) -> None:
+    checkpoint = a_checkpoint(tmp_path)
+    (checkpoint / "1_Pooling" / "config.json").write_text("{", encoding="utf-8")
+    with pytest.raises(EmbedderUnavailable, match="cannot read verified checkpoint pooling"):
+        read_pooling_recipe(checkpoint)
+
+
+def test_malformed_prompt_recipe_is_not_hidden_by_the_embedder_fallback(tmp_path: Path) -> None:
+    checkpoint = a_checkpoint(tmp_path)
+    (checkpoint / "config_sentence_transformers.json").write_text("{", encoding="utf-8")
+    with pytest.raises(EmbedderUnavailable, match="cannot read verified checkpoint prompt"):
+        read_pooling_recipe(checkpoint)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"prompts": []},
+        {"prompts": False},
+        {"prompts": "not-an-object"},
+        {"prompts": {}, "default_prompt_name": 0},
+        {"prompts": {}, "default_prompt_name": False},
+    ],
+)
+def test_false_valued_prompt_schema_violations_are_not_treated_as_absence(
+    tmp_path: Path, payload: object
+) -> None:
+    checkpoint = a_checkpoint(tmp_path)
+    (checkpoint / "config_sentence_transformers.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    with pytest.raises(EmbedderUnavailable, match="non-object 'prompts'|non-string prompt name"):
+        read_pooling_prompt(checkpoint)
+
+
+def test_embedder_does_not_cache_a_recipe_before_verified_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = a_checkpoint(tmp_path, prompt="attacker-controlled instruction")
+    embedder = QwenVisualEmbedder(checkpoint, device="cpu")
+    with pytest.raises(EmbedderUnavailable, match="before verified model load"):
+        _ = embedder.recipe
+
+    a_checkpoint(tmp_path, prompt="Represent the user's input.")
+
+    def verified_stub(_model_dir: Path, _device: str, **kwargs: Any) -> tuple[object, object]:
+        callback = kwargs["_after_verify"]
+        assert callable(callback)
+        callback(checkpoint)
+        return object(), object()
+
+    monkeypatch.setattr("hawedit.qwen_visual.load_processor_and_model", verified_stub)
+    embedder._load()
+    assert embedder.recipe.prompt == "Represent the user's input."
 
 
 # --- §7 before any weights move -------------------------------------------------------------
@@ -106,10 +202,13 @@ def test_a_section_7_model_with_the_wrong_job_is_refused(tmp_path: Path) -> None
         QwenVisualEmbedder(a_checkpoint(tmp_path), model_id="PySceneDetect")
 
 
-def test_missing_weights_name_the_command_that_fetches_them(tmp_path: Path) -> None:
+def test_missing_weights_are_lazy_at_construction_and_refused_at_runtime(tmp_path: Path) -> None:
     absent = tmp_path / "not-downloaded"
-    with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
-        QwenVisualEmbedder(absent)
+    embedder = QwenVisualEmbedder(absent)
+
+    assert embedder.model_dir == absent
+    with pytest.raises(EmbedderUnavailable, match="hawedit-fetch-models"):
+        embedder.embed_text("کوردی")
 
 
 def test_the_default_model_id_is_the_registry_id_for_the_embedder() -> None:
@@ -118,6 +217,42 @@ def test_the_default_model_id_is_the_registry_id_for_the_embedder() -> None:
     from hawedit.registry import REGISTRY
 
     assert REGISTRY[EMBEDDING_MODEL_ID].role == "visual_embedding"
+
+
+def test_model_config_is_refused_before_any_gpu_or_transformers_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CVE guard has to precede even runtime discovery, not merely AutoModel."""
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_vl",
+                "_attn_implementation_internal": "attacker/kernel",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # test_models intentionally reloads hawedit.models to exercise installed-path discovery;
+    # RuntimeError avoids binding this cross-file assertion to the pre-reload class identity.
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
+    with pytest.raises(RuntimeError, match="CVE-2026-4372"):
+        load_processor_and_model(tmp_path, "cuda:0")
+
+
+@pytest.mark.parametrize("model_type", ["xclip", "lightglue"])
+def test_visual_loader_uses_the_qwen_model_type_allowlist(
+    tmp_path: Path, model_type: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": model_type}), encoding="utf-8")
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
+    with pytest.raises(RuntimeError, match="unapproved"):
+        load_processor_and_model(tmp_path, "cuda:0")
 
 
 # --- the GPU is not optional ----------------------------------------------------------------
@@ -134,10 +269,138 @@ def test_asking_for_cuda_without_cuda_is_refused_rather_than_run_on_cpu(
     what the machine happens to have would make the test vanish exactly where it matters.
     """
     torch = pytest.importorskip("torch", reason="the gpu extra is not installed")
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     embedder = QwenVisualEmbedder(a_checkpoint(tmp_path), device="cuda:0")
     with pytest.raises(EmbedderUnavailable, match="reports no CUDA"):
         embedder._load()
+
+
+def test_checkpoint_integrity_is_proven_before_torch_or_transformers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}), encoding="utf-8")
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("integrity sentinel")
+
+    monkeypatch.setattr("hawedit.qwen_visual.verified_checkpoint_access", refuse)
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        load_processor_and_model(tmp_path, "cuda:0")
+
+
+def test_integrity_then_safe_config_precede_verified_recipe_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    @contextmanager
+    def integrity(*_args: object) -> Any:
+        events.append("integrity")
+        yield tmp_path
+
+    def safe_config(*_args: object) -> None:
+        assert events == ["integrity"]
+        events.append("safe-config")
+
+    def recipe(_verified_dir: Path) -> None:
+        assert events == ["integrity", "safe-config"]
+        events.append("recipe")
+        raise RuntimeError("recipe sentinel")
+
+    monkeypatch.setattr("hawedit.qwen_visual.verified_checkpoint_access", integrity)
+    monkeypatch.setattr("hawedit.qwen_visual.assert_transformers_config_safe", safe_config)
+    with pytest.raises(RuntimeError, match="recipe sentinel"):
+        load_processor_and_model(tmp_path, "cuda:0", _after_verify=recipe)
+    assert events == ["integrity", "safe-config", "recipe"]
+
+
+def test_verified_checkpoint_binding_is_held_through_every_constructor_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.qwen_visual as qwen_module
+
+    active = False
+    events: list[str] = []
+
+    @contextmanager
+    def access(_model_id: str, model_dir: Path) -> Any:
+        nonlocal active
+        active = True
+        events.append("verified")
+        try:
+            yield model_dir
+        finally:
+            active = False
+
+    def safe_config(model_dir: Path, _allowed: object) -> None:
+        assert active and model_dir == tmp_path
+        events.append("safe-config")
+
+    def recipe(model_dir: Path) -> None:
+        assert active and model_dir == tmp_path
+        events.append("recipe")
+
+    def backend(model_dir: Path, _device: str, **_kwargs: object) -> tuple[object, object]:
+        assert active and model_dir == tmp_path
+        events.append("from-pretrained")
+        return object(), object()
+
+    monkeypatch.setattr(qwen_module, "verified_checkpoint_access", access)
+    monkeypatch.setattr(qwen_module, "assert_transformers_config_safe", safe_config)
+    monkeypatch.setattr(qwen_module, "_load_verified_processor_and_model", backend)
+
+    load_processor_and_model(tmp_path, "cpu", _after_verify=recipe)
+    assert not active
+    assert events == ["verified", "safe-config", "recipe", "from-pretrained"]
+
+
+def test_embedder_backend_failures_become_domain_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    embedder = QwenVisualEmbedder(a_checkpoint(tmp_path))
+    failure = RuntimeError("CUDA out of memory")
+    monkeypatch.setattr(embedder, "_load", lambda: (_ for _ in ()).throw(failure))
+    window = a_window(0, 0)
+
+    with pytest.raises(EmbedderUnavailable, match="CUDA out of memory") as caught:
+        embedder.embed_frames(WindowFrames(window, (Path("f0.jpg"), Path("f1.jpg"))))
+    assert caught.value.__cause__ is failure
+
+
+def test_embed_window_deletes_extracted_source_pixels_after_embedding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = a_window(0, 0)
+    private = tmp_path / "private-frames"
+    private.mkdir()
+    paths = (private / "f0.jpg", private / "f1.jpg")
+    for path in paths:
+        path.write_bytes(b"source pixel")
+    metadata = private.stat()
+    frames = WindowFrames(
+        window,
+        paths,
+        _owner_dir=private,
+        _owner_identity=(metadata.st_dev, metadata.st_ino),
+    )
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    embedder = QwenVisualEmbedder(a_checkpoint(checkpoint), device="cpu")
+    monkeypatch.setattr("hawedit.qwen_visual.extract_window_frames", lambda *_args: frames)
+    monkeypatch.setattr(
+        embedder,
+        "embed_frames",
+        lambda value: VisualEmbedding(value.window, (1.0, 0.0), EMBEDDING_MODEL_ID),
+    )
+
+    result = embedder.embed_window(tmp_path / "source.mp4", window, tmp_path / "work")
+
+    assert result.window == window
+    assert not private.exists()
 
 
 # =========================================================================================
@@ -203,6 +466,57 @@ def test_a_checkpoint_that_does_not_name_its_score_tokens_is_refused(tmp_path: P
     with every score still landing in [0, 1]."""
     with pytest.raises(EmbedderUnavailable, match="which tokens its score"):
         read_score_tokens(tmp_path)
+
+
+def test_malformed_score_recipe_is_a_domain_refusal(tmp_path: Path) -> None:
+    checkpoint = a_reranker_checkpoint(tmp_path)
+    (checkpoint / "1_LogitScore" / "config.json").write_text("{", encoding="utf-8")
+    with pytest.raises(EmbedderUnavailable, match="cannot read verified checkpoint score"):
+        read_score_tokens(checkpoint)
+
+
+def test_reranker_does_not_cache_tokens_or_prompt_before_verified_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = a_reranker_checkpoint(tmp_path, true_id=777, false_id=666)
+    prompt_file = checkpoint / "config_sentence_transformers.json"
+    prompt_file.write_text(
+        json.dumps({"default_prompt_name": "query", "prompts": {"query": "attacker prompt"}}),
+        encoding="utf-8",
+    )
+    reranker = QwenVisualReranker(checkpoint, read_frames=lambda _window: two_frames())
+    with pytest.raises(EmbedderUnavailable, match="before verified model load"):
+        _ = reranker.tokens
+    with pytest.raises(EmbedderUnavailable, match="before verified model load"):
+        _ = reranker.instruct
+
+    a_reranker_checkpoint(tmp_path, true_id=1, false_id=2)
+
+    def verified_stub(_model_dir: Path, _device: str, **kwargs: Any) -> tuple[object, object]:
+        callback = kwargs["_after_verify"]
+        assert callable(callback)
+        callback(checkpoint)
+        return object(), object()
+
+    monkeypatch.setattr("hawedit.qwen_visual.load_processor_and_model", verified_stub)
+    reranker._load()
+    assert (reranker.tokens.true_id, reranker.tokens.false_id) == (1, 2)
+    assert reranker.instruct == "Retrieve text relevant to the user's query."
+
+
+def test_reranker_backend_failures_become_domain_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reranker = QwenVisualReranker(
+        a_reranker_checkpoint(tmp_path),
+        read_frames=lambda window: WindowFrames(window, (Path("f0.jpg"), Path("f1.jpg"))),
+    )
+    failure = RuntimeError("CUDA kernel launch failed")
+    monkeypatch.setattr(reranker, "_load", lambda: (_ for _ in ()).throw(failure))
+
+    with pytest.raises(EmbedderUnavailable, match="CUDA kernel launch failed") as caught:
+        reranker.score("گرنگ", WindowFrames(a_window(0, 0), (Path("f0.jpg"), Path("f1.jpg"))))
+    assert caught.value.__cause__ is failure
 
 
 def test_the_reranker_reorders_by_its_own_score(
@@ -318,8 +632,6 @@ class StubProcessor:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
-        # What the model was actually asked to read. Kurdish invariant #3 is a claim about this
-        # and nothing else, so it has to be recorded rather than inferred from the kwargs. D-150.
         self.conversations: list[Any] = []
         self.text = ""
 
@@ -359,6 +671,7 @@ def stubbed(
     obj: Any, monkeypatch: pytest.MonkeyPatch, hidden: Any, weight: Any
 ) -> tuple[StubProcessor, StubModel]:
     """Point `obj._load` at stubs, and make frame loading independent of Pillow."""
+    obj._cache_verified_recipe(obj.model_dir)
     processor, model = StubProcessor(), StubModel(hidden, weight)
     monkeypatch.setattr(type(obj), "_load", lambda _self: (processor, model))
     monkeypatch.setattr(
@@ -462,46 +775,28 @@ def test_the_reranker_asks_for_the_answer_position(
     assert model.forward_kwargs["output_hidden_states"] is True
 
 
-# --- D-150: Kurdish invariant #3 on the Stage 2 query, held instead of believed ---------------
-#
-# `embed_text` and `score` both normalize the query before the model sees it, and both docstrings
-# say why: the window embeddings were built from §4.1-normalized text, so a raw query "is
-# comparing two different alphabets — and the failure is not an error, it is a slightly wrong
-# score". Measured (adversarial pass #23): removing `normalize_sorani` from either call left the
-# whole gate suite green, and no test in this file mentioned normalization at all — the two that
-# call `score` pass a query that is already normalized, so the call was a no-op in every test that
-# reached it. `evidence/adversarial-pass-23-2026-08-10.md`.
-# =========================================================================================
+# --- D-183: Kurdish invariant #3 on every Stage 2 query reader -------------------------------
 
 
-# One string carrying four of §4.1's collisions, with the codepoints that make them collisions:
-# Arabic kaf U+0643 (Kurdish uses U+06A9), Arabic yeh U+064A (U+06CC), a ZWNJ before heh U+0647
-# (which §4.1 folds to ae U+06D5), and Arabic-Indic digits. This is what an Arabic keyboard
-# produces, which is why §4.1 exists.
-_A_QUERY_FROM_AN_ARABIC_KEYBOARD = "كوردي ٢٠٢٦ ده\u200cست"
+_ARABIC_KEYBOARD_QUERY = "كوردي ٢٠٢٦ ده\u200cست"
 _STAGE_2_QUERY_READERS = ("QwenVisualEmbedder", "QwenVisualReranker")
 
 
-def _all_text(value: Any) -> str:
-    """Every string anywhere in a conversation structure, joined.
-
-    The two adapters nest the query differently — one wraps it in a content part, the other in a
-    `<Query>:` line — and the invariant is about what reaches the model, not about the shape it
-    travelled in.
-    """
+def _all_conversation_text(value: Any) -> str:
+    """Join every string regardless of the adapters' different conversation nesting."""
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        return " ".join(_all_text(item) for item in value.values())
+        return " ".join(_all_conversation_text(item) for item in value.values())
     if isinstance(value, list | tuple):
-        return " ".join(_all_text(item) for item in value)
+        return " ".join(_all_conversation_text(item) for item in value)
     return ""
 
 
 def _a_query_reader(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[StubProcessor, Any]:
-    """The adapter under `name`, stubbed, with a callable that sends it one query."""
+    """Build one real adapter around tiny processor/model stubs and return its query call."""
     import torch
 
     if name == "QwenVisualEmbedder":
@@ -510,7 +805,7 @@ def _a_query_reader(
         return processor, embedder.embed_text
     reranker = QwenVisualReranker(
         a_reranker_checkpoint(tmp_path),
-        read_frames=lambda w: WindowFrames(window=w, paths=(Path("f0.jpg"),)),
+        read_frames=lambda window: WindowFrames(window=window, paths=(Path("f0.jpg"),)),
         device="cpu",
     )
     processor, _model = stubbed(reranker, monkeypatch, torch.zeros(1, 1, 2), torch.zeros(9694, 2))
@@ -518,11 +813,7 @@ def _a_query_reader(
 
 
 def _classes_taking_a_query() -> set[str]:
-    """Every class in this module with a method that takes a `query`.
-
-    Read from the module rather than listed, so a third Stage 2 adapter is covered the day it is
-    added — D-145's shape, and the reason that one exists.
-    """
+    """Every production class with a query-taking method; bound to the driver table below."""
     import inspect
 
     import hawedit.qwen_visual as module
@@ -531,20 +822,20 @@ def _classes_taking_a_query() -> set[str]:
     for name, value in vars(module).items():
         if not inspect.isclass(value) or value.__module__ != module.__name__:
             continue
-        for _method_name, method in inspect.getmembers(value, inspect.isfunction):
-            if "query" in inspect.signature(method).parameters:
-                found.add(name)
-                break
+        if any(
+            "query" in inspect.signature(method).parameters
+            for _method_name, method in inspect.getmembers(value, inspect.isfunction)
+        ):
+            found.add(name)
     return found
 
 
 def test_every_stage_2_adapter_that_takes_a_query_is_covered_here() -> None:
-    """Bidirectional: a new adapter fails until someone says how to drive it."""
-    assert _classes_taking_a_query() == set(_STAGE_2_QUERY_READERS), (
-        f"adapters taking a query with no case here: "
-        f"{sorted(_classes_taking_a_query() - set(_STAGE_2_QUERY_READERS))}; cases naming a class "
-        f"that no longer takes one: "
-        f"{sorted(set(_STAGE_2_QUERY_READERS) - _classes_taking_a_query())}"
+    expected = set(_STAGE_2_QUERY_READERS)
+    actual = _classes_taking_a_query()
+    assert actual == expected, (
+        f"query readers without normalization coverage: {sorted(actual - expected)}; "
+        f"stale drivers: {sorted(expected - actual)}"
     )
 
 
@@ -552,39 +843,28 @@ def test_every_stage_2_adapter_that_takes_a_query_is_covered_here() -> None:
 def test_the_query_reaches_the_model_normalized(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Kurdish invariant #3, asserted on what the model was asked to read.
-
-    Not on the return value: a wrong-alphabet query still produces a vector and still produces a
-    score in [0, 1]. The only place the defect is visible is the text itself.
-    """
+    """Assert invariant #3 on the actual conversation, not a plausible vector or score."""
     processor, send = _a_query_reader(name, tmp_path, monkeypatch)
-    send(_A_QUERY_FROM_AN_ARABIC_KEYBOARD)
+    send(_ARABIC_KEYBOARD_QUERY)
 
-    seen = _all_text(processor.conversations)
-    assert normalize_sorani(_A_QUERY_FROM_AN_ARABIC_KEYBOARD) in seen, (
-        f"{name} did not §4.1-normalize the query before the model read it: {seen!r}"
-    )
-    assert _A_QUERY_FROM_AN_ARABIC_KEYBOARD not in seen, (
-        f"{name} sent the raw query as well as the normalized one: {seen!r}"
-    )
-    # The specific collisions, so the assertion cannot pass on a query that merely changed.
+    seen = _all_conversation_text(processor.conversations)
+    normalized = normalize_sorani(_ARABIC_KEYBOARD_QUERY)
+    assert normalized in seen, f"{name} did not normalize the query before model input: {seen!r}"
+    assert _ARABIC_KEYBOARD_QUERY not in seen, f"{name} also sent the raw query: {seen!r}"
     assert "\u0643" not in seen and "\u064a" not in seen, "Arabic kaf/yeh reached the model"
     assert "\u200c" not in seen, "a ZWNJ reached the model"
     assert "٢٠٢٦" not in seen and "2026" in seen, "Arabic-Indic digits reached the model"
 
 
 @pytest.mark.parametrize("name", _STAGE_2_QUERY_READERS)
-def test_a_query_that_is_already_normalized_is_sent_unchanged(
+def test_an_already_normalized_query_reaches_the_model_unchanged(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The control. An adapter that mangled or dropped every query would pass the test above.
-
-    §4.1 is idempotent, so the corpus's own spelling has to survive the trip untouched — that is
-    what makes the query and the window embeddings comparable at all.
-    """
-    already = normalize_sorani(_A_QUERY_FROM_AN_ARABIC_KEYBOARD)
+    """Control: dropping or mangling every query would satisfy negative assertions alone."""
+    normalized = normalize_sorani(_ARABIC_KEYBOARD_QUERY)
     processor, send = _a_query_reader(name, tmp_path, monkeypatch)
-    send(already)
-    assert already in _all_text(processor.conversations), (
-        f"{name} altered a query that was already §4.1-normalized"
+    send(normalized)
+
+    assert normalized in _all_conversation_text(processor.conversations), (
+        f"{name} altered an already-normalized query"
     )

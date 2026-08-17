@@ -39,6 +39,7 @@ from hawedit.render import (
     Encoder,
     Reframe,
     RenderError,
+    _publish_render,
     assert_encoded_span,
     crop_filter,
     encoder_available,
@@ -225,6 +226,94 @@ def test_a_clip_that_has_not_cleared_qc_is_never_encoded(tmp_path: Path) -> None
     assert not (tmp_path / "out.mp4").exists(), "a refused clip must leave no artifact"
 
 
+def test_an_automatic_pass_without_human_review_is_never_encoded(tmp_path: Path) -> None:
+    clip = _clip(qc=Qc(auto_pass=True, flags=(), human_reviewed=False))
+    with pytest.raises(ValueError, match="human QC"):
+        render_clip(
+            clip,
+            FIXTURE,
+            _write_ass(tmp_path),
+            FONTS,
+            tmp_path / "out.mp4",
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+        )
+    assert not (tmp_path / "out.mp4").exists()
+
+
+def test_an_existing_render_is_never_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry or colliding worker must not replace an artifact a client may already use."""
+    output = tmp_path / "out.mp4"
+    original = b"the first worker's verified artifact"
+    output.write_bytes(original)
+
+    def ffmpeg_must_not_run() -> None:
+        pytest.fail("an existing publication target should be refused before probing ffmpeg")
+
+    monkeypatch.setattr("hawedit.render.find_ffmpeg", ffmpeg_must_not_run)
+    with pytest.raises(RenderError, match="refusing to overwrite"):
+        render_clip(
+            _clip(),
+            FIXTURE,
+            _write_ass(tmp_path),
+            FONTS,
+            output,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+        )
+    assert output.read_bytes() == original
+
+
+def test_atomic_publication_preserves_the_worker_that_won_the_name(tmp_path: Path) -> None:
+    """The final race is settled by the filesystem, not by a check-then-overwrite sequence."""
+    staging = tmp_path / ".clip.staging.mp4"
+    output = tmp_path / "clip.mp4"
+    staging.write_bytes(b"second worker")
+    output.write_bytes(b"first worker")
+
+    with pytest.raises(RenderError, match="another job published"):
+        _publish_render(staging, output)
+
+    assert output.read_bytes() == b"first worker"
+    assert staging.read_bytes() == b"second worker"
+
+
+@needs_ffmpeg
+def test_an_interrupted_encode_leaves_no_partial_or_final_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ffmpeg may create bytes before failing; those bytes must never occupy the final name."""
+    real_run = subprocess.run
+    output = tmp_path / "interrupted.mp4"
+
+    def interrupt_the_real_encode(args: object, **kwargs: object) -> object:
+        command = list(args) if isinstance(args, list | tuple) else []
+        destination = Path(str(command[-1])) if command else Path()
+        if destination.parent == tmp_path and destination.name.startswith(".interrupted."):
+            destination.write_bytes(b"plausible but incomplete mp4 bytes")
+            return subprocess.CompletedProcess(
+                command, returncode=1, stdout=b"", stderr=b"simulated interruption"
+            )
+        return real_run(args, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr("hawedit.render.subprocess.run", interrupt_the_real_encode)
+    with pytest.raises(RenderError, match="simulated interruption"):
+        render_clip(
+            _clip(),
+            FIXTURE,
+            _write_ass(tmp_path),
+            FONTS,
+            output,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+        )
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".interrupted.*.mp4")), "private staging file leaked"
+
+
 def test_an_incomplete_sentence_cannot_even_reach_a_clip() -> None:
     """Kurdish invariant #2, at the earliest point it can be enforced.
 
@@ -387,7 +476,7 @@ def test_a_missing_subtitle_file_is_refused(tmp_path: Path) -> None:
 def test_no_ffmpeg_names_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("hawedit.render.find_ffmpeg", lambda: None)
     (tmp_path / "captions.ass").write_text("", encoding="utf-8")
-    with pytest.raises(RenderError, match="fetch-ffmpeg.sh"):
+    with pytest.raises(RenderError, match="hawedit-ffmpeg-setup"):
         render_clip(
             _clip(),
             FIXTURE,
@@ -594,6 +683,24 @@ def test_a_clip_running_past_the_end_of_the_media_is_refused(tmp_path: Path) -> 
 
 
 @needs_ffmpeg
+def test_the_burn_refuses_a_fonts_directory_without_kurdish_coverage(tmp_path: Path) -> None:
+    fonts = tmp_path / "empty-fonts"
+    fonts.mkdir()
+    output = tmp_path / "missing-font.mp4"
+    with pytest.raises(RenderError, match="no font file"):
+        render_clip(
+            clip=_clip(),
+            source=FIXTURE,
+            ass_path=_write_ass(tmp_path),
+            fonts_dir=fonts,
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+        )
+    assert not output.exists()
+
+
+@needs_ffmpeg
 def test_the_result_reports_the_duration_of_the_file_not_of_the_request(tmp_path: Path) -> None:
     """A number carries its provenance: `measured_duration_ms` comes from the artifact."""
     clip = _clip()
@@ -626,6 +733,11 @@ def test_a_file_one_frame_long_is_container_rounding_not_a_failure() -> None:
     """Measured on the real fixture: correct cuts came back exact except one, which was +40 ms
     — exactly one frame at 25 fps. Rejecting that would fail honest renders."""
     assert_encoded_span(measured_ms=2_040, requested_ms=2_000, frame_ms=40)
+
+
+def test_a_file_more_than_one_frame_long_is_refused() -> None:
+    with pytest.raises(RenderError, match="longer"):
+        assert_encoded_span(measured_ms=100_000, requested_ms=2_000, frame_ms=40)
 
 
 def test_a_file_one_frame_short_is_tolerated_and_two_frames_is_not() -> None:
@@ -669,6 +781,61 @@ def test_real_render_accepts_a_time_varying_face_track(tmp_path: Path) -> None:
     assert output.exists() and output.stat().st_size > 1_000
 
 
+@needs_ffmpeg
+def test_real_render_preserves_validated_speaker_tracking_provenance(tmp_path: Path) -> None:
+    clip = _clip()
+    output = tmp_path / "speaker-tracked.mp4"
+    result = render_clip(
+        clip=clip,
+        source=FIXTURE,
+        ass_path=_write_ass(tmp_path),
+        output=output,
+        source_width=SOURCE_WIDTH,
+        source_height=SOURCE_HEIGHT,
+        fonts_dir=FONTS,
+        focus_points=((clip.in_ms, 50), (clip.out_ms - 1, 600)),
+        reframe=Reframe.SPEAKER_TRACKED,
+    )
+    assert result.reframe is Reframe.SPEAKER_TRACKED
+    assert output.exists() and output.stat().st_size > 1_000
+
+
+def test_render_refuses_a_reframe_label_that_contradicts_its_points(tmp_path: Path) -> None:
+    def attempt(
+        output: Path,
+        reframe: Reframe,
+        focus_points: tuple[tuple[int, int], ...] = (),
+    ) -> None:
+        render_clip(
+            clip=_clip(),
+            source=FIXTURE,
+            ass_path=tmp_path / "unused.ass",
+            fonts_dir=FONTS,
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+            focus_points=focus_points,
+            reframe=reframe,
+        )
+
+    with pytest.raises(ValueError, match="dynamic reframe mode needs focus points"):
+        attempt(
+            tmp_path / "speaker-without-points.mp4",
+            Reframe.SPEAKER_TRACKED,
+        )
+    with pytest.raises(ValueError, match="dynamic reframe mode needs focus points"):
+        attempt(
+            tmp_path / "face-without-points.mp4",
+            Reframe.FACE_TRACKED,
+        )
+    with pytest.raises(ValueError, match="static reframe mode cannot carry focus points"):
+        attempt(
+            tmp_path / "static-with-points.mp4",
+            Reframe.STATIC_CENTRE,
+            ((500, 100),),
+        )
+
+
 def test_the_burn_refuses_an_ass_whose_stamps_fall_outside_the_clip(tmp_path: Path) -> None:
     """`assert_captions_within_clip`'s LOGIC was tested; its wiring into `render_clip` was not.
 
@@ -677,7 +844,7 @@ def test_the_burn_refuses_an_ass_whose_stamps_fall_outside_the_clip(tmp_path: Pa
     Deleting the call outright is "caught" only because ruff reports an unused import and the
     nested-gate tests then fail on a red lint, which is a linter noticing, not a test. Under the
     import-preserving mutation an ASS carrying source-absolute stamps ships a valid, playable,
-    caption-free MP4 with `captions_burned_in=True` — Kurdish invariant #4. D-087.
+    caption-free MP4 with `captions_burned_in=True` — Kurdish invariant #4. D-097.
 
     This asserts the wiring: a file the guard should reject must be rejected *through the render
     path*, on whatever file arrives.
@@ -724,7 +891,7 @@ def test_the_burn_refuses_an_ass_whose_stamps_fall_outside_the_clip(tmp_path: Pa
     assert rendered.captions_burned_in
 
 
-# --- D-112: the guard was tested, its wiring was not -----------------------------------------
+# --- D-147: the guard was tested, its wiring was not -----------------------------------------
 
 
 def test_render_refuses_when_the_written_file_is_short(
@@ -739,7 +906,7 @@ def test_render_refuses_when_the_written_file_is_short(
 
     The probe is replaced rather than the encode, because what is under test here is the wiring:
     the guard's own arithmetic is covered by the unit tests above with real measured numbers.
-    D-112.
+    D-147.
     """
     clip = _clip()
     requested = clip.out_ms - clip.in_ms
@@ -748,7 +915,7 @@ def test_render_refuses_when_the_written_file_is_short(
     def short_for_the_output(path: Path, ffmpeg: Path | None = None) -> int:
         # The pre-flight check probes the SOURCE with this same helper, and it is wired and
         # tested — a blanket patch trips that refusal instead of the one under test.
-        return requested - 200 if path.name == "short.mp4" else real(path, ffmpeg)
+        return real(path, ffmpeg) if path == FIXTURE else requested - 200
 
     monkeypatch.setattr("hawedit.render.probe_duration_ms", short_for_the_output)
 
@@ -773,7 +940,7 @@ def test_render_accepts_a_file_that_measures_what_was_asked(
     real = probe_duration_ms
 
     def exact_for_the_output(path: Path, ffmpeg: Path | None = None) -> int:
-        return requested if path.name == "exact.mp4" else real(path, ffmpeg)
+        return real(path, ffmpeg) if path == FIXTURE else requested
 
     monkeypatch.setattr("hawedit.render.probe_duration_ms", exact_for_the_output)
 
@@ -943,3 +1110,77 @@ def test_an_unshifted_caption_file_is_refused_at_the_burn(tmp_path: Path) -> Non
 
     with pytest.raises(CaptionsOutsideClip):
         render_clip(clip, FIXTURE, ass, FONTS, tmp_path / "never.mp4", SOURCE_WIDTH, SOURCE_HEIGHT)
+
+
+# =========================================================================================
+# The three refusals a guard-revert sweep over this module found UNHELD: every `raise` here
+# deleted one at a time against a green baseline, whole suite each time. `delivery.py` came
+# back 12/12 held; these are render.py's, and the first one is the last check standing between
+# a failed encode and a client. D-194.
+# =========================================================================================
+
+
+@needs_ffmpeg
+def test_a_failed_encode_is_refused_with_ffmpegs_own_words(tmp_path: Path) -> None:
+    """Deleting this left the suite green, and the fall-through is not harmless: the next line
+    probes `output` for its duration, so a failed encode became whatever `probe_duration_ms`
+    says about a file that may not be there.
+
+    The failure is real rather than mocked: an unknown output suffix reaches ffmpeg's muxer
+    selection and is refused there. An already-existing path is no longer suitable for this test,
+    because the hardened renderer correctly rejects overwrite before launching ffmpeg.
+    """
+    output = tmp_path / "clip.hawedit-unknown-container"
+
+    with pytest.raises(RenderError, match="encode failed") as refused:
+        render_clip(
+            clip=_clip(),
+            source=FIXTURE,
+            ass_path=_write_ass(tmp_path),
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+            fonts_dir=FONTS,
+        )
+
+    # The control: the refusal must carry ffmpeg's own diagnosis. A generic "encode failed"
+    # would satisfy the match above while telling an operator nothing, and the reason this
+    # message exists at all is that ffmpeg is the only thing that knows why it stopped.
+    assert "output format" in str(refused.value), refused.value
+
+
+def test_a_source_too_small_to_crop_is_refused(tmp_path: Path) -> None:
+    """A crop of zero width is not a narrow clip, it is an ffmpeg error at encode time or a
+    frame of nothing. Measured: 1x1000, 1000x1 and 2x2 all reduce to a zero dimension once the
+    even-number rounding yuv420p needs is applied."""
+    for width, height in ((1, 1000), (1000, 1), (2, 2)):
+        with pytest.raises(ValueError, match="cannot be cropped"):
+            crop_filter(width, height)
+
+    # The control: the real fixture's own dimensions must still produce a filter, so this
+    # measures the degenerate case and not a `crop_filter` that refuses everything. It earned
+    # its place immediately — the first version passed the target size positionally, where the
+    # signature takes `focus_x` and `focus_points`, and every refusal above still fired.
+    assert crop_filter(SOURCE_WIDTH, SOURCE_HEIGHT).startswith("crop=")
+
+
+def test_a_frame_rate_of_zero_is_refused_rather_than_divided_by(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`0/0` is what ffprobe reports for a stream whose rate it cannot determine, and the guard
+    that turns it into a named refusal was held by nothing. Without it the ratio is evaluated
+    and the caller gets `ZeroDivisionError` from inside a rate probe — `frame_duration_ms`
+    divides by the result, so the traceback would point one function further away still.
+
+    ffprobe's answer is supplied rather than hunted for, the way the symlink tests supply the
+    kernel's: what is scarce is a file that provokes it, not the refusal under test.
+    """
+    monkeypatch.setattr("hawedit.render.probe_stream", lambda *_a, **_k: "0/0")
+    with pytest.raises(RenderError, match="could not read a frame rate"):
+        frame_rate(FIXTURE)
+
+    # The control: a rate ffprobe *can* report is returned as the exact ratio, not rounded —
+    # 30000/1001 is 29.97002997…, and `delivery.ms_to_timecode` refuses the non-integer rate on
+    # purpose, which it can only do if it is told the truth.
+    monkeypatch.setattr("hawedit.render.probe_stream", lambda *_a, **_k: "30000/1001")
+    assert frame_rate(FIXTURE) == 30000 / 1001

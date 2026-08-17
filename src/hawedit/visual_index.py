@@ -37,6 +37,7 @@ from itertools import pairwise
 from typing import Final, Protocol
 
 from hawedit.registry import resolve_role
+from hawedit.transcripts import validate_media_id
 
 __all__ = [
     "DECLARED_SAMPLING_FPS",
@@ -46,6 +47,7 @@ __all__ = [
     "REFERENCE_FPS",
     "RETRIEVE_K",
     "TEMPORAL_PATCH_FRAMES",
+    "VIDEOCHAT3_3090TI_MAX_FRAMES",
     "RerankedHit",
     "SceneWindow",
     "VisualEmbedding",
@@ -60,6 +62,9 @@ __all__ = [
 
 # §3 Stage 2, verbatim: "Reference settings run ~1 fps with a maximum of 64 frames".
 MAX_FRAMES_PER_WINDOW: Final = 64
+# Measured on the production RTX 3090 Ti with VideoChat3-4B: 8 frames succeeded at 21.57 GiB;
+# 9 frames OOMed. This is a consumer capacity below §3's general Stage 2 ceiling. D-138.
+VIDEOCHAT3_3090TI_MAX_FRAMES: Final = 8
 REFERENCE_FPS: Final = 1.0
 
 # The other end of the rate, and it is not §3's — it is the checkpoints'. All four §7 visual
@@ -153,6 +158,11 @@ class SceneWindow:
     fps: float = REFERENCE_FPS
 
     def __post_init__(self) -> None:
+        # ``window_id`` is used as an extraction-directory component by Qwen, TimeLens and the
+        # composed visual pipeline after translating its logical ``:`` separators.  Enforce the
+        # shared portable identifier contract at the type boundary so a directly constructed or
+        # injected window cannot escape any of those work roots.
+        validate_media_id(self.media_id)
         if self.fps < REFERENCE_FPS:
             raise ValueError(
                 f"window {self.window_id} samples at {self.fps} fps, below §3 Stage 2's "
@@ -229,6 +239,7 @@ def plan_scene_windows(
     duration_ms: int,
     shot_cuts_ms: Sequence[int],
     fps: float = REFERENCE_FPS,
+    *,
     max_frames: int = MAX_FRAMES_PER_WINDOW,
 ) -> tuple[SceneWindow, ...]:
     """Turn Stage 0's shot cuts into windows that tile the media and fit the ceiling.
@@ -244,19 +255,24 @@ def plan_scene_windows(
     `max_frames` defaults to §3's `MAX_FRAMES_PER_WINDOW` and may only be lowered. It exists
     because §3's ceiling and the Path B reader's memory are in tension on real hardware:
     measured on hawapc01, `MCG-NJU/VideoChat3-4B` reads at most **8** frames per window on a
-    23.99 GiB 3090 Ti, and the demand is quadratic in frames (D-106, `BLOCKED.md` #17). Planning
+    23.99 GiB 3090 Ti, and the demand is quadratic in frames (D-138, `BLOCKED.md` #17). Planning
     windows the reader cannot read is the failure that stopped the 38-minute run; planning
     smaller ones is the only option that neither lowers §3's constant nor truncates a window at
     read time, both of which this repo refuses elsewhere.
 
     A lower ceiling changes what a window *is*: more of them, each seeing less context, so
     §8.2's Recall@K is then measured on a different retrieval unit than §3 describes. That is a
-    real cost, recorded rather than hidden. D-108.
+    real cost, recorded rather than hidden. D-143.
 
     Raises:
         VisualIndexError: `duration_ms` is not positive, a shot cut is invalid, or `max_frames`
             is outside `[TEMPORAL_PATCH_FRAMES, MAX_FRAMES_PER_WINDOW]`.
     """
+    if isinstance(max_frames, bool) or not isinstance(max_frames, int):
+        raise VisualIndexError(
+            "max_frames must be an exact integer in "
+            f"{TEMPORAL_PATCH_FRAMES}..{MAX_FRAMES_PER_WINDOW}, got {max_frames!r}"
+        )
     if not TEMPORAL_PATCH_FRAMES <= max_frames <= MAX_FRAMES_PER_WINDOW:
         raise VisualIndexError(
             f"max_frames={max_frames} is outside {TEMPORAL_PATCH_FRAMES}.."
@@ -293,16 +309,20 @@ def plan_scene_windows(
         cursor = start
         for window_index in range(parts):
             length = base + 1 if window_index < remainder else base
-            windows.append(
-                SceneWindow(
-                    media_id=media_id,
-                    scene_index=scene_index,
-                    window_index=window_index,
-                    in_ms=cursor,
-                    out_ms=cursor + length,
-                    fps=fps,
-                )
+            window = SceneWindow(
+                media_id=media_id,
+                scene_index=scene_index,
+                window_index=window_index,
+                in_ms=cursor,
+                out_ms=cursor + length,
+                fps=fps,
             )
+            if window.frame_count > max_frames:
+                raise VisualIndexError(
+                    f"planner produced {window.frame_count} frames for {window.window_id}, past "
+                    f"the selected consumer capacity {max_frames}"
+                )
+            windows.append(window)
             cursor += length
 
     plan = tuple(windows)
@@ -552,7 +572,7 @@ def rerank_and_keep(
     # `retrieve` slices `scored[:k]` and a negative k drops the tail instead of keeping a head.
     # Retrieving fewer candidates than the survivor count cannot produce `keep` survivors — that
     # is arithmetic, not a chosen threshold — so it is refused here rather than silently
-    # shortening the slice the same way D-037 clause 4 forbids. D-090.
+    # shortening the slice the same way D-037 clause 4 forbids. D-102.
     if k < keep:
         raise VisualIndexError(
             f"k={k} retrieves fewer candidates than the {keep} survivors §3 Stage 2 asks for, so "

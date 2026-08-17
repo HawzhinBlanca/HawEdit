@@ -198,7 +198,7 @@ def test_the_evidence_file_records_real_counts(lexicon: tuple[str, ...]) -> None
     504, and the file's own `constructible_joined_forms: 24390` proved it, since
     24894 − 504 = 24390 while 24894 − 491 = 24403. Two adversarial passes reported the
     discrepancy and each got the true value wrong in turn. Recomputing is the only version of
-    this test that could have caught it. D-089.
+    this test that could have caught it. D-099.
     """
     evidence = Path(__file__).resolve().parents[1] / "evidence" / "waw-separation.md"
     body = evidence.read_text(encoding="utf-8")

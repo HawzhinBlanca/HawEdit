@@ -391,8 +391,11 @@ def test_the_decode_can_produce_a_token_the_reference_text_never_used() -> None:
 # and it reaches the gate only transitively, so leaning the gate on it would be a supply-chain
 # decision taken for a test's convenience.
 
+
 _ORACLE_TOLERANCE = 1e-9
 # One inclusive frame range per token, in token order — what both answers reduce to.
+
+
 _Spans = tuple[tuple[int, int], ...]
 
 

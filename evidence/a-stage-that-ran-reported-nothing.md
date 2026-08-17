@@ -22,7 +22,7 @@ discovery=None if merged else _STAGE_3_NOTHING_FOUND
 ```
 
 So `null` means "produced candidates" in one run and "never attempted" in another, and only
-`candidates` disambiguates. Same shape as D-100 (the readiness renderer) and D-110 (the transcript's
+`candidates` disambiguates. Same shape as D-100 (the readiness renderer) and D-145 (the transcript's
 gaps): the fact existed and the field a human reads did not carry it.
 
 ## The change

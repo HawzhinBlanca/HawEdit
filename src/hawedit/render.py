@@ -20,6 +20,11 @@ for NVENC on a machine without it and getting x264 anyway means a throughput mea
 is quietly about the wrong encoder — the same class of mistake §3 Stage 1 warns about with
 published RTF figures. Ask for what is not there and it raises.
 
+**It never encodes into the client-visible path.** ffmpeg writes a private sibling, that file
+is measured, and only then is it linked into place with write-once semantics. An interrupted
+encode leaves no plausible partial MP4, and a concurrent worker cannot replace the artifact
+that won the name first.
+
 The burn-in goes through `captions.subtitle_filter`, which hard-codes `shaping=complex` and an
 explicit `fontsdir`. §4.3.1 is emphatic that `auto` must not be relied on and §4.3.4 that
 fontconfig must not be trusted to find the font, and the golden render (§4.3.6) proves the
@@ -28,6 +33,7 @@ difference is real on this build rather than theoretical.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -38,8 +44,9 @@ from pathlib import Path
 from typing import Final
 
 from hawedit.captions import (
+    FontCoverageError,
+    assert_ass_fonts_cover_kurdish,
     assert_captions_within_clip,
-    assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
     find_ffmpeg,
     subtitle_filter,
@@ -85,6 +92,20 @@ ENCODER_PROBE_SIZE: Final = (VERTICAL_WIDTH, VERTICAL_HEIGHT)
 
 class RenderError(RuntimeError):
     """Raised when Stage 6 cannot produce a clip it would be honest to ship."""
+
+
+def _publish_render(staging: Path, output: Path) -> None:
+    """Atomically publish one verified render without replacing a competing artifact."""
+    try:
+        # Same-directory hard-link publication is atomic and refuses EEXIST on both POSIX
+        # and Windows. os.replace would be atomic but would silently overwrite the winner.
+        os.link(staging, output)
+    except FileExistsError as exc:
+        raise RenderError(
+            f"refusing to overwrite render artifact {output}; another job published it"
+        ) from exc
+    except OSError as exc:
+        raise RenderError(f"could not atomically publish render artifact {output}: {exc}") from exc
 
 
 class Reframe(Enum):
@@ -286,8 +307,8 @@ def frame_rate(video: Path, ffmpeg: Path | None = None) -> float:
     """`video`'s frame rate, from `r_frame_rate`, kept as the exact ratio ffprobe reports.
 
     `30000/1001` is 29.97002997…, and rounding it to 30 here is the difference between an EDL
-    that conforms and one that drifts — `delivery.ms_to_timecode` refuses the non-integer rate
-    on purpose, and can only do so if it is told the truth about it.
+    that selects drop-frame numbering and one that drifts. `delivery.ms_to_timecode` can make
+    that decision only if it is told the source's true rate.
     """
     try:
         rate = probe_stream(video, "stream=r_frame_rate", ffmpeg, video_only=True)
@@ -304,7 +325,7 @@ def frame_rate(video: Path, ffmpeg: Path | None = None) -> float:
 
 
 def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> None:
-    """Refuse an encode that came out shorter than the clip it claims to be.
+    """Refuse an encode whose duration differs from the requested clip by over one frame.
 
     §8.3: "Boundary invariant: assert `final_in <= anchor_in` and `final_out >= anchor_out` on
     every shipped clip." A file short of `requested_ms` ends before the clip's own `final_out`,
@@ -313,7 +334,9 @@ def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> N
 
     One frame of slack in each direction, measured rather than assumed: correct cuts of the
     real fixture came back exact except one, which was over by 40 ms — precisely one frame at
-    25 fps. Only the short side is a defect; a frame of container rounding is not.
+    25 fps. A longer file is also a defect: it can expose trailing source footage that has no
+    corresponding transcript, captions, editorial review, or consent. One frame of container
+    rounding in either direction is not.
     """
     if measured_ms < requested_ms - frame_ms:
         raise RenderError(
@@ -321,6 +344,12 @@ def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> N
             f"claims to be (tolerance one frame, {frame_ms} ms). The clip ends before its own "
             f"final_out, which is mid-sentence — §8.3 asserts Kurdish invariant #2 on every "
             f"shipped clip, and the shipped clip is this file."
+        )
+    if measured_ms > requested_ms + frame_ms:
+        raise RenderError(
+            f"the encoded file is {measured_ms} ms, longer than the {requested_ms} ms clip it "
+            f"claims to be (tolerance one frame, {frame_ms} ms). Trailing source footage "
+            f"outside the reviewed clip must never be published."
         )
 
 
@@ -337,6 +366,7 @@ def render_clip(
     focus_points: Sequence[tuple[int, int]] = (),
     ffmpeg: Path | None = None,
     crf: int = 20,
+    reframe: Reframe | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -347,14 +377,33 @@ def render_clip(
         BoundaryInvariantViolated: Kurdish invariant #2 fails for this clip.
         ValueError: the clip has not cleared QC, or has no editorial/output block.
         MissingRtlStack: this ffmpeg cannot shape Arabic script (§4.3.2).
-        FontCoverageError: `fonts_dir` has no font that can draw Kurdish (§4.3.4).
         RenderError: no ffmpeg, the requested encoder is absent, or the encode failed.
     """
     clip.assert_renderable()
 
+    effective_reframe = (
+        (Reframe.FACE_TRACKED if focus_points else Reframe.STATIC_CENTRE)
+        if reframe is None
+        else reframe
+    )
+    if not isinstance(effective_reframe, Reframe):
+        raise TypeError("reframe must be a Reframe value")
+    if effective_reframe is Reframe.STATIC_CENTRE and focus_points:
+        raise ValueError("static reframe mode cannot carry focus points")
+    if effective_reframe is not Reframe.STATIC_CENTRE and not focus_points:
+        raise ValueError("dynamic reframe mode needs focus points")
+
+    # The final name is a write-once publication target, never ffmpeg's working file. Checking
+    # before the expensive probes/encode gives deterministic reruns, while the atomic link at
+    # publication time closes the race with another worker that passes this same preflight.
+    if os.path.lexists(output):
+        raise RenderError(
+            f"refusing to overwrite render artifact {output}; choose a new clip/run id"
+        )
+
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
-        raise RenderError("no ffmpeg available — run scripts/fetch-ffmpeg.sh or set HAWEDIT_FFMPEG")
+        raise RenderError("no ffmpeg available — run hawedit-ffmpeg-setup or set HAWEDIT_FFMPEG")
 
     version = subprocess.run(
         [str(binary), "-hide_banner", "-version"], capture_output=True, text=True, check=False
@@ -374,16 +423,20 @@ def render_clip(
 
     if not ass_path.exists():
         raise RenderError(f"no subtitle file at {ass_path} — §4.3 captions are not optional")
-    # §4.3.4: the font is verified where the burn happens, not only in a test against the one
-    # font in the checkout. `_runtime_fonts_dir()` resolves to an installed location off a real
-    # deployment, and nothing looked at what was in it. Same reason as assert_rtl_stack above.
-    assert_fonts_dir_covers_kurdish(fonts_dir)
+    try:
+        ass_text = ass_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise RenderError(f"cannot read subtitle file {ass_path}: {exc}") from exc
 
     duration_ms = clip.out_ms - clip.in_ms
     # Subtitles are burned into a stream ffmpeg has already cut, so t=0 is the start of the
     # clip. A file carrying source-absolute stamps draws nothing and ships a caption-free MP4;
     # checked here on whatever file arrives, not only where `build_ass` writes one.
-    assert_captions_within_clip(ass_path.read_text(encoding="utf-8"), duration_ms)
+    assert_captions_within_clip(ass_text, duration_ms)
+    try:
+        assert_ass_fonts_cover_kurdish(ass_text, fonts_dir)
+    except FontCoverageError as exc:
+        raise RenderError(str(exc)) from exc
     # Measured on the real fixture: asking for 0..8000 ms of a 4162 ms source makes ffmpeg
     # exit 0 and write 4180 ms. Nothing in the numbers is wrong — the clip is internally
     # consistent — so the only place to catch it is against the media itself, before encoding.
@@ -409,45 +462,61 @@ def render_clip(
         ]
     )
 
-    result = subprocess.run(
-        [
-            str(binary),
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-threads",
-            "1",  # §6: parallelism across clips, not inside one encode
-            "-ss",
-            f"{clip.in_ms / 1000:.3f}",
-            "-t",
-            f"{duration_ms / 1000:.3f}",
-            "-i",
-            str(source),
-            "-vf",
-            filters,
-            "-c:v",
-            encoder.value,
-            "-crf",
-            str(crf),
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-y",
-            str(output),
-        ],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0 or not output.exists():
-        raise RenderError(
-            f"encode failed ({result.returncode}): "
-            f"{result.stderr.decode('utf-8', 'replace')[-800:]}"
-        )
+    # Keep the container suffix: ffmpeg infers its muxer from the path. NamedTemporaryFile is
+    # closed before ffmpeg starts so Windows can replace its empty placeholder with the encode.
+    with tempfile.NamedTemporaryFile(
+        dir=output.parent,
+        prefix=f".{output.stem}.",
+        suffix=output.suffix,
+        delete=False,
+    ) as staging_file:
+        staging = Path(staging_file.name)
 
-    # The artifact, measured. Until this existed, `duration_ms` was the request echoed back.
-    measured_ms = probe_duration_ms(output, binary)
-    assert_encoded_span(measured_ms, duration_ms, frame_duration_ms(output, binary))
+    try:
+        result = subprocess.run(
+            [
+                str(binary),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-threads",
+                "1",  # §6: parallelism across clips, not inside one encode
+                "-ss",
+                f"{clip.in_ms / 1000:.3f}",
+                "-t",
+                f"{duration_ms / 1000:.3f}",
+                "-i",
+                str(source),
+                "-vf",
+                filters,
+                "-c:v",
+                encoder.value,
+                "-crf",
+                str(crf),
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-y",
+                str(staging),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0 or not staging.exists() or staging.stat().st_size == 0:
+            raise RenderError(
+                f"encode failed ({result.returncode}): "
+                f"{result.stderr.decode('utf-8', 'replace')[-800:]}"
+            )
+
+        # Measure before publication. A short/broken file is never visible under the delivery
+        # name, even briefly.
+        measured_ms = probe_duration_ms(staging, binary)
+        assert_encoded_span(measured_ms, duration_ms, frame_duration_ms(staging, binary))
+
+        _publish_render(staging, output)
+    finally:
+        staging.unlink(missing_ok=True)
 
     return RenderResult(
         clip_id=clip.clip_id,
@@ -456,9 +525,9 @@ def render_clip(
         height=VERTICAL_HEIGHT,
         requested_duration_ms=duration_ms,
         measured_duration_ms=measured_ms,
-        # Named for what it is. §3 Stage 6's speaker tracking needs diarization, which does
-        # not run (`BLOCKED.md` #4), so no clip this function produces may claim it.
-        reframe=Reframe.FACE_TRACKED if focus_points else Reframe.STATIC_CENTRE,
+        # The explicit mode was validated against the crop evidence before any encode work,
+        # so the artifact cannot claim speaker/face tracking without time-varying points.
+        reframe=effective_reframe,
         encoder=encoder,
         captions_burned_in=True,
         ffmpeg_version=version,

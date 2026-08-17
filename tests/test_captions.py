@@ -30,10 +30,13 @@ from hawedit.captions import (
     DEFAULT_MAX_CHARS_PER_LINE,
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
+    CaptionsOutsideClip,
     CaptionStyle,
     FontCoverageError,
     GoldenReferenceMissing,
     MissingRtlStack,
+    assert_ass_fonts_cover_kurdish,
+    assert_captions_within_clip,
     assert_font_covers_kurdish,
     assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
@@ -51,6 +54,7 @@ from hawedit.transcripts import Word
 
 FONT = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoNaskhArabic-Regular.ttf"
 
+
 FULL_BUILDCONF = """
   configuration:
     --prefix=/usr
@@ -60,6 +64,7 @@ FULL_BUILDCONF = """
     --enable-libharfbuzz
     --enable-libx264
 """
+
 
 LDD_OUTPUT = """
     libass.so.9 => /usr/lib/libass.so.9
@@ -388,6 +393,67 @@ def test_no_sentences_is_refused() -> None:
         build_ass(())
 
 
+# --- §4.3 bounds: six refusals in this module that no test held --------------------------------
+#
+# Measured by neutralising each in a shadow copy of src/hawedit and running this file with
+# tests/test_delivery.py, tests/test_render.py and tests/test_review_findings.py — the callers
+# that turned out to hold guards elsewhere. These six reddened nothing in any of them.
+
+
+def test_a_sentence_starting_before_the_clip_is_refused() -> None:
+    """It "would need a negative timestamp, which means it is speech from outside this clip".
+
+    `build_ass` is handed sentences and a `clip_in_ms` to subtract. Nothing else reconciles the
+    two, so without this the cue is emitted with a negative start and libass draws it from the
+    first frame — a caption for words the clip does not contain, presented as if it did.
+    """
+    with pytest.raises(CaptionsOutsideClip, match="starts before the clip"):
+        build_ass((A_SENTENCE,), clip_in_ms=A_SENTENCE.start_ms + 1)
+
+
+def test_a_sentence_running_past_the_end_of_the_clip_is_refused() -> None:
+    """The other end of the same reconciliation, and the one with no negative number to give it
+    away: the cue is well-formed and simply outlives the video."""
+    duration = A_SENTENCE.end_ms - A_SENTENCE.start_ms
+    with pytest.raises(CaptionsOutsideClip, match="runs past the end of the clip"):
+        build_ass((A_SENTENCE,), clip_in_ms=A_SENTENCE.start_ms, clip_duration_ms=duration - 1)
+    # The control: exactly filling the clip is allowed, so the boundary is `>` and not `>=`.
+    build_ass((A_SENTENCE,), clip_in_ms=A_SENTENCE.start_ms, clip_duration_ms=duration)
+
+
+def test_a_caption_file_with_no_dialogue_lines_is_refused() -> None:
+    """Kurdish invariant #4 is that the burn happens; a file libass reads as empty draws
+    nothing, and the clip ships silently uncaptioned."""
+    with pytest.raises(CaptionsOutsideClip, match="no Dialogue lines"):
+        assert_captions_within_clip("[Script Info]\n[Events]\n", clip_duration_ms=5_000)
+
+
+def test_a_non_positive_wrap_width_is_refused() -> None:
+    """`max_chars` is the line-break width §4.3.5 says to compute ourselves. At zero every word
+    is longer than the limit, so each takes its own line and the wrap becomes one word per line
+    rather than an error anyone would see."""
+    for width in (0, -1):
+        with pytest.raises(ValueError, match="max_chars must be positive"):
+            wrap_caption_lines(A_SENTENCE.words, max_chars=width)
+
+
+def test_a_missing_font_file_is_refused_by_name(tmp_path: Path) -> None:
+    """The coverage check reads the font to decide whether Kurdish renders. Absent, `TTFont`
+    raises about a file handle rather than about the font, and the message a build produces is
+    what tells an operator which of the two failed."""
+    with pytest.raises(FileNotFoundError, match="no font at"):
+        assert_font_covers_kurdish(tmp_path / "absent.ttf")
+
+
+def test_a_missing_candidate_render_is_an_assertion_not_a_comparison(tmp_path: Path) -> None:
+    """§4.3.6's golden test compares two files. The reference has its own refusal one line up;
+    this is the other operand, and without it the comparison reads a file that is not there."""
+    reference = tmp_path / "golden.png"
+    reference.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 64)
+    with pytest.raises(AssertionError, match="no candidate render"):
+        compare_golden_render(reference, tmp_path / "absent.png")
+
+
 def test_braces_in_text_are_escaped_so_they_are_not_read_as_override_tags() -> None:
     tricky = Sentence(words=words(("{\\b1}", 0, 200)), complete=True)
     ass = build_ass((tricky,))
@@ -426,7 +492,10 @@ def test_a_missing_reference_says_how_to_generate_it(tmp_path: Path) -> None:
 
 # --- §4.3.6 the golden render, against a real ffmpeg -------------------------------------
 
+
 GOLDEN = Path(__file__).resolve().parent / "golden" / "kurdish-caption.png"
+
+
 FONTS_DIR = FONT.parent
 
 
@@ -790,7 +859,7 @@ def test_a_fonts_directory_whose_only_font_cannot_draw_kurdish_is_refused(
     tmp_path: Path,
 ) -> None:
     maimed = _font_without(tmp_path, 0x06A9)
-    with pytest.raises(FontCoverageError, match=r"Closest is .*U\+06A9"):
+    with pytest.raises(FontCoverageError, match=r"closest failure: .*U\+06A9"):
         assert_fonts_dir_covers_kurdish(maimed.parent)
 
 
@@ -805,6 +874,78 @@ def test_one_covering_font_beside_a_broken_one_is_accepted(tmp_path: Path) -> No
     assert assert_fonts_dir_covers_kurdish(maimed.parent) == shipped_copy
 
 
+def _font_with_family(directory: Path, family: str, filename: str = "covering.ttf") -> Path:
+    """Copy the shipped font while changing only its authoritative family names."""
+    from fontTools.ttLib import TTFont
+
+    output = directory / filename
+    font = TTFont(FONT)
+    names = font["name"]
+    names.removeNames(nameID=1)
+    names.removeNames(nameID=16)
+    names.setName(family, 1, 3, 1, 0x409)
+    font.save(output)
+    font.close()
+    return output
+
+
+def test_the_shipped_ass_family_binds_to_the_shipped_covering_font() -> None:
+    ass = build_ass((_golden_sentence(),), font_name="Noto Naskh Arabic")
+    assert assert_ass_fonts_cover_kurdish(ass, FONTS_DIR) == (FONT,)
+
+
+def test_an_unrelated_covering_font_cannot_certify_the_requested_broken_family(
+    tmp_path: Path,
+) -> None:
+    """The exact D-133 shortfall: directory coverage and selected-font coverage differ."""
+    requested_but_broken = _font_without(tmp_path, 0x06A9)
+    unrelated_covering = _font_with_family(
+        requested_but_broken.parent, "Unrelated Covering Family", "ZZ-covering.ttf"
+    )
+    assert assert_fonts_dir_covers_kurdish(requested_but_broken.parent) == unrelated_covering
+
+    ass = build_ass((_golden_sentence(),), font_name="Noto Naskh Arabic")
+    with pytest.raises(FontCoverageError, match=r"Noto Naskh Arabic.*U\+06A9"):
+        assert_ass_fonts_cover_kurdish(ass, requested_but_broken.parent)
+
+
+def test_a_missing_ass_family_is_refused_instead_of_using_host_fallback(tmp_path: Path) -> None:
+    _font_with_family(tmp_path, "Another Family")
+    ass = build_ass((_golden_sentence(),), font_name="Missing Family")
+    with pytest.raises(FontCoverageError, match="no font.*Missing Family"):
+        assert_ass_fonts_cover_kurdish(ass, tmp_path)
+
+
+def test_two_files_claiming_the_used_family_are_refused_as_ambiguous(tmp_path: Path) -> None:
+    _font_with_family(tmp_path, "Noto Naskh Arabic", "first.ttf")
+    _font_with_family(tmp_path, "Noto Naskh Arabic", "second.ttf")
+    ass = build_ass((_golden_sentence(),), font_name="Noto Naskh Arabic")
+    with pytest.raises(FontCoverageError, match="multiple directory fonts.*first.ttf.*second.ttf"):
+        assert_ass_fonts_cover_kurdish(ass, tmp_path)
+
+
+def test_an_undefined_dialogue_style_is_refused_before_font_resolution() -> None:
+    ass = build_ass((_golden_sentence(),)).replace(",Kurdish,,0,0,0,,", ",Undefined,,0,0,0,,")
+    with pytest.raises(FontCoverageError, match="undefined style.*Undefined"):
+        assert_ass_fonts_cover_kurdish(ass, FONTS_DIR)
+
+
+def test_a_malformed_style_format_is_refused() -> None:
+    ass = build_ass((_golden_sentence(),)).replace(
+        "Format: Name, Fontname, Fontsize", "Format: Name, Name, Fontsize"
+    )
+    with pytest.raises(FontCoverageError, match="style Format.*Fontname"):
+        assert_ass_fonts_cover_kurdish(ass, FONTS_DIR)
+
+
+def test_an_inline_font_family_override_is_refused() -> None:
+    ass = build_ass((_golden_sentence(),)).replace(
+        GOLDEN_CAPTION_TEXT, rf"{{\fnAnother Family}}{GOLDEN_CAPTION_TEXT}"
+    )
+    with pytest.raises(FontCoverageError, match=r"inline \\fn"):
+        assert_ass_fonts_cover_kurdish(ass, FONTS_DIR)
+
+
 def test_the_burn_verifies_the_font_directory_it_was_handed() -> None:
     """This is the whole point of D-133: `assert_font_covers_kurdish` had **no caller in
     `src/`**. It ran in one test against one hard-coded path while `render_clip` burned
@@ -814,13 +955,14 @@ def test_the_burn_verifies_the_font_directory_it_was_handed() -> None:
     Asserted on the source, in the shape D-119's entry-point test uses: the call has to be
     in `render_clip`, not merely imported somewhere in the module.
     """
-    assert "assert_fonts_dir_covers_kurdish(fonts_dir)" in _render_clip_source(), (
-        "render_clip does not verify the font directory it burns from; §4.3.4's check would "
-        "again be a function nothing in the product calls"
+    assert "assert_ass_fonts_cover_kurdish(ass_text, fonts_dir)" in _render_clip_source(), (
+        "render_clip does not bind the ASS family to a covering font in its fonts directory; "
+        "§4.3.4's check would certify a font libass never selects"
     )
 
 
 # --- D-167: what a break inside a surface form costs, in pixels ------------------------------
+
 
 _TWO_WORDS = ("یەکەم", "دووەم")
 
@@ -884,3 +1026,35 @@ def test_a_break_inside_a_caption_line_drops_everything_after_it(tmp_path: Path)
         "the cue-time readback disagrees with the intact file, which would have made this "
         "detectable without looking at pixels — it did not, which is why the guard is upstream"
     )
+
+
+def test_the_required_set_contains_kurdish_letters_the_normalizer_produces() -> None:
+    from hawedit.normalize import normalize_sorani
+
+    emitted = {
+        character
+        for character in normalize_sorani(GOLDEN_CAPTION_TEXT + " كوردي")
+        if unicodedata.category(character).startswith("L") and ord(character) > 0x0660
+    }
+    assert emitted <= KURDISH_REQUIRED_GLYPHS, sorted(emitted - KURDISH_REQUIRED_GLYPHS)
+
+
+def test_the_required_set_explicitly_includes_kurdish_keheh_and_yeh() -> None:
+    assert {"ک", "ی"} <= KURDISH_REQUIRED_GLYPHS
+
+
+def test_the_shipped_fonts_directory_has_a_covering_font() -> None:
+    assert assert_fonts_dir_covers_kurdish(FONT.parent) == FONT
+
+
+def test_an_empty_or_noncovering_fonts_directory_is_refused(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(FontCoverageError, match="no font file"):
+        assert_fonts_dir_covers_kurdish(empty)
+
+    only_naskh = tmp_path / "only-naskh"
+    only_naskh.mkdir()
+    (only_naskh / FONT.name).write_bytes(FONT.read_bytes())
+    with pytest.raises(FontCoverageError, match=r"U\+1F600"):
+        assert_fonts_dir_covers_kurdish(only_naskh, required=frozenset({"😀"}))

@@ -22,6 +22,7 @@ requires be rejected.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,29 @@ def a_window(in_ms: int = 1_400, duration_ms: int = 1_400, fps: float = 2.0) -> 
         out_ms=in_ms + duration_ms,
         fps=fps,
     )
+
+
+def test_reader_close_is_idempotent_and_next_use_reloads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    released: list[str] = []
+    loaded = (object(), object())
+
+    def unused_frames(_window: SceneWindow) -> WindowFrames:
+        raise AssertionError("close must not read frames")
+
+    reader = VideoChat3Reader(tmp_path, unused_frames, lambda _window: 0.5, device="cuda:0")
+    reader._loaded = (object(), object())
+    monkeypatch.setattr("hawedit.video_reader.release_cuda_model_memory", released.append)
+    monkeypatch.setattr(
+        "hawedit.video_reader.load_processor_and_model", lambda *_args, **_kwargs: loaded
+    )
+
+    reader.close()
+    reader.close()
+    assert released == ["cuda:0"]
+    assert reader._loaded is None
+    assert reader._load() is loaded
 
 
 def lines(at: float = 0.0, text: str = "an observation") -> dict[str, tuple[float, str]]:
@@ -206,12 +230,66 @@ def test_a_model_outside_path_bs_role_is_refused(tmp_path: Path) -> None:
 
 
 def test_missing_weights_are_refused_naming_the_fetch_script(tmp_path: Path) -> None:
-    with pytest.raises(EmbedderUnavailable, match="fetch-models.sh"):
+    with pytest.raises(EmbedderUnavailable, match="hawedit-fetch-models"):
         VideoChat3Reader(
             tmp_path / "absent",
             read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),
             score_window=lambda w: 0.5,
         )
+
+
+def test_videochat_loader_uses_its_exact_model_type_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text('{"model_type":"lightglue"}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hawedit.qwen_visual.verified_checkpoint_access",
+        lambda _model_id, model_dir: nullcontext(model_dir),
+    )
+    reader = VideoChat3Reader(
+        tmp_path,
+        read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),
+        score_window=lambda w: 0.5,
+    )
+    with pytest.raises(RuntimeError, match="unapproved"):
+        reader._load()
+
+
+def test_videochat_proves_checkpoint_integrity_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.json").write_text(
+        '{"model_type":"videochat3","text_config":{"model_type":"qwen3"}}',
+        encoding="utf-8",
+    )
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("integrity sentinel")
+
+    monkeypatch.setattr("hawedit.qwen_visual.verified_checkpoint_access", refuse)
+    reader = VideoChat3Reader(
+        tmp_path,
+        read_frames=lambda w: WindowFrames(w, (Path("f.jpg"),)),
+        score_window=lambda w: 0.5,
+    )
+    with pytest.raises(RuntimeError, match="integrity sentinel"):
+        reader._load()
+
+
+def test_videochat_backend_failures_become_path_b_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = VideoChat3Reader(
+        tmp_path,
+        read_frames=lambda window: WindowFrames(window, (Path("f0.jpg"), Path("f1.jpg"))),
+        score_window=lambda _window: 0.5,
+    )
+    failure = RuntimeError("CUDA out of memory")
+    monkeypatch.setattr(reader, "_load", lambda: (_ for _ in ()).throw(failure))
+
+    with pytest.raises(PathBError, match="CUDA out of memory") as caught:
+        reader.read_window(a_window())
+    assert caught.value.__cause__ is failure
 
 
 # --- the wiring, driven through a stub processor and model ----------------------------------
@@ -391,7 +469,7 @@ def test_a_window_whose_frames_the_processor_resampled_stops_the_read(tmp_path: 
         reader.read_window(window)
 
 
-# --- D-118: one unreadable window discarded every other reading -------------------------------
+# --- D-156: one unreadable window discarded every other reading -------------------------------
 
 # Verbatim from `MCG-NJU/VideoChat3-4B` on a survivor of the real 38-minute file — a static logo
 # card. Six well-formed dimensions, and a time *span* where SV6D_PROMPT asks for a bare number.
@@ -472,6 +550,33 @@ def test_read_scenes_reports_nothing_unreadable_when_every_window_reads(tmp_path
 
     assert len(produced.readings) == 3
     assert produced.unreadable == ()
+
+
+def test_read_scenes_bounds_and_single_lines_a_path_b_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.path_b import MAX_UNREADABLE_REASON_CHARS
+
+    reader, _, _ = a_reader(tmp_path)
+    original = reader.read_window
+    secret_tail = "hf_" + ("S" * 64)
+
+    def refuse_one(window: SceneWindow) -> Any:
+        if window.scene_index == 1:
+            raise PathBError("private\x00\n" + ("x" * 1_000_000) + secret_tail)
+        return original(window)
+
+    monkeypatch.setattr(reader, "read_window", refuse_one)
+    produced = reader.read_scenes(_three_windows())
+
+    assert len(produced.readings) == 2
+    assert len(produced.unreadable) == 1
+    reason = produced.unreadable[0].reason
+    assert len(reason) == MAX_UNREADABLE_REASON_CHARS
+    assert reason.startswith("PathBError: private ")
+    assert reason.endswith("…")
+    assert secret_tail not in reason
+    assert not any(character in reason for character in ("\x00", "\n", "\t"))
 
 
 # --- a span in the time field, measured on the real 38-minute run (D-182) --------------------

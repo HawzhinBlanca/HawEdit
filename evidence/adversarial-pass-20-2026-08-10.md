@@ -1,145 +1,59 @@
-# Adversarial pass #20 — M2.8's credential panel and billed judge
+# Adversarial pass 20 — scene-window paths and TimeLens status
 
-> Measured 2026-08-10 on hawapc01 against `0e1ad43`.
+Date: 2026-08-10
+Baseline: `a713dfd23e6265ef146d2ec3d2c712dbbbac05e0`
 
-M2.8 is **DONE** for *"Gemini credential panel + the real §3 Stage 4 judge"*, and the cell claims:
-the panel *"verifies a key against Google before storing it, refuses any target git tracks, and
-never prints it"*; the judge has *"schema-enforced output, real `countTokens` before the billed
-call, temperature 0, bounded retries on transient failures only, and §3's ZDR gate as a required
-value"*. One mutation per claim.
+## Finding
 
-## The claim it leads with had no test
+`SceneWindow.media_id` was accepted without the repository's portable identifier validation.
+Three production consumers derive extraction directories from `window.window_id` by translating
+only `:` to `_`:
 
-```
-$ grep -n "credentials.main\|main(\[" tests/test_credentials.py
-(nothing)
-```
+- `VisualFrameCache` in `visual_pipeline.py`;
+- `QwenVisualEmbedder.embed_window` in `qwen_visual.py`;
+- the TimeLens frame loader composed by `pipeline.py`.
 
-`main()` is where "verify, then store" is sequenced, and nothing drove it. Two mutations survived:
+The public type therefore made a path claim its consumers could not safely uphold. This exact
+control reproduced the escape before the fix:
 
-```
-SURVIVED  a key that Google rejected is stored anyway
-SURVIVED  the key is stored before it is verified
-```
-
-The units around it were well tested — `validate_gemini_key` against four transports,
-`write_credential` against symlinks, hardlinks, tracked paths and permissive modes, `mask` against
-two keys — and the gap was exactly between them.
-
-Four tests now drive the panel with the network and the writer replaced by recorders. The ordering
-one asserts `order == ["validate", "write"]`, because asserting only that the key *was* stored is
-satisfied by a panel that stores first.
-
-## The TOCTOU half of the O_NOFOLLOW reconstruction was untested
-
-```
-os.O_NOFOLLOW present: False
-_O_NOFOLLOW value on this machine: 0
-=> the identity test DOES run here (it is gated on not _O_NOFOLLOW): True
+```text
+window_id= ../../outside:s0:w0
+target= C:\safe\run\frames\..\..\outside_s0_w0
+escapes= True
 ```
 
-```
-SURVIVED  the opened file is not proved to be the file that was checked (TOCTOU)
-```
+The standard CLI happened to validate its media id first. That does not protect direct library
+use, injected adapters, a future construction site, or a deserialiser that correctly trusts the
+type's own invariants.
 
-The pre-open symlink refusal had a test; the "same file after the open" comparison did not — on the
-one platform where it runs. The race is forced by making `os.lstat` answer about a different file,
-which is what an attacker replacing `.env` between the two calls achieves.
+## Fix and discriminating controls
 
-## Two survivors were platform artefacts, measured not assumed
+`SceneWindow.__post_init__` now calls the shared `validate_media_id` before any frame arithmetic.
+The test matrix refuses:
 
-```
-mode of a file created with 0o666 on Windows: 0o666
-mode of a file created with 0o600 on Windows: 0o666
-_O_NOFOLLOW value on this machine: 0
-```
+- `../../outside` and `..\outside`;
+- a colon that would be confused with the logical ID separators;
+- a hidden filename;
+- Windows device name `CON`;
+- a trailing period.
 
-So `0o600 → 0o666` is **unobservable** here and removing `_O_NOFOLLOW` from the open flags is a
-**no-op**. Both properties are held on this platform by the pre-open refusal and by
-`assert_owner_only`'s ACL read, whose mutations are caught. Dropped from the audit with the
-measurement recorded, rather than reported as holes.
+A portable Kurdish identifier (`هەوا episode-12`) remains accepted. Testing Windows hazards on
+every host distinguishes a cross-platform contract from a POSIX-only separator check.
 
-## One mutation of mine was wrong
+Focused verification from the checkout source:
 
-`if attempt < self._max_attempts:` → `if True:` was labelled "retries are unbounded". The loop is
-bounded by `for attempt in range(1, self._max_attempts + 1)`; that line only skips the final sleep.
-The bound is tested — `test_a_rate_limit_is_retried_and_then_given_up_on` asserts exactly **3**
-`generateContent` calls. Replaced with a mutation that raises the ceiling; caught.
-
-## The audit was contaminated by the guard it was auditing
-
-First run: 18/20, with **sixteen** REDs all naming `test_writing_to_a_tracked_path_is_refused` —
-every mutation after the git-ignore one.
-
-```
-$ git status --short
- ?? a-credential-must-never-be-written-here.env
-$ cat a-credential-must-never-be-written-here.env
-# hawedit credentials. Git-ignored. Never commit this file.
-GEMINI_API_KEY=AIzaSy-not-a-real-key-0000-abcd
+```text
+155 passed
+Ruff: all checks passed
+Ruff format: 2 files already formatted
+mypy: success, no issues in 1 source file
 ```
 
-The git-ignore mutation made the guard fail open; the test wrote its probe file; and that test's
-**first** assertion is that the probe does not exist. One fail-open became an indefinitely red suite
-that only a manual `rm` of a real-looking credential file could clear — and every later mutation was
-red for the wrong reason.
+## TimeLens ledger correction
 
-D-113 chose one stray file over a deleted test, and that was right. It did not make the file
-self-healing. Removed in `finally` now, with a pre-existence message naming what to inspect. The
-check is unchanged.
-
-### The first push was refused by the gate, for the right reason
-
-The identity test was written with `pytest.skip` where the kernel has `O_NOFOLLOW` — true on the
-Linux runner, false here. CI refused the commit:
-
-```
-REFUSED: only 1372 tests passed against a floor of 1373 (1 skipped of 1373 collected). Either 1
-test(s) disappeared, or a skip condition is creeping. … a shrinking suite must be a visible edit,
-not a quieter green run.
-```
-
-It was right, and not only about the count: a guard only Windows exercises is a guard CI never
-checks, which is the same "runs on one machine" defect the floor exists to surface. `_O_NOFOLLOW` is
-patched to **0** instead, so the reconstruction branch is reached on both platforms — the constant is
-the branch's own condition, so patching it is exercising the code rather than working around it.
-Verified after the change: 26 tests in the file, **no skips**, and removing the identity comparison
-still reddens `test_the_opened_env_must_be_the_file_the_symlink_check_looked_at`.
-
-## Proof
-
-```
-baseline green: True
-
-RED  a key that Google rejected is stored anyway
-RED  the key is stored before it is verified
-RED  validation calls the API with the key in the URL instead of a header
-RED  a non-200 from the API counts as a valid key
-RED  the git-ignore check is skipped
-RED  a caller-supplied path defaults to NOT checking git
-RED  the mask returns the secret whole
-RED  the pre-open symlink refusal is dropped on platforms without O_NOFOLLOW
-RED  the opened file is not proved to be the file that was checked (TOCTOU)
-RED  a hardlinked .env is written through (the review-2 bug)
-RED  the write truncates at open, before the identity checks can run
-RED  the billed call happens without counting tokens first
-RED  the counted total is not checked against §3's tier ceiling
-RED  the judge samples instead of running at temperature 0
-RED  the response schema is not enforced on the model's output
-RED  a 400 is retried, billing twice for the same malformed request
-RED  the retry ceiling is raised
-RED  confidential material is uploaded without zero-data-retention
-
-18/18
-restored and green: True
-```
-
-## What survived the pass
-
-**Everything in `gemini.py`.** All the judge's claims — schema-enforced output, `countTokens` before
-the billed call, the tier ceiling, temperature 0, no retry on a 400, a bounded retry ceiling, and
-the ZDR gate — redden when reverted. So do every `write_credential` guard the two independent
-reviews added, except the identity test above. The failures were in the panel that sequences them
-and in the test that guards the sequence.
-
-Gate: `VERIFY OK — hawedit gate green`, 1373 tests.
+The historical M6.3 row still said TimeLens was not wired into `run_pipeline`, but the later
+composition amendment and current code contradict it. The runner selects overlapping scene
+windows, uses the canonical selected transcript slice as the query, calls `ground_all`, fuses
+relevant media-time intervals, and closes the grounder. M6.3 remains PARTIAL because accuracy on
+the labelled real-footage corpus is not accepted (`BLOCKED.md` #1), not because composition is
+missing.

@@ -17,7 +17,10 @@ on real Sorani client footage.
   persisted through the immutable transcript store. Windows automatically uses one WSL2 worker;
   Linux executes locally. The WSL request is path-confined and the output is create-once. A
   wheel-safe setup command provisions a source-fingerprinted user runtime rather than assuming
-  the process is running from a checkout.
+  the process is running from a checkout. The CTC forward now also produces its official greedy
+  hypothesis; the production router invokes rzgar for the bottom confidence quartile or material
+  disagreement, uses its correction for that segment, then CTC-realigns the final text. The full
+  route has run through the real CLI on both RTX 3090 Ti GPUs.
 - `VisualComposer` owns extraction → embedding → top-50 retrieval → rerank-all → keep 5–10 →
   VideoChat3. Only exact survivors reach Path B, and returned IDs/scores must match reranker
   provenance. Media with fewer scenes than the survivor count is refused outright, not
@@ -26,16 +29,32 @@ on real Sorani client footage.
   callers cannot bypass the survivor slice and promote an episode wholesale.
 - Stage 4 extracts up to 20 real JPEG keyframes from the exact candidate slice. The identical
   multimodal parts go through token counting and generation; text-only visual judgment refuses.
+  Each extraction owns a private namespace, so retry debris cannot become current evidence.
+- Hosted-model numeric output is accepted only with its exact JSON type. Booleans, numeric
+  strings, NaN/infinity and invalid token counts fail before ranking, fusion, billing or judging.
 - Automatic selection chooses complete contiguous sentences wholly contained by the best
   per-path-ranked survivor. A partial overlap cannot borrow a candidate's scores or SV6D.
 - TimeLens2 is wired into Stage 5 over overlapping scene windows. Window-relative spans are
   shifted to the media clock, and only evidence overlapping the anchored sentence can extend it.
 - Rendering accepts time-varying focus points from dominant-face continuity tracking and labels
   the result `face_tracked`; it no longer claims every crop is static centre.
+- Rendering requires recorded human review independently of automated QC and refuses encoded
+  duration more than one measured frame above or below the reviewed clip.
+- Canonical transcript raw/digest publication is serialized per media id across threads and
+  processes. A competing writer cannot observe the reservation before the pair is complete;
+  interrupted orphan evidence is refused rather than reconstructed.
+- A delivered clip is now one write-once directory transaction. ASS, MP4, SRT, EDL and editing
+  JSON remain private until the exact non-empty set has been flushed and atomically renamed;
+  a sidecar failure publishes no render, and concurrent workers cannot mix or replace bundles.
 - Confidential routing exists through Vertex REST with Application Default Credentials. It
   requires an attributed zero-data-retention confirmation and never places credentials in URLs.
 - A strict editorial regression manifest now requires real source media, exact paired spans,
   two named reviewers, at least 20 items and at least five items per Sorani dialect.
+- The clean-wheel dependency audit found FontTools 4.55.3 affected by CVE-2025-66034. The base
+  wheel and isolated Stage 1 WSL runtime now share the smallest fixed exact pin, 4.60.2; a fresh
+  Python 3.12 environment passes `pip check`, real Kurdish font coverage and a third-party
+  `pip-audit==2.10.1` scan with no known vulnerabilities (D-088). This is dated evidence, not a
+  claim that future advisories cannot appear.
 
 ## Remaining production blockers
 
@@ -47,32 +66,26 @@ These cannot be truthfully solved from the checkout alone:
    misleading-edit rate and judge preference remain unmeasured. Unit tests are not human review.
 3. **Cloud authorization is external.** Vertex code exists, but the project, billing, ADC,
    contractual ZDR configuration and named approver must be supplied by the operator.
-4. **Canonical-ASR model execution is still unmeasured.** The WSL2 runtime path is real and both
-   GPUs are visible, but this audit did not install/download the roughly 44 GB pair or claim an
-   unrun full-model result. Visual models have separate real-fixture evidence in `evidence/`.
-5. **Reframing is face-aware, not active-speaker-aware.** Without gated diarization and a
+4. **Reframing is face-aware, not active-speaker-aware.** Without gated diarization and a
    speaker-to-face association model, multiple visible faces can still make the wrong person the
    crop target. The current tracker prefers continuity and face area; it does not infer speech.
 
 ## Secondary debt
 
-- An interrupted delivery is **repaired in place**. `{clip_id}.delivery.provenance.json` is written
-  last, after all five artifacts, and `_assert_no_existing_artifacts` refuses only a set whose
-  record exists and whose byte lengths match; a leftover set with no record is an abandoned attempt,
-  overwritten, with the names returned in `PipelineRun.resumed_over` so the retry says what it
-  replaced. The debt that remains is narrower: two *simultaneous* runs of the same media id and
-  selection into one work directory are no longer caught at the pre-write guard.
-  **Corrected 2026-08-10 (D-154):** this bullet said *"interrupted delivery can require a fresh
-  work directory, by design, because artifact overwrite is refused rather than repaired in place"*
-  — the opposite of the shipped behaviour from the moment D-146 landed, and it stood for two days,
-  written by me in the session that falsified it. Measured on this tree: an abandoned attempt
-  returns `('m-s0-0.ass', 'm-s0-0.mp4', 'm-s0-0.json')` and the run proceeds; a finished delivery
-  still raises `FileExistsError`. D-146 records why the simultaneous-run trade was taken.
+- Atomic delivery is a namespace-visibility guarantee on one filesystem, not a promise that a
+  storage controller survives power loss. File contents are flushed before the directory
+  rename; a process crash may leave a hidden staging directory, which does not block a retry and
+  is intentionally not recursively deleted without inspection. D-190 binds this statement to
+  both sides of the current guard: a hidden private attempt permits a retry, while a published
+  delivery namespace is never overwritten.
 - The current automatic cross-path priority uses rank and path agreement because verbal and
   visual scores are not calibrated to the same scale. A learned fusion policy must wait for the
   real §8.2 set.
-- The WSL2 setup installs pinned PyPI packages but package-manager integrity is not the same as
-  vendored/checksummed model assets; Meta's model-card downloader still owns those remote bytes.
+- The WSL2 setup hash-locks the complete 140-distribution identity and independently verifies the
+  installed OmniASR card, effective fairseq cards, tokenizer and both checkpoints against exact
+  reviewed sizes and SHA-256 values before loading them. The remaining native boundary is different:
+  KenLM and Sox are built from hashed source archives, but compiler, system headers and produced
+  native bytes are not bit-reproducibly attested.
 - **Hugging Face model revisions are pinned as of 2026-08-09** (D-073). `models/revisions.json`
   fixes **all six** downloadable repositories to commit SHAs that were read from the Hub and then
   verified against the weights on this machine, and `fetch-models.sh` refuses a repository with
@@ -97,17 +110,34 @@ These cannot be truthfully solved from the checkout alone:
 
 ## Honest release call
 
-Call this a hardened, composed candidate pipeline. Do not call it production-ready until a real
-Sorani ASR run, a real human editorial regression run and an authorized Vertex job have all
-produced recorded evidence. Anything stronger would be marketing, not engineering.
+Call this a hardened, composed candidate pipeline. A dated real 38-minute Sorani Stage 1 run exists,
+but the latest source still needs its planned rerun and no labelled accuracy claim comes from that
+execution. Do not call the application production-ready until the current-SHA run, a real human
+editorial regression run and an authorized Vertex job have all produced recorded evidence. Anything
+stronger would be marketing, not engineering.
 
 ## Verification evidence
 
-- Full Windows gate, Ruff/formatting/mypy clean: **1,072 collected, 1,072 passed** on 2026-08-08.
+- Clean isolated-worktree Windows/Python 3.12.10 gate, Ruff/formatting/mypy clean:
+  **1,603 collected, 1,603 passed, 0 skipped** on 2026-08-09.
   That is a measurement at a date, not a running total — the suite ratchets, so this figure will
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
+- Clean Python 3.12 wheel install: `pip check` clean; **all twelve** declared console scripts —
+  `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials`,
+  `hawedit-durable`, `hawedit-editorial-bench`, `hawedit-fetch-models`,
+  `hawedit-ffmpeg-setup`, `hawedit-release`, `hawedit-revise`, `hawedit-workflow` and
+  `hawedit-wsl-vex` — start from the installed wheel. The last three of the agentic set joined
+  at the `agentic` merge (D-A26); the nine before them were measured on the run this paragraph
+  originally recorded. The hosted release
+  smoke derives the same contract from the wheel, and `tests/test_claims.py` requires this list
+  to equal `[project.scripts]` in both directions so a newly added command cannot drift out of
+  the audit again. Their help is invocation-aware: a generated launcher names the installed
+  command, while module execution names the pasteable `python -m hawedit.<module>` form.
+- Wheel contains `assets/fonts/NotoNaskhArabic-Regular.ttf`, `assets/fonts/OFL.txt`,
+  `models/revisions.json`, `models/sources.json`, `hawedit/asr_worker.py`, and
+  `hawedit/wsl_setup.py`.
 - Clean Python 3.12 wheel install: `pip check` clean; **all eight** console scripts —
   `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials`, `hawedit-durable`,
   `hawedit-editorial-bench`, `hawedit-revise` and `hawedit-workflow` — start from the installed

@@ -550,15 +550,22 @@ def run_quality_checks(work_dir: Path) -> QualityReport:
         )
 
     qc = clip.get("qc")
-    qc_passed = isinstance(qc, dict) and bool(qc.get("auto_pass") or qc.get("human_reviewed"))
+    # `human_reviewed`, not `auto_pass or human_reviewed`. `Clip.assert_renderable()` requires
+    # human review specifically — "automation may inform review, but it cannot replace it" — so
+    # accepting `auto_pass` alone would report a clip as shippable that the render gate refuses.
+    # This divergence arrived at the agentic merge, when the tightened gate met a checker written
+    # against the older, looser one; `test_run_quality_checks_agrees_with_assert_renderable`
+    # caught it, which is the entire reason that equivalence test exists. D-A26.
+    qc_passed = isinstance(qc, dict) and bool(qc.get("human_reviewed"))
     checks.append(
         QualityCheck(
             name="qc_gate",
             passed=qc_passed,
             detail="passed"
             if qc_passed
-            else "no QC record, or QC has not passed — §2 puts a human gate before output, "
-            "always; absence is refusal, not permission",
+            else "no QC record, or QC has not cleared human review — §2 puts a human gate "
+            "before output, always; absence is refusal, not permission, and auto_pass "
+            "cannot stand in for it",
         )
     )
 

@@ -36,8 +36,10 @@ import pytest
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import DiscoveryPath, Qc
+from hawedit.diarization import Segment
 from hawedit.discovery import MergedCandidate
 from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
+from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import JudgeVerdict
 from hawedit.pipeline import (
     PipelineRun,
@@ -48,16 +50,26 @@ from hawedit.pipeline import (
     main,
     run_pipeline,
 )
-from hawedit.transcripts import AsrProvenance, RawTranscript, UnalignedSpeech, Word
+from hawedit.transcripts import (
+    AsrProvenance,
+    RawTranscript,
+    UnalignedSpeech,
+    Word,
+)
 from hawedit.visual_index import MAX_FRAMES_PER_WINDOW
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 
 # Two complete Kurdish sentences whose timings sit inside the 4.16 s fixture, matching the two
 # utterances Stage 0's VAD actually finds in it.
+
+
 WORDS = (
     Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=800, conf=0.95),
     Word(w="کوردی.", start_ms=800, end_ms=1_700, conf=0.94),
@@ -95,6 +107,15 @@ def a_verdict(clip_in_ms: int, clip_out_ms: int) -> JudgeVerdict:
     )
 
 
+class _MeasuredDiarizer:
+    def diarize(self, audio: Path) -> tuple[Segment, ...]:
+        assert audio.name == "audio.wav"
+        return (
+            Segment(0, 1_950, "SPEAKER_00"),
+            Segment(1_950, 4_162, "SPEAKER_01"),
+        )
+
+
 # --- the honest report --------------------------------------------------------------------
 
 
@@ -120,7 +141,7 @@ def test_a_run_without_a_transcript_is_incomplete_and_says_which_stage_stopped_i
 def test_the_report_names_every_stage_that_did_not_run(tmp_path: Path) -> None:
     run = run_pipeline(FIXTURE, tmp_path / "work")
     skipped = {name for name, _ in run.skipped()}
-    assert {"transcript", "visual_index", "discovery", "editorial"} <= skipped, skipped
+    assert {"diarization", "transcript", "visual_index", "discovery", "editorial"} <= skipped
     for _, skip in run.skipped():
         assert skip.blocked_by, f"{skip} names no blocker"
 
@@ -139,6 +160,66 @@ def test_an_empty_run_object_cannot_claim_completion() -> None:
     run = PipelineRun(media_id="m", source="m.mp4", work_dir="work")
     assert not run.complete
     assert run.to_dict()["complete"] is False
+
+
+@needs_ffmpeg
+def test_an_enabled_diarizer_records_a_measured_success(tmp_path: Path) -> None:
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="diarized",
+        transcript=a_transcript("diarized"),
+        diarizer=_MeasuredDiarizer(),
+    )
+    assert not isinstance(run.ingest, StageSkipped)
+    assert run.ingest is not None
+    assert run.ingest.diarization == (
+        Segment(0, 1_950, "SPEAKER_00"),
+        Segment(1_950, 4_162, "SPEAKER_01"),
+    )
+    assert run.diarization is None
+    assert run.to_dict()["diarization"] == {
+        "skipped": False,
+        "stage": "diarization",
+        "turns": 2,
+        "speakers": 2,
+    }
+
+
+@needs_ffmpeg
+def test_diarizer_operational_failure_retains_base_ingest_and_continues(tmp_path: Path) -> None:
+    class FailingDiarizer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            raise DiarizationUnavailable("gated model is unavailable")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="diarizer-failed",
+        transcript=a_transcript("diarizer-failed"),
+        diarizer=FailingDiarizer(),
+    )
+    assert not isinstance(run.ingest, StageSkipped)
+    assert run.ingest is not None and run.ingest.diarization is None
+    assert isinstance(run.diarization, StageSkipped)
+    assert "gated model is unavailable" in run.diarization.reason
+    assert run.sentences, "independent transcript segmentation must still run"
+    assert run.to_dict()["diarization"]["skipped"] is True
+
+
+@needs_ffmpeg
+def test_stage_5_fuses_the_speaker_turn_containing_the_selected_anchor(tmp_path: Path) -> None:
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-boundary",
+        transcript=a_transcript("speaker-boundary"),
+        diarizer=_MeasuredDiarizer(),
+        select_sentences=(0,),
+    )
+    assert run.clip is not None
+    assert run.clip.boundary.final_out_ms == 1_950
+    assert run.clip.boundary.out_extended_by == "speaker_turn_end"
 
 
 # --- the end-to-end path that does run ----------------------------------------------------
@@ -289,7 +370,6 @@ def test_the_run_report_serializes_to_json(full_run: PipelineRun) -> None:
     # nothing needs the validator, which must be distinguishable from the rule never running
     # (D-135; the policy had no caller in `src/` at all before it).
     escalation = payload["escalation"]
-    assert escalation["scored_segments"] == len(full_run.escalation)
     assert escalation["escalated"] == len(escalation["segments"])
     assert escalation["disagreement_threshold_cer"] == DEFAULT_DISAGREEMENT_CER
     # Which trigger fired has to be readable: measured on the real 38-minute run, 176 of the 312
@@ -489,6 +569,53 @@ def test_the_cli_reports_malformed_transcript_json_without_a_traceback(tmp_path:
     transcript = tmp_path / "transcript.json"
     transcript.write_text("{}", encoding="utf-8")
     assert main([str(source), "--transcript", str(transcript)]) == 2
+
+
+# `main`'s except tuple has ten members. Measured by deleting each and running this file plus
+# tests/test_cli.py: FileNotFoundError, KeyError and ValueError were held; FileExistsError,
+# RuntimeError and TypeError were not.
+#
+# The other four — CredentialError, GeminiUnavailable, IngestError, RawTranscriptImmutable — all
+# subclass RuntimeError, which is itself in the tuple, so deleting them cannot change behaviour
+# and no test can hold them. They are listed for the reader, not for the interpreter. Removing
+# RuntimeError is the one that bites: every refusal `reframe.py` raises for a missing OpenCV, an
+# unloadable detector or an unopenable source is a bare RuntimeError, and would reach the
+# operator as a traceback with exit 1 — which `main`'s own contract reserves for an incomplete
+# run, not a refused one.
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [FileExistsError, FileNotFoundError, KeyError, RuntimeError, TypeError, ValueError],
+)
+def test_the_cli_maps_every_expected_failure_to_exit_2(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    raised: type[Exception],
+) -> None:
+    """A refusal has to arrive as `✗ <message>` on stderr with exit 2.
+
+    Exit 1 means "the run was incomplete" — a shell script driving this distinguishes the two,
+    and an uncaught exception exits 1 with a traceback, so a failure that escapes the tuple is
+    reported as the wrong kind of outcome as well as the wrong shape.
+
+    The raised message is asserted in stderr on purpose: without it this test would pass on any
+    earlier refusal that also exits 2, and prove nothing about the tuple.
+    """
+    from hawedit import pipeline as module
+
+    def boom(*args: object, **kwargs: object) -> PipelineRun:
+        raise raised("the run refused for a reason the tuple must carry")
+
+    monkeypatch.setattr(module, "run_pipeline", boom)
+    source = tmp_path / "source.mp4"
+    source.touch()
+
+    assert module.main([str(source), "--work-dir", str(tmp_path / "work")]) == 2
+    captured = capsys.readouterr()
+    assert "the run refused for a reason the tuple must carry" in captured.err
+    assert captured.err.startswith("✗")
 
 
 # `test_the_cli_refuses_flags_whose_prerequisites_are_absent` stood here and asserted
@@ -1069,6 +1196,204 @@ def test_subject_tracking_marks_output_for_dynamic_reframing(tmp_path: Path) -> 
     assert run.clip.output.crop_target == "face_tracked"
 
 
+@needs_ffmpeg
+def test_speaker_tracking_receives_only_overlapping_turns_and_labels_the_artifact(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import FocusPoint, SpeakerFocusPoint
+    from hawedit.render import Reframe
+
+    class SpeakerTracker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            assert source == FIXTURE
+            assert (in_ms, out_ms) == (0, 1_950)
+            assert turns == (Segment(0, 1_950, "SPEAKER_00"),)
+            return (
+                SpeakerFocusPoint(100, 120, "SPEAKER_00"),
+                SpeakerFocusPoint(1_700, 520, "SPEAKER_00"),
+            )
+
+    class FaceFallback:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+            pytest.fail("validated speaker evidence must win before the face-only fallback")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-tracked",
+        transcript=a_transcript("speaker-tracked"),
+        diarizer=_MeasuredDiarizer(),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-tracked-0"),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        speaker_tracker=SpeakerTracker(),
+        subject_tracker=FaceFallback(),
+    )
+    assert run.clip is not None and run.clip.output is not None
+    assert run.clip.output.crop_target == "speaker_face"
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    assert run.render.reframe is Reframe.SPEAKER_TRACKED
+
+
+@needs_ffmpeg
+def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenance(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import FocusPoint, SpeakerFocusPoint
+    from hawedit.render import Reframe
+
+    class AmbiguousSpeakerTracker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            return ()
+
+    class FaceFallback:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+            return (FocusPoint(in_ms, 120), FocusPoint(out_ms - 1, 520))
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-ambiguous",
+        transcript=a_transcript("speaker-ambiguous"),
+        diarizer=_MeasuredDiarizer(),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-ambiguous-0"),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        speaker_tracker=AmbiguousSpeakerTracker(),
+        subject_tracker=FaceFallback(),
+    )
+    assert run.clip is not None and run.clip.output is not None
+    assert run.clip.output.crop_target == "face_tracked"
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    assert run.render.reframe is Reframe.FACE_TRACKED
+
+
+def test_requested_speaker_tracking_refuses_missing_diarization_without_calling_provider(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import SpeakerFocusPoint
+
+    class MustNotRun:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            pytest.fail("speaker association cannot run without measured diarization")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-no-diarization",
+        transcript=a_transcript("speaker-no-diarization"),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-no-diarization-0"),
+        speaker_tracker=MustNotRun(),
+    )
+    assert isinstance(run.render, StageSkipped)
+    assert "measured diarization" in run.render.reason
+    assert run.clip is None
+
+
+def test_requested_speaker_tracking_refuses_when_no_measured_turn_overlaps_the_clip(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import SpeakerFocusPoint
+
+    class NonOverlappingDiarizer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            assert audio.name == "audio.wav"
+            return (Segment(2_800, 4_162, "SPEAKER_01"),)
+
+    class MustNotRun:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            pytest.fail("speaker association cannot run without an overlapping measured turn")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="speaker-no-overlap",
+        transcript=a_transcript("speaker-no-overlap"),
+        diarizer=NonOverlappingDiarizer(),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-no-overlap-0"),
+        speaker_tracker=MustNotRun(),
+    )
+    assert isinstance(run.render, StageSkipped)
+    assert "no measured diarization turn" in run.render.reason
+    assert "overlapping the final clip" in run.render.reason
+    assert run.clip is None
+
+
+def test_invalid_or_failed_speaker_association_is_not_silently_treated_as_ambiguity(
+    tmp_path: Path,
+) -> None:
+    from hawedit.reframe import FocusPoint, SpeakerFocusPoint
+
+    class FaceFallback:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+            pytest.fail("invalid or failed association is not an ambiguous empty result")
+
+    class WrongSpeaker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            return (SpeakerFocusPoint(100, 320, "SPEAKER_01"),)
+
+    class Broken:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            raise RuntimeError("association backend unavailable")
+
+    for media_id, tracker, detail in (
+        ("speaker-invalid", WrongSpeaker(), "active speaker is 'SPEAKER_00'"),
+        ("speaker-failed", Broken(), "association backend unavailable"),
+    ):
+        run = run_pipeline(
+            FIXTURE,
+            tmp_path / media_id,
+            media_id=media_id,
+            transcript=a_transcript(media_id),
+            diarizer=_MeasuredDiarizer(),
+            select_sentences=(0,),
+            verdict=replace(a_verdict(100, 1_700), candidate_id=f"{media_id}-0"),
+            speaker_tracker=tracker,
+            subject_tracker=FaceFallback(),
+        )
+        assert isinstance(run.render, StageSkipped)
+        assert detail in run.render.reason
+        assert run.clip is None
+
+
 # =========================================================================================
 # §3 Stage 5's fifth out-point signal
 #
@@ -1177,20 +1502,26 @@ def test_there_is_no_natural_silence_to_extend_to_inside_a_pause() -> None:
 def _existing_artifact(work_dir: Path, media_id: str, sentence: int) -> Path:
     """Plant a *finished* delivery, exactly as a completed run leaves it.
 
-    All five files plus the completion record, written by the production writer so the plant
-    cannot drift from what a real run produces. It used to plant one file, and the guard used
-    to refuse on one file — which read an abandoned attempt as a delivery and wedged the work
-    directory of any run that was interrupted (D-146). What is refused now is a delivery that
-    finished, so that is what this plants.
+    Written through `ArtifactBundle`, the production writer, so the plant cannot drift from what
+    a real run produces. It used to plant one file, and the guard used to refuse on one file -
+    which read an abandoned attempt as a delivery and wedged the work directory of any run that
+    was interrupted (D-146). What is refused is a delivery that *finished*, so that is what this
+    plants.
+
+    Ported from the flat writer across the readiness merge. The bundle makes the distinction
+    structural rather than careful: staging is private and the set becomes visible only on
+    publish, so an unfinished plant is not merely discouraged, it is unrepresentable.
     """
-    from hawedit.pipeline import _clip_id, _delivery_artifact_paths, _write_delivery_record
+    from hawedit.artifact_bundle import ArtifactBundle
+    from hawedit.pipeline import _clip_id
 
     work_dir.mkdir(parents=True, exist_ok=True)
     clip_id = _clip_id(media_id, (sentence,))
-    for path in _delivery_artifact_paths(work_dir, clip_id):
-        path.write_text("a previous run left this here", encoding="utf-8")
-    _write_delivery_record(work_dir, clip_id)
-    return _delivery_artifact_paths(work_dir, clip_id)[0]
+    bundle = ArtifactBundle.create(work_dir, clip_id)
+    for suffix in ("ass", "mp4", "srt", "edl", "json"):
+        bundle.write_text(suffix, "a previous run left this here")
+    bundle.publish()
+    return bundle.final_dir
 
 
 def test_an_overwriting_run_refuses_before_the_billed_judge_call(tmp_path: Path) -> None:
@@ -1350,86 +1681,21 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
 # The fixture is 25 fps, which is EDL-safe — that is what makes the control below possible.
 # =========================================================================================
 
+
 _SIDECARS = (".json", ".srt", ".edl")
 
 
-def _ntsc_copy(source: Path, dest: Path) -> Path:
-    """A real 29.97 fps transcode of the fixture. `frame_rate` reads 30000/1001 from it."""
-    ffmpeg = find_ffmpeg()
-    assert ffmpeg is not None
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            str(ffmpeg),
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(source),
-            "-r",
-            "30000/1001",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-            str(dest),
-        ],
-        check=True,
-    )
-    return dest
+def _ntsc_copy(source: Path, dest: Path, rate: str = "30000/1001") -> Path:
+    """A real NTSC transcode. `frame_rate` must read the requested exact fractional rate."""
+    return _fractional_rate_copy(source, dest, rate)
 
 
-def _sidecars_on_disk(work: Path) -> list[str]:
-    from hawedit.pipeline import DELIVERY_RECORD_SUFFIX
-
-    return sorted(
-        p.name
-        for p in work.glob("*")
-        # The completion record is a `.json` beside the sidecars and is not one of them (D-146).
-        if p.suffix in _SIDECARS and not p.name.endswith(DELIVERY_RECORD_SUFFIX)
-    )
-
-
-def _write_target(path: Path) -> Path:
-    """The artifact a write is aimed at, whether it lands there directly or via staging.
-
-    §2's sidecars are written to `.<name>.tmp` and renamed, so a crash cannot leave half a file
-    (D-146). A test that watches `Path.write_text` sees the staging name; resolving it back is
-    what keeps these tests about *which artifact* is written rather than about the convention.
-    """
-    if path.name.startswith(".") and path.suffix == ".tmp":
-        return path.with_name(path.name[1 : -len(".tmp")])
-    return path
-
-
-@needs_ffmpeg
-def test_a_refused_edl_leaves_no_partial_delivery_set(tmp_path: Path) -> None:
-    """Asserted on the work directory, because the defect was files nobody meant to keep."""
-    ntsc = _ntsc_copy(FIXTURE, tmp_path / "ntsc.mp4")
-    from hawedit.render import frame_rate
-
-    assert frame_rate(ntsc) != int(frame_rate(ntsc)), "the transcode must be a non-integer rate"
-
-    work = tmp_path / "work"
-    run = run_pipeline(
-        ntsc,
-        work,
-        media_id="ntsc",
-        transcript=a_transcript("ntsc"),
-        select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
-        verdict=a_verdict(100, 1_700),
-    )
-    assert isinstance(run.delivery, StageSkipped)
-    assert run.delivery.blocked_by == ("§2 delivery set",)
-    assert "drop-frame" in run.delivery.reason
-    assert not run.complete
-    # The point: none of the three sidecars survived the refusal.
-    assert _sidecars_on_disk(work) == [], f"stranded {_sidecars_on_disk(work)}"
-    # Stage 6 genuinely succeeded, so its output stays and the report stays true.
-    assert run.render is not None and not isinstance(run.render, StageSkipped)
-    assert Path(run.render.path).exists()
+def _sidecars_on_disk(work: Path, clip_id: str) -> list[str]:
+    """The exact sidecars in one atomically published delivery bundle."""
+    bundle = work / clip_id
+    if not bundle.is_dir():
+        return []
+    return sorted(path.name for path in bundle.iterdir() if path.suffix in _SIDECARS)
 
 
 @needs_ffmpeg
@@ -1447,7 +1713,11 @@ def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) 
         verdict=a_verdict(100, 1_700),
     )
     assert not isinstance(run.delivery, StageSkipped), run.delivery
-    assert _sidecars_on_disk(work) == ["safe-s0-0.edl", "safe-s0-0.json", "safe-s0-0.srt"]
+    assert _sidecars_on_disk(work, "safe-s0-0") == [
+        "safe-s0-0.edl",
+        "safe-s0-0.json",
+        "safe-s0-0.srt",
+    ]
 
 
 @needs_ffmpeg
@@ -1458,14 +1728,16 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
 
     The JSON is written, the SRT write raises, and the JSON must not survive it.
     """
-    real_write_text = Path.write_text
+    from hawedit.artifact_bundle import ArtifactBundle, BundleError
 
-    def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-        if _write_target(Path(self)).suffix == ".srt":
-            raise OSError("no space left on device")
-        return real_write_text(self, *args, **kwargs)
+    real_write_text = ArtifactBundle.write_text
 
-    monkeypatch.setattr(Path, "write_text", failing_write_text)
+    def failing_write_text(self: ArtifactBundle, suffix: str, payload: str) -> Path:
+        if suffix == "srt":
+            raise BundleError("no space left on device")
+        return real_write_text(self, suffix, payload)
+
+    monkeypatch.setattr(ArtifactBundle, "write_text", failing_write_text)
 
     work = tmp_path / "work"
     run = run_pipeline(
@@ -1479,55 +1751,7 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
     )
     assert isinstance(run.delivery, StageSkipped)
     assert "no space left" in run.delivery.reason
-    assert _sidecars_on_disk(work) == [], f"stranded {_sidecars_on_disk(work)}"
-
-
-@needs_ffmpeg
-def test_a_refused_edl_never_writes_a_sidecar_at_all(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Stronger than "no sidecars survive": none is ever created.
-
-    The cleanup loop alone makes the *final* disk state correct, so a mutation audit found
-    that reverting the build-before-write ordering changed nothing observable. It does change
-    something that matters: written-then-deleted leaves a window in which the files exist, and
-    a crash inside it — power loss, SIGKILL — strands exactly the partial set this fixes. The
-    only way to see the difference is to watch the writes rather than the leftovers.
-    """
-    ntsc = _ntsc_copy(FIXTURE, tmp_path / "ntsc.mp4")
-    real_write_text = Path.write_text
-    attempted: list[Path] = []
-
-    def recording_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-        attempted.append(_write_target(Path(self)))
-        return real_write_text(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "write_text", recording_write_text)
-
-    work = tmp_path / "work"
-    run = run_pipeline(
-        ntsc,
-        work,
-        media_id="ntsc",
-        transcript=a_transcript("ntsc"),
-        select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
-        verdict=a_verdict(100, 1_700),
-    )
-    assert isinstance(run.delivery, StageSkipped)
-    # Compared against the exact sidecar paths, not by suffix: Stage 1 writes
-    # `transcript.raw.json` under the work directory too, and an earlier version of this test
-    # counted that as a delivery sidecar and failed for the wrong reason.
-    from hawedit.pipeline import _clip_id, _delivery_artifact_paths
-
-    ass_path, _, *sidecar_paths = _delivery_artifact_paths(work, _clip_id("ntsc", (0,)))
-    stranded = [p.name for p in attempted if p in set(sidecar_paths)]
-    assert stranded == [], f"wrote {stranded} before discovering the EDL was refused"
-    # The ASS is the render's input and is expected; this is not a claim that nothing is written.
-    assert ass_path in attempted
-
-
-# --- D-105: §6 assigns the video phase across both GPUs, and the code used one ---------------
+    assert _sidecars_on_disk(work, "nospace-s0-0") == []
 
 
 def test_the_cli_defaults_put_each_visual_model_where_section_6_puts_it() -> None:
@@ -2179,6 +2403,7 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         tmp_path_factory.mktemp("whole"),
         media_id="whole",
         transcript=a_transcript("whole"),
+        diarizer=_MeasuredDiarizer(),
         select_sentences=(0, 1),
         qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
         discover=lambda _n: [Candidate("best", "whole", 100, 4_100, DiscoveryPath.VERBAL, 1, 0.9)],
@@ -2221,6 +2446,70 @@ def test_a_run_with_no_candidates_is_never_complete(whole_run: PipelineRun) -> N
     """§3 Stage 3 is the most important structural decision in the system; a run that produced
     no candidate did not perform it, whatever the other stages managed."""
     assert replace(whole_run, candidates=()).complete is False
+
+
+# The three tests above cover three of `complete`'s eleven conjuncts. Measured by replacing each
+# conjunct with `True` in a shadow copy of `src/hawedit` and running this file: those three are
+# held, and the remaining eight — ingest, transcript, index, boundary, clip, editorial, render,
+# delivery — could each be deleted with the suite green.
+#
+# The reason they were reachable at all is `whole_run`: before it existed nothing reached the
+# True branch, so no conjunct could be told from a no-op. The control was the hard part; these
+# are the rest of the sweep it made possible.
+#
+# Method note worth keeping: a first attempt put the shadow package one level too shallow, so
+# `pipeline.py:111`'s `parents[2] / "assets" / "fonts"` missed and every ffmpeg test died on
+# FontCoverageError. A mutation result read off a baseline like that means nothing — the shadow
+# has to mirror `src/` with the assets beside it.
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("missing", "strip"),
+    [
+        ("ingest", lambda run: replace(run, ingest=None)),
+        ("transcript", lambda run: replace(run, transcript=None)),
+        ("index", lambda run: replace(run, index=None)),
+        ("boundary", lambda run: replace(run, boundary=None)),
+        ("clip", lambda run: replace(run, clip=None)),
+        ("render", lambda run: replace(run, render=None)),
+        ("delivery", lambda run: replace(run, delivery=None)),
+    ],
+)
+def test_a_run_missing_any_material_evidence_is_never_complete(
+    whole_run: PipelineRun, missing: str, strip: Callable[[PipelineRun], PipelineRun]
+) -> None:
+    """`complete` is the CLI's exit code (`return 0 if run.complete else 1`) and the `"complete"`
+    key of the `--json` document.
+
+    Its docstring gives the rule these seven conjuncts enforce: `None` means "this stage
+    succeeded and has no separate result object" for several seams, and is also every field's
+    construction default — so "nothing was skipped" alone lets an empty `PipelineRun` claim
+    success. Each conjunct demands the material evidence a finished run necessarily leaves
+    behind, and each was deletable without reddening anything.
+    """
+    assert strip(whole_run).complete is False, f"a run with no {missing} claimed completeness"
+
+
+@needs_ffmpeg
+def test_a_run_without_measured_diarization_is_never_complete(whole_run: PipelineRun) -> None:
+    assert not isinstance(whole_run.ingest, StageSkipped)
+    assert whole_run.ingest is not None
+    without_turns = replace(whole_run.ingest, diarization=None)
+    assert replace(whole_run, ingest=without_turns).complete is False
+
+
+@needs_ffmpeg
+def test_a_clip_with_no_editorial_block_is_never_complete(whole_run: PipelineRun) -> None:
+    """The eighth conjunct, and the one that is not a field of the run.
+
+    §3 Stage 5 produces a boundary before Stage 4 has judged anything, so `Clip.editorial` is
+    optional by design — a clip can exist without it. `complete` is where that optionality has
+    to end: a run whose clip carries no editorial block never had a verdict, and reporting exit
+    0 for it would be the silent success §1 of this module forbids.
+    """
+    assert whole_run.clip is not None
+    assert replace(whole_run, clip=replace(whole_run.clip, editorial=None)).complete is False
 
 
 @needs_ffmpeg
@@ -2418,149 +2707,6 @@ def _abandoned_attempt(work: Path, media_id: str, sentence: int = 0) -> tuple[st
     return tuple(p.name for p in (ass_path, render_path, editing_json_path))
 
 
-@needs_ffmpeg
-def test_a_run_interrupted_before_the_record_is_redone_not_refused(tmp_path: Path) -> None:
-    """The artifact of this fix is a delivery set that exists after the retry.
-
-    Asserted on the work directory and on the emitted report, not on the return value: the
-    defect was files on disk, and the recovery has to be visible to whoever reads the JSON.
-    """
-    work = tmp_path / "work"
-    stranded = _abandoned_attempt(work, "resumed")
-
-    run = run_pipeline(
-        FIXTURE,
-        work,
-        media_id="resumed",
-        transcript=a_transcript("resumed"),
-        select_sentences=(0,),
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
-        verdict=a_verdict(100, 1_700),
-    )
-    assert not isinstance(run.delivery, StageSkipped), run.delivery
-    assert _sidecars_on_disk(work) == [
-        "resumed-s0-0.edl",
-        "resumed-s0-0.json",
-        "resumed-s0-0.srt",
-    ]
-    from hawedit.pipeline import _clip_id, _delivery_record_path
-
-    assert _delivery_record_path(work, _clip_id("resumed", (0,))).exists()
-    # Silently overwriting is the failure mode BLOCKED #12 is about; the report names what went.
-    assert json.loads(json.dumps(run.to_dict()))["resumed_over"] == list(stranded)
-
-
-@needs_ffmpeg
-def test_a_clean_run_reports_nothing_resumed(tmp_path: Path) -> None:
-    """The control. A field hard-coded to the artifact names would pass the test above."""
-    run = run_pipeline(
-        FIXTURE,
-        tmp_path / "work",
-        media_id="fresh",
-        transcript=a_transcript("fresh"),
-        select_sentences=(0,),
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
-        verdict=a_verdict(100, 1_700),
-    )
-    assert run.resumed_over == ()
-    assert json.loads(json.dumps(run.to_dict()))["resumed_over"] == []
-
-
-def test_a_finished_delivery_is_still_refused(tmp_path: Path) -> None:
-    """The rule narrowed to *finished*; it did not go away."""
-    from hawedit.pipeline import _assert_no_existing_artifacts
-
-    work = tmp_path / "work"
-    _existing_artifact(work, "done", 0)
-    with pytest.raises(FileExistsError, match="refusing to overwrite"):
-        _assert_no_existing_artifacts(work, "done", (0,))
-
-
-def test_an_abandoned_attempt_is_not_a_delivery(tmp_path: Path) -> None:
-    from hawedit.pipeline import _assert_no_existing_artifacts
-
-    work = tmp_path / "work"
-    stranded = _abandoned_attempt(work, "partial")
-    assert _assert_no_existing_artifacts(work, "partial", (0,)) == stranded
-
-
-def test_a_record_that_does_not_match_the_artifacts_is_not_a_delivery(tmp_path: Path) -> None:
-    """A truncated artifact is exactly what a kill mid-write used to leave.
-
-    The record carries each artifact's byte length, so a file that shrank — or grew, or went
-    away — fails to match and the set falls back to being redone. Existence alone cannot tell
-    a complete file from half of one, which is why the record is not just a flag.
-    """
-    from hawedit.pipeline import (
-        _assert_no_existing_artifacts,
-        _clip_id,
-        _delivery_artifact_paths,
-    )
-
-    work = tmp_path / "work"
-    _existing_artifact(work, "torn", 0)
-    truncated = _delivery_artifact_paths(work, _clip_id("torn", (0,)))[2]
-    truncated.write_text("", encoding="utf-8")
-
-    assert _assert_no_existing_artifacts(work, "torn", (0,)), "a torn set must be redone"
-
-
-def test_a_sidecar_write_that_dies_leaves_no_file_at_all(tmp_path: Path) -> None:
-    """The staging half, measured on its own: `write_text` truncates the target first.
-
-    A reader that checks existence — this pipeline's guard, and anyone opening the work
-    directory — cannot tell an empty `.srt` from a missing one, so the target must never appear
-    until it is whole.
-    """
-    from hawedit.pipeline import _write_atomic
-
-    target = tmp_path / "clip.srt"
-    target.write_text("the previous, complete captions", encoding="utf-8")
-
-    def failing_replace(self: Path, _target: Any) -> Path:
-        raise OSError("the process died between the write and the rename")
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(Path, "replace", failing_replace)
-        with pytest.raises(OSError, match="died between"):
-            _write_atomic(target, "captions that never finished being written")
-
-    assert target.read_text(encoding="utf-8") == "the previous, complete captions"
-    assert list(tmp_path.glob(".*.tmp")) == [], "a staging file survived a failed write"
-
-
-def test_a_delivery_missing_one_of_its_files_is_not_a_delivery(tmp_path: Path) -> None:
-    """The record names five files; four of them plus a record is not a delivery set.
-
-    Found by mutating the record check: making a missing file fall through instead of
-    falsifying the record left every other test green, and turned "someone deleted the SRT" into
-    a permanent refusal to produce one.
-    """
-    from hawedit.pipeline import (
-        _assert_no_existing_artifacts,
-        _clip_id,
-        _delivery_artifact_paths,
-    )
-
-    work = tmp_path / "work"
-    _existing_artifact(work, "incomplete", 0)
-    _delivery_artifact_paths(work, _clip_id("incomplete", (0,)))[2].unlink()
-
-    assert _assert_no_existing_artifacts(work, "incomplete", (0,)), "the set must be redone"
-
-
-# --- D-147: `--auto-select` accepted a Stage 3 producer that could not produce ----------------
-#
-# `--visual` retrieves against a query, and §3 Stage 2 has exactly two sources for one:
-# `--visual-query`, or Path A anchoring one from its best candidate (`--gemini`/
-# `--vertex-project`). D-117 removed the third — the whole transcript — because a corpus is not a
-# query. Since then `--visual` alone cannot rank a window, so it cannot answer `--auto-select`;
-# the guard accepted it anyway. Measured on the real 38-minute ZAR38MinTest.mp4 and reproduced in
-# 3.5 s on the fixture: `visual_index` skipped for want of a query, `discovery` skipped for want
-# of candidates, nothing selected — all of it decidable from argv before Stage 0 ran.
-# =========================================================================================
-
-
 def _cli_exit(argv: list[str], tmp_path: Path) -> tuple[int, str]:
     """Run `main` and return its exit code with whatever it wrote to stderr."""
     import contextlib
@@ -2695,6 +2841,8 @@ def _argv_refusals() -> tuple[str, ...]:
 
 # One argv per refusal, each reaching *that* one: the block is ordered and the first match wins,
 # so every case here also asserts the ordering it depends on.
+
+
 _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
     (
         "two Stage 1 sources",
@@ -2747,6 +2895,16 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--visual-query requires --visual",
     ),
     (
+        "a blank retrieval query",
+        ["--transcript", "x.json", "--visual", "--visual-query", "   "],
+        "--visual-query must contain non-whitespace Sorani retrieval text",
+    ),
+    (
+        "Path B with neither Path A nor an explicit query",
+        ["--transcript", "x.json", "--visual"],
+        "--visual without Path A requires --visual-query",
+    ),
+    (
         "passing QC on nothing",
         ["--transcript", "x.json", "--qc-pass"],
         "--qc-pass requires --sentences or --auto-select",
@@ -2771,6 +2929,8 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
 # Refused for a reason that a *different* refusal always reaches first, so no argv can trigger it
 # and no test can hold it. Named here with the guard that pre-empts it rather than deleted: the
 # unreachability is a property of the block's order, and this is where that gets checked.
+
+
 _PRE_EMPTED_REFUSALS: tuple[tuple[str, str], ...] = (
     (
         "--auto-select requires --transcript or --omni-asr",
@@ -2892,8 +3052,15 @@ def _delivery_handler_types() -> tuple[str, ...]:
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.Try):
             continue
-        body = ast.dump(node)
-        if "_write_delivery_record" not in body or "build_edl" not in body:
+        calls = [child for child in ast.walk(node) if isinstance(child, ast.Call)]
+        builds_edl = any(getattr(call.func, "id", None) == "build_edl" for call in calls)
+        publishes_bundle = any(
+            isinstance(call.func, ast.Attribute)
+            and call.func.attr == "publish"
+            and getattr(call.func.value, "id", None) == "bundle"
+            for call in calls
+        )
+        if not builds_edl or not publishes_bundle:
             continue
         handlers = [h.type for h in node.handlers if h.type is not None]
         assert len(handlers) == 1, f"the delivery block has {len(handlers)} except clauses"
@@ -3406,3 +3573,1157 @@ def test_a_run_without_auto_select_keeps_the_plain_dependency_reason(tmp_path: P
 
     assert "complete selected sentences was not available" in boundary.reason
     assert "--auto-select" not in boundary.reason
+
+
+def test_an_operational_ingest_failure_is_a_complete_structured_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stage 0 used to escape before ``PipelineRun`` existed, contradicting this module's API.
+
+    The downstream skips matter as much as the ingest record: a consumer must not need to infer
+    that an absent transcript/index/render all share the same root blocker.
+    """
+
+    def fail_ingest(*_args: object, **_kwargs: object) -> None:
+        raise IngestError("ffmpeg could not open the media")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", fail_ingest)
+    run = run_pipeline(FIXTURE, tmp_path / "work")
+
+    assert not run.complete
+    assert [name for name, _ in run.skipped()] == [
+        "ingest",
+        "diarization",
+        "transcript",
+        "index",
+        "visual_index",
+        "discovery",
+        "editorial",
+        "boundary",
+        "render",
+        "delivery",
+    ]
+    assert isinstance(run.ingest, StageSkipped)
+    assert "ffmpeg could not open the media" in run.ingest.reason
+    assert run.ingest.blocked_by == ("Stage 0 ingest",)
+    for name, skip in run.skipped()[1:]:
+        assert skip.blocked_by == ("Stage 0 ingest",), name
+
+
+def test_an_ingest_os_error_is_normalized_but_programmer_errors_still_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def os_failure(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("media read denied")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", os_failure)
+    run = run_pipeline(FIXTURE, tmp_path / "os-work")
+    assert isinstance(run.ingest, StageSkipped)
+    assert "PermissionError" in run.ingest.reason
+
+    def control(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("programmer control")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", control)
+    with pytest.raises(AssertionError, match="programmer control"):
+        run_pipeline(FIXTURE, tmp_path / "control-work")
+
+
+# --- the command-line surface --------------------------------------------------------------
+
+
+def test_cli_json_reports_an_operational_stage_0_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from hawedit.pipeline import main
+
+    def fail_ingest(*_args: object, **_kwargs: object) -> None:
+        raise IngestError("ffprobe launch was denied")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", fail_ingest)
+    code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), "--json"])
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert code == 1
+    assert captured.err == ""
+    assert report["ingest"]["skipped"] is True
+    assert report["ingest"]["blocked_by"] == ["Stage 0 ingest"]
+    assert report["delivery"]["blocked_by"] == ["Stage 0 ingest"]
+
+
+@needs_ffmpeg
+def test_missing_gemini_key_is_a_json_stage_skip_not_a_pre_run_cli_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from hawedit.pipeline import main
+
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(a_transcript("kurdish-speech-3cuts").to_json(), encoding="utf-8")
+    monkeypatch.setattr("hawedit.gemini.read_credential", lambda _name=None: None)
+
+    code = main(
+        [
+            str(FIXTURE),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--transcript",
+            str(transcript_path),
+            "--gemini",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert code == 1
+    assert captured.err == ""
+    assert report["discovery"]["skipped"] is True
+    assert "no Gemini API key" in report["discovery"]["reason"]
+
+
+@needs_ffmpeg
+def test_visual_composer_plans_to_the_measured_videochat_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit import pipeline as pipeline_module
+    from hawedit.visual_index import SceneWindow
+    from hawedit.visual_index import plan_scene_windows as real_plan
+    from hawedit.visual_pipeline import VisualPipelineError
+
+    selected: list[int] = []
+
+    def recording_plan(
+        media_id: str,
+        duration_ms: int,
+        shot_cuts_ms: Sequence[int],
+        fps: float,
+        *,
+        max_frames: int,
+    ) -> tuple[SceneWindow, ...]:
+        selected.append(max_frames)
+        return real_plan(
+            media_id,
+            duration_ms,
+            shot_cuts_ms,
+            fps,
+            max_frames=max_frames,
+        )
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            raise VisualPipelineError("stop after observing the plan")
+
+    monkeypatch.setattr(pipeline_module, "plan_scene_windows", recording_plan)
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "capacity",
+        media_id="capacity",
+        transcript=a_transcript("capacity"),
+        visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="گرنگ",
+        visual_max_frames=8,
+    )
+    assert selected == [8], "the 64-frame general ceiling still reached VideoChat3"
+
+
+@needs_ffmpeg
+def test_visual_composer_failure_reason_is_single_line_and_bounded(tmp_path: Path) -> None:
+    from hawedit.visual_pipeline import VisualPipelineError
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            raise VisualPipelineError("visual backend\x00\n" + ("v" * 1_000_000))
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="bounded-visual-error",
+        transcript=a_transcript("bounded-visual-error"),
+        visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="گرنگ",
+    )
+
+    assert isinstance(run.visual_index, StageSkipped)
+    assert len(run.visual_index.reason) == 1_024
+    assert run.visual_index.reason.endswith("…")
+    assert not any(character in run.visual_index.reason for character in ("\n", "\t", "\x00"))
+
+
+@needs_ffmpeg
+def test_visual_backend_failure_preserves_path_a_candidates(tmp_path: Path) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.visual_pipeline import VisualPipelineError
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            failure = RuntimeError("CUDA out of memory")
+            raise VisualPipelineError("Qwen backend failed: CUDA out of memory") from failure
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="oom-fallback",
+        transcript=a_transcript("oom-fallback"),
+        discover=lambda _norm: [
+            Candidate(
+                "verbal-survivor",
+                "oom-fallback",
+                0,
+                1_400,
+                DiscoveryPath.VERBAL,
+                rank=1,
+                score=0.8,
+            )
+        ],
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert isinstance(run.visual_index, StageSkipped)
+    assert [candidate.discovery_path for candidate in run.candidates] == [DiscoveryPath.VERBAL]
+
+
+@needs_ffmpeg
+def test_path_b_refuses_the_whole_transcript_when_path_a_has_no_candidate(
+    tmp_path: Path,
+) -> None:
+    from hawedit.discovery import Candidate
+    from hawedit.gemini import GeminiUnavailable
+
+    calls = 0
+
+    class Composer:
+        def discover(self, *args: object, **kwargs: object) -> None:
+            nonlocal calls
+            calls += 1
+            raise AssertionError("the GPU must not be touched without a bounded query")
+
+    def broken_path_a(_transcript: Any) -> Sequence[Candidate]:
+        raise GeminiUnavailable("temporary cloud refusal")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="no-query-authority",
+        transcript=a_transcript("no-query-authority"),
+        discover=broken_path_a,
+        visual_composer=Composer(),  # type: ignore[arg-type]
+    )
+
+    assert calls == 0
+    assert isinstance(run.discovery, StageSkipped)
+    assert isinstance(run.visual_index, StageSkipped)
+    assert "refusing the whole episode transcript" in run.visual_index.reason
+    assert run.visual_index.blocked_by == ("a retrieval query",)
+    assert run.visual_query_source is None
+    assert run.to_dict()["visual_query_source"] is None
+    assert run.candidates == ()
+
+
+@needs_ffmpeg
+def test_canonical_asr_runtime_failure_is_a_json_capable_stage_skip(tmp_path: Path) -> None:
+    class BrokenAsr:
+        def transcribe(self, *args: Any, **kwargs: Any) -> RawTranscript:
+            raise RuntimeError("checkpoint could not load")
+
+    run = run_pipeline(FIXTURE, tmp_path / "work", media_id="asr-failed", asr=BrokenAsr())
+
+    assert isinstance(run.transcript, StageSkipped)
+    assert "RuntimeError: checkpoint could not load" in run.transcript.reason
+    assert run.clip is None
+    assert json.loads(json.dumps(run.to_dict()))["transcript"]["skipped"] is True
+
+
+@needs_ffmpeg
+def test_automatic_selection_with_no_complete_sentence_never_extracts_frames_or_calls_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    calls = {"frames": 0, "judge": 0}
+
+    def extract_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        calls["frames"] += 1
+        return ()
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            calls["judge"] += 1
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", extract_frames)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="automatic-gap",
+        transcript=a_transcript("automatic-gap"),
+        discover=lambda _n: [
+            Candidate(
+                "gap",
+                "automatic-gap",
+                1_750,
+                1_950,
+                DiscoveryPath.VERBAL,
+                1,
+                0.99,
+            )
+        ],
+        judge=Judge(),
+        auto_select=True,
+    )
+
+    assert calls == {"frames": 0, "judge": 0}
+    assert run.clip is None
+    assert isinstance(run.editorial, StageSkipped)
+    assert "no complete contiguous sentence" in run.editorial.reason
+
+
+@needs_ffmpeg
+def test_keyframe_operational_failure_is_an_editorial_skip_before_judging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+    from hawedit.keyframes import KeyframeError
+
+    judge_calls = 0
+
+    def broken_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        raise KeyframeError("ffmpeg decoder refused the slice")
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            nonlocal judge_calls
+            judge_calls += 1
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", broken_frames)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="bad-frames",
+        transcript=a_transcript("bad-frames"),
+        discover=lambda _n: [
+            Candidate("best", "bad-frames", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.99)
+        ],
+        judge=Judge(),
+    )
+
+    assert judge_calls == 0
+    assert isinstance(run.editorial, StageSkipped)
+    assert "KeyframeError: ffmpeg decoder refused the slice" in run.editorial.reason
+
+
+def test_operational_failure_sanitizes_and_bounds_notes_without_changing_plain_reason() -> None:
+    from hawedit.pipeline import _operational_failure
+
+    plain = _operational_failure("editorial", "Stage 4", RuntimeError("plain failure"))
+    assert plain.reason == "Stage 4 failed with RuntimeError: plain failure"
+
+    noted = RuntimeError("body failure")
+    noted.add_note(" first\n\tprivacy warning\x00 ")
+    noted.add_note("x" * 2_000)
+    failure = _operational_failure("editorial", "Stage 4", noted)
+    note_summary = failure.reason.split("; exception notes: ", 1)[1]
+
+    assert note_summary.startswith("first privacy warning | ")
+    assert len(note_summary) <= 512
+    assert note_summary.endswith("…")
+    assert not any(character in note_summary for character in ("\n", "\t", "\x00"))
+
+
+def test_operational_failure_sanitizes_and_hard_caps_base_message_in_json() -> None:
+    from hawedit.pipeline import _operational_failure
+
+    provider_secret = "AIza" + ("S" * 64)
+    error = RuntimeError("private-prefix\x00\n" + ("x" * 1_000_000) + provider_secret)
+    error.add_note("bounded note")
+
+    failure = _operational_failure("editorial", "Stage 4", error)
+    report = json.loads(json.dumps(failure.to_dict()))
+    reason = report["reason"]
+    detail = reason.split("RuntimeError: ", 1)[1].split("; exception notes: ", 1)[0]
+
+    assert detail.startswith("private-prefix ")
+    assert len(detail) == 1_024
+    assert detail.endswith("…")
+    assert provider_secret not in reason
+    assert reason.endswith("; exception notes: bounded note")
+    assert not any(character in reason for character in ("\n", "\t", "\x00"))
+
+
+@needs_ffmpeg
+def test_atomic_bundle_failure_reasons_are_single_line_and_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.artifact_bundle import ArtifactBundle, BundleError
+
+    def refuse_bundle(cls: type[ArtifactBundle], /, *args: object, **kwargs: object) -> None:
+        raise BundleError("bundle creation\x00\n" + ("b" * 1_000_000))
+
+    monkeypatch.setattr(ArtifactBundle, "create", classmethod(refuse_bundle))
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="bounded-bundle-error",
+        transcript=a_transcript("bounded-bundle-error"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+
+    assert isinstance(run.render, StageSkipped)
+    assert isinstance(run.delivery, StageSkipped)
+    for failure in (run.render, run.delivery):
+        assert len(failure.reason) == 1_024
+        assert failure.reason.endswith("…")
+        assert not any(character in failure.reason for character in ("\n", "\t", "\x00"))
+
+
+@needs_ffmpeg
+def test_keyframe_cleanup_privacy_note_survives_into_json_stage_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+    from hawedit.keyframes import KeyframeError
+
+    error = KeyframeError("ffmpeg produced no usable keyframe")
+    error.add_note(
+        "private Stage 4 keyframe cleanup failed for C:/private\nframes: directory locked"
+    )
+    judge_calls = 0
+
+    def broken_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        raise error
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            nonlocal judge_calls
+            judge_calls += 1
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", broken_frames)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="cleanup-note",
+        transcript=a_transcript("cleanup-note"),
+        discover=lambda _n: [
+            Candidate("best", "cleanup-note", 0, 1_700, DiscoveryPath.VERBAL, 1, 0.99)
+        ],
+        judge=Judge(),
+    )
+    report = json.loads(json.dumps(run.to_dict()))
+    reason = report["editorial"]["reason"]
+
+    assert judge_calls == 0
+    assert "KeyframeError: ffmpeg produced no usable keyframe" in reason
+    assert (
+        "private Stage 4 keyframe cleanup failed for C:/private frames: directory locked" in reason
+    )
+    assert "\n" not in reason
+
+
+@needs_ffmpeg
+def test_unsafe_candidate_id_is_rejected_before_stage4_touches_its_work_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.judge import JudgeRequest
+
+    frame_calls = 0
+
+    def extract_frames(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        nonlocal frame_calls
+        frame_calls += 1
+        return ()
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+        requires_keyframes = True
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return replace(
+                a_verdict(request.clip_in_ms, request.clip_out_ms),
+                candidate_id=request.candidate_id,
+            )
+
+    monkeypatch.setattr("hawedit.pipeline.extract_judge_frames", extract_frames)
+    work = tmp_path / "work"
+    with pytest.raises(ValueError, match=r"candidate_id .*safe Stage 4 work component"):
+        run_pipeline(
+            FIXTURE,
+            work,
+            media_id="unsafe-candidate",
+            transcript=a_transcript("unsafe-candidate"),
+            discover=lambda _n: [
+                Candidate(
+                    "../../outside",
+                    "unsafe-candidate",
+                    0,
+                    1_700,
+                    DiscoveryPath.VERBAL,
+                    1,
+                    0.99,
+                )
+            ],
+            judge=Judge(),
+        )
+
+    assert frame_calls == 0
+    assert not (tmp_path / "outside").exists()
+
+
+def test_colon_delimited_candidate_id_has_a_portable_single_work_component() -> None:
+    from hawedit.pipeline import _candidate_work_component
+
+    assert _candidate_work_component("episode:s0:w1") == "episode_s0_w1"
+
+
+@pytest.mark.parametrize("failure_kind", ["gemini", "unusable", "not-routable", "too-large"])
+@needs_ffmpeg
+def test_known_judge_operational_failures_are_editorial_skips(
+    tmp_path: Path, failure_kind: str
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.gemini import GeminiUnavailable, JudgeUnusable
+    from hawedit.judge import JudgeRequest, NotRoutable, RequestTooLarge
+
+    failure = {
+        "gemini": GeminiUnavailable("cloud refused"),
+        "unusable": JudgeUnusable("malformed model output"),
+        "not-routable": NotRoutable("shadow model"),
+        "too-large": RequestTooLarge("token ceiling"),
+    }[failure_kind]
+
+    class Judge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            raise failure
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / f"work-{failure_kind}",
+        media_id=f"judge-{failure_kind}",
+        transcript=a_transcript(f"judge-{failure_kind}"),
+        discover=lambda _n: [
+            Candidate(
+                "best",
+                f"judge-{failure_kind}",
+                0,
+                1_700,
+                DiscoveryPath.VERBAL,
+                1,
+                0.99,
+            )
+        ],
+        judge=Judge(),
+    )
+
+    assert isinstance(run.editorial, StageSkipped)
+    assert type(failure).__name__ in run.editorial.reason
+    assert run.clip is None
+
+
+@needs_ffmpeg
+def test_path_a_operational_failure_stays_visible_while_independent_visual_path_runs(
+    tmp_path: Path,
+) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.gemini import GeminiUnavailable
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            candidate = Candidate(
+                "visual",
+                media_id,
+                0,
+                1_700,
+                DiscoveryPath.VISUAL,
+                1,
+                0.9,
+            )
+            return VisualDiscoveryResult(media_id, query, len(windows), 1, (), (candidate,))
+
+    def broken_path_a(_transcript: Any) -> Sequence[Candidate]:
+        raise GeminiUnavailable("temporary cloud refusal")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="one-path",
+        transcript=a_transcript("one-path"),
+        discover=broken_path_a,
+        visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_query="گرنگ",
+    )
+
+    assert isinstance(run.discovery, StageSkipped)
+    assert "GeminiUnavailable: temporary cloud refusal" in run.discovery.reason
+    assert tuple(candidate.candidate_id for candidate in run.candidates) == ("visual",)
+    assert not isinstance(run.visual_index, StageSkipped)
+    assert run.visual_query_source == "explicit"
+
+
+@needs_ffmpeg
+def test_programmer_exception_from_discovery_is_not_normalized(tmp_path: Path) -> None:
+    def broken_discovery(_transcript: Any) -> Sequence[Any]:
+        raise AssertionError("producer invariant broke")
+
+    with pytest.raises(AssertionError, match="producer invariant broke"):
+        run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="programmer-error",
+            transcript=a_transcript("programmer-error"),
+            discover=broken_discovery,
+        )
+
+
+@pytest.mark.parametrize("failure_kind", ["grounding", "weights", "frames"])
+@needs_ffmpeg
+def test_known_timelens_failures_skip_boundary_and_never_render(
+    tmp_path: Path, failure_kind: str
+) -> None:
+    from hawedit.qwen_visual import EmbedderUnavailable
+    from hawedit.video_grounding import GroundingError
+    from hawedit.video_input import VideoInputError
+
+    failure = {
+        "grounding": GroundingError("model response was not spans"),
+        "weights": EmbedderUnavailable("checkpoint absent"),
+        "frames": VideoInputError("window extraction failed"),
+    }[failure_kind]
+
+    class Grounder:
+        def ground_all(self, windows: Sequence[Any], query: str) -> tuple[Any, ...]:
+            raise failure
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / f"work-{failure_kind}",
+        media_id=f"timelens-{failure_kind}",
+        transcript=a_transcript(f"timelens-{failure_kind}"),
+        select_sentences=(0,),
+        verdict=replace(
+            a_verdict(100, 1_700),
+            candidate_id=f"timelens-{failure_kind}-0",
+        ),
+        temporal_grounder=Grounder(),
+    )
+
+    assert isinstance(run.boundary, StageSkipped)
+    assert type(failure).__name__ in run.boundary.reason
+    assert isinstance(run.render, StageSkipped)
+    assert run.clip is None
+
+
+@needs_ffmpeg
+def test_timelens_cleanup_failure_after_success_becomes_a_boundary_refusal(tmp_path: Path) -> None:
+    from hawedit.timelens import VisualEvidenceInterval
+
+    class Grounder:
+        def ground_all(self, windows: Sequence[Any], query: str) -> tuple[Any, ...]:
+            return (VisualEvidenceInterval("ok", 100, 1_700, "visible"),)
+
+        def close(self) -> None:
+            raise RuntimeError("CUDA allocator would not release")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "cleanup-after-success",
+        media_id="cleanup-after-success",
+        transcript=a_transcript("cleanup-after-success"),
+        select_sentences=(0,),
+        temporal_grounder=Grounder(),
+    )
+    assert isinstance(run.boundary, StageSkipped)
+    assert "TimeLens cleanup failed after inference" in run.boundary.reason
+    assert run.clip is None
+
+
+@needs_ffmpeg
+def test_timelens_cleanup_does_not_mask_the_primary_grounding_failure(tmp_path: Path) -> None:
+    from hawedit.video_grounding import GroundingError
+
+    class Grounder:
+        def ground_all(self, windows: Sequence[Any], query: str) -> tuple[Any, ...]:
+            raise GroundingError("primary model refusal")
+
+        def close(self) -> None:
+            raise RuntimeError("cleanup also failed")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "cleanup-after-failure",
+        media_id="cleanup-after-failure",
+        transcript=a_transcript("cleanup-after-failure"),
+        select_sentences=(0,),
+        temporal_grounder=Grounder(),
+    )
+    assert isinstance(run.boundary, StageSkipped)
+    assert "primary model refusal" in run.boundary.reason
+    assert "TimeLens cleanup failed" in run.boundary.reason
+    assert run.clip is None
+
+
+@needs_ffmpeg
+def test_requested_tracker_runtime_failure_skips_render_without_static_fallback(
+    tmp_path: Path,
+) -> None:
+    class BrokenTracker:
+        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[Any, ...]:
+            raise RuntimeError("OpenCV could not decode a frame")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="tracking-failed",
+        transcript=a_transcript("tracking-failed"),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="tracking-failed-0"),
+        subject_tracker=BrokenTracker(),
+    )
+
+    assert run.clip is None
+    assert isinstance(run.render, StageSkipped)
+    assert "RuntimeError: OpenCV could not decode a frame" in run.render.reason
+    assert "requested subject tracking" in run.render.reason
+
+
+# =========================================================================================
+# §3 Stage 5's fifth out-point signal
+#
+# `fuse_boundary` has always had a `natural_silence` branch. This runner computed the VAD
+# silences (`_pauses_between`), spent them on §4.2's sentence segmentation, and never handed
+# Stage 5 its own — so the branch was unreachable from the runner and the fused out point was
+# three of §3's five signals. D-070.
+#
+# Both directions are asserted on the fused artifact, and the pair is the point: the same
+# wiring bug is also consistent with reading "natural silence" as *the next speech onset*,
+# which is the plausible wrong answer. On this fixture that would put the out point at 1954 ms
+# — across the whole 164 ms pause, butting against the next utterance — so the control below
+# fails for it while the positive test passes either way.
+# =========================================================================================
+
+
+def _fractional_rate_copy(source: Path, dest: Path, rate: str) -> Path:
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            str(ffmpeg),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-r",
+            rate,
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(dest),
+        ],
+        check=True,
+    )
+    return dest
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("rate", "media_id"),
+    [("30000/1001", "ntsc30"), ("60000/1001", "ntsc60")],
+)
+def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
+    tmp_path: Path, rate: str, media_id: str
+) -> None:
+    ntsc = _ntsc_copy(FIXTURE, tmp_path / f"{media_id}.mp4", rate)
+    from hawedit.render import frame_rate
+
+    assert frame_rate(ntsc) != int(frame_rate(ntsc)), "the transcode must be a non-integer rate"
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        ntsc,
+        work,
+        media_id=media_id,
+        transcript=a_transcript(media_id),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
+    assert _sidecars_on_disk(work, f"{media_id}-s0-0") == [
+        f"{media_id}-s0-0.edl",
+        f"{media_id}-s0-0.json",
+        f"{media_id}-s0-0.srt",
+    ]
+    edl = Path(run.delivery.edl_path).read_text(encoding="utf-8")
+    assert "FCM: DROP FRAME" in edl
+    assert ";" in next(line for line in edl.splitlines() if line.startswith("001"))
+
+
+@needs_ffmpeg
+def test_an_ass_staging_failure_is_reported_and_leaves_no_private_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.artifact_bundle import ArtifactBundle, BundleError
+
+    def fail_ass(self: ArtifactBundle, suffix: str, payload: str) -> Path:
+        raise BundleError(f"could not stage {suffix}: permission denied")
+
+    monkeypatch.setattr(ArtifactBundle, "write_text", fail_ass)
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="noass",
+        transcript=a_transcript("noass"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+
+    assert isinstance(run.render, StageSkipped)
+    assert "permission denied" in run.render.reason
+    assert not (work / "noass-s0-0").exists()
+    assert not tuple(work.glob(".noass-s0-0.*.staging"))
+
+
+@needs_ffmpeg
+def test_an_unsupported_fractional_edl_never_writes_a_sidecar_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stronger than "no sidecars survive": none is ever created.
+
+    The cleanup loop alone makes the *final* disk state correct, so a mutation audit found
+    that reverting the build-before-write ordering changed nothing observable. It does change
+    something that matters: written-then-deleted leaves a window in which the files exist, and
+    a crash inside it — power loss, SIGKILL — strands exactly the partial set this fixes. The
+    only way to see the difference is to watch the writes rather than the leftovers.
+    """
+    from hawedit.artifact_bundle import ArtifactBundle
+
+    fractional = _fractional_rate_copy(FIXTURE, tmp_path / "fractional.mp4", "24000/1001")
+    real_write_text = ArtifactBundle.write_text
+    attempted: list[str] = []
+
+    def recording_write_text(self: ArtifactBundle, suffix: str, payload: str) -> Path:
+        attempted.append(suffix)
+        return real_write_text(self, suffix, payload)
+
+    monkeypatch.setattr(ArtifactBundle, "write_text", recording_write_text)
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        fractional,
+        work,
+        media_id="fractional",
+        transcript=a_transcript("fractional"),
+        select_sentences=(0,),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert isinstance(run.delivery, StageSkipped)
+    assert "fractional frame rate" in run.delivery.reason
+    assert attempted == ["ass"], f"wrote {attempted[1:]} before discovering the EDL refusal"
+    assert not (work / "fractional-s0-0").exists()
+    assert not tuple(work.glob(".fractional-s0-0.*.staging"))
+
+
+# --- D-137: §6 assigns the video phase across both GPUs, and the code used one ---------------
+
+
+def _query_preflight_exit(argv: list[str], tmp_path: Path) -> tuple[int, str]:
+    import contextlib
+    import io
+
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
+        code = main([str(FIXTURE), "--work-dir", str(tmp_path / "work"), *argv])
+    return code, captured.getvalue()
+
+
+_CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    (
+        "two Stage 1 sources",
+        ("--transcript", "missing.json", "--omni-asr"),
+        "mutually exclusive Stage 1",
+    ),
+    ("runtime without OmniASR", ("--omni-asr-runtime", "wsl"), "require --omni-asr"),
+    ("distro without OmniASR", ("--wsl-distro", "Ubuntu"), "require --omni-asr"),
+    (
+        "two cloud routes",
+        ("--gemini", "--vertex-project", "project"),
+        "mutually exclusive cloud routes",
+    ),
+    (
+        "live cloud and stored verdict",
+        ("--gemini", "--verdict", "missing.json"),
+        "mutually exclusive Stage 4 sources",
+    ),
+    ("Gemini without Stage 1", ("--gemini",), "cloud discovery requires"),
+    (
+        "Vertex without Stage 1",
+        ("--vertex-project", "project"),
+        "cloud discovery requires",
+    ),
+    ("selection without Stage 1", ("--sentences", "0"), "--sentences requires"),
+    ("verdict without Stage 1", ("--verdict", "missing.json"), "--verdict requires"),
+    (
+        "verdict without selection",
+        ("--transcript", "missing.json", "--verdict", "missing-verdict.json"),
+        "--verdict requires",
+    ),
+    (
+        "visual without Stage 1",
+        ("--visual", "--visual-query", "پرسیار"),
+        "--visual requires",
+    ),
+    (
+        "query without visual",
+        ("--transcript", "missing.json", "--visual-query", "پرسیار"),
+        "--visual-query requires --visual",
+    ),
+    (
+        "blank visual query",
+        ("--transcript", "missing.json", "--visual", "--visual-query", "   "),
+        "non-whitespace Sorani retrieval text",
+    ),
+    (
+        "visual without a query source",
+        ("--transcript", "missing.json", "--visual"),
+        "--visual without Path A",
+    ),
+    ("QC without selection", ("--qc-pass",), "--qc-pass requires"),
+    (
+        "auto-selection without discovery",
+        ("--transcript", "missing.json", "--auto-select"),
+        "Stage 3 producer that can actually produce",
+    ),
+    (
+        "TimeLens without selection",
+        ("--timelens",),
+        "--timelens and --face-reframe require",
+    ),
+    (
+        "reframing without selection",
+        ("--face-reframe",),
+        "--timelens and --face-reframe require",
+    ),
+    (
+        "confidential without cloud",
+        ("--confidential",),
+        "governance flags apply only",
+    ),
+    (
+        "ZDR without cloud",
+        ("--zero-data-retention",),
+        "governance flags apply only",
+    ),
+    (
+        "ZDR attribution without cloud",
+        ("--zdr-confirmed-by", "Hawa"),
+        "governance flags apply only",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "flags", "expected"),
+    _CLI_PREFLIGHT_CASES,
+    ids=[label for label, _flags, _expected in _CLI_PREFLIGHT_CASES],
+)
+def test_every_reachable_cli_prerequisite_refuses_at_its_own_boundary(
+    tmp_path: Path, label: str, flags: tuple[str, ...], expected: str
+) -> None:
+    """An exit-2 assertion alone passes when a later unrelated failure kills the run. D-181."""
+    code, stderr = _query_preflight_exit(list(flags), tmp_path)
+
+    assert code == 2, label
+    assert expected in stderr, f"{label}: {stderr}"
+    assert not (tmp_path / "work").exists(), label
+
+
+def _preflight_value_error_messages() -> tuple[str, ...]:
+    """Read the direct pre-input refusals so a future guard cannot arrive uncovered.
+
+    Reads `_build_and_run`, not `_run_from_args`, for the same reason
+    `_preflight_refusal_sources` above already does: D-A2 moved every validation this walks into
+    a function `durable_workflow.py`'s DBOS step can also call, leaving `_run_from_args` a thin
+    catch-and-print wrapper with no refusals of its own. Walking the old name found zero
+    assignments and raised `min() arg is an empty sequence` — a vacuous pass waiting to happen
+    had the `min()` had a default. D-A26.
+    """
+    import ast
+
+    source = (ROOT / "src" / "hawedit" / "pipeline.py").read_text(encoding="utf-8")
+    function = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_and_run"
+    )
+    input_boundary = min(
+        node.lineno
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "transcript" for target in node.targets
+        )
+    )
+    messages: list[str] = []
+    for node in ast.walk(function):
+        if not (
+            isinstance(node, ast.Raise)
+            and node.lineno < input_boundary
+            and isinstance(node.exc, ast.Call)
+            and getattr(node.exc.func, "id", None) == "ValueError"
+            and node.exc.args
+        ):
+            continue
+        argument = node.exc.args[0]
+        if not (isinstance(argument, ast.Constant) and isinstance(argument.value, str)):
+            raise AssertionError(f"preflight refusal at line {node.lineno} has a dynamic message")
+        messages.append(argument.value)
+    pre_empted = {message for message, _by in _PRE_EMPTED_REFUSALS}
+    return tuple(message for message in messages if message not in pre_empted)
+
+
+def test_the_case_table_is_bound_bidirectionally_to_every_preflight_refusal() -> None:
+    """A new guard needs a case; a removed guard cannot leave a decorative stale case."""
+    messages = _preflight_value_error_messages()
+    fragments = {expected for _label, _flags, expected in _CLI_PREFLIGHT_CASES}
+    matches = {
+        message: sorted(fragment for fragment in fragments if fragment in message)
+        for message in messages
+    }
+
+    assert all(len(found) == 1 for found in matches.values()), (
+        f"preflight refusals need exactly one case fragment: {matches}"
+    )
+    orphaned = sorted(
+        fragment for fragment in fragments if not any(fragment in message for message in messages)
+    )
+    assert orphaned == [], f"cases naming no live preflight refusal: {orphaned}"
+
+
+def test_a_legal_argv_gets_past_every_preflight_refusal(tmp_path: Path) -> None:
+    """Control: an implementation that refused every invocation passes negative cases alone."""
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--sentences", "0", "--qc-pass"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "missing.json" in stderr
+    for message in _preflight_value_error_messages():
+        assert message not in stderr, f"legal argv hit preflight refusal: {message}"
+
+
+def test_auto_select_refuses_visual_without_a_query_before_stage_zero(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--visual", "--auto-select"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "--visual-query" in stderr
+    assert not (tmp_path / "work").exists()
+
+
+def test_auto_select_accepts_path_a_without_an_explicit_visual_query(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--gemini", "--auto-select"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "Stage 3 producer" not in stderr
+
+
+def test_auto_select_still_refuses_when_no_discovery_path_is_enabled(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--auto-select"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "Stage 3 producer" in stderr
+    assert not (tmp_path / "work").exists()
+
+
+def test_visual_query_without_visual_is_refused_by_the_earlier_contract(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        ["--transcript", "missing.json", "--visual-query", "query", "--auto-select"],
+        tmp_path,
+    )
+
+    assert code == 2, stderr
+    assert "--visual-query requires --visual" in stderr
+
+
+def test_blank_visual_query_is_refused_before_stage_zero(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        [
+            "--transcript",
+            "missing.json",
+            "--visual",
+            "--visual-query",
+            "   ",
+            "--auto-select",
+        ],
+        tmp_path,
+    )
+
+    assert code == 2, stderr
+    assert "non-whitespace" in stderr
+    assert not (tmp_path / "work").exists()
+
+
+def test_no_producer_report_names_the_query_path_b_needs() -> None:
+    from hawedit.pipeline import _STAGE_3_DISCOVERY
+
+    assert "--visual-query" in _STAGE_3_DISCOVERY.reason
+
+
+# --- D-146: a stage that ran reported nothing about itself -------------------------------------

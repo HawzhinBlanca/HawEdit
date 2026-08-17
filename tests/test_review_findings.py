@@ -283,17 +283,12 @@ def test_a_string_false_from_the_model_is_not_read_as_true() -> None:
         )
 
 
-# --- MAJOR: a dropped network connection was treated as a refusal --------------------------
+# --- MAJOR: ambiguous billed generation must not be replayed -------------------------------
 
 
-def test_a_dropped_connection_is_retried_rather_than_reported_as_a_refusal() -> None:
-    """`_https` maps every `OSError` to status 0, and 0 was not in the retryable set.
-
-    A reset connection, a DNS blip or a TLS hiccup therefore produced "the judge refused this
-    request" on the first attempt — a diagnosis that sends someone looking at their prompt when
-    the problem was the network.
-    """
-    from hawedit.gemini import GeminiJudge
+def test_a_dropped_connection_after_upload_is_not_retried_without_idempotency() -> None:
+    """Status 0 is ambiguous: the provider may already have processed and billed the upload."""
+    from hawedit.gemini import GeminiJudge, GeminiUnavailable
     from hawedit.judge import InputMode, JudgeFrame, JudgeRequest
 
     attempts = {"n": 0}
@@ -334,18 +329,18 @@ def test_a_dropped_connection_is_retried_rather_than_reported_as_a_refusal() -> 
         )
 
     judge = GeminiJudge(api_key="k", transport=flaky, sleep=lambda _s: None)
-    verdict = judge.judge(
-        JudgeRequest(
-            candidate_id="c",
-            mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
-            text_ckb="ئەمە",
-            clip_in_ms=0,
-            clip_out_ms=1_000,
-            keyframes=(JudgeFrame(500, "image/jpeg", b"jpeg"),),
+    with pytest.raises(GeminiUnavailable, match="was not retried"):
+        judge.judge(
+            JudgeRequest(
+                candidate_id="c",
+                mode=InputMode.STAGE_4_TRANSCRIPT_FIRST,
+                text_ckb="ئەمە",
+                clip_in_ms=0,
+                clip_out_ms=1_000,
+                keyframes=(JudgeFrame(500, "image/jpeg", b"jpeg"),),
+            )
         )
-    )
-    assert verdict.candidate_id == "c"
-    assert attempts["n"] == 2, "the transient failure was not retried"
+    assert attempts["n"] == 1, "ambiguous billed generation was replayed"
 
 
 # --- MAJOR: the RTL check's second evidence source was never supplied ---------------------

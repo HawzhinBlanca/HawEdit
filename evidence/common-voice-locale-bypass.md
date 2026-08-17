@@ -64,7 +64,7 @@ CAUGHT   honest ckb rows are refused (over-strict)
 
 The third is the control doing the work. Refusing every row passes both refusal tests and imports
 nothing, ever — and no refusal test can see that. Fourth consecutive iteration where the over-strict
-direction was catchable only by a control (D-088, D-087, D-090, now this).
+direction was catchable only by a control (D-088, D-087, D-102, now this).
 
 ## Scope, stated plainly
 

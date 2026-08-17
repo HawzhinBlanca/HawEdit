@@ -11,16 +11,21 @@ toward putting one somewhere convenient.
 
 from __future__ import annotations
 
+import errno
 import getpass
+import io
 import json
 import os
 import stat
 import subprocess
+import urllib.error
 from collections.abc import Mapping
+from email.message import Message
 from pathlib import Path
 
 import pytest
 
+from hawedit import credentials
 from hawedit.credentials import (
     _PINNED_JUDGE,
     GEMINI_API_KEY,
@@ -199,6 +204,150 @@ def test_the_opened_env_must_be_the_file_the_symlink_check_looked_at(
     assert GEMINI_API_KEY in env_file.read_text(encoding="utf-8")
 
 
+def test_a_hard_linked_env_file_is_refused_before_the_key_is_written(tmp_path: Path) -> None:
+    """The sibling of the symlink refusal, and the one no test held.
+
+    Measured by neutralising each refusal in a shadow copy of src/hawedit and running this file
+    with tests/test_claims.py: this one could be deleted with both green.
+
+    Its own comment says where it came from — "found by the second independent review, in the
+    code written to fix the first one". O_NOFOLLOW rejects a *symlinked* `.env` and says nothing
+    about a hardlink, which is an ordinary regular file sharing an inode with, say, a tracked
+    file. O_TRUNC would then rewrite that file's content with the key. The first fix validated
+    the path's name; this validates the file's identity.
+    """
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("a file git knows about\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    try:
+        os.link(tracked, env_file)
+    except (OSError, NotImplementedError) as exc:  # pragma: no cover - filesystem dependent
+        pytest.fail(f"could not create a hard link to exercise the guard: {exc}")
+
+    with pytest.raises(CredentialError, match="hard links"):
+        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
+
+    assert tracked.read_text(encoding="utf-8") == "a file git knows about\n", (
+        "the key was written through a hard link into the file sharing that inode"
+    )
+    assert FAKE_KEY not in env_file.read_text(encoding="utf-8")
+
+    # The control: the same call against a file with one link succeeds, so this measures the
+    # link count and not something else about writing into tmp_path.
+    alone = tmp_path / "alone.env"
+    write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=alone, check_ignored=False)
+    assert GEMINI_API_KEY in alone.read_text(encoding="utf-8")
+
+
+def test_the_key_never_reaches_the_disk_when_the_narrowing_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal used to name a state it had already created.
+
+    `restrict_to_owner` ran *after* the body was written, so when it failed the plaintext key
+    was on disk at inherited permissions and the panel printed "Refusing to leave a credential
+    at inherited permissions". Measured on hawapc01 against a real `icacls` failure — an
+    unresolvable principal, exit 1332 — in a directory granting `Everyone:(OI)(CI)F`: 95 bytes
+    containing the key, readable by Everyone, and `main()` returning 2 as though nothing had
+    been stored.
+
+    So the narrowing moved above the write, and this asserts the file rather than the exception.
+    """
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_API_KEY=sk-the-one-already-stored\n", encoding="utf-8")
+    real_restrict = credentials.restrict_to_owner
+
+    def cannot_narrow(_path: Path) -> None:
+        raise CredentialError("could not restrict … refusing to leave it at inherited permissions")
+
+    monkeypatch.setattr("hawedit.credentials.restrict_to_owner", cannot_narrow)
+
+    with pytest.raises(CredentialError, match="inherited permissions"):
+        write_credential(
+            GEMINI_API_KEY, "sk-MUST-NOT-REACH-DISK", env_file=env_file, check_ignored=False
+        )
+
+    body = env_file.read_text(encoding="utf-8")
+    assert "sk-MUST-NOT-REACH-DISK" not in body, (
+        "the key is on disk at permissions the code just refused to accept"
+    )
+    # The narrowing is also above `ftruncate`, so refusing does not destroy what was stored
+    # before it — a failed rotation must not leave the operator with neither key.
+    assert "sk-the-one-already-stored" in body, "the previous key was destroyed on the way out"
+
+    # The control. With the narrowing working, the same call writes — otherwise this test would
+    # pass just as well against a `write_credential` that never writes anything.
+    monkeypatch.setattr("hawedit.credentials.restrict_to_owner", real_restrict)
+    write_credential(
+        GEMINI_API_KEY, "sk-MUST-NOT-REACH-DISK", env_file=env_file, check_ignored=False
+    )
+    assert "sk-MUST-NOT-REACH-DISK" in env_file.read_text(encoding="utf-8")
+
+
+def test_a_narrowing_that_could_not_be_applied_is_refused_not_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`icacls` exiting nonzero is the only signal Windows gives that the ACL was not rewritten.
+
+    Deleting this check left the entire suite green — the sweep that found it deleted every
+    `raise` in the module one at a time — because the branch is Windows-only and the assertion
+    that would catch it lives on the success path. `_IS_WINDOWS` is patched rather than the test
+    being skipped on POSIX, for the reason spelled out above: a guard only one platform executes
+    is a guard the runner never checks.
+    """
+    monkeypatch.setattr("hawedit.credentials._IS_WINDOWS", True)
+    target = tmp_path / ".env"
+    target.write_text("x\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def icacls(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(argv)
+        # 1332 is what the real tool returns for a principal it cannot map to a SID, measured.
+        return subprocess.CompletedProcess(argv, 1332, "", "No mapping between account names")
+
+    monkeypatch.setattr("hawedit.credentials.subprocess.run", icacls)
+    with pytest.raises(CredentialError, match="inherited permissions"):
+        credentials.restrict_to_owner(target)
+    assert seen and seen[0][0] == "icacls" and "/inheritance:r" in seen[0], seen
+
+    # The control: the same code path with the tool succeeding must return, so this measures the
+    # exit status and not merely that the call was intercepted.
+    monkeypatch.setattr(
+        "hawedit.credentials.subprocess.run",
+        lambda argv, **_k: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    credentials.restrict_to_owner(target)
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [(errno.ELOOP, "symbolic link"), (errno.EACCES, "cannot write")],
+)
+def test_the_kernels_own_answer_about_a_symlink_is_a_refusal_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, message: str
+) -> None:
+    """Where `O_NOFOLLOW` exists, the kernel refuses the symlink and the code reads `ELOOP`.
+
+    That branch is unreachable on this Windows host — `_O_NOFOLLOW` is 0, so the pre-open check
+    answers first — and the sweep duly found both arms of the `OSError` handler deletable with
+    the suite green here. On the POSIX runner they are the live path. The kernel's answer is
+    supplied rather than waited for, which is what the symlink test one file over already does
+    with the privilege it cannot get on Windows.
+    """
+    env_file = tmp_path / ".env"
+    real_open = os.open
+
+    def refusing_open(path: object, flags: int, mode: int = 0o777) -> int:
+        if str(path) == str(env_file):
+            raise OSError(code, os.strerror(code))
+        return real_open(path, flags, mode)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("hawedit.credentials.os.open", refusing_open)
+    with pytest.raises(CredentialError, match=message):
+        write_credential(GEMINI_API_KEY, FAKE_KEY, env_file=env_file, check_ignored=False)
+    assert not env_file.exists(), "a refused open still left a credential file behind"
+
+
 # --- refusal 2: never store a key that has not been verified ------------------------------
 
 
@@ -234,6 +383,33 @@ def test_key_validation_authenticates_by_header_never_by_url() -> None:
     assert seen[0][1].get("x-goog-api-key") == FAKE_KEY
 
 
+@pytest.mark.parametrize(
+    "unsafe_key",
+    [
+        "",
+        "contains a space",
+        "contains\ta-tab",
+        "header\r\nInjected: value",
+        "unicode-کلیل",
+        "A" * 513,
+    ],
+)
+def test_header_unsafe_keys_are_refused_before_transport(unsafe_key: str) -> None:
+    calls = 0
+
+    def transport(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("a header-unsafe key reached the transport")
+
+    check = validate_gemini_key(unsafe_key, transport=transport)
+    assert not check.valid
+    assert calls == 0
+    assert "header-safe" in check.detail
+    if unsafe_key:
+        assert unsafe_key not in check.detail
+
+
 def test_a_malformed_success_body_is_not_treated_as_valid() -> None:
     check = validate_gemini_key(FAKE_KEY, transport=lambda _u, _h: (200, "not json"))
     assert not check.valid
@@ -264,6 +440,95 @@ def test_the_rejection_message_does_not_contain_the_key() -> None:
 def test_an_unreachable_api_message_does_not_contain_the_key() -> None:
     check = validate_gemini_key(FAKE_KEY, transport=offline_transport)
     assert FAKE_KEY not in check.detail
+
+
+def test_key_validation_bounds_and_redacts_an_untrusted_provider_error() -> None:
+    hostile = f"provider echoed {FAKE_KEY}\x00\n" + ("X" * 1_000_000) + " secret-tail"
+    check = validate_gemini_key(
+        FAKE_KEY,
+        transport=lambda _url, _headers: (
+            400,
+            json.dumps({"error": {"message": hostile}}),
+        ),
+    )
+
+    assert not check.valid
+    assert FAKE_KEY not in check.detail
+    assert "\x00" not in check.detail and "\n" not in check.detail
+    assert len(check.detail) <= credentials._MAX_KEY_CHECK_DETAIL_CHARS
+    assert "secret-tail" not in check.detail
+
+
+def test_key_validation_bounds_an_untrusted_network_error() -> None:
+    check = validate_gemini_key(
+        FAKE_KEY,
+        transport=lambda _url, _headers: (0, "offline\x00\n" + ("N" * 1_000_000)),
+    )
+
+    assert not check.valid
+    assert "\x00" not in check.detail and "\n" not in check.detail
+    assert len(check.detail) <= credentials._MAX_KEY_CHECK_DETAIL_CHARS
+
+
+def test_the_live_key_probe_refuses_an_oversized_response_without_reading_it_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[int] = []
+
+    class OversizedResponse:
+        status = 200
+
+        def __enter__(self) -> OversizedResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            requested.append(size)
+            assert size == credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1
+            return b"x" * size
+
+    monkeypatch.setattr(
+        "hawedit.credentials.open_without_redirects",
+        lambda _request, timeout: OversizedResponse(),
+    )
+
+    check = validate_gemini_key(FAKE_KEY)
+    assert not check.valid
+    assert "exceeded" in check.detail
+    assert requested == [credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1]
+
+
+def test_the_live_key_probe_bounds_an_oversized_http_error_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[int] = []
+
+    class OversizedErrorBody(io.BytesIO):
+        def __init__(self) -> None:
+            super().__init__(b"e" * (credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1))
+
+        def read(self, size: int | None = -1) -> bytes:
+            requested.append(-1 if size is None else size)
+            return super().read(size)
+
+    def reject(_request: object, timeout: int) -> object:
+        assert timeout == 30
+        raise urllib.error.HTTPError(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            429,
+            "too many requests",
+            Message(),
+            OversizedErrorBody(),
+        )
+
+    monkeypatch.setattr("hawedit.credentials.open_without_redirects", reject)
+
+    check = validate_gemini_key(FAKE_KEY)
+    assert not check.valid
+    assert "exceeded" in check.detail
+    assert requested == [credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1]
 
 
 # --- reading: environment first, then .env -------------------------------------------------
@@ -436,6 +701,34 @@ def test_the_panel_prints_the_mask_and_never_the_key(
 
     _, _, _, rejected = _drive_main(monkeypatch, FAKE_KEY, KeyCheck(False, "no"), capsys)
     assert FAKE_KEY not in rejected
+
+
+def test_the_panel_refuses_a_header_unsafe_key_without_printing_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unsafe_key = "AIzaSy-THIS-MUST-NOT-PRINT\nInjected: value"
+
+    monkeypatch.delenv(GEMINI_API_KEY, raising=False)
+    monkeypatch.setattr("hawedit.credentials.read_credential", lambda *a, **k: None)
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": unsafe_key)
+
+    def no_network(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the panel constructed a request for a header-unsafe key")
+
+    def no_write(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("the panel stored a header-unsafe key")
+
+    monkeypatch.setattr("hawedit.credentials.open_without_redirects", no_network)
+    monkeypatch.setattr("hawedit.credentials.write_credential", no_write)
+
+    code = credentials_main([])
+    output = capsys.readouterr()
+    combined = output.out + output.err
+    assert code == 1
+    assert "THIS-MUST-NOT-PRINT" not in combined
+    assert "Injected" not in combined
+    assert "Traceback" not in combined
+    assert "nothing was written" in combined
 
 
 def test_a_blank_entry_changes_nothing(

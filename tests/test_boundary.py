@@ -334,6 +334,37 @@ def test_the_render_gate_catches_a_truncated_out_point() -> None:
         assert_boundary_invariant(smuggled)
 
 
+@pytest.mark.parametrize("truthy", ["false", "no", 1, [0]])
+def test_the_render_gate_refuses_a_sentence_complete_that_is_not_a_boolean(
+    truthy: object,
+) -> None:
+    """The one refusal in this module that no test held — measured across
+    tests/test_boundary.py, test_timelens.py, test_clip.py and test_delivery.py, where the other
+    fifteen all redden something.
+
+    Its own comment records why it exists: the strict-bool guard was wired into
+    `Boundary.from_dict` alone, so a boundary built by any other route arrived with
+    `sentence_complete="false"` and passed — a non-empty string is truthy, so the very next
+    check, `if not boundary.sentence_complete`, waves it through. Kurdish invariant #2 is
+    "reject, never render", and that rendered.
+
+    Every case here is deliberately *truthy*, because a falsy non-boolean is caught by that next
+    check anyway and would prove nothing about this one.
+    """
+    smuggled = Boundary(
+        anchor_in_ms=ANCHOR_IN,
+        anchor_out_ms=ANCHOR_OUT,
+        final_in_ms=ANCHOR_IN,
+        final_out_ms=ANCHOR_OUT,
+        in_extended_by=None,
+        out_extended_by=None,
+        sentence_complete=truthy,  # type: ignore[arg-type]
+    )
+    assert bool(truthy) is True, "a falsy case would be caught by the next guard, not this one"
+    with pytest.raises(BoundaryInvariantViolated, match="not a boolean"):
+        assert_boundary_invariant(smuggled)
+
+
 def test_the_render_gate_rejects_an_incomplete_sentence() -> None:
     smuggled = Boundary(
         anchor_in_ms=ANCHOR_IN,
@@ -477,7 +508,7 @@ def test_a_non_positive_media_duration_is_refused() -> None:
 #                             speaker_turn_end, timelens_interval_end }
 #
 # Nothing tested that asymmetry: adding the interval's start to the in-point candidate set left
-# the whole suite green. Found by the second adversarial pass. D-085.
+# the whole suite green. Found by the second adversarial pass. D-092.
 
 
 def test_timelens_never_moves_the_in_point() -> None:

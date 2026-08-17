@@ -23,7 +23,7 @@ misleading-edit risk, and §8.2 calls the second of those the metric that matter
 organisation. Without a verdict this builds a clip and stops. Given both, it runs six stages
 of the blueprint against real media:
 
-    Stage 0  ingest      16 kHz audio, 1 fps proxy, shot cuts, VAD          ingest.py
+    Stage 0  ingest      audio, proxy, cuts, VAD, optional diarization      ingest.py
     §4.1     normalize   five collisions, raw written once and never again  transcripts.py
     Stage 2  index       BM25 + character 3-grams over the *normalized*     index.py
     Stage 2  windows     scenes segmented to ~1 fps × 64 frames             visual_index.py
@@ -42,12 +42,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TextIO
 
+from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import CaptionStyle, build_ass
@@ -55,6 +58,7 @@ from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
+from hawedit.diarization import turn_bounds_for_anchors
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.escalation import (
     DEFAULT_DISAGREEMENT_CER,
@@ -63,15 +67,36 @@ from hawedit.escalation import (
     select_for_validation,
 )
 from hawedit.events import EventSink, RunEventLog, discard
-from hawedit.gemini import GeminiUnavailable
+from hawedit.gemini import GeminiUnavailable, JudgeUnusable
 from hawedit.index import Bm25Index
-from hawedit.ingest import IngestError, IngestResult, ingest, probe_stream
-from hawedit.judge import EditorialJudge, JudgeRequest, JudgeVerdict
-from hawedit.keyframes import extract_judge_frames
+from hawedit.ingest import (
+    DiarizationUnavailable,
+    Diarizer,
+    IngestError,
+    IngestResult,
+    attach_diarization,
+    ingest,
+    probe_stream,
+)
+from hawedit.judge import (
+    EditorialJudge,
+    JudgeRequest,
+    JudgeVerdict,
+    NotRoutable,
+    RequestTooLarge,
+)
+from hawedit.keyframes import KeyframeError, extract_judge_frames
 from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
-from hawedit.reframe import SubjectTracker
-from hawedit.render import RenderError, RenderResult, frame_rate, render_clip
+from hawedit.qwen_visual import EmbedderUnavailable
+from hawedit.reframe import (
+    FocusPoint,
+    SpeakerAssociationError,
+    SpeakerSubjectTracker,
+    SubjectTracker,
+    validate_speaker_focus_points,
+)
+from hawedit.render import Reframe, RenderError, RenderResult, frame_rate, render_clip
 from hawedit.sentences import (
     Sentence,
     UndeliverableOrder,
@@ -83,11 +108,15 @@ from hawedit.transcripts import (
     NormalizedTranscript,
     RawTranscript,
     RawTranscriptImmutable,
+    RejectedValidatorCorrection,
     TranscriptStore,
     UnalignedSpeech,
     Word,
     normalize_transcript,
+    validate_media_id,
 )
+from hawedit.video_grounding import GroundingError
+from hawedit.video_input import VideoInputError
 from hawedit.visual_index import (
     DECLARED_SAMPLING_FPS,
     MAX_FRAMES_PER_WINDOW,
@@ -96,6 +125,9 @@ from hawedit.visual_index import (
     plan_scene_windows,
 )
 from hawedit.visual_pipeline import VisualComposer, VisualDiscoveryResult, VisualPipelineError
+
+if TYPE_CHECKING:
+    from hawedit.models import ModelStore
 
 __all__ = [
     "Delivery",
@@ -152,9 +184,8 @@ class Delivery:
     """§2's two sidecars, once they are on disk.
 
     Separate from `RenderResult` because they are separate deliverables: a run can produce a
-    correct MP4 and still be unable to write an honest EDL — an NTSC source needs drop-frame
-    timecode, which `delivery.py` refuses rather than approximates. That gap is a named
-    `StageSkipped`, not a missing file nobody mentions.
+    correct MP4 and still be unable to write an honest EDL when its rate has no supported CMX
+    representation. That gap is a named `StageSkipped`, not a missing file nobody mentions.
     """
 
     srt_path: str
@@ -177,17 +208,22 @@ class PipelineRun:
     source: str
     work_dir: str
     ingest: IngestResult | StageSkipped | None = None
+    # ``None`` is success only when ``ingest.diarization`` contains the measured result.
+    # A ``StageSkipped`` names either an unconfigured producer or an operational refusal.
+    diarization: StageSkipped | None = None
     transcript: NormalizedTranscript | StageSkipped | None = None
     # Speech the canonical transcript does not contain, carried up from the raw artifact.
     #
     # D-103 put this in `transcript.raw.json`, and the report a human reads is the normalized
     # transcript, which by design has no such field — so a run that dropped speech said nothing
     # about it here. Measured on the real 38-minute run: 2 of 547 regions, 664 ms of Kurdish, and
-    # the emitted report mentioned neither. §1 of this module: fail visible, not silent. D-110.
+    # the emitted report mentioned neither. §1 of this module: fail visible, not silent. D-145.
     transcript_gaps: tuple[UnalignedSpeech, ...] = ()
-    # §3 Stage 1's routing decision per segment. The validator itself is BLOCKED #16, so
-    # this reports which segments the rule selects rather than sending them anywhere —
-    # which is the half that can be checked on this machine. D-135.
+    # Validator corrections that were rejected while the canonical timed segment was retained.
+    # They are not speech gaps, but they are still material Stage 1 fallback evidence.
+    rejected_validator_corrections: tuple[RejectedValidatorCorrection, ...] = ()
+    # §3 Stage 1's validator-routing decision per segment. Empty means the routing rule ran and
+    # found no scored segments, not that the rule disappeared from the composed runner.
     escalation: tuple[EscalationDecision, ...] = ()
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
@@ -196,6 +232,10 @@ class PipelineRun:
     # even though the embedder cannot; `visual_index` stays skipped for the embedding itself.
     visual_windows: tuple[SceneWindow, ...] = ()
     visual_index: VisualDiscoveryResult | StageSkipped | None = None
+    # Where the Path B retrieval query came from. The query itself is recorded by
+    # `VisualDiscoveryResult`; this says who authorized its scope. `None` means Path B did not
+    # run, never "the whole transcript was used implicitly". D-154.
+    visual_query_source: str | None = None
     discovery: StageSkipped | None = None
     editorial: StageSkipped | None = None
     candidates: tuple[MergedCandidate, ...] = ()
@@ -203,7 +243,7 @@ class PipelineRun:
     # found it. §5: "Rejection is a first-class outcome … that set is your only measure of
     # recall", and §8.2 measures Recall@20 *per discovery path*. `RejectedCandidate` was built,
     # validated and unit-tested with no producer anywhere in `src/`, so the measure had no data
-    # at all. D-116.
+    # at all. D-153.
     rejected: tuple[RejectedCandidate, ...] = ()
     boundary: object | None = None
     clip: Clip | None = None
@@ -216,11 +256,6 @@ class PipelineRun:
     selected_sentences: tuple[Sentence, ...] = ()
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
-    # Artifacts of an earlier, unfinished attempt that this run overwrote. A previous run that
-    # died between the sidecar writes leaves files with no completion record; overwriting them
-    # is the recovery, and saying nothing about it would be the silent case this module's §1
-    # forbids. Empty on a clean directory. D-146.
-    resumed_over: tuple[str, ...] = ()
 
     def _rejected_by_path(self) -> dict[str, int]:
         """How many candidates each discovery path lost, which is what §8.2 partitions on.
@@ -262,6 +297,20 @@ class PipelineRun:
             return None
         return {"skipped": False, "stage": "editorial", "judge": self.clip.editorial.judge}
 
+    def _diarization_ran(self) -> dict[str, Any] | None:
+        """Stage 0 diarization success, derived from its measured turn artifact."""
+        if self.diarization is not None or not isinstance(self.ingest, IngestResult):
+            return None
+        turns = self.ingest.diarization
+        if turns is None:
+            return None
+        return {
+            "skipped": False,
+            "stage": "diarization",
+            "turns": len(turns),
+            "speakers": len({turn.speaker for turn in turns}),
+        }
+
     def skipped(self) -> tuple[tuple[str, StageSkipped], ...]:
         """Every stage that did not run, in pipeline order.
 
@@ -297,6 +346,7 @@ class PipelineRun:
         return (
             not self.skipped()
             and isinstance(self.ingest, IngestResult)
+            and self.ingest.diarization is not None
             and isinstance(self.transcript, NormalizedTranscript)
             and isinstance(self.index, Bm25Index)
             and bool(self.visual_windows)
@@ -324,6 +374,7 @@ class PipelineRun:
             "complete": self.complete,
             "skipped": [name for name, _ in self.skipped()],
             "ingest": encode(self.ingest),
+            "diarization": encode(self.diarization) or self._diarization_ran(),
             "transcript_gaps": [
                 {
                     "start_ms": gap.start_ms,
@@ -336,37 +387,49 @@ class PipelineRun:
             "speech_without_transcription_ms": sum(
                 gap.end_ms - gap.start_ms for gap in self.transcript_gaps
             ),
-            # Always present, empty included, so "no segment needs the validator" is readable
-            # rather than indistinguishable from "the rule never ran" (D-110's rule).
+            "rejected_validator_corrections": [
+                {
+                    "start_ms": item.start_ms,
+                    "end_ms": item.end_ms,
+                    "duration_ms": item.end_ms - item.start_ms,
+                    "validator": item.validator,
+                    "reason": item.reason,
+                }
+                for item in self.rejected_validator_corrections
+            ],
             "escalation": {
                 "scored_segments": len(self.escalation),
-                "escalated": sum(1 for d in self.escalation if d.escalate),
+                "escalated": sum(1 for decision in self.escalation if decision.escalate),
                 "disagreement_threshold_cer": DEFAULT_DISAGREEMENT_CER,
-                # Which trigger fired, because the two are not equally well founded. Measured on
-                # the real 38-minute run: 312 of 545 escalated, and **176 on disagreement alone**
-                # — driven partly by CTC-3B's greedy decode being unconditioned, which lands
-                # 17.7% of hypotheses in Latin script and 4% in CJK/Malayalam/Hebrew/Cyrillic
-                # against an LLM pass conditioned on ckb_Arab. A bare count would read as §3's
-                # intended routing; this makes it answerable. BLOCKED #19. D-135.
                 "by_trigger": {
                     "quartile_only": sum(
-                        1 for d in self.escalation if d.escalate and "disagree" not in d.reason
+                        1
+                        for decision in self.escalation
+                        if decision.escalate and "disagree" not in decision.reason
                     ),
                     "disagreement_only": sum(
                         1
-                        for d in self.escalation
-                        if d.escalate and "disagree" in d.reason and "quartile" not in d.reason
+                        for decision in self.escalation
+                        if decision.escalate
+                        and "disagree" in decision.reason
+                        and "quartile" not in decision.reason
                     ),
                     "both": sum(
                         1
-                        for d in self.escalation
-                        if d.escalate and "disagree" in d.reason and "quartile" in d.reason
+                        for decision in self.escalation
+                        if decision.escalate
+                        and "disagree" in decision.reason
+                        and "quartile" in decision.reason
                     ),
                 },
                 "segments": [
-                    {"segment_id": d.segment_id, "escalate": d.escalate, "reason": d.reason}
-                    for d in self.escalation
-                    if d.escalate
+                    {
+                        "segment_id": decision.segment_id,
+                        "escalate": decision.escalate,
+                        "reason": decision.reason,
+                    }
+                    for decision in self.escalation
+                    if decision.escalate
                 ],
             },
             "transcript": (
@@ -391,16 +454,14 @@ class PipelineRun:
             ),
             "sentence_count": len(self.sentences),
             "visual_windows": [w.to_dict() for w in self.visual_windows],
+            "visual_query_source": self.visual_query_source,
             "delivery": encode(self.delivery),
-            # Reported even when empty, for D-110's reason: an absent key cannot be told apart
-            # from a build that does not record this at all.
-            "resumed_over": list(self.resumed_over),
             "candidates": [c.to_dict() for c in self.candidates],
             # §5 makes rejection first-class and calls the rejection set "your only measure
             # of recall"; §8.2 measures Recall@20 *per discovery path*, so the split is here
             # rather than left for a reader to compute. Reported even when empty — an
             # absent key cannot be told apart from a build that does not record rejections,
-            # which is the same reason D-110 reports zero gaps explicitly.
+            # which is the same reason D-145 reports zero gaps explicitly.
             "rejected": [r.to_dict() for r in self.rejected],
             "rejected_by_path": self._rejected_by_path(),
             "visual_index": encode(self.visual_index),
@@ -410,7 +471,7 @@ class PipelineRun:
             # attempted, and had to cross-reference `candidates` to tell which. Measured on the
             # real 38-minute run: `discovery: null` alongside **7** merged candidates, with
             # "discovery" absent from `skipped` too. This module's §1 is fail visible, not
-            # silent; a stage reporting nothing about itself is the silent case. D-111.
+            # silent; a stage reporting nothing about itself is the silent case. D-146.
             "discovery": encode(self.discovery) or self._discovery_ran(),
             "editorial": encode(self.editorial) or self._editorial_ran(),
             "boundary": encode(self.boundary),
@@ -444,6 +505,15 @@ class PipelineRun:
 
 # The stages that need something this machine does not have. Written once, here, so the run
 # report and the README cannot drift apart about what is missing.
+_STAGE_0_DIARIZATION = StageSkipped(
+    stage="diarization",
+    reason=(
+        "no Stage 0 diarization producer was enabled. Community-1 remains gated; enable only "
+        "an authenticated, integrity-verified producer rather than treating no result as zero "
+        "speakers."
+    ),
+    blocked_by=("Stage 0 diarization producer not enabled",),
+)
 _STAGE_1_ASR = StageSkipped(
     stage="transcript",
     reason=(
@@ -464,9 +534,9 @@ _STAGE_3_DISCOVERY = StageSkipped(
     stage="discovery",
     reason=(
         "no Stage 3 producer was enabled. Select --gemini or --vertex-project for Path A, "
-        "--visual with --visual-query for composed Path B — the query is not optional, since "
-        "§3 Stage 2 retrieves against one and D-117 removed the whole-transcript fallback — or "
-        "both for the two-sided union."
+        "--visual with --visual-query for composed Path B — Stage 2 must retrieve against a "
+        "query, and the whole transcript is the corpus rather than a fallback query — or both "
+        "for the two-sided union."
     ),
     blocked_by=("discovery producer not enabled",),
 )
@@ -544,6 +614,136 @@ def _nothing_fits_a_candidate(
         ),
         blocked_by=("no complete sentence fits a candidate window",),
     )
+
+
+def _file_digest(path: Path) -> str:
+    """SHA-256 of a file, streamed. Measured in D-132: 0.1 s for the real 82 MB source.
+
+    Restored across the readiness merge: it was deleted there with the flat delivery
+    writer, but Stage 1's reuse key is a second, unrelated caller and it survived.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _operational_failure(stage: str, component: str, exc: Exception) -> StageSkipped:
+    """A known runtime/domain refusal, retaining its concrete cause in the run report."""
+    detail = _safe_exception_text(str(exc), budget=1_024)
+    reason = f"{component} failed with {type(exc).__name__}: {detail}"
+    notes = _safe_exception_notes(exc)
+    if notes:
+        reason = f"{reason}; exception notes: {notes}"
+    return StageSkipped(
+        stage=stage,
+        reason=reason,
+        blocked_by=(component,),
+    )
+
+
+def _ingest_failure_run(
+    identifier: str, source: Path, work_dir: Path, exc: IngestError | OSError
+) -> PipelineRun:
+    """Report an operational Stage 0 refusal without pretending later stages ran.
+
+    Ingest is the root of the media clock, audio, VAD and shot-window graph. There is no
+    meaningful partial object to synthesize when it fails, but there is a meaningful run
+    report: Stage 0's concrete refusal followed by every dependent stage naming that root
+    blocker. Returning it keeps ``--json`` machine-readable for the same operational failures
+    that model stages already normalize, while source/argument/schema errors remain exceptions.
+    """
+    dependency = "Stage 0 ingest"
+    return PipelineRun(
+        media_id=identifier,
+        source=str(source),
+        work_dir=str(work_dir),
+        ingest=_operational_failure("ingest", dependency, exc),
+        diarization=_not_reached("diarization", dependency),
+        transcript=_not_reached("transcript", dependency),
+        index=_not_reached("index", dependency),
+        visual_index=_not_reached("visual_index", dependency),
+        discovery=_not_reached("discovery", dependency),
+        editorial=_not_reached("editorial", dependency),
+        boundary=_not_reached("boundary", dependency),
+        render=_not_reached("render", dependency),
+        delivery=_not_reached("delivery", dependency),
+    )
+
+
+def _safe_exception_text(value: str, budget: int) -> str:
+    """A printable, single-line exception detail within a deterministic hard limit."""
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    pending_space = False
+    for character in value:
+        if not character.isprintable() or character.isspace():
+            pending_space = bool(kept)
+            continue
+        if pending_space:
+            if len(kept) >= budget:
+                kept[-1] = "…"
+                return "".join(kept)
+            kept.append(" ")
+            pending_space = False
+        if len(kept) >= budget:
+            kept[-1] = "…"
+            return "".join(kept)
+        kept.append(character)
+    return "".join(kept)
+
+
+def _safe_exception_notes(exc: Exception, budget: int = 512, maximum: int = 4) -> str:
+    """Printable, single-line exception notes within one deterministic total budget."""
+    raw_notes = getattr(exc, "__notes__", ())
+    if not isinstance(raw_notes, list | tuple) or budget <= 0 or maximum <= 0:
+        return ""
+    kept: list[str] = []
+    remaining = budget
+    for raw_note in raw_notes[:maximum]:
+        if not isinstance(raw_note, str):
+            continue
+        separator = 3 if kept else 0
+        available = remaining - separator
+        if available <= 0:
+            break
+        normalized = _safe_exception_text(raw_note, available)
+        if not normalized:
+            continue
+        kept.append(normalized)
+        remaining -= separator + len(normalized)
+        if remaining <= 0:
+            break
+    return " | ".join(kept)
+
+
+@contextmanager
+def _release_grounder_after_use(component: object) -> Iterator[None]:
+    """Unload TimeLens without masking the inference failure that triggered cleanup."""
+    closer = getattr(component, "close", None)
+    try:
+        yield
+    except BaseException as primary:
+        if callable(closer):
+            try:
+                closer()
+            except BaseException as cleanup:
+                primary.add_note(
+                    "TimeLens cleanup failed: "
+                    f"{type(cleanup).__name__}: {_safe_exception_text(str(cleanup), 384)}"
+                )
+        raise
+    else:
+        if callable(closer):
+            try:
+                closer()
+            except (OSError, RuntimeError) as exc:
+                raise GroundingError(
+                    "TimeLens cleanup failed after inference: "
+                    f"{type(exc).__name__}: {_safe_exception_text(str(exc), 384)}"
+                ) from exc
 
 
 def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
@@ -795,6 +995,52 @@ def _candidate_slice_text(transcript: NormalizedTranscript, in_ms: int, out_ms: 
     return normalize_sorani(" ".join(words))
 
 
+def _visual_retrieval_query(
+    transcript: NormalizedTranscript,
+    verbal: Sequence[Candidate],
+    explicit: str | None,
+) -> tuple[str, str] | None:
+    """Return one bounded, provenance-bearing Path B query or refuse to invent one.
+
+    An explicit operator query is authority to use exactly that normalized text. Otherwise the
+    top Path A survivor scopes retrieval to the words aligned inside its own time span. The whole
+    transcript is intentionally not a fallback: on the measured 38-minute episode its 35,185
+    characters made the reranker request 40.89 GiB on a 23.99 GiB GPU before Stage 3 could run.
+    """
+    if explicit is not None:
+        query = normalize_sorani(explicit)
+        if not query.strip():
+            raise ValueError("visual query must contain non-whitespace Sorani retrieval text")
+        return query, "explicit"
+
+    best = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
+    if best is None:
+        return None
+    query = _candidate_slice_text(transcript, best.in_ms, best.out_ms)
+    if not query.strip():
+        return None
+    return query, f"path_a:{best.candidate_id}"
+
+
+def _candidate_work_component(candidate_id: str) -> str:
+    """Stage 4 directory name derived from one safe candidate-id component.
+
+    Scene-window IDs use colons as logical separators. They are valid candidate IDs but not
+    portable filename characters, so only those separators are translated; every path-forming
+    character and parent reference remains visible to the shared strict validator and is
+    refused before keyframe extraction can touch the filesystem.
+    """
+    if not isinstance(candidate_id, str):
+        raise ValueError(f"candidate_id must be a string, got {type(candidate_id).__name__}")
+    component = candidate_id.replace(":", "_")
+    try:
+        return validate_media_id(component)
+    except ValueError as exc:
+        raise ValueError(
+            f"candidate_id {candidate_id!r} is not a safe Stage 4 work component: {exc}"
+        ) from exc
+
+
 def _assert_verdict_matches_request(verdict: JudgeVerdict, request: JudgeRequest) -> None:
     """Refuse a judge adapter that returns a verdict for different footage."""
     if verdict.candidate_id != request.candidate_id:
@@ -839,87 +1085,21 @@ def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
 
 
 def _delivery_artifact_paths(work_dir: Path, clip_id: str) -> tuple[Path, ...]:
-    """The five files a completed run writes: captions, render, and §2's three sidecars."""
+    """The five files in the atomically published directory for one delivered clip."""
+    return ArtifactBundle.final_paths_for(work_dir, clip_id)
+
+
+def _legacy_delivery_artifact_paths(work_dir: Path, clip_id: str) -> tuple[Path, ...]:
+    """Flat paths written before atomic bundle directories existed; never overwrite them."""
     return tuple(
         work_dir / f"{clip_id}.{suffix}" for suffix in ("ass", "mp4", "srt", "edl", "json")
     )
 
 
-def _write_atomic(path: Path, text: str) -> None:
-    """Write through a staging file and one rename, so a kill cannot leave half a file.
-
-    `Path.write_text` truncates first: a process that dies mid-write leaves a file that exists,
-    is readable and is wrong — and every reader here checks existence, not completeness. The
-    rename is the same shape `transcripts.py` and `visual_pipeline.py` already use for their
-    own artifacts; §2's sidecars had none. D-146.
-    """
-    staging = path.with_name(f".{path.name}.tmp")
-    try:
-        staging.write_text(text, encoding="utf-8")
-        staging.replace(path)
-    except OSError:
-        # Otherwise a failed write leaves a dotfile that looks exactly like the partial state
-        # this function exists to prevent.
-        staging.unlink(missing_ok=True)
-        raise
-
-
-# The completion record's name: beside §2's five artifacts, and not one of them. Named here so
-# a reader of the work directory — and every test that lists sidecars — reads it from one place.
-DELIVERY_RECORD_SUFFIX = "delivery.provenance.json"
-
-
-def _delivery_record_path(work_dir: Path, clip_id: str) -> Path:
-    """Where a *finished* delivery records itself, following this work directory's own
-    `<artifact>.provenance.json` convention (Stage 0 already writes two)."""
-    return work_dir / f"{clip_id}.{DELIVERY_RECORD_SUFFIX}"
-
-
-def _delivery_is_complete(work_dir: Path, clip_id: str) -> bool:
-    """Did a previous run finish this delivery, or abandon it partway?
-
-    The record is written last, after all five artifacts, and names each one with the byte
-    length it had. So a run killed anywhere leaves no record, and a truncated artifact does not
-    match the record it was written from. Every failure mode — missing record, unreadable
-    record, missing file, wrong length — answers "not complete", which routes to redoing the
-    work rather than to trusting it. D-132's shape, applied to §2's delivery set. D-146.
-    """
-    try:
-        recorded = json.loads(_delivery_record_path(work_dir, clip_id).read_text(encoding="utf-8"))
-        sizes = recorded["bytes"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-    for path in _delivery_artifact_paths(work_dir, clip_id):
-        try:
-            if sizes.get(path.name) != path.stat().st_size:
-                return False
-        except (OSError, AttributeError):
-            return False
-    return True
-
-
-def _write_delivery_record(work_dir: Path, clip_id: str) -> None:
-    """Called once, after the last artifact, and never before."""
-    _write_atomic(
-        _delivery_record_path(work_dir, clip_id),
-        json.dumps(
-            {
-                "clip_id": clip_id,
-                "bytes": {
-                    path.name: path.stat().st_size
-                    for path in _delivery_artifact_paths(work_dir, clip_id)
-                },
-            },
-            indent=2,
-        )
-        + "\n",
-    )
-
-
 def _assert_no_existing_artifacts(
     work_dir: Path, identifier: str, select_sentences: Sequence[int]
-) -> tuple[str, ...]:
-    """Refuse overwriting a *finished* delivery, before spending GPU time or money.
+) -> None:
+    """Refuse an overwriting run *before* it spends GPU time or money.
 
     This check used to live beside the render step, ~180 lines after the billed Stage 4
     `generateContent` and after Stage 2/3's model calls — so a re-run into a used work
@@ -930,29 +1110,21 @@ def _assert_no_existing_artifacts(
     Called at each point where the selection first becomes knowable — after an explicit
     selection is validated, and again after `--auto-select` settles one — because those are
     genuinely different times, not two copies of the rule.
-
-    It used to refuse when *any* of the five paths existed, and that read an abandoned attempt
-    as a delivery. Measured: interrupting a real run at the second of the three sidecar writes
-    left `.ass`, `.mp4` and `.json` behind, and the retry into the same directory raised
-    `FileExistsError` — the work directory was wedged for good by one Ctrl-C. A leftover set
-    with no completion record is not a deliverable, so it is overwritten and the names are
-    returned for the report. D-146.
-
-    Returns:
-        The artifact names of an abandoned attempt this run will overwrite; empty otherwise.
     """
     if not select_sentences:
         # No selection, no clip, no artifacts. `run_pipeline` returns before the render step.
-        return ()
+        return
     clip_id = _clip_id(identifier, select_sentences)
-    existing = [path for path in _delivery_artifact_paths(work_dir, clip_id) if path.exists()]
-    if existing and _delivery_is_complete(work_dir, clip_id):
+    final_paths = _delivery_artifact_paths(work_dir, clip_id)
+    final_dir = final_paths[0].parent
+    candidates = (final_dir, *_legacy_delivery_artifact_paths(work_dir, clip_id))
+    existing = [path for path in candidates if os.path.lexists(path)]
+    if existing:
         raise FileExistsError(
             "refusing to overwrite existing delivery artifact(s): "
             + ", ".join(str(path) for path in existing)
             + ". Use a new work directory for a new run."
         )
-    return tuple(path.name for path in existing)
 
 
 def _natural_silence_for_anchor(ingested: IngestResult, anchor_out_ms: int) -> int | None:
@@ -978,21 +1150,13 @@ def _natural_silence_for_anchor(ingested: IngestResult, anchor_out_ms: int) -> i
     return max(segment.end_ms for segment in containing) if containing else None
 
 
-def _file_digest(path: Path) -> str:
-    """SHA-256 of a file, streamed. Measured in D-132: 0.1 s for the real 82 MB source."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def run_pipeline(
     source: Path,
     work_dir: Path,
     media_id: str | None = None,
     transcript: RawTranscript | None = None,
     asr: CanonicalTranscriptProducer | None = None,
+    diarizer: Diarizer | None = None,
     select_sentences: tuple[int, ...] = (),
     qc: Qc | None = None,
     verdict: JudgeVerdict | None = None,
@@ -1008,6 +1172,7 @@ def run_pipeline(
     visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
     on_event: EventSink = discard,
+    speaker_tracker: SpeakerSubjectTracker | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1020,6 +1185,9 @@ def run_pipeline(
             §3 Stage 3's job and Stage 3 has no producers.
         qc: §5's QC block. Absent means the clip is built but never rendered: §2 puts a human
             gate before output, always, and a runner is not a human.
+        diarizer: an authenticated Stage 0 exclusive-turn producer. Omitted is an explicit
+            diarization skip; an enabled operational refusal preserves base ingest and is
+            reported independently rather than aborting unrelated stages.
         discover: §3 Stage 3 Path A. Supply `PathADiscovery(...).discover` and the runner
             stops standing in for discovery and actually runs it.
         read_scenes: retired unsafe injection seam. Any non-``None`` value is refused because a
@@ -1027,10 +1195,13 @@ def run_pipeline(
             ``visual_composer`` so only bounded, scored survivors reach VideoChat3.
         visual_max_frames: the most frames any planned window may hold. Defaults to §3's
             ceiling and may only be lowered — the Path B reader's memory is the binding
-            constraint on real hardware (D-106, D-108, `BLOCKED.md` #17).
+            constraint on real hardware (D-138, D-143, `BLOCKED.md` #17).
         visual_fps: one sampling rate for every planned visual window. Omitted uses the
             blueprint's 1 fps planning reference, or the checkpoints' declared 2 fps ceiling
             when the composed model path is enabled.
+        visual_query: an explicit Sorani Path B retrieval query. When omitted, the top Path A
+            survivor's aligned transcript slice is used. If neither exists, Path B is reported
+            skipped rather than silently sending the whole episode transcript to the GPU.
         judge: §3 Stage 4. Supply `GeminiJudge(...)` and the runner scores the top candidate
             itself rather than needing `verdict` handed to it.
         on_event: called once when each stage starts and once when it ends. The default
@@ -1043,6 +1214,10 @@ def run_pipeline(
             §8.2 calls the second of those the metric that matters for a media organisation.
             So without a verdict the pipeline builds a clip and stops — which is the gate
             working, not a limitation to route around.
+        speaker_tracker: an active-speaker/face associator. It receives only exclusive turns
+            overlapping the final clip. A non-empty validated result is labelled speaker
+            tracked; an explicitly empty result may fall back to face-only tracking, while a
+            missing diarization input or invalid/failed association is refused visibly.
 
     Raises:
         FileNotFoundError: `source` does not exist.
@@ -1057,7 +1232,7 @@ def run_pipeline(
             "so Qwen retrieval/reranking bounds the scenes sent to VideoChat3"
         )
 
-    identifier = media_id or source.stem
+    identifier = validate_media_id(media_id or source.stem)
     if transcript is not None and transcript.media_id != identifier:
         raise ValueError(
             f"transcript media_id {transcript.media_id!r} is not {identifier!r}. A transcript "
@@ -1069,9 +1244,24 @@ def run_pipeline(
 
     # --- §3 Stage 0 ----------------------------------------------------------------------
     log.started("ingest")
-    ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
+    try:
+        ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
+    except (IngestError, OSError) as exc:
+        return _ingest_failure_run(identifier, source, work_dir, exc)
     log.finished("ingest")
 
+    diarization_stage: StageSkipped | None = _STAGE_0_DIARIZATION
+    if diarizer is not None:
+        try:
+            ingested = attach_diarization(ingested, diarizer)
+        except DiarizationUnavailable as exc:
+            diarization_stage = _operational_failure(
+                "diarization", "Stage 0 diarization runtime", exc
+            )
+        else:
+            diarization_stage = None
+
+    asr_failure: StageSkipped | None = None
     audio_digest: str | None = None
     producer_id: str | None = None
     if transcript is None and asr is not None:
@@ -1095,14 +1285,19 @@ def run_pipeline(
         reused = TranscriptStore(work_dir / "transcripts").reusable_raw(
             identifier, audio_digest, producer_id
         )
-        transcript = reused or asr.transcribe(
-            identifier,
-            Path(ingested.audio_path),
-            ingested.speech,
-            work_dir / "stage1",
-            ffmpeg,
-        )
-        if transcript.media_id != identifier:
+        transcript = reused
+        if transcript is None:
+            try:
+                transcript = asr.transcribe(
+                    identifier,
+                    Path(ingested.audio_path),
+                    ingested.speech,
+                    work_dir / "stage1",
+                    ffmpeg,
+                )
+            except RuntimeError as exc:
+                asr_failure = _operational_failure("transcript", "canonical ASR runtime", exc)
+        if transcript is not None and transcript.media_id != identifier:
             raise ValueError(
                 f"canonical ASR returned media_id {transcript.media_id!r} for {identifier!r}"
             )
@@ -1131,6 +1326,7 @@ def run_pipeline(
         source=str(source),
         work_dir=str(work_dir),
         ingest=ingested,
+        diarization=diarization_stage,
         transcript=_STAGE_1_ASR,
         index=_not_reached("index", "a transcript"),
         visual_windows=windows,
@@ -1141,6 +1337,8 @@ def run_pipeline(
         render=_not_reached("render", "a judged boundary and QC pass"),
         delivery=_not_reached("delivery", "a successful render"),
     )
+    if asr_failure is not None:
+        return replace(run, transcript=asr_failure)
     log.started("transcript")
     if transcript is None:
         log.finished("transcript", _STAGE_1_ASR.reason)
@@ -1149,9 +1347,6 @@ def run_pipeline(
     # --- §3 Stage 1 (supplied) + §4.1 -----------------------------------------------------
     store = TranscriptStore(work_dir / "transcripts")
     try:
-        # The audio digest travels with the transcript so a later run can verify reuse rather
-        # than assume it. `None` when Stage 1 was supplied rather than run — a transcript handed
-        # in with `--transcript` was not made from this audio and must never license a reuse.
         store.write_raw(transcript, audio_sha256=audio_digest, producer=producer_id)
     except RawTranscriptImmutable:
         # Invariant #1: the canonical transcript is never rewritten. A second run over the
@@ -1168,12 +1363,12 @@ def run_pipeline(
     run = replace(
         run,
         transcript_gaps=transcript.unaligned,
-        # §3 Stage 1: "Route the bottom quartile, and any segment where LLM-7B and CTC-3B
-        # disagree materially, to the validator." The policy had no caller in `src/` because
-        # `ctc_text` was never computed (D-135); it is computed now, so the rule runs here.
+        rejected_validator_corrections=transcript.rejected_validator_corrections,
         escalation=select_for_validation(scores_from_transcript(transcript)),
     )
-    normalized = normalize_transcript(transcript)
+    # Stamp the norm with the digest of the raw *file* — the same value `verify_raw_integrity`
+    # checked one line above — so the link survives a later release adding a transcript field.
+    normalized = normalize_transcript(transcript, source_sha256=store.raw_digest(identifier))
     store.write_norm(normalized)
     log.finished("transcript")
 
@@ -1185,12 +1380,9 @@ def run_pipeline(
 
     # --- §3 Stage 2 (text half) -----------------------------------------------------------
     log.started("index")
-    # One document per sentence, not one for the episode. Measured on the real 38-minute file,
-    # `from_transcript` gave a **single** document: BM25's idf is then log(1 + 0.5/1.5) for every
-    # one of 2,784 terms — one distinct value against the per-sentence index's 37 — so rarity is
-    # invisible, every query returns that one document, and its window is 322..2,313,729 ms, the
-    # whole 38.6 minutes. Built after segmentation for that reason; the sentences were already
-    # three lines away. D-134.
+    # BM25 ranks passages, not a one-document episode. On the measured 38-minute transcript,
+    # the old shape returned one 38.6-minute hit for every query; sentence documents produce
+    # bounded windows and term rarity across 186 documents (D-164).
     index = Bm25Index.from_sentences(sentences, normalized)
     log.finished("index")
 
@@ -1209,8 +1401,17 @@ def run_pipeline(
     merged: tuple[MergedCandidate, ...] = ()
     visual_result: VisualDiscoveryResult | None = None
     visual_skipped: StageSkipped | None = None
+    visual_query_source: str | None = None
+    discovery_skipped: StageSkipped | None = None
     if discover is not None or visual_composer is not None:
-        verbal = tuple(discover(normalized)) if discover is not None else ()
+        verbal: tuple[Candidate, ...] = ()
+        if discover is not None:
+            try:
+                verbal = tuple(discover(normalized))
+            except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
+                discovery_skipped = _operational_failure(
+                    "discovery", "Path A discovery runtime", exc
+                )
         # Path B usually has no composed producer here, and §3 is explicit that
         # a one-sided union is correct rather than degraded: candidates from *either* path
         # proceed, and a verbal-only moment is the case the dual path exists to protect. When
@@ -1221,33 +1422,19 @@ def run_pipeline(
         # repeating it would suggest two independent stages declined.
         log.started("visual_index")
         if visual_composer is not None:
-            best_verbal = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
-            # The whole transcript used to stand in here when neither was available. It is not a
-            # query — it is the corpus — and it broke in both directions at once. Measured on
-            # hawapc01 against this media's real 35,185-character transcript: `embed_text` asks
-            # for **40.89 GiB** on a 23.99 GiB card and the run dies mid-Stage-2; 8,000 chars
-            # (5,988 tokens) is the largest that fits, at a 9.86 GiB peak, and the demand is
-            # quadratic in tokens. Where it *does* fit — a short media — retrieval ranks every
-            # window against the entire episode, which orders nothing in particular and puts a
-            # number in §8.2's Recall@K column that means less than it looks. Truncating to some
-            # length would fix neither and would be a guessed threshold besides. D-117.
-            query = visual_query or (
-                _candidate_slice_text(normalized, best_verbal.in_ms, best_verbal.out_ms)
-                if best_verbal is not None
-                else None
-            )
-            if query is None:
+            query_with_source = _visual_retrieval_query(normalized, verbal, visual_query)
+            if query_with_source is None:
                 visual_skipped = StageSkipped(
                     stage="visual_index",
                     reason=(
-                        "§3 Stage 2 retrieves against a query and this run has none: Path A "
-                        "found no candidate to anchor one and --visual-query was not supplied. "
-                        "The normalized transcript is the corpus, not a query. Supply "
-                        "--visual-query, or --gemini so Path A can anchor one."
+                        "Path B requires --visual-query or a Path A candidate whose aligned "
+                        "transcript slice can scope retrieval; refusing the whole episode "
+                        "transcript because the measured fallback exhausted GPU memory"
                     ),
                     blocked_by=("a retrieval query",),
                 )
             else:
+                query, visual_query_source = query_with_source
                 try:
                     visual_result = visual_composer.discover(
                         source,
@@ -1260,7 +1447,7 @@ def run_pipeline(
                 except VisualPipelineError as exc:
                     visual_skipped = StageSkipped(
                         stage="visual_index",
-                        reason=str(exc),
+                        reason=_safe_exception_text(str(exc), budget=1_024),
                         blocked_by=("visual retrieval refused this media",),
                     )
                 else:
@@ -1271,9 +1458,10 @@ def run_pipeline(
         merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
-            discovery=None if merged else _STAGE_3_NOTHING_FOUND,
+            discovery=discovery_skipped or (None if merged else _STAGE_3_NOTHING_FOUND),
             candidates=merged,
             visual_index=visual_result or visual_skipped or _STAGE_2_VISUAL,
+            visual_query_source=visual_query_source,
         )
         log.finished("discovery", None if merged else _STAGE_3_NOTHING_FOUND.reason)
     else:
@@ -1297,6 +1485,21 @@ def run_pipeline(
         select_sentences, selected, selected_anchors = _prepare_selection(
             transcript, sentences, automatic
         )
+        if not select_sentences:
+            # The survivor exists, but none of it can become a sentence-complete clip. Stop
+            # before extracting source pixels or making the billed Stage 4 call: a verdict for
+            # footage the automatic path already knows it cannot cut has no downstream use.
+            return replace(
+                run,
+                editorial=StageSkipped(
+                    stage="editorial",
+                    reason=(
+                        "automatic selection found no complete contiguous sentence inside any "
+                        "Stage 3 survivor, so Stage 4 was not called"
+                    ),
+                    blocked_by=("complete sentence anchors",),
+                ),
+            )
         # `--auto-select` only knows which sentences it wants once Stage 3 has ranked
         # candidates, so this is the first moment the artifact names exist in that mode. Still
         # ahead of the billed Stage 4 call below.
@@ -1328,17 +1531,24 @@ def run_pipeline(
             if selected_anchors is not None
             else survivor
         )
-        judge_frames = (
-            extract_judge_frames(
-                source,
-                request_candidate.in_ms,
-                request_candidate.out_ms,
-                work_dir / "stage4" / request_candidate.candidate_id.replace(":", "_"),
-                ffmpeg=ffmpeg,
+        candidate_work_component = _candidate_work_component(request_candidate.candidate_id)
+        try:
+            judge_frames = (
+                extract_judge_frames(
+                    source,
+                    request_candidate.in_ms,
+                    request_candidate.out_ms,
+                    work_dir / "stage4" / candidate_work_component,
+                    ffmpeg=ffmpeg,
+                )
+                if getattr(judge, "requires_keyframes", False)
+                else ()
             )
-            if getattr(judge, "requires_keyframes", False)
-            else ()
-        )
+        except KeyframeError as exc:
+            return replace(
+                run,
+                editorial=_operational_failure("editorial", "Stage 4 keyframe extraction", exc),
+            )
         request = JudgeRequest.for_survivor(
             request_candidate,
             text_ckb=_candidate_slice_text(
@@ -1346,7 +1556,13 @@ def run_pipeline(
             ),
             keyframes=judge_frames,
         )
-        judged = judge.judge(request)
+        try:
+            judged = judge.judge(request)
+        except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
+            return replace(
+                run,
+                editorial=_operational_failure("editorial", "Stage 4 judge runtime", exc),
+            )
         _assert_verdict_matches_request(judged, request)
         if judged.sv6d is None and survivor.sv6d is not None:
             judged = replace(judged, sv6d=survivor.sv6d)
@@ -1358,6 +1574,14 @@ def run_pipeline(
     if not select_sentences:
         log.finished("boundary", _skip_reason(run.boundary))
         return run
+
+    try:
+        editorial = verdict.to_editorial() if verdict is not None else None
+    except NotRoutable as exc:
+        return replace(
+            run,
+            editorial=_operational_failure("editorial", "Stage 4 verdict routing", exc),
+        )
 
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------
     anchors = selected_anchors
@@ -1374,6 +1598,9 @@ def run_pipeline(
         return replace(run, boundary=no_anchor)
 
     anchor_in, anchor_out = anchors
+    speaker_turn_start, speaker_turn_end = turn_bounds_for_anchors(
+        ingested.diarization or (), anchor_in, anchor_out
+    )
     if (
         verdict is not None
         and judge is None
@@ -1401,10 +1628,17 @@ def run_pipeline(
                 f"no visual window overlaps the Stage 5 span {temporal_span[0]}.."
                 f"{temporal_span[1]} ms"
             )
-        timelens_intervals = temporal_grounder.ground_all(
-            grounding_windows,
-            _candidate_slice_text(normalized, anchor_in, anchor_out),
-        )
+        try:
+            with _release_grounder_after_use(temporal_grounder):
+                timelens_intervals = temporal_grounder.ground_all(
+                    grounding_windows,
+                    _candidate_slice_text(normalized, anchor_in, anchor_out),
+                )
+        except (GroundingError, EmbedderUnavailable, VideoInputError) as exc:
+            return replace(
+                run,
+                boundary=_operational_failure("boundary", "TimeLens temporal grounding", exc),
+            )
         timelens_interval = interval_for_fusion(
             timelens_intervals, anchor_in, anchor_out, identifier
         )
@@ -1421,11 +1655,12 @@ def run_pipeline(
             # §3 Stage 5 takes the latest of five out-point signals. This runner computed the
             # VAD silences a few hundred lines above (`_pauses_between`), spent them on §4.2's
             # sentence segmentation and then never handed Stage 5 its own — so `fuse_boundary`
-            # had a `natural_silence` branch no caller could reach, and the fused out point was
-            # three of the five. Four now; the fifth is `speaker_turn_end`, which needs the
-            # gated diarization model (`BLOCKED.md` #4) and is absent for a stated reason
-            # rather than by omission. D-070.
+            # had a `natural_silence` branch no caller could reach. Speaker-turn signals now
+            # come only from an enabled, validated exclusive diarizer; an absent producer stays
+            # an explicit StageSkipped rather than an invented boundary. D-070.
             natural_silence_ms=_natural_silence_for_anchor(ingested, anchor_out),
+            speaker_turn_start_ms=speaker_turn_start,
+            speaker_turn_end_ms=speaker_turn_end,
             timelens_interval_start_ms=(
                 timelens_interval.start_ms if timelens_interval is not None else None
             ),
@@ -1466,11 +1701,89 @@ def run_pipeline(
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
-    focus_points = (
-        subject_tracker.track(source, boundary.final_in_ms, boundary.final_out_ms)
-        if subject_tracker is not None
-        else ()
-    )
+    focus_points: tuple[FocusPoint, ...] = ()
+    reframe_mode = Reframe.STATIC_CENTRE
+    if speaker_tracker is not None:
+        if ingested.diarization is None:
+            return replace(
+                run,
+                boundary=boundary,
+                render=StageSkipped(
+                    stage="render",
+                    reason=(
+                        "requested speaker/face association needs measured diarization for "
+                        "the final clip; no validated Stage 0 turns are available"
+                    ),
+                    blocked_by=("Stage 0 measured diarization",),
+                ),
+            )
+        overlapping_turns = tuple(
+            turn
+            for turn in ingested.diarization
+            if turn.start_ms < boundary.final_out_ms and turn.end_ms > boundary.final_in_ms
+        )
+        if not overlapping_turns:
+            return replace(
+                run,
+                boundary=boundary,
+                render=StageSkipped(
+                    stage="render",
+                    reason=(
+                        "requested speaker/face association has no measured diarization turn "
+                        f"overlapping the final clip {boundary.final_in_ms}.."
+                        f"{boundary.final_out_ms} ms"
+                    ),
+                    blocked_by=("overlapping measured diarization",),
+                ),
+            )
+        try:
+            speaker_points = speaker_tracker.track_speakers(
+                source,
+                boundary.final_in_ms,
+                boundary.final_out_ms,
+                overlapping_turns,
+            )
+        except RuntimeError as exc:
+            return replace(
+                run,
+                boundary=boundary,
+                render=_operational_failure("render", "speaker/face association", exc),
+            )
+        try:
+            focus_points = validate_speaker_focus_points(
+                speaker_points,
+                overlapping_turns,
+                boundary.final_in_ms,
+                boundary.final_out_ms,
+            )
+        except (SpeakerAssociationError, TypeError, ValueError) as exc:
+            return replace(
+                run,
+                boundary=boundary,
+                render=_operational_failure("render", "speaker/face association", exc),
+            )
+        if focus_points:
+            reframe_mode = Reframe.SPEAKER_TRACKED
+
+    if not focus_points and subject_tracker is not None:
+        try:
+            focus_points = subject_tracker.track(
+                source, boundary.final_in_ms, boundary.final_out_ms
+            )
+        except RuntimeError as exc:
+            return replace(
+                run,
+                boundary=boundary,
+                render=_operational_failure("render", "requested subject tracking", exc),
+            )
+        if focus_points:
+            reframe_mode = Reframe.FACE_TRACKED
+
+    crop_target = {
+        Reframe.STATIC_CENTRE: "static_centre",
+        Reframe.FACE_TRACKED: "face_tracked",
+        Reframe.SPEAKER_TRACKED: "speaker_face",
+    }[reframe_mode]
     clip = Clip(
         clip_id=_clip_id(identifier, select_sentences),
         media_id=identifier,
@@ -1491,10 +1804,10 @@ def run_pipeline(
             words=clip_words,
             asr=transcript.asr,
         ),
-        editorial=verdict.to_editorial() if verdict is not None else None,
+        editorial=editorial,
         output=(
             verdict.to_output(
-                crop_target="face_tracked" if focus_points else "static_centre",
+                crop_target=crop_target,
                 durations=(max(1, round((boundary.final_out_ms - boundary.final_in_ms) / 1000)),),
             )
             if verdict is not None
@@ -1522,15 +1835,13 @@ def run_pipeline(
         log.finished("render", unjudged.reason)
         return replace(run, render=unjudged)
 
-    ass_path, render_path, srt_path, edl_path, editing_json_path = _delivery_artifact_paths(
+    _, final_render, final_srt, final_edl, final_json = _delivery_artifact_paths(
         work_dir, clip.clip_id
     )
     # Kept as well as hoisted, and it costs nothing: the guard above runs before the expensive
     # stages, this one runs immediately before the first write. Anything that appeared in the
     # work directory while the models were running is still caught here.
-    run = replace(
-        run, resumed_over=_assert_no_existing_artifacts(work_dir, identifier, select_sentences)
-    )
+    _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
     try:
         clip.assert_renderable()
     except (ValueError, IncompleteSentence) as exc:
@@ -1538,13 +1849,34 @@ def run_pipeline(
         return replace(
             run,
             render=StageSkipped(
-                stage="render", reason=str(exc), blocked_by=("§2 QC/editorial gate",)
+                stage="render",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("§2 QC/editorial gate",),
             ),
         )
 
     try:
-        _write_atomic(
-            ass_path,
+        bundle = ArtifactBundle.create(work_dir, clip.clip_id)
+    except BundleError as exc:
+        return replace(
+            run,
+            render=StageSkipped(
+                stage="render",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("§2 atomic delivery bundle",),
+            ),
+            delivery=StageSkipped(
+                stage="delivery",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("§2 atomic delivery bundle",),
+            ),
+        )
+    ass_path = bundle.staged_path("ass")
+    render_path = bundle.staged_path("mp4")
+
+    try:
+        bundle.write_text(
+            "ass",
             # The clip's own timeline. Without this every caption is scheduled at its source
             # time, lands past the end of a clip cut from mid-episode, and libass draws
             # nothing — a playable MP4 with no captions and no error.
@@ -1565,87 +1897,90 @@ def run_pipeline(
             source_width=width,
             source_height=height,
             focus_points=tuple((point.at_ms, point.center_x) for point in focus_points),
+            reframe=reframe_mode,
             ffmpeg=ffmpeg,
         )
-    except (IngestError, RenderError, ValueError) as exc:
-        ass_path.unlink(missing_ok=True)
-        render_path.unlink(missing_ok=True)
+    except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:
+        try:
+            bundle.discard()
+        except BundleError as cleanup_error:
+            exc = RenderError(
+                "private bundle cleanup also failed: "
+                f"{_safe_exception_text(str(cleanup_error), budget=512)}; original failure: "
+                f"{_safe_exception_text(str(exc), budget=512)}"
+            )
         log.finished("render", str(exc))
         return replace(
             run,
             render=StageSkipped(
-                stage="render", reason=str(exc), blocked_by=("Stage 6 render runtime",)
+                stage="render",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("Stage 6 render runtime",),
             ),
         )
 
-    run = replace(run, render=rendered)
     log.finished("render")
 
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
+    # Nothing is public yet: the render and all sidecars live in one private sibling directory.
     log.started("delivery")
-    # The MP4, the ASS and the §5 JSON are already produced above. These are the other two.
     try:
         # Build all three before writing any. This used to write the JSON, then the SRT, then
-        # build the EDL — and the EDL is the one that legitimately refuses: an NTSC 29.97 fps
-        # source needs drop-frame timecode, which `build_edl` will not fake. So on ordinary
-        # broadcast footage the run left a playable captioned MP4, an ASS, a JSON and an SRT
-        # on disk with no EDL beside them, reported the stage skipped, and anyone reading the
-        # work directory for deliverables had four fifths of a delivery set that looked whole.
-        # Nothing here needs a file to exist before the next step, so the fallible part now
-        # happens first. D-072.
+        # build the EDL — formerly an NTSC 29.97 fps source legitimately refused because
+        # drop-frame support did not exist. The build-first ordering remains load-bearing for
+        # unsupported fractional rates and any future sidecar validation failure: no partial
+        # delivery set is briefly exposed before cleanup. D-072.
         editing_json = json.dumps(clip.to_dict(), ensure_ascii=False, indent=2)
         srt = build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms)
         # The EDL's source timecodes are the *source's* timeline — where this clip was cut
-        # from — so it takes the source's own frame rate. An NTSC rate is refused there rather
-        # than rounded, and lands here as a named gap instead of a silently drifting conform.
+        # from — so it takes the source's own frame rate. NTSC 30000/1001 selects SMPTE
+        # drop-frame numbering; unsupported rates land here instead of silently drifting.
         edl = build_edl(
             clip_in_ms=clip.in_ms,
             clip_out_ms=clip.out_ms,
             fps=frame_rate(source, ffmpeg),
             title=f"{identifier} {clip.clip_id}",
         )
-        _write_atomic(editing_json_path, editing_json)
-        _write_atomic(srt_path, srt)
-        _write_atomic(edl_path, edl)
-        # Last, and only now: the record is what makes the five files a *delivery* rather than
-        # five files. A run killed at any point above leaves no record, so the next run treats
-        # what is there as an abandoned attempt and redoes it instead of refusing for ever.
-        _write_delivery_record(work_dir, clip.clip_id)
-    # `UndeliverableOrder` is a `ValueError` and **not** a `DeliveryError` (they are siblings),
-    # so it escaped this tuple when D-165 introduced it one commit earlier. Demonstrated, not
-    # inferred: raising it against this exact tuple is not caught, which would skip the cleanup
-    # below and the named gap, and propagate out of a stage designed to refuse gracefully. It was
-    # shielded only by call order — `build_ass` runs first on the same sequence and its handler
-    # catches `ValueError` — and an ordering guarantee is not an exception contract. D-166.
-    except (DeliveryError, UndeliverableOrder, RenderError, OSError) as exc:
-        # Building first makes the refusal case leave nothing behind; this covers a write that
-        # fails partway through the three — disk full, permissions — so the set is all or none
-        # either way. The MP4 and ASS are deliberately kept: Stage 6 genuinely succeeded and
-        # `run.render` reports that path, so deleting them would make the report a lie.
-        for path in (
-            editing_json_path,
-            srt_path,
-            edl_path,
-            _delivery_record_path(work_dir, clip.clip_id),
-        ):
-            path.unlink(missing_ok=True)
+        bundle.write_text("json", editing_json)
+        bundle.write_text("srt", srt)
+        bundle.write_text("edl", edl)
+        bundle.publish()
+    except (DeliveryError, UndeliverableOrder, RenderError, BundleError, OSError) as exc:
+        try:
+            bundle.discard()
+        except BundleError as cleanup_error:
+            exc = DeliveryError(
+                "private bundle cleanup also failed: "
+                f"{_safe_exception_text(str(cleanup_error), budget=512)}; original failure: "
+                f"{_safe_exception_text(str(exc), budget=512)}"
+            )
         log.finished("delivery", str(exc))
         return replace(
             run,
+            render=StageSkipped(
+                stage="render",
+                reason=(
+                    "render completed privately but was not published: "
+                    f"{_safe_exception_text(str(exc), budget=1_024)}"
+                ),
+                blocked_by=("§2 atomic delivery bundle",),
+            ),
             delivery=StageSkipped(
                 stage="delivery",
-                reason=str(exc),
+                reason=_safe_exception_text(str(exc), budget=1_024),
                 blocked_by=("§2 delivery set",),
             ),
         )
 
     log.finished("delivery")
+    rendered = replace(rendered, path=str(final_render))
     return replace(
         run,
+        render=rendered,
         delivery=Delivery(
-            srt_path=str(srt_path),
-            edl_path=str(edl_path),
-            editing_json_path=str(editing_json_path),
+            srt_path=str(final_srt),
+            edl_path=str(final_edl),
+            editing_json_path=str(final_json),
         ),
     )
 
@@ -1690,7 +2025,7 @@ def assert_devices_available(assignments: Mapping[str, str]) -> None:
     §6 assigns the video phase across two GPUs — `GPU 0 → VideoChat3-4B`, `GPU 1 → Embedding /
     Reranker / TimeLens2` — so the defaults below are two-GPU defaults. On a machine with fewer,
     a stage would otherwise die inside torch with a device-ordinal error that names neither the
-    stage nor the remedy. Refusing here says both. D-105.
+    stage nor the remedy. Refusing here says both. D-137.
     """
     requested = {
         role: device
@@ -1714,16 +2049,17 @@ def assert_devices_available(assignments: Mapping[str, str]) -> None:
         )
 
 
-if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
-    from hawedit.models import ModelStore
+def _embedding_revision(model_store: ModelStore) -> str | None:
+    """The pinned commit of the embedding checkpoint, or `None` if it is not pinned.
 
+    `None` rather than raising: an unpinned checkpoint must not *stop* a run, it must stop the
+    embedding cache from claiming a match - vectors from a checkpoint nobody can name are not
+    evidence that this run's weights produced them. `VisualComposer` disables the cache for
+    `None`, so the run completes and simply re-embeds.
 
-def _embedding_revision(model_store: ModelStore) -> str:
-    """The pinned commit of the embedding checkpoint, or `""` if it is not pinned.
-
-    Empty rather than raising: an unpinned checkpoint must not *stop* a run, it must stop the
-    embedding cache from claiming a match — vectors from a checkpoint nobody can name are not
-    evidence that this run's weights produced them. D-140.
+    Restored across the readiness merge, which requires one 40-hex revision and passed
+    `revision_for(...)` straight into the composer - correct for a pinned checkpoint, fatal for
+    an unpinned one. D-140.
     """
     from hawedit.models import RevisionNotPinned, SourceNotConfigured
     from hawedit.registry import REGISTRY
@@ -1732,15 +2068,15 @@ def _embedding_revision(model_store: ModelStore) -> str:
     try:
         return model_store.revision_for(model_store.source_for(entry))
     except (SourceNotConfigured, RevisionNotPinned):
-        return ""
+        return None
 
 
 def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
     """Wire §3 Stage 2's index and Path B's reader onto the GPUs §6 assigns them.
 
     A separate function because the *wiring* is the decision, not the flag: the first version of
-    D-105's test asserted the parsed defaults and reverting either model to `--visual-device` left
-    it green. A default nothing reads is not an assignment. D-105.
+    D-137's test asserted the parsed defaults and reverting either model to `--visual-device` left
+    it green. A default nothing reads is not an assignment. D-137.
     """
     from hawedit.models import ModelStore
     from hawedit.qwen_visual import QwenVisualEmbedder, QwenVisualReranker
@@ -1748,7 +2084,8 @@ def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
     from hawedit.video_reader import VideoChat3Reader
 
     model_store = ModelStore()
-    embed_dir = model_store.path_for(REGISTRY["Qwen3-VL-Embedding-2B"])
+    embed_entry = REGISTRY["Qwen3-VL-Embedding-2B"]
+    embed_dir = model_store.path_for(embed_entry)
     rerank_dir = model_store.path_for(REGISTRY["Qwen3-VL-Reranker-2B"])
     reader_dir = model_store.path_for(REGISTRY["MCG-NJU/VideoChat3-4B"])
     # §6, VIDEO PHASE: `GPU 0 -> VideoChat3-4B (segmented)` and `GPU 1 -> Embedding / Reranker /
@@ -1756,10 +2093,6 @@ def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
     # together on GPU 0 while GPU 1 held 1.3 GiB, and the real 38-minute run died with `CUDA out of
     # memory. Tried to allocate 21.83 GiB … 18.30 GiB is allocated by PyTorch`. Splitting them
     # freed 7.86 GiB on GPU 0. Measured 2026-08-09.
-    # The pinned revision of the embedding checkpoint travels with the composer, because the
-    # per-window embedding cache keys on it: vectors from two different checkpoints live in
-    # different spaces, and mixing them makes every similarity meaningless while looking fine.
-    # D-073 pinned the revisions; D-140 made this one part of the cache key.
     return VisualComposer(
         QwenVisualEmbedder(embed_dir, device=args.index_device),
         lambda read: QwenVisualReranker(rerank_dir, read, device=args.index_device),
@@ -1774,7 +2107,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     §6 assigns the video phase across two GPUs, and the defaults below are that assignment.
     Extracted from `main` because a default nothing can read is a default nothing can hold to
-    the blueprint — D-105's test asserts on the parsed values, not on a comment.
+    the blueprint — D-137's test asserts on the parsed values, not on a comment.
     """
     parser = argparse.ArgumentParser(
         prog=program_name("hawedit.pipeline"),
@@ -1839,7 +2172,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "most frames any planned window may hold; §3's ceiling by default and only "
             "lowerable. Measured on hawapc01, VideoChat3-4B reads at most 8 on a 3090 Ti "
-            "(D-106); a lower ceiling means more, shorter windows (D-108)"
+            "(D-138); a lower ceiling means more, shorter windows (D-143)"
         ),
     )
     parser.add_argument(
@@ -1900,10 +2233,15 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
 
     Everything `_run_from_args` used to do between parsing and reporting, extracted so a second
     caller can drive the identical producer wiring — the same `--gemini`/`--visual`/`--omni-asr`
-    branches, the same mutual-exclusion checks — without re-deriving any of it. `durable.py`'s
-    DBOS step is that second caller: it needs `on_event` wired to a durable sink and it needs
-    the same exceptions this raises (`_run_from_args` still catches them; nothing about what is
-    raised or when changed here, only where the try/except now sits). D-A2.
+    branches, the same mutual-exclusion checks — without re-deriving any of it.
+    `durable_workflow.py`'s DBOS step is that second caller: it needs `on_event` wired to a
+    durable sink and it needs the same exceptions this raises (`_run_from_args` still catches
+    them; nothing about what is raised or when changed here, only where the try/except now
+    sits). D-A2.
+
+    The body is `main`'s, not this branch's: `main` kept editing this logic in place while this
+    branch had moved it, so the merge took `main`'s newer validation wholesale and re-added only
+    the `on_event` wiring the extraction exists for.
 
     Raises:
         Exactly what `run_pipeline` raises, plus `ValueError` for a combination of flags that
@@ -1929,28 +2267,28 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         raise ValueError("--verdict requires a Stage 1 source and --sentences")
     if args.visual and not (args.transcript or args.omni_asr):
         raise ValueError("--visual requires --transcript or --omni-asr")
-    if args.visual_query and not args.visual:
+    if args.visual_query is not None and not args.visual:
         raise ValueError("--visual-query requires --visual")
+    if args.visual_query is not None and not normalize_sorani(args.visual_query).strip():
+        raise ValueError("--visual-query must contain non-whitespace Sorani retrieval text")
+    if args.visual and not (args.visual_query or args.gemini or args.vertex_project):
+        raise ValueError("--visual without Path A requires --visual-query")
     if args.qc_pass and not (args.sentences or args.auto_select):
         raise ValueError("--qc-pass requires --sentences or --auto-select")
-    # `--visual` counts as a producer only when Stage 2 can retrieve, and §3 Stage 2 has
-    # exactly two sources for a query: `--visual-query`, or Path A anchoring one from its
-    # best candidate, which needs `--gemini`/`--vertex-project`. D-117 removed the third —
-    # the whole transcript — because a corpus is not a query. So since D-117 `--visual`
-    # alone cannot rank a window, cannot surface a candidate, and cannot answer
-    # `--auto-select`; this test accepted it anyway. Measured on the real 38-minute
-    # ZAR38MinTest.mp4: the run paid for all of Stage 0, then skipped `visual_index` for
-    # want of a query and `discovery` for want of candidates, and selected nothing — every
-    # bit of it decidable from argv. D-147.
+    visual_query = args.visual_query.strip() if args.visual_query is not None else ""
+    # Path B is a producer only when it has something to retrieve against. `--visual`
+    # alone plans windows but cannot rank or surface one, so accepting it for auto-selection
+    # pays all of Stage 0 for an outcome argv already proves impossible. Path A can either
+    # produce directly or anchor the optional Path B query. D-177.
     stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
-        args.visual and args.visual_query
+        args.visual and visual_query
     )
     if args.auto_select and not stage_3_can_produce:
         raise ValueError(
             "--auto-select needs a Stage 3 producer that can actually produce: "
-            "--gemini/--vertex-project for Path A, or --visual with --visual-query so §3 "
-            "Stage 2 has something to retrieve against. --visual on its own has no query "
-            "and cannot rank a window (D-117), so nothing would reach the selector."
+            "--gemini/--vertex-project for Path A, or --visual with --visual-query so "
+            "Stage 2 has something to retrieve against. --visual alone cannot rank a "
+            "window."
         )
     if args.auto_select and not (args.transcript or args.omni_asr):
         raise ValueError("--auto-select requires --transcript or --omni-asr")
@@ -2100,9 +2438,15 @@ def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
 def _print_report(run: PipelineRun) -> None:
     print(f"media   {run.media_id}")
     if not isinstance(run.ingest, StageSkipped) and run.ingest is not None:
+        turns = run.ingest.diarization
+        diarization = (
+            f"{len(turns)} diarization turn(s) / {len({turn.speaker for turn in turns})} speaker(s)"
+            if turns is not None
+            else "diarization unavailable"
+        )
         print(
             f"stage 0 {run.ingest.duration_ms} ms · {len(run.ingest.shot_cuts_ms)} shot cut(s) · "
-            f"{len(run.ingest.speech)} speech region(s) · diarization: not run"
+            f"{len(run.ingest.speech)} speech region(s) · {diarization}"
         )
     if run.visual_windows:
         # Printed even though `visual_index` is skipped just below. Stage 2's visual half is

@@ -25,12 +25,14 @@ codebase keeps finding.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import pytest
 
 from hawedit.clip import DiscoveryPath, Sv6d, assert_sv6d_within_window, parse_timestamps_ms
 from hawedit.path_b import (
     MAX_FRAMES_PER_CALL,
+    MAX_UNREADABLE_REASON_CHARS,
     PATH_B_MODEL,
     PathBError,
     SceneReading,
@@ -397,7 +399,7 @@ def test_path_b_never_claims_both() -> None:
     assert all(c.path is not DiscoveryPath.BOTH for c in candidates)
 
 
-# --- D-118: one unreadable survivor discarded all of Path B -----------------------------------
+# --- D-156: one unreadable survivor discarded all of Path B -----------------------------------
 
 
 class PartlyUnreadable:
@@ -510,3 +512,59 @@ def test_a_refusal_with_no_reason_is_refused_at_construction() -> None:
     """A window dropped for no stated reason is a window silently dropped."""
     with pytest.raises(ValueError, match="carries no reason"):
         UnreadableScene(window_id="m1:s0:w0", in_ms=0, out_ms=1_000, reason="   ")
+
+
+def test_unreadable_reason_is_a_bounded_printable_line_without_losing_short_detail() -> None:
+    ordinary = UnreadableScene(
+        window_id="m1:s0:w0",
+        in_ms=0,
+        out_ms=1_000,
+        reason="PathBError: useful model refusal",
+    )
+    assert ordinary.reason == "PathBError: useful model refusal"
+
+    discarded_tail = "AIza" + ("S" * 64)
+    huge = UnreadableScene(
+        window_id="m1:s0:w1",
+        in_ms=1_000,
+        out_ms=2_000,
+        reason="PathBError: private\x00\n\t" + ("x" * 1_000_000) + discarded_tail,
+    )
+    serialized = huge.to_dict()["reason"]
+
+    assert isinstance(serialized, str)
+    assert len(serialized) == MAX_UNREADABLE_REASON_CHARS
+    assert serialized.startswith("PathBError: private ")
+    assert serialized.endswith("…")
+    assert discarded_tail not in serialized
+    assert not any(character in serialized for character in ("\x00", "\n", "\t"))
+
+
+def test_unreadable_reason_refuses_a_non_string_runtime_value() -> None:
+    with pytest.raises(TypeError, match="reason must be a string"):
+        UnreadableScene(
+            window_id="m1:s0:w0",
+            in_ms=0,
+            out_ms=1_000,
+            reason=cast(str, 7),
+        )
+
+
+@pytest.mark.parametrize(("in_ms", "out_ms"), [(1_000, 1_000), (2_000, 1_000)])
+def test_a_refusal_that_spans_nothing_is_refused_at_construction(in_ms: int, out_ms: int) -> None:
+    """The sibling guard, and the only refusal in this module no test held.
+
+    Measured across tests/test_path_b.py, test_visual_pipeline.py, test_clip.py and
+    test_judge.py: the other nine redden something; this one could be deleted with all four
+    green.
+
+    `UnreadableScene` exists, by its own docstring, to keep "six candidates" from being
+    indistinguishable from "seven, and one vanished". The span is how a reader knows *which*
+    window vanished — a zero-length or inverted one makes the accounting record point at
+    nothing, which is the failure this type was introduced to prevent, reappearing inside the
+    record itself.
+    """
+    with pytest.raises(ValueError, match="has no length"):
+        UnreadableScene(
+            window_id="m1:s0:w0", in_ms=in_ms, out_ms=out_ms, reason="the model refused"
+        )

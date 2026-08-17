@@ -124,7 +124,7 @@ all, using hand-written recipe fixtures:
 - `pooling_mode: "mean"` → refused, naming it
 - a model outside §7 → refused before any load
 - `PySceneDetect` as the embedder → `WrongRole`, before the 4 GB load (audit finding #8's rule)
-- missing weights → refused, naming `fetch-models.sh`
+- missing weights → refused, naming the wheel-installed `hawedit-fetch-models`
 - **`cuda:0` asked for on a machine reporting no CUDA → refused, not run on the CPU.**
   `torch.cuda.is_available` is answered directly rather than branching on what this box has, so
   the test still runs on a GPU machine — deciding by hardware would delete the check exactly

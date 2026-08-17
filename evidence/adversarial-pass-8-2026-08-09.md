@@ -42,7 +42,7 @@ GREEN  the guard compares the request against itself              <- UNPROTECTED
 **The guard's wiring.** `assert_encoded_span(duration_ms, duration_ms, …)` — comparing the request
 against itself — left the suite green. The function is unit-tested with real numbers, but it is reached
 only through `render_clip`, and truncation by a short source is prevented upstream, so no test ever
-drove it. Third appearance of this shape: D-105 and D-108 were both "the function is tested, the trip
+drove it. Third appearance of this shape: D-137 and D-143 were both "the function is tested, the trip
 to it is not".
 
 **The frame rate.** `frame_duration_ms` → `return 40` survived, against its own docstring: *"Not a
