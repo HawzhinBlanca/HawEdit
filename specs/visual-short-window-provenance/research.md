@@ -115,6 +115,24 @@ rate exceeds the checkpoints' ordinary 2 fps sampling declaration: because the d
 is two, no processor drops or pads a frame. It does not yet prove real-model retrieval or reading
 quality, which remains the GPU decision gate below.
 
+The same preflight exposed one warning that could otherwise contaminate the model comparison.
+Transformers 4.57.6 warns that TimeLens2's `Qwen2Tokenizer` carries the Mistral-regex pattern and
+recommends `fix_mistral_regex=True`. Loading the exact pinned processor both ways produced
+byte-identical token-id sequences for the complete grounding prompt with the positive Sorani query,
+the contrast Sorani query, doubled spaces, a newline, a decimal, and a curly apostrophe. The two
+Sorani prompts were 55 and 49 tokens respectively in both modes. Therefore the warning is recorded,
+but changing the production tokenizer is not part of this unit: it did not change any tested input
+and a loader change without model-output evidence would be a new unmeasured recipe.
+
+The non-repository measurement harness now covers all four real checkpoints sequentially. Its
+SHA-256 is `7668657ef1f9ce23c227c141b2d6e1369a1241d49400954d0c54b85b7aa8d8bf` and it refuses an
+existing result path or any pixel-identity drift. A first launch was stopped before publication
+after a processor-only review found that a TimeLens still image needs the checkpoint's spatial
+image-grid resize rather than its temporal video resize; no result artifact was created. The
+corrected processor preflight now records an `image_grid_thw` for the still and consumes exactly
+two frames for every video representation. The real inference run remains pending a GPU lease and
+will use a fresh non-overwriting output.
+
 ## Alternatives and invariants
 
 1. Drop/refuse a short scene: rejected because the planned windows no longer give Path B visual
