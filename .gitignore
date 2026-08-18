@@ -38,3 +38,10 @@ models/*
 /.gate/
 /build/
 /dist/
+# DBOS's own system database (D-A3): local SQLite by default, one file, never committed — it
+# is process state (workflow/step checkpoints), not source, and its schema is DBOS's to
+# migrate, not this repo's to track.
+/.dbos/
+# The judge promotion ledger (D-A14): installation-level state (which judge version is
+# currently active), not source — the same reasoning as /.dbos/ above.
+/.hawedit/

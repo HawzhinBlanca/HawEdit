@@ -77,8 +77,12 @@ fi
 # dependencies. Execute the current source check by absolute path under isolated startup. The
 # token is now a response from the path-bound interpreter, not an authentication mechanism.
 # Installed code therefore cannot grade the checkout whose source is about to run. D-104.
+# `agentic` joins dev/media here for the same reason it joined the gate scope in
+# `install-host.sh` and `_PROFILE_EXTRAS`: this probe asserts the venv matches the *gate*
+# profile's lock, and that lock now carries dbos + pydantic-ai. The four sites must agree —
+# `environment.py` refuses when they do not, which is how each partial edit was caught. D-A26.
 _probe="$("$PY" -I "$here/src/hawedit/environment.py" \
-  --project-root "$here" --extra dev --extra media --lock "$HOST_LOCK" 2>&1 || true)"
+  --project-root "$here" --extra dev --extra media --extra agentic --lock "$HOST_LOCK" 2>&1 || true)"
 if [[ "$_probe" != hawedit-environment-ok ]]; then
   echo "REFUSED: $PY cannot verify the exact HawEdit environment for this checkout." >&2
   echo "A gate graded by another checkout, stale dependencies, or a non-Python executable" >&2

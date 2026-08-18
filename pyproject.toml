@@ -80,6 +80,22 @@ models = [
     # The command refuses drift instead of installing into its own environment at runtime.
     "huggingface-hub==0.36.2", # Apache-2.0
 ]
+# AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md Phase 1: the coarse durable workflow around
+# run_pipeline (D-A3). MIT. Pulls in psycopg (Postgres, unused until a later phase),
+# sqlalchemy and click — all already-audited-elsewhere licences, no NC.
+agentic = [
+    "dbos==2.29.0",
+    # Phase 2 (D-A5). MIT. Bare package, no provider extra: build_agent() takes an
+    # already-constructed Model, so this module never chooses or wires a provider itself —
+    # see agent.py's module docstring for why the model choice is deferred, not this
+    # dependency's business. Adding a provider extra (e.g. `[google]`) pulls in google-genai +
+    # google-auth, which broke `mypy --strict` locally the moment it was actually installed
+    # (google-auth's own `Credentials.refresh` has no type annotation, and the existing
+    # `google.*` mypy override only suppresses *missing*-import errors, not real ones against
+    # an installed package) — confirmed by installing it, hitting the error, and removing it
+    # again rather than guessing whether it was needed.
+    "pydantic-ai-slim==2.28.0",
+]
 
 [build-system]
 requires = ["setuptools==84.0.0"]
@@ -117,10 +133,13 @@ hawedit = "hawedit.pipeline:main"
 hawedit-asr-bench = "hawedit.bench:main"
 hawedit-asr-setup = "hawedit.wsl_setup:main"
 hawedit-credentials = "hawedit.credentials:main"
+hawedit-durable = "hawedit.durable:main"
 hawedit-editorial-bench = "hawedit.editorial_bench:main"
 hawedit-fetch-models = "hawedit.model_fetch:main"
 hawedit-ffmpeg-setup = "hawedit.ffmpeg_setup:main"
 hawedit-release = "hawedit.release:main"
+hawedit-revise = "hawedit.proposals:main"
+hawedit-workflow = "hawedit.workflow_control:main"
 hawedit-wsl-vex = "hawedit.wsl_vex_gate:main"
 
 [tool.pytest.ini_options]
@@ -180,5 +199,13 @@ module = [
   # passed here and failed on the runner for four of my own lines (D-067).
   "transformers.*",
   "PIL.*",
+  # The `agentic` extra (D-A3). `dbos` ships its own inline type hints (no `-stubs` package
+  # needed to resolve names) but declaring it here is what lets `durable.py` import it at
+  # module level — required for `@DBOS.workflow()`/`@DBOS.step()` to decorate module-level
+  # functions — without every environment that runs `mypy --strict` having it installed.
+  # Unlike `transformers`/`PIL` above, CI's lockfile *does* install it (`requirements/
+  # gate-linux-py311.txt` was regenerated with `--extra agentic`), so this override is for the
+  # environments that lockfile does not cover: a bare `pip install -e .` with no extras.
+  "dbos.*",
 ]
 ignore_missing_imports = true

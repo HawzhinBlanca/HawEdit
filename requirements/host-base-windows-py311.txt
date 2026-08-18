@@ -7,7 +7,7 @@
 # project-version: 0.1.0
 # contract-sha256: 66e1efdbcad64bd3af2f4016499dc9e1cd48cbd8e8956b2a61e38f8b4a03227d
 # resolver: uv==0.11.26
-# exclude-newer: 2026-08-09T00:00:00Z
+# exclude-newer: 2026-08-13T00:00:00Z
 --extra-index-url https://download.pytorch.org/whl/cpu
 --only-binary=:all:
 

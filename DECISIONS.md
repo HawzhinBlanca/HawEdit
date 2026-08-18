@@ -11255,3 +11255,1573 @@ replaying stale content. Tree equality is not runtime acceptance, so a new canon
 required at the final documented merge tip.
 
 `evidence/main-semantic-merge-2026-08-10.md`.
+<!-- Decisions made on the `agentic` branch are numbered D-A1, D-A2, … deliberately. main is
+     being finished by a concurrent session that is appending its own D-19x entries to the end
+     of this same file; two branches both claiming "D-191" would merge into a contradiction
+     that reads like a renumbering error rather than a collision. Measured, not predicted: main
+     had an uncommitted D-191 of its own at the moment this branch wrote one. -->
+
+## D-A1
+
+**The pipeline's only report arrived after the work was over.** `run_pipeline` returns a
+complete, honest `PipelineRun` and says nothing at all before that. On the 38-minute source
+that is most of an hour in which nothing outside the function can learn that Stage 0 finished
+and Stage 3 started. Every part of the agentic upgrade needs those transitions — a durable
+workflow to checkpoint on them, an editor's timeline to show anything at all — and none of it
+can be built on a return value.
+
+**So: one additive `on_event` parameter, defaulting to `discard`.** Not a rewrite, not a
+`ProgressReporter` object threaded through ten signatures, not an abstract base class with one
+implementation. `EventSink` is `Callable[[RunEvent], None]`, which makes `list.append` already
+a sink, so `events.py` contains no collector class either. Every existing caller — the CLI,
+`smoke.py`, all 1,622 tests — passes nothing and pays one function call per stage.
+
+**The property worth the code is that the stream cannot disagree with the report.** An event
+saying a stage completed where the report records a `StageSkipped` would be worse than no
+stream: a green timeline over a run that refused is precisely the silent success §1 of
+`pipeline.py` is written against. So a skip event's reason is *read from the record*, never
+written beside it — `_skip_reason(run.editorial)` rather than a second copy of the string —
+and `RunEvent` refuses a skip with no reason and a completion that carries one.
+
+**Mutation-audited, and the first audit failed.** Replacing `_skip_reason`'s body with a fixed
+`"stage did not run"` left the whole suite green. The agreement test drove only the run that
+stops at Stage 1, where the reason is the module constant `_STAGE_1_ASR.reason` and the bridge
+is never reached; the two call sites that use `_skip_reason` are the editorial and boundary
+skips, which need a run that gets a transcript and then stops for want of a selection. That
+arrangement is now the second half of a parametrized case, and the mutation fails exactly it.
+The test that "passed" before was measuring the constants, not the mechanism.
+
+**Sequence numbers, not timestamps, are the replay cursor.** Phase 1's reconnect contract is
+"replay from the last event ID". Two events inside one millisecond are ordinary — asserted
+under a frozen clock, where six events share an `at_ms` and remain totally ordered by a
+per-log counter starting at 1.
+
+**Deliberately not built here:** persistence, and any run-level `started`/`completed`/`failed`
+event. The run *is* the `run_pipeline` call; its start is the call and its end is the return or
+the exception, both of which the caller already holds. Only a wrapper outside the process
+boundary can honestly report a run that died mid-stage, and that wrapper is Phase 2's durable
+workflow. Emitting them from inside would mean threading a terminal event through nine `return`
+statements to duplicate what one `try/finally` a level up expresses once.
+
+## D-A2
+
+**The CLI's producer wiring was one function, and only one caller could reach it.**
+`_run_from_args` did argument validation, built every §3 producer `--gemini`/`--visual`/
+`--omni-asr` name, called `run_pipeline`, and printed the result — all in one function, entered
+only from `main`. The durable workflow needs the middle of that (validate, build, run) without
+the CLI-specific ends (print to a report stream, catch exceptions into an exit code) — and
+needs it to be the *same* wiring, not a second copy that could drift from the first the next
+time a flag is added.
+
+**Extracted, not duplicated.** `_build_and_run(args, on_event=discard)` is everything between
+parsing and reporting; `_run_from_args` is now four lines: call it, catch `_BUILD_ERRORS`,
+report. Nothing about what is validated or in what order changed — confirmed by running the
+full suite before and after with no edits to expected behaviour, only to `tests/
+test_pipeline.py::_argv_refusals`, which walks `_run_from_args`'s AST by name to build its list
+of refusal messages and correctly failed the moment those `raise ValueError`s moved to a
+different function. Repointed at `_build_and_run`; caught the drift it exists to catch.
+
+**`on_event` threads through as a parameter, not a global.** `_build_and_run` takes the same
+`EventSink` `run_pipeline` (D-A1) already accepts and passes it straight through — the CLI's own
+call needs nothing, so `_run_from_args` calls `_build_and_run(args)` with the default `discard`
+and is unaffected.
+
+## D-A3
+
+**Phase 1's second half: a coarse DBOS workflow around `_build_and_run`.**
+`AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` calls for "wrap the current CLI/pipeline
+invocation as a coarse DBOS workflow and durable step" — one step around the whole call, not one
+per §3 stage, because the pipeline's own digest caches (`TranscriptStore.reusable_raw`, the
+per-window visual embedding cache, `resumed_over`/D-146's delivery resumption) already make a
+from-scratch re-entry cheap where it matters. Splitting into per-stage steps would duplicate
+resumability the pipeline already has, for no reason Phase 1 needs — that is Phase 5's job, and
+only if HawEdit becomes a genuinely distributed service.
+
+**The DBOS API was not guessed.** `dbos==2.29.0`'s Python API is not fully documented publicly
+as of this writing — a `WebFetch` of the official programming guide came back missing
+`start_workflow`, `retrieve_workflow`, and any mention of `recover_pending_workflows` at all.
+Guessing decorator signatures for a system whose entire purpose is correctness under a crash
+would be exactly the wrong place to guess, so every claim `durable_workflow.py` makes is
+checked against the installed source: `DBOS.launch()` calls `startup_recovery_thread` for every
+`PENDING` local workflow unconditionally (`_dbos.py::_launch`), and `start_workflow`/a direct
+call under a repeated `SetWorkflowID` returns the already-completed result rather than
+re-invoking the function (`_core.py`: "Workflow {status} is already completed... Directly
+return the result"). Both then verified empirically, not just read: a same-process smoke test
+proved the dedup path (a step counter stayed at 1 across two calls under one ID) before any of
+this was trusted into the real module.
+
+**Crash/restart proven against a real second process, not a same-process reconstruction.**
+`DBOS.destroy()` then `DBOS(config=...)` again in the same test process would show DBOS *can*
+be re-launched; it would not show that a process genuinely killed mid-step comes back, because
+nothing was ever actually interrupted — Python state, in particular the `PENDING` row DBOS
+writes before a step runs, was never put at risk. `tests/test_durable.py::
+test_a_process_killed_mid_step_resumes_in_the_next_process` instead writes a child script to
+disk, runs it as a real subprocess, and has the monkeypatched step body call `os._exit(137)` —
+no exception, no cleanup, no chance for the step wrapper to record anything — after writing an
+"attempt" marker but before returning. A second subprocess, launched against the same SQLite
+file and the same workflow ID, must find that row `PENDING`, retry the step exactly once (the
+marker count reaching 2 is the proof), and complete; a third call after that must not add a
+third marker, proving recovery does not turn off the dedup guarantee it was just used to
+demonstrate. Run four times in a row with no flake before being trusted into the gate.
+
+**SQLite, matching the architecture record's own scoping, not a shortcut around it.** DBOS's
+system database — where both properties above are checkpointed — defaults to a local SQLite
+file when `system_database_url` is unset (`_dbos_config.py`: `f"sqlite:///{name}.sqlite"`).
+Postgres is the document's explicit call for when HawEdit becomes distributed or multi-host;
+neither is true of one Windows box running one CLI at a time, so `configure_dbos` uses SQLite
+and accepts an override for the day that changes.
+
+**`--help` broke on a clean wheel install, and the fix is a module split, not a workaround.**
+Every optional heavy dependency elsewhere in this codebase (`torch`, `transformers`,
+`omnilingual_asr`, `peft`) is imported inside a function behind `try: ... except ImportError`,
+so a module that merely *mentions* the dependency stays importable without it. `dbos` cannot
+follow that pattern: `@DBOS.workflow()`/`@DBOS.step()` decorate module-level functions, so
+`from dbos import DBOS` has to run at import time for the module defining them to exist at all.
+The first version of `durable.py` put that import at the top of the one file containing
+`main()`, which meant `hawedit-durable --help` — a command that should need nothing beyond
+argparse — imported `dbos` before argparse ever got a chance to recognise `-h`. Measured against
+a clean wheel built with `scripts/build-wheel.sh` and installed into a venv with only the base
+dependencies (`klpt`, `fonttools`, no `agentic` extra): `ModuleNotFoundError: No module named
+'dbos'`, traceback, before any usage text. Fixed by splitting the module: `durable_workflow.py`
+carries the `@DBOS`-decorated functions and imports `dbos` at its own top level (fine — nothing
+imports this module until it is actually needed); `durable.py` keeps `main`, parses and
+validates `argv` with a plain `argparse.ArgumentParser`, and imports `durable_workflow` only
+after that parse has already exited on `-h` or a bad flag combination. Re-measured on the same
+clean-venv wheel after the split: `--help` exits 0, and the usage line correctly reads
+`hawedit-durable` rather than `hawedit-pipeline` — `build_parser()`'s own parser hardcodes
+`prog="hawedit.pipeline"`, so `durable.py`'s early parse overrides `.prog` before calling
+`parse_args`.
+
+**The same `--help` path was also printing to a stream it does not own.** `tests/test_cli.py`'s
+`test_no_document_is_printed_to_a_shared_stdout` — a source-level scan for `print(json.dumps(
+...))` with no `file=` — caught a second defect in the same code: `main`'s JSON report was a
+bare `print`, not routed through `machine_readable_stdout()`. D-119 measured what a library's
+own stray `print` does to a promised single-document stdout stream; `durable.py` runs the same
+producers `pipeline.main` does and was exposed to the identical risk. Fixed the same way
+`pipeline.main` was.
+
+**`requirements/gate-linux-py311.txt` regenerated, and the first regeneration was wrong in a
+way worth recording.** CI installs from this hash-pinned lockfile, not from `pyproject.toml`
+directly (D-139), and separately refuses a run that ratchets `scripts/test-count.floor` without
+the lockfile agreeing — so adding `dbos` to the `agentic` extra meant nothing to CI until this
+file changed too. Regenerated with the recorded command plus `--extra agentic`
+(`uv pip compile pyproject.toml --extra dev --extra media --extra agentic --generate-hashes
+--python-platform linux --python-version 3.11 --index-strategy unsafe-best-match`) and diffed
+package-by-package against the prior file before trusting it: the first attempt silently pulled
+in `cuda-bindings`, `cuda-toolkit`, eleven `nvidia-*` packages and `triton` — none of them
+`dbos` dependencies — because without `--extra-index-url https://download.pytorch.org/whl/cpu`
+(the flag CI's own install step passes, and the flag the lockfile's own auto-generated header
+comment does not record having been given, on the run that first produced it) `uv` resolved
+plain PyPI `torch==2.13.0`, which bundles CUDA on Linux, instead of the `+cpu` variant the
+`media` extra's own comment exists to keep pinned. Re-run with that flag added: the diff against
+the original lockfile is exactly `dbos` and its own declared dependencies (`click` already
+present; `greenlet`, `psycopg`/`psycopg-binary`, `python-dateutil`, `pyyaml`, `six`,
+`sqlalchemy`, `websockets` newly added), `torch==2.13.0+cpu` unchanged. The gate workflow's own
+`git diff --exit-code -- scripts/test-count.floor` step is what would have caught a mismatch
+between what this branch's environment ran and what CI's would — checked in advance rather than
+discovered by a red CI run.
+
+**AUDIT_REPORT.md's console-script measurement re-run for real, not hand-edited.** The existing
+entry is a dated, measured claim ("all five console scripts... start from the installed wheel"),
+not a static list — `tests/test_claims.py::test_the_audit_report_states_how_many_console_scripts
+_there_are` requires the stated count to match `[project.scripts]`, but nothing requires the
+*evidence* behind it to still be true after a sixth script is added with a real defect in its
+`--help` path. Re-measured with `scripts/build-wheel.sh`, a fresh venv, and only the base
+dependencies installed (deliberately no `agentic` extra, to prove `--help` needs none of it):
+6 declared, 6 present, all 6 exit 0, `pip check` clean.
+
+## D-A4
+
+**Phase 1's acceptance line names four properties, and D-A3 verified two.**
+`AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md`: "verify crash/restart, duplicate request,
+cancellation and reconnect behavior." D-A3's commit message called Phase 1 complete having
+built and proven only the first two — an overclaim caught while looking for the next unit of
+work, not by anyone else. Corrected in place: PROGRESS.md's M9.2 cell no longer says "complete"
+(this repo's own rule is that a correction goes in the cell, not as prose appended after it),
+and this entry plus M9.3 are the remaining two properties.
+
+**Cancellation was observed before it was asserted.** The obvious design for a test — start a
+workflow, block its step, cancel it, confirm the block is interrupted — assumes DBOS can reach
+into a running synchronous Python call and stop it. A throwaway script checked this first
+rather than writing the assertion on faith: a step blocked on `threading.Event().wait()`,
+cancelled via `DBOS.cancel_workflow` while still blocked, ran to completion and returned its
+computed value when released. DBOS has no mechanism to preempt a thread executing ordinary
+Python code, and nothing in its public API claims one. What actually happens, read from the
+real traceback the script produced: the *persist* step DBOS runs after the function returns
+finds the workflow already marked `CANCELLED` and raises `DBOSAwaitedWorkflowCancelledError`
+from the persist call itself, which propagates out of `WorkflowHandle.get_result()`. So the
+guarantee is at the awaiter, not at the running code — which is the guarantee that matters for
+an editor: cancelling a run must mean the caller never receives a result it would otherwise
+treat as real, not that the underlying work stops instantly. `test_cancelling_a_running_
+workflow_fails_the_awaiter` asserts exactly that shape: `get_result()` raises, and
+`get_workflow_status(run_id).status == "CANCELLED"`, without asserting anything about how long
+the blocked call itself took to unwind. A second case, `test_cancellation_does_not_wedge_
+later_runs`, confirms cancelling one workflow ID leaves every other workflow ID unaffected —
+DBOS's own scoping, checked rather than assumed given how much of this module already turned
+out to need checking against the source rather than the public docs (D-A3).
+
+**Reconnect is `read_events` called mid-run, and the test proves "mid-run" rather than naming
+it.** `_JsonlEventSink` (D-A3) flushes every line immediately specifically so a reconnecting
+reader does not have to wait for the run to finish. Proving that requires a genuinely
+in-progress run at the moment of reading, not a completed one read back afterward: `test_
+reading_the_event_ledger_mid_run_sees_partial_progress` runs `run_durable` in a background
+thread against a stub that writes two real events through the real sink, signals a
+`threading.Event`, and then blocks; the test thread waits for that signal, calls `read_events`
+on the same file *while the background thread is still blocked inside the stage*, and asserts
+both events are already there — sequence and state matching what the stub wrote — before
+releasing the block and letting the run finish. A `read_events` call made only after the whole
+test function returns would not distinguish "flushed as it happened" from "flushed once the
+run finished, coincidentally before I checked."
+
+**All three cases run four times with no flake before being trusted into the gate**, matching
+the same bar D-A3's crash/restart case was held to.
+
+VERIFY OK — hawedit gate green: 1654 collected, 1654 passed, 0 skipped (floor ratcheted
+1651 -> 1654).
+
+## D-A5
+
+**Phase 2's first slice: a read-only creative-director agent, scoped narrower than the
+architecture record's full tool list.** `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md` Phase 2:
+"Add Pydantic AI with inspection, explanation and candidate-comparison tools... Load the
+versioned App Manifest... Add the benchmarked model router. Make all proposals non-mutating."
+Four bullets; this closes the first, third-of-a-third (one tool per named category), and fourth
+(structurally, not by promise). It deliberately does not close the model-router bullet — see
+below — and does not load editorial skills, which the same document's security section gates
+behind "only versioned, reviewed, internally signed skills." Neither omission is silent:
+PROGRESS.md's M9.4 row names both.
+
+**`pydantic-ai-slim`'s real API was checked before being designed against, the same discipline
+D-A3 used for `dbos`.** `Agent`, `RunContext`, `@agent.tool`, and `pydantic_ai.models.test.
+TestModel` were introspected on the installed `2.28.0` package rather than assumed from the
+public docs, and the whole tool-wiring pattern (deps injection, typed tool return values,
+`TestModel(call_tools='all')` auto-calling every registered tool) was proven end to end with a
+throwaway script — a synthetic `report.json`, a two-tool agent, a real `run_sync` call — before
+any of it went into `agent.py`.
+
+**`work_dir` is bound at construction, never a tool argument, and this is a security decision
+made deliberately rather than an implementation convenience.** The architecture record: "Media
+storage uses scoped object references rather than filesystem paths where possible" and "the
+model sees only an allowlisted tool registry." A tool that accepted a path string chosen by the
+model would let a prompt-injected transcript (the same threat class §3 Stage 3's judge already
+treats as untrusted input) ask a "read-only" agent to read anything the OS user running it can
+read — not scoped to the project, not scoped to the work directory, scoped to nothing at all.
+`Deps.work_dir` is a frozen dataclass field fixed by whoever constructs the `Agent` instance —
+the application, not the model — and every one of the three tools closes over `ctx.deps.
+work_dir`. `test_two_agents_scoped_to_different_work_dirs_stay_scoped` builds two agents against
+two directories and confirms neither ever produces the other's `media_id` in its output.
+
+**Read-only proven by an AST scan of the module's own source, matching this repo's established
+"prove the invariant, don't state it" convention** (`_argv_refusals` walks `_run_from_args`/
+`_build_and_run` the same way). `test_agent_module_never_writes_a_file` walks every `ast.Call`
+in `agent.py` and fails on any write-shaped name (`write_text`, `unlink`, `rename`, `mkdir`, an
+`open()` call whose mode contains `w`/`a`/`x`). A docstring saying "read-only" is a claim about
+the code; this is a claim about a specific AST property that fails loudly the day it stops
+being true.
+
+**`report.json` exists because DBOS's own checkpoint is not readable by a second process.**
+`durable_workflow.py`'s `_run_pipeline_step` already returned `run.to_dict()` as its checkpointed
+result — durable, but opaque: reading it back requires the DBOS workflow ID and the DBOS API,
+not a filesystem path. `agent.py`'s tools are a separate process with only `work_dir` to go on,
+so the step now also mirrors the same dict to `work_dir / "report.json"` via the existing
+`_write_atomic` (staging file, one rename — the same crash-safety property every other §2
+sidecar in this codebase already has, reused rather than re-derived). One line changed in
+`durable_workflow.py`; every existing `test_durable.py` case re-run and still green.
+
+**`compare_candidates` does not identify the selected candidate, and this is a finding, not an
+oversight.** The natural next step after listing candidates and rejections is "and this one
+won" — but `Clip` (`clip.py`) carries `clip_id`, `in_ms`, `out_ms`, `discovery_path`, and no
+`candidate_id`. Matching the final clip back to its source candidate would mean comparing spans,
+and a boundary that VAD or TimeLens moved during Stage 5 fusion can leave the final `in_ms`/
+`out_ms` different from every candidate's own recorded span — meaning a span-equality match can
+report "no candidate matches" for a clip that unambiguously came from one of them, and a
+nearest-span heuristic can guess wrong. `CandidateComparison` reports `final_clip_span_ms`
+alongside the full candidate list instead, so a reader — human or the calling model — can make
+the comparison themselves with the real data rather than trust an inference this module chose
+not to make. `test_compare_candidates_does_not_guess_which_candidate_won` pins the field set so
+a future edit cannot quietly add a guessed `selected_candidate_id` without that test naming
+what changed.
+
+**The "benchmarked model router" bullet is explicitly not this row's.** `build_agent(model,
+deps)` accepts any `pydantic_ai.models.Model` and makes no choice of its own — not a stalled
+TODO, a decision. Choosing a model for the creative director needs the same kind of evidence
+`judge.py`'s `decide_judge` already requires for Stage 4 (a real regression set, blind
+comparisons, a promotion rule), and this branch does not have that evidence for a
+creative-director role yet. Hardcoding a default model here — even a defensible-sounding one —
+would be exactly the unverified claim Phase 1's D-A3/D-A4 history (guessing DBOS's API, then
+overclaiming "Phase 1 complete" one property early) already cost time to catch and correct.
+Left as a parameter; the router is real future work, not this decision's to fake.
+
+VERIFY OK — hawedit gate green (see PROGRESS.md M9.4 for the exact count).
+
+## D-A6
+
+**Phase 3, scoped down twice before any code was written.** The architecture record's Phase 3
+covers boundaries, captions and render variants, and a `commit_approved_edit` tool the agent
+itself could call after some `request_human_approval` step. Two scope decisions were made
+before implementation, both because the alternative would have meant inventing a design this
+project has no evidence for yet, not because the smaller scope was easier to code:
+
+1. **Boundary revisions only**, offered to the user as a named choice rather than picked
+   unilaterally — the same reasoning D-A5 used for Phase 2's read-only span applies here more
+   sharply: boundaries have a real deterministic validator already in this codebase
+   (`boundary.py`'s Kurdish invariant #2). Captions and render variants would each need this
+   branch to invent a validator that does not exist yet, and a hand-written "looks about right"
+   validator for a mutating tool is exactly the kind of unverified claim this whole session has
+   tried not to make.
+2. **No `commit_*_tool` on any agent.** The architecture record's own recommended tool list
+   includes `commit_approved_edit` as something the agent calls. That shape requires a real,
+   out-of-band way to know a human — not the model, narrating on the model's own behalf —
+   actually approved something, and this branch has no such channel yet (no UI, no signed
+   approval token, nothing but a terminal). Building `commit_approved_edit` as an agent tool
+   today would mean either trusting the model's own claim that a human approved (worthless as a
+   security boundary) or inventing an approval-proof mechanism with no real requirements behind
+   it. So the boundary is drawn at the process level instead: `editor_agent.py` registers
+   `propose_boundary_revision` and nothing else; `commit_boundary_revision` is a plain function a
+   human calls directly, and `test_editor_agent_module_never_calls_commit` asserts the name
+   `commit_boundary_revision` does not appear anywhere in `editor_agent.py`'s AST — not
+   reachable, not merely unregistered.
+
+**The validator is reused, not re-derived.** `propose_boundary_revision` constructs a candidate
+`Boundary` from the run's own recorded anchors and calls `boundary.py`'s real
+`assert_boundary_invariant` — the same function `pipeline.py` calls at the render gate. A
+second implementation of Kurdish invariant #2 living in `proposals.py` could drift from the one
+that actually gates a render, and a proposal this module calls "valid" has to mean what the
+render gate would also accept; only importing the real function guarantees that.
+
+**Three refusals, each proven not to reach the next step.** `commit_boundary_revision` refuses
+an invalid proposal, an unattributed approval, and a declined one — and each test checks not
+just that the call raised, but that the *side effect that should not have happened, didn't*:
+an invalid proposal must never reach the confirm prompt at all (`asked == []`), and none of the
+three refusal paths may create the `revisions/` directory. A revision tool that enforces its
+gate on the happy path but leaves a partial write behind on a declined approval would be worse
+than no gate — exactly the class of defect `_write_atomic`'s staging-file-and-rename already
+guards render/delivery artifacts against, reused here rather than re-derived for the same
+reason.
+
+**The `--help` lesson from D-A3 was applied proactively this time, not discovered by testing.**
+`proposals.py`'s module docstring states up front why `build_editor_agent` lives in a separate
+file (`editor_agent.py`) that `proposals.py` never imports, and this was verified before the
+wheel-build check: uninstalling every package in the `agentic` extra's dependency tree from the
+working venv and confirming `python -m hawedit.proposals --help` still ran cleanly, then
+reinstalling and re-running the real wheel-install measurement (7 declared, 7 present, all 7
+exit 0 on `--help`, from a venv with no `agentic` extra) to hold the same bar D-A3/D-A5 already
+established rather than trust the cheaper check alone.
+
+**Deliberately does not re-render, and this is the biggest named gap in the branch so far.** A
+committed revision is `work_dir/revisions/{id}.json` — an attributed, validated record of an
+approved change — not a new MP4. Actually re-rendering with a shifted boundary needs the
+selected sentences' word-level timing to rebuild ASS captions correctly (`captions.py`'s
+`build_ass` takes `Sequence[Sentence]`; `report.json` persists a sentence *count*, not the
+sentences), which no run currently persists per-`work_dir`. Extending `durable_workflow.py` to
+persist that too is the natural next increment — deferred rather than built halfway, since a
+revision tool that silently produced a caption-broken re-render on a legal boundary change would
+be a worse outcome than one that stops at "approved, pending render" and says so.
+
+VERIFY OK — hawedit gate green (see PROGRESS.md M9.5 for the exact count).
+
+## D-A7
+
+**Closing D-A6's own named gap: a committed revision now actually re-renders.** The user asked
+directly: finish the boundary-revision loop, make it re-render. D-A6 stopped at an approved,
+attributed JSON record deliberately, naming the missing piece as the sentences' word-level
+timing that captions need and that no run persisted. This closes it.
+
+**The missing data is persisted once, at the source, not reconstructed per revision.**
+`PipelineRun` gained `selected_sentences: tuple[Sentence, ...]` — the exact sentences a clip's
+captions were built from, set at the same point `boundary`/`clip` are (`run = replace(run,
+boundary=boundary, clip=clip, selected_sentences=tuple(selected))`), serialized in `to_dict()`
+via plain `dataclasses.asdict`. No new `Sentence.to_dict()`/`from_dict()` pair: `asdict` on a
+frozen dataclass containing a tuple of `Word` (itself a plain dataclass) already produces the
+right shape, and reconstructing with `Sentence(words=tuple(Word(**w) for w in data["words"]),
+complete=data["complete"])` mirrors exactly how `RawTranscript.from_json` already rebuilds its
+own `words` field — the same pattern, not a new one. Verified against a real run before being
+trusted: a throwaway script ran the real fixture through `run_pipeline` and inspected the
+persisted JSON directly, rather than assuming the shape from reading the dataclass definitions.
+
+**This is additive to `PipelineRun`, and the blast radius was checked, not assumed.** Adding a
+field to a dataclass over a thousand tests already construct and compare is exactly the kind of
+change that can quietly break something far from where it was made. Checked before trusting it:
+no test in the suite asserts an exact key set on `PipelineRun.to_dict()`'s output (grepped for
+the pattern), and `test_the_run_report_serializes_to_json` — the test most likely to be
+sensitive to new keys — asserts specific subkeys, not full-dict equality. The full suite ran
+clean before and after with zero test edits needed for the field itself.
+
+**Editorial, output and QC are reused from the original clip, and this is a correctness
+argument, not a shortcut.** `Clip.assert_renderable` — called inside `render_clip`, not
+duplicated here — refuses a clip with no editorial block (Stage 4's judgment) or no output
+block (title/description/crop target). A boundary revision changes neither: it moves the cut
+points, not what was judged or how the deliverable should be titled. So `Clip.from_dict(
+report["clip"])` plus `dataclasses.replace` for the new `in_ms`/`out_ms`/`boundary` is the
+correct reconstruction, not a convenience that happens to satisfy the type checker. QC is the
+one field supplied fresh (`Qc(auto_pass=False, human_reviewed=True)`) rather than carried over:
+the interactive approval `commit_boundary_revision` already required *is* the human review for
+this specific span, and reusing the original clip's QC record would misattribute that review to
+whoever approved a different one.
+
+**Approval and render stay two functions, and a test proves why that matters rather than just
+asserting it as a design choice.** A render can fail for reasons that have nothing to do with
+whether the revision itself was legal or approved — no ffmpeg on this machine, a full disk, an
+RTL font gap. Folding render into `commit_boundary_revision` would mean a render failure could
+look like the approval itself failed, or worse, a bug in error handling could silently drop the
+recorded approval along with the failed render. `test_cli_reports_a_render_failure_as_its_own_
+outcome` runs the full CLI against a synthetic report whose `source` does not exist, confirms
+the process exits 1 with "render failed" on stderr, and — the part that actually tests the
+separation — confirms the revision record on disk still carries `approved_by`. The render gate
+inside `render_boundary_revision` also re-validates the proposed span against
+`assert_boundary_invariant` rather than trusting the record's `status` field, proven by a test
+that hand-edits an "approved" record to an illegal span and confirms the render function still
+refuses it: a status string on disk is not itself a security boundary, and this module does not
+treat it as one.
+
+**Found, not assumed: the test fixture leaves no room to extend the original boundary.** The
+first version of the render test tried to widen the original 0..4162 ms boundary to 0..4362 ms
+— a legal move under Kurdish invariant #2's arithmetic alone — and `render.py` correctly refused
+it, checked against the real file: the fixture is exactly 4162 ms long, so the original render
+already used the entire source, and there is no media to extend into. This is exactly the
+render-time real-media check `render.py`'s own docstring describes (measured on the real
+38-minute file: "asking for 0..8000 ms of a 4162 ms source makes ffmpeg exit 0 and write 4180
+ms... the only place to catch it is against the media itself, before encoding") doing its job on
+a second, unrelated caller. The test now proposes a legal *narrowing* instead (final_in_ms=50,
+final_out_ms=4140, still satisfying `final_in_ms <= anchor_in_ms` and `final_out_ms >=
+anchor_out_ms`), and a duration test measures the resulting file — not just that it exists — to
+confirm the revised span is what actually got encoded.
+
+**Still a real, named simplification carried over from D-A6, not fixed here.** Revisions render
+with `focus_points=()` unconditionally — a face-tracked original's revision comes back statically
+centred. Reproducing tracked reframing over a shifted span needs `reframe.py`'s tracker re-run
+against the source, genuinely separate scope from "make the boundary loop re-render," and is
+named in the revision's own docstring rather than silently approximated.
+
+**Re-verified, not assumed, that `--help` still needs none of the new dependency surface.**
+`render_boundary_revision` pulls in `render.py`, `captions.py`, `delivery.py`, `clip.py`,
+`sentences.py`, `ingest.py` — none of which existed as `proposals.py` imports before this
+change. Checked two ways before trusting the D-A6 guarantee still held: grepped all six for a
+top-level import beyond the standard library (none), then rebuilt the wheel and reran the exact
+D-A6 measurement (a venv with only `klpt`/`fonttools`, no `agentic` extra) — `hawedit-revise
+--help` still exits 0, and all seven console scripts still do too.
+
+VERIFY OK — hawedit gate green: 1705 collected, 1705 passed, 0 skipped (floor ratcheted
+1696 -> 1705).
+
+## D-A8
+
+**Two defects in my own Phase 2 work, found by auditing what was wired rather than what the
+docstrings claimed.** Both were introduced by D-A5 and survived its own tests, its gate run,
+and a commit message describing the feature as delivered. Neither was found by the suite; both
+were found by re-reading the module against the architecture record's Phase 2 bullet list when
+the user asked what remained. That is worth recording as a pattern: a test suite proves the
+code does what its tests say, not that the code does what its docstring says.
+
+**Defect 1: `app_manifest()` was loaded by nothing.** It was defined, exported in `__all__`,
+and unit-tested (`test_app_manifest_reports_a_real_installed_version` asserted its version
+string was non-empty) — and no `Agent` ever received it. `build_agent`'s system prompt was a
+hardcoded literal. So the test passed, the function was "covered", and Phase 2's "Load the
+versioned App Manifest" bullet was not addressed at all, while M9.4's ledger row implied it
+was. A manifest no model ever sees is a fact about this module, not about the agent's context.
+
+Fixed with `@creative_director.system_prompt` returning `app_manifest().as_prompt()`, kept as
+a second system prompt rather than concatenated into the first: the manifest is *generated*
+(real installed version, real tool list), and keeping it separate is what lets a caller or a
+test ask for the same value the model was shown instead of parsing it back out of a literal.
+
+The new test asserts against `result.all_messages()` — the messages actually sent to the model —
+not against `build_agent`'s source, because the defect being fixed is precisely "the source
+looks right and the model never sees it." **Mutation-audited**: deleting the three-line wiring
+fails `test_the_manifest_actually_reaches_the_model` and nothing else.
+
+**Tool names now match what the manifest claims, enforced.** The manifest tells the model which
+tools it can call. Before this, the manifest's default listed `inspect_run`/`explain_run_state`/
+`compare_candidates` while the registered names were `inspect_run_tool` etc. — Pydantic AI takes
+the Python function name unless given `name=`. So had the manifest ever been loaded, it would
+have described tools that did not exist under those names. Tools are now registered with
+explicit `name=`, a module-level `TOOL_NAMES` is the single source, and
+`test_the_manifest_names_exactly_the_tools_the_agent_registers` pins manifest == constant ==
+the agent's real toolset. This class of drift shows up as confusing model behaviour, never as
+an error, which is why it needs a test rather than care.
+
+(`name=` required marking `ctx` positional-only — mypy rejected the parameterized `@tool(...)`
+overload otherwise, and said so precisely enough to fix directly.)
+
+**Defect 2: the module docstring claimed it read `events.jsonl`; no tool did.** All three tools
+read `report.json` only. Fixed by building the capability rather than deleting the sentence,
+because the event ledger genuinely belongs in the read-only inspection surface — Phase 1 built
+it precisely so something could replay a run, and until now nothing outside a test ever read it.
+
+**Testing that produced a real design correction, not just coverage.** `TestModel` calls every
+registered tool, so adding `run_timeline` immediately failed three existing tests whose
+fixtures write `report.json` and no ledger. The lazy fix was to add `events.jsonl` to those
+fixtures. The right fix was to notice what the failure was saying: a run started through
+`hawedit` rather than `hawedit-durable` has no ledger, which is an *ordinary, expected state*,
+and raising `FileNotFoundError` for it would abort an entire conversation over something the
+model could simply report and work around. `RunTimeline` now carries `available: bool` and
+`unavailable_reason: str | None` — `StageSkipped`'s own precedent in this codebase that "never
+recorded" and "recorded nothing" must not serialize the same way.
+
+The asymmetry with the other three tools is deliberate and documented: a missing `report.json`
+means no run exists under that directory at all — a caller error, correctly raised — while a
+missing `events.jsonl` means the run exists and simply was not durable. Same-looking absence,
+genuinely different facts.
+
+**Supporting move: the ledger format went to `events.py`.** `JsonlEventSink` and `read_events`
+lived in `durable_workflow.py`, which imports `dbos` at module level — so `agent.py` reading a
+run's timeline would have pulled a durable-execution engine into the read-only agent's import
+graph to parse a text file. The JSONL format is `events.py`'s contract (it already owns
+`RunEvent.to_dict`/`from_dict`), so both halves moved there. `durable_workflow.py` re-exports
+`read_events` with a comment saying why, so the relocation is not a breaking change for
+existing callers — `tests/test_durable.py` imports it from the old location and still passes
+untouched.
+
+VERIFY OK — hawedit gate green: 1710 collected, 1710 passed, 0 skipped (floor ratcheted
+1705 -> 1710).
+
+## D-A9
+
+**The prompt-injection acceptance gate, and an honest statement of what a test can hold.**
+`AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md`: "Prompt injection inside transcript, metadata,
+web retrieval, a skill or an MCP response cannot grant new permissions." The tempting reading
+is "prove the model resists injected instructions." That is not testable here and would not be
+the right guarantee even if it were: it depends on which model is routed (this branch chooses
+none, D-A5), it degrades silently when a provider changes a system prompt's handling, and it
+puts the security boundary inside the least trustworthy component in the system.
+
+**So the tests hold the property the record actually asks for, which is stronger: capability is
+not data-dependent.** No content in a run's artifacts changes which tools exist, what they are
+scoped to, or what they can reach. A model that fully believed an injected instruction still
+could not act on it, because the tool that would carry it out is not registered and the
+directory it would reach is not reachable. The test module says this in its own docstring
+before the first test, so nobody reads these as "the model was proven safe."
+
+**What is actually asserted, against a `report.json` poisoned in every free-text field**
+(`media_id`, `source`, both `StageSkipped.reason` strings, `blocked_by`, `candidate_id`,
+`reject_reason` — every field a tool hands back to a model):
+
+- The read-only agent's registered tool set equals `TOOL_NAMES` after the run, and contains
+  neither `commit_boundary_revision` nor an invented `delete_everything`.
+- The editor agent still has exactly one tool, and it is the proposal tool.
+- The work directory is **byte-identical** before and after a full agent run — snapshotted and
+  compared, which catches a rewrite of `report.json` itself, not merely the appearance of new
+  files. "No new files" would have passed a mutation that overwrote an existing one.
+- A sibling directory the payloads name by absolute path keeps its only file, unchanged.
+
+**The path guarantee is structural and read off the real schema, not the source.** Every
+read-only tool's generated JSON schema has empty `properties`: there is no argument at all for
+an injected instruction to try to control, which is a stronger statement than "the argument is
+validated." Verified by printing the real schemas before writing the assertion, and
+mutation-audited afterwards: giving `inspect_run` an `override_dir: str` parameter fails the
+test and names the offending argument in the message.
+
+**The editor agent is the deliberate control case, and closes a real gap in the claim.** It
+legitimately takes parameters — a proposal needs a span — so "no tool takes arguments" would be
+false of the system as a whole. Its schema is asserted to contain only integers, so there is no
+string field through which a path, a command, or a second instruction could cross the tool
+boundary; Pydantic AI validates against that schema before `proposals.py` is entered at all.
+That test also proves the read-only assertion is not vacuous: if `function_schema.json_schema`
+were the wrong attribute path and silently yielded nothing, the control case would fail too.
+
+**One further point the gate does not name but the same threat model requires.** The manifest
+the model is shown asserts `read-only: True` and lists its tools (D-A8). If any of it were read
+from the run's own artifacts, a poisoned report could rewrite the model's own understanding of
+its permissions — precisely the "grant new permissions" being forbidden, arriving through the
+context rather than the toolset. `test_the_manifest_the_model_sees_is_generated_not_read_from_
+the_run` asserts every payload is absent from the system prompt and that `read-only: True`
+survives a hostile report.
+
+VERIFY OK — hawedit gate green: 1718 collected, 1718 passed, 0 skipped (floor ratcheted
+1710 -> 1718).
+
+## D-A10
+
+**Phase 0's "policy classes", built as the Policy Gate the architecture record names as a
+numbered component.** "A hard **Policy Gate** outside the model. The production agent receives
+only named HawEdit tools and cannot write source code, invoke an unrestricted shell, install
+packages, or silently publish an edit." And: "**The Policy Gate owns authority.** It decides
+which action is allowed and whether human approval is required. A model's promise to behave is
+never considered authorization."
+
+**A declaration whose tests are the gate, not a runtime interceptor.** The obvious reading is a
+layer that inspects each tool call at request time. That would be a second enforcement path
+duplicating what the tool functions already do — and a weaker one, since it could only see
+calls that reached it, while the record is explicit that "tool implementations—not prompts—
+verify all of these." The enforcement that matters already exists and is tested:
+`commit_boundary_revision` refuses an unattributed or unconfirmed approval (D-A6),
+`assert_boundary_invariant` refuses an illegal span, `Deps.work_dir` is not model-suppliable
+(D-A5, D-A9). Adding a wrapper around those would create a place for the two to disagree.
+
+So this module's job is different and not otherwise covered: make the *set* of capabilities an
+auditable, tested contract. Every tool any agent registers must appear in `TOOL_POLICIES` with
+an explicit `ApprovalClass`, and adding a tool without deciding its class is a failing build
+rather than a silent capability grant.
+
+**The test discovers agents rather than listing them, and that is the whole point.**
+`tests/test_policy.py::_all_agent_builders` walks `pkgutil.iter_modules(hawedit.__path__)` for
+every `build_*_agent` function, builds each, and reads the tools it actually registered off the
+built agent. A hardcoded list of agents would cover exactly the agents someone remembered to
+add to it — which is not the failure mode worth defending against. A new agent module with an
+undeclared tool fails on the day it is added, without this test file being touched.
+Mutation-audited: adding a `sneaky_new_capability` tool to `editor_agent.py` fails two policy
+tests and names the tool.
+
+**A real defect in my own first version, found by its own test.** The blocked-capability name
+check (`_FORBIDDEN_NAME_FRAGMENTS` — `shell`, `install`, `publish`, `delete`, `commit_`, …)
+originally ran *after* the declaration check. A forbidden capability is nearly always also
+undeclared, so it was reported as merely "undeclared" and the fragment list was unreachable —
+dead code defending nothing, which
+`test_a_blocked_capability_name_is_refused` caught immediately by asserting on the message.
+
+Reordered so the blocked check runs first. That fixes the unreachability *and* buys the
+stronger property: declaring a forbidden capability is not a way through. The realistic failure
+this defends is not an attacker — it is a future edit adding
+`ToolPolicy(name="publish_clip", ...)` and passing review. Pinned by
+`test_a_blocked_capability_is_refused_even_when_someone_declares_it`, which monkeypatches
+exactly that entry into `TOOL_POLICIES` and confirms the refusal still fires.
+
+**The manifest gained `policy_version` and `blocked_operations`.** Both appear in the record's
+own App Manifest contents list ("policy version and blocked operations") and neither existed.
+Both are sourced from `policy.py` rather than restated in `agent.py`, so the paragraph the
+model reads cannot describe a policy other than the one the tests enforce. `POLICY_VERSION`
+also gives the rollback acceptance gate ("a rollback restores the previous model, prompt,
+skill, policy and workflow version") something to restore *to*: policy is now a version rather
+than an implicit state of the source tree.
+
+**`mutating_tool_names()` returns `()` today, and a test asserts it.** The strongest honest
+statement about this codebase's agents: the set of mutating capabilities reachable from any of
+them is empty, not merely small. That test should fail loudly the day it stops holding, which
+is exactly when someone needs to think hardest.
+
+VERIFY OK — hawedit gate green: 1726 collected, 1726 passed, 0 skipped (floor ratcheted
+1718 -> 1726).
+
+## D-A11
+
+**OS/DB-level enforcement, scoped to what is real today rather than built speculatively.**
+The architecture record's security section is explicit that HawEdit "must enforce capability
+limits in its tool service, database permissions, OS identity and egress policy" — three of
+those four are infrastructure this branch does not have. `grep -ri postgres src/` finds
+exactly one hit, a docstring naming it as the document's own future schema; `configure_dbos`
+defaults to SQLite by an already-recorded decision, because Postgres is the record's own call
+for when HawEdit is "distributed or multi-host," neither true of the single Windows box this
+runs on. A read-only Postgres role has no database to attach to, and provisioning one now
+would be exactly the infrastructure-before-the-trigger this branch already declined once for
+Phase 5.
+
+**A restricted OS identity is not this session's to create, and not this gate's to hold even
+if it were.** Changing what Windows account or NTFS ACL a process runs under is a system
+security setting on a real machine — outside what an agent may change unilaterally regardless
+of what a blueprint recommends, and, independent of that boundary, not something `verify.sh`
+could ever assert: a role provisioned outside the repository leaves nothing in source for a
+test to check, so the gate would print green while the actual guarantee lived in a runbook
+nobody re-verifies. Every other property this branch has shipped — the Policy Gate (D-A10),
+the injection gate (D-A9), read-only-by-AST (D-A5) — was chosen specifically because a test
+can hold it. An OS account is real hardening and belongs in deployment documentation for
+whoever provisions the box this eventually runs on outside a developer's own machine; it is
+not a `src/hawedit` change.
+
+**So the honest, buildable slice is one level under the Policy Gate: capability surface, not
+just registered tools.** D-A10 proves no *registered* tool exposes a blocked operation.
+`tests/test_capability_surface.py` proves something a registered-tool check cannot: that the
+modules defining those tools do not even *import* a shell/network/filesystem-mutation-capable
+module, wired to a tool or not. A tool the Policy Gate would catch on the day someone
+registers it; a bare unused import sitting in the same file is one line away from being
+reachable, with nothing forcing a declared approval class first. Scoped to the modules that
+define `build_*_agent` functions themselves, not their transitive dependency tree —
+`pydantic_ai` uses `httpx` internally, and auditing every third-party import is a different,
+much larger property than "did this codebase's own agent-definition file add a dangerous
+import."
+
+Measured: both `agent.py` and `editor_agent.py` already import nothing from
+`{subprocess, os, shutil, socket, urllib, requests, httpx, aiohttp, ftplib, telnetlib,
+smtplib, pip, ensurepip}` — the test passes today because the property already held, not
+because the bar was set low; `_DANGEROUS_IMPORTS` is exactly `BLOCKED_OPERATIONS`'s
+capabilities mapped to the modules that would provide them. **Mutation-audited**: adding
+`import subprocess` to `editor_agent.py` fails the test and names both the module and the
+import.
+
+**Deferred with a named trigger, mirroring Phase 5's own scoping**: the Postgres read-only
+role and the OS-identity restriction both become real work the day an Artifact Ledger with an
+actual database connection exists — that is the trigger, the same shape as D-A2's Postgres
+deferral for DBOS itself. Building either now would be provisioning security infrastructure
+for a database and a deployment topology that do not exist, which is the same mistake Phase 5
+was scoped away from.
+
+VERIFY OK — hawedit gate green: 1730 collected, 1730 passed, 0 skipped (floor ratcheted
+1728 -> 1730).
+
+## D-A12
+
+**The second proposal type the architecture record names beside boundaries:
+`propose_caption_revision` (line 193, directly under `propose_boundary_revision`).** Same
+propose/commit/render triad as D-A6/D-A7, deliberately not a parallel implementation —
+`commit_caption_revision`/`render_caption_revision` reuse `_write_atomic`,
+`_sentence_from_dict`, `_interactive_confirm` and `RevisionRejected` rather than repeating them,
+and the CLI (`hawedit-revise`) gained one flag (`--caption-style`) rather than a second entry
+point, dispatching internally to whichever triad the caller asked for.
+
+**What "revising a caption" means here, and does not mean.** Not the caption *text* —
+`captions.py`'s own docstring is explicit that caption text is "the raw surface forms... a
+viewer must see what was said," so a tool letting an agent propose different words would
+violate the same invariant a boundary revision cannot touch anchors for. What is genuinely
+revisable is `Output.caption_style` — `CaptionStyle.LINE` vs `WORD_HIGHLIGHT`, both already
+real and implemented in `build_ass` (`WORD_HIGHLIGHT` emits actual `\kf` karaoke tags from word
+timing), not aspirational.
+
+**The deterministic validator is reused, not invented — and `BLUEPRINT.md` is why.** The
+architecture record's own quality-gate list includes "captions fit validated safe regions"
+(line 225), which reads as a spatial margin check. `BLUEPRINT.md` — the frozen spec whose
+divergence needs an ADR — has no §-numbered safe-region requirement anywhere; inventing a
+pixel-margin validator here would be product judgment this branch has no spec backing for, the
+same reasoning that kept Phase 5 to a trigger check rather than a distributed stack. What is
+real and already gates every render is Kurdish invariant #4's `assert_captions_within_clip`
+(`captions.py`) — reused exactly the way `propose_boundary_revision` reuses
+`assert_boundary_invariant`, not reimplemented, and run against the candidate style's own
+rebuilt caption file rather than the string alone.
+
+**`revisions/<id>.json` records now carry `"kind"`.** Both render functions refuse a record
+that is not theirs (`render_boundary_revision` requires `kind` absent-or-`"boundary"`,
+`render_caption_revision` requires `"caption"`), a clear `ValueError` instead of a confusing
+`KeyError` on whichever field the wrong renderer expected next. `None` is accepted as boundary
+because every record written before this field existed is one — checked directly rather than
+assumed, and covered by a test in each direction.
+
+**A real, structural question this raised, and the answer that survived it: `caption_style` is
+typed `Literal["line", "word_highlight"]` on the editor agent's tool, not `str`.**
+`tests/test_prompt_injection.py`'s own control test pins every parameter on that agent to a
+schema with no free-form string field, specifically so an injected instruction cannot smuggle
+content through the tool boundary. A plain `str` parameter would have opened exactly that field
+— caught immediately, before this shipped, by that control test failing rather than by review.
+Pydantic AI renders a `Literal` as `{"type": "string", "enum": [...]}` — checked against the
+real schema before relying on it, the same discipline that produced the original assertion —
+so the JSON type is still "string" but the set of accepted values is closed; anything outside
+the two real `CaptionStyle` values never reaches this module's code. The control test is
+widened accordingly: every parameter must be either an integer or a closed enum, never an
+open-ended string, which is the actual property worth having and is strictly weaker than
+neither test could hold with an unconstrained field.
+
+**Mutation-audited**: changing the parameter's type annotation back to `str` fails the widened
+control test by name (`caption_style is a free-form (non-enum) string parameter`), confirming
+the assertion is load-bearing rather than decorative.
+
+**Test coverage mirrors the boundary triad's own split.** Hand-built-report tests in
+`test_proposals.py` cover propose/commit refusals without ffmpeg (a real `Clip`/`Output`
+constructed via the actual dataclasses and `.to_dict()`'d, not hand-typed JSON that could drift
+from the real shape). `tests/test_render_caption_revision.py` drives a genuine `run_pipeline`
+call against the real fixture, approves a style change, renders it, and reads the resulting
+`.ass` file back to confirm `\kf` karaoke tags are present for `word_highlight` and absent for
+`line` — a measured difference, not merely "a file exists" — while probing that the span itself
+is unchanged (a caption revision must not move the cut points).
+
+**Amended: render variants, the third proposal type the record names beside boundaries and
+captions ("Add typed proposal tools for boundaries, captions and render variants", line 372),
+is deliberately not built here or anywhere in this branch yet.** `Clip.output.crop_target` is a
+*report* field describing which reframing actually ran ("face_tracked" if `focus_points` else
+"static_centre", `pipeline.py:1497`), not an independently settable control — proposing a
+different value without re-running `reframe.py`'s tracker over the new footage would be
+inventing a variant that was never actually rendered. `Output.encoder`/`crf` are hardware and
+deployment choices (§6: NVENC on hawapc01, x264 elsewhere), not editorial ones an agent should
+be proposing changes to. `Output.durations` (a different-length cut) is the same operation
+`propose_boundary_revision` already exposes as a span change; a second tool for the same
+capability under a different name would not be a new proposal type. There is no honest,
+real render axis left to build a third triad around without taking on the face-tracked
+re-reframe scope every revision function in `proposals.py` already names as a real
+simplification it does not attempt — so this is named as a scope boundary rather than left a
+silent gap in the module map.
+
+VERIFY OK — hawedit gate green: 1760 collected, 1760 passed, 0 skipped (floor ratcheted
+1730 -> 1760).
+
+## D-A13
+
+**Phase 4's first bullet, taken literally: "Record structured decision deltas and reason
+codes."** Research before writing anything: `judge.py` already has `ShadowVerdict`/
+`decide_judge` (a shadow-model comparison and promotion decision, both pure functions, neither
+ever called or persisted), no version constant exists beyond `POLICY_VERSION`
+(`policy.py:56`), and — the load-bearing finding — **a decline currently writes nothing.**
+`commit_boundary_revision`/`commit_caption_revision` raise `RevisionRejected` for an invalid
+proposal, an unattributed approver, or an explicit decline, and in every case the only
+`_write_atomic` call in either function sits after the point each of those three refusals
+already returned. An approval and a decline are both facts worth a permanent record — the
+architecture record's own line, "Store structured deltas such as moved boundary, rejected
+candidate, caption correction, reason codes and final approval," names rejection explicitly,
+not only success.
+
+**`src/hawedit/learning.py`, a new module rather than an extension of `events.py`.**
+`RunEvent`'s schema is purpose-built for pipeline stage transitions — a 3-state enum with a
+skip/reason coupling baked into `__post_init__` — and cannot carry a decision delta without
+breaking that invariant. So this is a sibling ledger, same shape: append-only JSONL,
+flush-per-line, tolerant of a torn last line, for the same reason `JsonlEventSink`/`read_events`
+have that property — a crash must not lose an already-recorded decision. `DecisionDelta` itself
+is validated at construction the same way `RunEvent`/`JudgeVerdict` are: a human-reached
+outcome (`APPROVED`/`DECLINED`) must carry both `reason_code` and `approved_by`; a
+`REFUSED_INVALID`/`REFUSED_UNATTRIBUTED` outcome — a proposal that never reached a human at all
+— must carry neither. Enforced both directions, so a future edit cannot silently invent a
+reason code for a decision nobody made.
+
+**`reason_code` is required unconditionally, not defaulted.** The record's own words: "Do not
+treat every user action as a preference: undo operations, experiments, accidental changes and
+policy-forced changes need distinct labels." A default of `ReasonCode.PREFERENCE` would be
+exactly the failure this line warns against — a silent classification nobody chose — so
+`commit_boundary_revision`/`commit_caption_revision` both gained `reason_code: ReasonCode` with
+no default, the same way `approved_by` has none. It is required even on the two refusal paths
+that never end up recording it, matching how `approved_by` is already asked for before a
+proposal's validity is even known — the human states why before learning whether the edit will
+go through.
+
+**Offline replay, scoped to what this branch can honestly claim.** The architecture record's
+loop names "offline evaluation" and "redacted replay dataset" against held-out data and a live
+judge — both blocked (`BLOCKED.md` #1, no labelled Sorani set; #3, Gemini billing). Building
+against either would be the infrastructure-before-the-trigger mistake D-A11/Phase 5 already
+declined once. What is real and buildable today: `replay_decision_deltas` re-runs every
+recorded *approved* decision's own `propose_boundary_revision`/`propose_caption_revision` call
+against the run's current `report.json`, and reports any today's code no longer accepts. This
+reuses the same propose functions the original commit called — not a hand-rebuilt `Boundary` or
+a re-derivation of caption validity from the frozen proposal dict — so a finding here means the
+codebase's behaviour changed, not that a second implementation drifted from the first. Only
+`APPROVED` deltas are replayed: a declined or refused proposal was never applied, so there is
+no committed state for a validator regression to silently break.
+
+**Mutation-audited twice, at the two points that matter most.** (1) Removing the
+`record_decision_delta` call on the approved path fails three tests by name —
+`test_an_approval_is_recorded_with_its_reason_code` and both replay tests that depend on a
+ledger existing at all — confirming the recording is load-bearing, not decorative. (2)
+Neutering `replay_decision_deltas`'s own validity check (`if not now.valid` -> `if False`)
+fails exactly `test_replay_flags_an_approval_the_run_no_longer_supports` and nothing else,
+confirming the regression test is the one this property depends on, not a coincidence of some
+other assertion.
+
+**Explicitly out of scope for this row, named rather than silently absent**: shadow-challenger
+persistence (`ShadowVerdict` gaining `to_dict`/`from_dict`), a promotion gate wired to
+`decide_judge`'s existing `JudgeDecision`, and any version tracking beyond `POLICY_VERSION`.
+Real work, and real Phase 4 scope — deferred to a following row rather than rushed into this
+one, the same discipline every other D-A-numbered slice this branch has kept.
+
+VERIFY OK — hawedit gate green: 1786 collected, 1786 passed, 0 skipped (floor ratcheted
+1760 -> 1786).
+
+## D-A14
+
+**Phase 4's remaining bullet: "Add ... shadow challengers and canary promotion."** D-A13
+scoped this out explicitly as "real work, deferred to a following row" — this is that row.
+`judge.py` already had the evaluation half of the architecture record's loop (Agent proposal ->
+... -> Shadow or canary challenger -> Human promotion gate -> Versioned ... model): `ShadowVerdict`
+(a shadow model's opinion, structurally unable to reach §5's editorial block) and `decide_judge`
+(§3's "empirical beats newer" rule as a pure function), both built before this branch and never
+called or persisted anywhere in `src/` — confirmed by research before writing anything, not
+assumed. This row is the missing second half: persistence for the shadow opinion, and a real,
+human-gated promotion turning `decide_judge`'s recommendation into an active, rollback-able
+state.
+
+**Scoped to the judge model, the one axis with real backing — not a generic version
+registry.** The acceptance gate names "model, prompt, skill, policy and workflow" version.
+Policy already has `POLICY_VERSION` (D-A10). Of the rest, only the judge model has a real
+comparison mechanism (`decide_judge`) and a real incumbent (`KURDISH_EDITORIAL_JUDGE`) to
+promote against — there is no prompt-versioning concept, no skill-versioning concept, anywhere
+in this codebase. Building a generic multi-axis registry for content that does not exist would
+be the same infrastructure-before-the-trigger mistake D-A11 declined for a Postgres role and
+Phase 5 declined for a distributed stack. `PromotionRecord.component` is a free string so a
+future axis can reuse the ledger shape without a rewrite; only `"judge"` is ever produced today.
+
+**The first system-wide, cross-run persistent state this branch has written.** `events.jsonl`,
+`revisions/<id>.json`, `decisions.jsonl` are all scoped to one run's `work_dir`, because the
+fact each records is about that run. A promotion is different in kind: it changes what judge
+*future* runs — runs that do not exist yet — should use, so it cannot live inside any single
+run's directory. Stored at `.hawedit/judge_promotions.jsonl`, relative to the current working
+directory, mirroring the precedent `durable_workflow.py`'s `.dbos/hawedit.sqlite` already set
+for "state that belongs to the installation, not to one run" — and for the same underlying
+fact: a single Windows box running one CLI at a time has exactly one working directory this can
+mean. Added to `.gitignore` alongside `/.dbos/`, for the same reason: process/installation
+state, not source.
+
+**Read-only integration today, named as a boundary rather than left to look finished.**
+`current_judge()` reports what the ledger says is active. `gemini.py`'s `GeminiJudge`
+constructor still defaults every parameter to the module constant `KURDISH_EDITORIAL_JUDGE`,
+unchanged by this row — wiring a dynamically promoted judge into the actual render path is a
+real, separate change to an already-shipped, tested call site (`gemini.py`, `editorial_bench.py`
+both consume the constant directly), not something a promotion ledger should silently imply by
+existing.
+
+**Rollback restores the immediately preceding version, matching the acceptance gate's own
+wording exactly.** "A rollback restores *the previous* ... version" is singular, not "any
+recorded point." `rollback_judge` reads the last two ledger entries (or falls back to the
+pinned default if only one promotion has ever happened — the implicit prior state
+`current_judge` already treats an empty ledger as) and writes a new entry restoring the one
+before the most recent change. A second rollback therefore toggles back to what the first
+rollback undid, the same one-level-undo shape a browser back button has — intentional and
+tested (`test_rolling_back_twice_toggles_rather_than_unwinds_further`), not a limitation
+discovered later.
+
+**`ShadowVerdict` gained `to_dict`/`from_dict`**, mirroring `JudgeVerdict`'s own existing
+pair exactly — a shadow opinion nobody can read back is one `decide_judge`'s
+incumbent/shadow/tie tally cannot be reconstructed from later. `shadow_verdicts.jsonl` lives
+beside a run's other artifacts (`work_dir`-scoped, unlike the promotion ledger above) because
+which judge is being challenged on which candidate is a fact about that specific run.
+
+**Mutation-audited twice, at the two points that matter most.** (1) Neutering the
+switch-recommendation check (`if not decision.switch or ...` -> `if False`) fails exactly
+`test_promote_refuses_a_decision_that_did_not_recommend_switching` and nothing else. (2)
+Neutering the rollback "previous version" computation (always using the *current* version
+instead of the one before it) fails all three tests that depend on the computation being
+correct — one promotion, two promotions, and the double-rollback toggle — and only those three,
+confirming the tests are checking the arithmetic itself rather than something incidental.
+
+VERIFY OK — hawedit gate green: 1808 collected, 1808 passed, 0 skipped (floor ratcheted
+1786 -> 1808).
+
+## D-A15
+
+**Phase 5, built to the shape the user explicitly chose: a trigger check and a migration path,
+not the distributed stack itself.** Asked directly which of the two AskUserQuestion options to
+build, the answer was "Trigger check + migration path" over building Temporal/worker
+services/HA now — the architecture record's own Phase 5 heading is "scale only when triggered,"
+and no trigger has fired. This row is that check, built honestly rather than as a placeholder
+that always returns "not yet."
+
+**None of the five conditions are measurable from this codebase's own state, so nothing here
+guesses.** The record names five explicit, numbered conditions for moving DBOS to Temporal
+(lines 124-130): multiple physical worker pools, multi-tenant HA hosting, contractual
+cross-region/retention requirements, workflow-history management outgrowing the application and
+its Postgres deployment, and the team needing Temporal's operational ecosystem enough to justify
+it. Every one is an organizational or deployment fact — not something a static read of a
+single-process CLI's source can observe. `evaluate_scale_triggers` takes an explicit, named
+answer for each condition and refuses if any is missing, rather than defaulting an unanswered
+one to "not triggered" — the same "required, never assumed" rule `reason_code` established for
+a much smaller decision (D-A13), applied here to the largest one this branch makes.
+
+**The five conditions are pinned to the record's own words, not a paraphrase that could
+drift.** `SCALE_TRIGGERS` quotes lines 124-130 of `AGENT_ARCHITECTURE_DEFINITIVE_2026-08-11.md`
+verbatim, and `test_every_trigger_condition_is_quoted_verbatim_from_the_architecture_record`
+reads that file directly and asserts each condition string is a substring of it — so an edit to
+either side that lets them diverge is caught, not merely trusted from the code's own comment
+claiming to quote it.
+
+**The migration path is a function, checked against real code, not a `.md` file that could go
+stale beside the source it describes.** `describe_migration_path()` is prose, and
+`tests/test_scale.py` binds every module and function it names to what is actually on disk —
+the same discipline `test_claims.py` already holds the README's module map and PROGRESS's
+ledger to, applied to a new document before it has the chance to drift the way those did.
+
+**The claim that matters most in that prose is checked directly, not trusted.** The migration
+path states that DBOS-specific code is isolated to one module — `durable_workflow.py` is the
+only place `@DBOS.step()`/`@DBOS.workflow()` appear, and `durable.py` is the only caller that
+imports it (one function-local import of `run_durable()`, deferred past argument parsing so
+`--help` needs no `dbos` install, D-A2/D-A3). Verified by grepping every file under `src/` for
+an actual `from hawedit.durable_workflow import` line before writing the claim, not assumed
+from memory of how the module split was originally reasoned about — and re-verified by the test
+itself on every future run. This is a genuinely useful fact for anyone actually planning a
+migration: it means rewriting `durable_workflow.py` and its one call site is the whole
+DBOS-specific surface area, not a search-and-replace across the codebase.
+
+**Mutation-audited twice.** (1) Rewording one trigger condition's text fails the verbatim-quote
+test by name. (2) Adding a second, real `from hawedit.durable_workflow import run_durable` line
+to `events.py` fails `test_migration_path_states_durable_workflow_is_the_only_dbos_specific_module`
+by name, naming the offending file.
+
+**Explicitly not built, matching the chosen scope rather than silently absent**: a Temporal
+integration, dedicated worker-service deployment, OpenLineage export, and persistence for a
+`ScaleAssessment` (unlike `decide_judge`, which D-A14 gave a promotion ledger, an architecture
+assessment happens rarely enough and has no acceptance-gate language demanding a record the way
+Phase 4's did — `decide_judge` itself went unpersisted until there was a real reason to persist
+it). Building any of the first three now, with no trigger fired, would repeat the
+infrastructure-before-the-trigger mistake D-A11 declined for a Postgres role and D-A14 declined
+for a generic version registry.
+
+VERIFY OK — hawedit gate green: 1819 collected, 1819 passed, 0 skipped (floor ratcheted
+1808 -> 1819).
+
+## D-A16
+
+**One of the eleven acceptance gates, closed rather than left to hold by accident.** The
+architecture record's acceptance-gate list (lines 390-404) includes: "Sensitive media/
+transcript content is absent from telemetry unless a project policy explicitly enables it."
+Auditing this branch's remaining gap against that list — after D-A11 through D-A15 closed the
+tool-boundary, injection, mutation-surface and rollback gates — found this one true today but
+unasserted: nothing anywhere imports a telemetry SDK, but nothing said so where a future change
+would have to notice breaking it.
+
+**Scoped to real external transmission, not stdlib `logging`.** `grep -rl "logging"` finds real
+hits: DBOS logs its own operation internally (every `verify.sh` run's own `[INFO] (dbos:...)`
+lines are proof), and a few modules already use Python's stdlib `logging` for local,
+non-transmitting output. Neither is what the acceptance gate is about — the risk it names is
+content leaving the machine to an external collector. `_TELEMETRY_IMPORTS` names the actual
+import identifiers of products whose entire purpose is exactly that (`sentry_sdk`,
+`opentelemetry`, `datadog`, `posthog`, …), checked via the same AST-import-scan
+`test_capability_surface.py` (D-A11) already uses for shell/network capability — applied here
+across the whole `src/hawedit` tree rather than only the agent-defining modules D-A11 scoped
+to, since this gate is about the whole application's telemetry surface, not only what an agent
+can reach.
+
+**A near-miss worth naming: a naive grep for "segment"/"analytics" (Segment.io's own import
+name) would have false-positived on this codebase's own vocabulary** — "segment" appears
+throughout as an ordinary English word for a piece of audio/video, and "analytics" collides
+with this project's own editorial-analytics language. Checked directly before trusting it: a
+precise grep for the real product names returned zero hits, confirming the AST check is
+catching a real absence rather than a coincidence of vocabulary.
+
+**The qualifier "unless a project policy explicitly enables it" is checked from both sides.**
+No module imports a telemetry SDK, and no entry in `policy.py`'s `TOOL_POLICIES` names a
+telemetry-shaped capability either — so a future edit could not add telemetry by declaring it
+in policy without also importing something, or vice versa, without at least one of these two
+checks failing and forcing the decision to be explicit.
+
+**Mutation-audited**: adding `import sentry_sdk` to `gemini.py` fails the test and names the
+exact file, confirming the check is a real assertion rather than a vacuous pass over an empty
+set.
+
+VERIFY OK — hawedit gate green: 1822 collected, 1822 passed, 0 skipped (floor ratcheted
+1819 -> 1822).
+
+## D-A17
+
+**`export_developer_report`, the one tool the architecture record scopes outside editorial
+work entirely.** Line 199 lists it among Phase 3's recommended tools; line 212 is explicit
+about why it is different in kind from the rest: "If the agent finds an application defect, it
+creates a structured developer report with reproduction steps, workflow/artifact IDs, sanitized
+logs, expected versus actual behavior and the smallest suspected component. A separate coding
+agent or developer can fix it outside the production editor identity." This is not a proposal
+about a clip; it is a report about the application itself, filed for a different identity to
+act on.
+
+**A third agent, not a new tool bolted onto either existing one.** `agent.py`'s core, heavily
+tested promise is that it writes nothing at all — proven by an AST scan of its own source, and
+relied on by `test_a_poisoned_run_writes_nothing_anywhere_under_its_work_dir` (D-A9) among
+others. Adding a write-capable tool there would mean weakening that guarantee for every future
+reader, not composing with it. `editor_agent.py`'s promise is specifically about proposing
+*editorial* revisions. Neither module's stated scope covers "the application has a bug" — so
+this is `src/hawedit/diagnostics_agent.py`, a third module with its own narrower promise,
+matching the pattern `editor_agent.py`'s own docstring already establishes for exactly this
+situation.
+
+**Compose, don't file — the same split every mutating capability in this branch already
+uses.** `build_developer_report` is pure: it validates and returns a `DeveloperReport`, and
+touches no disk. `write_developer_report` is the only write in `developer_report.py`, and it is
+not registered as a tool on any agent — mirroring `propose_boundary_revision`/
+`commit_boundary_revision` (D-A6) exactly. `mutating_tool_names()` (`policy.py`, D-A10) stays
+`()` after this row, unchanged: the strongest statement this branch makes — that the set of
+mutating capabilities reachable from any agent is empty, not merely small — was not weakened to
+accommodate a capability that felt low-risk. A developer report is diagnostic, not a production
+change, but this codebase does not carve out an exception to "the model can propose; it cannot
+commit" on that basis.
+
+**"Sanitized logs" is a checked constraint, not a naming convention.** This project's own real
+risk is exactly what D-A16 closed for telemetry: Kurdish transcript content leaking somewhere
+it should not. A developer report about *the application's* behavior has no legitimate reason
+to quote Kurdish speech verbatim, so every free-text field is refused if it contains a
+character from `captions.py`'s own `KURDISH_REQUIRED_GLYPHS` — letters that do not appear in
+English prose, reused rather than inventing a second Kurdish-detection scheme. Verified against
+a real control case, not merely the positive refusal: English prose *describing* a Kurdish-text
+defect ("Kurdish captions render as boxes", "missing glyphs for several Sorani letters") is
+accepted, while the transcript text itself is refused — the rule is about the script appearing,
+not the topic being discussed.
+
+**Mutation-audited three times, and the third result was genuinely worth learning from.** (1)
+Five targeted tests, one per free-text field, each confirm `SanitizationError` fires and names
+the right field; two controls confirm ordinary English prose is never falsely flagged. (2) The
+Policy Gate: building the diagnostics agent before declaring `export_developer_report_tool` in
+`TOOL_POLICIES` failed `test_every_registered_tool_on_every_agent_is_declared_in_policy` and
+`test_no_agent_exposes_a_blocked_operation` by name, confirmed before the entry was added, not
+merely asserted to have been. (3) The AST-no-write check
+(`test_diagnostics_agent_module_never_calls_write`) has a real, narrow limitation worth
+recording rather than discovering later: it walks `ast.Name`/`ast.Attribute` nodes only, so an
+*unused* `from hawedit.developer_report import write_developer_report` added to the module does
+not fail it — import machinery produces `ast.alias` nodes, which the check does not scan.
+Confirmed directly: adding the bare import left every test green. The realistic mutation —
+actually calling `write_developer_report` from inside the tool, which is the only way an
+unused import could ever matter — failed the test immediately and by name. The check holds
+against the defect that could actually execute a write; it does not (and was never claimed to)
+catch a dead import that can never run. This is the same limitation `editor_agent.py`'s
+original equivalent test has always had, unexamined until this row's mutation pass looked for
+it specifically.
+
+VERIFY OK — hawedit gate green: 1849 collected, 1849 passed, 0 skipped (floor ratcheted
+1822 -> 1849).
+
+## D-A18
+
+**`run_quality_checks`, the architecture record's own tool name (line 196), added to the
+read-only agent as a fifth tool rather than a new module.** Unlike `export_developer_report`
+(D-A17), which needed its own agent because it writes something, this genuinely fits
+`agent.py`'s existing, heavily tested zero-write promise — every check it runs is a read
+against `report.json`, so it composes with the AST-proof `test_agent_module_never_writes_a_file`
+rather than straining against it.
+
+**Itemized, not short-circuited — and that is a deliberate difference from the function it
+draws on.** `Clip.assert_renderable()` (`clip.py`) already checks four conditions in sequence —
+the boundary invariant, the QC gate, the editorial block, the output block — and raises on the
+first one that fails. A caller asking "is this run's clip ready to ship" is better served by
+everything wrong at once than by whichever check a short-circuiting guard happened to reach
+first, so `run_quality_checks` evaluates all four independently and reports each as its own
+`QualityCheck`. The boundary check reuses the real `assert_boundary_invariant` from
+`boundary.py` — constructing an actual `Boundary` from the report's own recorded fields and
+calling the same function `render_clip`'s gate calls — not a second implementation of Kurdish
+invariant #2, matching every other reused-validator precedent this branch has kept since D-A6.
+
+**Proven equivalent to `assert_renderable()`, not merely modeled on it.** A test builds one real
+`Clip` (via the actual dataclasses, not a hand-typed dict) and derives five variants —
+fully valid; an illegal boundary (`final_out_ms` before the anchor); a missing QC record; a QC
+record present but neither `auto_pass` nor `human_reviewed`; a missing editorial block; a
+missing output block — and asserts that `run_quality_checks(...).all_passed` never disagrees
+with whether `clip.assert_renderable()` raises, checked against the *same* underlying objects
+each time. This is checking two real implementations against each other, not one implementation
+against a description of the other that could itself have drifted.
+
+**Caption validity — Kurdish invariant #4 — is named out of scope, not silently absent.**
+`assert_captions_within_clip` needs a rebuilt `.ass` file from the run's persisted
+`selected_sentences`, and that construction is `proposals.py`'s own logic
+(`_load_clip_and_sentences`, `build_ass`). `agent.py` cannot import `proposals.py` to reuse it:
+`proposals.py` already imports `Deps` from `agent.py`, so the reverse import would complete a
+cycle. Nothing ships uncovered because of this gap — `render_clip` runs
+`assert_captions_within_clip` itself, on every render this codebase produces, revision or
+original — `run_quality_checks` simply does not have an on-demand, read-only path to the same
+check without either duplicating `proposals.py`'s sentence-loading logic here or restructuring
+which module owns it, and this row does neither rather than doing either partially.
+
+**Mutation-audited.** Marking a caught `BoundaryInvariantViolated` as `passed=True` instead of
+`False` fails exactly two tests: the dedicated `test_run_quality_checks_flags_an_illegal_boundary`
+and the equivalence test `test_run_quality_checks_agrees_with_assert_renderable` — and initially
+failed to fail the equivalence test at all, because that test's first version had no illegal-
+boundary case among its five variants. Caught before trusting the mutation pass: the equivalence
+test's own coverage was itself checked by mutation, found incomplete, and a sixth case (the
+illegal boundary, built the same way as the dedicated test's) was added before either test was
+considered to actually prove what it claimed.
+
+VERIFY OK — hawedit gate green: 1860 collected, 1860 passed, 0 skipped (floor ratcheted
+1849 -> 1860).
+
+## D-A19
+
+**`start_pipeline`, built rather than left off the Phase 3 tool list.** Asked directly whether
+to build the remaining recommended tools (`start_pipeline`/`cancel_or_pause_run`/`resume_run`)
+or treat the list as complete, the answer was to build them. This is the first: the same
+propose/commit split every mutating capability in this branch has kept since D-A6, applied to
+*starting a run* rather than revising a clip — a genuinely different risk class from anything
+built so far, since it spends real compute rather than proposing a change to already-produced
+content.
+
+**Scoped to three parameters, not `pipeline.py`'s full ~25-flag CLI.** `build_parser()`
+accepts `--omni-asr`, `--gemini`, `--visual`, `--confidential`, `--zero-data-retention`,
+`--qc-pass`, device selection, and more. `propose_start_pipeline`/`commit_start_pipeline`
+expose exactly `source`, optional `media_id`, optional `transcript` — an agent proposing to
+start a run should not be toggling compliance flags or bypassing the human QC gate itself.
+Everything else runs at `pipeline.py`'s own defaults, the same graceful, already-tested
+`StageSkipped` degradation any caller without live ASR/Gemini access gets (`BLOCKED.md` #1/#3
+mean that is every caller in this environment today, agent or human).
+
+**A run must not silently overwrite a completed one.** `propose_start_pipeline` refuses if
+`work_dir/report.json` already exists — the same "additive, never destructive" principle
+`proposals.py` already holds for boundary/caption revisions, checked against a real run this
+branch's own tests started and completed, not a hand-written stand-in file.
+
+**Recorded as a decision delta on every outcome**, extending `DecisionDelta.kind` to accept
+`"start_pipeline"` alongside `"boundary"`/`"caption"` — the same reasoning D-A13 gave for
+recording declines and refusals, not only approvals: starting a real, compute-consuming run is
+exactly the kind of decision worth a permanent, reasoned record.
+
+**A real, named tradeoff: `source`/`transcript` are free-form strings, unlike every other agent
+parameter in this codebase.** Every prior tool either takes no parameters (`agent.py`'s
+read-only five) or a closed enum (`caption_style`, D-A12) specifically so an injected
+instruction has no open string field to smuggle a path through. `start_pipeline` cannot follow
+that pattern — naming a file *is* the input. The honest boundary this leaves:
+`propose_start_pipeline` only ever calls `Path.is_file()` against `source`/`transcript`, an existence check,
+never a read, so an injected instruction could at most learn whether an attacker-chosen path
+exists on the host, and only by observing which `violation` message comes back — never its
+contents, and nothing runs without a human seeing the real path in `commit_start_pipeline`'s
+confirmation prompt.
+
+**A real Policy Gate defect this tool's own natural name found, fixed at the source rather than
+worked around.** `policy.py`'s `_FORBIDDEN_NAME_FRAGMENTS` had a bare `"pip"` fragment meant to
+catch a tool that shells out to the package installer; `propose_start_pipeline_tool` — the
+name matching the Python function it wraps — matched it, since "pipeline" contains "pip". The
+comment beside that list calls a false positive "a five-second rename," but this codebase's own
+central domain word (`pipeline.py`, `run_pipeline`, `PipelineRun`) is not a rare collision worth
+renaming around every time a workflow tool is added — `cancel_or_pause_run` and anything else
+pipeline-shaped would hit it again. Narrowed to `"pip_"` instead, matching the trailing-
+underscore precision `"commit_"` already uses for the same reason, and pinned in both
+directions: `test_a_real_pip_shaped_tool_name_is_still_refused` (a genuinely dangerous name is
+still caught) and `test_pipeline_in_a_tool_name_is_not_a_blocked_capability` (the domain word
+is not).
+
+**Verified against a real wheel, not assumed.** Built from this commit
+(`scripts/build-wheel.sh`), installed into a clean venv with only base dependencies (`klpt`,
+`fonttools`, no `agentic` extra) — all eight console scripts, `hawedit-workflow` now among
+them, exit 0 on `--help`. Not re-measured against the exact pinned versions the earlier
+`AUDIT_REPORT.md` entries used, so that document's amendment states only that every script
+starts, not a repeat of the earlier "`pip check` clean" claim.
+
+**Mutation-audited twice.** (1) Reverting the fragment fix (`"pip_"` back to bare `"pip"`)
+fails `test_pipeline_in_a_tool_name_is_not_a_blocked_capability` and
+`test_every_registered_tool_on_every_agent_is_declared_in_policy`, and only those two. (2) A
+genuinely pip-shaped name (`pip_install_tool`, `run_pip_tool`) is confirmed still refused after
+the fix, proving the narrowing did not also remove the real protection.
+
+**Explicitly deferred to a following row, named rather than silently absent**:
+`cancel_or_pause_run` and `resume_run`. DBOS has a real `cancel_workflow` API but no "pause" —
+`WorkflowStatusString` in the installed package has no `PAUSED` state, only
+`PENDING/SUCCESS/ERROR/CANCELLED/ENQUEUED` — so the honest version of that tool is a cancel-only
+capability, and it needs a way for a `work_dir`-scoped agent to discover its own run's DBOS
+workflow ID first, since `report.json` does not currently persist one and `run_id` is not
+model-suppliable without breaking the same project-boundary guarantee every other tool in this
+codebase holds. `resume_run` is not built at all: DBOS's own `DBOS.launch()` already recovers a
+`PENDING` workflow automatically, and a completed workflow's result is already returned by a
+second `run_durable` call under the same `run_id` (both verified in M9.2/M9.3) — there is no
+third, distinct "resume" action DBOS actually exposes beyond those two, so building a tool for
+one would be inventing a capability that is not real, the same mistake this branch has declined
+everywhere else (D-A11, D-A15).
+
+VERIFY OK — hawedit gate green: 1893 collected, 1893 passed, 0 skipped (floor ratcheted
+1860 -> 1893).
+
+
+## D-A20
+
+**`cancel_run`, and the prerequisite D-A19 shipped without: a discoverable run ID.**
+`commit_start_pipeline` called `run_durable(argv)` with no explicit `run_id`, so DBOS assigned a
+random UUID nothing outside that one process call ever saw again. A human who started
+`hawedit-workflow start` in one terminal and wanted to stop it from another had no ID to cancel
+*by* — cancellation was unbuildable, not merely undesigned. Asked to design `cancel_or_pause_run`
+and to keep going until the pipeline is "full robust ... at max grade," the honest first step was
+closing that gap rather than building a tool that could never find what it was meant to act on.
+
+**`dbos_run_id_for(work_dir)`: a pure function, not a persisted file.** `f"hawedit-run:
+{work_dir.resolve()}"` — `commit_start_pipeline`, `propose_cancel_run` and `propose_resume_run`
+(D-A21, below) all derive the same ID independently and agree without a discovery round-trip or
+a race between writing one and reading it back. `work_dir` is resolved first so a relative and an
+absolute path to the same directory agree
+(`test_dbos_run_id_for_agrees_across_a_relative_and_an_absolute_path`). This also makes
+`start_pipeline` idempotent in the sense the architecture record requires — "every mutating tool
+must have ... an idempotency key" (line 199) — for the first time: previously the only guard
+against a duplicate submission was `propose_start_pipeline`'s `report.json`-exists check, which
+does not cover the window before a run has produced one. Measured directly, not assumed: reusing
+a `run_id` that is already `CANCELLED` to start a new logical run under it does not silently
+execute — DBOS raises `DBOSAwaitedWorkflowCancelledError` immediately, the step body never runs a
+second time (`_sys_db.py`'s `update_workflow_outcome` guard, confirmed against the real installed
+package before being relied on). `commit_start_pipeline` does not catch and translate that
+exception; it propagates exactly as `_build_and_run`'s own exceptions already do, and the honest
+recovery is `resume_run`, not a second `start_pipeline` into the same `work_dir`.
+
+**What "cancel" actually does, measured against the installed `dbos==2.29.0` source rather than
+read off a docstring** — the same bar `durable_workflow.py` already holds itself to, extended
+here because DBOS's cancel semantics are exactly the kind of thing worth getting wrong quietly.
+`DBOS.cancel_workflow(run_id, cancel_children=False)` marks the workflow `CANCELLED` in the
+system database and fails any `get_result()` awaiting it — it does **not** stop code already
+executing inside a running step. `_run_pipeline_step` is one coarse step; a slow synthetic step
+cancelled mid-execution in a throwaway probe kept running to completion, and its step-level
+output was still checkpointed even though the workflow stayed `CANCELLED`. `propose_cancel_run`
+reports the run's real DBOS status (`get_workflow_status`) so a human approving the cancel sees
+this stated in the confirmation prompt, not just implied by the tool existing.
+`cancel_children=False` is hardcoded, not a parameter: `run_pipeline_workflow` is this codebase's
+only `@DBOS.workflow()` (grepped, not assumed), so there are no children to cascade to, and a
+parameter with one legal value is not a parameter — this is the one real corner of the new
+surface with no behavioural test, since a codebase with zero child workflows cannot exercise the
+`True` branch without inventing one that does not otherwise exist; named here rather than left
+implicit, matching D-A17's own precedent for a narrow, honest coverage gap.
+
+**Same propose/commit split, same decision-delta recording, extended rather than duplicated.**
+`propose_cancel_run` is the one place in this codebase where "propose" legitimately needs `dbos`
+(deferred-imported, same as `commit_start_pipeline`) — determining "is there anything to cancel"
+is inherently a question DBOS's system database answers, unlike `propose_start_pipeline`'s pure
+filesystem checks. It still never *writes*: `DBOS.get_workflow_status` is a read, the same
+guarantee every other `propose_*` in this codebase holds, just extended to a read that happens to
+cross the `dbos` boundary. `commit_cancel_run` records a `DecisionDelta` with `kind="cancel_run"`
+on every outcome (`DecisionDelta.__post_init__` widened to accept it); it is not registered as a
+tool on any agent (`workflow_agent.py` registers only `propose_cancel_run_tool`), so
+`mutating_tool_names()` stays `()`.
+
+**Mutation-audited against the real installed `dbos` package, not merely against hand-written
+fixtures.** Dropping `run_id=dbos_run_id_for(work_dir)` from `commit_start_pipeline` fails
+`test_commit_start_pipeline_registers_the_deterministic_run_id` and the full mid-flight lifecycle
+test, both by name. Removing `propose_cancel_run`'s "already `CANCELLED`" refusal branch fails
+the lifecycle test's own re-check of that state, added specifically because the mutation pass
+found it had no coverage the first time through — the same "the equivalence test's own coverage
+was itself checked by mutation, found incomplete" discipline D-A18 established. Reverting
+`DecisionDelta`'s widened `kind` check fails ten tests across `test_learning.py` and
+`test_workflow_control.py`, not just one.
+
+See D-A21, immediately below, for `resume_run` and the correction to what this branch previously
+believed about it — the two shipped together, in the same commit and the same gate run, so the
+`VERIFY OK` line at the end of that entry covers both.
+
+## D-A21
+
+**`resume_run` — built, correcting D-A19's own stated position that it should not be.** D-A19
+said: "there is no third, distinct 'resume' action DBOS actually exposes" beyond crash
+auto-recovery of a `PENDING` workflow and re-calling `run_durable` under a completed `run_id` to
+fetch a cached result. That claim was reached without checking `DBOS`'s actual API surface for
+`cancel_workflow`/`resume_workflow`/`get_workflow_status` first — a real research gap, not a
+judgment call that later evidence merely refined. `DBOS.resume_workflow(run_id)` is real, in the
+installed `dbos==2.29.0`, and is a genuinely distinct third action: it resets a non-terminal
+workflow's status to `ENQUEUED`, and a background queue thread DBOS's own `_launch()` starts
+(confirmed live in `dbos/_dbos.py`, not inferred from a comment) picks it up and re-executes it.
+Named directly rather than glossed over, because this codebase's own culture (D-A15's "none of
+the five conditions are measurable... so nothing here guesses") treats a wrong claim caught later
+as worth recording, not quietly overwriting.
+
+**What resuming actually does, measured with a real cancel-then-resume round trip before this
+was built, not assumed from the source alone.** A throwaway probe against the installed package:
+start a slow synthetic workflow, cancel it mid-execution (status → `CANCELLED`, `get_result()`
+raises `DBOSAwaitedWorkflowCancelledError`, the step keeps running underneath and its result gets
+checkpointed anyway), then `DBOS.resume_workflow` it. Result: `get_result()` returns the real,
+correct value, the workflow's final status is `SUCCESS`, and the step body is **not** invoked a
+second time — DBOS found the step's already-checkpointed output and reused it. Applied to
+HawEdit's real coarse-step architecture (D-A2/D-A3): if a run is cancelled while genuinely still
+computing and the underlying process finishes anyway (measured in D-A20), resuming afterward
+finalizes that already-completed work as `SUCCESS` without ever re-invoking `_build_and_run`. If
+the process instead died before finishing, resuming re-enters `_run_pipeline_step(argv)` from
+scratch — safe for the same reason crash recovery already is, since the pipeline's own digest
+caches reuse whatever completed.
+
+**Scoped to the two states a human resuming something is actually acting on.**
+`propose_resume_run` is valid only for `CANCELLED` or `MAX_RECOVERY_ATTEMPTS_EXCEEDED`; refused
+for `PENDING`/`ENQUEUED` ("already in flight — nothing to resume", proven against a real run
+still `PENDING` mid-lifecycle-test, not merely asserted) and for `SUCCESS`/`ERROR` (terminal).
+DBOS's own `resume_workflows` would technically also accept a `PENDING`/`ENQUEUED` target — this
+module narrows the exposed surface to what resuming *means* for this codebase, the same
+`start_pipeline`-scoped-to-three-parameters judgment D-A19 already made once.
+
+**`commit_resume_run` returns exactly what `commit_start_pipeline` returns on success** — the
+run's own `PipelineRun.to_dict()` — because a resumed workflow is the same logical run
+continuing, not a new one; there is no separate "resume result" shape to invent.
+
+**Same propose/commit split.** `propose_resume_run` needs `dbos` for the same reason
+`propose_cancel_run` does; `commit_resume_run` records a `DecisionDelta` with
+`kind="resume_run"` on every outcome and is not registered as a tool on any agent
+(`workflow_agent.py` registers only `propose_resume_run_tool`).
+
+**The full lifecycle, proven in one real, expensive test rather than three cheaper ones that
+each trust a different hand-built stand-in.**
+`test_a_run_cancelled_mid_flight_keeps_computing_and_can_then_be_resumed` runs the real
+`kurdish-speech-3cuts.mp4` fixture through `commit_start_pipeline` on a background thread, polls
+for a real DBOS `PENDING` status, cancels it via `commit_cancel_run`, confirms the background
+thread's own call raises `DBOSAwaitedWorkflowCancelledError` once the real pipeline finishes
+anyway, confirms `report.json` was written despite the cancellation, confirms `propose_cancel_run`
+and `propose_resume_run` both report the right refusal for `PENDING` and re-`CANCELLED` states
+along the way, then resumes and confirms the real result and a final `SUCCESS` status. Cheaper
+refusal-path tests (invalid/unattributed/declined, for both `cancel_run` and `resume_run`) use a
+hand-constructed but structurally valid proposal instead of a real running workflow — legal
+because `commit_cancel_run`/`commit_resume_run` only touch DBOS *after* the approval gate passes,
+proven directly by
+`test_commit_cancel_run_approved_calls_the_real_dbos_api_and_no_ops_on_a_missing_id` (cancelling
+an ID DBOS has never seen is a real, measured no-op) and
+`test_commit_resume_run_approved_calls_the_real_dbos_api_and_raises_on_a_missing_id` (resuming
+one raises `DBOSNonExistentWorkflowError` — DBOS's own `resume_workflows` checks existence
+explicitly where `cancel_workflows` does not, a real asymmetry between the two APIs worth having
+a test that would fail if it changed).
+
+**Mutation-audited**: removing `propose_resume_run`'s `PENDING`/`ENQUEUED` refusal branch fails
+the lifecycle test's mid-run re-check of that state, added after the mutation pass found the
+original version had no coverage for it — the same pattern D-A20 already used once in this same
+row, applied a second time rather than trusted to have generalised.
+
+**Not built**: a `queue_name` override for `resume_workflow` (this codebase has exactly one
+queue, DBOS's own internal default — the same "a parameter with one legal value is not a
+parameter" judgment D-A20 made for `cancel_children`), and any change to `propose_start_pipeline`
+to pre-check DBOS status before proposing — D-A20 established that reusing a `CANCELLED` run_id
+already fails loudly and specifically on its own, so a second, DBOS-aware check in
+`propose_start_pipeline` would duplicate a refusal DBOS already produces correctly.
+
+**Amended, after an independent adversarial review pass caught two real bugs before this row
+was committed.** Both fixed at the source rather than worked around, both mutation-audited by
+reverting and confirming the right test fails, matching the discipline every other row in this
+branch holds itself to:
+
+1. `replay_decision_deltas` (`proposals.py`, D-A13) dispatched any `DecisionDelta.kind` that was
+   not literally `"boundary"` into the `"caption"` branch by default, reading
+   `delta.proposal["proposed_caption_style"]` — a key that does not exist on a
+   `"start_pipeline"`/`"cancel_run"`/`"resume_run"` proposal dict. This bug already existed for
+   `"start_pipeline"` since D-A19 and went undiscovered until this row's `kind` widening made it
+   reachable by two more kinds; fixed with an explicit `elif "caption"` /
+   `else: continue` — workflow-lifecycle decisions have no deterministic content validator to
+   replay against, so they are skipped rather than mis-handled. Regression test:
+   `test_replay_skips_workflow_lifecycle_kinds_instead_of_crashing`
+   (`tests/test_proposals.py`), which reproduced the original `KeyError` before the fix.
+2. `commit_cancel_run`/`commit_resume_run` derived their `DecisionDelta.media_id` as
+   `work_dir.name or str(work_dir)` — `work_dir.name` is truthy even when it is only whitespace
+   (`"   "` is a non-empty string), so a work_dir ending in a whitespace-only segment would pass
+   this check, then fail `DecisionDelta.__post_init__`'s `media_id.strip()` requirement with an
+   unhandled `ValueError` instead of this module's own `WorkflowRejected`. Extracted into
+   `_delta_media_id_for(work_dir)`, checking truthiness on the *stripped* value; tested as a
+   pure function (`test_delta_media_id_for_falls_back_to_work_dir_when_the_name_is_whitespace_only`)
+   rather than through a real whitespace-named directory on disk — Windows does not reliably
+   create one via `Path.mkdir` (verified directly: the OS normalizes a trailing-space path
+   component away before the file write, discovered while writing this exact test the first
+   way and getting a `FileNotFoundError` unrelated to the logic under test).
+
+No other issue survived the review — it also independently re-verified, against the real
+installed `dbos` source rather than trusting the prose above, the status-string exhaustiveness in
+`propose_cancel_run`/`propose_resume_run`, that `CancelRunProposal`/`ResumeRunProposal` expose
+only the status string and never DBOS's full `WorkflowStatus` (which can carry `input`/`output`),
+and the `cancel_children=False`/"only `@DBOS.workflow()`" claims above.
+
+VERIFY OK — hawedit gate green: 1924 collected, 1924 passed, 0 skipped (floor ratcheted
+1893 -> 1924).
+
+## D-A22
+
+**`inspect_artifact` and `compare_versions`, and why "artifact" is a real concept here rather
+than an imported one.** The architecture record's recommended tool list (line 180) names
+`inspect_artifact` and `compare_versions` beside a full Artifact Ledger with `derived_from`/
+`supersedes` relations over a Postgres graph. This branch has no such graph and does not build
+one here — `durable_workflow.py`'s docstring already records why two flat files are the whole
+ledger while the only reader replays a single run. What this codebase *does* have is exactly two
+addressable things: the run's own clip, and each `revisions/<id>.json` record. `artifact_id` is
+therefore either the literal `"original"` or a `revision_id`, and there is deliberately no third
+kind — an `ArtifactInspection` names what actually exists on disk rather than modelling a
+lineage nothing produces yet.
+
+**Resolution mirrors the render functions rather than re-deriving.** For a revision,
+`inspect_artifact` reconstructs the effective span/style the same way `render_boundary_revision`/
+`render_caption_revision` do: the original clip with only the one field that kind of revision
+changes replaced. A boundary revision reports the *original's* caption style; a caption revision
+reports the *original's* span. A second derivation that could disagree with what would actually
+be encoded would be worse than no tool at all — the whole point of asking "what is this
+artifact" is to get the answer the render would give.
+
+**`compare_versions` is built on `inspect_artifact`, not a parallel lookup**, so a comparison
+can never disagree with inspecting either side alone. `both_found` gates `span_changed`/
+`caption_style_changed`: an unfound artifact has `None` in every field, so a naive inequality
+against a real one would report both dimensions as "changed" — a confident, wrong answer where
+"one of these does not exist" is the honest one.
+
+**Two real bugs an adversarial review pass caught here before this landed**, both fixed at the
+source and both now pinned by a regression test that was mutation-audited (revert the fix, watch
+exactly that test fail):
+
+1. **A failed render reported as `"rendered"`.** `status` was
+   `"rendered" if isinstance(report.get("render"), dict)` — but `StageSkipped.to_dict()` is
+   *also* a dict (`{"skipped": true, "stage": "render", ...}`), and `pipeline.py` sets `clip`
+   *before* the render stage, so a run whose encode failed or whose QC gate stopped it has a
+   populated clip, a skipped-shaped `render`, and no file on disk. `agent.py`'s own `inspect_run`
+   already guards the identical trap with `"path" in render`, and `_load_boundary` with
+   `boundary.get("skipped")`. The tests missed it because this file's fixtures used
+   `"render": None` — a shape the real pipeline never writes once a clip exists — while the same
+   fixture helper deliberately used the `StageSkipped` shape for `transcript` two fields away.
+2. **A `KeyError` on an unknown `kind`.** `revision.get("kind") or "boundary"` followed by an
+   `else` branch meant any *future* kind fell through to the caption path and read
+   `proposed_caption_style` off a record with no such key — breaking this module's own "an
+   identifier that resolves to something is never an exception" contract. This is the same
+   defect `replay_decision_deltas` already records having been found once, for `start_pipeline`
+   deltas; recording it twice is the point, since the shared cause is a widening `kind` field
+   with more than one consumer.
+
+## D-A23
+
+**`inspect_project`, the one new tool that fits `agent.py`'s own toolset.** Zero parameters —
+which is not a coincidence but the entire reason it lives there while its four siblings do not
+(D-A24). It answers "what is in this directory as a whole": the run's completion state, whether
+an event ledger exists, how many decisions have been recorded, and every revision with its kind
+and status. `inspect_run` already answers "what did the original run reach"; this is the run
+*plus everything done to it since*, which nothing could see before.
+
+**`decision_count` reuses `learning.read_decision_deltas`** rather than parsing
+`decisions.jsonl` a second time, and inherits its tolerance for a crash-torn last line for free.
+A second parser here could disagree with the ledger's own reader about how many decisions a
+directory holds, which is exactly the drift `test_claims.py` exists to catch elsewhere.
+
+**Not built**: cross-project or cross-run inspection. The architecture record's `inspect_project`
+sits beside a multi-project world model; `Deps.work_dir` is one directory, bound at construction
+and never model-suppliable (D-A5's security boundary), so a tool that could see *other* projects
+would need that boundary redesigned, not extended. `AppManifest.known_limitations` already
+states "Reads one run's own artifacts only; cannot see other runs or projects" — this row keeps
+that true rather than quietly widening it.
+
+## D-A24
+
+**`list_candidates` and `preview_candidate`, and the third agent module the existing tests
+forced.** Both need a caller-supplied parameter — a limit, a path filter, a `candidate_id` — and
+`agent.py`'s toolset is pinned to *zero* parameters by
+`test_injected_paths_cannot_move_the_agent_outside_its_work_dir`, which asserts against the real
+tool schemas that no read-only inspection tool takes an argument an injected instruction could
+try to control. Registering them there would have made that test wrong about what it checks.
+`editor_agent.py`'s weaker guarantee (integer or closed enum, D-A12) does not fit either:
+`candidate_id`/`artifact_id` cannot honestly be closed enums. So `explorer_agent.py` is a fourth
+agent holding a third, explicitly weaker and separately tested guarantee — every parameter is an
+integer, a closed enum, or one of a named, enumerated set of lookup identifiers. **The split was
+forced by tests that already existed, not chosen for tidiness**, and the alternative was
+loosening a stronger guarantee that already shipped.
+
+**`preview_candidate` is the first tool in this codebase to return transcript content to an
+agent, and that is a deliberate scope decision rather than an accident.** Every other read-only
+tool summarizes into narrow typed fields — spans, scores, statuses — and never the underlying
+Kurdish speech. But an editorial agent's whole purpose is proposing revisions to content it
+otherwise cannot read, and the text is already fully persisted in `report.json`'s own
+`transcript` field; this introduces no new disk read, only a new *exposure*. Scoped to one
+candidate's own `[in_ms, out_ms)` — a word counts if its own span overlaps at all, matching how a
+caption cue is timed rather than requiring exact containment, which would silently drop a word
+straddling either edge. Mutation-audited by replacing the span filter with "every word": three
+tests fail, including the one asserting a word outside the span never appears.
+
+**`list_candidates` refuses to rank across discovery paths, one level removed from where
+`discovery.py` refuses it.** That module's own words: "There is no defensible arithmetic between
+[`verbal_score` and `visual_score`]... A fused ranking is a §8.2 tuning question against the
+labelled set, not something to guess here." So: a single-path filter (`"verbal"`/`"visual"`)
+orders by *that path's own* 1-based rank, which is a comparison within one scale and defensible;
+`"both"` and the unfiltered case keep the run's recorded order. Mutation-audited by adding a
+`verbal_score + visual_score` sort — exactly the fusion `discovery.py` refuses — which fails the
+dedicated test by name.
+
+**Two ordering bugs the review pass caught**, both mutation-audited after fixing: `"both"` was
+documented as rank-sorted but silently was not (now documented and tested as recorded-order,
+because a `DiscoveryPath.BOTH` candidate carries *both* ranks and choosing between them is the
+same refused arithmetic); and a missing rank sorted via `or 0` landed *ahead* of the real rank 1,
+which combined with `limit` would evict the top candidate from a truncated list — `math.inf`
+instead, since `discovery.py`'s ranks are 1-based.
+
+**A contract all of these had to learn, and did not have at first.** None may raise for a
+caller-supplied identifier that resolves to nothing. `TestModel` probes every registered tool
+with the placeholder string `"a"`, and the first version's `ValueError`/`FileNotFoundError`
+failed five existing prompt-injection tests immediately. `found=False` throughout instead —
+including for a run that has no clip at all, an ordinary state `run_quality_checks` (D-A18)
+already treats as a reportable value rather than an error. `limit` is clamped rather than
+refused for the same reason; `discovery_path` still raises, because the tool schema closes it to
+a real enum before a model could supply a bad one, so reaching the function with one is a
+genuine direct-caller error.
+
+## D-A25
+
+**`request_render`, built as `propose_render`/`commit_render` — the one new tool that touches
+the invariant this branch has held since D-A6.** The architecture record lists `request_render`
+as an agent tool. Rendering writes a real MP4, so it gets the same split every mutating
+capability here has: `propose_render` validates and never touches `ffmpeg` or disk;
+`commit_render` is the only write, requires a named approver, a reason code, and an explicit
+confirmation, and is registered as a tool on no agent. `mutating_tool_names()` stays `()` after
+this row — the strongest statement this branch makes, unweakened for a capability that only
+re-encodes an already-approved revision.
+
+**A fifth agent (`render_agent.py`) rather than a tool on `editor_agent.py`**, for the same
+reason D-A24 needed a fourth: `revision_id` cannot be a closed enum, and
+`test_the_editor_agents_parameters_are_integers_or_closed_enums` pins that module's whole
+parameter surface. Confirmed by actually adding it there first and watching the test fail, not
+by reading the test and predicting it. The AST no-commit scan on this module checks
+`commit_render`, `render_boundary_revision` *and* `render_caption_revision` — the agent that is
+*about* rendering is precisely the one whose inability to render needs a structural proof rather
+than a promise in its prompt.
+
+**`propose_render` mirrors the render functions' own preconditions rather than inventing a
+weaker set**: the exact `approved_pending_render` status string, a clip, persisted
+`selected_sentences` (D-A7), an output block for a caption revision, and a re-check of the real
+`assert_boundary_invariant` for a boundary revision so a hand-edited record cannot be called
+renderable. Plus one neither render function can check for free: whether `ffmpeg` is findable at
+all. It can be wrong only in the direction of "looked renderable, then genuinely failed to
+render" — a source probe error, an ffmpeg crash — never in calling something renderable that the
+render gate would refuse.
+
+**A third bug the review pass caught, in exactly that claim.** `revision.get("kind") or
+"boundary"` treated a *present but falsy* kind (`""`, `null`) as a boundary revision, while
+`render_boundary_revision` refuses anything whose kind is not literally `None` or `"boundary"`.
+`commit_render` records its APPROVED delta *before* dispatching, so the ledger would have held an
+approved render that then raised a bare `ValueError` — and the caller would get `ValueError`
+rather than `RevisionRejected`. Only an *absent* kind now defaults (a genuine pre-D-A12 record);
+a present one must be real. Pinned in both directions: the falsy case is refused, and the
+pre-D-A12 no-`kind` case still resolves to `boundary`, so the fix could not have silently broken
+every record written before that field existed.
+
+**`commit_render` records its `DecisionDelta` under the *revision's* id, not the run's
+`media_id`** (`kind="render"`, `DecisionDelta.kind` widened again). A render decision is about
+one specific revision; recording it under the run's media would make two renders of two
+different revisions indistinguishable in the ledger. It dispatches to the two existing render
+functions by kind rather than reimplementing either.
+
+**`hawedit-revise --render-only`** closes a gap the module docstring already promised:
+`--no-render` leaves a revision at `approved_pending_render` "for a later render call", and
+until now there was no such call from the CLI. Also the retry path after a `render_failed`.
+
+VERIFY OK — hawedit gate green: 1973 collected, 1973 passed, 0 skipped (floor ratcheted
+1924 -> 1973).

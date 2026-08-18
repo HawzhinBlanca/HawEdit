@@ -785,6 +785,8 @@ _NUMBER_WORDS = {
     "eight": 8,
     "nine": 9,
     "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
 }
 
 
@@ -1136,7 +1138,10 @@ def test_the_lock_can_be_regenerated_by_a_committed_script() -> None:
         assert flag in body, f"the lock script does not pin {flag}"
     assert '"--format",\n        "pylock.toml"' in body
     assert "--hash=sha256:" in body
-    assert '("gate", ("dev", "media"))' in body
+    # The gate scope's extras, pinned here so a silent change to what CI installs is a failing
+    # test. `agentic` joined at the merge that brought the agent surface in: the gate floors on
+    # tests that *passed*, and without dbos + pydantic-ai ~150 of them skip. D-A26.
+    assert '("gate", ("dev", "media", "agentic"))' in body
 
 
 def test_the_lock_does_not_pin_the_project_itself() -> None:
@@ -1219,6 +1224,9 @@ def test_the_audit_report_states_how_many_console_scripts_there_are() -> None:
         7: "seven",
         8: "eight",
         9: "nine",
+        10: "ten",
+        11: "eleven",
+        12: "twelve",
     }
     stated = words[len(declared)]
     assert f"**all {stated}** declared console scripts" in section, (

@@ -13,7 +13,31 @@ import errno
 import os
 from pathlib import Path
 
-__all__ = ["rename_directory_noreplace"]
+__all__ = ["rename_directory_noreplace", "write_text_atomic"]
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Write one file through a staging file and a single rename, so a kill cannot half-write it.
+
+    `Path.write_text` truncates first: a process that dies mid-write leaves a file that exists,
+    is readable and is wrong — and every reader of these artifacts checks existence, not
+    completeness. The rename is the same shape `transcripts.py` and `visual_pipeline.py` already
+    use for their own artifacts. D-146.
+
+    Lives here rather than in `pipeline.py` (where it was `_write_atomic` until the merge that
+    brought `artifact_bundle.py` in): that module's own atomic publication is now directory-
+    shaped, while `proposals.py`'s revision records and `durable_workflow.py`'s `report.json`
+    are single files. Two different primitives, and this module already owns the other. D-A26.
+    """
+    staging = path.with_name(f".{path.name}.tmp")
+    try:
+        staging.write_text(text, encoding="utf-8")
+        staging.replace(path)
+    except OSError:
+        # Otherwise a failed write leaves a dotfile that looks exactly like the partial state
+        # this function exists to prevent.
+        staging.unlink(missing_ok=True)
+        raise
 
 
 def rename_directory_noreplace(source: Path, destination: Path) -> None:

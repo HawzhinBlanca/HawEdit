@@ -33,7 +33,13 @@ def _packages(path: Path) -> dict[str, tuple[str, str]]:
 
 def test_all_supported_host_targets_have_valid_semantically_bound_locks() -> None:
     found: set[Path] = set()
-    cpu_profiles = (("base", ()), ("gate", ("dev", "media")), ("models", ("models",)))
+    # `gate` carries `agentic` from the agent-surface merge on: the gate floors on tests
+    # that passed, and dbos + pydantic-ai must be installed or ~150 of them skip. D-A26.
+    cpu_profiles = (
+        ("base", ()),
+        ("gate", ("dev", "media", "agentic")),
+        ("models", ("models",)),
+    )
     for scope, extras in cpu_profiles:
         for platform in ("linux", "windows"):
             for python in ("3.11", "3.12"):
@@ -147,7 +153,7 @@ def test_installer_and_gate_fail_closed_around_the_selected_lock() -> None:
     assert "pip install --upgrade" not in setup
     gate = (ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8")
     assert "host-gate-${_lock_identity}.txt" in gate
-    assert '--extra media --lock "$HOST_LOCK"' in gate
+    assert '--extra media --extra agentic --lock "$HOST_LOCK"' in gate
 
 
 def test_source_lock_preflight_bootstraps_before_hawedit_is_importable() -> None:
@@ -200,7 +206,9 @@ def test_ci_and_release_smoke_consume_locks_without_dependency_resolution() -> N
 def test_generator_pins_the_resolver_cutoff_and_rejects_non_wheels() -> None:
     generator = (ROOT / "scripts" / "lock_host_dependencies.py").read_text(encoding="utf-8")
     assert 'UV_VERSION: Final = "0.11.26"' in generator
-    assert 'EXCLUDE_NEWER: Final = "2026-08-09T00:00:00Z"' in generator
+    # Moved to the minimum date that admits `pydantic-ai-slim==2.28.0` and its graph;
+    # 2026-08-12 still fails to resolve, 2026-08-13 succeeds. D-A26.
+    assert 'EXCLUDE_NEWER: Final = "2026-08-13T00:00:00Z"' in generator
     assert '"--only-binary=:all:"' in generator
     assert '"cu130"' in generator
     assert "_download_wheel_sha256" in generator
