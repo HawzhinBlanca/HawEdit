@@ -28,7 +28,8 @@ from typing import Any
 import pytest
 
 from hawedit.agent import inspect_project, list_candidates, preview_candidate
-from hawedit.boundary import Boundary
+from hawedit.boundary import Boundary, BoundaryInvariantViolated
+from hawedit.captions import CaptionsOutsideClip
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Output
 from hawedit.learning import DecisionOutcome, ReasonCode, read_decision_deltas
 from hawedit.proposals import (
@@ -39,6 +40,7 @@ from hawedit.proposals import (
     inspect_artifact,
     propose_boundary_revision,
     propose_render,
+    render_boundary_revision,
 )
 from hawedit.sentences import Sentence
 from hawedit.transcripts import AsrProvenance, Word
@@ -595,6 +597,80 @@ def test_propose_render_still_accepts_a_pre_d_a12_record_with_no_kind(tmp_path: 
     del record["kind"]
     record_path.write_text(json.dumps(record), encoding="utf-8")
     assert propose_render(tmp_path, "old-style").kind == "boundary"
+
+
+def test_propose_render_agrees_with_what_the_render_functions_actually_refuse(
+    tmp_path: Path,
+) -> None:
+    """The property `propose_render`'s docstring claims and nothing enforced until now.
+
+    That docstring says "every check here mirrors a real precondition
+    `render_boundary_revision`/`render_caption_revision` themselves enforce". A mirror with no
+    equivalence test is exactly how `run_quality_checks` drifted from `Clip.assert_renderable()`
+    — it accepted `auto_pass` alone after the render gate had been tightened to require
+    `human_reviewed`, and only that pair's own equivalence test caught it (D-A26). This is the
+    same guard for this pair.
+
+    The dangerous direction is **propose says valid, render refuses**: an agent told a revision
+    is ready to render, for something the gate throws out. Every variant below therefore checks
+    both sides against each other rather than against a hand-written expectation.
+
+    Needs no ffmpeg: every precondition these functions enforce raises before any encode starts,
+    which is itself part of what the equivalence asserts.
+    """
+    checked = 0
+    for label, mutate in (
+        ("no revision record at all", lambda w: (w / "revisions" / "r.json").unlink()),
+        ("status is not approved_pending_render", lambda w: _set_status(w, "rendered")),
+        ("the run has no clip", lambda w: _write_report(w, clip=None)),
+        (
+            "the run predates persisted selected_sentences",
+            lambda w: _write_report(w, selected_sentences=[]),
+        ),
+        (
+            "the recorded boundary was tampered into an illegal span",
+            lambda w: _set_field(w, "proposed_final_out_ms", 2_000),
+        ),
+    ):
+        work = tmp_path / label.replace(" ", "-")[:40]
+        _write_report(work)
+        _approve_boundary(work, "r", 50, 4_200)
+        mutate(work)
+
+        proposal = propose_render(work, "r")
+        raised: Exception | None = None
+        try:
+            render_boundary_revision(work, "r")
+        except (
+            FileNotFoundError,
+            ValueError,
+            BoundaryInvariantViolated,
+            CaptionsOutsideClip,
+        ) as exc:
+            raised = exc
+
+        verdict = f"raised {type(raised).__name__}" if raised else "accepted it"
+        assert proposal.valid is (raised is None), (
+            f"{label}: propose_render said valid={proposal.valid} while "
+            f"render_boundary_revision {verdict} — the two disagree about the "
+            f"same precondition."
+        )
+        checked += 1
+    assert checked == 5, f"only {checked} variants compared; the equivalence went vacuous"
+
+
+def _set_status(work_dir: Path, status: str) -> None:
+    path = work_dir / "revisions" / "r.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["status"] = status
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def _set_field(work_dir: Path, key: str, value: object) -> None:
+    path = work_dir / "revisions" / "r.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record[key] = value
+    path.write_text(json.dumps(record), encoding="utf-8")
 
 
 def test_propose_render_writes_nothing(tmp_path: Path) -> None:
