@@ -394,7 +394,16 @@ _DECLARED_OPEN_STRING_PARAMETERS: dict[str, str] = {
     "expected_behavior": "sanitised against Kurdish glyphs",
     "actual_behavior": "sanitised against Kurdish glyphs",
     "suspected_component": "sanitised against Kurdish glyphs",
-    "workflow_id": "sanitised against Kurdish glyphs",
+    # NOT glyph-sanitised, unlike the four prose fields above — measured, not assumed
+    # (D-A29). It is an identifier echoed into a report, and the identifier this codebase
+    # actually produces is `hawedit-run:<resolved work_dir>`, so refusing Kurdish script here
+    # would refuse a legitimate run whose directory is named in Kurdish. That leaves a real,
+    # narrow gap: a model could smuggle transcript text into a written report through this one
+    # field. Recorded rather than closed, because the fix has a tradeoff someone should choose
+    # deliberately — glyph-sanitise it and break Kurdish paths, or constrain it to the shape a
+    # DBOS workflow id actually has. See `test_workflow_id_is_the_one_report_field_not_glyph_
+    # sanitised` for the behaviour this pins today.
+    "workflow_id": "identifier echoed into a report; NOT glyph-sanitised — see D-A29",
 }
 
 

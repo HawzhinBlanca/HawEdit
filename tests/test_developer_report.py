@@ -165,3 +165,47 @@ def test_write_is_the_only_thing_that_creates_the_ledger_file(tmp_path: Path) ->
     assert not (tmp_path / "developer_reports.jsonl").exists()
     write_developer_report(tmp_path, a_report())
     assert (tmp_path / "developer_reports.jsonl").is_file()
+
+
+def test_workflow_id_is_the_one_report_field_not_glyph_sanitised() -> None:
+    """Pins a real, narrow gap rather than implying it is closed.
+
+    D-A17 says "every free-text field is refused if it contains a character from
+    `KURDISH_REQUIRED_GLYPHS`". Measured across all six fields, five hold and `workflow_id`
+    does not — found by testing the claim `tests/test_prompt_injection.py`'s declaration table
+    made about it, rather than trusting the table (D-A29).
+
+    Not silently fixed: `workflow_id` carries `hawedit-run:<resolved work_dir>`, so refusing
+    Kurdish script would refuse a legitimate run whose directory is named in Kurdish. Closing it
+    means choosing between that and constraining the field to a DBOS workflow id's real shape —
+    a decision worth making deliberately. This test fails if either the gap closes or the other
+    five stop holding, so neither can change unnoticed.
+    """
+    k = "ک"
+    ok = dict(
+        summary="s",
+        expected_behavior="e",
+        actual_behavior="a",
+        suspected_component="c",
+        workflow_id="w",
+    )
+    steps = ["a"]
+
+    with pytest.raises(SanitizationError):
+        build_developer_report(reproduction_steps=steps, **{**ok, "summary": f"x{k}y"})
+    with pytest.raises(SanitizationError):
+        build_developer_report(reproduction_steps=steps, **{**ok, "expected_behavior": f"x{k}y"})
+    with pytest.raises(SanitizationError):
+        build_developer_report(reproduction_steps=steps, **{**ok, "actual_behavior": f"x{k}y"})
+    with pytest.raises(SanitizationError):
+        build_developer_report(reproduction_steps=steps, **{**ok, "suspected_component": f"x{k}y"})
+    with pytest.raises(SanitizationError):
+        build_developer_report(reproduction_steps=[f"x{k}y"], **ok)
+
+    # The gap, stated: this does not raise today.
+    report = build_developer_report(reproduction_steps=steps, **{**ok, "workflow_id": f"x{k}y"})
+    assert report.workflow_id == f"x{k}y", (
+        "workflow_id started refusing Kurdish script. If that was deliberate, this test and "
+        "the declaration table in tests/test_prompt_injection.py both need updating — and a "
+        "run whose work_dir is named in Kurdish now needs checking."
+    )
