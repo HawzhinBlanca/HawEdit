@@ -47,8 +47,13 @@ from hawedit.transcripts import AsrProvenance, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# The first word starts at `_BOUNDARY["anchor_in_ms"]`, not at 0. An anchor is where forced
+# alignment says the selected sentences actually begin, so a fixture whose words start
+# before its own anchor is a run that cannot happen — and it made a legal narrowing put
+# captions before the clip, which is why the valid-direction equivalence could not be
+# written against it. `anchor_out_ms` (4100) already matched the last word's end. D-A26.
 _WORDS = (
-    Word(w="ڕۆژنامەوانی", start_ms=0, end_ms=800, conf=0.95),
+    Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=800, conf=0.95),
     Word(w="کوردی.", start_ms=800, end_ms=1_700, conf=0.94),
     Word(w="لە", start_ms=2_000, end_ms=2_400, conf=0.93),
     Word(w="هەولێر.", start_ms=2_400, end_ms=4_100, conf=0.92),
