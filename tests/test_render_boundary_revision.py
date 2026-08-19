@@ -25,6 +25,7 @@ from hawedit.pipeline import PipelineRun, run_pipeline
 from hawedit.proposals import (
     RevisionRejected,
     commit_boundary_revision,
+    inspect_artifact,
     propose_boundary_revision,
     propose_render,
     render_boundary_revision,
@@ -189,6 +190,49 @@ def test_a_valid_render_proposal_is_one_the_render_actually_accepts(
     record = render_boundary_revision(work, "propose-agrees")
     assert record["status"] in ("rendered", "rendered_without_delivery_sidecars"), (
         f"propose_render called this ready, but the render finished as {record['status']!r}."
+    )
+
+
+@needs_ffmpeg
+def test_inspect_artifact_reports_the_span_the_render_actually_produced(
+    real_run: tuple[Path, PipelineRun],
+) -> None:
+    """`inspect_artifact` claims to be "the same read every render function already trusts, not
+    a second derivation that could disagree with what would actually be rendered". Until now
+    that claim was checked only against hand-built revision records — ten tests, none of which
+    had ever seen a real encode.
+
+    This binds it to the bytes: the span it reports, against the measured duration of the MP4
+    the render actually wrote. A tool that tells an agent "this artifact is 50..4140 ms" while
+    the file on disk is some other length is the failure the claim exists to rule out.
+    """
+    from hawedit.ingest import probe_stream
+
+    work, _run = real_run
+    _approve(work, "inspected", final_in_ms=50, final_out_ms=4_140)
+    record = render_boundary_revision(work, "inspected")
+    assert record["status"] == "rendered"
+
+    artifact = inspect_artifact(work, "inspected")
+    assert artifact.found is True
+    # `found` is the contract that the rest is populated - asserted rather than assumed, which
+    # also narrows the Optionals the not-found case makes necessary.
+    assert artifact.in_ms is not None and artifact.out_ms is not None
+    assert (artifact.in_ms, artifact.out_ms) == (50, 4_140), (
+        f"inspect_artifact resolved the revision to {artifact.in_ms}..{artifact.out_ms} ms, "
+        f"but it was approved and rendered as 50..4140 ms."
+    )
+    # The render updates the record's status in place; the tool must report the new one, not
+    # the `approved_pending_render` it was inspected as before.
+    assert artifact.status == "rendered"
+
+    measured_s = float(
+        probe_stream(Path(record["render_path"]), "format=duration", None, video_only=False)
+    )
+    claimed_s = (artifact.out_ms - artifact.in_ms) / 1000
+    assert abs(measured_s - claimed_s) < 0.25, (
+        f"inspect_artifact claims a {claimed_s:.3f}s span; the encoded file measures "
+        f"{measured_s:.3f}s. The tool and the artifact it describes disagree."
     )
 
 
