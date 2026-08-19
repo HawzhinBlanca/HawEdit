@@ -501,26 +501,66 @@ def _model_reads(count: int, fps: float, declared: float = 2.0, minimum: int = 4
     return taken + (taken % TEMPORAL_PATCH_FRAMES)
 
 
+def _sweep_cut_sets(duration_ms: int) -> tuple[tuple[int, ...], ...]:
+    """`()` plus the cut patterns that leave the short trailing scenes real media produces.
+
+    Without shot cuts `plan_scene_windows` only ever tiles uniformly, so no window it emits
+    falls under the reader's floor — measured: zero of the 52 windows the rate/duration grid
+    produced with `shot_cuts_ms=()`. The `emitted < 2` carve-out below was therefore dead code
+    against these inputs, and the sweep's name was a stronger claim than its input space.
+    """
+    sets: list[tuple[int, ...]] = [()]
+    if duration_ms > 1_200:
+        sets.append((duration_ms - 1_000,))  # a 1 s tail
+    if duration_ms > 2_400:
+        sets.append((duration_ms - 2_000, duration_ms - 200))  # a 200 ms tail
+    return tuple(sets)
+
+
 def test_every_plannable_window_is_delivered_to_the_model_whole() -> None:
-    """The sweep. Every legal rate, a spread of durations, real `plan_scene_windows` output."""
+    """The sweep. Every legal rate, a spread of durations, real `plan_scene_windows` output —
+    now including shot cuts, so short scenes enter the input space instead of being unreachable.
+
+    **What this does not cover, stated rather than skipped.** Windows whose *emitted* frame count
+    is under 2 are counted and left unasserted: how a sub-floor window should be handled is
+    `BLOCKED.md` #22's open decision (pad the last frame, merge into the neighbouring scene, or
+    extend past it — three options with opposite failure modes). This test does not pre-empt it.
+    It does refuse to hide it: `below_floor` is pinned, so a change that pushes *more* windows
+    under the floor fails here instead of passing quietly.
+
+    The count is not incidental. 21 of those 46 emit **zero** frames — the planner's
+    `frame_count` is `ceil`, while ffmpeg writes interval centres (`floor`), so a 200 ms scene
+    at 2.0 fps is planned as 1 frame and extracts none. `video_input.py` refuses that by name
+    rather than crashing, and 7 of the 46 occur at §3's *declared* 2.0 fps — not only at the
+    1.0 fps #22 was opened about.
+    """
     checked = 0
+    below_floor = 0
     for fps in (REFERENCE_FPS, 1.5, DECLARED_SAMPLING_FPS):
         for duration_ms in (2_000, 4_162, 7_001, 15_500, 31_000, 64_000, 121_000, 300_000):
-            for window in plan_scene_windows(
-                "m", duration_ms=duration_ms, shot_cuts_ms=(), fps=fps
-            ):
-                # What ffmpeg really emits: interval centres, so one short of the plan whenever
-                # the duration is not a whole number of frames — then trimmed to even.
-                emitted = math.floor(window.duration_ms * window.fps / 1000)
-                if emitted < 2:
-                    continue
-                emitted -= emitted % TEMPORAL_PATCH_FRAMES
-                assert _model_reads(emitted, window.fps) == emitted, (
-                    f"{window.window_id} {window.duration_ms} ms @ {window.fps} fps: "
-                    f"{emitted} frames extracted, {_model_reads(emitted, window.fps)} read"
-                )
-                checked += 1
+            for cuts in _sweep_cut_sets(duration_ms):
+                for window in plan_scene_windows(
+                    "m", duration_ms=duration_ms, shot_cuts_ms=cuts, fps=fps
+                ):
+                    # What ffmpeg really emits: interval centres, so one short of the plan
+                    # whenever the duration is not a whole number of frames — then trimmed
+                    # to even.
+                    emitted = math.floor(window.duration_ms * window.fps / 1000)
+                    if emitted < 2:
+                        below_floor += 1
+                        continue
+                    emitted -= emitted % TEMPORAL_PATCH_FRAMES
+                    assert _model_reads(emitted, window.fps) == emitted, (
+                        f"{window.window_id} {window.duration_ms} ms @ {window.fps} fps: "
+                        f"{emitted} frames extracted, {_model_reads(emitted, window.fps)} read"
+                    )
+                    checked += 1
     assert checked > 40, f"the sweep only covered {checked} windows"
+    assert below_floor == 46, (
+        f"{below_floor} planned windows emit fewer than 2 frames, not the 46 measured when this "
+        f"was pinned. If the planner changed, say so deliberately — this number is the size of "
+        f"BLOCKED.md #22's undecided surface, and it moving silently is what this pin prevents."
+    )
 
 
 def test_the_rate_the_cli_used_to_force_is_refused_at_planning_time() -> None:

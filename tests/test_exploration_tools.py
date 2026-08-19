@@ -28,7 +28,8 @@ from typing import Any
 import pytest
 
 from hawedit.agent import inspect_project, list_candidates, preview_candidate
-from hawedit.boundary import Boundary
+from hawedit.boundary import Boundary, BoundaryInvariantViolated
+from hawedit.captions import CaptionsOutsideClip
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Output
 from hawedit.learning import DecisionOutcome, ReasonCode, read_decision_deltas
 from hawedit.proposals import (
@@ -39,14 +40,20 @@ from hawedit.proposals import (
     inspect_artifact,
     propose_boundary_revision,
     propose_render,
+    render_boundary_revision,
 )
 from hawedit.sentences import Sentence
 from hawedit.transcripts import AsrProvenance, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# The first word starts at `_BOUNDARY["anchor_in_ms"]`, not at 0. An anchor is where forced
+# alignment says the selected sentences actually begin, so a fixture whose words start
+# before its own anchor is a run that cannot happen — and it made a legal narrowing put
+# captions before the clip, which is why the valid-direction equivalence could not be
+# written against it. `anchor_out_ms` (4100) already matched the last word's end. D-A26.
 _WORDS = (
-    Word(w="ڕۆژنامەوانی", start_ms=0, end_ms=800, conf=0.95),
+    Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=800, conf=0.95),
     Word(w="کوردی.", start_ms=800, end_ms=1_700, conf=0.94),
     Word(w="لە", start_ms=2_000, end_ms=2_400, conf=0.93),
     Word(w="هەولێر.", start_ms=2_400, end_ms=4_100, conf=0.92),
@@ -463,6 +470,75 @@ def test_inspect_artifact_reports_an_unknown_kind_as_not_found_rather_than_raisi
     assert compare_versions(tmp_path, "original", "future").both_found is False
 
 
+@pytest.mark.parametrize(
+    "probe",
+    ["../../outside", "..\\..\\outside", "../secret", "a/b", "a\b", "..", "."],
+)
+def test_a_traversing_artifact_id_cannot_read_outside_the_work_dir(
+    tmp_path: Path, probe: str
+) -> None:
+    """The property `agent.py`'s docstring claims for the whole agent surface: "there is no
+    flag, config, or prompt phrasing that changes what directory a given agent instance can
+    read".
+
+    It was false here. `artifact_id` is interpolated into `work_dir/revisions/<id>.json`, and
+    `inspect_artifact` is reachable from `explorer_agent`'s tool with a model-supplied string —
+    so a prompt-injected transcript could ask a read-only agent to probe the host. Measured
+    before the fix: `"../../outside"` returned `found=True` carrying the `status` and
+    `approved_by` of a file outside the run. D-A27.
+
+    The file below really exists and really is outside `work_dir`; a probe that resolves is a
+    regression, not a hypothetical.
+    """
+    outside = tmp_path.parent / "outside.json"
+    outside.write_text(
+        json.dumps({"kind": "boundary", "status": "LEAKED", "approved_by": "someone-else"}),
+        encoding="utf-8",
+    )
+    secret = tmp_path.parent / "secret.json"
+    secret.write_text(
+        json.dumps(
+            {
+                "kind": "boundary",
+                "status": "LEAKED",
+                "proposed_final_in_ms": 1,
+                "proposed_final_out_ms": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_report(tmp_path)
+
+    artifact = inspect_artifact(tmp_path, probe)
+    assert artifact.found is False, (
+        f"artifact_id {probe!r} resolved to something — status={artifact.status!r}. An "
+        f"identifier carrying a separator or a parent reference must never be looked up."
+    )
+    assert artifact.status is None
+
+
+@pytest.mark.parametrize("probe", ["../../outside", "..\\..\\outside", "a/b"])
+def test_a_traversing_revision_id_is_not_a_renderable_proposal(tmp_path: Path, probe: str) -> None:
+    """The same guard on the other agent-facing entry point. `propose_render` reports it as an
+    invalid proposal rather than raising, matching its own contract for every other
+    unresolvable revision_id."""
+    _write_report(tmp_path)
+    proposal = propose_render(tmp_path, probe)
+    assert proposal.valid is False
+    assert "safe filename component" in (proposal.violation or "")
+
+
+def test_a_traversing_revision_id_is_refused_outright_on_the_write_paths(
+    tmp_path: Path,
+) -> None:
+    """Reads report; writes refuse. `commit_*`/`render_*` interpolate the id into six output
+    paths (.json/.ass/.mp4/.srt/.edl), so "not found" would be the wrong answer — nothing was
+    looked up, the name itself was rejected."""
+    _write_report(tmp_path)
+    with pytest.raises(ValueError, match="safe filename component"):
+        render_boundary_revision(tmp_path, "../../escape")
+
+
 def test_inspect_artifact_reports_an_unknown_id_as_not_found(tmp_path: Path) -> None:
     _write_report(tmp_path)
     artifact = inspect_artifact(tmp_path, "no-such-revision")
@@ -595,6 +671,80 @@ def test_propose_render_still_accepts_a_pre_d_a12_record_with_no_kind(tmp_path: 
     del record["kind"]
     record_path.write_text(json.dumps(record), encoding="utf-8")
     assert propose_render(tmp_path, "old-style").kind == "boundary"
+
+
+def test_propose_render_agrees_with_what_the_render_functions_actually_refuse(
+    tmp_path: Path,
+) -> None:
+    """The property `propose_render`'s docstring claims and nothing enforced until now.
+
+    That docstring says "every check here mirrors a real precondition
+    `render_boundary_revision`/`render_caption_revision` themselves enforce". A mirror with no
+    equivalence test is exactly how `run_quality_checks` drifted from `Clip.assert_renderable()`
+    — it accepted `auto_pass` alone after the render gate had been tightened to require
+    `human_reviewed`, and only that pair's own equivalence test caught it (D-A26). This is the
+    same guard for this pair.
+
+    The dangerous direction is **propose says valid, render refuses**: an agent told a revision
+    is ready to render, for something the gate throws out. Every variant below therefore checks
+    both sides against each other rather than against a hand-written expectation.
+
+    Needs no ffmpeg: every precondition these functions enforce raises before any encode starts,
+    which is itself part of what the equivalence asserts.
+    """
+    checked = 0
+    for label, mutate in (
+        ("no revision record at all", lambda w: (w / "revisions" / "r.json").unlink()),
+        ("status is not approved_pending_render", lambda w: _set_status(w, "rendered")),
+        ("the run has no clip", lambda w: _write_report(w, clip=None)),
+        (
+            "the run predates persisted selected_sentences",
+            lambda w: _write_report(w, selected_sentences=[]),
+        ),
+        (
+            "the recorded boundary was tampered into an illegal span",
+            lambda w: _set_field(w, "proposed_final_out_ms", 2_000),
+        ),
+    ):
+        work = tmp_path / label.replace(" ", "-")[:40]
+        _write_report(work)
+        _approve_boundary(work, "r", 50, 4_200)
+        mutate(work)
+
+        proposal = propose_render(work, "r")
+        raised: Exception | None = None
+        try:
+            render_boundary_revision(work, "r")
+        except (
+            FileNotFoundError,
+            ValueError,
+            BoundaryInvariantViolated,
+            CaptionsOutsideClip,
+        ) as exc:
+            raised = exc
+
+        verdict = f"raised {type(raised).__name__}" if raised else "accepted it"
+        assert proposal.valid is (raised is None), (
+            f"{label}: propose_render said valid={proposal.valid} while "
+            f"render_boundary_revision {verdict} — the two disagree about the "
+            f"same precondition."
+        )
+        checked += 1
+    assert checked == 5, f"only {checked} variants compared; the equivalence went vacuous"
+
+
+def _set_status(work_dir: Path, status: str) -> None:
+    path = work_dir / "revisions" / "r.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["status"] = status
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def _set_field(work_dir: Path, key: str, value: object) -> None:
+    path = work_dir / "revisions" / "r.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record[key] = value
+    path.write_text(json.dumps(record), encoding="utf-8")
 
 
 def test_propose_render_writes_nothing(tmp_path: Path) -> None:

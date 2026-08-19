@@ -134,7 +134,7 @@ from hawedit.learning import (
 from hawedit.pipeline import FONTS_DIR, _proxy_dimensions
 from hawedit.render import RenderError, frame_rate, render_clip
 from hawedit.sentences import Sentence, UndeliverableOrder
-from hawedit.transcripts import Word
+from hawedit.transcripts import Word, validate_media_id
 
 __all__ = [
     "ArtifactInspection",
@@ -191,6 +191,40 @@ class BoundaryRevisionProposal:
             "valid": self.valid,
             "violation": self.violation,
         }
+
+
+def _is_safe_identifier(value: str) -> bool:
+    """Whether `value` can be interpolated into a filename without escaping the run directory.
+
+    Reuses `validate_media_id` — the sanitiser audit finding #9 added for exactly this shape —
+    rather than a second implementation that could drift from it. `revision_id` and
+    `artifact_id` are interpolated into `work_dir/revisions/<id>.{json,ass,mp4,srt,edl}` at
+    fourteen sites, six of them writes; a parent reference or path separator there reads or
+    writes outside the run entirely.
+
+    Measured before this existed: `inspect_artifact(work_dir, "../../outside")` returned
+    `found=True` with the `status` and `approved_by` of a JSON file outside the work directory,
+    and that function is reachable from `explorer_agent`'s tool with a model-supplied string —
+    so a prompt-injected transcript could ask a "read-only" agent to probe the host. That
+    falsified `agent.py`'s own claim that "there is no flag, config, or prompt phrasing that
+    changes what directory a given agent instance can read". D-A27.
+    """
+    try:
+        validate_media_id(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _assert_safe_identifier(value: str, label: str) -> None:
+    """Refuse an identifier that would escape `work_dir/revisions/`. For the write paths, where
+    reporting "not found" would be wrong: nothing was looked up, the name was rejected."""
+    if not _is_safe_identifier(value):
+        raise ValueError(
+            f"{label} {value!r} is not a safe filename component. It is interpolated into "
+            f"work_dir/revisions/, so a path separator or parent reference there would read or "
+            f"write outside the run entirely (audit finding #9's shape, D-A27)."
+        )
 
 
 def _load_report(work_dir: Path) -> dict[str, Any]:
@@ -322,6 +356,7 @@ def commit_boundary_revision(
         ValueError: `reason_code` is present/absent the wrong way round for this outcome —
             raised by `DecisionDelta.__post_init__` inside `record_decision_delta`.
     """
+    _assert_safe_identifier(revision_id, "revision_id")
     if not proposal.valid:
         record_decision_delta(
             work_dir,
@@ -420,6 +455,7 @@ def render_boundary_revision(
             failed. The revision record is updated to `"render_failed"` before this propagates.
         IngestError: the source could not be probed for its frame dimensions.
     """
+    _assert_safe_identifier(revision_id, "revision_id")
     revision_path = work_dir / "revisions" / f"{revision_id}.json"
     if not revision_path.is_file():
         raise FileNotFoundError(f"no revision record at {revision_path}")
@@ -682,6 +718,7 @@ def commit_caption_revision(
         ValueError: `reason_code` is present/absent the wrong way round for this outcome —
             raised by `DecisionDelta.__post_init__` inside `record_decision_delta`.
     """
+    _assert_safe_identifier(revision_id, "revision_id")
     if not proposal.valid:
         record_decision_delta(
             work_dir,
@@ -765,6 +802,7 @@ def render_caption_revision(
             before this propagates.
         IngestError: the source could not be probed for its frame dimensions.
     """
+    _assert_safe_identifier(revision_id, "revision_id")
     revision_path = work_dir / "revisions" / f"{revision_id}.json"
     if not revision_path.is_file():
         raise FileNotFoundError(f"no revision record at {revision_path}")
@@ -983,6 +1021,12 @@ def inspect_artifact(work_dir: Path, artifact_id: str) -> ArtifactInspection:
             approved_by=None,
         )
 
+    # Refused before the path is built, not after: an identifier carrying a separator or a
+    # parent reference is not "an artifact that does not exist", it is one that must never be
+    # looked up. Reported as not-found rather than raised, so the contract this function holds
+    # for every other unresolvable id is unchanged - and so a probe learns nothing either way.
+    if not _is_safe_identifier(artifact_id):
+        return _not_found_artifact(artifact_id)
     path = work_dir / "revisions" / f"{artifact_id}.json"
     if not path.is_file():
         return _not_found_artifact(artifact_id)
@@ -1104,6 +1148,15 @@ def propose_render(work_dir: Path, revision_id: str) -> RenderProposal:
     """Check whether `revision_id` is ready to render. Never touches `ffmpeg` or writes
     anything — the same "propose never mutates" guarantee every other proposal in this codebase
     holds."""
+    if not _is_safe_identifier(revision_id):
+        return RenderProposal(
+            str(work_dir),
+            revision_id,
+            None,
+            False,
+            "revision_id is not a safe filename component — it would be interpolated into "
+            "work_dir/revisions/ (D-A27).",
+        )
     revision_path = work_dir / "revisions" / f"{revision_id}.json"
     if not revision_path.is_file():
         return RenderProposal(

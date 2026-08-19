@@ -109,6 +109,7 @@ from typing import Any
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.learning import DecisionOutcome, ReasonCode, record_decision_delta
 from hawedit.proposals import _interactive_confirm
+from hawedit.transcripts import validate_media_id
 
 __all__ = [
     "CancelRunProposal",
@@ -193,6 +194,23 @@ def propose_start_pipeline(
     Never touches `dbos`, never starts anything — the same "propose never writes" guarantee
     `propose_boundary_revision` holds.
     """
+    # `media_id` is validated by `run_pipeline` (`validate_media_id`, pipeline.py) — but only
+    # once the run is already executing, after a human approved it and compute started. A
+    # proposal that reports `valid=True` for an id certain to be refused is the same
+    # over-promise `propose_render` was fixed for: the agent reports ready, the commit path
+    # throws it out. Checked here, at plan time, with the same sanitiser rather than a second
+    # one. D-A28.
+    if media_id is not None:
+        try:
+            validate_media_id(media_id)
+        except ValueError as exc:
+            return StartPipelineProposal(
+                source=str(source),
+                media_id=media_id,
+                transcript=str(transcript) if transcript else None,
+                valid=False,
+                violation=f"media_id is not usable as a run identifier: {exc}",
+            )
     if not source.is_file():
         return StartPipelineProposal(
             source=str(source),

@@ -25,7 +25,9 @@ from hawedit.pipeline import PipelineRun, run_pipeline
 from hawedit.proposals import (
     RevisionRejected,
     commit_boundary_revision,
+    inspect_artifact,
     propose_boundary_revision,
+    propose_render,
     render_boundary_revision,
 )
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
@@ -161,6 +163,77 @@ def test_the_revised_render_duration_matches_the_narrower_span(
         f"({original_duration_s}s measured); got {duration_s}s"
     )
     assert 3.9 <= duration_s <= 4.2, f"expected roughly 4.09s, measured {duration_s}s"
+
+
+@needs_ffmpeg
+def test_a_valid_render_proposal_is_one_the_render_actually_accepts(
+    real_run: tuple[Path, PipelineRun],
+) -> None:
+    """The direction that matters most: propose says ready, and the render agrees.
+
+    `tests/test_exploration_tools.py` binds `propose_render`'s *refusals* to the render's
+    refusals. This is the other half, and the dangerous one: a proposal an agent reports as
+    ready for something the gate then throws out. That is precisely what `run_quality_checks`
+    did after `main` tightened the QC gate — it called a clip shippable that
+    `assert_renderable()` refused, and only its own equivalence test caught it (D-A26).
+
+    Lives here rather than beside the refusal half because it needs a **real** run: the other
+    file's report carries a placeholder source, and a proposal that clears every precondition
+    and then cannot encode is still a proposal that promised more than it could keep.
+    """
+    work, _run = real_run
+    _approve(work, "propose-agrees", final_in_ms=50, final_out_ms=4_140)
+
+    proposal = propose_render(work, "propose-agrees")
+    assert proposal.valid is True, f"the control must be valid, got: {proposal.violation}"
+
+    record = render_boundary_revision(work, "propose-agrees")
+    assert record["status"] in ("rendered", "rendered_without_delivery_sidecars"), (
+        f"propose_render called this ready, but the render finished as {record['status']!r}."
+    )
+
+
+@needs_ffmpeg
+def test_inspect_artifact_reports_the_span_the_render_actually_produced(
+    real_run: tuple[Path, PipelineRun],
+) -> None:
+    """`inspect_artifact` claims to be "the same read every render function already trusts, not
+    a second derivation that could disagree with what would actually be rendered". Until now
+    that claim was checked only against hand-built revision records — ten tests, none of which
+    had ever seen a real encode.
+
+    This binds it to the bytes: the span it reports, against the measured duration of the MP4
+    the render actually wrote. A tool that tells an agent "this artifact is 50..4140 ms" while
+    the file on disk is some other length is the failure the claim exists to rule out.
+    """
+    from hawedit.ingest import probe_stream
+
+    work, _run = real_run
+    _approve(work, "inspected", final_in_ms=50, final_out_ms=4_140)
+    record = render_boundary_revision(work, "inspected")
+    assert record["status"] == "rendered"
+
+    artifact = inspect_artifact(work, "inspected")
+    assert artifact.found is True
+    # `found` is the contract that the rest is populated - asserted rather than assumed, which
+    # also narrows the Optionals the not-found case makes necessary.
+    assert artifact.in_ms is not None and artifact.out_ms is not None
+    assert (artifact.in_ms, artifact.out_ms) == (50, 4_140), (
+        f"inspect_artifact resolved the revision to {artifact.in_ms}..{artifact.out_ms} ms, "
+        f"but it was approved and rendered as 50..4140 ms."
+    )
+    # The render updates the record's status in place; the tool must report the new one, not
+    # the `approved_pending_render` it was inspected as before.
+    assert artifact.status == "rendered"
+
+    measured_s = float(
+        probe_stream(Path(record["render_path"]), "format=duration", None, video_only=False)
+    )
+    claimed_s = (artifact.out_ms - artifact.in_ms) / 1000
+    assert abs(measured_s - claimed_s) < 0.25, (
+        f"inspect_artifact claims a {claimed_s:.3f}s span; the encoded file measures "
+        f"{measured_s:.3f}s. The tool and the artifact it describes disagree."
+    )
 
 
 @needs_ffmpeg

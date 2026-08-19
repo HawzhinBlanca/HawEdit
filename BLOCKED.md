@@ -1082,6 +1082,29 @@ is the crash.
 `test_every_plannable_window_is_delivered_to_the_model_whole` contains `if emitted < 2: continue`,
 so its claim covers only the windows it did not skip.
 
+**Amended 2026-08-18, and the exemption was smaller *and* larger than this entry said.** Measured
+by running the sweep's own grid: with `shot_cuts_ms=()` — which is what it passed — **not one** of
+the 52 planned windows falls under the floor, so `if emitted < 2: continue` was dead code and
+skipped nothing. The hole was never the skip; it was the **input space**. Uniform tiling cannot
+produce a short scene, so the windows this entry is about could not enter the sweep at all.
+
+Adding shot-cut patterns that leave a 1 s and a 200 ms tail: **172 windows checked (from 52), and
+46 fall under the floor** — the real exempt set, now counted and pinned rather than invisible.
+
+Two facts from that measurement that this entry did not have:
+
+- **21 of the 46 emit zero frames.** `SceneWindow.frame_count` is `ceil`, while ffmpeg writes
+  interval centres (`floor`): a 200 ms scene at 2.0 fps is *planned* as 1 frame and extracts
+  none. `video_input.py` already refuses that by name rather than crashing — so the zero-frame
+  case is a named refusal, not the library traceback this entry opens with.
+- **7 of the 46 occur at §3's declared 2.0 fps.** This entry says "§3's declared 2.0 fps is
+  unaffected and every run so far has used it." That holds for the *1-frame `temporal_factor`
+  crash* it was opened about, but not for the sub-floor surface generally: 2.0 fps reaches it too
+  as soon as a scene is short enough. The decision below is therefore not only about
+  `--visual-fps 1.0`.
+
+None of this settles the three-way decision below — it measures how much rides on it.
+
 **A symmetric lower-bound refusal in `SceneWindow` was written, measured and reverted.** It did what
 this entry asked — 2.0 fps unaffected, 1.0 fps refused at plan time by name — but
 `plan_scene_windows` defaults to `REFERENCE_FPS = 1.0`, so it made *any scene shorter than 2 s*
@@ -1149,3 +1172,45 @@ installed in this venv yet, and installing the `[gemini]` extra would settle it.
 
 **What this blocks:** T0 of `specs/production-hardening/plan.md`, and therefore the merge. It
 does not block T0b (the D-number renumber), which is independent.
+
+---
+
+## #24 · The VEX review date does not move when the digest it reviewed does
+
+`security/wsl-asr-vex.json` carries twelve CVE dispositions, a `reviewed` date of 2026-08-09,
+and an `applicability.source_sha256`. `tests/test_vex.py:131` binds that digest to
+`package_digest(src/hawedit)`, and `vex.py:534` refuses the run when it differs from the live
+WSL runtime receipt. Both checks are correct and both do their job.
+
+Nothing binds `reviewed` to the digest. `check_vex` (`vex.py:528-531`) reads `reviewed` and
+`expires` as bare dates — not in the future, not yet expired — and never asks whether the
+human who wrote that date saw the source the digest now names.
+
+**Why this is a blocker and not a footnote.** The failure mode is the gate teaching its own
+workaround. Any edit under `src/hawedit/` changes `package_digest`, so the digest check fails
+with `HawEdit source snapshot digest drifted`; the obvious fix is to rebind `source_sha256`,
+which restores green. That rebind is a one-line edit that silently re-points all twelve
+dispositions at source nobody reviewed. It has already happened three times on `harden`
+(`64e5a2d`, `982930d`, `7a463ff`), moving the digest from `2860455f` to `558dc7f4` while
+`reviewed` stayed at 2026-08-09. The dispositions are phrased as claims about reviewed source —
+"the reviewed OmniASR route", "the reviewed dependency lock", "the exact reviewed 43.5 GB
+checkpoint" — so the drift is not cosmetic: those sentences are now unsupported.
+
+The `wsl-asr-security` job would be the place this surfaces, but it is gated to self-hosted
+pushes on `main`, so it skipped on every `harden` run and will first execute against the
+rebound digest only after the branch lands.
+
+**Needs one of:**
+
+1. A human with the live WSL2 runtime re-reviews the twelve dispositions against `558dc7f4`
+   and moves `reviewed` forward. Then a pin of the reviewed digest can sit beside
+   `BUILD_LOCK_SHA256` in `tests/test_vex.py`, so a future rebind fails until `reviewed` moves
+   with it — the `.codystem-allow-self-edit` pattern, deliberate rather than prevented.
+2. Or that pin lands first and the gate goes red until the re-review happens. The honest pin
+   records `2860455f` / 2026-08-09, which is what was actually reviewed, and therefore fails
+   today. Writing it with the current digest and the old date would make it pass by asserting
+   something false, which is the one form this must not take.
+
+**What this blocks:** nothing mechanically — the gate is green on `harden` (run 32222939171,
+41 commits, clean runner). It blocks the *claim* that the WSL ASR security posture is reviewed.
+`expires` is 2026-09-08, so the question is forced within twenty days regardless.
