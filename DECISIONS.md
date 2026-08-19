@@ -12825,3 +12825,56 @@ until now there was no such call from the CLI. Also the retry path after a `rend
 
 VERIFY OK — hawedit gate green: 1973 collected, 1973 passed, 0 skipped (floor ratcheted
 1924 -> 1973).
+
+## D-A26
+
+**A read-only agent could still read outside its `work_dir`, and the fix goes at the identifier,
+not at each caller.** `artifact_id` and `revision_id` arrive from the model as free-form strings
+and were interpolated into paths under the run's directory. `..` segments therefore escaped it.
+D-A6 guarantees no agent can *write*; it never claimed an agent could not *read* an arbitrary
+file the process could open, and the distinction had not been tested.
+
+**Found by probing, and the first probe was wrong.** An initial traversal attempt used a single
+`..` against a target two levels up, came back clean, and would have been recorded as "no
+traversal" had it been trusted. Re-running with the correct depth reached the file. The lesson
+is the one `[[A Number Carries Its Hardware]]` already states for measurements: a negative
+result is only as good as the probe that produced it, and a probe that cannot reach the target
+proves nothing.
+
+**`validate_media_id` was already the right sanitiser**, so `_is_safe_identifier` /
+`_assert_safe_identifier` reuse it rather than introducing a second notion of "safe". Applied at
+six sites, deliberately in two different modes: four write/render entry points *raise*, because
+a traversing id there is a caller bug and must not proceed; two agent-facing read paths *report*
+a not-found result instead, because an agent handed a bad id should get an answer it can reason
+about rather than an exception that ends the turn. Same predicate, different failure posture,
+chosen per call site rather than uniformly.
+
+## D-A27
+
+**`media_id` is validated when the run is planned, not when it fails.** `propose_start_pipeline`
+now runs `validate_media_id` and returns `valid=False` with the violation in the proposal, so an
+unusable id is refused before any work starts. Previously the same string was accepted into a
+proposal and only rejected downstream, after the pipeline had begun — which spends real time and
+leaves a partial `work_dir` to explain.
+
+This is the propose/commit split doing what it exists for. A proposal that cannot be committed is
+worth nothing, so every precondition the commit will enforce belongs in the proposal too;
+`propose_render` (D-A25) mirrors the render gate's preconditions for the same reason. The
+validation is the existing sanitiser, not a new one — the decision here is only *where* it runs.
+
+## D-A28
+
+**`workflow_id` is deliberately not glyph-sanitised, and the record now says so.** The injection
+declaration table asserted that it was. It is not, and the discrepancy was found by measuring the
+parameter rather than re-reading the table.
+
+**The table was corrected, not the behaviour.** `workflow_id` derives from `work_dir.name`, and
+`work_dir` is chosen by the operator. Glyph-sanitising it would reject a directory named in
+Kurdish — the language this system exists to process — which is a worse failure than the one
+sanitising would prevent. `workflow_id` is not interpolated into a path (the run id is built by
+`dbos_run_id_for` from the resolved `work_dir`, not from this string), so the exposure is
+prose-shaped, not traversal-shaped.
+
+The general rule this settles: when a declaration and the code disagree, the declaration is the
+suspect until measured. Twelve of the thirteen entries in that table held; this one did not, and
+finding it was the point of checking each one rather than trusting the table it lives in.
