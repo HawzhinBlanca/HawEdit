@@ -470,6 +470,75 @@ def test_inspect_artifact_reports_an_unknown_kind_as_not_found_rather_than_raisi
     assert compare_versions(tmp_path, "original", "future").both_found is False
 
 
+@pytest.mark.parametrize(
+    "probe",
+    ["../../outside", "..\\..\\outside", "../secret", "a/b", "a\b", "..", "."],
+)
+def test_a_traversing_artifact_id_cannot_read_outside_the_work_dir(
+    tmp_path: Path, probe: str
+) -> None:
+    """The property `agent.py`'s docstring claims for the whole agent surface: "there is no
+    flag, config, or prompt phrasing that changes what directory a given agent instance can
+    read".
+
+    It was false here. `artifact_id` is interpolated into `work_dir/revisions/<id>.json`, and
+    `inspect_artifact` is reachable from `explorer_agent`'s tool with a model-supplied string —
+    so a prompt-injected transcript could ask a read-only agent to probe the host. Measured
+    before the fix: `"../../outside"` returned `found=True` carrying the `status` and
+    `approved_by` of a file outside the run. D-A27.
+
+    The file below really exists and really is outside `work_dir`; a probe that resolves is a
+    regression, not a hypothetical.
+    """
+    outside = tmp_path.parent / "outside.json"
+    outside.write_text(
+        json.dumps({"kind": "boundary", "status": "LEAKED", "approved_by": "someone-else"}),
+        encoding="utf-8",
+    )
+    secret = tmp_path.parent / "secret.json"
+    secret.write_text(
+        json.dumps(
+            {
+                "kind": "boundary",
+                "status": "LEAKED",
+                "proposed_final_in_ms": 1,
+                "proposed_final_out_ms": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_report(tmp_path)
+
+    artifact = inspect_artifact(tmp_path, probe)
+    assert artifact.found is False, (
+        f"artifact_id {probe!r} resolved to something — status={artifact.status!r}. An "
+        f"identifier carrying a separator or a parent reference must never be looked up."
+    )
+    assert artifact.status is None
+
+
+@pytest.mark.parametrize("probe", ["../../outside", "..\\..\\outside", "a/b"])
+def test_a_traversing_revision_id_is_not_a_renderable_proposal(tmp_path: Path, probe: str) -> None:
+    """The same guard on the other agent-facing entry point. `propose_render` reports it as an
+    invalid proposal rather than raising, matching its own contract for every other
+    unresolvable revision_id."""
+    _write_report(tmp_path)
+    proposal = propose_render(tmp_path, probe)
+    assert proposal.valid is False
+    assert "safe filename component" in (proposal.violation or "")
+
+
+def test_a_traversing_revision_id_is_refused_outright_on_the_write_paths(
+    tmp_path: Path,
+) -> None:
+    """Reads report; writes refuse. `commit_*`/`render_*` interpolate the id into six output
+    paths (.json/.ass/.mp4/.srt/.edl), so "not found" would be the wrong answer — nothing was
+    looked up, the name itself was rejected."""
+    _write_report(tmp_path)
+    with pytest.raises(ValueError, match="safe filename component"):
+        render_boundary_revision(tmp_path, "../../escape")
+
+
 def test_inspect_artifact_reports_an_unknown_id_as_not_found(tmp_path: Path) -> None:
     _write_report(tmp_path)
     artifact = inspect_artifact(tmp_path, "no-such-revision")
