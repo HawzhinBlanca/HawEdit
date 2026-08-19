@@ -54,6 +54,26 @@ def test_propose_rejects_a_missing_source(tmp_path: Path) -> None:
     assert "no file at" in (proposal.violation or "")
 
 
+@pytest.mark.parametrize("bad", ["../../escape", "a/b", "a\\b", "..", "", "  ", "."])
+def test_propose_rejects_a_media_id_the_run_would_refuse(tmp_path: Path, bad: str) -> None:
+    """`run_pipeline` validates `media_id` — but only once the run is executing, after a human
+    approved it and compute started. A proposal reporting `valid=True` for an id certain to be
+    refused is the same over-promise `propose_render` was fixed for.
+
+    `media_id` is agent-suppliable (`propose_start_pipeline_tool` on `workflow_agent`), and it
+    reaches path construction downstream, so plan-time is where it belongs. D-A28.
+    """
+    proposal = propose_start_pipeline(tmp_path, FIXTURE, media_id=bad)
+    assert proposal.valid is False, f"media_id {bad!r} was accepted at plan time"
+    assert "not usable as a run identifier" in (proposal.violation or "")
+
+
+def test_propose_still_accepts_an_ordinary_media_id(tmp_path: Path) -> None:
+    """The control: the guard must not refuse the ids real runs actually use."""
+    proposal = propose_start_pipeline(tmp_path, FIXTURE, media_id="episode-1")
+    assert proposal.valid is True, proposal.violation
+
+
 def test_propose_rejects_a_missing_transcript(tmp_path: Path) -> None:
     proposal = propose_start_pipeline(tmp_path, FIXTURE, transcript=tmp_path / "no.json")
     assert proposal.valid is False
