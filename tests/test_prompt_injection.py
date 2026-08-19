@@ -26,15 +26,20 @@ trusted input in the system (`gemini.py`).
 
 from __future__ import annotations
 
+import importlib
+import inspect
 import json
-from collections.abc import Iterator
+import pkgutil
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 pytest.importorskip("pydantic_ai")
 dbos = pytest.importorskip("dbos")
 
+import hawedit  # noqa: E402
 from hawedit.agent import TOOL_NAMES, Deps, build_agent, inspect_run  # noqa: E402
 from hawedit.durable_workflow import configure_dbos  # noqa: E402
 from hawedit.editor_agent import build_editor_agent  # noqa: E402
@@ -338,3 +343,103 @@ def test_the_manifest_the_model_sees_is_generated_not_read_from_the_run(tmp_path
             "an injected payload reached the system prompt — the manifest must be generated "
             "from this build, never from the run's own artifacts"
         )
+
+
+# --- every agent, discovered rather than listed (D-A27) ---------------------------------------
+#
+# This file exercised `build_agent` and `build_editor_agent` and no others. Those are the two
+# agents with the STRICTEST parameter guarantees - zero parameters, and integer-or-closed-enum.
+# The four it skipped (diagnostics, explorer, render, workflow) are precisely the ones taking
+# free-form identifiers, which is where an injected instruction has something to aim at. The
+# suite covered the safe agents and ignored the risky ones.
+#
+# That inversion produced a real vulnerability: `inspect_artifact(work_dir, "../../outside")`
+# returned a file from outside the run, through `explorer_agent`'s tool, with a model-supplied
+# string. Discovered rather than listed here for the same reason `test_policy.py` discovers:
+# the value is covering the agent nobody remembered to add.
+
+
+def _all_agent_builders() -> Iterator[tuple[str, Callable[..., Any]]]:
+    for module_info in pkgutil.iter_modules(hawedit.__path__):
+        module = importlib.import_module(f"hawedit.{module_info.name}")
+        for name, obj in vars(module).items():
+            if (
+                name.startswith("build_")
+                and name.endswith("_agent")
+                and inspect.isfunction(obj)
+                and obj.__module__ == module.__name__
+            ):
+                yield name, obj
+
+
+# Every open (non-enum) string parameter any agent exposes, and why it is not a way in. A new
+# one fails this test until someone writes the reason down - the same "a capability nobody
+# decided to grant" rule `policy.py` holds for tools, applied to the fields they accept.
+_DECLARED_OPEN_STRING_PARAMETERS: dict[str, str] = {
+    # Looked up under work_dir/revisions/. Refused by `_is_safe_identifier` before the path is
+    # built, so a separator or parent reference never reaches the filesystem (D-A27).
+    "artifact_id": "sanitised path component",
+    "artifact_id_a": "sanitised path component",
+    "artifact_id_b": "sanitised path component",
+    "revision_id": "sanitised path component",
+    # Matched against report.json's own candidate list. Never interpolated into a path.
+    "candidate_id": "matched against a list, never a path",
+    # Naming a file *is* the input for starting a run; accepted deliberately, and nothing runs
+    # without a human seeing the real path in commit_start_pipeline's prompt (D-A19).
+    "source": "human-confirmed media path",
+    "transcript": "human-confirmed media path",
+    "media_id": "run label, validated by validate_media_id downstream",
+    # Free prose about the *application*, refused if it carries Kurdish script (D-A17).
+    "summary": "sanitised against Kurdish glyphs",
+    "expected_behavior": "sanitised against Kurdish glyphs",
+    "actual_behavior": "sanitised against Kurdish glyphs",
+    "suspected_component": "sanitised against Kurdish glyphs",
+    "workflow_id": "sanitised against Kurdish glyphs",
+}
+
+
+def _open_string_parameters(agent: Any) -> set[str]:
+    found: set[str] = set()
+    for tool in agent._function_toolset.tools.values():
+        for name, spec in tool.function_schema.json_schema.get("properties", {}).items():
+            if spec.get("type") == "string" and "enum" not in spec:
+                found.add(name)
+    return found
+
+
+def test_every_open_string_parameter_on_every_agent_is_declared(tmp_path: Path) -> None:
+    """A free-form string field is the only thing an injected instruction can actually steer.
+
+    Every one must be declared with the reason it is not a way in. Undeclared fails: adding a
+    tool that takes open prose or an unsanitised identifier is then a failing build rather than
+    a quiet widening of the attack surface.
+    """
+    from pydantic_ai.models.test import TestModel
+
+    _poisoned_report(tmp_path)
+    checked = 0
+    for label, builder in _all_agent_builders():
+        agent = builder(TestModel(), Deps(work_dir=tmp_path))
+        for name in sorted(_open_string_parameters(agent)):
+            assert name in _DECLARED_OPEN_STRING_PARAMETERS, (
+                f"{label} exposes the open string parameter {name!r}, which nothing declares. "
+                f"Say why an injected instruction cannot use it, or close it to an enum."
+            )
+            checked += 1
+    assert checked >= 13, f"only {checked} open string parameters swept; discovery went vacuous"
+
+
+def test_no_agent_exposes_a_work_dir_shaped_parameter(tmp_path: Path) -> None:
+    """`Deps.work_dir` is bound at construction and must never become a tool argument. Checked
+    across every discovered agent, not only the two this file used to build."""
+    from pydantic_ai.models.test import TestModel
+
+    _poisoned_report(tmp_path)
+    for label, builder in _all_agent_builders():
+        agent = builder(TestModel(), Deps(work_dir=tmp_path))
+        for tool in agent._function_toolset.tools.values():
+            for name in tool.function_schema.json_schema.get("properties", {}):
+                assert name not in {"work_dir", "workdir", "path", "directory", "root"}, (
+                    f"{label}'s {tool.name} takes {name!r} — the directory an agent can reach "
+                    f"is fixed by whoever constructs it, never by the model."
+                )
