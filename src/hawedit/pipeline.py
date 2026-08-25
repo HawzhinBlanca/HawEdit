@@ -123,12 +123,14 @@ from hawedit.sentences import (
 from hawedit.timelens import VisualEvidenceInterval, interval_for_fusion
 from hawedit.transcripts import (
     NormalizedTranscript,
+    NotKurdish,
     RawTranscript,
     RawTranscriptImmutable,
     RejectedValidatorCorrection,
     TranscriptStore,
     UnalignedSpeech,
     Word,
+    assert_kurdish_transcript,
     normalize_transcript,
     validate_media_id,
 )
@@ -1453,6 +1455,23 @@ def run_pipeline(
     if transcript is None:
         log.finished("transcript", _STAGE_1_ASR.reason)
         return run
+
+    # Before anything persists it. `--transcript` and `--omni-asr` both land here, so one
+    # check covers both routes, and it runs before `write_raw` because Kurdish invariant #1
+    # makes the canonical transcript write-once — a wrong-language transcript committed to the
+    # store would have to be deleted by hand before the media could be run again.
+    try:
+        assert_kurdish_transcript(transcript)
+    except NotKurdish as exc:
+        log.finished("transcript", str(exc))
+        return replace(
+            run,
+            transcript=StageSkipped(
+                stage="transcript",
+                reason=_safe_exception_text(str(exc), budget=1_024),
+                blocked_by=("Sorani Kurdish source audio",),
+            ),
+        )
 
     # --- §3 Stage 1 (supplied) + §4.1 -----------------------------------------------------
     store = TranscriptStore(work_dir / "transcripts")

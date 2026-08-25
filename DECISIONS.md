@@ -13145,3 +13145,45 @@ prose-shaped, not traversal-shaped.
 The general rule this settles: when a declaration and the code disagree, the declaration is the
 suspect until measured. Twelve of the thirteen entries in that table held; this one did not, and
 finding it was the point of checking each one rather than trusting the table it lives in.
+
+
+---
+
+## D-251
+
+**Stage 1 had no language guard, and the field is called `text_ckb`.** Running
+`TestAyub05min.mp4` through `--omni-asr` produced a canonical transcript that is **78.6% Latin
+script**: the interview is conducted in English. §4.1 normalization, the BM25 index, §4.2
+segmentation, §5 boundary fusion and §4.3 caption rendering every one accepted it, the run
+reported 40 sentences, and the pipeline would have burned English subtitles into a vertical clip
+labelled Kurdish. Nothing about that artifact would have revealed it.
+
+`judge._kurdish_field` already makes exactly this check on the *judge's* output, and its
+docstring is the argument for making it one stage earlier: "a judge answering in another
+language produces a clip that renders, uploads and reads as finished work in the wrong language,
+and every type downstream accepts a `str`."
+
+**A share, not the judge's any-Kurdish-character test.** The English transcript still scored
+21.4% Kurdish script, because the LLM arm transliterates English into Kurdish letters
+(`ئەکادەمیک کەوریر ئەتۆزە پارتۆف دی` for "academic career, it was a part of the"), so
+`_is_kurdish` would have passed it. The threshold is 70%, set between two measurements: the
+38-minute Sorani reference episode is **100.0%** Kurdish script over 28,724 letters, and this
+one is 21.4%. There is no gradual band between them, and the gap leaves room for real
+code-switching — a Latin brand name, a quoted English title.
+
+The check runs **before** `TranscriptStore.write_raw`. Kurdish invariant #1 makes the canonical
+transcript write-once, so a wrong-language transcript that reached the store would have to be
+deleted by hand before that media could be run again.
+
+**This also corrects D-250.** That entry blamed the CTC arm's script-hopping on the reference
+episode's 48 kbps audio. Wrong: `TestAyub05min.mp4` carries **320 kbps at 48 kHz** and its CTC
+output contains **zero** Kurdish across all 88 segments, against 71.4% for the 48 kbps file. The
+CTC arm was not degraded by bitrate — it was transcribing the language actually being spoken,
+correctly, and the disagreement metric was reporting a real language mismatch rather than noise.
+Median word confidence went *down* on the better source (0.0063 → 0.0010) for the same reason.
+
+**Checked and ruled out while here:** whether the two-mic stereo mix carries an active-speaker
+cue that would let §3 Stage 6 cut between speakers without diarization. It does not — measured
+L/R correlation over the whole 254 s file is **+1.0000** and the per-second energy balance never
+leaves 0.000. The mix is dual-mono. `BLOCKED.md` #4 is the only route to speaker-aware
+reframing.

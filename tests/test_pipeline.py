@@ -5024,3 +5024,31 @@ def test_dead_air_needs_two_sentences_to_have_a_gap_between_them() -> None:
 def test_the_dead_air_limit_is_a_number_that_must_make_sense() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         dead_air_flags((_spoken(0, 1_000), _spoken(9_000, 10_000)), limit_ms=-1)
+
+
+@needs_ffmpeg
+def test_the_runner_refuses_a_stage_1_transcript_in_another_language(tmp_path: Path) -> None:
+    """Measured: a real English interview produced a 78.6%-Latin `text_ckb` and every stage
+    below accepted it. The runner must stop at Stage 1 and say why, before anything persists —
+    Kurdish invariant #1 makes the canonical transcript write-once, so a wrong-language one
+    committed to the store would have to be deleted by hand before the media could be re-run.
+    """
+    english = RawTranscript(
+        media_id="fixture",
+        text_ckb="The title is Media and Politics in Kurdistan",
+        words=(
+            Word(w="The", start_ms=100, end_ms=800, conf=0.9),
+            Word(w="title.", start_ms=800, end_ms=1_700, conf=0.9),
+        ),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
+    )
+    run = run_pipeline(FIXTURE, tmp_path, media_id="fixture", transcript=english)
+
+    assert isinstance(run.transcript, StageSkipped)
+    assert "not Sorani Kurdish" in run.transcript.reason
+    assert run.transcript.blocked_by == ("Sorani Kurdish source audio",)
+    assert not run.complete
+    # Nothing was written: the store must be untouched so a re-run with the right transcript
+    # is not blocked by invariant #1.
+    assert not (tmp_path / "transcripts" / "fixture.transcript.raw.json").exists()

@@ -27,8 +27,10 @@ import pytest
 
 from hawedit.registry import ModelExcluded, ModelNotInRegistry, WrongRole
 from hawedit.transcripts import (
+    MIN_KURDISH_LETTER_SHARE,
     AsrProvenance,
     NormalizedTranscript,
+    NotKurdish,
     RawTranscript,
     RawTranscriptImmutable,
     RawTranscriptTampered,
@@ -38,7 +40,9 @@ from hawedit.transcripts import (
     TranscriptStore,
     UnalignedSpeech,
     Word,
+    assert_kurdish_transcript,
     assert_model_input,
+    kurdish_letter_share,
     normalize_transcript,
     validate_media_id,
 )
@@ -1793,3 +1797,60 @@ def test_rejected_validator_correction_round_trips_without_becoming_a_gap() -> N
 
 
 # --- D-139: the raw file's own write-once layer was never reached by a test ------------------
+
+
+# --- Stage 1 speaks ckb, or it does not ship ------------------------------------------
+
+
+def test_a_real_kurdish_transcript_is_entirely_kurdish_script() -> None:
+    """The threshold is set from measurement, not taste.
+
+    `text_ckb` over the 38-minute reference episode is 100.0% Kurdish script across 28,724
+    letters. There is no gradual band between that and a transcript in another language.
+    """
+    assert kurdish_letter_share("ئەمە زۆر باشە") == 1.0
+    assert MIN_KURDISH_LETTER_SHARE == 0.70
+
+
+def test_an_english_transcript_is_refused_at_stage_1() -> None:
+    """A 4-minute English interview produced a `text_ckb` that was 78.6% Latin.
+
+    §4.1, the BM25 index, §4.2 segmentation and §4.3 captions all accepted it, and the clip
+    would have shipped English subtitles labelled Kurdish.
+    """
+    english = a_raw(text="The title is Media and Politics in Kurdistan")
+    with pytest.raises(NotKurdish, match="not Sorani Kurdish"):
+        assert_kurdish_transcript(english)
+
+
+def test_the_share_is_measured_rather_than_any_kurdish_character() -> None:
+    """`judge._is_kurdish` asks "any Arabic-script character", which is far too weak here.
+
+    The real English transcript still scored 21.4% Kurdish script — the LLM arm transliterating
+    English into Kurdish letters — so an any-character test would have passed it.
+    """
+    mixed = "The title is Media and Politics in ئەکادەمیک کەوریر ئەتۆزە"
+    share = kurdish_letter_share(mixed)
+    assert 0.0 < share < MIN_KURDISH_LETTER_SHARE, "some Kurdish present, still refused"
+    with pytest.raises(NotKurdish, match="Kurdish script"):
+        assert_kurdish_transcript(a_raw(text=mixed))
+
+
+def test_code_switching_inside_a_kurdish_transcript_still_passes() -> None:
+    """A Latin brand name or a quoted English title must not fail an otherwise Kurdish clip."""
+    borrowed = "ئەمە زۆر باشە بۆ Instagram و TikTok و ئێمە زۆر خۆشحاڵین بەم ئەنجامە باشە"
+    assert kurdish_letter_share(borrowed) >= MIN_KURDISH_LETTER_SHARE
+    assert_kurdish_transcript(a_raw(text=borrowed))
+
+
+def test_a_transcript_with_no_letters_at_all_is_refused() -> None:
+    """Zero letters is not "0% wrong language" — there is nothing here to caption."""
+    assert kurdish_letter_share("12345 ... !!") == 0.0
+    with pytest.raises(NotKurdish):
+        assert_kurdish_transcript(a_raw(text="12345 ... !!"))
+
+
+def test_the_threshold_itself_must_be_a_fraction() -> None:
+    for bad in (-0.1, 1.1):
+        with pytest.raises(ValueError, match=r"within \[0, 1\]"):
+            assert_kurdish_transcript(a_raw(), minimum=bad)

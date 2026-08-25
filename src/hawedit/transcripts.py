@@ -51,8 +51,10 @@ from hawedit.normalize import normalize_sorani
 from hawedit.registry import resolve_role
 
 __all__ = [
+    "MIN_KURDISH_LETTER_SHARE",
     "AsrProvenance",
     "NormalizedTranscript",
+    "NotKurdish",
     "RawTranscript",
     "RawTranscriptImmutable",
     "RawTranscriptTampered",
@@ -63,6 +65,7 @@ __all__ = [
     "UnalignedSpeech",
     "Word",
     "assert_model_input",
+    "kurdish_letter_share",
     "normalize_transcript",
     "validate_media_id",
     "validate_media_sha256",
@@ -813,6 +816,73 @@ def assert_model_input(transcript: NormalizedTranscript | RawTranscript) -> None
             "raw transcript passed to a model input: indexes, embeddings and model inputs "
             "read transcript.norm.json (Kurdish invariant #3). Call normalize_transcript() "
             "first — raw is canonical and ships to the client, it is not model input."
+        )
+
+
+# A real Sorani transcript is not "mostly" Kurdish — measured over the 38-minute reference
+# episode, `text_ckb` is **100.0%** Kurdish-script across 28,724 letters. The English interview
+# that prompted this check came in at 21.4%. The threshold sits between them with room for
+# genuine code-switching: Latin brand names, an English loanword, a quoted title.
+MIN_KURDISH_LETTER_SHARE: Final = 0.70
+
+# The same block `judge._is_kurdish` tests, for the same reason one stage later.
+_KURDISH_SCRIPT_FIRST: Final = "\u0600"
+_KURDISH_SCRIPT_LAST: Final = "\u06ff"
+
+
+class NotKurdish(ValueError):
+    """Stage 1 produced a transcript that is not in Sorani Kurdish."""
+
+
+def kurdish_letter_share(text: str) -> float:
+    """Fraction of the alphabetic characters in `text` that are Arabic-script.
+
+    Returns 0.0 for text with no letters at all, which is refused for the same reason as the
+    wrong script: there is nothing here to caption.
+    """
+    letters = [character for character in text if character.isalpha()]
+    if not letters:
+        return 0.0
+    kurdish = sum(
+        1 for character in letters if _KURDISH_SCRIPT_FIRST <= character <= _KURDISH_SCRIPT_LAST
+    )
+    return kurdish / len(letters)
+
+
+def assert_kurdish_transcript(
+    transcript: RawTranscript, minimum: float = MIN_KURDISH_LETTER_SHARE
+) -> None:
+    """Refuse a transcript whose text is not the language every stage below assumes.
+
+    `judge._kurdish_field` already makes this check on the *judge's* output, and its reasoning
+    applies at least as strongly one stage earlier: "a judge answering in another language
+    produces a clip that renders, uploads and reads as finished work in the wrong language, and
+    every type downstream accepts a `str`." Stage 1 had no equivalent.
+
+    Measured, which is why this exists: a 4-minute English-language interview run through
+    `--omni-asr` produced a `text_ckb` that was **78.6% Latin script**, and the field is named
+    `text_ckb`. §4.1 normalization, BM25 indexing, §4.2 segmentation, §5 boundary fusion and
+    §4.3 caption rendering all accepted it without complaint, and the pipeline would have burned
+    English subtitles into a vertical clip labelled Kurdish. Nothing about that artifact would
+    have revealed it.
+
+    A share rather than the judge's any-Kurdish-character test, because "any" is far too weak
+    here: the English transcript still scored 21.4% Kurdish script, from the LLM arm
+    transliterating English into Kurdish letters, and would have sailed past it.
+
+    Raises:
+        NotKurdish: the transcript is below `minimum` Kurdish-script letters.
+    """
+    if not 0.0 <= minimum <= 1.0:
+        raise ValueError(f"minimum Kurdish share must be within [0, 1], got {minimum}")
+    share = kurdish_letter_share(transcript.text_ckb)
+    if share < minimum:
+        raise NotKurdish(
+            f"transcript {transcript.media_id!r} is {share:.1%} Kurdish script, below the "
+            f"{minimum:.0%} this pipeline requires — it is not Sorani Kurdish. §4.1, the BM25 "
+            f"index, §4.2 segmentation and §4.3 captions all treat `text_ckb` as ckb, so a "
+            f"clip built from this would render finished-looking subtitles in the wrong "
+            f"language. Check the source media's language, or the ASR route's."
         )
 
 
