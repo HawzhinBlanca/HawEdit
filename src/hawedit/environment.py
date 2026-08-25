@@ -87,9 +87,16 @@ _GPU_LOCK_OPTIONS: Final = frozenset(
         "--only-binary=:all:",
     }
 )
+# Must stay equal to `scripts/install-host.sh`'s per-scope `extras=(...)` and to
+# `scripts/lock_host_dependencies.py`'s `TARGETS`. Three declaring sites for one fact; this is
+# the one that *refuses* on a mismatch, which is how a partial edit of the other two is caught
+# (measured: adding `agentic` to those two alone made `install-host.sh` refuse here by name).
 _PROFILE_EXTRAS: Final = {
     "base": (),
-    "gate": ("dev", "media"),
+    # `agentic` is in the gate scope because the gate floors on tests that *passed*
+    # (`gate.py`); without dbos + pydantic-ai, ~150 agent tests skip and the run is refused
+    # for a floor it cannot reach. D-A26.
+    "gate": ("dev", "media", "agentic"),
     "models": ("models",),
     "gpu": ("media", "gpu"),
 }

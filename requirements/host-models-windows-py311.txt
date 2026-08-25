@@ -7,14 +7,14 @@
 # project-version: 0.1.0
 # contract-sha256: f2eab981d2b86c451733e846f4fd20ff03e8db1ec31d7f08bf45d0bab86465ce
 # resolver: uv==0.11.26
-# exclude-newer: 2026-08-09T00:00:00Z
+# exclude-newer: 2026-08-13T00:00:00Z
 --extra-index-url https://download.pytorch.org/whl/cpu
 --only-binary=:all:
 
 # selected wheel https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl
 certifi==2026.7.22 --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
-# selected wheel https://files.pythonhosted.org/packages/ed/a1/e29995109e455dc8eff8d0fac6ae509be39561318a7cfeac5d33ad029213/charset_normalizer-3.4.9-cp311-cp311-win_amd64.whl
-charset-normalizer==3.4.9 --hash=sha256:6366a16e1a25018694d6a5d784d09b046edc9eac40ea2b54065c3052672516a1
+# selected wheel https://files.pythonhosted.org/packages/97/84/6fc03e802578df41a2ab9b6a1f26657fb92e32285a603ad5852a4a4f68c1/charset_normalizer-3.5.0-cp311-cp311-win_amd64.whl
+charset-normalizer==3.5.0 --hash=sha256:8cb9b6892b53bd6d11fa4cde3dbee020b1f0b6656be1fbaa1ec0d4324a7839db
 # selected wheel https://files.pythonhosted.org/packages/8d/ab/148e7027df54b2b04fe2084770bdd8ab8f31522a1418a513e7700a9b7438/chunspell-2.0.4-cp311-cp311-win_amd64.whl
 chunspell==2.0.4 --hash=sha256:54601a1c54cc51ae2f4ecaf07a11c30d18d24b1a94cdc023de8b951ec0b7e98e
 # selected wheel https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl

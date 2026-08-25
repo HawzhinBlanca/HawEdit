@@ -444,6 +444,17 @@ class ShadowVerdict:
                 f"'the shadow did not win' forever."
             )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Added for `promotion.py`'s shadow-verdict ledger (D-A14) — a shadow opinion nobody
+        can read back is a shadow opinion `decide_judge`'s tally cannot be reconstructed from."""
+        return {"verdict": self.verdict.to_dict(), "incumbent": self.incumbent}
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> ShadowVerdict:
+        return ShadowVerdict(
+            verdict=JudgeVerdict.from_dict(data["verdict"]), incumbent=str(data["incumbent"])
+        )
+
 
 @runtime_checkable
 class EditorialJudge(Protocol):

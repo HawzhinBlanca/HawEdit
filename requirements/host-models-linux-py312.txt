@@ -7,14 +7,14 @@
 # project-version: 0.1.0
 # contract-sha256: f2eab981d2b86c451733e846f4fd20ff03e8db1ec31d7f08bf45d0bab86465ce
 # resolver: uv==0.11.26
-# exclude-newer: 2026-08-09T00:00:00Z
+# exclude-newer: 2026-08-13T00:00:00Z
 --extra-index-url https://download.pytorch.org/whl/cpu
 --only-binary=:all:
 
 # selected wheel https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl
 certifi==2026.7.22 --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
-# selected wheel https://files.pythonhosted.org/packages/01/c4/4fa4c8b3097a11f3c5f09a35b72ed6855fb1d332469504962ab7bafcc702/charset_normalizer-3.4.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-charset-normalizer==3.4.9 --hash=sha256:5e226f6218febc71f6c1fc2fafb91c226f75bdc1d8fb12d66823716e891608fd
+# selected wheel https://files.pythonhosted.org/packages/23/35/5b85772eb82528ef22ba29487ad544a7049dfd27f35b1a5a55dbc0843048/charset_normalizer-3.5.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+charset-normalizer==3.5.0 --hash=sha256:14f6904a3cf870abf044df3a8c4924ac6c8ef77e9896586fd37e73ae96cff2af
 # selected wheel https://files.pythonhosted.org/packages/52/eb/d151c8c53c35ace4e3e92be988776dd3b892e85b0d34d08ef89f1b8efdf8/chunspell-2.0.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 chunspell==2.0.4 --hash=sha256:1632bfa913f6c91f6fe90685e28ca98ba27472471153c81adb2a6de6e5ea5212
 # selected wheel https://files.pythonhosted.org/packages/c1/e8/72f8cef9fdfeffe06213fe8508039396ee48daa0e3259457ed766173bfd6/filelock-3.32.2-py3-none-any.whl

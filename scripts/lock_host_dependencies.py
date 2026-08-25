@@ -25,7 +25,12 @@ sys.path.insert(0, str(ROOT / "src"))
 from hawedit.environment import dependency_contract_digest  # noqa: E402
 
 UV_VERSION: Final = "0.11.26"
-EXCLUDE_NEWER: Final = "2026-08-09T00:00:00Z"
+# Moved 2026-08-09 -> 2026-08-13, the *minimum* date that admits the `agentic` extra:
+# `pydantic-ai-slim==2.28.0` and its graph were published after the old anchor, and the gate
+# scope now needs them (see install-host.sh). 2026-08-12 still fails; 2026-08-13 resolves.
+# Four days, not "today", because every target in TARGETS re-resolves against this and a
+# larger jump moves more transitive versions than the change actually requires. D-A26.
+EXCLUDE_NEWER: Final = "2026-08-13T00:00:00Z"
 ALLOWED_WHEEL_HOSTS: Final = frozenset({"files.pythonhosted.org", "download-r2.pytorch.org"})
 HASH_MODULE: Final = ROOT / "src" / "hawedit" / "host_lock_hashes.py"
 MAX_HASH_DOWNLOAD_BYTES: Final = 1024**3
@@ -49,7 +54,11 @@ class Target:
 TARGETS: Final = (
     *(
         Target(scope, platform, uv_platform, python, extras, "cpu")
-        for scope, extras in (("base", ()), ("gate", ("dev", "media")), ("models", ("models",)))
+        for scope, extras in (
+            ("base", ()),
+            ("gate", ("dev", "media", "agentic")),
+            ("models", ("models",)),
+        )
         for platform, uv_platform in (
             ("linux", "x86_64-unknown-linux-gnu"),
             ("windows", "x86_64-pc-windows-msvc"),

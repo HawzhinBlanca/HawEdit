@@ -3050,12 +3050,19 @@ def test_a_query_without_the_visual_path_is_refused_before_the_producer_test(
 
 
 def _argv_refusals() -> tuple[str, ...]:
-    """Every combination `_run_from_args` refuses, read out of its own source.
+    """Every combination `_build_and_run` refuses, read out of its own source.
 
     Taken from the AST rather than listed here, so a fifteenth refusal is covered the day it is
     added instead of the day someone remembers to add a case. Every `ValueError` this function
     raises *directly* is an argv refusal — nothing later in it raises that type — which is what
     makes the set well defined rather than a hopeful filter.
+
+    Reads `_build_and_run`, not `_run_from_args`: D-A2 moved every validation this test walks
+    into a function `durable.py` can also call, leaving `_run_from_args` a thin catch-and-print
+    wrapper with no `raise` of its own. This test caught the move — it named the function it
+    scans, and asserted against messages, not call sites, so a real extraction was exactly the
+    diff that trips it. Fixed by pointing at the new home rather than widening what the walk
+    accepts, so a *third* function quietly gaining a `raise ValueError` still fails it.
     """
     import ast
 
@@ -3063,7 +3070,7 @@ def _argv_refusals() -> tuple[str, ...]:
     function = next(
         node
         for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef) and node.name == "_run_from_args"
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_and_run"
     )
     messages: list[str] = []
     for node in ast.walk(function):
@@ -4840,14 +4847,22 @@ def test_every_reachable_cli_prerequisite_refuses_at_its_own_boundary(
 
 
 def _preflight_value_error_messages() -> tuple[str, ...]:
-    """Read the direct pre-input refusals so a future guard cannot arrive uncovered."""
+    """Read the direct pre-input refusals so a future guard cannot arrive uncovered.
+
+    Reads `_build_and_run`, not `_run_from_args`, for the same reason
+    `_preflight_refusal_sources` above already does: D-A2 moved every validation this walks into
+    a function `durable_workflow.py`'s DBOS step can also call, leaving `_run_from_args` a thin
+    catch-and-print wrapper with no refusals of its own. Walking the old name found zero
+    assignments and raised `min() arg is an empty sequence` — a vacuous pass waiting to happen
+    had the `min()` had a default. D-A26.
+    """
     import ast
 
     source = (ROOT / "src" / "hawedit" / "pipeline.py").read_text(encoding="utf-8")
     function = next(
         node
         for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef) and node.name == "_run_from_args"
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_and_run"
     )
     input_boundary = min(
         node.lineno

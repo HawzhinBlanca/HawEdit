@@ -47,7 +47,11 @@ if [[ ! -f "$lock" ]]; then
 fi
 
 extras=()
-if [[ "$scope" == gate ]]; then extras=(--extra dev --extra media); fi
+# `agentic` joins the gate scope because the gate *floors on tests that passed*
+# (`src/hawedit/gate.py`). Without dbos + pydantic-ai installed, ~150 agent tests hit
+# `pytest.importorskip` and skip, and the run is refused for a floor it cannot reach —
+# a green local suite that CI can never reproduce. D-A26.
+if [[ "$scope" == gate ]]; then extras=(--extra dev --extra media --extra agentic); fi
 if [[ "$scope" == models ]]; then extras=(--extra models); fi
 if [[ "$scope" == gpu ]]; then extras=(--extra media --extra gpu); fi
 

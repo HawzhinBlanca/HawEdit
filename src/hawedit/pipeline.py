@@ -46,7 +46,7 @@ import os
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, fields, replace
+from dataclasses import asdict, dataclass, fields, replace
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
@@ -74,6 +74,7 @@ from hawedit.escalation import (
     scores_from_transcript,
     select_for_validation,
 )
+from hawedit.events import EventSink, RunEventLog, discard
 from hawedit.gemini import GeminiUnavailable, JudgeUnusable
 from hawedit.index import Bm25Index
 from hawedit.ingest import (
@@ -263,6 +264,13 @@ class PipelineRun:
     rejected: tuple[RejectedCandidate, ...] = ()
     boundary: object | None = None
     clip: Clip | None = None
+    # The exact `Sentence` objects `clip` was built from — not the episode's full segmentation
+    # (`sentences` above), the subset `select_sentences` chose. Captions and the SRT sidecar are
+    # timed from these, and nothing else on this record carries word-level timing: `clip.
+    # transcript` is raw/normalized *text*. Persisted so a boundary revision (`proposals.py`,
+    # Phase 3, D-A7) can rebuild captions for a shifted span without re-running §4.2 segmentation
+    # against VAD pauses this record does not carry either. Empty when no clip was built.
+    selected_sentences: tuple[Sentence, ...] = ()
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
 
@@ -485,6 +493,11 @@ class PipelineRun:
             "editorial": encode(self.editorial) or self._editorial_ran(),
             "boundary": encode(self.boundary),
             "clip": self.clip.to_dict() if self.clip is not None else None,
+            # `asdict`, matching how `RawTranscript.to_json`/`NormalizedTranscript.to_json`
+            # already serialize their own `words: tuple[Word, ...]` — `Sentence` needs no
+            # separate `to_dict` when the stdlib one already does this correctly for a plain
+            # nested dataclass.
+            "selected_sentences": [asdict(sentence) for sentence in self.selected_sentences],
             "render": (
                 encode(self.render)
                 if isinstance(self.render, StageSkipped)
@@ -563,6 +576,17 @@ _STAGE_4_JUDGE = StageSkipped(
     ),
     blocked_by=("Stage 4 judgment not enabled",),
 )
+
+
+def _skip_reason(outcome: object) -> str | None:
+    """The reason a stage recorded for not running, or `None` when it ran.
+
+    The bridge between `PipelineRun`'s stage records and `events.py`'s stage events, so the two
+    cannot disagree: an event that says "skipped" reads its reason from the very object the
+    report will carry, rather than from a second string written beside it. `events.py` takes
+    the reason rather than the record precisely so it needs no import from this module.
+    """
+    return outcome.reason if isinstance(outcome, StageSkipped) else None
 
 
 def _not_reached(stage: str, dependency: str) -> StageSkipped:
@@ -1236,6 +1260,7 @@ def run_pipeline(
     visual_fps: float | None = None,
     visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
+    on_event: EventSink = discard,
     speaker_tracker: SpeakerSubjectTracker | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
@@ -1268,6 +1293,10 @@ def run_pipeline(
             skipped rather than silently sending the whole episode transcript to the GPU.
         judge: §3 Stage 4. Supply `GeminiJudge(...)` and the runner scores the top candidate
             itself rather than needing `verdict` handed to it.
+        on_event: called once when each stage starts and once when it ends. The default
+            discards, so every existing caller is unchanged. This is the only way anything
+            outside this function can learn what it is doing before it returns — an hour into
+            a 38-minute source, the return value is not yet a fact about anything.
         verdict: what §3 Stage 4 would have returned. The second stand-in, for the same reason
             as `transcript`: `Clip.assert_renderable` refuses a clip with no editorial block,
             because an unjudged clip has no meaning fidelity and no misleading-edit risk and
@@ -1300,12 +1329,15 @@ def run_pipeline(
         )
 
     work_dir.mkdir(parents=True, exist_ok=True)
+    log = RunEventLog(identifier, on_event)
 
     # --- §3 Stage 0 ----------------------------------------------------------------------
+    log.started("ingest")
     try:
         ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
     except (IngestError, OSError) as exc:
         return _ingest_failure_run(identifier, source, work_dir, exc)
+    log.finished("ingest")
 
     if transcript is not None:
         if transcript.media_sha256 is None:
@@ -1384,6 +1416,7 @@ def run_pipeline(
     # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
     # embedding". The segmenting is arithmetic over the cuts Stage 0 just found on this video,
     # so it runs now and is real; only the embedding itself waits on the model.
+    log.started("visual_windows")
     effective_visual_fps = (
         visual_fps
         if visual_fps is not None
@@ -1396,6 +1429,7 @@ def run_pipeline(
         fps=effective_visual_fps,
         max_frames=visual_max_frames,
     )
+    log.finished("visual_windows")
 
     run = PipelineRun(
         media_id=identifier,
@@ -1415,7 +1449,9 @@ def run_pipeline(
     )
     if asr_failure is not None:
         return replace(run, transcript=asr_failure)
+    log.started("transcript")
     if transcript is None:
+        log.finished("transcript", _STAGE_1_ASR.reason)
         return run
 
     # --- §3 Stage 1 (supplied) + §4.1 -----------------------------------------------------
@@ -1444,16 +1480,21 @@ def run_pipeline(
     # checked one line above — so the link survives a later release adding a transcript field.
     normalized = normalize_transcript(transcript, source_sha256=store.raw_digest(identifier))
     store.write_norm(normalized)
+    log.finished("transcript")
 
     # --- §4.2 sentence segmentation, against this run's own VAD ---------------------------
+    log.started("sentences")
     vad_pauses = _pauses_between(ingested)
     sentences = segment_sentences(transcript.words, vad_pauses=vad_pauses)
+    log.finished("sentences")
 
     # --- §3 Stage 2 (text half) -----------------------------------------------------------
+    log.started("index")
     # BM25 ranks passages, not a one-document episode. On the measured 38-minute transcript,
     # the old shape returned one 38.6-minute hit for every query; sentence documents produce
     # bounded windows and term rarity across 186 documents (D-164).
     index = Bm25Index.from_sentences(sentences, normalized)
+    log.finished("index")
 
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 
@@ -1466,6 +1507,7 @@ def run_pipeline(
     _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
 
     # --- §3 Stage 3, both paths -------------------------------------------------------------
+    log.started("discovery")
     merged: tuple[MergedCandidate, ...] = ()
     visual_result: VisualDiscoveryResult | None = None
     visual_skipped: StageSkipped | None = None
@@ -1485,6 +1527,10 @@ def run_pipeline(
         # proceed, and a verbal-only moment is the case the dual path exists to protect. When
         # a composer *is* supplied it retrieves and reranks before reading any scene.
         visual_candidates_tuple: tuple[Candidate, ...] = ()
+        # Reported only inside Stage 3, because outside it the visual index is genuinely never
+        # reached — the discovery skip below is the whole explanation, and a second event
+        # repeating it would suggest two independent stages declined.
+        log.started("visual_index")
         if visual_composer is not None:
             query_with_source = _visual_retrieval_query(normalized, verbal, visual_query)
             if query_with_source is None:
@@ -1520,6 +1566,9 @@ def run_pipeline(
                 _assert_source_unchanged(
                     source, ingested.source_sha256, "Path B visual retrieval completion"
                 )
+            log.finished("visual_index", visual_skipped.reason if visual_skipped else None)
+        else:
+            log.finished("visual_index", _STAGE_2_VISUAL.reason)
         merged = merge_candidates(list(verbal), list(visual_candidates_tuple))
         run = replace(
             run,
@@ -1528,6 +1577,9 @@ def run_pipeline(
             visual_index=visual_result or visual_skipped or _STAGE_2_VISUAL,
             visual_query_source=visual_query_source,
         )
+        log.finished("discovery", None if merged else _STAGE_3_NOTHING_FOUND.reason)
+    else:
+        log.finished("discovery", _STAGE_3_DISCOVERY.reason)
 
     if auto_select and not select_sentences and merged:
         automatic = _automatic_sentence_selection(merged, sentences)
@@ -1584,6 +1636,7 @@ def run_pipeline(
         )
 
     # --- §3 Stage 4 -----------------------------------------------------------------------
+    log.started("editorial")
     if judge is not None and merged and (not selected or selected_anchors is not None):
         assert selected_candidate is not None, "Stage 4's condition implies a chosen survivor"
         survivor = selected_candidate
@@ -1633,8 +1686,11 @@ def run_pipeline(
             judged = replace(judged, sv6d=survivor.sv6d)
         verdict = judged
         run = replace(run, editorial=None)
+    log.finished("editorial", _skip_reason(run.editorial))
 
+    log.started("boundary")
     if not select_sentences:
+        log.finished("boundary", _skip_reason(run.boundary))
         return run
 
     try:
@@ -1648,17 +1704,16 @@ def run_pipeline(
     # --- §3 Stage 5 boundary fusion -------------------------------------------------------
     anchors = selected_anchors
     if anchors is None:
-        return replace(
-            run,
-            boundary=StageSkipped(
-                stage="boundary",
-                reason=(
-                    "no complete sentence in the selection, so §5 has no anchor. Kurdish "
-                    "invariant #2 is reject, never render — a boundary invented here is how a "
-                    "clip that starts mid-sentence reaches a client."
-                ),
+        no_anchor = StageSkipped(
+            stage="boundary",
+            reason=(
+                "no complete sentence in the selection, so §5 has no anchor. Kurdish "
+                "invariant #2 is reject, never render — a boundary invented here is how a "
+                "clip that starts mid-sentence reaches a client."
             ),
         )
+        log.finished("boundary", no_anchor.reason)
+        return replace(run, boundary=no_anchor)
 
     anchor_in, anchor_out = anchors
     speaker_turn_start, speaker_turn_end = turn_bounds_for_anchors(
@@ -1751,19 +1806,18 @@ def run_pipeline(
     ]
     if uncaptioned:
         first = uncaptioned[0]
-        return replace(
-            run,
-            boundary=StageSkipped(
-                stage="boundary",
-                reason=(
-                    f"soft boundary expansion {boundary.final_in_ms}..{boundary.final_out_ms} ms "
-                    f"would include unselected speech beginning with {first.w!r} at "
-                    f"{first.start_ms}..{first.end_ms} ms. Rendering it would ship speech "
-                    "missing from the captions and clip transcript."
-                ),
-                blocked_by=("uncaptioned speech",),
+        would_ship_uncaptioned = StageSkipped(
+            stage="boundary",
+            reason=(
+                f"soft boundary expansion {boundary.final_in_ms}..{boundary.final_out_ms} ms "
+                f"would include unselected speech beginning with {first.w!r} at "
+                f"{first.start_ms}..{first.end_ms} ms. Rendering it would ship speech "
+                "missing from the captions and clip transcript."
             ),
+            blocked_by=("uncaptioned speech",),
         )
+        log.finished("boundary", would_ship_uncaptioned.reason)
+        return replace(run, boundary=would_ship_uncaptioned)
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
@@ -1890,24 +1944,25 @@ def run_pipeline(
         ),
         qc=_qc_with_measured_flags(qc, selected),
     )
-    run = replace(run, boundary=boundary, clip=clip)
+    run = replace(run, boundary=boundary, clip=clip, selected_sentences=tuple(selected))
+    log.finished("boundary")
 
     # --- §3 Stage 6 render ----------------------------------------------------------------
+    log.started("render")
     if verdict is None:
         # Not a shortcut around the gate — the gate's own conclusion, reached before spending
         # an encode on a clip that `assert_renderable` would refuse anyway.
-        return replace(
-            run,
-            render=StageSkipped(
-                stage="render",
-                reason=(
-                    "§3 Stage 4 did not run, so the clip has no editorial block and §2's "
-                    "render gate refuses it: an unjudged clip has no meaning fidelity and no "
-                    "misleading-edit risk. Supply a verdict to render."
-                ),
-                blocked_by=("Stage 4 verdict",),
+        unjudged = StageSkipped(
+            stage="render",
+            reason=(
+                "§3 Stage 4 did not run, so the clip has no editorial block and §2's "
+                "render gate refuses it: an unjudged clip has no meaning fidelity and no "
+                "misleading-edit risk. Supply a verdict to render."
             ),
+            blocked_by=("Stage 4 verdict",),
         )
+        log.finished("render", unjudged.reason)
+        return replace(run, render=unjudged)
 
     _, final_render, final_srt, final_edl, final_json = _delivery_artifact_paths(
         work_dir, clip.clip_id
@@ -1920,6 +1975,7 @@ def run_pipeline(
     try:
         clip.assert_renderable()
     except (ValueError, IncompleteSentence) as exc:
+        log.finished("render", str(exc))
         return replace(
             run,
             render=StageSkipped(
@@ -1994,6 +2050,7 @@ def run_pipeline(
                 f"{_safe_exception_text(str(cleanup_error), budget=512)}; original failure: "
                 f"{_safe_exception_text(str(exc), budget=512)}"
             )
+        log.finished("render", str(exc))
         return replace(
             run,
             render=StageSkipped(
@@ -2003,8 +2060,11 @@ def run_pipeline(
             ),
         )
 
+    log.finished("render")
+
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
     # Nothing is public yet: the render and all sidecars live in one private sibling directory.
+    log.started("delivery")
     try:
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         # Build all three before writing any. This used to write the JSON, then the SRT, then
@@ -2044,6 +2104,7 @@ def run_pipeline(
                 f"{_safe_exception_text(str(cleanup_error), budget=512)}; original failure: "
                 f"{_safe_exception_text(str(exc), budget=512)}"
             )
+        log.finished("delivery", str(exc))
         return replace(
             run,
             render=StageSkipped(
@@ -2061,6 +2122,7 @@ def run_pipeline(
             ),
         )
 
+    log.finished("delivery")
     rendered = replace(rendered, path=str(final_render))
     return replace(
         run,
@@ -2335,169 +2397,199 @@ def main(argv: list[str] | None = None) -> int:
         return _run_from_args(args, report_stream)
 
 
+def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> PipelineRun:
+    """Validate `args`, build every §3 producer they name, and run the pipeline.
+
+    Everything `_run_from_args` used to do between parsing and reporting, extracted so a second
+    caller can drive the identical producer wiring — the same `--gemini`/`--visual`/`--omni-asr`
+    branches, the same mutual-exclusion checks — without re-deriving any of it.
+    `durable_workflow.py`'s DBOS step is that second caller: it needs `on_event` wired to a
+    durable sink and it needs the same exceptions this raises (`_run_from_args` still catches
+    them; nothing about what is raised or when changed here, only where the try/except now
+    sits). D-A2.
+
+    The body is `main`'s, not this branch's: `main` kept editing this logic in place while this
+    branch had moved it, so the merge took `main`'s newer validation wholesale and re-added only
+    the `on_event` wiring the extraction exists for.
+
+    Raises:
+        Exactly what `run_pipeline` raises, plus `ValueError` for a combination of flags that
+        cannot produce a coherent run.
+    """
+    if args.transcript and args.omni_asr:
+        raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
+    if (
+        args.omni_asr_runtime != "auto" or args.wsl_distro or args.omni_asr_adapter
+    ) and not args.omni_asr:
+        raise ValueError(
+            "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr"
+        )
+    if args.gemini and args.vertex_project:
+        raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
+    if (args.gemini or args.vertex_project) and args.verdict:
+        raise ValueError("cloud judging and --verdict are mutually exclusive Stage 4 sources")
+    if (args.gemini or args.vertex_project) and not (args.transcript or args.omni_asr):
+        raise ValueError("cloud discovery requires --transcript or --omni-asr")
+    if args.sentences and not (args.transcript or args.omni_asr):
+        raise ValueError("--sentences requires --transcript or --omni-asr")
+    if args.verdict and (not (args.transcript or args.omni_asr) or not args.sentences):
+        raise ValueError("--verdict requires a Stage 1 source and --sentences")
+    if args.visual and not (args.transcript or args.omni_asr):
+        raise ValueError("--visual requires --transcript or --omni-asr")
+    if args.visual_query is not None and not args.visual:
+        raise ValueError("--visual-query requires --visual")
+    if args.visual_query is not None and not normalize_sorani(args.visual_query).strip():
+        raise ValueError("--visual-query must contain non-whitespace Sorani retrieval text")
+    if args.visual and not (args.visual_query or args.gemini or args.vertex_project):
+        raise ValueError("--visual without Path A requires --visual-query")
+    if args.qc_pass and not (args.sentences or args.auto_select):
+        raise ValueError("--qc-pass requires --sentences or --auto-select")
+    visual_query = args.visual_query.strip() if args.visual_query is not None else ""
+    # Path B is a producer only when it has something to retrieve against. `--visual`
+    # alone plans windows but cannot rank or surface one, so accepting it for auto-selection
+    # pays all of Stage 0 for an outcome argv already proves impossible. Path A can either
+    # produce directly or anchor the optional Path B query. D-177.
+    stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
+        args.visual and visual_query
+    )
+    if args.auto_select and not stage_3_can_produce:
+        raise ValueError(
+            "--auto-select needs a Stage 3 producer that can actually produce: "
+            "--gemini/--vertex-project for Path A, or --visual with --visual-query so "
+            "Stage 2 has something to retrieve against. --visual alone cannot rank a "
+            "window."
+        )
+    if args.auto_select and not (args.transcript or args.omni_asr):
+        raise ValueError("--auto-select requires --transcript or --omni-asr")
+    if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
+        raise ValueError("--timelens and --face-reframe require --sentences or --auto-select")
+    if (args.confidential or args.zero_data_retention or args.zdr_confirmed_by) and not (
+        args.gemini or args.vertex_project
+    ):
+        raise ValueError("governance flags apply only with a Gemini or Vertex route")
+
+    transcript = (
+        RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
+        if args.transcript
+        else None
+    )
+    verdict = _load_persisted_verdict(args.verdict) if args.verdict else None
+    selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
+
+    discover = None
+    judge = None
+    governance = None
+    if args.gemini or args.vertex_project:
+        from hawedit.gemini import GeminiJudge, Governance, VertexGeminiJudge
+        from hawedit.path_a import PathADiscovery
+
+        governance = Governance(
+            confidential=args.confidential,
+            zero_data_retention=args.zero_data_retention,
+            confirmed_by=args.zdr_confirmed_by,
+        )
+        judge = (
+            VertexGeminiJudge(
+                args.vertex_project,
+                location=args.vertex_location,
+                governance=governance,
+            )
+            if args.vertex_project
+            else GeminiJudge(governance=governance)
+        )
+        path_a = PathADiscovery(client=judge)
+        discover = path_a.discover
+
+    canonical_asr = None
+    if args.omni_asr:
+        from hawedit.asr import create_omni_asr_producer
+
+        canonical_asr = create_omni_asr_producer(
+            args.omni_asr_runtime,
+            distro=args.wsl_distro,
+            lora_adapter=args.omni_asr_adapter,
+        )
+
+    assert_devices_available(
+        {
+            **({"the Path B reader": args.visual_device} if args.visual else {}),
+            **({"Stage 2 indexing": args.index_device} if args.visual else {}),
+            **({"TimeLens2": args.timelens_device} if args.timelens else {}),
+        }
+    )
+
+    visual_composer = None
+    if args.visual:
+        visual_composer = build_visual_composer(args)
+
+    temporal_grounder = None
+    if args.timelens:
+        from hawedit.models import ModelStore
+        from hawedit.registry import REGISTRY
+        from hawedit.video_grounding import TimeLens2Grounder
+        from hawedit.video_input import extract_window_frames
+
+        temporal_grounder = TimeLens2Grounder(
+            ModelStore().path_for(REGISTRY["MCG-NJU/TimeLens2-4B"]),
+            lambda window: extract_window_frames(
+                args.source,
+                window,
+                args.work_dir / "timelens" / "frames" / window.window_id.replace(":", "_"),
+            ),
+            device=args.timelens_device,
+        )
+
+    subject_tracker = None
+    if args.face_reframe:
+        from hawedit.reframe import OpenCvFaceTracker
+
+        subject_tracker = OpenCvFaceTracker()
+
+    return run_pipeline(
+        args.source,
+        args.work_dir,
+        media_id=args.media_id,
+        transcript=transcript,
+        asr=canonical_asr,
+        select_sentences=selection,
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=True) if args.qc_pass else None,
+        verdict=verdict,
+        discover=discover,
+        visual_composer=visual_composer,
+        visual_query=args.visual_query,
+        judge=judge,
+        temporal_grounder=temporal_grounder,
+        subject_tracker=subject_tracker,
+        auto_select=args.auto_select,
+        visual_fps=args.visual_fps,
+        visual_max_frames=args.visual_max_frames,
+        on_event=on_event,
+    )
+
+
+# `_build_and_run` raises through here; the CLI is the one caller that turns a raised exception
+# into a printed line and an exit code rather than propagating it, so the catch stays here and
+# not inside `_build_and_run` — a second caller (`durable.py`) needs the exception itself, not
+# stderr and a 2.
+_BUILD_ERRORS = (
+    CredentialError,
+    FileExistsError,
+    FileNotFoundError,
+    GeminiUnavailable,
+    IngestError,
+    KeyError,
+    RawTranscriptImmutable,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
 def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
     """Everything after argument parsing. `report_stream` is where the one document goes."""
     try:
-        if args.transcript and args.omni_asr:
-            raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
-        if (
-            args.omni_asr_runtime != "auto" or args.wsl_distro or args.omni_asr_adapter
-        ) and not args.omni_asr:
-            raise ValueError(
-                "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr"
-            )
-        if args.gemini and args.vertex_project:
-            raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
-        if (args.gemini or args.vertex_project) and args.verdict:
-            raise ValueError("cloud judging and --verdict are mutually exclusive Stage 4 sources")
-        if (args.gemini or args.vertex_project) and not (args.transcript or args.omni_asr):
-            raise ValueError("cloud discovery requires --transcript or --omni-asr")
-        if args.sentences and not (args.transcript or args.omni_asr):
-            raise ValueError("--sentences requires --transcript or --omni-asr")
-        if args.verdict and (not (args.transcript or args.omni_asr) or not args.sentences):
-            raise ValueError("--verdict requires a Stage 1 source and --sentences")
-        if args.visual and not (args.transcript or args.omni_asr):
-            raise ValueError("--visual requires --transcript or --omni-asr")
-        if args.visual_query is not None and not args.visual:
-            raise ValueError("--visual-query requires --visual")
-        if args.visual_query is not None and not normalize_sorani(args.visual_query).strip():
-            raise ValueError("--visual-query must contain non-whitespace Sorani retrieval text")
-        if args.visual and not (args.visual_query or args.gemini or args.vertex_project):
-            raise ValueError("--visual without Path A requires --visual-query")
-        if args.qc_pass and not (args.sentences or args.auto_select):
-            raise ValueError("--qc-pass requires --sentences or --auto-select")
-        visual_query = args.visual_query.strip() if args.visual_query is not None else ""
-        # Path B is a producer only when it has something to retrieve against. `--visual`
-        # alone plans windows but cannot rank or surface one, so accepting it for auto-selection
-        # pays all of Stage 0 for an outcome argv already proves impossible. Path A can either
-        # produce directly or anchor the optional Path B query. D-177.
-        stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
-            args.visual and visual_query
-        )
-        if args.auto_select and not stage_3_can_produce:
-            raise ValueError(
-                "--auto-select needs a Stage 3 producer that can actually produce: "
-                "--gemini/--vertex-project for Path A, or --visual with --visual-query so "
-                "Stage 2 has something to retrieve against. --visual alone cannot rank a "
-                "window."
-            )
-        if args.auto_select and not (args.transcript or args.omni_asr):
-            raise ValueError("--auto-select requires --transcript or --omni-asr")
-        if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
-            raise ValueError("--timelens and --face-reframe require --sentences or --auto-select")
-        if (args.confidential or args.zero_data_retention or args.zdr_confirmed_by) and not (
-            args.gemini or args.vertex_project
-        ):
-            raise ValueError("governance flags apply only with a Gemini or Vertex route")
-
-        transcript = (
-            RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
-            if args.transcript
-            else None
-        )
-        verdict = _load_persisted_verdict(args.verdict) if args.verdict else None
-        selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
-
-        discover = None
-        judge = None
-        governance = None
-        if args.gemini or args.vertex_project:
-            from hawedit.gemini import GeminiJudge, Governance, VertexGeminiJudge
-            from hawedit.path_a import PathADiscovery
-
-            governance = Governance(
-                confidential=args.confidential,
-                zero_data_retention=args.zero_data_retention,
-                confirmed_by=args.zdr_confirmed_by,
-            )
-            judge = (
-                VertexGeminiJudge(
-                    args.vertex_project,
-                    location=args.vertex_location,
-                    governance=governance,
-                )
-                if args.vertex_project
-                else GeminiJudge(governance=governance)
-            )
-            path_a = PathADiscovery(client=judge)
-            discover = path_a.discover
-
-        canonical_asr = None
-        if args.omni_asr:
-            from hawedit.asr import create_omni_asr_producer
-
-            canonical_asr = create_omni_asr_producer(
-                args.omni_asr_runtime,
-                distro=args.wsl_distro,
-                lora_adapter=args.omni_asr_adapter,
-            )
-
-        assert_devices_available(
-            {
-                **({"the Path B reader": args.visual_device} if args.visual else {}),
-                **({"Stage 2 indexing": args.index_device} if args.visual else {}),
-                **({"TimeLens2": args.timelens_device} if args.timelens else {}),
-            }
-        )
-
-        visual_composer = None
-        if args.visual:
-            visual_composer = build_visual_composer(args)
-
-        temporal_grounder = None
-        if args.timelens:
-            from hawedit.models import ModelStore
-            from hawedit.registry import REGISTRY
-            from hawedit.video_grounding import TimeLens2Grounder
-            from hawedit.video_input import extract_window_frames
-
-            temporal_grounder = TimeLens2Grounder(
-                ModelStore().path_for(REGISTRY["MCG-NJU/TimeLens2-4B"]),
-                lambda window: extract_window_frames(
-                    args.source,
-                    window,
-                    args.work_dir / "timelens" / "frames" / window.window_id.replace(":", "_"),
-                ),
-                device=args.timelens_device,
-            )
-
-        subject_tracker = None
-        if args.face_reframe:
-            from hawedit.reframe import OpenCvFaceTracker
-
-            subject_tracker = OpenCvFaceTracker()
-
-        run = run_pipeline(
-            args.source,
-            args.work_dir,
-            media_id=args.media_id,
-            transcript=transcript,
-            asr=canonical_asr,
-            select_sentences=selection,
-            qc=Qc(auto_pass=False, flags=(), human_reviewed=True) if args.qc_pass else None,
-            verdict=verdict,
-            discover=discover,
-            visual_composer=visual_composer,
-            visual_query=args.visual_query,
-            judge=judge,
-            temporal_grounder=temporal_grounder,
-            subject_tracker=subject_tracker,
-            auto_select=args.auto_select,
-            visual_fps=args.visual_fps,
-            visual_max_frames=args.visual_max_frames,
-        )
-    except (
-        CredentialError,
-        FileExistsError,
-        FileNotFoundError,
-        GeminiUnavailable,
-        IngestError,
-        KeyError,
-        RawTranscriptImmutable,
-        RuntimeError,
-        TypeError,
-        ValueError,
-    ) as exc:
+        run = _build_and_run(args)
+    except _BUILD_ERRORS as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2
 
