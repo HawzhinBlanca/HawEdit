@@ -47,13 +47,21 @@ import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, fields, replace
+from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TextIO
+from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
-from hawedit.captions import CaptionStyle, build_ass
+from hawedit.captions import (
+    POPUP_MAX_CHARS,
+    POPUP_MAX_WORDS,
+    VIRAL_FONT_SIZE,
+    VIRAL_THEME,
+    CaptionStyle,
+    build_ass,
+)
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
 from hawedit.credentials import CredentialError
@@ -79,6 +87,7 @@ from hawedit.ingest import (
     probe_stream,
 )
 from hawedit.judge import (
+    MAX_PERSISTED_VERDICT_BYTES,
     EditorialJudge,
     JudgeRequest,
     JudgeVerdict,
@@ -94,9 +103,17 @@ from hawedit.reframe import (
     SpeakerAssociationError,
     SpeakerSubjectTracker,
     SubjectTracker,
+    stabilize,
     validate_speaker_focus_points,
 )
-from hawedit.render import Reframe, RenderError, RenderResult, frame_rate, render_clip
+from hawedit.render import (
+    Reframe,
+    RenderError,
+    RenderResult,
+    frame_rate,
+    render_clip,
+    vertical_crop_size,
+)
 from hawedit.sentences import (
     Sentence,
     UndeliverableOrder,
@@ -629,6 +646,19 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _assert_source_unchanged(source: Path, expected_sha256: str, boundary: str) -> None:
+    """Refuse when a later pixel consumer would reopen different source bytes."""
+    try:
+        actual = _file_digest(source)
+    except OSError as exc:
+        raise ValueError(f"cannot verify source media before {boundary}: {exc}") from exc
+    if actual != expected_sha256:
+        raise ValueError(
+            f"source media changed before {boundary}: Stage 0 measured {expected_sha256}, "
+            f"but the current bytes hash to {actual}"
+        )
+
+
 def _operational_failure(stage: str, component: str, exc: Exception) -> StageSkipped:
     """A known runtime/domain refusal, retaining its concrete cause in the run report."""
     detail = _safe_exception_text(str(exc), budget=1_024)
@@ -744,6 +774,50 @@ def _release_grounder_after_use(component: object) -> Iterator[None]:
                     "TimeLens cleanup failed after inference: "
                     f"{type(exc).__name__}: {_safe_exception_text(str(exc), 384)}"
                 ) from exc
+
+
+# Above this, a hole between two selected sentences stops reading as a beat and starts
+# reading as a fault in the file. §4.2 already knows where the speaker stopped, from the same
+# VAD this run measured; nothing was looking at how long they stopped for.
+MAX_INTERNAL_SILENCE_MS: Final = 1_500
+
+
+def dead_air_flags(
+    selected: Sequence[Sentence], limit_ms: int = MAX_INTERNAL_SILENCE_MS
+) -> tuple[str, ...]:
+    """Name every silent hole inside the cut, as §5 `qc.flags` entries.
+
+    Not a refusal. A two-second pause before a punchline is editing; a six-second one is a
+    clip nobody watched before shipping, and the difference is a judgement a person makes.
+    What was wrong was that nothing measured it at all — `qc.flags` was constructed empty on
+    every run, so §2's gate had no automated finding to put in front of the human it gates on.
+
+    Measured on the real 38-minute source: a contiguous six-sentence selection carried a
+    5,990 ms hole, and the rendered clip sat silent for six of its fifty-six seconds with
+    every check in this pipeline green.
+
+    Raises:
+        ValueError: `limit_ms` is negative.
+    """
+    if limit_ms < 0:
+        raise ValueError("dead-air limit must be non-negative")
+    return tuple(
+        f"dead_air:{earlier.end_ms}-{later.start_ms}ms"
+        for earlier, later in pairwise(selected)
+        if later.start_ms - earlier.end_ms > limit_ms
+    )
+
+
+def _qc_with_measured_flags(qc: Qc | None, selected: Sequence[Sentence]) -> Qc | None:
+    """Fold this run's automated findings into the QC record the clip will carry."""
+    if qc is None:
+        return None
+    flags = dead_air_flags(selected)
+    if not flags:
+        return qc
+    # `auto_pass` cannot stay true beside a finding: it is the field that says automation had
+    # no objection. `human_reviewed` is untouched — only a person may set that.
+    return replace(qc, auto_pass=False, flags=tuple(dict.fromkeys((*qc.flags, *flags))))
 
 
 def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
@@ -1075,6 +1149,21 @@ def _vad_onset_for_anchor(
     return min(overlapping, key=lambda segment: segment.start_ms).start_ms if overlapping else None
 
 
+def _steady_camera(
+    points: tuple[FocusPoint, ...], source: Path, ffmpeg: Path | None
+) -> tuple[FocusPoint, ...]:
+    """Hold the camera still between real moves, at a dead zone sized to the visible crop.
+
+    A tracker's own output is a per-sample position, and feeding it straight to the crop moved
+    the frame every half second for the whole clip. The dead zone is a tenth of the crop width
+    — wide enough that a speaker shifting in their chair does not move the camera, narrow
+    enough that standing up does.
+    """
+    width, height = _proxy_dimensions(source, ffmpeg)
+    crop_w, _ = vertical_crop_size(width, height)
+    return stabilize(points, dead_zone_px=max(1, crop_w // 10))
+
+
 def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
     """The clip's id, derived in exactly one place.
 
@@ -1250,6 +1339,19 @@ def run_pipeline(
         return _ingest_failure_run(identifier, source, work_dir, exc)
     log.finished("ingest")
 
+    if transcript is not None:
+        if transcript.media_sha256 is None:
+            raise ValueError(
+                "supplied transcript has no source-media SHA-256; this legacy artifact cannot be "
+                "matched to this source video's bytes. Regenerate it from this media."
+            )
+        if transcript.media_sha256 != ingested.source_sha256:
+            raise ValueError(
+                f"supplied transcript was created for source media SHA-256 "
+                f"{transcript.media_sha256}, "
+                f"but {source} hashes to {ingested.source_sha256}"
+            )
+
     diarization_stage: StageSkipped | None = _STAGE_0_DIARIZATION
     if diarizer is not None:
         try:
@@ -1283,7 +1385,7 @@ def run_pipeline(
         if model_identity:
             producer_id = f"{producer_id}+{model_identity}"
         reused = TranscriptStore(work_dir / "transcripts").reusable_raw(
-            identifier, audio_digest, producer_id
+            identifier, audio_digest, producer_id, ingested.source_sha256
         )
         transcript = reused
         if transcript is None:
@@ -1301,6 +1403,14 @@ def run_pipeline(
             raise ValueError(
                 f"canonical ASR returned media_id {transcript.media_id!r} for {identifier!r}"
             )
+        if transcript is not None:
+            if transcript.media_sha256 is None:
+                transcript = replace(transcript, media_sha256=ingested.source_sha256)
+            elif transcript.media_sha256 != ingested.source_sha256:
+                raise ValueError(
+                    "canonical ASR returned a transcript bound to media SHA-256 "
+                    f"{transcript.media_sha256}, not {ingested.source_sha256}"
+                )
 
     # --- §3 Stage 2 (visual half, the part that needs no weights) --------------------------
     # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
@@ -1435,6 +1545,7 @@ def run_pipeline(
                 )
             else:
                 query, visual_query_source = query_with_source
+                _assert_source_unchanged(source, ingested.source_sha256, "Path B visual retrieval")
                 try:
                     visual_result = visual_composer.discover(
                         source,
@@ -1452,6 +1563,9 @@ def run_pipeline(
                     )
                 else:
                     visual_candidates_tuple = visual_result.candidates
+                _assert_source_unchanged(
+                    source, ingested.source_sha256, "Path B visual retrieval completion"
+                )
             log.finished("visual_index", visual_skipped.reason if visual_skipped else None)
         else:
             log.finished("visual_index", _STAGE_2_VISUAL.reason)
@@ -1532,6 +1646,7 @@ def run_pipeline(
             else survivor
         )
         candidate_work_component = _candidate_work_component(request_candidate.candidate_id)
+        _assert_source_unchanged(source, ingested.source_sha256, "Stage 4 keyframe extraction")
         try:
             judge_frames = (
                 extract_judge_frames(
@@ -1549,6 +1664,9 @@ def run_pipeline(
                 run,
                 editorial=_operational_failure("editorial", "Stage 4 keyframe extraction", exc),
             )
+        _assert_source_unchanged(
+            source, ingested.source_sha256, "Stage 4 keyframe extraction completion"
+        )
         request = JudgeRequest.for_survivor(
             request_candidate,
             text_ckb=_candidate_slice_text(
@@ -1628,6 +1746,7 @@ def run_pipeline(
                 f"no visual window overlaps the Stage 5 span {temporal_span[0]}.."
                 f"{temporal_span[1]} ms"
             )
+        _assert_source_unchanged(source, ingested.source_sha256, "TimeLens grounding")
         try:
             with _release_grounder_after_use(temporal_grounder):
                 timelens_intervals = temporal_grounder.ground_all(
@@ -1639,6 +1758,7 @@ def run_pipeline(
                 run,
                 boundary=_operational_failure("boundary", "TimeLens temporal grounding", exc),
             )
+        _assert_source_unchanged(source, ingested.source_sha256, "TimeLens grounding completion")
         timelens_interval = interval_for_fusion(
             timelens_intervals, anchor_in, anchor_out, identifier
         )
@@ -1737,6 +1857,7 @@ def run_pipeline(
                 ),
             )
         try:
+            _assert_source_unchanged(source, ingested.source_sha256, "speaker/face association")
             speaker_points = speaker_tracker.track_speakers(
                 source,
                 boundary.final_in_ms,
@@ -1749,6 +1870,9 @@ def run_pipeline(
                 boundary=boundary,
                 render=_operational_failure("render", "speaker/face association", exc),
             )
+        _assert_source_unchanged(
+            source, ingested.source_sha256, "speaker/face association completion"
+        )
         try:
             focus_points = validate_speaker_focus_points(
                 speaker_points,
@@ -1763,9 +1887,11 @@ def run_pipeline(
                 render=_operational_failure("render", "speaker/face association", exc),
             )
         if focus_points:
+            focus_points = _steady_camera(focus_points, source, ffmpeg)
             reframe_mode = Reframe.SPEAKER_TRACKED
 
     if not focus_points and subject_tracker is not None:
+        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
         try:
             focus_points = subject_tracker.track(
                 source, boundary.final_in_ms, boundary.final_out_ms
@@ -1776,7 +1902,9 @@ def run_pipeline(
                 boundary=boundary,
                 render=_operational_failure("render", "requested subject tracking", exc),
             )
+        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
         if focus_points:
+            focus_points = _steady_camera(focus_points, source, ffmpeg)
             reframe_mode = Reframe.FACE_TRACKED
 
     crop_target = {
@@ -1787,6 +1915,7 @@ def run_pipeline(
     clip = Clip(
         clip_id=_clip_id(identifier, select_sentences),
         media_id=identifier,
+        media_sha256=ingested.source_sha256,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         # §3 Stage 3 discovers candidates and did not run. VERBAL records where this clip
@@ -1813,7 +1942,7 @@ def run_pipeline(
             if verdict is not None
             else None
         ),
-        qc=qc,
+        qc=_qc_with_measured_flags(qc, selected),
     )
     run = replace(run, boundary=boundary, clip=clip, selected_sentences=tuple(selected))
     log.finished("boundary")
@@ -1842,6 +1971,7 @@ def run_pipeline(
     # stages, this one runs immediately before the first write. Anything that appeared in the
     # work directory while the models were running is still caught here.
     _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
+    _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render")
     try:
         clip.assert_renderable()
     except (ValueError, IncompleteSentence) as exc:
@@ -1882,9 +2012,19 @@ def run_pipeline(
             # nothing — a playable MP4 with no captions and no error.
             build_ass(
                 selected,
+                font_size=VIRAL_FONT_SIZE,
                 style=CaptionStyle.WORD_HIGHLIGHT,
                 clip_in_ms=clip.in_ms,
                 clip_duration_ms=clip.out_ms - clip.in_ms,
+                # Not a taste setting, and so not a flag. Every clip this runner produces is
+                # a vertical social cut, and the library defaults are built for a subtitle
+                # track being proofread: 140 px of bottom margin puts Kurdish text under the
+                # platform's own UI, and one event per sentence puts a seven-line paragraph
+                # on screen for fifteen seconds. Both were true of every clip shipped before
+                # this line existed. D-247.
+                theme=VIRAL_THEME,
+                max_chars_per_line=POPUP_MAX_CHARS,
+                max_words_per_event=POPUP_MAX_WORDS,
             ),
         )
         width, height = _proxy_dimensions(source, ffmpeg)
@@ -1900,6 +2040,7 @@ def run_pipeline(
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
         )
+        _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:
         try:
             bundle.discard()
@@ -1925,6 +2066,7 @@ def run_pipeline(
     # Nothing is public yet: the render and all sidecars live in one private sibling directory.
     log.started("delivery")
     try:
+        _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         # Build all three before writing any. This used to write the JSON, then the SRT, then
         # build the EDL — formerly an NTSC 29.97 fps source legitimately refused because
         # drop-frame support did not exist. The build-first ordering remains load-bearing for
@@ -1944,8 +2086,16 @@ def run_pipeline(
         bundle.write_text("json", editing_json)
         bundle.write_text("srt", srt)
         bundle.write_text("edl", edl)
+        _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         bundle.publish()
-    except (DeliveryError, UndeliverableOrder, RenderError, BundleError, OSError) as exc:
+    except (
+        DeliveryError,
+        UndeliverableOrder,
+        RenderError,
+        BundleError,
+        OSError,
+        ValueError,
+    ) as exc:
         try:
             bundle.discard()
         except BundleError as cleanup_error:
@@ -2209,6 +2359,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_persisted_verdict(path: Path) -> JudgeVerdict:
+    """Read one local verdict within the same byte budget as a live provider response."""
+    try:
+        with path.open("rb") as stream:
+            payload = stream.read(MAX_PERSISTED_VERDICT_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"cannot read persisted verdict {path}: {exc}") from exc
+    if len(payload) > MAX_PERSISTED_VERDICT_BYTES:
+        raise ValueError(
+            f"persisted verdict exceeds {MAX_PERSISTED_VERDICT_BYTES} bytes; refusing "
+            "oversized Stage 4 evidence"
+        )
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"persisted verdict is not valid UTF-8: {exc}") from exc
+    return JudgeVerdict.from_json(text)
+
+
 def main(argv: list[str] | None = None) -> int:
     """`python -m hawedit.pipeline <video> [--transcript t.json] [--sentences 0,1]`.
 
@@ -2304,11 +2473,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         if args.transcript
         else None
     )
-    verdict = (
-        JudgeVerdict.from_dict(json.loads(args.verdict.read_text(encoding="utf-8")))
-        if args.verdict
-        else None
-    )
+    verdict = _load_persisted_verdict(args.verdict) if args.verdict else None
     selection = tuple(int(i) for i in args.sentences.split(",")) if args.sentences else ()
 
     discover = None
@@ -2486,10 +2651,28 @@ def _print_report(run: PipelineRun) -> None:
             f"stage 3 {ran['candidates']} candidate(s) [{by_path}] · "
             f"{len(run.rejected)} rejected{f' [{rejected}]' if rejected else ''}"
         )
+    # Stage 1 scores its own output and nothing said so. Measured on the real 38-minute
+    # source: `select_for_validation` escalated 294 of 545 segments — 54% of the transcript —
+    # because the LLM and CTC arms disagree past the CER threshold, and the run printed a clean
+    # fourteen-line report. The finding existed only in `--json`, which is not what the
+    # documented invocation produces. §1: fail visible, not silent.
+    if run.escalation:
+        escalated = sum(1 for decision in run.escalation if decision.escalate)
+        if escalated:
+            share = 100 * escalated / len(run.escalation)
+            print(
+                f"stage 1 {escalated}/{len(run.escalation)} segment(s) ({share:.0f}%) escalated "
+                f"for human validation — {run.escalation[0].reason}"
+            )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")
     if run.clip is not None:
         print(f"stage 5 clip {run.clip.in_ms}..{run.clip.out_ms} ms")
+    # §2 gates on a human, and a human reads this. A measured finding that appears only in
+    # `--json` is a finding the documented invocation hides.
+    if run.clip is not None and run.clip.qc is not None and run.clip.qc.flags:
+        for flag in run.clip.qc.flags:
+            print(f"QC FLAG {flag}")
     if run.render is not None and not isinstance(run.render, StageSkipped):
         print(f"stage 6 {run.render.path} ({run.render.width}x{run.render.height})")
     for name, skip in run.skipped():

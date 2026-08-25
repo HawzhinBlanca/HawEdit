@@ -35,6 +35,7 @@ it as one input among five is what keeps a visual model from silently truncating
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -52,6 +53,75 @@ def _strict_bool(value: object, field: str) -> bool:
             f"{field} must be a JSON boolean, got {type(value).__name__} {value!r}. "
             f"Coercing it would let the string 'false' read as true."
         )
+    return value
+
+
+def _json_object_fields(
+    value: object,
+    *,
+    field: str,
+    required: frozenset[str],
+    optional: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Return one exact JSON object without silently discarding producer constraints."""
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise ValueError(f"{field} must be a JSON object with string keys")
+    keys = set(value)
+    missing = sorted(required - keys)
+    extra = sorted(keys - required - optional)
+    if missing or extra:
+        raise ValueError(f"{field} has invalid fields; missing={missing}, extra={extra}")
+    return value
+
+
+def _strict_json_int(value: object, field: str, *, minimum: int | None = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be a JSON integer, got {value!r} ({type(value).__name__})")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{field} must be at least {minimum}, got {value}")
+    return value
+
+
+def _strict_json_number(
+    value: object,
+    field: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or (isinstance(value, float) and not math.isfinite(value))
+    ):
+        raise ValueError(
+            f"{field} must be a finite JSON number, got {value!r} ({type(value).__name__})"
+        )
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{field} must be at least {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{field} must be at most {maximum}, got {value}")
+    try:
+        return float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{field} must fit a finite JSON number") from exc
+
+
+def _strict_json_string(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a JSON string, got {value!r} ({type(value).__name__})")
+    return value
+
+
+def _strict_optional_json_string(value: object, field: str) -> str | None:
+    if value is None:
+        return None
+    return _strict_json_string(value, field)
+
+
+def _strict_json_array(value: object, field: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a JSON array")
     return value
 
 
@@ -136,16 +206,52 @@ class Boundary:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Boundary:
-        """Rebuild from §5 JSON. Does **not** validate — call the render gate explicitly."""
+        """Rebuild exact §5 JSON shape; relational validity remains the render gate's job."""
+        fields = _json_object_fields(
+            data,
+            field="boundary",
+            required=frozenset(
+                {
+                    "anchor_in_ms",
+                    "anchor_out_ms",
+                    "final_in_ms",
+                    "final_out_ms",
+                    "sentence_complete",
+                }
+            ),
+            optional=frozenset({"in_extended_by", "out_extended_by", "confidence"}),
+        )
+        raw_confidence = fields.get("confidence")
         return Boundary(
-            anchor_in_ms=int(data["anchor_in_ms"]),
-            anchor_out_ms=int(data["anchor_out_ms"]),
-            final_in_ms=int(data["final_in_ms"]),
-            final_out_ms=int(data["final_out_ms"]),
-            in_extended_by=data.get("in_extended_by"),
-            out_extended_by=data.get("out_extended_by"),
-            sentence_complete=_strict_bool(data["sentence_complete"], "sentence_complete"),
-            confidence=data.get("confidence"),
+            anchor_in_ms=_strict_json_int(
+                fields["anchor_in_ms"], "boundary.anchor_in_ms", minimum=0
+            ),
+            anchor_out_ms=_strict_json_int(
+                fields["anchor_out_ms"], "boundary.anchor_out_ms", minimum=0
+            ),
+            final_in_ms=_strict_json_int(fields["final_in_ms"], "boundary.final_in_ms", minimum=0),
+            final_out_ms=_strict_json_int(
+                fields["final_out_ms"], "boundary.final_out_ms", minimum=0
+            ),
+            in_extended_by=_strict_optional_json_string(
+                fields.get("in_extended_by"), "boundary.in_extended_by"
+            ),
+            out_extended_by=_strict_optional_json_string(
+                fields.get("out_extended_by"), "boundary.out_extended_by"
+            ),
+            sentence_complete=_strict_bool(
+                fields["sentence_complete"], "boundary.sentence_complete"
+            ),
+            confidence=(
+                None
+                if raw_confidence is None
+                else _strict_json_number(
+                    raw_confidence,
+                    "boundary.confidence",
+                    minimum=0.0,
+                    maximum=1.0,
+                )
+            ),
         )
 
 

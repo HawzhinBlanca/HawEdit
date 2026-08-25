@@ -14,6 +14,7 @@ from hawedit.reframe import (
     SpeakerAssociationError,
     SpeakerFocusPoint,
     choose_face,
+    stabilize,
     validate_speaker_focus_points,
 )
 
@@ -163,17 +164,23 @@ def test_a_non_positive_or_infinite_sampling_rate_is_refused() -> None:
             OpenCvFaceTracker(sample_fps=bad)
 
 
-def test_a_smoothing_window_below_one_is_refused() -> None:
-    """`history[-self.smoothing:]` at reframe.py:95 is the bounded window.
+def test_the_tracker_reports_detected_centres_and_never_an_average_of_two_faces() -> None:
+    """The running mean this replaced could only ever be wrong on the material that matters.
 
-    Python reads `history[-0:]` as the whole list, so a smoothing of 0 does not mean "no
-    smoothing" — it silently means "average every face centre seen so far in this clip", and the
-    crop centre burned into the encode is wrong in a way no frame looks wrong on its own.
+    An interview is two people facing each other. When detection alternates between a face at
+    145 and one at 495, the mean of the two is 320 — the empty window *between* the speakers,
+    where there is no face at all, and the crop lands on the set dressing. Measured on the real
+    38-minute source, that is exactly what shipped.
+
+    Smoothing still happens, in `stabilize`, using a median: a median of observed positions is
+    always a position something was observed at, and no mean has that property.
     """
-    for bad in (0, -1):
-        with pytest.raises(ValueError, match="smoothing window must be positive"):
-            OpenCvFaceTracker(smoothing=bad)
-    assert OpenCvFaceTracker(smoothing=1).smoothing == 1
+    assert not hasattr(OpenCvFaceTracker(), "smoothing"), "the averaging knob is gone"
+
+    two_shot = (FocusPoint(0, 145), FocusPoint(500, 495), FocusPoint(1_000, 145))
+    committed = {point.center_x for point in stabilize(two_shot, dead_zone_px=20, settle_ms=1)}
+    assert 320 not in committed, "the empty middle is never a camera position"
+    assert committed <= {145, 495}, "every camera position is one a face was detected at"
 
 
 def test_a_reframe_span_with_no_duration_is_refused() -> None:
@@ -224,3 +231,70 @@ def test_a_source_opencv_cannot_open_is_refused_rather_than_read_as_no_face(
     _install_fake_cv2(monkeypatch, capture_opened=False)
     with pytest.raises(RuntimeError, match="could not open"):
         OpenCvFaceTracker().track(FIXTURE, 0, 1_000)
+
+
+def _track(*centers: int, step_ms: int = 500, start_ms: int = 0) -> tuple[FocusPoint, ...]:
+    return tuple(
+        FocusPoint(start_ms + index * step_ms, center) for index, center in enumerate(centers)
+    )
+
+
+def test_stabilize_holds_through_detector_wobble() -> None:
+    """A face that jitters inside the dead zone must not move the camera at all.
+
+    This is the defect the whole function exists for: `OpenCvFaceTracker` samples twice a
+    second, and passing its raw output to the crop moved the frame twice a second.
+    """
+    wobble = _track(500, 508, 494, 511, 497, 505)
+    assert stabilize(wobble, dead_zone_px=60) == (FocusPoint(0, 500), FocusPoint(2_500, 500))
+
+
+def test_stabilize_commits_a_sustained_move_as_two_keyframes() -> None:
+    """A real move becomes hold-end plus move-end, which is a ramp once interpolated."""
+    moved = _track(500, 500, 900, 910, 905, 900)
+    keyframes = stabilize(moved, dead_zone_px=60, move_ms=400, settle_ms=600)
+    assert keyframes[0] == FocusPoint(0, 500)
+    # The hold runs to the first sample outside the dead zone, then eases over `move_ms`.
+    assert FocusPoint(1_000, 500) in keyframes
+    assert FocusPoint(1_400, 905) in keyframes
+    assert [point.at_ms for point in keyframes] == sorted({point.at_ms for point in keyframes}), (
+        "keyframe timestamps must be strictly increasing"
+    )
+
+
+def test_stabilize_ignores_a_spike_that_does_not_last() -> None:
+    """One mis-detected frame is not a camera move, however far away it lands."""
+    spike = _track(500, 500, 1_400, 500, 500, 500)
+    assert stabilize(spike, dead_zone_px=60, settle_ms=600) == (
+        FocusPoint(0, 500),
+        FocusPoint(2_500, 500),
+    )
+
+
+def test_stabilize_takes_the_median_so_one_wild_sample_cannot_drag_the_camera() -> None:
+    """The committed position is the median of the settle window, never its mean.
+
+    A detector that reports one frame at the far edge of a 1920-wide source would pull a mean
+    most of the way there and swing the camera off the speaker for the rest of the clip.
+    """
+    outlier = _track(500, 900, 905, 5_000, 900, 900)
+    keyframes = stabilize(outlier, dead_zone_px=60, move_ms=400, settle_ms=1_000)
+    committed = [point.center_x for point in keyframes][-1]
+    assert committed == 905, "the settle window is 900, 905, 5000 and its median is 905"
+    assert committed < (900 + 905 + 5_000) // 3, "a mean would have followed the outlier"
+
+
+def test_stabilize_refuses_input_it_cannot_order() -> None:
+    with pytest.raises(ValueError, match="strictly increasing"):
+        stabilize((FocusPoint(500, 100), FocusPoint(500, 200)), dead_zone_px=60)
+    with pytest.raises(ValueError, match="dead zone must be positive"):
+        stabilize(_track(500, 500), dead_zone_px=0)
+    with pytest.raises(ValueError, match="move duration must be positive"):
+        stabilize(_track(500, 500), dead_zone_px=60, move_ms=0)
+    with pytest.raises(ValueError, match="settle duration must be positive"):
+        stabilize(_track(500, 500), dead_zone_px=60, settle_ms=0)
+
+
+def test_stabilize_invents_no_camera_path_from_an_empty_track() -> None:
+    """No track means a static centre crop, which is an honest label. Never a fabricated pan."""
+    assert stabilize((), dead_zone_px=60) == ()

@@ -9,6 +9,7 @@ for functions whose job is reading fields off a dict. Rendering drives `captions
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 
@@ -46,6 +48,7 @@ def a_transcript(media_id: str = "fixture") -> RawTranscript:
         text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
         words=WORDS,
         asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
     )
 
 

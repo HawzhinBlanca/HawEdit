@@ -30,8 +30,13 @@ from hawedit.captions import (
     DEFAULT_MAX_CHARS_PER_LINE,
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
+    POPUP_MAX_CHARS,
+    REPORT_THEME,
+    VIRAL_FONT_SIZE,
+    VIRAL_THEME,
     CaptionsOutsideClip,
     CaptionStyle,
+    CaptionTheme,
     FontCoverageError,
     GoldenReferenceMissing,
     MissingRtlStack,
@@ -41,6 +46,7 @@ from hawedit.captions import (
     assert_fonts_dir_covers_kurdish,
     assert_rtl_stack,
     build_ass,
+    chunk_caption_events,
     compare_golden_render,
     decode_to_rgb,
     find_ffmpeg,
@@ -1058,3 +1064,150 @@ def test_an_empty_or_noncovering_fonts_directory_is_refused(tmp_path: Path) -> N
     (only_naskh / FONT.name).write_bytes(FONT.read_bytes())
     with pytest.raises(FontCoverageError, match=r"U\+1F600"):
         assert_fonts_dir_covers_kurdish(only_naskh, required=frozenset({"😀"}))
+
+
+def _popup_sentence() -> Sentence:
+    spoken = words(
+        ("یەک", 0, 400),
+        ("دوو", 400, 800),
+        ("سێ", 800, 1_200),
+        ("چوار", 1_200, 1_600),
+        ("پێنج", 1_600, 2_000),
+        ("شەش.", 2_000, 2_400),
+    )
+    return Sentence(words=spoken, complete=True)
+
+
+def test_popup_chunks_close_on_the_word_count() -> None:
+    chunks = chunk_caption_events(_popup_sentence().words, max_words=3, max_chars=99, max_ms=99_999)
+    assert [len(chunk) for chunk in chunks] == [3, 3]
+
+
+def test_popup_chunks_close_on_a_pause_even_when_nothing_else_is_full() -> None:
+    """A group that straddles a silence sits on screen with nothing being said.
+
+    No shorter word or character limit replaces this rule: the pause can fall anywhere.
+    """
+    spoken = words(("یەک", 0, 300), ("دوو", 300, 600), ("سێ", 3_000, 3_300))
+    chunks = chunk_caption_events(spoken, max_words=9, max_chars=99, max_ms=99_999, max_gap_ms=400)
+    assert [[word.w for word in chunk] for chunk in chunks] == [["یەک", "دوو"], ["سێ"]]
+
+
+def test_popup_chunks_close_on_elapsed_time() -> None:
+    spoken = words(("یەک", 0, 1_500), ("دوو", 1_500, 3_000))
+    chunks = chunk_caption_events(spoken, max_words=9, max_chars=99, max_ms=2_000, max_gap_ms=9_999)
+    assert [len(chunk) for chunk in chunks] == [1, 1]
+
+
+def test_a_word_wider_than_the_limit_gets_its_own_event_rather_than_being_dropped() -> None:
+    spoken = words(("کورت", 0, 200), ("درێژترین‌وشەی‌ئەم‌ڕستەیە", 200, 900))
+    chunks = chunk_caption_events(spoken, max_words=9, max_chars=6, max_ms=9_999, max_gap_ms=9_999)
+    assert [word.w for chunk in chunks for word in chunk] == [
+        "کورت",
+        "درێژترین‌وشەی‌ئەم‌ڕستەیە",
+    ]
+
+
+def test_chunking_refuses_input_it_cannot_split() -> None:
+    with pytest.raises(ValueError, match="no words"):
+        chunk_caption_events(())
+    for limit in ("max_words", "max_chars", "max_ms"):
+        with pytest.raises(ValueError, match="must be positive"):
+            chunk_caption_events(_popup_sentence().words, **{limit: 0})
+    with pytest.raises(ValueError, match="must be non-negative"):
+        chunk_caption_events(_popup_sentence().words, max_gap_ms=-1)
+
+
+def test_popup_events_never_put_a_paragraph_on_screen() -> None:
+    """One event per sentence is a wall of text; one per popup is a caption.
+
+    A 2.4 s sentence is mild — the real 38-minute source produced a single 15.8 s event
+    holding seven wrapped lines, which is the whole of the visible defect.
+    """
+    ass = build_ass(
+        (_popup_sentence(),),
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        max_words_per_event=3,
+        max_chars_per_line=22,
+    )
+    events = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert len(events) == 2
+    assert all("\\N" not in line for line in events), "a popup must never wrap"
+
+
+def test_popup_events_hold_across_a_short_hole_and_stop_at_the_sentence() -> None:
+    ass = build_ass((_popup_sentence(),), style=CaptionStyle.WORD_HIGHLIGHT, max_words_per_event=3)
+    spans = parse_dialogue_times(ass)
+    # The first popup is held open until the second begins: no blink between them.
+    assert spans[0][1] == spans[1][0]
+    # The last popup ends on its own last word, never past the sentence.
+    assert spans[-1][1] == _popup_sentence().end_ms
+
+
+def test_the_default_theme_is_byte_identical_to_what_shipped_before_it_existed() -> None:
+    """`REPORT_THEME` is a refactor, not a change. Every existing caller must be unaffected."""
+    assert REPORT_THEME.style_row("Kurdish", "Noto Naskh Arabic", 64) == (
+        "Style: Kurdish,Noto Naskh Arabic,64,&H00FFFFFF,&H0000FFFF,&H00000000,"
+        "&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,60,60,140,1"
+    )
+
+
+def test_the_viral_theme_sweeps_with_the_voice_rather_than_ahead_of_it() -> None:
+    """ASS karaoke fills from `secondary` to `primary`, so `primary` is the *spoken* colour.
+
+    The reporting default has white primary and yellow secondary, which renders unspoken
+    words yellow and spoken words white — a highlight that leads the speaker.
+    """
+    assert VIRAL_THEME.primary == "&H0000E5FF", "spoken text is gold"
+    assert VIRAL_THEME.secondary == "&H00FFFFFF", "unspoken text is white"
+    assert (VIRAL_THEME.primary, VIRAL_THEME.secondary) == (
+        REPORT_THEME.secondary.replace("&H0000FFFF", "&H0000E5FF"),
+        REPORT_THEME.primary,
+    )
+
+
+def test_the_viral_theme_clears_the_platform_caption_bar() -> None:
+    """140 px of a 1920-tall frame puts Kurdish text under the Reels/Shorts/TikTok UI."""
+    assert REPORT_THEME.margin_v == 140
+    assert VIRAL_THEME.margin_v == 360
+    assert VIRAL_THEME.bold and VIRAL_THEME.outline > REPORT_THEME.outline
+
+
+def test_a_theme_reaches_the_rendered_style_row() -> None:
+    ass = build_ass((_popup_sentence(),), font_size=74, theme=VIRAL_THEME)
+    assert VIRAL_THEME.style_row("Kurdish", "Noto Naskh Arabic", 74) in ass
+    assert ",140,1" not in ass
+
+
+def test_a_custom_theme_round_trips_every_field() -> None:
+    theme = CaptionTheme(
+        primary="&H00112233",
+        secondary="&H00445566",
+        outline_colour="&H00778899",
+        back_colour="&H00AABBCC",
+        bold=True,
+        outline=2.5,
+        shadow=0.5,
+        margin_l=1,
+        margin_r=2,
+        margin_v=3,
+    )
+    assert theme.style_row("K", "F", 10) == (
+        "Style: K,F,10,&H00112233,&H00445566,&H00778899,&H00AABBCC,1,0,0,0,100,100,0,0,1,"
+        "2.5,0.5,2,1,2,3,1"
+    )
+
+
+def test_the_viral_font_size_is_set_from_measured_ink_not_from_the_point_number() -> None:
+    """A point size is an em, and Naskh sets a small face inside it.
+
+    Rendered a real 17-character Kurdish popup at each size and took the ink bounding box:
+    64 pt gave 38 px of height, 74 -> 43, 84 -> 49, 96 -> 56, 108 -> 63, 120 -> 70. A burned-in
+    social caption wants 60-90 px on a 1920-tall frame, so the 74 this shipped with was under
+    half the height it appeared to promise.
+    """
+    assert VIRAL_FONT_SIZE == 108
+
+    # The widest popup the chunker can emit must still fit between the margins. At 108 pt
+    # Kurdish measures about 28 px per character, and the theme leaves 1080 - 80 - 80 = 920.
+    assert 1080 - VIRAL_THEME.margin_l - VIRAL_THEME.margin_r > POPUP_MAX_CHARS * 28

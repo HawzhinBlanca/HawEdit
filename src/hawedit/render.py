@@ -55,6 +55,9 @@ from hawedit.clip import Clip
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
 
 __all__ = [
+    "DELIVERY_AUDIO_RATE",
+    "DELIVERY_LUFS",
+    "DELIVERY_TRUE_PEAK_DB",
     "ENCODER_PROBE_SIZE",
     "NVENC_MIN_FRAME",
     "VERTICAL_HEIGHT",
@@ -64,12 +67,15 @@ __all__ = [
     "RenderError",
     "RenderResult",
     "assert_encoded_span",
+    "audio_filter",
     "crop_filter",
     "encoder_available",
     "frame_duration_ms",
     "frame_rate",
     "linked_libraries",
+    "quality_args",
     "render_clip",
+    "vertical_crop_size",
 ]
 
 # §4.3's caption geometry is built for 1080x1920, and `render_caption_png` defaults to it.
@@ -92,6 +98,54 @@ ENCODER_PROBE_SIZE: Final = (VERTICAL_WIDTH, VERTICAL_HEIGHT)
 
 class RenderError(RuntimeError):
     """Raised when Stage 6 cannot produce a clip it would be honest to ship."""
+
+
+# Every platform this pipeline delivers to normalises playback to roughly -14 LUFS, and a
+# podcast master sits ten decibels below that. Uploading unnormalised means either the viewer
+# reaches for the volume or the platform's own limiter does the job less carefully than this
+# does. -1 dBTP of headroom leaves room for the lossy re-encode on the other side to overshoot
+# without clipping.
+DELIVERY_LUFS: Final = -14.0
+DELIVERY_TRUE_PEAK_DB: Final = -1.0
+
+# 48 kHz stereo is what every target re-encodes to. Handing them 44.1 kHz buys one extra
+# resample for nothing.
+DELIVERY_AUDIO_RATE: Final = 48_000
+DELIVERY_AUDIO_BITRATE: Final = "192k"
+
+
+def quality_args(encoder: Encoder, crf: int) -> list[str]:
+    """The flags that actually make `encoder` hold a constant quality.
+
+    **`-crf` is silently ignored by NVENC**, and that is not a style preference — measured on
+    hawapc01 with ffmpeg 8.1.1, `-crf 18` and `-crf 30` into `h264_nvenc` produce byte-for-byte
+    identical output (976,781 bytes for the same 3 s 1080x1920 source). So every render on the
+    machine §6 designates for NVENC ignored the quality argument it was given and encoded at
+    the driver's default rate-control instead. `-rc vbr -cq N -b:v 0` responds: the same two
+    values give 5,412,913 and 1,763,082 bytes.
+
+    This is `encoder_available`'s lesson a second time — the encoder accepting an option is not
+    the encoder honouring it — and the reason both numbers above are in this docstring rather
+    than in a commit message.
+    """
+    if encoder is Encoder.NVENC:
+        # -b:v 0 is required: without it NVENC caps the constant-quality result at a default
+        # bitrate ceiling and the cq value stops mattering again at the top of the range.
+        return ["-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
+    return ["-crf", str(crf)]
+
+
+def audio_filter() -> str:
+    """Single-pass EBU R128 normalisation to the delivery target.
+
+    Single pass rather than the two-pass measure-then-apply: the second pass buys accuracy
+    this does not need (a fraction of a LU on a speech clip) at the cost of decoding the audio
+    twice, and the clip is already cut to length before it gets here.
+    """
+    return (
+        f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11,"
+        f"aresample={DELIVERY_AUDIO_RATE}"
+    )
 
 
 def _publish_render(staging: Path, output: Path) -> None:
@@ -208,6 +262,36 @@ def linked_libraries(ffmpeg: Path) -> str:
     return result.stdout
 
 
+def vertical_crop_size(
+    source_width: int,
+    source_height: int,
+    target_width: int = VERTICAL_WIDTH,
+    target_height: int = VERTICAL_HEIGHT,
+) -> tuple[int, int]:
+    """The source-pixel rectangle a vertical crop takes, before scaling.
+
+    Extracted from `crop_filter` because the reframe stabilizer needs the same number: a
+    dead zone is only meaningful as a fraction of what the viewer can actually see, and a
+    second copy of this arithmetic would be a second answer to that question.
+
+    Raises:
+        ValueError: the source is not positive, or is smaller than the crop it would need.
+    """
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError(f"source dimensions must be positive, got {source_width}x{source_height}")
+
+    aspect = target_width / target_height
+    crop_w = min(source_width, int(source_height * aspect))
+    crop_h = min(source_height, int(source_width / aspect))
+    # Even dimensions: yuv420p chroma is subsampled by two, and an odd crop is an encoder error
+    # rather than a rounding difference.
+    crop_w -= crop_w % 2
+    crop_h -= crop_h % 2
+    if crop_w < 2 or crop_h < 2:
+        raise ValueError(f"{source_width}x{source_height} cannot be cropped to {aspect:.3f}")
+    return crop_w, crop_h
+
+
 def crop_filter(
     source_width: int,
     source_height: int,
@@ -231,30 +315,35 @@ def crop_filter(
     Raises:
         ValueError: the source is smaller than the crop it would need.
     """
-    if source_width <= 0 or source_height <= 0:
-        raise ValueError(f"source dimensions must be positive, got {source_width}x{source_height}")
-
-    aspect = target_width / target_height
-    crop_w = min(source_width, int(source_height * aspect))
-    crop_h = min(source_height, int(source_width / aspect))
-    # Even dimensions: yuv420p chroma is subsampled by two, and an odd crop is an encoder error
-    # rather than a rounding difference.
-    crop_w -= crop_w % 2
-    crop_h -= crop_h % 2
-    if crop_w < 2 or crop_h < 2:
-        raise ValueError(f"{source_width}x{source_height} cannot be cropped to {aspect:.3f}")
+    crop_w, crop_h = vertical_crop_size(source_width, source_height, target_width, target_height)
 
     if focus_points:
         ordered = sorted(focus_points)
         positions = [
             max(0, min(center - crop_w // 2, source_width - crop_w)) for _, center in ordered
         ]
+        times = [(at_ms - clip_in_ms) / 1000 for at_ms, _ in ordered]
+        # Interpolated, not stepped. This used to snap to each sample at the midpoint between
+        # them, so a tracker sampling twice a second moved the crop twice a second for the
+        # whole clip — the horizontal shimmer that made every tracked render unusable. A
+        # straight line between neighbouring keyframes is a pan; a step between them is a
+        # glitch. `reframe.stabilize` supplies equal-valued neighbours for the holds, so this
+        # sits still wherever the camera is meant to sit still.
         expression = str(positions[-1])
         for index in range(len(positions) - 2, -1, -1):
-            boundary_s = ((ordered[index][0] + ordered[index + 1][0]) / 2 - clip_in_ms) / 1000
-            expression = (
-                f"if(lt(t\\,{max(0.0, boundary_s):.3f})\\,{positions[index]}\\,{expression})"
+            start_s, end_s = times[index], times[index + 1]
+            here, there = positions[index], positions[index + 1]
+            span = end_s - start_s
+            segment = (
+                str(here)
+                if span <= 0 or here == there
+                else f"({here}+({there - here})*(t-{start_s:.3f})/{span:.3f})"
             )
+            expression = f"if(lt(t\\,{end_s:.3f})\\,{segment}\\,{expression})"
+        # Before the first keyframe there is nothing to interpolate from: hold the opening
+        # position rather than extrapolating backwards off the front of the clip.
+        if times[0] > 0:
+            expression = f"if(lt(t\\,{times[0]:.3f})\\,{positions[0]}\\,{expression})"
         x: int | str = expression
     elif focus_x is None:
         x = (source_width - crop_w) // 2
@@ -489,14 +578,34 @@ def render_clip(
                 str(source),
                 "-vf",
                 filters,
+                "-af",
+                audio_filter(),
                 "-c:v",
                 encoder.value,
-                "-crf",
-                str(crf),
+                *quality_args(encoder, crf),
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
                 "aac",
+                "-b:a",
+                DELIVERY_AUDIO_BITRATE,
+                "-ar",
+                str(DELIVERY_AUDIO_RATE),
+                "-ac",
+                "2",
+                # The moov atom belongs at the front of a file that will be streamed. Without
+                # this it is written last, and a player has to fetch the end of the file before
+                # it can start — which for a delivery artifact is the whole point of the format.
+                "-movflags",
+                "+faststart",
+                # A second, output-side duration. The input-side `-t` above bounds what is
+                # decoded; this bounds what is written. Without it the AAC encoder pads its
+                # final frame and the 48 kHz resample rounds up, and the container comes out
+                # 38 ms long on the real fixture — inside `assert_encoded_span`'s one-frame
+                # tolerance, but 38 ms of source that no one reviewed. With it the artifact is
+                # exactly the span §8.3 says it is: measured 4162 ms for a 4162 ms clip.
+                "-t",
+                f"{duration_ms / 1000:.3f}",
                 "-y",
                 str(staging),
             ],

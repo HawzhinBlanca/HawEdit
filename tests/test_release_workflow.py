@@ -223,7 +223,10 @@ def test_release_attestation_waits_for_clean_installed_wheel_smoke() -> None:
         "hawedit-credentials",
         "hawedit-fetch-models",
         "hawedit-ffmpeg-setup",
+        "hawedit-owner-decisions",
         "hawedit-release",
+        "hawedit-release-approval",
+        "hawedit-vertex-acceptance",
         "hawedit-wsl-vex",
     ):
         assert command in smoke

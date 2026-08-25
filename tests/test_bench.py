@@ -12,8 +12,10 @@ The rule is deliberately hard to satisfy. §1: "No model changes without measure
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -103,6 +105,28 @@ def test_the_report_never_gives_only_an_aggregate() -> None:
 def test_a_perfect_transcription_scores_zero() -> None:
     report = a_run({"hew-1": PERFECT, "muk-1": PERFECT})
     assert report.models[INCUMBENT].normalized_cer == 0.0
+
+
+def test_acceptance_guard_spans_each_measurement_and_binds_the_report() -> None:
+    events: list[str] = []
+
+    class Guard:
+        evidence: ClassVar = {
+            "approval_sha256": "b" * 64,
+            "manifest_sha256": "a" * 64,
+        }
+
+        @contextmanager
+        def guard(self, item: CorpusItem):  # type: ignore[no-untyped-def]
+            events.append(f"before:{item.item_id}")
+            yield
+            events.append(f"after:{item.item_id}")
+
+    adapter = ScriptedAdapter(INCUMBENT, {"hew-1": PERFECT, "muk-1": PERFECT})
+    report = run_benchmark(TWO_DIALECT_CORPUS, (adapter,), a_session(), Guard())
+
+    assert events == ["before:hew-1", "after:hew-1", "before:muk-1", "after:muk-1"]
+    assert report.to_dict()["acceptance"] == Guard.evidence
 
 
 def test_encoding_differences_are_not_scored_as_errors() -> None:

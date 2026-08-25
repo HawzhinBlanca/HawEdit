@@ -787,6 +787,9 @@ _NUMBER_WORDS = {
     "ten": 10,
     "eleven": 11,
     "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
 }
 
 
@@ -1214,21 +1217,7 @@ def test_the_audit_report_states_how_many_console_scripts_there_are() -> None:
     """
     declared = _declared_console_scripts()
     section = _audit_report().split("## Verification evidence")[1]
-    words = {
-        1: "one",
-        2: "two",
-        3: "three",
-        4: "four",
-        5: "five",
-        6: "six",
-        7: "seven",
-        8: "eight",
-        9: "nine",
-        10: "ten",
-        11: "eleven",
-        12: "twelve",
-    }
-    stated = words[len(declared)]
+    stated = _NUMBER_WORDS_REVERSE[len(declared)]
     assert f"**all {stated}** declared console scripts" in section, (
         f"the report does not say there are {stated} console scripts, and there are "
         f"{len(declared)}: {sorted(declared)}"

@@ -38,6 +38,7 @@ __all__ = [
     "Segment",
     "boundary_reconciliation",
     "diarization_error_rate",
+    "overlap_aware_diarization_error_rate",
     "turn_bounds_for_anchors",
 ]
 
@@ -223,6 +224,91 @@ def diarization_error_rate(
             for start, end, ref, hyp in intervals
             if ref and hyp and mapping.get(hyp) != ref
         )
+        pairs = tuple(sorted(mapping.items()))
+        if best is None or confusion < best[0]:
+            best = (confusion, pairs)
+
+    confusion_ms, speaker_mapping = best if best is not None else (0, ())
+    return DiarizationError(
+        missed_ms=missed,
+        false_alarm_ms=false_alarm,
+        confusion_ms=confusion_ms,
+        total_speech_ms=total_speech,
+        speaker_mapping=speaker_mapping,
+    )
+
+
+def _speakers_at(segments: Sequence[Segment], start: int, end: int) -> frozenset[str]:
+    return frozenset(
+        segment.speaker
+        for segment in segments
+        if segment.start_ms <= start and segment.end_ms >= end
+    )
+
+
+def overlap_aware_diarization_error_rate(
+    reference: Sequence[Segment],
+    hypothesis: Sequence[Segment],
+) -> DiarizationError | None:
+    """Score a benchmark hypothesis that may contain overlapping speakers.
+
+    Production Stage 0 still requires :func:`assert_exclusive`.  The separate §8.1 control,
+    ``speaker-diarization-3.1``, returns ordinary (potentially overlapping) diarization, so
+    applying the production refusal to that benchmark would make the mandated comparison
+    impossible.  This function implements the standard speaker-time decomposition per atomic
+    interval: missing and extra speaker counts become miss/false-alarm time, while the remaining
+    unmatched assignments become confusion.  The global one-to-one label mapping is chosen to
+    minimise confusion exactly, with the same eight-speaker bound as the production metric.
+
+    The reference may overlap too, although HawEdit's current acceptance manifest deliberately
+    requires an exclusive human reference.  Its denominator is reference *speaker time*, not
+    wall-clock time, which is the only meaningful denominator when two reference speakers overlap.
+    """
+    reference_speakers = sorted({segment.speaker for segment in reference})
+    hypothesis_speakers = sorted({segment.speaker for segment in hypothesis})
+    if max(len(reference_speakers), len(hypothesis_speakers)) > MAX_SPEAKERS_FOR_EXACT_MAPPING:
+        raise ValueError(
+            f"more than {MAX_SPEAKERS_FOR_EXACT_MAPPING} speakers: the optimal mapping is "
+            "found by exhaustive search, and a greedy fallback would report a DER that is "
+            "not the minimum without saying so."
+        )
+
+    points = _boundaries(reference, hypothesis)
+    intervals = [
+        (
+            start,
+            end,
+            _speakers_at(reference, start, end),
+            _speakers_at(hypothesis, start, end),
+        )
+        for start, end in pairwise(points)
+    ]
+    total_speech = sum((end - start) * len(ref) for start, end, ref, _ in intervals)
+    if not total_speech:
+        return None
+
+    missed = sum((end - start) * max(0, len(ref) - len(hyp)) for start, end, ref, hyp in intervals)
+    false_alarm = sum(
+        (end - start) * max(0, len(hyp) - len(ref)) for start, end, ref, hyp in intervals
+    )
+
+    best: tuple[int, tuple[tuple[str, str], ...]] | None = None
+    longer, shorter = (
+        (hypothesis_speakers, reference_speakers)
+        if len(hypothesis_speakers) >= len(reference_speakers)
+        else (reference_speakers, hypothesis_speakers)
+    )
+    for candidate in permutations(longer, len(shorter)):
+        mapping = dict(zip(candidate, shorter, strict=True))
+        if longer is reference_speakers:
+            mapping = {
+                hypothesis_label: reference_label
+                for reference_label, hypothesis_label in mapping.items()
+            }
+        confusion = 0
+        for start, end, ref, hyp in intervals:
+            correct = sum(1 for label in hyp if mapping.get(label) in ref)
+            confusion += (end - start) * (min(len(ref), len(hyp)) - correct)
         pairs = tuple(sorted(mapping.items()))
         if best is None or confusion < best[0]:
             best = (confusion, pairs)

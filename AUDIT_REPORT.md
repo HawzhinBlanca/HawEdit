@@ -124,13 +124,14 @@ stronger would be marketing, not engineering.
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.12 wheel install: `pip check` clean; **all twelve** declared console scripts —
+- Clean Python 3.12 wheel install: `pip check` clean; **all fifteen** declared console scripts —
   `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials`,
   `hawedit-durable`, `hawedit-editorial-bench`, `hawedit-fetch-models`,
-  `hawedit-ffmpeg-setup`, `hawedit-release`, `hawedit-revise`, `hawedit-workflow` and
-  `hawedit-wsl-vex` — start from the installed wheel. The last three of the agentic set joined
-  at the `agentic` merge (D-A26); the nine before them were measured on the run this paragraph
-  originally recorded. The hosted release
+  `hawedit-ffmpeg-setup`, `hawedit-owner-decisions`, `hawedit-release`,
+  `hawedit-release-approval`, `hawedit-revise`, `hawedit-vertex-acceptance`,
+  `hawedit-workflow` and `hawedit-wsl-vex` — start from the installed wheel. The three agentic
+  commands joined at the `agentic` merge (D-A26); the acceptance commands joined on the production
+  branch. The hosted release
   smoke derives the same contract from the wheel, and `tests/test_claims.py` requires this list
   to equal `[project.scripts]` in both directions so a newly added command cannot drift out of
   the audit again. Their help is invocation-aware: a generated launcher names the installed

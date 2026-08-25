@@ -40,13 +40,14 @@ of being a field nobody noticed was missing. See D-030.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
 
-from hawedit.boundary import _strict_bool
-from hawedit.clip import Editorial, Output, Sv6d
+from hawedit.boundary import _json_object_fields, _strict_bool
+from hawedit.clip import Editorial, Output, Sv6d, _sv6d_from_json
 from hawedit.discovery import MergedCandidate
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import ModelEntry, resolve_role
@@ -57,6 +58,7 @@ __all__ = [
     "JUDGE_ROLES",
     "KURDISH_EDITORIAL_JUDGE",
     "MAX_JUDGE_FRAME_BYTES",
+    "MAX_PERSISTED_VERDICT_BYTES",
     "MIN_REGRESSION_ITEMS",
     "NARRATIVE_ROLES",
     "PRO_TIER_TOKEN_CEILING",
@@ -84,6 +86,9 @@ KURDISH_EDITORIAL_JUDGE: Final = "gemini-2.5-pro"
 JUDGE_SHADOW: Final = "gemini-3.1-pro"
 JUDGE_ROLES: Final = frozenset({"kurdish_editorial_judge", "judge_shadow"})
 MAX_JUDGE_FRAME_BYTES: Final = 5 * 1024 * 1024
+# The live provider response is capped at the same one-mebibyte boundary in `gemini.py`.
+# A persisted stand-in is the same schema and earns no larger parser/memory budget.
+MAX_PERSISTED_VERDICT_BYTES: Final = 1 << 20
 
 # §3 Stage 4's input-mode table, verbatim.
 FULL_TRANSCRIPT_TOKENS_PER_HOUR: Final = 20_000  # Path A discovery
@@ -108,6 +113,38 @@ MIN_REGRESSION_ITEMS: Final = 20
 
 
 NARRATIVE_ROLES: Final = frozenset({"setup", "escalation", "payoff", "aside"})
+
+_VERDICT_REQUIRED_FIELDS: Final = frozenset(
+    {
+        "candidate_id",
+        "hook_score",
+        "self_contained",
+        "payoff_at_ms",
+        "meaning_fidelity",
+        "misleading_edit_risk",
+        "cultural_landing",
+        "narrative_role",
+        "title_ckb",
+        "description_ckb",
+        "hashtags_ckb",
+        "judge",
+        "clip_in_ms",
+        "clip_out_ms",
+    }
+)
+
+
+def _reject_duplicate_verdict_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    decoded: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError(f"duplicate JSON key {key!r} in persisted verdict")
+        decoded[key] = value
+    return decoded
+
+
+def _reject_verdict_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON numeric constant {value!r} in persisted verdict")
 
 
 class NotRoutable(ValueError):
@@ -335,8 +372,13 @@ class JudgeVerdict:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> JudgeVerdict:
-        raw_sv6d = data.get("sv6d")
-        raw_hashtags = data["hashtags_ckb"]
+        fields = _json_object_fields(
+            data,
+            field="persisted verdict",
+            required=_VERDICT_REQUIRED_FIELDS,
+            optional=frozenset({"sv6d"}),
+        )
+        raw_hashtags = fields["hashtags_ckb"]
         if not isinstance(raw_hashtags, list) or not all(
             isinstance(tag, str) for tag in raw_hashtags
         ):
@@ -344,25 +386,42 @@ class JudgeVerdict:
                 "hashtags_ckb must be a JSON array of strings; a scalar string would be "
                 "split into one hashtag per character"
             )
-        if raw_sv6d is not None and not isinstance(raw_sv6d, dict):
-            raise ValueError("sv6d must be a JSON object or null")
         return JudgeVerdict(
-            candidate_id=data["candidate_id"],
-            hook_score=data["hook_score"],
-            self_contained=_strict_bool(data["self_contained"], "self_contained"),
-            payoff_at_ms=data["payoff_at_ms"],
-            meaning_fidelity=data["meaning_fidelity"],
-            misleading_edit_risk=data["misleading_edit_risk"],
-            cultural_landing=data["cultural_landing"],
-            narrative_role=data["narrative_role"],
-            title_ckb=data["title_ckb"],
-            description_ckb=data["description_ckb"],
+            candidate_id=fields["candidate_id"],
+            hook_score=fields["hook_score"],
+            self_contained=_strict_bool(fields["self_contained"], "self_contained"),
+            payoff_at_ms=fields["payoff_at_ms"],
+            meaning_fidelity=fields["meaning_fidelity"],
+            misleading_edit_risk=fields["misleading_edit_risk"],
+            cultural_landing=fields["cultural_landing"],
+            narrative_role=fields["narrative_role"],
+            title_ckb=fields["title_ckb"],
+            description_ckb=fields["description_ckb"],
             hashtags_ckb=tuple(raw_hashtags),
-            judge=data["judge"],
-            clip_in_ms=data["clip_in_ms"],
-            clip_out_ms=data["clip_out_ms"],
-            sv6d=Sv6d(**raw_sv6d) if raw_sv6d is not None else None,
+            judge=fields["judge"],
+            clip_in_ms=fields["clip_in_ms"],
+            clip_out_ms=fields["clip_out_ms"],
+            sv6d=_sv6d_from_json(fields.get("sv6d"), "persisted verdict.sv6d"),
         )
+
+    @staticmethod
+    def from_json(payload: str) -> JudgeVerdict:
+        """Decode one unambiguous persisted verdict instead of Python's permissive JSON."""
+        if not isinstance(payload, str):
+            raise ValueError("persisted verdict payload must be text")
+        try:
+            decoded: object = json.loads(
+                payload,
+                object_pairs_hook=_reject_duplicate_verdict_keys,
+                parse_constant=_reject_verdict_constant,
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"persisted verdict is not valid JSON: {exc.msg}") from exc
+        except RecursionError as exc:
+            raise ValueError("persisted verdict exceeds the JSON nesting limit") from exc
+        if not isinstance(decoded, dict):
+            raise ValueError("persisted verdict must be a JSON object")
+        return JudgeVerdict.from_dict(decoded)
 
 
 @dataclass(frozen=True, slots=True)

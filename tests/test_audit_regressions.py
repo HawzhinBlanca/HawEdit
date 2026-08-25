@@ -80,6 +80,7 @@ def test_a_clip_with_no_qc_record_is_refused() -> None:
     clip = Clip(
         clip_id="c",
         media_id="m",
+        media_sha256="0" * 64,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         discovery_path=DiscoveryPath.VERBAL,

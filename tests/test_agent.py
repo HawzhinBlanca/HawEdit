@@ -511,6 +511,7 @@ def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> Non
     good_clip = Clip(
         clip_id="fixture-0",
         media_id="fixture",
+        media_sha256="a" * 64,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         discovery_path=DiscoveryPath.VERBAL,

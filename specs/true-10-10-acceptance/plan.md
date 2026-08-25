@@ -1,4 +1,4 @@
-# Plan — true-10-10-acceptance
+# Plan — true-10-10 acceptance, autonomy-first execution
 
 Research: `specs/true-10-10-acceptance/research.md`
 
@@ -6,103 +6,217 @@ Specification: `specs/true-10-10-acceptance/spec.md`
 
 Impact map: `specs/true-10-10-acceptance/impact-map.md`
 
-Approved-by: Hawa — 2026-08-15
+Approved-by: Hawa — 2026-08-15; autonomy-first ordering reaffirmed by Hawa — 2026-08-17
 
-The owner approved the roadmap in this task. Work proceeds in dependency order. Each task is the
-smallest independently reviewable unit, is test-first where code changes are needed, runs the exact
-canonical gate, updates the ledger only through `scripts/update-ledger.sh`, commits explicit paths
-only, and then waits for required hosted checks before its acceptance claim.
+## Current anchor
 
-## Phase 1 — establish the production revision
+- Working branch: `codex/visual-short-window-provenance`
+- Planning anchor revision: `8b04515b924a7e23cc39a219157fbe28f70e044c`
+- Base revision: `4dbffa2585e50e60d4dcebf6c508699aac0a35ad`
+- Draft pull request: #21
+- Canonical local gate at the planning anchor: 2,793 passed, zero skipped, `VERIFY OK`
+- Hosted pull-request gate for the planning anchor: running as GitHub Actions run `32004370587`;
+  do not treat the anchor as accepted until that exact-SHA run succeeds.
+- Canonical Stage 1 evidence: the rights-cleared 38-minute source completed from the base revision;
+  545 regions were retained, two gaps were recorded, and a reuse run preserved the raw artifact.
+- Most recent autonomous closure: persisted editorial and clip evidence now uses bounded, duplicate-
+  rejecting, exact-type JSON at the planning anchor.
+- Current CPU critical path: strict persisted benchmark/worker/cache inputs and the remaining
+  reproducibility/security boundaries that can be tested without model execution.
+- Current GPU critical path: `BLOCKED.md` #22 and D-242, the truthful representation of scenes that
+  yield fewer than two frames at the measured 1 fps / 8-frame operating point. Both GPUs are in use
+  by unrelated jobs; the plan waits for an observed safe lease instead of interfering with them.
 
-1. Commit this acceptance package on the already-green PR branch.
-2. Run `bash scripts/verify.sh`; push only after it passes.
-3. Require PR #2's exact hosted checks to pass at the new SHA.
-4. Merge through the repository's protected non-force path.
-5. Capture the accepted `main` SHA and its required checks. Any main-only WSL failure becomes the
-   next task; it is not bypassed or relabelled.
+The current branch is a candidate, not an accepted production revision. The hosted pull-request
+checks, protected-main checks, main-only WSL security job, and final accepted-SHA reruns remain
+authoritative even when a local run is green.
 
-Exit: AC-1 is satisfied and one immutable accepted SHA anchors every later artifact.
+## Execution rules
 
-## Phase 2 — canonical ASR acceptance
+1. Exhaust autonomous work before asking for credentials, licences, labels, or product decisions.
+2. Work in one bounded unit at a time. Claim exact files before editing, write or refresh research,
+   EARS criteria, caller impact, and tests, then run focused checks and the canonical gate.
+3. Commit only explicit paths. Never use broad staging. Push only a green commit and require hosted
+   checks for that exact SHA.
+4. Treat every model, provider reply, checkpoint, media path, and filesystem object as untrusted at
+   its boundary. Operational failures become bounded structured refusals; programmer failures stay
+   visible.
+5. Never guess a quality threshold or amend the frozen blueprint through code. When evidence cannot
+   choose, prepare the experiment and decision packet, then stop that lane truthfully.
+6. Never interfere with unrelated GPU jobs. Real-model measurements run only under an observed safe
+   GPU lease and record exact environment, memory, timing, model, source, and artifact identities.
+7. A task is accepted only when its focused tests, full gate, exact-SHA hosted checks, real evidence
+   where required, and documentation all agree.
 
-1. Provision or reuse only a receipt valid for the accepted SHA.
-2. Run the live WSL VEX gate and retain its non-overwriting evidence artifact.
-3. Execute Stage 1 on the rights-cleared 38-minute Sorani source.
-4. Audit successful segments, failed gaps, validator/adapter provenance, timings, GPU identity, and
-   transcript integrity. Add regressions for any code failure before rerunning.
-5. Import an authorised labelled corpus when supplied, then run the per-dialect §8.1 benchmark.
+## Current execution board
 
-Exit: AC-2 and AC-3 are satisfied. AC-7 remains blocked until human-reference data exists.
+The waves below remain the acceptance contract. Execute their currently reachable work in this
+cost- and risk-ordered sequence:
 
-## Phase 3 — complete dual-GPU product-path acceptance
+| Order | Lane | Runs now without human input? | Exit evidence |
+|---|---|---:|---|
+| 1 | Exact-SHA branch acceptance | Yes | Clean tree, canonical local gate, and hosted PR gate green for the same SHA |
+| 2 | CPU persisted-boundary audit | Yes | Strict benchmark, worker, cache and sidecar parsers; malformed/oversized/duplicate/coercive inputs refused before expensive work |
+| 3 | Offline supply-chain and recovery audit | Yes | Locks, VEX, model roots, crash/retry, clean installs, release provenance and installed-data resolution agree |
+| 4 | Current-source WSL/ASR acceptance | Yes, when GPUs are idle | Receipt and source identity match; VEX passes; canonical Stage 1 and reuse evidence are current |
+| 5 | Short-scene visual decision and composed Path B | Yes, when GPUs are idle | D-242 evidence, exact extraction/indexing, top-50 retrieval, rerank, 5–10 survivors, survivor-only reading, sequential unload |
+| 6 | Complete no-cloud real-media acceptance | Yes, when GPUs are idle | One source-bound run through delivery, plus exact cache miss/hit and bounded failure evidence |
+| 7 | Independent final adversarial/soak pass | Yes | No reproducible autonomous P0/P1; retries, interruption, privacy cleanup and artifact checks survive |
+| 8 | Immutable release candidate | Yes except merge/tag approval | Exact protected SHA, current hardware evidence, reproducible wheel, clean 3.11/3.12 smokes, verified attestations |
+| 9 | Consolidated external acceptance | No | Licensed Sorani labels, editorial review, pyannote/reference turns, Vertex/ZDR, owner decisions and release approval |
 
-1. Run the exact GPU dependency/hardware readiness check.
-2. Execute the full local visual path at the measured safe operating point; record window/fps,
-   counts, survivor ordering, VideoChat3 inputs, phase close order, peak allocation, and timings.
-3. Execute automatic selection, actual keyframe judging, TimeLens fusion, reframe, captions,
-   render, and atomic delivery on real footage.
-4. Adversarially verify structured failures, no stale pixels, no model overlap, no path escape,
-   bounded diagnostics, one billed call, and exact delivery bytes.
+Do not wait on row 9 while any work in rows 1–8 remains reachable. Do not run rows 4–6 while the
+GPUs are leased by another process. Do not merge, tag, publish, spend cloud money, accept a gated
+licence, or manufacture human labels without the corresponding owner action.
 
-Exit: AC-4, AC-5, and AC-6 are satisfied on the accepted revision. Quality judgments remain for
-Phase 4.
+## Autonomous wave A — close the short-scene visual blocker
 
-## Phase 4 — quality evidence and threshold promotion
+1. Finish local, pinned-model research for the still-image and two-real-frame input semantics of
+   Qwen embedding/reranking, VideoChat3, and TimeLens.
+2. Wait for a safe dual-GPU lease; do not pre-empt unrelated workloads.
+3. Run the prepared real-model harness on the exact one-second and sub-500 ms counterexamples.
+   Record processor grids, delivered frame count, timestamps, pixel/vector hashes, cosine direction,
+   reranker scores, VideoChat3 output, peak CUDA allocation, post-close allocation, wall time, and a
+   deterministic rerun.
+4. Reject any representation that crosses a cut, invents time, silently pads/repeats frames, changes
+   the declared interval, or causes a model to consume a different count than provenance reports.
+5. Record D-242 selecting one policy from evidence. If no faithful representation works, implement
+   an explicit named refusal rather than a fabricated success.
+6. Add the immutable representation/provenance record, bind it to model metadata and embedding-cache
+   identity, preserve ordinary-window bytes, and prove exact private-pixel cleanup.
+7. Prove every planned scene is either indexed exactly once or reported as an explicit refusal;
+   retain top-50 retrieval, reranking, 5–10 survivors, survivor-only VideoChat3, and sequential model
+   release.
+8. Run real-media acceptance at 1 fps / 8 frames, then update #22 and the related #17 evidence only
+   to the extent the measurement proves.
 
-1. Validate licences, consent, coverage labels, and manifest integrity for the Sorani corpus.
-2. Produce per-dialect/per-condition ASR and alignment results.
-3. Assemble 200–500 real candidates with blinded human labels.
-4. Run the editorial benchmark, analyze path-unique wins and failure slices, tune only thresholds
-   justified by the labelled set, and preserve a locked holdout.
-5. Obtain Kurdish editor approval of the report and representative outputs.
+Exit: the supported operating point can process or explicitly refuse every short scene without a
+crash, stale cache reuse, false timestamps, hidden padding, or GPU phase overlap.
 
-Exit: AC-7 and AC-8 are satisfied. This phase requires owner-provided or owner-authorised data and
-human review; automation prepares, validates, measures, and reports it.
+## Autonomous wave B — prove the complete no-cloud product path
 
-## Phase 5 — speaker-aware reframing
+1. Re-run the exact GPU dependency and hardware identity check.
+2. Run Stage 0, canonical Stage 1 reuse, sentence indexing, Path A preparation, and composed Path B
+   on rights-cleared real footage.
+3. Prove retrieval limits and ordering from artifacts: one extraction per scene, top 50 maximum,
+   exact reranker provenance, 5–10 survivor rule when enough valid results exist, and only survivors
+   reaching VideoChat3.
+4. Exercise automatic survivor selection, real keyframe extraction, bounded judge-request assembly,
+   TimeLens query/grounding/fusion, face-aware reframing, captions, render, and atomic five-file
+   delivery. Use a schema-valid persisted verdict only for the unavailable cloud response, and label
+   that seam explicitly; do not present it as a live Gemini acceptance.
+5. Record scene/window identities, chosen anchors, frame timestamps, memory-release order, exact
+   delivery checksums, clip duration, caption/transcript equality, and structured refusal behavior.
+6. Run cache-miss and exact cache-hit passes. Refuse mismatched source, representation, model,
+   checkpoint, or policy identities.
 
-1. After gated access is accepted, provision the exact pyannote production and control models with
-   licence attribution and authenticated identities.
-2. Implement the production diarizer adapter and Stage 0 structured-failure path.
-3. Reconcile exclusive turns to aligned words and pass eligible turn bounds into Stage 5.
-4. Associate active speakers with detected faces; preserve explicit fallback when ambiguous.
-5. Measure DER, boundary error, crop stability, and missed/incorrect-speaker crops on labelled real
-   multi-speaker footage.
-6. Decide from evidence whether SAM 3 is necessary; do not add it before the §7 decision.
+Exit: AC-4 and the local portions of AC-5/AC-6 have current-SHA real-media evidence. The only Stage 4
+gap is the honestly named live confidential provider call.
 
-Exit: AC-9 is satisfied, or remains explicitly blocked on gated access/data/registry decision.
+## Autonomous wave C — eliminate every remaining code-solvable P0/P1
 
-## Phase 6 — confidential Vertex acceptance
+Run independent adversarial passes in this order, adding a regression before each fix:
 
-1. Validate the paid Vertex project/location, ADC route, allowlisted endpoint, and approved
-   retention policy without persisting credentials.
-2. Run no-transport refusal controls, bounded cost/token checks, and one-call accounting.
-3. Run the rights-cleared live smoke with matching pixels/transcript.
-4. Record request identifiers, model/version, project/location, cost, retention approval, and
-   redacted logs. Compare against the Sorani regression set before promoting a new model.
+1. Pipeline composition and model lifecycle: lazy acquisition, phase close order, OOM/launch/I/O
+   normalization, no billing replay, and no swallowed programmer error.
+2. Media and transcript integrity: path containment, immutable canonical ASR, alignment/gap coverage,
+   timestamp arithmetic, cut containment, stale-frame isolation, and bounded parsing.
+3. Filesystem/concurrency: root identity, symlink/reparse/hardlink resistance, private staging,
+   crash-safe resume, atomic non-overwrite publication, lock interoperability, and cleanup reporting.
+4. Model/checkpoint supply chain: exact revisions, metadata trust root, verified-byte-to-loader binding,
+   effective fairseq cards, full dependency inventories, VEX applicability, and final-path recheck.
+5. Cloud/security boundaries: credential-file and ADC failures, redirect isolation, route allowlists,
+   bounded response bodies/errors, strict JSON types, one billed request, and secret-free diagnostics.
+6. Render/delivery/privacy: exact selected span, no trailing footage, caption equivalence, pixel-grounded
+   keyframes, bounded temporary retention, correct QC semantics, and exact five-artifact publication.
+7. Release: immutable exact-SHA source exports, independent builds, clean installed-wheel smoke on
+   Python 3.11/3.12, exact dependency locks, SBOM/checksums/provenance, permission separation, and
+   attested/uploaded set equality.
 
-Exit: AC-10 is satisfied. Human/cloud-account governance is required.
+Use fault injection, boundary/property tests, targeted mutation of security guards, malformed model
+outputs, concurrent subprocesses, and clean-install probes. Do not weaken tests or count a failure
+for an unrelated lint/type error as coverage.
 
-## Phase 7 — production release
+Exit: no reproducible autonomous P0/P1 remains; every resolved defect has a discriminating regression
+and the full gate is green.
 
-1. Define and record version/tag and rollback policy.
-2. Trigger release only from the exact accepted main gate.
-3. Verify fresh 3.11/3.12 wheel installs, all CLIs, bundled data, SBOM, checksums, and provenance.
-4. Verify every GitHub attestation using the exact workflow, source ref, source digest, signer
-   digest, and hosted-runner policy.
-5. Publish a non-overwriting GitHub Release and exercise install/rollback instructions.
+## Autonomous wave D — prepare all human-dependent acceptance kits
 
-Exit: AC-11 is satisfied.
+1. Sorani ASR kit: signed manifest template, licence/consent fields, audio/reference hash import,
+   dialect/condition coverage report, leakage/duplicate checks, and exact benchmark command.
+2. Editorial kit: deterministic sampling of 200–500 real candidates, blinded labelling schema,
+   annotator guide, disagreement/adjudication fields, train/holdout split, and promotion-report command.
+3. Diarization/reframe kit: gated-model provisioning preflight, licence attribution, multi-speaker
+   manifest, reference-turn import, DER/boundary/crop metrics, and explicit fallback acceptance.
+4. Vertex kit: project/location/billing/ADC/retention checklist, no-transport preflight, matching
+   media/transcript manifest, bounded-cost smoke command, and redacted evidence schema.
+5. Decision kit: one evidence-backed page for each unresolved semantic choice — #13 Latin `ř/ł`,
+   #14 VAD-pause rule, #15 TimeLens relevance, #18 Path A BM25 query ownership, #9 SAM 3/Molmo2,
+   and #21 champion-adapter licence. Each page presents consequences and the recommended option but
+   makes no hidden choice.
+6. Release kit: recommended version/tag, non-overwrite publication, rollback-forward procedure,
+   attestation verification commands, and owner approval line.
 
-## Phase 8 — final adversarial and human acceptance
+Exit: human work is reduced to supplying or authorising assets/accounts and making named decisions;
+no additional engineering discovery is required to begin the acceptance runs.
 
-1. Run a fresh independent P0/P1 audit across ingest, ASR, discovery, judgment, boundary, render,
-   delivery, provisioning, cloud, and release surfaces.
-2. Resolve every code-solvable P0/P1 and rerun its adversarial regression plus the full gate.
-3. Build an acceptance matrix linking AC-1…AC-12 to immutable evidence.
-4. Record all residual P2/P3 limitations and operator runbooks.
-5. Ask the owner and Kurdish editor to sign only after every human-owned criterion is evidenced.
+## Autonomous wave E — promote one immutable production candidate
 
-Exit: AC-12 is satisfied. Until then the project may be excellent and release-candidate quality,
-but it is not truthfully rated 10/10.
+1. Reconcile claims, decisions, blockers, progress, and evidence without rewriting historical facts.
+2. Run the exact canonical gate from a clean committed tree.
+3. Commit explicit paths, push the focused branch, and require all pull-request checks at the exact
+   SHA. Resolve review findings without broad staging or force pushes.
+4. Merge only through protected `main`; capture the merge SHA and required checks.
+5. Because source changes invalidate the receipt, provision/revalidate the final main source snapshot,
+   run the main-only WSL VEX job, and rerun the 38-minute failure-preserving ASR acceptance.
+6. Re-run GPU readiness and the full no-cloud product path at the accepted main SHA.
+7. Build the release candidate twice, perform clean 3.11/3.12 wheel smokes, and verify the complete
+   unsigned candidate set. Do not create the final production tag until the human release decision.
+
+Exit: one exact protected-main SHA has green local/hosted gates, current WSL/ASR/GPU/product evidence,
+zero autonomous P0/P1, and a release candidate whose remaining blockers are exclusively human-owned.
+
+## Human-input gate — only after waves A–E
+
+Request one consolidated packet, not repeated interruptions:
+
+1. Authorised, licensed Sorani audio with human reference transcripts, dialect/condition labels, and
+   consent/redistribution terms.
+2. Kurdish editorial labels for 200–500 candidates plus final editor sign-off.
+3. Acceptance of the pyannote gated licence, an HF token supplied outside Git, real multi-speaker
+   footage, and reference speaker turns.
+4. Paid confidential Vertex project/location, billing, ADC access, approved retention posture, and a
+   rights-cleared matching smoke video.
+5. Decisions for #13, #14, #15, #18, #9, #21, and the production version/tag.
+
+Secrets, tokens, and client media remain outside Git and evidence is redacted.
+
+## Human-enabled completion
+
+1. Import and validate the supplied Sorani corpus; run per-dialect/per-condition ASR and alignment
+   benchmarks without aggregate-only reporting.
+2. Run the 200–500-item editorial study, tune only on training data, verify the locked holdout, and
+   obtain Kurdish editor approval.
+3. Provision pyannote, implement/enable the production diarizer and active-speaker/face association,
+   then measure DER, boundary error, crop stability, and speaker mistakes on real footage.
+4. Run the paid Vertex smoke once through the approved confidential route and record model, route,
+   request/cost identifiers, retention approval, and redacted result.
+5. Apply the approved semantic decisions through their own researched/tested units.
+6. Create the approved immutable tag, let the guarded release workflow publish and attest all four
+   payloads, verify the public release independently, and exercise the rollback-forward runbook.
+7. Run a final independent P0/P1 audit and build an AC-1…AC-12 acceptance matrix with residual P2/P3
+   risks. Obtain owner and Kurdish-editor sign-off.
+
+Exit: only this evidence permits a truthful 10/10 claim. Until then HawEdit may be a highly hardened,
+single-user production candidate, but missing human/cloud evidence is not converted into a score by
+test count.
+
+## Stop conditions
+
+- Stop a lane rather than guessing when the next action requires a credential, licence acceptance,
+  client-data right, human label, frozen-blueprint amendment, or release approval.
+- Stop publication on any failed gate, wrong SHA, dirty tree, missing attestation, unresolved P0/P1,
+  or evidence/source mismatch.
+- A blocked external acceptance does not block unrelated autonomous waves.
+- The active goal remains open until waves A–E are exhausted and the consolidated human packet is
+  delivered; it is not marked complete merely because a dependency is external.

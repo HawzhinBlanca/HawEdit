@@ -13,7 +13,11 @@ The exact result and artifact digest are recorded in
 `security/wsl-asr-vex.json` is a 30-day disposition expiring 2026-09-08, not a claim that the
 dependency graph is vulnerability-free. It binds CPython 3.12, exact dependency locks, package
 versions, all three OmniASR asset identities, and the reviewed HawEdit source SHA-256
-`d8547bdc2421b3853ba02e050d76cf055ca6f3ebb27f4df45759c9b6bea896bf`. Any later source change
+`5d1f8888fc53609c9ff7ea62117eb0491b9f38af14c7fca8a19b39a9db98d4db`. The applicability digest
+was refreshed on 2026-08-17 after reviewing the acceptance-kit-only source delta, including the
+new editorial-study coordinator. That module is not imported by the WSL ASR worker and changes no
+dependency, asset, checkpoint loading or deserialization path. The vulnerability dispositions and
+2026-09-08 expiry were not extended. Any later source change
 must trigger disposition review and a new digest; code mitigations cannot be carried onto old or
 modified worker bytes by matching only dependencies and assets.
 
@@ -31,7 +35,7 @@ CUDA devices.
 The following validator-readiness correction separates exact checkpoint bytes from loader
 placement and changes no dependency, advisory disposition, checkpoint, asset, deserialization
 path, descriptor binding, or mitigation. Review therefore rebinds the policy to the current
-`d8547bdc…` package digest above. It does **not** inherit the accepted `8dc112b…` run: after merge,
+`5d1f8888…` package digest above. It does **not** inherit the accepted `8dc112b…` run: after merge,
 the new exact source still requires its own receipt and hosted live audit.
 
 The 2026-08-15 review rebound the policy after setup, Stage 1, and this live gate were composed

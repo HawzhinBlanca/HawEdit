@@ -10812,6 +10812,121 @@ tree. The second parent makes all main commits ancestors without replaying stale
 
 `evidence/main-semantic-merge-2026-08-10.md`.
 
+## D-246 - Release evidence can prepare authorization but cannot become the authorizer
+
+**Date:** 2026-08-17 · **Blueprint ref:** §2 delivery/release boundary · **Type:** human authorization
+
+Creating the strict version tag is the remaining public-release authorization. It is neither safe
+to ask an owner to reconstruct several hosted checks by hand nor legitimate for automation to infer
+approval from a green gate. `hawedit.release_approval` therefore separates evidence preparation
+from the decision itself.
+
+Preparation accepts only the exact four-file release set. It binds their bytes, schema-5
+provenance, wheel identity/version, clean protected-main checkout, current blocker/progress/rollback
+documents, all five successful hosted release jobs and an independent strict GitHub attestation
+verification. It publishes one deterministic, write-once packet with owner, action, timestamp,
+rationale and every residual-risk acknowledgement explicitly unset.
+
+Verification reopens all of that evidence, requires the packet's instructions/template/tag commands
+to remain canonical, and verifies a detached OpenSSH signature under the dedicated
+`hawedit-release-approval` namespace. An approval yields commands for the owner to run; a rejection
+yields none. Neither path invokes mutating Git or GitHub commands. Rejected auto-tagging after a
+green build because software evidence is not rights, risk or publication authority. Rejected a
+checkbox stored only in GitHub UI because it does not bind the reviewed bytes or survive as portable
+evidence. Rollback remains forward-only through a reviewed new patch version.
+
+`evidence/release-owner-approval.md`.
+
+## D-245 - Recommendation packets authenticate their facts and cannot approve themselves
+
+**Date:** 2026-08-17 · **Blueprint refs:** §§3, 4.1, 4.2, 5, 7, 8.2 · **Type:** human-decision boundary
+
+The six remaining product-owner decisions in `BLOCKED.md` #9, #13, #14, #15, #18 and #21 are not
+engineering blanks that an agent may fill. They determine product scope, boundary semantics,
+grounding authority, retrieval composition, model admission and release rights. A green test can
+prepare the choice but cannot become the chooser.
+
+`hawedit.decision_packets` therefore binds every recommendation to the complete frozen
+`BLUEPRINT.md`, the exact blocker section and each reviewed evidence file by SHA-256. It emits the
+question, current behaviour, consequences, implementation requirements, allowed option identifiers
+and one explicitly labelled recommendation. The companion template repeats the exact allowed and
+recommended identifiers but leaves owner, UTC timestamp, rationale and selected option JSON `null`.
+Every rendered page says `OWNER DECISION: UNSET`.
+
+The packet is deterministic, transport-free and published as an exact write-once directory.
+Changed, linked or hardlinked authorities are refused, as is an existing output. Rejected embedding
+a default selection in the template: a recommendation that becomes a serialized selection has
+already made the decision. Rejected copying prose without hashes: it could remain plausible after
+the source measurement changed. Rejected reopening these six questions during each implementation
+task: the packet is the bounded handoff, and the filled owner response must drive the later
+ADR/blueprint/code change explicitly.
+
+
+## D-244 - Confidential Vertex acceptance is one signed, reserved counted operation
+
+**Date:** 2026-08-17 · **Blueprint ref:** §3 Stages 3 and 4 · **Type:** governance/evidence boundary
+
+Preparation must not contact Google. It reopens one private, authorised video, its normalized
+transcript and retained ZDR policy; measures and hashes the content; binds the exact project,
+location, model, ADC identity, billing account and owner token/cost ceiling; then emits an unsigned
+approval template. Contractual retention configuration, media rights and spend authority are facts
+code cannot infer, so execution requires an OpenSSH signature from the recorded media authorizer.
+
+Before client content leaves the machine, execution recomputes the prepared manifest, verifies the
+signature, refreshes ADC, requires its project/type/principal to match, and queries Cloud Billing
+plus Service Usage for live billing and Vertex API enablement. The production transport remains
+`VertexGeminiJudge`; there is no second Vertex client, frame sampler, schema parser or retry policy.
+
+One operation must own the authoritative token count and generation. Counting in the coordinator
+and calling ordinary `judge()` would count twice and could approve a number different from the one
+that authorises billing. `GeminiJudge.judge_with_count` counts once, applies §3's 200K ceiling and
+the stricter signed ceiling, then attempts `generateContent` once without retry. Ordinary `judge`
+delegates to the same operation.
+
+The executor publishes a content-derived attempt receipt before that operation. It is retained on
+success, refusal, crash or ambiguous provider outcome, so rerunning the same output identity cannot
+create another paid call. Extracted frames live only in a private temporary workspace and cleanup
+cannot mask the primary error. The public result records hashes, route/environment facts, exact
+count/cost and non-editorial numeric verdict fields; it omits the transcript, source pixels,
+generated Kurdish copy, access token, billing-account name and retained policy text.
+
+Rejected treating a manifest boolean as ZDR proof: it becomes evidence only when signed by the
+responsible owner and mechanically bound to the live route. Rejected automatic retry or deletion of
+the attempt after failure: both turn an ambiguous first call into an untracked second bill. Rejected
+adding an installed CLI in this unit; the approved plan adds it only after the library format is
+settled with the release/handoff packet.
+
+This closes engineering preparation, not external acceptance. No paid confidential run was made;
+the approved project, ADC, contractual ZDR record and matching authorised video remain external.
+
+`evidence/confidential-vertex-acceptance-kit.md`.
+
+## D-243 - The 3.1 benchmark may overlap; the production diarizer may not
+
+**Date:** 2026-08-17 · **Blueprint ref:** §3 Stage 0, §8.1 · **Type:** metric boundary
+
+HawEdit selected Community-1 specifically for its exclusive diarization, and the production
+`Diarizer`/Stage 5 contract correctly refuses overlapping turns. The §8.1 comparison separately
+requires `speaker-diarization-3.1`, whose ordinary output can contain simultaneous speakers. Using
+the production refusal for both systems would make the required control unmeasurable; accepting
+overlap at the production boundary would discard the property Community-1 was selected for.
+
+The boundaries therefore remain separate. `diarization_error_rate` still requires exclusive
+reference and hypothesis turns. `overlap_aware_diarization_error_rate` is benchmark-only: on each
+atomic interval it counts missing reference speaker-time as missed speech, extra hypothesis
+speaker-time as false alarm, and incorrectly mapped matched speaker slots as confusion. Its exact
+global one-to-one label mapping and eight-speaker search bound match the production metric. With an
+exclusive reference it reduces to the production result whenever the hypothesis is also exclusive.
+
+Speaker-labelled crop points still require an unambiguous exclusive active turn. A control run with
+overlap can be scored for DER and boundary placement, but its crop mode must remain an explicit
+fallback rather than inventing which simultaneous speaker owns a face.
+
+No threshold or model decision follows from this definition. The signed acceptance report exposes
+the raw components for human review; the real gated runs and Kurdish references remain required.
+
+`evidence/diarization-acceptance-kit.md`.
+
 ## D-241 - Speaker-tracked provenance requires speaker-labelled crop evidence
 
 §3 Stage 6 requires the vertical crop to follow the active speaker using diarization plus face
@@ -11255,6 +11370,158 @@ replaying stale content. Tree equality is not runtime acceptance, so a new canon
 required at the final documented merge tip.
 
 `evidence/main-semantic-merge-2026-08-10.md`.
+## D-247
+
+**Stage 6 shipped subtitles built for proofreading, not for delivery, and nothing in the
+pipeline could tell the difference.** `build_ass` emitted one `Dialogue` event per *sentence*.
+On the real 38-minute source that put a single event on screen from 0:13.04 to 0:28.85 —
+15.8 seconds holding seven `\N`-wrapped lines — and the viewer read the punchline twelve
+seconds before it was spoken. Every timestamp in that file was correct. Nothing measured the
+one property that mattered, which is how long a caption stays up and how much it says.
+
+Three defects, all in the same style row and event loop, all invisible to the existing tests:
+
+1. **One event per sentence.** Fixed by `chunk_caption_events`, which closes a group on word
+   count, rendered width, elapsed span, **or a pause** — the last of which no shorter limit
+   substitutes for, because a group straddling a silence sits on screen saying nothing. Six
+   sentences became 45 popups of at most three words, none of which wraps.
+
+2. **The karaoke swept the wrong way.** ASS fills from `SecondaryColour` to `PrimaryColour`, so
+   `Primary` is the *spoken* colour. The style row had white primary and yellow secondary,
+   which renders unspoken words yellow and spoken words white — a highlight leading the
+   speaker. `VIRAL_THEME` swaps them.
+
+3. **`MarginV: 140` on a 1920-tall frame.** Reels, Shorts and TikTok all draw their own caption
+   bar and action rail over roughly the bottom 300 px, so every Kurdish caption this pipeline
+   ever burned in sat underneath the platform's UI. Now 360.
+
+**The font size was measured, not chosen.** A point size is an em and Naskh sets a small face
+inside it. Rendering a real 17-character popup and taking the ink bounding box: 64 pt → 38 px
+of height, 74 → 43, 84 → 49, 96 → 56, 108 → 63, 120 → 70. A burned-in social caption wants
+60–90 px on a 1920-tall frame, so the 74 that looked reasonable was under half the size it
+appeared to promise. `VIRAL_FONT_SIZE` is 108.
+
+**What was checked and found innocent.** The text-less `{\kf}` spans that tile pauses looked
+like a bug — two karaoke tags with no glyphs between them. They are not: rendered at 1080x1920
+with `ass=…:shaping=complex` and classified by pixel, a run `{\kf100}AAAA {\kf100}{\kf100}BBBB`
+has A fully filled and B untouched at t=1.5 s, mid-gap. libass honours the empty span. Recorded
+because the next reader will suspect it too.
+
+`REPORT_THEME` is the previous style row exactly, so every existing caller, golden render and
+delivery sidecar is byte-identical. The runner takes `VIRAL_THEME` unconditionally rather than
+behind a flag: every clip it produces is a vertical social cut, and a flag would only offer a
+choice between correct and the defect above.
+
+---
+
+## D-248
+
+**A face tracker reports where a face is. It does not report where the camera should be, and
+Stage 6 treated the two as the same thing.** Three separate defects compounded on the real
+38-minute two-shot interview.
+
+**The crop stepped between samples.** `crop_filter` snapped to each focus point at the midpoint
+between neighbours, so a tracker sampling at 2 fps moved the frame up to twice a second for the
+whole clip — a continuous horizontal shimmer. It now interpolates linearly between keyframes,
+and `stabilize` supplies equal-valued neighbours for the spans where the camera should sit
+still. Held positions are emitted as bare integers, never as a ramp with a zero numerator.
+
+**The tracker averaged two faces into the gap between them.** `OpenCvFaceTracker` returned a
+running mean of its last five detections. An interview is two people facing each other: when
+detection alternates between a face at x=145 and one at x=495, the mean is 320 — the empty
+window *between* the speakers. The mean is gone; the tracker reports the detected centre and
+`stabilize` smooths with a **median**, which is always a position something was observed at.
+
+**It could not see either of them anyway.** Both speakers sit in profile. Across the opening
+eight seconds, `haarcascade_frontalface_default` returned zero faces on every sample, and so
+did `frontalface_alt2`. `haarcascade_profileface` — run over the frame and again over its
+mirror, since it detects one facing only — found the guest at x=152..154 on all eight samples
+and the host at x=491. With no detections the crop held a position measured from a *later*
+shot, and the first eight seconds of the delivered clip framed a rug. Adding the profile
+cascade took the track from 71 samples to 99 and moved its first point from 8,000 ms to 0.
+
+**What this does not fix, and cannot.** With both faces detected, nothing in this path knows
+which of them is *speaking*. `choose_face`'s continuity term locks onto one subject and stays,
+which is a defensible shot and not an edit. Cutting to the active speaker needs diarization
+(`BLOCKED.md` #4) plus speaker/face association — the seam `SpeakerSubjectTracker` and
+`validate_speaker_focus_points` already exist for, with no implementation behind it. Until then
+`--face-reframe` on a two-shot is honestly labelled `FACE_TRACKED` and is not the same thing as
+`SPEAKER_TRACKED`.
+
+---
+
+## D-249
+
+**`-crf` is accepted and silently ignored by NVENC, which made Stage 6's quality argument a
+no-op on exactly the host §6 designates for it.** Measured on hawapc01 with ffmpeg 8.1.1:
+`-crf 18` and `-crf 30` into `h264_nvenc` both wrote **976,781 bytes** for the same 3 s
+1080x1920 source — byte-identical. `-rc vbr -cq N -b:v 0` responds: the same two values wrote
+5,412,913 and 1,763,082. `libx264` as the control gave 3,564,155 and 881,520 for `-crf 18/30`.
+
+This is `encoder_available`'s lesson a second time. That function exists because a build
+listing an encoder is not a build that can *use* it; this is the same gap one level down — an
+encoder accepting an option is not an encoder honouring it. `quality_args` asks each encoder
+for the flag it actually implements.
+
+Three further delivery defects fixed in the same argument list, each measured on the artifact:
+
+- **No loudness normalisation.** Every target normalises playback to about -14 LUFS and a
+  podcast master sits ~10 LU under it. Single-pass `loudnorm=I=-14:TP=-1:LRA=11`; the test
+  measures the encoded file with `ebur128`, not the filter string.
+- **44.1 kHz, 128 kbps, no `+faststart`.** Now 48 kHz stereo at 192 kbps with the moov atom at
+  the front, because a delivery artifact that has to be fetched end-first is not streamable.
+- **The container ran long.** The AAC encoder pads its final frame and the resample rounds up,
+  so a 4,162 ms clip muxed as 4,200 ms — inside `assert_encoded_span`'s one-frame tolerance,
+  but 38 ms of source nobody reviewed. A second, output-side `-t` bounds what is *written* as
+  well as what is decoded, and the artifact now measures 4,162 ms exactly.
+
+**`-shortest` is refused, and it was in the working tree uncommitted.** It truncates the output
+to the shortest stream: measured on the fixture it produced 4,040 ms for a 4,162 ms clip with
+loudnorm on *and* off, failing the §8.3 boundary invariant either way. The clip would have
+ended before its own `final_out`, which is mid-sentence.
+
+---
+
+## D-250
+
+**§2's QC gate had no automated finding to put in front of the human it gates on.** `qc.flags`
+was constructed empty on every run, so the gate asked a person to review a clip while telling
+them nothing measured about it.
+
+`dead_air_flags` names every silence between two selected sentences longer than 1,500 ms.
+Measured on the real 38-minute source: a contiguous six-sentence selection carried a 5,990 ms
+hole, and the rendered clip sat silent for six of its fifty-six seconds with every check in
+this pipeline green and `qc.flags` empty.
+
+Deliberately **not** a refusal. A two-second pause before a punchline is editing; a six-second
+one is a clip nobody watched before shipping, and only a person can tell those apart. What was
+wrong was that nothing measured it at all. A finding forces `auto_pass` to false — that field
+means "automation had no objection" — leaves `human_reviewed` untouched, and now prints in the
+report rather than only in `--json`, because the documented invocation is the one a person runs.
+
+**Stage 1 had the same defect and it was louder.** `select_for_validation` already scored every
+segment and nothing printed the result. Measured on the real 38-minute source: **294 of 545
+segments (54%)** were escalated for human validation because the LLM and CTC arms disagree past
+`DEFAULT_DISAGREEMENT_CER`, and the run printed a clean fourteen-line report with no mention of
+it. The cause is visible in `segment_confidence`: the CTC-3B arm has no language conditioning
+and script-hops on this audio, returning `ctc_text` in eleven different scripts — Malayalam,
+Bengali, CJK, Cyrillic, Devanagari, Ethiopic, Hebrew, Latin and Arabic among them — so only
+71.4% of segments carry any Kurdish letter at all against the LLM arm's 98.9%. Word timings come
+from Viterbi over those emissions, which is why word confidence has a median of 0.0063 and only
+3 of 5,897 words exceed 0.5. Karaoke highlighting is built on those timings. The runner now
+prints the escalated count and the first reason.
+
+**`security/wsl-asr-vex.json`'s applicability digest was re-bound, and only that.** The gate
+compares `applicability.source_sha256` against `package_digest(src/hawedit)`, so every
+source-changing commit moves it — 61 of this repository's 523 commits touch the file, and each
+of the last three moved that one field and nothing else. What was verified before moving it:
+`requirements/**` and `pyproject.toml` are byte-identical to HEAD, and every import added across
+the four changed modules is either stdlib (`itertools.pairwise`, `typing.Final`) or first-party
+(`hawedit.*`). The dependency surface the twelve dispositions were reviewed against is unchanged,
+which is why `reviewed: 2026-08-09` and `expires` stay where they are — that date belongs to the
+disposition review, not to the applicability pin, and re-dating it would claim a pip-audit run
+that did not happen.
+
 <!-- Decisions made on the `agentic` branch are numbered D-A1, D-A2, … deliberately. main is
      being finished by a concurrent session that is appending its own D-19x entries to the end
      of this same file; two branches both claiming "D-191" would merge into a contradiction

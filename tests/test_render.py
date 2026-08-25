@@ -20,6 +20,7 @@ producing something plausible.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import tempfile
 from dataclasses import replace
@@ -32,6 +33,8 @@ from hawedit.captions import build_ass, ffprobe_for, find_ffmpeg
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
 from hawedit.ingest import probe_duration_ms
 from hawedit.render import (
+    DELIVERY_AUDIO_RATE,
+    DELIVERY_LUFS,
     ENCODER_PROBE_SIZE,
     NVENC_MIN_FRAME,
     VERTICAL_HEIGHT,
@@ -41,10 +44,12 @@ from hawedit.render import (
     RenderError,
     _publish_render,
     assert_encoded_span,
+    audio_filter,
     crop_filter,
     encoder_available,
     frame_duration_ms,
     frame_rate,
+    quality_args,
     render_clip,
 )
 from hawedit.sentences import Sentence
@@ -52,6 +57,7 @@ from hawedit.transcripts import AsrProvenance, Word
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
 FONTS = ROOT / "assets" / "fonts"
 
 # The fixture is 640x360 — see tests/test_ingest.py for how it is built.
@@ -80,6 +86,7 @@ def _clip(*, qc: Qc | None = None, complete: bool = True) -> Clip:
     return Clip(
         clip_id="m2-4",
         media_id="kurdish-speech-3cuts",
+        media_sha256=FIXTURE_SHA256,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         discovery_path=DiscoveryPath.VERBAL,
@@ -751,16 +758,47 @@ def test_frame_duration_comes_from_the_file_rather_than_an_assumed_rate() -> Non
     assert frame_duration_ms(FIXTURE, find_ffmpeg()) == 40
 
 
-def test_dynamic_crop_tracks_focus_points_over_the_clip_timeline() -> None:
+def test_dynamic_crop_interpolates_between_focus_points_instead_of_stepping() -> None:
+    """A step between samples is the shimmer; a ramp between them is a pan.
+
+    This asserted the stepped form — a snap at the midpoint between neighbouring samples —
+    until a real 2 fps face track showed what that means on screen: the crop jumping twice a
+    second for the whole clip. The behaviour changed deliberately, so the assertion does too.
+    """
     chain = crop_filter(
         SOURCE_WIDTH,
         SOURCE_HEIGHT,
         focus_points=((100, 50), (1_100, 600)),
         clip_in_ms=100,
     )
-    assert "if(lt(t\\,0.500)" in chain
-    assert "\\,0\\," in chain
-    assert "\\,438)" in chain
+    # Clamped left edge at the first point, right edge at the second, ramped between them
+    # across the whole 1.0 s the two samples span.
+    assert "if(lt(t\\,1.000)\\,(0+(438)*(t-0.000)/1.000)\\,438)" in chain
+    # The old midpoint snap must be gone, not merely outnumbered.
+    assert "\\,0.500)\\," not in chain
+
+
+def test_dynamic_crop_holds_still_between_equal_keyframes() -> None:
+    """`stabilize` encodes a hold as two equal neighbours; the filter must not drift over it."""
+    chain = crop_filter(
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        focus_points=((0, 200), (4_000, 200), (4_400, 500)),
+    )
+    # 640x360 crops to 202 wide, so a face centred at 200 puts the crop's left edge at 99.
+    # A flat span is emitted as the bare position, never as a ramp with a zero numerator.
+    assert "if(lt(t\\,4.000)\\,99\\," in chain
+    assert "(99+(0)*" not in chain
+
+
+def test_dynamic_crop_holds_the_opening_position_before_the_first_keyframe() -> None:
+    """A clip whose track starts late must not extrapolate backwards off the front."""
+    chain = crop_filter(
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        focus_points=((2_000, 100), (3_000, 500)),
+    )
+    assert chain.startswith("crop=202:360:if(lt(t\\,2.000)\\,0\\,if(lt(t\\,3.000)\\,")
 
 
 @needs_ffmpeg
@@ -1184,3 +1222,99 @@ def test_a_frame_rate_of_zero_is_refused_rather_than_divided_by(
     # purpose, which it can only do if it is told the truth.
     monkeypatch.setattr("hawedit.render.probe_stream", lambda *_a, **_k: "30000/1001")
     assert frame_rate(FIXTURE) == 30000 / 1001
+
+
+def test_nvenc_gets_a_quality_flag_it_actually_honours() -> None:
+    """`-crf` is accepted and ignored by NVENC, which made it a no-op on the §6 host.
+
+    Measured on hawapc01 with ffmpeg 8.1.1: `-crf 18` and `-crf 30` into `h264_nvenc` both
+    wrote 976,781 bytes for the same 3 s 1080x1920 source. `-rc vbr -cq N -b:v 0` wrote
+    5,412,913 and 1,763,082 for the same pair.
+    """
+    assert quality_args(Encoder.NVENC, 20) == ["-rc", "vbr", "-cq", "20", "-b:v", "0"]
+    assert "-crf" not in quality_args(Encoder.NVENC, 20)
+    # Without -b:v 0 the constant-quality result is capped by a default bitrate ceiling and
+    # the cq value stops mattering again at the top of the range.
+    assert "-b:v" in quality_args(Encoder.NVENC, 20)
+
+
+def test_x264_keeps_crf_which_is_the_flag_it_honours() -> None:
+    assert quality_args(Encoder.X264, 20) == ["-crf", "20"]
+
+
+def test_delivery_audio_is_normalised_to_the_platform_target() -> None:
+    """A podcast master sits ~10 LU under what every target normalises playback to."""
+    chain = audio_filter()
+    assert "loudnorm=I=-14:TP=-1:LRA=11" in chain
+    assert f"aresample={DELIVERY_AUDIO_RATE}" in chain
+    assert DELIVERY_AUDIO_RATE == 48_000
+
+
+@needs_ffmpeg
+def test_a_real_encode_lands_on_the_loudness_target(tmp_path: Path) -> None:
+    """The filter string is not the evidence; the measured loudness of the file is.
+
+    ebur128 over the encoded artifact, not over the filter graph that was asked for.
+    """
+    binary = find_ffmpeg()
+    assert binary is not None
+    quiet = tmp_path / "quiet.wav"
+    subprocess.run(
+        [
+            str(binary),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:duration=6:sample_rate=48000",
+            "-af",
+            "volume=-24dB",
+            "-y",
+            str(quiet),
+        ],
+        check=True,
+    )
+    loud = tmp_path / "loud.wav"
+    subprocess.run(
+        [
+            str(binary),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(quiet),
+            "-af",
+            audio_filter(),
+            "-ar",
+            str(DELIVERY_AUDIO_RATE),
+            "-y",
+            str(loud),
+        ],
+        check=True,
+    )
+
+    def integrated(path: Path) -> float:
+        measured = subprocess.run(
+            [
+                str(binary),
+                "-hide_banner",
+                "-nostats",
+                "-i",
+                str(path),
+                "-af",
+                "ebur128=framelog=quiet",
+                "-f",
+                "null",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stderr
+        tail = measured[measured.rindex("Integrated loudness") :]
+        return float(tail.split("I:")[1].split("LUFS")[0].strip())
+
+    assert integrated(quiet) < -20.0, "the input really is quiet"
+    assert abs(integrated(loud) - DELIVERY_LUFS) <= 1.5, "single-pass loudnorm lands on target"

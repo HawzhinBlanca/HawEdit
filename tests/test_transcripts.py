@@ -44,6 +44,7 @@ from hawedit.transcripts import (
 )
 
 CANONICAL = AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi")
+MEDIA_SHA256 = "0" * 64
 
 # The two §7 model ids by role, for D-197's tests. Named apart from `CANONICAL` above, which is a
 # whole provenance record rather than a model id.
@@ -64,6 +65,7 @@ def a_raw(text: str = "ئه‌مه‌ زۆر باشه‌") -> RawTranscript:
         if surface in text
         else (),
         asr=CANONICAL,
+        media_sha256=MEDIA_SHA256,
     )
 
 
@@ -514,6 +516,62 @@ def test_a_real_reason_and_span_are_accepted() -> None:
     assert "15 tokens" in gap.reason
 
 
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms"),
+    [(False, 1), (0, True), (0.0, 1), (0, 1.0), (-1, 1)],
+)
+def test_unaligned_speech_refuses_non_integer_or_negative_media_clock_bounds(
+    start_ms: object, end_ms: object
+) -> None:
+    """JSON booleans are Python integers; they must not become a 0..1 ms speech gap."""
+    with pytest.raises(ValueError, match="integer milliseconds|non-negative"):
+        UnalignedSpeech(
+            start_ms=start_ms,  # type: ignore[arg-type]
+            end_ms=end_ms,  # type: ignore[arg-type]
+            reason="AlignmentInfeasible",
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [42, "line one\nline two", "control\x00byte", "x" * 1_025],
+)
+def test_unaligned_speech_refuses_unreportable_reasons(reason: object) -> None:
+    with pytest.raises(ValueError, match="reason"):
+        UnalignedSpeech(
+            start_ms=0,
+            end_ms=1,
+            reason=reason,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms"),
+    [(False, 1), (0, True), (0.0, 1), (0, 1.0), (-1, 1)],
+)
+def test_rejected_validator_correction_refuses_invalid_media_clock_bounds(
+    start_ms: object, end_ms: object
+) -> None:
+    with pytest.raises(ValueError, match="integer milliseconds|non-negative"):
+        RejectedValidatorCorrection(
+            start_ms=start_ms,  # type: ignore[arg-type]
+            end_ms=end_ms,  # type: ignore[arg-type]
+            validator=VALIDATOR_ID,
+            reason="alignment refused",
+        )
+
+
+@pytest.mark.parametrize("reason", [None, "a\nb", "a\x00b", "x" * 1_025])
+def test_rejected_validator_correction_refuses_unreportable_reasons(reason: object) -> None:
+    with pytest.raises(ValueError, match="reason"):
+        RejectedValidatorCorrection(
+            start_ms=0,
+            end_ms=1,
+            validator=VALIDATOR_ID,
+            reason=reason,  # type: ignore[arg-type]
+        )
+
+
 # --- D-107: the raw file's own write-once layer was never reached by a test ------------------
 
 
@@ -602,6 +660,36 @@ def test_a_real_segment_confidence_is_accepted() -> None:
     assert SegmentConfidence(start_ms=0, end_ms=1, mean_logprob=0.0).mean_logprob == 0.0
 
 
+@pytest.mark.parametrize(
+    ("start_ms", "end_ms"),
+    [(False, 1), (0, True), (0.0, 1), (0, 1.0), (-1, 1)],
+)
+def test_segment_confidence_refuses_invalid_media_clock_bounds(
+    start_ms: object, end_ms: object
+) -> None:
+    with pytest.raises(ValueError, match="integer milliseconds|non-negative"):
+        SegmentConfidence(
+            start_ms=start_ms,  # type: ignore[arg-type]
+            end_ms=end_ms,  # type: ignore[arg-type]
+            mean_logprob=-1.0,
+        )
+
+
+@pytest.mark.parametrize("value", [True, "-1", float("nan"), float("inf"), -float("inf"), 0.1])
+def test_segment_confidence_requires_one_finite_log_probability(value: object) -> None:
+    with pytest.raises(ValueError, match="finite log-probability"):
+        SegmentConfidence(start_ms=0, end_ms=1, mean_logprob=value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [True, "-1", float("nan"), float("inf"), -float("inf"), 0.1])
+def test_asr_provenance_requires_one_finite_aggregate_log_probability(value: object) -> None:
+    with pytest.raises(ValueError, match="finite log-probability"):
+        AsrProvenance(
+            canonical=CANONICAL_ASR_ID,
+            mean_logprob=value,  # type: ignore[arg-type]
+        )
+
+
 # --- D-136: Stage 1 is the expensive stage, and it was re-run every time -------------------
 
 
@@ -612,7 +700,7 @@ def test_a_transcript_is_reused_when_the_audio_and_producer_both_match(tmp_path:
     raw = a_raw()
     store.write_raw(raw, audio_sha256="abc123", producer="pkg.RealProducer")
 
-    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") == raw
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer", MEDIA_SHA256) == raw
 
 
 def test_a_changed_audio_digest_is_not_reused(tmp_path: Path) -> None:
@@ -621,7 +709,31 @@ def test_a_changed_audio_digest_is_not_reused(tmp_path: Path) -> None:
     store = TranscriptStore(tmp_path)
     store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.RealProducer")
 
-    assert store.reusable_raw("media-001", "different", "pkg.RealProducer") is None
+    assert store.reusable_raw("media-001", "different", "pkg.RealProducer", MEDIA_SHA256) is None
+
+
+def test_matching_audio_and_producer_cannot_reuse_transcript_for_other_media_bytes(
+    tmp_path: Path,
+) -> None:
+    store = TranscriptStore(tmp_path)
+    store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.RealProducer")
+
+    with pytest.raises(RawTranscriptImmutable, match="not bound to source media"):
+        store.reusable_raw("media-001", "abc123", "pkg.RealProducer", "1" * 64)
+
+
+def test_legacy_unbound_transcript_is_not_reused_after_media_binding(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    legacy = RawTranscript(
+        media_id="media-001",
+        text_ckb="ئه‌مه‌ زۆر باشه‌",
+        words=(Word(w="ئه‌مه‌", start_ms=84_600, end_ms=84_920, conf=0.97),),
+        asr=CANONICAL,
+    )
+    store.write_raw(legacy, audio_sha256="abc123", producer="pkg.RealProducer")
+
+    with pytest.raises(RawTranscriptImmutable, match="new work directory"):
+        store.reusable_raw("media-001", "abc123", "pkg.RealProducer", MEDIA_SHA256)
 
 
 def test_a_transcript_from_a_stub_is_not_reused_by_another_producer(tmp_path: Path) -> None:
@@ -631,10 +743,13 @@ def test_a_transcript_from_a_stub_is_not_reused_by_another_producer(tmp_path: Pa
     store = TranscriptStore(tmp_path)
     store.write_raw(a_raw(), audio_sha256="abc123", producer="tests.StubProducer")
 
-    assert store.reusable_raw("media-001", "abc123", "hawedit.asr.WslOmniAsrProducer") is None
+    assert (
+        store.reusable_raw("media-001", "abc123", "hawedit.asr.WslOmniAsrProducer", MEDIA_SHA256)
+        is None
+    )
     # The control: the same stub asking again does get it back, so this measures the producer
     # and not merely that some string mismatches.
-    assert store.reusable_raw("media-001", "abc123", "tests.StubProducer") is not None
+    assert store.reusable_raw("media-001", "abc123", "tests.StubProducer", MEDIA_SHA256) is not None
 
 
 def test_a_transcript_written_without_provenance_is_never_reused(tmp_path: Path) -> None:
@@ -643,7 +758,7 @@ def test_a_transcript_written_without_provenance_is_never_reused(tmp_path: Path)
     store = TranscriptStore(tmp_path)
     store.write_raw(a_raw())
 
-    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") is None
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer", MEDIA_SHA256) is None
     assert not (tmp_path / "media-001.transcript.raw.provenance.json").is_file()
 
 
@@ -655,7 +770,7 @@ def test_half_a_provenance_record_is_not_a_match(tmp_path: Path) -> None:
     assert sidecar.is_file(), "the sidecar this test overwrites is not where it thinks"
     sidecar.write_text(json.dumps({"audio_sha256": "abc123"}), encoding="utf-8")
 
-    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") is None
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer", MEDIA_SHA256) is None
 
 
 def test_unreadable_provenance_falls_back_to_transcribing(tmp_path: Path) -> None:
@@ -663,7 +778,7 @@ def test_unreadable_provenance_falls_back_to_transcribing(tmp_path: Path) -> Non
     store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.RealProducer")
     (tmp_path / "media-001.transcript.raw.provenance.json").write_text('{"audio', encoding="utf-8")
 
-    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer") is None
+    assert store.reusable_raw("media-001", "abc123", "pkg.RealProducer", MEDIA_SHA256) is None
 
 
 def test_reuse_still_verifies_the_transcript_against_its_digest(tmp_path: Path) -> None:
@@ -676,7 +791,7 @@ def test_reuse_still_verifies_the_transcript_against_its_digest(tmp_path: Path) 
     path.write_text(a_raw(text="something else entirely").to_json(), encoding="utf-8")
 
     with pytest.raises(RawTranscriptTampered):
-        store.reusable_raw("media-001", "abc123", "pkg.Real")
+        store.reusable_raw("media-001", "abc123", "pkg.Real", MEDIA_SHA256)
 
 
 def test_a_missing_transcript_is_not_reused_even_with_a_sidecar(tmp_path: Path) -> None:
@@ -687,7 +802,7 @@ def test_a_missing_transcript_is_not_reused_even_with_a_sidecar(tmp_path: Path) 
         json.dumps({"audio_sha256": "abc123", "producer": "pkg.Real"}), encoding="utf-8"
     )
 
-    assert store.reusable_raw("media-001", "abc123", "pkg.Real") is None
+    assert store.reusable_raw("media-001", "abc123", "pkg.Real", MEDIA_SHA256) is None
 
 
 # --- D-151: invariant #1's tamper evidence, held in the state that removes it -----------------
@@ -765,7 +880,7 @@ def test_a_transcript_whose_digest_is_gone_cannot_be_verified(
         if entry_point == "verify_raw_integrity":
             store.verify_raw_integrity("media-001")
         else:
-            store.reusable_raw("media-001", "abc123", "pkg.Real")
+            store.reusable_raw("media-001", "abc123", "pkg.Real", MEDIA_SHA256)
 
 
 @pytest.mark.parametrize("how", _SIDECAR_STATES)
@@ -788,7 +903,7 @@ def test_a_tampered_transcript_is_still_refused_once_its_digest_is_gone(
         store.verify_raw_integrity("media-001")
     # The door a real Stage 1 run takes. It must refuse rather than hand the edited text back.
     with pytest.raises(RawTranscriptTampered):
-        store.reusable_raw("media-001", "abc123", "pkg.Real")
+        store.reusable_raw("media-001", "abc123", "pkg.Real", MEDIA_SHA256)
 
 
 def test_an_intact_digest_still_verifies_and_still_reuses(tmp_path: Path) -> None:
@@ -802,7 +917,7 @@ def test_an_intact_digest_still_verifies_and_still_reuses(tmp_path: Path) -> Non
     store.write_raw(a_raw(), audio_sha256="abc123", producer="pkg.Real")
 
     store.verify_raw_integrity("media-001")  # must not raise
-    reused = store.reusable_raw("media-001", "abc123", "pkg.Real")
+    reused = store.reusable_raw("media-001", "abc123", "pkg.Real", MEDIA_SHA256)
     assert reused is not None, "an intact transcript was not offered for reuse"
     assert reused.text_ckb == a_raw().text_ckb
 
@@ -920,6 +1035,59 @@ def _raw_file(**overrides: object) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+@pytest.mark.parametrize("payload", ["null", "[]", "1", '"transcript"'])
+def test_raw_transcript_json_requires_an_object(payload: str) -> None:
+    with pytest.raises(ValueError, match="JSON object"):
+        RawTranscript.from_json(payload)
+
+
+def test_raw_transcript_json_refuses_duplicate_keys() -> None:
+    payload = (
+        a_raw()
+        .to_json()
+        .replace(
+            '"media_id": "media-001"',
+            '"media_id": "other", "media_id": "media-001"',
+            1,
+        )
+    )
+    with pytest.raises(ValueError, match="duplicate JSON key.*media_id"):
+        RawTranscript.from_json(payload)
+
+
+def test_raw_transcript_json_refuses_nonstandard_numeric_constants() -> None:
+    payload = json.loads(a_raw().to_json())
+    payload["segment_confidence"] = [{"start_ms": 0, "end_ms": 1, "mean_logprob": float("nan")}]
+    with pytest.raises(ValueError, match="non-standard JSON numeric constant"):
+        RawTranscript.from_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("words", {}),
+        ("words", ["not an object"]),
+        ("asr", []),
+        ("unaligned", {}),
+        ("segment_confidence", {}),
+        ("rejected_validator_corrections", {}),
+    ],
+)
+def test_raw_transcript_json_refuses_wrong_container_and_member_shapes(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        RawTranscript.from_json(_raw_file(**{field: value}))
+
+
+def test_normalized_transcript_json_uses_the_same_strict_decoder() -> None:
+    duplicate = (
+        '{"media_id":"m","media_id":"other","text_ckb":"کوردی","source_sha256":"abc","words":[]}'
+    )
+    with pytest.raises(ValueError, match="duplicate JSON key.*media_id"):
+        NormalizedTranscript.from_json(duplicate)
+
+
 @pytest.mark.parametrize(
     ("value", "message"),
     [
@@ -937,6 +1105,23 @@ def test_a_raw_transcript_file_whose_media_id_is_not_a_name_is_refused(
     """
     with pytest.raises(ValueError, match=message):
         RawTranscript.from_json(_raw_file(media_id=value))
+
+
+def test_legacy_raw_transcript_without_media_digest_remains_readable_but_unbound() -> None:
+    payload = json.loads(a_raw().to_json())
+    payload.pop("media_sha256")
+    assert RawTranscript.from_json(json.dumps(payload, ensure_ascii=False)).media_sha256 is None
+
+
+@pytest.mark.parametrize("value", [True, 7, "A" * 64, "0" * 63, "g" * 64])
+def test_raw_transcript_refuses_a_noncanonical_media_digest(value: object) -> None:
+    with pytest.raises(ValueError, match="media_sha256"):
+        RawTranscript.from_json(_raw_file(media_sha256=value))
+
+
+def test_raw_transcript_round_trips_an_exact_media_digest() -> None:
+    raw = RawTranscript.from_json(_raw_file(media_sha256="0" * 64))
+    assert raw.media_sha256 == "0" * 64
 
 
 @pytest.mark.parametrize(

@@ -166,6 +166,41 @@ def test_tokens_are_counted_before_the_billed_call() -> None:
     assert api.calls[1].endswith("generateContent")
 
 
+def test_counted_judgment_uses_one_authoritative_count_for_one_generation() -> None:
+    api = Api()
+    judge = a_judge(api)
+
+    tokens, verdict = judge.judge_with_count(a_request(), max_tokens=5_000)
+
+    assert tokens == 1_200
+    assert verdict.candidate_id == "c1"
+    assert [call.rsplit(":", 1)[-1] for call in api.calls] == [
+        "countTokens",
+        "generateContent",
+    ]
+
+
+def test_owner_token_ceiling_refuses_before_the_billed_call() -> None:
+    api = Api()
+    judge = a_judge(api)
+
+    with pytest.raises(RequestTooLarge, match="owner-approved ceiling"):
+        judge.judge_with_count(a_request(), max_tokens=1_000)
+
+    assert len(api.calls) == 1
+    assert api.calls[0].endswith("countTokens")
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 1.5, "5000"])
+def test_owner_token_ceiling_requires_a_positive_json_integer(value: object) -> None:
+    api = Api()
+
+    with pytest.raises(ValueError, match="max_tokens"):
+        a_judge(api).judge_with_count(a_request(), max_tokens=value)  # type: ignore[arg-type]
+
+    assert api.calls == []
+
+
 def test_api_key_is_sent_in_a_header_never_in_the_url() -> None:
     api = Api()
     a_judge(api).judge(a_request())

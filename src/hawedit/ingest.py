@@ -594,6 +594,7 @@ class IngestResult:
 
     media_id: str
     source: str
+    source_sha256: str
     audio_path: str
     proxy_path: str
     duration_ms: int
@@ -604,6 +605,14 @@ class IngestResult:
     diarization: tuple[Segment, ...] | None = None
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.source_sha256, str)
+            or len(self.source_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.source_sha256)
+        ):
+            raise ValueError(
+                "ingest source_sha256 must be exactly 64 lowercase hexadecimal characters"
+            )
         if type(self.duration_ms) is not int:
             raise TypeError("ingest duration must be exact integer milliseconds")
         if self.duration_ms <= 0:
@@ -639,6 +648,7 @@ class IngestResult:
         return {
             "media_id": self.media_id,
             "source": self.source,
+            "source_sha256": self.source_sha256,
             "audio_path": self.audio_path,
             "proxy_path": self.proxy_path,
             "duration_ms": self.duration_ms,
@@ -663,6 +673,7 @@ class IngestResult:
         return IngestResult(
             media_id=data["media_id"],
             source=data["source"],
+            source_sha256=data["source_sha256"],
             audio_path=data["audio_path"],
             proxy_path=data["proxy_path"],
             duration_ms=data["duration_ms"],
@@ -729,20 +740,25 @@ def ingest(
     binary = _ffmpeg(ffmpeg)
     work_dir.mkdir(parents=True, exist_ok=True)
     identifier = media_id or source.stem
+    source_sha256 = _source_digest(source)
 
     audio = extract_audio(source, work_dir / "audio.wav", ffmpeg=binary)
     proxy = extract_proxy(source, work_dir / "proxy.mp4", ffmpeg=binary)
     duration_ms = probe_duration_ms(source, ffmpeg=binary)
     speech = _clip_speech_to_media(detect_speech(audio), duration_ms)
     assert_within_asr_ceiling(speech)
+    shot_cuts_ms = detect_shots(source)
+    if _source_digest(source) != source_sha256:
+        raise IngestError("Stage 0 source changed while ingest was measuring it")
 
     return IngestResult(
         media_id=identifier,
         source=str(source),
+        source_sha256=source_sha256,
         audio_path=str(audio),
         proxy_path=str(proxy),
         duration_ms=duration_ms,
-        shot_cuts_ms=detect_shots(source),
+        shot_cuts_ms=shot_cuts_ms,
         speech=speech,
         diarization=None,
     )

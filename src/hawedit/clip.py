@@ -28,9 +28,19 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, ClassVar, Final
 
-from hawedit.boundary import Boundary, _strict_bool, assert_boundary_invariant
+from hawedit.boundary import (
+    Boundary,
+    _json_object_fields,
+    _strict_bool,
+    _strict_json_array,
+    _strict_json_int,
+    _strict_json_number,
+    _strict_json_string,
+    _strict_optional_json_string,
+    assert_boundary_invariant,
+)
 from hawedit.registry import resolve_role
-from hawedit.transcripts import AsrProvenance, Word
+from hawedit.transcripts import AsrProvenance, Word, validate_media_id, validate_media_sha256
 
 __all__ = [
     "Clip",
@@ -98,7 +108,7 @@ class Sv6d:
 
     def __post_init__(self) -> None:
         for dimension in self.DIMENSIONS:
-            label: str = getattr(self, dimension)
+            label = _strict_json_string(getattr(self, dimension), f"sv6d.{dimension}")
             if not _TIMESTAMP.search(label):
                 raise ValueError(
                     f"SV6D {dimension} label {label!r} cites no timestamp. §3 Stage 3: "
@@ -115,6 +125,22 @@ class Sv6d:
             "narrative": self.narrative,
             "retention": self.retention,
         }
+
+
+def _sv6d_from_json(value: object, field: str) -> Sv6d | None:
+    if value is None:
+        return None
+    fields = _json_object_fields(
+        value,
+        field=field,
+        required=frozenset(Sv6d.DIMENSIONS),
+    )
+    return Sv6d(
+        **{
+            dimension: _strict_json_string(fields[dimension], f"{field}.{dimension}")
+            for dimension in Sv6d.DIMENSIONS
+        }
+    )
 
 
 def parse_timestamps_ms(label: str) -> tuple[int, ...]:
@@ -208,10 +234,15 @@ class Editorial:
     payoff_at_ms: int | None = None
 
     def __post_init__(self) -> None:
+        _strict_bool(self.self_contained, "editorial.self_contained")
         for name in _SCORE_FIELDS:
-            value: float = getattr(self, name)
-            if not 0.0 <= value <= 1.0:
-                raise ValueError(f"{name} must be within [0, 1], got {value}")
+            _strict_json_number(getattr(self, name), f"editorial.{name}", minimum=0.0, maximum=1.0)
+        for name in ("narrative_role", "judge"):
+            _strict_json_string(getattr(self, name), f"editorial.{name}")
+        if self.payoff_at_ms is not None:
+            _strict_json_int(self.payoff_at_ms, "editorial.payoff_at_ms", minimum=0)
+        if self.sv6d is not None and not isinstance(self.sv6d, Sv6d):
+            raise ValueError("editorial.sv6d must be an Sv6d value or None")
         entry = resolve_role(
             self.judge,
             frozenset({"kurdish_editorial_judge", "judge_shadow"}),
@@ -239,17 +270,56 @@ class Editorial:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Editorial:
-        raw_sv6d = data.get("sv6d")
+        fields = _json_object_fields(
+            data,
+            field="editorial",
+            required=frozenset(
+                {
+                    "hook_score",
+                    "self_contained",
+                    "meaning_fidelity",
+                    "misleading_edit_risk",
+                    "cultural_landing",
+                    "narrative_role",
+                    "judge",
+                }
+            ),
+            optional=frozenset({"sv6d", "payoff_at_ms"}),
+        )
+        raw_payoff = fields.get("payoff_at_ms")
         return Editorial(
-            hook_score=data["hook_score"],
-            self_contained=_strict_bool(data["self_contained"], "editorial.self_contained"),
-            meaning_fidelity=data["meaning_fidelity"],
-            misleading_edit_risk=data["misleading_edit_risk"],
-            cultural_landing=data["cultural_landing"],
-            narrative_role=data["narrative_role"],
-            judge=data["judge"],
-            sv6d=Sv6d(**raw_sv6d) if raw_sv6d else None,
-            payoff_at_ms=data.get("payoff_at_ms"),
+            hook_score=_strict_json_number(
+                fields["hook_score"], "editorial.hook_score", minimum=0.0, maximum=1.0
+            ),
+            self_contained=_strict_bool(fields["self_contained"], "editorial.self_contained"),
+            meaning_fidelity=_strict_json_number(
+                fields["meaning_fidelity"],
+                "editorial.meaning_fidelity",
+                minimum=0.0,
+                maximum=1.0,
+            ),
+            misleading_edit_risk=_strict_json_number(
+                fields["misleading_edit_risk"],
+                "editorial.misleading_edit_risk",
+                minimum=0.0,
+                maximum=1.0,
+            ),
+            cultural_landing=_strict_json_number(
+                fields["cultural_landing"],
+                "editorial.cultural_landing",
+                minimum=0.0,
+                maximum=1.0,
+            ),
+            narrative_role=_strict_json_string(
+                fields["narrative_role"], "editorial.narrative_role"
+            ),
+            judge=_strict_json_string(fields["judge"], "editorial.judge"),
+            sv6d=_sv6d_from_json(fields.get("sv6d"), "editorial.sv6d"),
+            payoff_at_ms=(
+                None
+                if raw_payoff is None
+                else _strict_json_int(raw_payoff, "editorial.payoff_at_ms", minimum=0)
+            ),
         )
 
 
@@ -262,6 +332,17 @@ class ClipTranscript:
     en_aux: str | None
     words: tuple[Word, ...]
     asr: AsrProvenance
+
+    def __post_init__(self) -> None:
+        _strict_json_string(self.raw_ckb, "transcript.raw_ckb")
+        _strict_json_string(self.norm_ckb, "transcript.norm_ckb")
+        _strict_optional_json_string(self.en_aux, "transcript.en_aux")
+        if not isinstance(self.words, tuple) or not all(
+            isinstance(word, Word) for word in self.words
+        ):
+            raise ValueError("transcript.words must be a tuple of Word values")
+        if not isinstance(self.asr, AsrProvenance):
+            raise ValueError("transcript.asr must be AsrProvenance")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -286,12 +367,57 @@ class ClipTranscript:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> ClipTranscript:
+        fields = _json_object_fields(
+            data,
+            field="transcript",
+            required=frozenset({"raw_ckb", "norm_ckb", "asr"}),
+            optional=frozenset({"en_aux", "words"}),
+        )
+        raw_words = _strict_json_array(fields.get("words", []), "transcript.words")
+        words: list[Word] = []
+        for index, raw_word in enumerate(raw_words):
+            word = _json_object_fields(
+                raw_word,
+                field=f"transcript.words[{index}]",
+                required=frozenset({"w", "start_ms", "end_ms", "conf"}),
+            )
+            words.append(
+                Word(
+                    w=_strict_json_string(word["w"], f"transcript.words[{index}].w"),
+                    start_ms=_strict_json_int(
+                        word["start_ms"], f"transcript.words[{index}].start_ms", minimum=0
+                    ),
+                    end_ms=_strict_json_int(
+                        word["end_ms"], f"transcript.words[{index}].end_ms", minimum=0
+                    ),
+                    conf=_strict_json_number(
+                        word["conf"],
+                        f"transcript.words[{index}].conf",
+                        minimum=0.0,
+                        maximum=1.0,
+                    ),
+                )
+            )
+        asr = _json_object_fields(
+            fields["asr"],
+            field="transcript.asr",
+            required=frozenset({"canonical"}),
+            optional=frozenset({"adapter", "aligner", "validated_by", "mean_logprob"}),
+        )
         return ClipTranscript(
-            raw_ckb=data["raw_ckb"],
-            norm_ckb=data["norm_ckb"],
-            en_aux=data.get("en_aux"),
-            words=tuple(Word(**w) for w in data.get("words", ())),
-            asr=AsrProvenance(**data["asr"]),
+            raw_ckb=_strict_json_string(fields["raw_ckb"], "transcript.raw_ckb"),
+            norm_ckb=_strict_json_string(fields["norm_ckb"], "transcript.norm_ckb"),
+            en_aux=_strict_optional_json_string(fields.get("en_aux"), "transcript.en_aux"),
+            words=tuple(words),
+            asr=AsrProvenance(
+                canonical=_strict_json_string(asr["canonical"], "transcript.asr.canonical"),
+                adapter=_strict_optional_json_string(asr.get("adapter"), "transcript.asr.adapter"),
+                aligner=_strict_optional_json_string(asr.get("aligner"), "transcript.asr.aligner"),
+                validated_by=_strict_optional_json_string(
+                    asr.get("validated_by"), "transcript.asr.validated_by"
+                ),
+                mean_logprob=asr.get("mean_logprob"),
+            ),
         )
 
 
@@ -310,8 +436,18 @@ class Output:
     hashtags_ckb: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if any(duration <= 0 for duration in self.durations):
-            raise ValueError("output durations must be positive seconds")
+        for name in ("title_ckb", "description_ckb", "crop_target", "caption_style"):
+            _strict_json_string(getattr(self, name), f"output.{name}")
+        if not isinstance(self.durations, tuple):
+            raise ValueError("output durations must be a tuple of JSON integers")
+        for duration in self.durations:
+            _strict_json_int(duration, "output duration")
+            if duration <= 0:
+                raise ValueError("output durations must be positive seconds")
+        if not isinstance(self.hashtags_ckb, tuple) or not all(
+            isinstance(tag, str) for tag in self.hashtags_ckb
+        ):
+            raise ValueError("output.hashtags_ckb must be a tuple of strings")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -325,13 +461,29 @@ class Output:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Output:
+        fields = _json_object_fields(
+            data,
+            field="output",
+            required=frozenset(
+                {"title_ckb", "description_ckb", "crop_target", "caption_style", "durations"}
+            ),
+            optional=frozenset({"hashtags_ckb"}),
+        )
+        raw_durations = _strict_json_array(fields["durations"], "output.durations")
+        raw_hashtags = _strict_json_array(fields.get("hashtags_ckb", []), "output.hashtags_ckb")
         return Output(
-            title_ckb=data["title_ckb"],
-            description_ckb=data["description_ckb"],
-            crop_target=data["crop_target"],
-            caption_style=data["caption_style"],
-            durations=tuple(data["durations"]),
-            hashtags_ckb=tuple(data.get("hashtags_ckb", ())),
+            title_ckb=_strict_json_string(fields["title_ckb"], "output.title_ckb"),
+            description_ckb=_strict_json_string(
+                fields["description_ckb"], "output.description_ckb"
+            ),
+            crop_target=_strict_json_string(fields["crop_target"], "output.crop_target"),
+            caption_style=_strict_json_string(fields["caption_style"], "output.caption_style"),
+            durations=tuple(
+                _strict_json_int(duration, "output duration") for duration in raw_durations
+            ),
+            hashtags_ckb=tuple(
+                _strict_json_string(tag, "output.hashtags_ckb member") for tag in raw_hashtags
+            ),
         )
 
 
@@ -360,13 +512,19 @@ class Qc:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Qc:
-        raw_flags = data.get("flags", [])
-        if not isinstance(raw_flags, list) or not all(isinstance(flag, str) for flag in raw_flags):
+        fields = _json_object_fields(
+            data,
+            field="qc",
+            required=frozenset({"auto_pass"}),
+            optional=frozenset({"flags", "human_reviewed"}),
+        )
+        raw_flags = _strict_json_array(fields.get("flags", []), "qc.flags")
+        if not all(isinstance(flag, str) for flag in raw_flags):
             raise ValueError("qc.flags must be a JSON array of strings")
         return Qc(
-            auto_pass=_strict_bool(data["auto_pass"], "qc.auto_pass"),
+            auto_pass=_strict_bool(fields["auto_pass"], "qc.auto_pass"),
             flags=tuple(raw_flags),
-            human_reviewed=_strict_bool(data.get("human_reviewed", False), "qc.human_reviewed"),
+            human_reviewed=_strict_bool(fields.get("human_reviewed", False), "qc.human_reviewed"),
         )
 
 
@@ -387,6 +545,14 @@ class RejectedCandidate:
     reject_reason: str
 
     def __post_init__(self) -> None:
+        validate_media_id(self.media_id)
+        _strict_json_int(self.in_ms, "rejected candidate in_ms", minimum=0)
+        _strict_json_int(self.out_ms, "rejected candidate out_ms", minimum=0)
+        if self.out_ms <= self.in_ms:
+            raise ValueError("rejected candidate out_ms must be after in_ms")
+        if not isinstance(self.discovery_path, DiscoveryPath):
+            raise ValueError("rejected candidate discovery_path must be a DiscoveryPath")
+        _strict_json_string(self.reject_reason, "rejected candidate reject_reason")
         if not self.reject_reason.strip():
             raise ValueError(
                 "reject_reason must not be empty: the rejection set is the only measure of "
@@ -404,12 +570,21 @@ class RejectedCandidate:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> RejectedCandidate:
+        fields = _json_object_fields(
+            data,
+            field="rejected candidate",
+            required=frozenset({"media_id", "in_ms", "out_ms", "discovery_path", "reject_reason"}),
+        )
         return RejectedCandidate(
-            media_id=data["media_id"],
-            in_ms=data["in_ms"],
-            out_ms=data["out_ms"],
-            discovery_path=DiscoveryPath(data["discovery_path"]),
-            reject_reason=data["reject_reason"],
+            media_id=_strict_json_string(fields["media_id"], "rejected candidate.media_id"),
+            in_ms=_strict_json_int(fields["in_ms"], "rejected candidate.in_ms", minimum=0),
+            out_ms=_strict_json_int(fields["out_ms"], "rejected candidate.out_ms", minimum=0),
+            discovery_path=DiscoveryPath(
+                _strict_json_string(fields["discovery_path"], "rejected candidate.discovery_path")
+            ),
+            reject_reason=_strict_json_string(
+                fields["reject_reason"], "rejected candidate.reject_reason"
+            ),
         )
 
 
@@ -423,6 +598,8 @@ class Clip:
 
     clip_id: str
     media_id: str
+    # ``None`` reads legacy editing JSON, but cannot clear the render gate.
+    media_sha256: str | None
     in_ms: int
     out_ms: int
     discovery_path: DiscoveryPath
@@ -434,6 +611,26 @@ class Clip:
     qc: Qc | None = None
 
     def __post_init__(self) -> None:
+        validate_media_id(self.clip_id)
+        validate_media_id(self.media_id)
+        validate_media_sha256(self.media_sha256)
+        _strict_json_int(self.in_ms, "clip.in_ms", minimum=0)
+        _strict_json_int(self.out_ms, "clip.out_ms", minimum=0)
+        if self.out_ms <= self.in_ms:
+            raise ValueError("clip.out_ms must be after clip.in_ms")
+        if not isinstance(self.discovery_path, DiscoveryPath):
+            raise ValueError("clip.discovery_path must be a DiscoveryPath")
+        if not isinstance(self.boundary, Boundary):
+            raise ValueError("clip.boundary must be a Boundary")
+        if not isinstance(self.transcript, ClipTranscript):
+            raise ValueError("clip.transcript must be a ClipTranscript")
+        _strict_optional_json_string(self.speaker, "clip.speaker")
+        if self.editorial is not None and not isinstance(self.editorial, Editorial):
+            raise ValueError("clip.editorial must be Editorial or None")
+        if self.output is not None and not isinstance(self.output, Output):
+            raise ValueError("clip.output must be Output or None")
+        if self.qc is not None and not isinstance(self.qc, Qc):
+            raise ValueError("clip.qc must be Qc or None")
         if self.in_ms != self.boundary.final_in_ms:
             raise ValueError(
                 f"in_ms ({self.in_ms}) does not match the boundary's final_in_ms "
@@ -454,6 +651,11 @@ class Clip:
             ValueError: the clip has not cleared QC.
         """
         assert_boundary_invariant(self.boundary)
+        if self.media_sha256 is None:
+            raise ValueError(
+                f"clip {self.clip_id!r} has no source-media SHA-256 binding; legacy "
+                "editing JSON cannot be rendered safely"
+            )
         # A clip with no QC record has not passed QC — it has skipped it. §2's diagram puts
         # the gate before output "(always)", so absence is refusal, not permission. The
         # same for the judge: an unjudged clip has no meaning-fidelity or misleading-edit
@@ -486,6 +688,7 @@ class Clip:
         return {
             "clip_id": self.clip_id,
             "media_id": self.media_id,
+            "media_sha256": self.media_sha256,
             "in_ms": self.in_ms,
             "out_ms": self.out_ms,
             "discovery_path": self.discovery_path.value,
@@ -499,19 +702,53 @@ class Clip:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Clip:
-        editorial = data.get("editorial")
-        output = data.get("output")
-        qc = data.get("qc")
+        fields = _json_object_fields(
+            data,
+            field="clip",
+            required=frozenset(
+                {
+                    "clip_id",
+                    "media_id",
+                    "in_ms",
+                    "out_ms",
+                    "discovery_path",
+                    "boundary",
+                    "transcript",
+                }
+            ),
+            optional=frozenset({"media_sha256", "speaker", "editorial", "output", "qc"}),
+        )
+
+        def object_value(name: str, value: object) -> dict[str, Any]:
+            if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+                raise ValueError(f"clip.{name} must be a JSON object with string keys")
+            return value
+
+        boundary = object_value("boundary", fields["boundary"])
+        transcript = object_value("transcript", fields["transcript"])
+
+        def optional_object(name: str) -> dict[str, Any] | None:
+            value = fields.get(name)
+            if value is None:
+                return None
+            return object_value(name, value)
+
+        editorial = optional_object("editorial")
+        output = optional_object("output")
+        qc = optional_object("qc")
         return Clip(
-            clip_id=data["clip_id"],
-            media_id=data["media_id"],
-            in_ms=data["in_ms"],
-            out_ms=data["out_ms"],
-            discovery_path=DiscoveryPath(data["discovery_path"]),
-            boundary=Boundary.from_dict(data["boundary"]),
-            transcript=ClipTranscript.from_dict(data["transcript"]),
-            speaker=data.get("speaker"),
-            editorial=Editorial.from_dict(editorial) if editorial else None,
-            output=Output.from_dict(output) if output else None,
-            qc=Qc.from_dict(qc) if qc else None,
+            clip_id=_strict_json_string(fields["clip_id"], "clip.clip_id"),
+            media_id=_strict_json_string(fields["media_id"], "clip.media_id"),
+            media_sha256=fields.get("media_sha256"),
+            in_ms=_strict_json_int(fields["in_ms"], "clip.in_ms", minimum=0),
+            out_ms=_strict_json_int(fields["out_ms"], "clip.out_ms", minimum=0),
+            discovery_path=DiscoveryPath(
+                _strict_json_string(fields["discovery_path"], "clip.discovery_path")
+            ),
+            boundary=Boundary.from_dict(boundary),
+            transcript=ClipTranscript.from_dict(transcript),
+            speaker=_strict_optional_json_string(fields.get("speaker"), "clip.speaker"),
+            editorial=Editorial.from_dict(editorial) if editorial is not None else None,
+            output=Output.from_dict(output) if output is not None else None,
+            qc=Qc.from_dict(qc) if qc is not None else None,
         )

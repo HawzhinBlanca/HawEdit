@@ -15,9 +15,43 @@ from hawedit.diarization import (
     Segment,
     boundary_reconciliation,
     diarization_error_rate,
+    overlap_aware_diarization_error_rate,
     turn_bounds_for_anchors,
 )
 from hawedit.transcripts import Word
+
+
+def test_overlap_aware_benchmark_metric_matches_exclusive_metric() -> None:
+    reference = (Segment(0, 1_000, "A"), Segment(1_000, 2_000, "B"))
+    hypothesis = (Segment(0, 1_000, "x"), Segment(1_000, 2_000, "y"))
+    assert overlap_aware_diarization_error_rate(reference, hypothesis) == diarization_error_rate(
+        reference, hypothesis
+    )
+
+
+def test_overlap_aware_benchmark_metric_counts_extra_speaker_time_as_false_alarm() -> None:
+    reference = (Segment(0, 2_000, "A"),)
+    hypothesis = (Segment(0, 2_000, "x"), Segment(500, 1_500, "y"))
+    result = overlap_aware_diarization_error_rate(reference, hypothesis)
+    assert result is not None
+    assert result.missed_ms == 0
+    assert result.false_alarm_ms == 1_000
+    assert result.confusion_ms == 0
+    assert result.total_speech_ms == 2_000
+    assert result.der == 0.5
+
+
+def test_overlap_aware_benchmark_metric_uses_reference_speaker_time_denominator() -> None:
+    reference = (Segment(0, 2_000, "A"), Segment(500, 1_500, "B"))
+    hypothesis = (Segment(0, 2_000, "x"),)
+    result = overlap_aware_diarization_error_rate(reference, hypothesis)
+    assert result is not None
+    assert result.missed_ms == 1_000
+    assert result.false_alarm_ms == 0
+    assert result.confusion_ms == 0
+    assert result.total_speech_ms == 3_000
+    assert result.der == pytest.approx(1 / 3)
+
 
 REFERENCE = (
     Segment(0, 10_000, "A"),

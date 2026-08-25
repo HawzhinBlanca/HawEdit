@@ -67,6 +67,7 @@ def _clip_dict(caption_style: str = "line") -> dict[str, object]:
     clip = Clip(
         clip_id="fixture-0",
         media_id="fixture",
+        media_sha256="a" * 64,
         in_ms=boundary.final_in_ms,
         out_ms=boundary.final_out_ms,
         discovery_path=DiscoveryPath.VERBAL,

@@ -178,7 +178,8 @@ wheel, or existing release directory is refused.
 On the default branch, `.github/workflows/release.yml` consumes only a successful official
 `gate` **push** run on `main`, checks out that run's exact SHA, invokes the same fail-closed release
 verifier in a read-only job, then requires fresh no-checkout Python 3.11 and 3.12 runners to install
-the exact wheel, run `pip check`, resolve installed package data and start all nine CLIs. Only after
+the exact wheel, run `pip check`, resolve installed package data and start all fifteen CLIs. Only
+after
 both pass does it transfer the four explicit payloads to a fresh runner. Only that isolated job has
 OIDC/attestation authority; it refuses any extra, nested,
 linked, malformed or digest-mismatched entry, independently requires the wheel to identify the
@@ -199,6 +200,25 @@ draft, downloads and byte-compares its exact assets, and only then publishes. Re
 **immutable releases** are enabled, and the workflow refuses a published result unless GitHub
 reports it immutable. Operators must never move, delete, or reuse a production tag. Rollback is a
 new patch version, never a rewritten release. See `evidence/versioned-immutable-release.md`.
+
+Before creating that tag, produce the owner handoff from the downloaded four-file Actions artifact:
+
+```bash
+hawedit-release-approval prepare \
+  --project-root . \
+  --release-dir PATH/TO/DOWNLOADED/hawedit-release-SHA \
+  --output-dir PATH/TO/release-owner-packet \
+  --release-run-id RELEASE_WORKFLOW_RUN_ID
+```
+
+The command independently rechecks the clean protected-main SHA, schema-5 provenance, exact bundle
+digests, all five hosted release jobs and the strict `gh attestation verify` policy. It emits a
+write-once packet whose owner, action, timestamp, rationale and four risk acknowledgements are all
+unset. The owner reviews and fills a separate copy, signs its canonical bytes with OpenSSH namespace
+`hawedit-release-approval`, and passes that copy, signature and an allowed-signers file to
+`hawedit-release-approval verify`. Verification reopens every artifact and packet byte. A valid
+approval returns the exact fetch/check/tag/push commands as JSON; a rejection returns no commands.
+Neither operation creates a tag, pushes Git, publishes a release, or chooses for the owner.
 
 Verify either the Actions artifact or downloaded GitHub Release assets with the exact signer
 policy:
@@ -392,19 +412,79 @@ Stage 4 samples up to 20 JPEG keyframes from the exact candidate span and sends 
 parts to `countTokens` and `generateContent`. Textual SV6D remains supporting evidence; it no
 longer masquerades as source pixels.
 
+`hawedit-vertex-acceptance` is the confidential-route acceptance coordinator. Its preparation
+phase performs no cloud request: it binds one authorised video, normalized transcript, candidate
+slice, retained ZDR-policy digest, approved project/location, ADC identity, billing account and
+owner token/cost ceilings, then emits an unsigned approval template. Execution requires the exact
+OpenSSH-signed approval, revalidates all private bytes, refreshes ADC, mechanically checks the ADC
+project plus live Cloud Billing and Vertex API state, removes its private extracted pixels, and
+retains a durable no-replay receipt before the one non-retried paid generation attempt. The public
+result contains hashes and numeric operational facts, never access tokens, billing-account names,
+full transcript text, raw frame bytes, generated title/description/hashtags or retained policy
+text. This code does not prove a customer's contractual ZDR assertion: a responsible human still
+has to sign it, and no live Vertex acceptance has been run in this repository.
+
+`hawedit-owner-decisions` prepares the six remaining owner choices (#9, #13, #14, #15, #18 and
+#21) without silently choosing for Hawa. It authenticates the frozen blueprint, each exact blocker
+section and the reviewed evidence behind each recommendation, then publishes deterministic pages,
+a machine-readable manifest and a self-contained JSON template whose owner, timestamp, rationale
+and selected option remain unset. Publication is write-once; changed or linked authority files are
+refused.
+
 ## Benchmarks
 
 `bench.py` remains the §8.1 ASR harness: normalized/spacing-free CER, named entities,
-code-switching, alignment, RTF, VRAM and per-dialect coverage. `hawedit-editorial-bench`
-validates and scores a blind human regression manifest, requiring at least 20 items, at least
-five per dialect, two named reviewers per item, exact candidate/span equality and source media
-on disk.
+code-switching, alignment, RTF, VRAM and per-dialect coverage. A production run now requires a
+content-bound acceptance manifest plus a human approval signed with OpenSSH's detached-signature
+format. The guard re-hashes each audio item before and after every model measurement, and the
+benchmark report records the manifest, approval, signature and allowed-signers SHA-256 identities.
+Synthetic, interim, changed, linked, duplicate, path-escaping or declared training audio is refused.
+`hawedit-editorial-bench` validates and scores a blind human regression manifest, requiring at
+least 20 items, at least five per dialect, two named reviewers per item, exact candidate/span
+equality and source media on disk. The separate `hawedit.editorial_acceptance` coordinator prepares
+the larger §8.2 study: it deterministically selects 200–500 candidates, conceals incumbent/shadow
+identity, freezes a dialect-balanced training/holdout split before labelling, and emits unsigned
+review/adjudication templates. Preparation and evaluation require probeable video whose measured
+duration matches the inventory; evaluation reopens the exact inventory and recomputes sampling,
+blinding, split and media identities. Detached OpenSSH evidence must come from a coordinator, two
+distinct reviewers and a separate adjudicator using four distinct signing keys. Training and
+holdout labels/reports are published separately. Preparing a packet is not human acceptance.
 
 ```bash
+python -m hawedit.corpus_acceptance prepare sorani-corpus.json \
+  --audio-root /secure/audio --output-dir /secure/asr-acceptance \
+  --dataset-owner "<owner>" --authorized-by "<signer identity>" \
+  --licence "<licence>" --consent-basis "<recorded consent basis>" \
+  --permitted-use "HawEdit internal model evaluation and acceptance" \
+  --redistribution-forbidden --exclude-hashes /secure/training-audio.sha256
+# Review and fill approval.template.json, then sign it exactly as INSTRUCTIONS.txt specifies.
 hawedit-asr-bench sorani-corpus.json --audio-root /secure/audio \
-  --host hawapc01 --accelerator "RTX 3090 Ti" --output asr-report.json
+  --acceptance-manifest /secure/asr-acceptance/corpus-acceptance.json \
+  --approval /secure/approval.json --signature /secure/approval.json.sig \
+  --allowed-signers /secure/allowed_signers --host hawapc01 \
+  --accelerator "2x RTX 3090 Ti" --output asr-report.json
 hawedit-editorial-bench editorial.json --media-root /secure/media --output report.json
+python -m hawedit.editorial_acceptance prepare editorial-inventory.json \
+  --media-root /secure/media --output-dir /secure/editorial-study --sample-size 200
+# Complete and sign the generated coordinator/reviewer/adjudication documents as INSTRUCTIONS.txt
+# specifies, then run `python -m hawedit.editorial_acceptance evaluate --help` for the exact inputs.
+python -m hawedit.diarization_acceptance prepare diarization-reference.json \
+  --media-root /secure/multispeaker-media --output-dir /secure/diarization-study
+# Run pinned Community-1 and the non-routable 3.1 control after accepting both gated repositories;
+# fill and sign the generated documents exactly as INSTRUCTIONS.txt specifies, then run
+# `python -m hawedit.diarization_acceptance evaluate --help` for the bound evaluation inputs.
+hawedit-owner-decisions prepare --project-root . \
+  --output-dir /secure/hawedit-owner-decisions
+# Read all six pages; filling the template is an owner decision, not automated acceptance.
+hawedit-vertex-acceptance prepare --source-manifest /secure/vertex-source.json \
+  --private-root /secure/vertex-client-inputs --output-dir /secure/vertex-approval
+# Fill/sign the generated approval exactly as INSTRUCTIONS.txt specifies. `run --help` lists the
+# bound execution inputs; it reserves one paid attempt and therefore is never run by setup or CI.
 ```
+
+The private signing key, allowed-signers trust file, client audio, signed approval and training
+hash inventory stay outside Git. The preparation command emits an unsigned template; it is not
+approval and cannot make the blocked benchmark complete by itself.
 
 No production benchmark number ships in this repository. The required client/archive Sorani
 audio and 200–500 human-reviewed editorial candidates have not been supplied, so claiming a CER,
@@ -462,10 +542,11 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 |---|---|---|
 | `registry.py` | §7 | The model allowlist, checked against §7 by parsing the blueprint. NC licences hard-rejected. |
 | `normalize.py` | §4.1 | Sorani normalization: KLPT for four collisions, a dictionary-backed rule for conjunctive `و`. Failure mode #1 in §0. |
-| `transcripts.py` | §4.1, §5 | The raw/norm artifact pair. Kurdish invariants #1 and #3. |
+| `transcripts.py` | §4.1, §5 | The raw/norm artifact pair, exact source-media SHA-256 binding, and Kurdish invariants #1 and #3. |
 | `alignment.py` | §4.2, §8.1 | Alignment accuracy. Kurdish invariant #5. |
 | `metrics.py` | §8.1 | Normalized CER, spacing-free CER, named-entity error, code-switch error. |
 | `corpus.py` | §8.1, §4.4 | The labelled set and its coverage grid — 3 dialects × 7 conditions. |
+| `corpus_acceptance.py` | §8.1 | Canonical corpus/audio/reference hashes, rights and exclusion binding, detached human approval verification, and per-measurement byte guards for real AC-7 evidence. |
 | `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
@@ -475,7 +556,11 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
-| `diarization.py` | §8.1, §3 Stages 0 and 5 | DER, boundary reconciliation, strict exclusive turns, and anchor-edge-to-turn selection without nearest-turn invention. |
+| `editorial_acceptance.py` | §8.2 | Deterministic 200–500-item blinded A/B preparation, predeclared dialect-balanced holdout, independent signed review/adjudication import, content revalidation, and separate training/holdout evidence. |
+| `diarization.py` | §8.1, §3 Stages 0 and 5 | Production-exclusive DER, benchmark-only overlap-aware DER for the 3.1 control, boundary reconciliation, and anchor-edge-to-turn selection without nearest-turn invention. |
+| `diarization_acceptance.py` | §8.1, §3 Stages 0 and 6 | Content-bound real multi-speaker references and media, exact Community-1/control receipts, signed rights/access/crop approval, raw DER/boundary/association/crop metrics, explicit fallbacks, attribution, and atomic write-once reports. |
+| `vertex_acceptance.py` | §3 Stages 3 and 4 | Transport-free confidential packet preparation, exact private-content and signed ZDR/spend binding, live ADC/billing/API preflight, one counted non-retried generation reservation, private-frame cleanup, and redacted write-once evidence. |
+| `decision_packets.py` | §§3, 4.1, 4.2, 5, 7, 8.2 | Content-bound, deterministic, write-once recommendation packets for blockers #9/#13/#14/#15/#18/#21; every human decision field stays explicitly unset. |
 | `forced_alignment.py` | §4.2, §7 | Viterbi CTC forced alignment — in-house, no library. |
 | `sentences.py` | §4.2, §5 | Sentence segmentation on punctuation **plus** pauses; §5 anchors. |
 | `escalation.py` | §3 Stage 1 | Validator routing: log-prob quartile + model disagreement. |
@@ -528,6 +613,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `gpu_runtime.py` | §6 | Exact dual-3090-Ti CUDA/Torch identity plus real bfloat16 compute on both cards; refuses version, visibility, topology, capability or memory drift. |
 | `gate.py` | — | Positive evidence that the test step ran: the gate reads the report, not the exit code. |
 | `release.py` | — | Exact-SHA official main-gate proof, clean-HEAD double-build wheel reproducibility, runtime-data validation and atomic checksummed provenance. |
+| `release_approval.py` | — | Independent four-payload, hosted-run and attestation verification; deterministic unset owner packet; detached OpenSSH decision verification; never tags, pushes or publishes. |
 | `cli.py` | — | Shared entry-point rules: `use_utf8_streams` pins stdout/stderr to UTF-8; `machine_readable_stdout` reserves stdout for one parseable document; `program_name` makes help name the installed launcher or pasteable `python -m` command. |
 | `collisions.py` | §4.1 | The collision table itself, and the incidence measurement over a real lexicon. |
 | `corpus_import.py` | §8.1 | Public-corpus import that refuses to invent dialect, condition or duration. |
