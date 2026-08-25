@@ -41,7 +41,15 @@ __all__ = [
     "DEFAULT_MAX_CHARS_PER_LINE",
     "GOLDEN_CAPTION_TEXT",
     "KURDISH_REQUIRED_GLYPHS",
+    "POPUP_MAX_CHARS",
+    "POPUP_MAX_GAP_MS",
+    "POPUP_MAX_MS",
+    "POPUP_MAX_WORDS",
+    "REPORT_THEME",
+    "VIRAL_FONT_SIZE",
+    "VIRAL_THEME",
     "CaptionStyle",
+    "CaptionTheme",
     "CaptionsOutsideClip",
     "FontCoverageError",
     "GoldenReferenceMissing",
@@ -53,6 +61,7 @@ __all__ = [
     "assert_fonts_dir_covers_kurdish",
     "assert_rtl_stack",
     "build_ass",
+    "chunk_caption_events",
     "compare_golden_render",
     "decode_to_rgb",
     "find_ffmpeg",
@@ -96,6 +105,94 @@ class CaptionStyle(Enum):
 
     LINE = "line"
     WORD_HIGHLIGHT = "word_highlight"
+
+
+# One popup holds a breath, not a paragraph. A vertical crop shows ~22 Kurdish characters at
+# the sizes §4.3 renders, and a caption that outlives its own words is a wall of text the
+# viewer reads ahead of the audio — the failure that made every earlier run of this pipeline
+# unusable for social delivery even though every timestamp in it was correct.
+POPUP_MAX_WORDS: Final = 3
+POPUP_MAX_CHARS: Final = 22
+POPUP_MAX_MS: Final = 2_000
+# A pause inside one popup leaves it on screen with nothing being said. Break there instead:
+# the alignment already knows where the speaker stopped.
+POPUP_MAX_GAP_MS: Final = 400
+
+# Below this, two consecutive popups are held together rather than blinked apart. Measured
+# against the real 25 fps fixture: a 3-frame hole reads as a flicker, not as a beat.
+_POPUP_HOLD_MS: Final = 600
+
+
+@dataclass(frozen=True, slots=True)
+class CaptionTheme:
+    """The V4+ style row's visual fields, which are chosen together and only together.
+
+    Separated from `font_name`/`font_size` because those two were already parameters and a
+    value with two sources is a value nobody can predict.
+
+    **`primary` and `secondary` are not "the colour" and "the other colour".** ASS karaoke
+    starts text in `secondary` and switches it to `primary` as each ``\\kf`` span elapses,
+    for a highlight that follows the voice, `primary` is the *spoken* colour. The reporting
+    default below has them the other way round — white primary, yellow secondary — which
+    renders unspoken words yellow and spoken words white: a highlight that runs ahead of the
+    speaker. Correct for a subtitle track being proofread, wrong for anything shipped.
+    """
+
+    primary: str = "&H00FFFFFF"
+    secondary: str = "&H0000FFFF"
+    outline_colour: str = "&H00000000"
+    back_colour: str = "&H80000000"
+    bold: bool = False
+    outline: float = 3.0
+    shadow: float = 1.0
+    margin_l: int = 60
+    margin_r: int = 60
+    margin_v: int = 140
+
+    def style_row(self, name: str, font_name: str, font_size: int) -> str:
+        """One `Style:` line. `%g` keeps `3.0` as `3` so existing goldens still match."""
+        return (
+            f"Style: {name},{font_name},{font_size},{self.primary},{self.secondary},"
+            f"{self.outline_colour},{self.back_colour},{int(self.bold)},0,0,0,100,100,0,0,1,"
+            f"{self.outline:g},{self.shadow:g},2,{self.margin_l},{self.margin_r},"
+            f"{self.margin_v},1"
+        )
+
+
+# What §4.3 has always emitted. Kept as the default so every existing caller, golden render
+# and delivery sidecar is byte-identical to before this theme existed.
+REPORT_THEME: Final = CaptionTheme()
+
+# Built for a phone held in one hand. Three things differ from `REPORT_THEME` and each is a
+# defect fixed rather than a taste applied:
+#
+# `primary`/`secondary` are swapped, so the sweep runs *with* the voice instead of ahead of it.
+# `margin_v` is 360 rather than 140: Reels, Shorts and TikTok all draw their own caption bar
+# and action rail over roughly the bottom 300 px of a 1920-tall frame, so a 140 px margin puts
+# Kurdish text underneath the platform's own UI on every one of them.
+# `outline`/`shadow`/`bold` are heavier because burned-in text is composited over live video,
+# not over a neutral card, and a 3 px outline disappears against a bright background.
+# 64 pt is a reading size for a 1080-wide report frame. A reel is watched at arm's length on
+# a phone, often muted, and the caption is the only channel the words arrive on.
+#
+# The number is an em, and Naskh sets a small face inside it, so this is not the height of the
+# text. Measured by rendering a real 17-character popup and taking the ink bounding box:
+# 64 pt -> 38 px tall, 74 -> 43, 84 -> 49, 96 -> 56, 108 -> 63, 120 -> 70. A burned-in social
+# caption wants 60-90 px on a 1920-tall frame, so 74 was less than half the size it looked.
+# 108 lands in that band while leaving the widest popup (22 characters, ~620 px) comfortably
+# inside the 920 px the left and right margins leave for it.
+VIRAL_FONT_SIZE: Final = 108
+
+VIRAL_THEME: Final = CaptionTheme(
+    primary="&H0000E5FF",
+    secondary="&H00FFFFFF",
+    bold=True,
+    outline=4.0,
+    shadow=2.0,
+    margin_l=80,
+    margin_r=80,
+    margin_v=360,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -485,6 +582,63 @@ def wrap_caption_lines(
     return tuple(lines)
 
 
+def chunk_caption_events(
+    words: Sequence[Word],
+    *,
+    max_words: int = POPUP_MAX_WORDS,
+    max_chars: int = POPUP_MAX_CHARS,
+    max_ms: int = POPUP_MAX_MS,
+    max_gap_ms: int = POPUP_MAX_GAP_MS,
+) -> tuple[tuple[Word, ...], ...]:
+    """Split one sentence into popup-sized groups, each of which is its own caption event.
+
+    `wrap_caption_lines` answers "where does this sentence break across lines"; this answers
+    "where does it break across *time*". They are different questions and conflating them is
+    what put a seven-line, fifteen-second block on screen: the sentence was one event, so the
+    whole paragraph appeared at its first word and stayed until its last.
+
+    A group closes on whichever comes first — word count, rendered width, elapsed span, or a
+    pause. The pause rule is the one that cannot be replaced by a shorter limit: a group that
+    straddles a silence sits on screen saying nothing.
+
+    Raises:
+        ValueError: any limit is non-positive, or `words` is empty.
+    """
+    if not words:
+        raise ValueError("no words to chunk into caption events")
+    if max_words < 1:
+        raise ValueError("max_words must be positive")
+    if max_chars < 1:
+        raise ValueError("max_chars must be positive")
+    if max_ms < 1:
+        raise ValueError("max_ms must be positive")
+    if max_gap_ms < 0:
+        raise ValueError("max_gap_ms must be non-negative")
+
+    chunks: list[tuple[Word, ...]] = []
+    current: list[Word] = []
+    width = 0
+    for word in words:
+        addition = len(word.w) + (1 if current else 0)
+        # A single word wider than `max_chars` still gets its own event: dropping it would
+        # caption speech that was never said, and splitting Arabic script mid-word breaks
+        # shaping (§4.3.5's reasoning, applied to time instead of line width).
+        closes = bool(current) and (
+            len(current) >= max_words
+            or width + addition > max_chars
+            or word.end_ms - current[0].start_ms > max_ms
+            or word.start_ms - current[-1].end_ms > max_gap_ms
+        )
+        if closes:
+            chunks.append(tuple(current))
+            current, width = [word], len(word.w)
+        else:
+            current.append(word)
+            width += addition
+    chunks.append(tuple(current))
+    return tuple(chunks)
+
+
 class CaptionsOutsideClip(ValueError):
     """The caption file's timeline is not the clip's timeline.
 
@@ -564,6 +718,26 @@ def _escape_ass_text(text: str) -> str:
     return _ASS_OVERRIDE.sub("", text)
 
 
+def _karaoke(words: Sequence[Word], start_ms: int) -> str:
+    """Karaoke spans for one run of words, tiling every gap so the sweep tracks the voice.
+
+    Durations must tile the whole run, gaps included. Emitting only word durations makes the
+    highlight run ahead by the length of every pause, so it drifts further from the speech
+    with each silence. Reported by audit finding #7.
+    """
+    parts: list[str] = []
+    cursor = start_ms
+    for word in words:
+        gap_cs = max(0, (word.start_ms - cursor) // 10)
+        if gap_cs:
+            # An empty karaoke span holds the highlight through the silence.
+            parts.append(f"{{\\kf{gap_cs}}}")
+        span_cs = max(1, (word.end_ms - word.start_ms) // 10)
+        parts.append(f"{{\\kf{span_cs}}}{_escape_ass_text(word.w)} ")
+        cursor = word.end_ms
+    return "".join(parts).strip()
+
+
 def build_ass(
     sentences: Sequence[Sentence],
     font_name: str = "Noto Naskh Arabic",
@@ -574,6 +748,8 @@ def build_ass(
     max_chars_per_line: int = DEFAULT_MAX_CHARS_PER_LINE,
     clip_in_ms: int = 0,
     clip_duration_ms: int | None = None,
+    theme: CaptionTheme = REPORT_THEME,
+    max_words_per_event: int | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -629,46 +805,57 @@ def build_ass(
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
             "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
             "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Kurdish,{font_name},{font_size},&H00FFFFFF,&H0000FFFF,&H00000000,"
-            "&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,60,60,140,1",
+            theme.style_row("Kurdish", font_name, font_size),
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         ]
     )
 
-    events: list[str] = []
-    for sentence in sentences:
-        lines = wrap_caption_lines(sentence.words, max_chars=max_chars_per_line)
+    def render(words: Sequence[Word]) -> str:
         if style is CaptionStyle.WORD_HIGHLIGHT:
-            # Karaoke durations must tile the whole line, gaps included. Emitting only word
-            # durations makes the highlight run ahead by the length of every pause, so it
-            # drifts further from the speech with each silence. Reported by audit finding #7.
-            rendered_lines = []
-            for line in lines:
-                parts: list[str] = []
-                cursor = line[0].start_ms
-                for word in line:
-                    gap_cs = max(0, (word.start_ms - cursor) // 10)
-                    if gap_cs:
-                        # An empty karaoke span holds the highlight through the silence.
-                        parts.append(f"{{\\kf{gap_cs}}}")
-                    span_cs = max(1, (word.end_ms - word.start_ms) // 10)
-                    parts.append(f"{{\\kf{span_cs}}}{_escape_ass_text(word.w)} ")
-                    cursor = word.end_ms
-                rendered_lines.append("".join(parts).strip())
-        else:
-            rendered_lines = [" ".join(_escape_ass_text(word.w) for word in line) for line in lines]
-        text = "\\N".join(rendered_lines)
-        # The clip's timeline, not the source's. The `\kf` spans above are durations and are
-        # unaffected — only these two absolute stamps ever needed the offset, and for as long
-        # as they did not have it, every clip cut from the middle of an episode shipped with
-        # no captions at all.
-        events.append(
-            f"Dialogue: 0,{_ass_time(sentence.start_ms - clip_in_ms)},"
-            f"{_ass_time(sentence.end_ms - clip_in_ms)},"
+            return _karaoke(words, words[0].start_ms)
+        return " ".join(_escape_ass_text(word.w) for word in words)
+
+    # The clip's timeline, not the source's. The kf spans are durations and are unaffected
+    # — only the two absolute stamps below ever needed the offset, and for as long as they did
+    # not have it, every clip cut from mid-episode shipped with no captions at all.
+    def event(start_ms: int, end_ms: int, text: str) -> str:
+        return (
+            f"Dialogue: 0,{_ass_time(start_ms - clip_in_ms)},"
+            f"{_ass_time(end_ms - clip_in_ms)},"
             f"Kurdish,,0,0,0,,{text}"
         )
+
+    events: list[str] = []
+    for sentence in sentences:
+        if max_words_per_event is None:
+            lines = wrap_caption_lines(sentence.words, max_chars=max_chars_per_line)
+            events.append(
+                event(
+                    sentence.start_ms,
+                    sentence.end_ms,
+                    "\\N".join(render(line) for line in lines),
+                )
+            )
+            continue
+        # One event per popup. Each is short enough to fit one line, so no newline appears and
+        # libass is never asked to lay a paragraph over live video.
+        chunks = chunk_caption_events(
+            sentence.words,
+            max_words=max_words_per_event,
+            max_chars=max_chars_per_line,
+        )
+        for index, chunk in enumerate(chunks):
+            # Hold a popup until the next one starts when the hole between them is short: a
+            # caption that vanishes for a fifth of a second reads as a glitch, not as a beat.
+            # The last chunk ends on its own last word and never past the sentence, which is
+            # what `clip_duration_ms` and `assert_captions_within_clip` are measured against.
+            following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
+            end_ms = chunk[-1].end_ms
+            if following is not None and following - end_ms <= _POPUP_HOLD_MS:
+                end_ms = following
+            events.append(event(chunk[0].start_ms, end_ms, render(chunk)))
 
     return header + "\n" + "\n".join(events) + "\n"
 

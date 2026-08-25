@@ -47,13 +47,21 @@ import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, fields, replace
+from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TextIO
+from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
-from hawedit.captions import CaptionStyle, build_ass
+from hawedit.captions import (
+    POPUP_MAX_CHARS,
+    POPUP_MAX_WORDS,
+    VIRAL_FONT_SIZE,
+    VIRAL_THEME,
+    CaptionStyle,
+    build_ass,
+)
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
 from hawedit.credentials import CredentialError
@@ -94,9 +102,17 @@ from hawedit.reframe import (
     SpeakerAssociationError,
     SpeakerSubjectTracker,
     SubjectTracker,
+    stabilize,
     validate_speaker_focus_points,
 )
-from hawedit.render import Reframe, RenderError, RenderResult, frame_rate, render_clip
+from hawedit.render import (
+    Reframe,
+    RenderError,
+    RenderResult,
+    frame_rate,
+    render_clip,
+    vertical_crop_size,
+)
 from hawedit.sentences import (
     Sentence,
     UndeliverableOrder,
@@ -736,6 +752,50 @@ def _release_grounder_after_use(component: object) -> Iterator[None]:
                 ) from exc
 
 
+# Above this, a hole between two selected sentences stops reading as a beat and starts
+# reading as a fault in the file. §4.2 already knows where the speaker stopped, from the same
+# VAD this run measured; nothing was looking at how long they stopped for.
+MAX_INTERNAL_SILENCE_MS: Final = 1_500
+
+
+def dead_air_flags(
+    selected: Sequence[Sentence], limit_ms: int = MAX_INTERNAL_SILENCE_MS
+) -> tuple[str, ...]:
+    """Name every silent hole inside the cut, as §5 `qc.flags` entries.
+
+    Not a refusal. A two-second pause before a punchline is editing; a six-second one is a
+    clip nobody watched before shipping, and the difference is a judgement a person makes.
+    What was wrong was that nothing measured it at all — `qc.flags` was constructed empty on
+    every run, so §2's gate had no automated finding to put in front of the human it gates on.
+
+    Measured on the real 38-minute source: a contiguous six-sentence selection carried a
+    5,990 ms hole, and the rendered clip sat silent for six of its fifty-six seconds with
+    every check in this pipeline green.
+
+    Raises:
+        ValueError: `limit_ms` is negative.
+    """
+    if limit_ms < 0:
+        raise ValueError("dead-air limit must be non-negative")
+    return tuple(
+        f"dead_air:{earlier.end_ms}-{later.start_ms}ms"
+        for earlier, later in pairwise(selected)
+        if later.start_ms - earlier.end_ms > limit_ms
+    )
+
+
+def _qc_with_measured_flags(qc: Qc | None, selected: Sequence[Sentence]) -> Qc | None:
+    """Fold this run's automated findings into the QC record the clip will carry."""
+    if qc is None:
+        return None
+    flags = dead_air_flags(selected)
+    if not flags:
+        return qc
+    # `auto_pass` cannot stay true beside a finding: it is the field that says automation had
+    # no objection. `human_reviewed` is untouched — only a person may set that.
+    return replace(qc, auto_pass=False, flags=tuple(dict.fromkeys((*qc.flags, *flags))))
+
+
 def assert_time_contiguous(sentences: Sequence[Sentence], selection: tuple[int, ...]) -> None:
     """Refuse a selection whose span covers a sentence it does not include.
 
@@ -1063,6 +1123,21 @@ def _vad_onset_for_anchor(
         if segment.start_ms < anchor_out_ms and segment.end_ms > anchor_in_ms
     ]
     return min(overlapping, key=lambda segment: segment.start_ms).start_ms if overlapping else None
+
+
+def _steady_camera(
+    points: tuple[FocusPoint, ...], source: Path, ffmpeg: Path | None
+) -> tuple[FocusPoint, ...]:
+    """Hold the camera still between real moves, at a dead zone sized to the visible crop.
+
+    A tracker's own output is a per-sample position, and feeding it straight to the crop moved
+    the frame every half second for the whole clip. The dead zone is a tenth of the crop width
+    — wide enough that a speaker shifting in their chair does not move the camera, narrow
+    enough that standing up does.
+    """
+    width, height = _proxy_dimensions(source, ffmpeg)
+    crop_w, _ = vertical_crop_size(width, height)
+    return stabilize(points, dead_zone_px=max(1, crop_w // 10))
 
 
 def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
@@ -1758,6 +1833,7 @@ def run_pipeline(
                 render=_operational_failure("render", "speaker/face association", exc),
             )
         if focus_points:
+            focus_points = _steady_camera(focus_points, source, ffmpeg)
             reframe_mode = Reframe.SPEAKER_TRACKED
 
     if not focus_points and subject_tracker is not None:
@@ -1774,6 +1850,7 @@ def run_pipeline(
             )
         _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
         if focus_points:
+            focus_points = _steady_camera(focus_points, source, ffmpeg)
             reframe_mode = Reframe.FACE_TRACKED
 
     crop_target = {
@@ -1811,7 +1888,7 @@ def run_pipeline(
             if verdict is not None
             else None
         ),
-        qc=qc,
+        qc=_qc_with_measured_flags(qc, selected),
     )
     run = replace(run, boundary=boundary, clip=clip)
 
@@ -1879,9 +1956,19 @@ def run_pipeline(
             # nothing — a playable MP4 with no captions and no error.
             build_ass(
                 selected,
+                font_size=VIRAL_FONT_SIZE,
                 style=CaptionStyle.WORD_HIGHLIGHT,
                 clip_in_ms=clip.in_ms,
                 clip_duration_ms=clip.out_ms - clip.in_ms,
+                # Not a taste setting, and so not a flag. Every clip this runner produces is
+                # a vertical social cut, and the library defaults are built for a subtitle
+                # track being proofread: 140 px of bottom margin puts Kurdish text under the
+                # platform's own UI, and one event per sentence puts a seven-line paragraph
+                # on screen for fifteen seconds. Both were true of every clip shipped before
+                # this line existed. D-247.
+                theme=VIRAL_THEME,
+                max_chars_per_line=POPUP_MAX_CHARS,
+                max_words_per_event=POPUP_MAX_WORDS,
             ),
         )
         width, height = _proxy_dimensions(source, ffmpeg)
@@ -2472,10 +2559,28 @@ def _print_report(run: PipelineRun) -> None:
             f"stage 3 {ran['candidates']} candidate(s) [{by_path}] · "
             f"{len(run.rejected)} rejected{f' [{rejected}]' if rejected else ''}"
         )
+    # Stage 1 scores its own output and nothing said so. Measured on the real 38-minute
+    # source: `select_for_validation` escalated 294 of 545 segments — 54% of the transcript —
+    # because the LLM and CTC arms disagree past the CER threshold, and the run printed a clean
+    # fourteen-line report. The finding existed only in `--json`, which is not what the
+    # documented invocation produces. §1: fail visible, not silent.
+    if run.escalation:
+        escalated = sum(1 for decision in run.escalation if decision.escalate)
+        if escalated:
+            share = 100 * escalated / len(run.escalation)
+            print(
+                f"stage 1 {escalated}/{len(run.escalation)} segment(s) ({share:.0f}%) escalated "
+                f"for human validation — {run.escalation[0].reason}"
+            )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")
     if run.clip is not None:
         print(f"stage 5 clip {run.clip.in_ms}..{run.clip.out_ms} ms")
+    # §2 gates on a human, and a human reads this. A measured finding that appears only in
+    # `--json` is a finding the documented invocation hides.
+    if run.clip is not None and run.clip.qc is not None and run.clip.qc.flags:
+        for flag in run.clip.qc.flags:
+            print(f"QC FLAG {flag}")
     if run.render is not None and not isinstance(run.render, StageSkipped):
         print(f"stage 6 {run.render.path} ({run.render.width}x{run.render.height})")
     for name, skip in run.skipped():

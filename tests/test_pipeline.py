@@ -44,14 +44,17 @@ from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
 from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeVerdict
 from hawedit.pipeline import (
+    MAX_INTERNAL_SILENCE_MS,
     PipelineRun,
     StageSkipped,
     assert_devices_available,
     build_parser,
     build_visual_composer,
+    dead_air_flags,
     main,
     run_pipeline,
 )
+from hawedit.sentences import Sentence
 from hawedit.transcripts import (
     AsrProvenance,
     RawTranscript,
@@ -4966,3 +4969,43 @@ def test_no_producer_report_names_the_query_path_b_needs() -> None:
 
 
 # --- D-146: a stage that ran reported nothing about itself -------------------------------------
+
+
+def _spoken(start_ms: int, end_ms: int) -> Sentence:
+    return Sentence(
+        words=(Word(w="وشە.", start_ms=start_ms, end_ms=end_ms, conf=0.9),), complete=True
+    )
+
+
+def test_dead_air_is_measured_between_selected_sentences() -> None:
+    """The real 38-minute source produced a 5,990 ms hole and nothing noticed.
+
+    Every check in the pipeline was green and the rendered clip sat silent for six of its
+    fifty-six seconds, because `qc.flags` was constructed empty on every run.
+    """
+    silent = (_spoken(0, 28_850), _spoken(34_840, 50_000))
+    assert dead_air_flags(silent) == ("dead_air:28850-34840ms",)
+
+
+def test_a_pause_short_enough_to_be_editing_is_not_a_finding() -> None:
+    """A beat before a punchline is craft. The threshold is what separates it from a fault."""
+    beat = (_spoken(0, 1_000), _spoken(1_000 + MAX_INTERNAL_SILENCE_MS, 4_000))
+    assert dead_air_flags(beat) == ()
+
+    fault = (_spoken(0, 1_000), _spoken(1_001 + MAX_INTERNAL_SILENCE_MS, 4_000))
+    assert len(dead_air_flags(fault)) == 1
+
+
+def test_every_hole_is_named_not_just_the_first() -> None:
+    holes = (_spoken(0, 1_000), _spoken(5_000, 6_000), _spoken(9_000, 10_000))
+    assert dead_air_flags(holes) == ("dead_air:1000-5000ms", "dead_air:6000-9000ms")
+
+
+def test_dead_air_needs_two_sentences_to_have_a_gap_between_them() -> None:
+    assert dead_air_flags(()) == ()
+    assert dead_air_flags((_spoken(0, 60_000),)) == ()
+
+
+def test_the_dead_air_limit_is_a_number_that_must_make_sense() -> None:
+    with pytest.raises(ValueError, match="non-negative"):
+        dead_air_flags((_spoken(0, 1_000), _spoken(9_000, 10_000)), limit_ms=-1)

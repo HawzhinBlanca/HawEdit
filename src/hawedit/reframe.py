@@ -5,12 +5,15 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from hawedit.diarization import Segment, assert_exclusive
 
 __all__ = [
+    "DEFAULT_MOVE_MS",
+    "DEFAULT_SETTLE_MS",
     "FocusPoint",
     "OpenCvFaceTracker",
     "SpeakerAssociationError",
@@ -18,8 +21,17 @@ __all__ = [
     "SpeakerSubjectTracker",
     "SubjectTracker",
     "choose_face",
+    "stabilize",
     "validate_speaker_focus_points",
 ]
+
+# How long a committed camera move takes. Under ~250 ms it reads as a cut with a smear; over
+# ~600 ms the audience notices the camera rather than the speaker.
+DEFAULT_MOVE_MS: Final = 400
+
+# How long the subject must stay outside the dead zone before the camera follows. Without
+# this, a single mis-detected frame moves the camera and moves it back.
+DEFAULT_SETTLE_MS: Final = 600
 
 
 class SpeakerAssociationError(RuntimeError):
@@ -155,15 +167,22 @@ def choose_face(
 
 
 class OpenCvFaceTracker:
-    """Track the dominant continuous face at a bounded sampling rate."""
+    """Track the dominant continuous face at a bounded sampling rate.
 
-    def __init__(self, sample_fps: float = 2.0, smoothing: int = 5) -> None:
+    **Frontal detection alone is not enough for an interview.** Two people at a table face
+    each other, not the lens, and `haarcascade_frontalface_default` finds neither. Measured on
+    the real 38-minute source: across the opening eight seconds of a wide two-shot, the frontal
+    cascade returned zero faces on every sample, and so did `frontalface_alt2`. The profile
+    cascade — run over the frame and again over its mirror, because it only detects one facing
+    — found the guest at x=152..154 on all eight and the host at x=491. So the tracker reported
+    nothing for that span and the crop held a position measured from a later shot, which put a
+    rug on screen for the first eight seconds of the clip.
+    """
+
+    def __init__(self, sample_fps: float = 2.0) -> None:
         if sample_fps <= 0 or not math.isfinite(sample_fps):
             raise ValueError("face-tracking fps must be finite and positive")
-        if smoothing < 1:
-            raise ValueError("face-tracking smoothing window must be positive")
         self.sample_fps = sample_fps
-        self.smoothing = smoothing
 
     def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
         if out_ms <= in_ms:
@@ -174,17 +193,31 @@ class OpenCvFaceTracker:
             raise RuntimeError("face tracking needs the media extra (OpenCV)") from exc
         cv2: Any = imported_cv2
 
-        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
-        detector = cv2.CascadeClassifier(str(cascade_path))
-        if detector.empty():
-            raise RuntimeError(f"OpenCV could not load its face detector at {cascade_path}")
+        cascades = Path(cv2.data.haarcascades)
+        detectors = {}
+        for name in ("haarcascade_frontalface_default.xml", "haarcascade_profileface.xml"):
+            classifier = cv2.CascadeClassifier(str(cascades / name))
+            if classifier.empty():
+                raise RuntimeError(f"OpenCV could not load its face detector at {cascades / name}")
+            detectors[name] = classifier
+        frontal = detectors["haarcascade_frontalface_default.xml"]
+        profile = detectors["haarcascade_profileface.xml"]
+
         capture = cv2.VideoCapture(str(source))
         if not capture.isOpened():
             raise RuntimeError(f"OpenCV could not open {source} for subject tracking")
         step_ms = 1000 / self.sample_fps
-        history: list[int] = []
         points: list[FocusPoint] = []
         previous: int | None = None
+
+        def boxes(classifier: Any, image: Any) -> list[tuple[int, int, int, int]]:
+            return [
+                (int(x), int(y), int(w), int(h))
+                for x, y, w, h in classifier.detectMultiScale(
+                    image, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
+                )
+            ]
+
         try:
             at = float(in_ms)
             while at < out_ms:
@@ -193,22 +226,90 @@ class OpenCvFaceTracker:
                 if not ok:
                     break
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                detected = detector.detectMultiScale(
-                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
-                )
-                faces = tuple(
-                    (int(face[0]), int(face[1]), int(face[2]), int(face[3])) for face in detected
-                )
-                chosen = choose_face(faces, previous)
+                width = gray.shape[1]
+                faces = boxes(frontal, gray) + boxes(profile, gray)
+                # The profile cascade is trained on one facing only. The other is the same
+                # detector over the mirrored frame, with each box reflected back.
+                faces += [
+                    (width - (x + w), y, w, h) for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
+                ]
+                chosen = choose_face(tuple(faces), previous)
                 if chosen is not None:
                     center = chosen[0] + chosen[2] // 2
-                    history.append(center)
-                    smoothed = round(
-                        sum(history[-self.smoothing :]) / len(history[-self.smoothing :])
-                    )
-                    points.append(FocusPoint(round(at), smoothed))
+                    # The detected centre, not a running mean of it. `stabilize` decides what
+                    # the camera does; this reports only what was seen.
+                    points.append(FocusPoint(round(at), center))
                     previous = center
                 at += step_ms
         finally:
             capture.release()
         return tuple(points)
+
+
+def stabilize(
+    points: Sequence[FocusPoint],
+    *,
+    dead_zone_px: int,
+    move_ms: int = DEFAULT_MOVE_MS,
+    settle_ms: int = DEFAULT_SETTLE_MS,
+) -> tuple[FocusPoint, ...]:
+    """Turn a per-sample face track into a camera path that holds still and then moves.
+
+    A tracker reports where the face is; it does not report where the camera should be, and
+    treating one as the other is what produced the artifact this function exists to stop.
+    `OpenCvFaceTracker` samples twice a second, so its raw output moved the crop up to twice
+    a second, every second, for the whole clip — a continuous horizontal shimmer that reads
+    as a broken encode rather than as camera work. Averaging alone does not fix it: a mean
+    over a sliding window still changes every sample, just by less.
+
+    So the camera holds a position and only commits to a new one when the subject has been
+    outside `dead_zone_px` of it for a sustained `settle_ms` — a real move by the speaker,
+    not a detector flicker or a turn of the head. The new position is the *median* of that
+    window, which a single wild detection cannot drag.
+
+    The result is a keyframe list, not a sample list: a pair of equal values spans a hold and
+    a pair of differing values spans a move, which is exactly what `render.crop_filter`
+    interpolates between. Empty in, empty out — a clip with no track is a static centre crop,
+    and this must never invent one.
+
+    Raises:
+        ValueError: a non-positive dead zone or duration, or timestamps that do not increase.
+    """
+    if dead_zone_px <= 0:
+        raise ValueError("dead zone must be positive")
+    if move_ms <= 0:
+        raise ValueError("camera move duration must be positive")
+    if settle_ms <= 0:
+        raise ValueError("settle duration must be positive")
+    if not points:
+        return ()
+    for earlier, later in pairwise(points):
+        if later.at_ms <= earlier.at_ms:
+            raise ValueError("focus point timestamps must be strictly increasing")
+
+    held = points[0].center_x
+    keyframes: list[FocusPoint] = [FocusPoint(points[0].at_ms, held)]
+    pending: list[FocusPoint] = []
+    for point in points[1:]:
+        if abs(point.center_x - held) <= dead_zone_px:
+            # Back inside the dead zone: whatever was building was a wobble, not a move.
+            pending.clear()
+            continue
+        pending.append(point)
+        if point.at_ms - pending[0].at_ms < settle_ms:
+            continue
+        centers = sorted(candidate.center_x for candidate in pending)
+        target = centers[len(centers) // 2]
+        start = pending[0].at_ms
+        # The hold runs to the instant the move begins, then the move eases to the new
+        # position. Equal-valued neighbours are what make the interpolation flat.
+        if start > keyframes[-1].at_ms:
+            keyframes.append(FocusPoint(start, held))
+        keyframes.append(FocusPoint(max(start + move_ms, keyframes[-1].at_ms + 1), target))
+        held = target
+        pending.clear()
+
+    last = points[-1].at_ms
+    if last > keyframes[-1].at_ms:
+        keyframes.append(FocusPoint(last, held))
+    return tuple(keyframes)
