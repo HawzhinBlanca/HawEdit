@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
+from hawedit.atomic_fs import write_text_atomic
 from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
 from hawedit.captions import (
     POPUP_MAX_CHARS,
@@ -1021,6 +1022,51 @@ def _sentence_run_for_candidate(
     return tuple(best)
 
 
+def _judgeable_plans(
+    candidates: Sequence[MergedCandidate],
+    sentences: Sequence[Sentence],
+    limit: int,
+) -> tuple[tuple[MergedCandidate, tuple[int, ...]], ...]:
+    """The first `limit` candidates that could actually become a clip, in priority order.
+
+    A candidate containing no complete contiguous sentence run cannot be cut, and finding that
+    out must not cost a Stage 4 request. D-185 measured it as the common case rather than the
+    rare one — 7 candidates spanning 3.48-3.96 s against sentences with a 6.72 s median, and
+    zero wholly inside any candidate — so at N=5 a naive loop would spend five billed calls to
+    learn nothing. Eligibility is decided here, from data this run already has.
+
+    Raises:
+        ValueError: `limit` is not positive.
+    """
+    if limit < 1:
+        raise ValueError(f"judge_top_n must be at least 1, got {limit}")
+    plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
+    for candidate in sorted(candidates, key=_candidate_priority):
+        run = _sentence_run_for_candidate(candidate, sentences)
+        if run:
+            plans.append((candidate, run))
+        if len(plans) == limit:
+            break
+    return tuple(plans)
+
+
+def _persist_verdict(work_dir: Path, candidate_id: str, verdict: JudgeVerdict) -> None:
+    """Write one billed verdict beside its keyframes, before anything decides to discard it.
+
+    Measured on the real 75-minute run: the render was refused by §2's editorial gate and
+    `work/ep10/stage4/` was left holding an empty keyframe directory and nothing else. An
+    18-candidate episode kept no record of what the judge actually said, and a re-run would have
+    paid for the same answer again. A verdict is evidence about the footage whether or not it
+    was good enough to ship.
+    """
+    destination = work_dir / "stage4" / _candidate_work_component(candidate_id)
+    destination.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(
+        destination / "verdict.json",
+        json.dumps(verdict.to_dict(), ensure_ascii=False, indent=2),
+    )
+
+
 def _automatic_sentence_selection(
     candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence]
 ) -> tuple[int, ...]:
@@ -1278,6 +1324,9 @@ def run_pipeline(
     temporal_grounder: TemporalGrounder | None = None,
     subject_tracker: SubjectTracker | None = None,
     auto_select: bool = False,
+    # 1 reproduces the single-judgement behaviour, and its cost, exactly. Each
+    # additional candidate is one more billed Stage 4 request.
+    judge_top_n: int = 1,
     visual_fps: float | None = None,
     visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
@@ -1619,8 +1668,15 @@ def run_pipeline(
     else:
         log.finished("discovery", _STAGE_3_DISCOVERY.reason)
 
+    judge_plans: tuple[tuple[MergedCandidate, tuple[int, ...]], ...] = ()
     if auto_select and not select_sentences and merged:
-        automatic = _automatic_sentence_selection(merged, sentences)
+        # Up to `judge_top_n` of them, not one. Stage 4 judged the best-ranked survivor and the
+        # run lived or died on that single sample: measured twice on real episodes, 26
+        # candidates and 18 candidates, one judged each time, hook 0.20 both times.
+        # `_candidate_priority` orders by discovery rank and knows nothing about editorial
+        # quality, so nothing established rank #1 was the *best* candidate.
+        judge_plans = _judgeable_plans(merged, sentences, judge_top_n)
+        automatic = judge_plans[0][1] if judge_plans else ()
         if not automatic:
             # `--auto-select` ran, examined every candidate and chose nothing. Reported as a
             # skip naming the measurement, because the downstream skip says only "complete
@@ -1675,55 +1731,82 @@ def run_pipeline(
 
     # --- §3 Stage 4 -----------------------------------------------------------------------
     log.started("editorial")
+    judged_candidates: list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]] = []
     if judge is not None and merged and (not selected or selected_anchors is not None):
         assert selected_candidate is not None, "Stage 4's condition implies a chosen survivor"
-        survivor = selected_candidate
-        request_candidate = (
-            replace(survivor, in_ms=selected_anchors[0], out_ms=selected_anchors[1])
-            if selected_anchors is not None
-            else survivor
+        # One span when the operator named sentences explicitly; up to N when the automatic
+        # path ranked candidates. `--sentences` is a decision already made, and re-ranking it
+        # against other candidates would judge footage the operator did not ask for.
+        to_judge: tuple[tuple[MergedCandidate, tuple[int, int] | None], ...] = (
+            tuple(
+                (candidate, anchors_for(tuple(sentences[i] for i in run)))
+                for candidate, run in judge_plans
+            )
+            if judge_plans
+            else ((selected_candidate, selected_anchors),)
         )
-        candidate_work_component = _candidate_work_component(request_candidate.candidate_id)
-        _assert_source_unchanged(source, ingested.source_sha256, "Stage 4 keyframe extraction")
-        try:
-            judge_frames = (
-                extract_judge_frames(
-                    source,
-                    request_candidate.in_ms,
-                    request_candidate.out_ms,
-                    work_dir / "stage4" / candidate_work_component,
-                    ffmpeg=ffmpeg,
+        for candidate, anchors in to_judge:
+            request_candidate = (
+                replace(candidate, in_ms=anchors[0], out_ms=anchors[1])
+                if anchors is not None
+                else candidate
+            )
+            component = _candidate_work_component(request_candidate.candidate_id)
+            _assert_source_unchanged(source, ingested.source_sha256, "Stage 4 keyframe extraction")
+            try:
+                judge_frames = (
+                    extract_judge_frames(
+                        source,
+                        request_candidate.in_ms,
+                        request_candidate.out_ms,
+                        work_dir / "stage4" / component,
+                        ffmpeg=ffmpeg,
+                    )
+                    if getattr(judge, "requires_keyframes", False)
+                    else ()
                 )
-                if getattr(judge, "requires_keyframes", False)
-                else ()
+            except KeyframeError as exc:
+                if judged_candidates:
+                    # Later candidates are a bonus, not a dependency. One that cannot be framed
+                    # must not discard verdicts already paid for.
+                    break
+                return replace(
+                    run,
+                    editorial=_operational_failure("editorial", "Stage 4 keyframe extraction", exc),
+                )
+            _assert_source_unchanged(
+                source, ingested.source_sha256, "Stage 4 keyframe extraction completion"
             )
-        except KeyframeError as exc:
-            return replace(
-                run,
-                editorial=_operational_failure("editorial", "Stage 4 keyframe extraction", exc),
+            request = JudgeRequest.for_survivor(
+                request_candidate,
+                text_ckb=_candidate_slice_text(
+                    normalized, request_candidate.in_ms, request_candidate.out_ms
+                ),
+                keyframes=judge_frames,
             )
-        _assert_source_unchanged(
-            source, ingested.source_sha256, "Stage 4 keyframe extraction completion"
-        )
-        request = JudgeRequest.for_survivor(
-            request_candidate,
-            text_ckb=_candidate_slice_text(
-                normalized, request_candidate.in_ms, request_candidate.out_ms
-            ),
-            keyframes=judge_frames,
-        )
-        try:
-            judged = judge.judge(request)
-        except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
-            return replace(
-                run,
-                editorial=_operational_failure("editorial", "Stage 4 judge runtime", exc),
+            try:
+                judged = judge.judge(request)
+            except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
+                if judged_candidates:
+                    break
+                return replace(
+                    run,
+                    editorial=_operational_failure("editorial", "Stage 4 judge runtime", exc),
+                )
+            _assert_verdict_matches_request(judged, request)
+            if judged.sv6d is None and candidate.sv6d is not None:
+                judged = replace(judged, sv6d=candidate.sv6d)
+            # Persisted before anything decides whether to keep it. §2's gate can refuse the
+            # render, and a refused render used to take the billed verdict with it.
+            _persist_verdict(work_dir, request_candidate.candidate_id, judged)
+            selection_for_candidate = next(
+                (run for plan_candidate, run in judge_plans if plan_candidate is candidate),
+                select_sentences,
             )
-        _assert_verdict_matches_request(judged, request)
-        if judged.sv6d is None and survivor.sv6d is not None:
-            judged = replace(judged, sv6d=survivor.sv6d)
-        verdict = judged
-        run = replace(run, editorial=None)
+            judged_candidates.append((candidate, tuple(selection_for_candidate), judged))
+        if judged_candidates:
+            verdict = judged_candidates[0][2]
+            run = replace(run, editorial=None)
     log.finished("editorial", _skip_reason(run.editorial))
 
     log.started("boundary")

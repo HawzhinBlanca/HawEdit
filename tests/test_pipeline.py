@@ -39,10 +39,10 @@ from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import DiscoveryPath, Qc
 from hawedit.diarization import Segment
-from hawedit.discovery import MergedCandidate
+from hawedit.discovery import Candidate, MergedCandidate
 from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
 from hawedit.ingest import DiarizationUnavailable, IngestError
-from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeVerdict
+from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import (
     MAX_INTERNAL_SILENCE_MS,
     PipelineRun,
@@ -999,7 +999,6 @@ def test_supplying_a_judge_scores_the_top_candidate(tmp_path: Path) -> None:
     """Stage 4 stops being a stand-in: the runner asks the judge itself."""
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     seen: list[JudgeRequest] = []
 
@@ -1037,7 +1036,6 @@ def test_the_judge_gets_rank_one_not_the_earliest_candidate(tmp_path: Path) -> N
     """Merge order is chronological; Stage 4 survivor order is not."""
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     seen: list[JudgeRequest] = []
 
@@ -1214,7 +1212,6 @@ def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
 ) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     class Judge:
         model_id = "gemini-2.5-pro"
@@ -1247,7 +1244,6 @@ def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
 def test_multimodal_judge_receives_real_source_keyframes_from_runner(tmp_path: Path) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     seen: list[JudgeRequest] = []
 
@@ -1782,7 +1778,6 @@ def test_an_overwriting_run_refuses_before_the_billed_judge_call(tmp_path: Path)
     """The artifact of this fix is a request that never happened."""
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     work = tmp_path / "work"
     planted = _existing_artifact(work, "billed", 0)
@@ -1825,7 +1820,6 @@ def test_an_overwriting_auto_selected_run_also_refuses_before_the_judge(tmp_path
     """
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     work = tmp_path / "work"
     _existing_artifact(work, "autobilled", 0)
@@ -1866,7 +1860,6 @@ def test_a_clean_work_directory_still_reaches_the_judge(tmp_path: Path) -> None:
     """
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     calls: list[JudgeRequest] = []
 
@@ -2573,7 +2566,6 @@ def test_a_judge_that_does_not_want_keyframes_is_sent_none(tmp_path: Path) -> No
     """
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     seen: list[JudgeRequest] = []
 
@@ -2628,7 +2620,6 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
     from hawedit.visual_pipeline import VisualDiscoveryResult
 
     class Composer:
@@ -3551,7 +3542,6 @@ def _run_with_judge_returning(
     """Drive Stage 4 with an adapter whose verdict is whatever `make_verdict` builds."""
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     class Judge:
         model_id = "gemini-2.5-pro"
@@ -4045,7 +4035,6 @@ def test_visual_backend_failure_preserves_path_a_candidates(tmp_path: Path) -> N
 def test_path_b_refuses_the_whole_transcript_when_path_a_has_no_candidate(
     tmp_path: Path,
 ) -> None:
-    from hawedit.discovery import Candidate
     from hawedit.gemini import GeminiUnavailable
 
     calls = 0
@@ -4098,7 +4087,6 @@ def test_automatic_selection_with_no_complete_sentence_never_extracts_frames_or_
 ) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     calls = {"frames": 0, "judge": 0}
 
@@ -4150,7 +4138,6 @@ def test_keyframe_operational_failure_is_an_editorial_skip_before_judging(
 ) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
     from hawedit.keyframes import KeyframeError
 
     judge_calls = 0
@@ -4259,7 +4246,6 @@ def test_keyframe_cleanup_privacy_note_survives_into_json_stage_skip(
 ) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
     from hawedit.keyframes import KeyframeError
 
     error = KeyframeError("ffmpeg produced no usable keyframe")
@@ -4311,7 +4297,6 @@ def test_unsafe_candidate_id_is_rejected_before_stage4_touches_its_work_path(
 ) -> None:
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
-    from hawedit.judge import JudgeRequest
 
     frame_calls = 0
 
@@ -4370,7 +4355,7 @@ def test_known_judge_operational_failures_are_editorial_skips(
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
     from hawedit.gemini import GeminiUnavailable, JudgeUnusable
-    from hawedit.judge import JudgeRequest, NotRoutable, RequestTooLarge
+    from hawedit.judge import NotRoutable, RequestTooLarge
 
     failure = {
         "gemini": GeminiUnavailable("cloud refused"),
@@ -5121,3 +5106,111 @@ def test_auto_selection_still_picks_what_it_picked_before() -> None:
     barren = _ranked("e", 1_200, 1_800, rank=0)
     assert _automatic_sentence_selection((barren, second), _RUN_SENTENCES) == (0, 1)
     assert _automatic_sentence_selection((), _RUN_SENTENCES) == ()
+
+
+# --- judge-top-n T2: more than one candidate reaches the judge -----------------------------
+
+
+def _verbal(candidate_id: str, in_ms: int, out_ms: int, rank: int) -> Candidate:
+    return Candidate(
+        candidate_id, "judged", in_ms, out_ms, DiscoveryPath.VERBAL, rank=rank, score=0.9
+    )
+
+
+class _RecordingJudge:
+    """A judge that records every request and answers each one on its own span."""
+
+    model_id = "gemini-2.5-pro"
+
+    def __init__(self) -> None:
+        self.seen: list[JudgeRequest] = []
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        self.seen.append(request)
+        return replace(
+            a_verdict(request.clip_in_ms, request.clip_out_ms),
+            candidate_id=request.candidate_id,
+        )
+
+
+def test_more_than_one_candidate_can_be_judged(tmp_path: Path) -> None:
+    """Stage 4 judged exactly one candidate and the run lived or died on that sample.
+
+    Measured twice on real episodes: 26 candidates -> 1 judged -> hook 0.20, and 18 candidates
+    -> 1 judged -> hook 0.20. Nothing established rank #1 was the best candidate, only that it
+    ranked first by discovery score, which knows nothing about editorial quality.
+    """
+    judge = _RecordingJudge()
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            _verbal("v1", 0, 1_800, rank=1),
+            _verbal("v2", 1_900, 4_200, rank=2),
+        ],
+        judge=judge,
+        auto_select=True,
+        judge_top_n=3,
+    )
+    assert len(judge.seen) == 2, "both eligible candidates should have reached the judge"
+    assert {request.candidate_id for request in judge.seen} == {"v1", "v2"}
+
+
+def test_an_ineligible_candidate_costs_no_billed_call(tmp_path: Path) -> None:
+    """A candidate with no complete sentence inside it cannot become a clip, and finding that
+    out must not cost a Stage 4 request.
+
+    D-185 measured this as the common case rather than the rare one: 7 candidates spanning
+    3.48-3.96 s against sentences with a 6.72 s median, and zero wholly inside any candidate.
+    At N=5 that would be five billed calls to learn nothing.
+    """
+    judge = _RecordingJudge()
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            _verbal("barren", 1_750, 1_880, rank=1),
+            _verbal("real", 0, 1_800, rank=2),
+        ],
+        judge=judge,
+        auto_select=True,
+        judge_top_n=5,
+    )
+    assert [request.candidate_id for request in judge.seen] == ["real"], (
+        "the candidate containing no whole sentence must be skipped before the billed call"
+    )
+
+
+def test_every_verdict_is_persisted_even_when_render_is_refused(tmp_path: Path) -> None:
+    """A refused render discarded a billed verdict.
+
+    Measured on the real 75-minute run: `work/ep10/stage4/` held an empty keyframe directory
+    and nothing else, so an 18-candidate episode kept no record of what Gemini actually said and
+    a re-run would pay for the same answer again.
+    """
+    work = tmp_path / "work"
+    judge = _RecordingJudge()
+    run_pipeline(
+        FIXTURE,
+        work,
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            _verbal("v1", 0, 1_800, rank=1),
+            _verbal("v2", 1_900, 4_200, rank=2),
+        ],
+        judge=judge,
+        auto_select=True,
+        judge_top_n=3,
+    )
+    persisted = sorted(path.name for path in (work / "stage4").rglob("verdict.json"))
+    assert len(persisted) == len(judge.seen), (
+        f"every billed verdict must survive the run: {len(judge.seen)} judged, "
+        f"{len(persisted)} on disk"
+    )
+    stored = json.loads(next((work / "stage4").rglob("verdict.json")).read_text(encoding="utf-8"))
+    assert stored["judge"] == "gemini-2.5-pro"
