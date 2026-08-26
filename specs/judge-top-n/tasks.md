@@ -13,7 +13,7 @@
                                             test_an_ineligible_candidate_costs_no_billed_call,
                                             test_every_verdict_is_persisted_even_when_render_is_refused)
 
-- [ ] T3  Ship the best passing verdict by hook score; refuse with every score named when none
+- [x] T3  Ship the best passing verdict by hook score; refuse with every score named when none
           passes.                   (tests: test_the_best_passing_candidate_wins_not_the_first,
                                             test_no_passing_candidate_refuses_and_names_every_score)
 
