@@ -13,7 +13,7 @@
           is updated.               (tests: test_a_stored_hf_token_is_honoured_without_the_environment,
                                             test_the_gated_download_receives_the_token_explicitly)
 
-- [ ] T3  `setup_panel` — one window, masked fields, verify-before-store, `mask()`-only display,
+- [x] T3  `setup_panel` — one window, masked fields, verify-before-store, `mask()`-only display,
           per-credential "this unlocks" line including the billing caveat for #3.
                                     (tests: test_the_panel_never_displays_an_unmasked_secret,
                                             test_a_credential_that_fails_verification_is_not_stored,
