@@ -64,7 +64,15 @@ from hawedit.captions import (
     build_ass,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
-from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Qc, RejectedCandidate
+from hawedit.clip import (
+    MAX_MISLEADING_EDIT_RISK,
+    MIN_HOOK_SCORE,
+    Clip,
+    ClipTranscript,
+    DiscoveryPath,
+    Qc,
+    RejectedCandidate,
+)
 from hawedit.credentials import CredentialError
 from hawedit.delivery import DeliveryError, build_edl, build_srt
 from hawedit.diarization import turn_bounds_for_anchors
@@ -1022,6 +1030,44 @@ def _sentence_run_for_candidate(
     return tuple(best)
 
 
+def _verdict_is_shippable(verdict: JudgeVerdict) -> bool:
+    """Whether §2's editorial thresholds would let this verdict become a clip.
+
+    The same three conditions `Clip.assert_renderable` enforces (D-253), consulted earlier so
+    selection can prefer a verdict that will survive the gate rather than discovering at the
+    artifact boundary that it will not. **The gate remains the authority** — this predicate
+    choosing a clip does not exempt it from being checked again before the encoder starts.
+    """
+    return (
+        verdict.hook_score >= MIN_HOOK_SCORE
+        and verdict.misleading_edit_risk <= MAX_MISLEADING_EDIT_RISK
+        and verdict.self_contained
+    )
+
+
+def _no_shippable_verdict_reason(
+    judged: Sequence[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]],
+) -> str:
+    """Name every candidate and every score, because the run that produced them was billed.
+
+    "No candidate passed" without the numbers costs the operator another paid run to learn what
+    was close. Measured on two real episodes, every judged candidate scored hook 0.20 — which is
+    a very different message from one that scored 0.74.
+    """
+    scored = "; ".join(
+        f"{candidate.candidate_id} hook {verdict.hook_score:.2f}, misleading-edit "
+        f"{verdict.misleading_edit_risk:.2f}"
+        + ("" if verdict.self_contained else ", not self-contained")
+        for candidate, _, verdict in judged
+    )
+    return (
+        f"{len(judged)} candidate(s) were judged and none cleared §2's editorial thresholds "
+        f"(hook >= {MIN_HOOK_SCORE:.2f}, misleading-edit <= {MAX_MISLEADING_EDIT_RISK:.2f}, "
+        f"self-contained): {scored}. Every verdict is kept under stage4/ — this episode has no "
+        f"clip worth shipping, which is an answer about the footage rather than a failure."
+    )
+
+
 def _judgeable_plans(
     candidates: Sequence[MergedCandidate],
     sentences: Sequence[Sentence],
@@ -1805,7 +1851,32 @@ def run_pipeline(
             )
             judged_candidates.append((candidate, tuple(selection_for_candidate), judged))
         if judged_candidates:
-            verdict = judged_candidates[0][2]
+            shippable = [item for item in judged_candidates if _verdict_is_shippable(item[2])]
+            if not shippable:
+                # Not an error and not a silent pass: the judge answered, and the answer was no.
+                return replace(
+                    run,
+                    editorial=StageSkipped(
+                        stage="editorial",
+                        reason=_no_shippable_verdict_reason(judged_candidates),
+                        blocked_by=("§2 editorial thresholds",),
+                    ),
+                )
+            winner, winning_run, verdict = max(shippable, key=lambda item: item[2].hook_score)
+            if judge_plans and tuple(winning_run) != tuple(select_sentences):
+                # A later candidate won, so everything downstream — captions, boundary, clip id
+                # and artifact names — has to follow it rather than rank #1's selection.
+                select_sentences, selected, selected_anchors = _prepare_selection(
+                    transcript, sentences, winning_run
+                )
+                # The winner's artifact names were never checked; rank #1's were. Checked before
+                # any pixels are extracted, as the original ordering guarantees.
+                _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
+                selected_candidate = winner
+                run = replace(
+                    run,
+                    rejected=_rejected_candidates(merged, winner, sentences, selected_anchors),
+                )
             run = replace(run, editorial=None)
     log.finished("editorial", _skip_reason(run.editorial))
 

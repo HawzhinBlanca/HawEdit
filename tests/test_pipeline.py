@@ -5214,3 +5214,120 @@ def test_every_verdict_is_persisted_even_when_render_is_refused(tmp_path: Path) 
     )
     stored = json.loads(next((work / "stage4").rglob("verdict.json")).read_text(encoding="utf-8"))
     assert stored["judge"] == "gemini-2.5-pro"
+
+
+# --- judge-top-n T3: the best passing verdict ships ----------------------------------------
+
+
+class _ScoringJudge:
+    """Answers each candidate with the hook score its id is mapped to."""
+
+    model_id = "gemini-2.5-pro"
+
+    def __init__(self, hooks: dict[str, float]) -> None:
+        self.hooks = hooks
+        self.seen: list[JudgeRequest] = []
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        self.seen.append(request)
+        return replace(
+            a_verdict(request.clip_in_ms, request.clip_out_ms),
+            candidate_id=request.candidate_id,
+            hook_score=self.hooks[request.candidate_id],
+        )
+
+
+def test_the_best_passing_candidate_wins_not_the_first(tmp_path: Path) -> None:
+    """Discovery rank is what produced two runs scoring hook 0.20.
+
+    `_candidate_priority` orders by discovery rank and knows nothing about editorial quality, so
+    spending N billed calls and then shipping rank order would reach the same answer more
+    expensively. The strongest verdict wins.
+    """
+    judge = _ScoringJudge({"v1": 0.78, "v2": 0.95})
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            _verbal("v1", 0, 1_800, rank=1),
+            _verbal("v2", 1_900, 4_200, rank=2),
+        ],
+        judge=judge,
+        auto_select=True,
+        judge_top_n=3,
+    )
+    assert len(judge.seen) == 2, "both candidates should have been judged"
+    assert run.clip is not None and run.clip.editorial is not None
+    assert run.clip.editorial.hook_score == 0.95, "the strongest verdict must be the one that ships"
+    # And the clip really is the second candidate's footage, not the first's with a borrowed
+    # score. Asserted on the out-point: §5 fuses the in-point *outward* from the anchor toward
+    # a VAD onset or shot cut, so a clip anchored at 1,900 ms legitimately starts earlier
+    # (measured here: 1,834 ms). The out-point reaching sentence 1's end is what proves which
+    # footage was chosen.
+    assert run.clip.out_ms >= 4_100
+
+
+def test_a_stronger_but_failing_candidate_does_not_win(tmp_path: Path) -> None:
+    """Best *passing*, not best. A 0.99 hook with a misleading-edit risk over §8.2's ceiling is
+    exactly the clip D-253 exists to refuse."""
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            _verbal("v1", 0, 1_800, rank=1),
+            _verbal("v2", 1_900, 4_200, rank=2),
+        ],
+        judge=_FailingHighScorer({"v1": 0.80, "v2": 0.99}, failing="v2"),
+        auto_select=True,
+        judge_top_n=3,
+    )
+    assert run.clip is not None and run.clip.editorial is not None
+    assert run.clip.editorial.hook_score == 0.80, (
+        "the 0.99 candidate breached the misleading-edit ceiling and must not have been chosen"
+    )
+
+
+class _FailingHighScorer(_ScoringJudge):
+    """Like `_ScoringJudge`, but one named candidate breaches §8.2's misleading-edit ceiling."""
+
+    def __init__(self, hooks: dict[str, float], failing: str) -> None:
+        super().__init__(hooks)
+        self.failing = failing
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        verdict = super().judge(request)
+        if request.candidate_id == self.failing:
+            return replace(verdict, misleading_edit_risk=0.40)
+        return verdict
+
+
+def test_no_passing_candidate_refuses_and_names_every_score(tmp_path: Path) -> None:
+    """Measured on two real episodes: every judged candidate scored hook 0.20.
+
+    "No candidate passed" without the numbers costs the operator another billed run to learn
+    what was close, and the run that produced them was billed already.
+    """
+    judge = _ScoringJudge({"v1": 0.20, "v2": 0.31})
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            _verbal("v1", 0, 1_800, rank=1),
+            _verbal("v2", 1_900, 4_200, rank=2),
+        ],
+        judge=judge,
+        auto_select=True,
+        judge_top_n=3,
+    )
+    skipped = dict(run.skipped())
+    assert "editorial" in skipped, "no shippable verdict must be a visible refusal"
+    reason = skipped["editorial"].reason
+    assert "0.20" in reason and "0.31" in reason, f"every score must be named: {reason}"
+    assert "v1" in reason and "v2" in reason, f"every candidate must be named: {reason}"
+    assert run.render is None or isinstance(run.render, StageSkipped)
