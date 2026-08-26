@@ -1,0 +1,1 @@
+TS=2026-08-26T20:35:59Z FEATURE=judge-top-n TASK=T1 TESTS=test_the_selector_returns_a_run_for_one_candidate,test_auto_selection_still_picks_what_it_picked_before VERIFY=pass REPORT=.gate/last-test-run.xml

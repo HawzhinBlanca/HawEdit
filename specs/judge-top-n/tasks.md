@@ -2,7 +2,7 @@
 # Rows flip to [x] ONLY via scripts/update-ledger.sh, after verify.sh passes and the cited
 # tests are found in the report that run wrote.
 
-- [ ] T1  Split `_automatic_sentence_selection` into a per-candidate
+- [x] T1  Split `_automatic_sentence_selection` into a per-candidate
           `_sentence_run_for_candidate` plus the caller's loop. Pure refactor, behaviour
           identical.                (tests: test_the_selector_returns_a_run_for_one_candidate,
                                             test_auto_selection_still_picks_what_it_picked_before)
