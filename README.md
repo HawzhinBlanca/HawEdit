@@ -601,6 +601,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `render_agent.py` | Phase 3 | The fifth agent (D-A25): `propose_render_tool` only. Split from `editor_agent.py` for the same kind of reason — that module's parameters are pinned to integer-or-closed-enum, and `revision_id` cannot honestly be either. `commit_render`, `render_boundary_revision` and `render_caption_revision` are all absent from this module's source, checked by an AST scan: the agent that is *about* rendering is the one whose inability to render needs a structural proof, not a promise in a prompt. |
 | `smoke.py` | §3 Stages 3–4 | The one live check. Two real calls, announced and confirmed before spending. |
 | `credentials.py` | — | The key store. Refuses a git-tracked target, an unverified key, and printing either. |
+| `setup_panel.py` | — | One window for both credentials. Verifies with the provider before storing, masks on display, falls back to the terminal panel where there is no display. |
 | `http_transport.py` | — | Shared authenticated HTTP boundary: redirects are refused before API-key or bearer headers can reach another origin. |
 | `gemini.py` | §3 Stage 4 | `gemini-2.5-pro` behind the judge interface: schema-enforced output, real token counts, and fail-closed confidential routing. |
 | `judge.py` | §3 Stage 4 | The judge contract: shadow never routed, 200K tier ceiling, promotion only on evidence. |

@@ -124,12 +124,19 @@ stronger would be marketing, not engineering.
   fall behind `scripts/test-count.floor` and that is correct. It is dated because the number
   recorded here was 1,063 and read as current for as long as nobody checked it;
   `tests/test_claims.py` now requires the date rather than pinning the number.
-- Clean Python 3.12 wheel install: `pip check` clean; **all fifteen** declared console scripts —
+- Clean Python 3.12 wheel install: `pip check` clean; **all sixteen** declared console scripts —
   `hawedit`, `hawedit-asr-bench`, `hawedit-asr-setup`, `hawedit-credentials`,
   `hawedit-durable`, `hawedit-editorial-bench`, `hawedit-fetch-models`,
   `hawedit-ffmpeg-setup`, `hawedit-owner-decisions`, `hawedit-release`,
-  `hawedit-release-approval`, `hawedit-revise`, `hawedit-vertex-acceptance`,
-  `hawedit-workflow` and `hawedit-wsl-vex` — start from the installed wheel. The three agentic
+  `hawedit-release-approval`, `hawedit-revise`, `hawedit-setup`,
+  `hawedit-vertex-acceptance`, `hawedit-workflow` and `hawedit-wsl-vex` — start from the
+  installed wheel. **Re-measured 2026-08-26** when the sixteenth command was added: wheel
+  `hawedit-0.1.0-py3-none-any.whl` sha256 `3a66205c03513214d6b2155ea49d02609b3ac361fad3a15ed0d8b7f743540f51`
+  built from revision `8943dcafef28e709a17752417aa01733c5e5562f`, installed into a throwaway
+  venv on Python 3.12.10, `pip check` clean, and each of the sixteen launchers exited 0 on
+  `--help`. The count word was raised only after that run, not alongside the declaration —
+  this bullet is a measurement, and a name added to it without one would be a claim about a
+  wheel nobody built. The three agentic
   commands joined at the `agentic` merge (D-A26); the acceptance commands joined on the production
   branch. The hosted release
   smoke derives the same contract from the wheel, and `tests/test_claims.py` requires this list

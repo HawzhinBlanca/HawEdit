@@ -790,6 +790,7 @@ _NUMBER_WORDS = {
     "thirteen": 13,
     "fourteen": 14,
     "fifteen": 15,
+    "sixteen": 16,
 }
 
 
