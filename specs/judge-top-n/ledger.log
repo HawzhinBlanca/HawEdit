@@ -1,3 +1,4 @@
 TS=2026-08-26T20:35:59Z FEATURE=judge-top-n TASK=T1 TESTS=test_the_selector_returns_a_run_for_one_candidate,test_auto_selection_still_picks_what_it_picked_before VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-08-26T21:30:08Z FEATURE=judge-top-n TASK=T2 TESTS=test_more_than_one_candidate_can_be_judged,test_an_ineligible_candidate_costs_no_billed_call,test_every_verdict_is_persisted_even_when_render_is_refused VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-08-26T21:52:42Z FEATURE=judge-top-n TASK=T3 TESTS=test_the_best_passing_candidate_wins_not_the_first,test_no_passing_candidate_refuses_and_names_every_score VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-08-26T22:29:42Z FEATURE=judge-top-n TASK=T4 TESTS=test_judge_top_n_defaults_and_is_bounded,test_n_of_one_is_todays_behaviour VERIFY=pass REPORT=.gate/last-test-run.xml

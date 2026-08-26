@@ -17,7 +17,7 @@
           passes.                   (tests: test_the_best_passing_candidate_wins_not_the_first,
                                             test_no_passing_candidate_refuses_and_names_every_score)
 
-- [ ] T4  `--judge-top-n` on the parser and `_build_and_run`; N=1 reproduces today exactly.
+- [x] T4  `--judge-top-n` on the parser and `_build_and_run`; N=1 reproduces today exactly.
                                     (tests: test_judge_top_n_defaults_and_is_bounded,
                                             test_n_of_one_is_todays_behaviour)
 
