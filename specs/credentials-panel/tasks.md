@@ -8,7 +8,7 @@
                                     (tests: test_an_hf_token_is_verified_before_it_is_stored,
                                             test_an_hf_token_response_is_bounded_like_the_gemini_one)
 
-- [ ] T2  The token reaches the download: `Download` protocol gains keyword-only `token`,
+- [x] T2  The token reaches the download: `Download` protocol gains keyword-only `token`,
           `model_fetch` reads it via `read_credential` rather than `os.environ`, and every stub
           is updated.               (tests: test_a_stored_hf_token_is_honoured_without_the_environment,
                                             test_the_gated_download_receives_the_token_explicitly)
