@@ -13187,3 +13187,79 @@ cue that would let §3 Stage 6 cut between speakers without diarization. It does
 L/R correlation over the whole 254 s file is **+1.0000** and the per-second energy balance never
 leaves 0.000. The mix is dual-mono. `BLOCKED.md` #4 is the only route to speaker-aware
 reframing.
+
+
+---
+
+## D-252
+
+**`pyannote.audio==4.0.7` enters the runtime as the `diarization` extra.** §3 Stage 0 names the
+model and the library — *"`pyannote/speaker-diarization-community-1` on pyannote.audio 4.x"*
+(`BLUEPRINT.md:108`) — and §7's table carries the same row. This is implementing a §, not
+diverging from one. It is `specs/diarization-adapter` T1; the adapter itself is T2–T5.
+
+**Pinned, not floored.** An open floor would let the diarization runtime move underneath any DER
+or boundary number later recorded against it, which is §8.1's rule about measurements applied to
+the library rather than the hardware. 4.0.7 is the latest 4.x. It declares `torch>=2.8.0`, which
+the `media` extra's `torch==2.13.0` satisfies; the test asserts the two pins against each other
+rather than separately, because a torch downgrade would otherwise break the diarizer at import,
+far from the pin that caused it.
+
+**A separate extra, not `media`.** Stage 0's shot detection and VAD are useful without
+diarization, and a run that never passes `--diarize` must not pay for a second deep-learning
+stack. This follows `gpu` and `asr`, and like them it is outside the set
+`scripts/lock_host_dependencies.py` compiles the gate lock from (`dependencies + dev + media`),
+so no lock regeneration is owed.
+
+### Licence audit (D-002: NonCommercial is a hard reject)
+
+| what | licence | how it was established |
+|---|---|---|
+| `pyannote.audio` 4.0.7 | **MIT**, © 2020 CNRS | read from the repository `LICENSE` |
+| `pyannote/speaker-diarization-community-1` | **CC-BY-4.0** | §7 / `registry.py:179`, already in the registry |
+| `torchcodec` (transitive) | **BSD-3-Clause** | project documentation |
+| `pyannoteai-sdk` (transitive) | **could not be established** | see below |
+
+None is NonCommercial. Attribution for the CC-BY-4.0 checkpoint is already automatic —
+`registry.attribution_notices()` (`registry.py:570`) emits it from `licence.attribution_required`
+— so nothing was added for it.
+
+**PyPI metadata is not a licence source and was not treated as one.** `pyannote.audio`'s PyPI
+`license` field is `null` and it publishes no License classifier; the MIT above comes from the
+LICENSE file in the source repository. The same is true of `torchcodec`, whose PyPI metadata
+carries `"license": null` while its documentation states BSD-3.
+
+### The finding: `pyannoteai-sdk`
+
+`pyannote.audio` 4.0.7 lists `pyannoteai-sdk>=0.3.0` in `requires_dist` **with no `extra ==`
+marker**, so it is a hard dependency and installs unconditionally. It is the official pyannoteAI
+cloud SDK: it uploads audio to `dashboard.pyannote.ai` and retrieves results asynchronously.
+
+Its licence could not be established. Its PyPI metadata has no `license` field, no License
+classifier and no project URLs, and the two plausible repository paths
+(`pyannote/pyannoteAI-sdk-python`, `pyannote/pyannoteAI-sdk`) both return 404.
+
+This matters here more than it would elsewhere. This project has an explicit confidentiality
+posture — `--confidential`, `--zero-data-retention`, `--zdr-confirmed-by`, and a Vertex
+governance path — built precisely so that no media leaves the machine without someone saying so.
+A dependency whose purpose is to upload audio is not a neutral transitive package.
+
+**What is true, and what is therefore not claimed.** The SDK is inert unless a client is
+constructed with an API key; import alone performs no network I/O, and nothing in this project
+constructs one. So installing it does not send anything anywhere. But "it does not run" is a
+property of our code, not a property of the dependency, and its licence remains unknown.
+
+**Recorded rather than resolved.** Adopting it is Hawa's call, not this ADR's, because it is a
+governance question and not a technical one. Three options, none taken unilaterally:
+
+1. Accept as-is, with T2 adding a test that the adapter's import path never touches
+   `pyannoteai`.
+2. Vendor or constrain the dependency out, which pip cannot express and which would fork the
+   package.
+3. Refuse 4.x. This costs Community-1 — it is a 4.x checkpoint — and so contradicts §3 Stage 0,
+   which would need its own ADR.
+
+Until she says otherwise the extra stands as declared and remains uninstalled here: `HF_TOKEN`
+is unset and the weights 401 anyway (`BLOCKED.md` #4), so nothing about this dependency is
+exercised by any current run.
+

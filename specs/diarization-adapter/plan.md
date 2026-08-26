@@ -88,4 +88,4 @@ AC-6 refuses a sub-millisecond turn outright. The alternative is dropping it and
 count. I chose refusal because it cannot hide anything, but it can fail a whole run on a model
 artifact. Say the word if you would rather it drop-and-report.
 
-Approved-by:
+Approved-by: Hawa (in chat, 2026-08-26) — approved as written, T1 to start.

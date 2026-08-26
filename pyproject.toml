@@ -61,6 +61,25 @@ gpu = [
     "pillow==12.3.0",               # MIT-CMU (HPND) — measured frame transport
     "torchvision==0.28.0",          # BSD-3-Clause — measured Qwen3VLVideoProcessor runtime
 ]
+# §3 Stage 0's diarization arm. Split from `media` because Stage 0's shot detection and VAD are
+# useful without it and this pulls a second deep learning stack; a run without `--diarize` must
+# not pay for it.
+#
+# Licences audited per D-002 and D-252; NonCommercial is a hard reject and none of these are.
+# pyannote.audio itself is MIT (CNRS, verified from the repository LICENSE, not from PyPI
+# metadata, whose `license` field is null). The checkpoint it loads,
+# pyannote/speaker-diarization-community-1, is CC-BY-4.0 — attribution is emitted automatically
+# by registry.attribution_notices().
+#
+# READ D-252 BEFORE WIDENING THIS. pyannote.audio 4.x hard-depends on `pyannoteai-sdk`, a cloud
+# SDK that uploads audio to dashboard.pyannote.ai and publishes no licence anywhere this project
+# could find. It is inert unless a client is constructed, and nothing here constructs one.
+diarization = [
+    # PINNED, not a floor. §3 Stage 0 names the 4.x family (BLUEPRINT.md:108) and an open floor
+    # would let the diarization runtime move underneath any DER number recorded against it.
+    # Declares torch>=2.8.0, which the `media` pin at 2.13.0 satisfies.
+    "pyannote.audio==4.0.7",   # MIT (CNRS) — §7 diarization
+]
 asr = [
     # fairseq2n has no Windows wheel. The Windows runner invokes this extra inside WSL2.
     # omnilingual-asr forces torch 2.8 but only floors torchaudio; without the explicit

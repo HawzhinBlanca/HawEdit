@@ -77,3 +77,21 @@ def test_gpu_and_cloud_runtime_dependencies_are_exactly_reproducible() -> None:
     mypy = tool["mypy"]
     assert isinstance(mypy, dict)
     assert mypy["untyped_calls_exclude"] == ["google.auth.credentials.Credentials.refresh"]
+
+
+def test_the_diarization_extra_pins_a_four_x_pyannote() -> None:
+    """§3 Stage 0 names the version family, not a floor.
+
+    BLUEPRINT.md:108: "`pyannote/speaker-diarization-community-1` on pyannote.audio **4.x**".
+    An open floor is exactly what this module exists to refuse — it would let the diarization
+    runtime move underneath any DER or boundary number recorded against it.
+    """
+    document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version = _dependency_version(document, "diarization", "pyannote.audio")
+    assert version[0] == 4, "BLUEPRINT.md:108 names the 4.x family"
+    assert version == (4, 0, 7)
+
+    # pyannote.audio 4.0.7 declares `torch>=2.8.0`; §6 puts Stage 0 on CPU and `media` pins the
+    # build that serves it. A future torch downgrade would break the diarizer at import, far
+    # from here, so the two pins are asserted against each other rather than separately.
+    assert _dependency_version(document, "media", "torch") >= (2, 8, 0)
