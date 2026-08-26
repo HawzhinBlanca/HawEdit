@@ -11,7 +11,8 @@
 - [ ] T2  `PyannoteDiarizer.diarize` conversion + refusals, against a stubbed pyannote
           `Annotation`. No model, no network.              (tests: test_float_seconds_become_exact_integer_milliseconds,
                                                                   test_a_turn_that_rounds_to_zero_length_is_refused_not_dropped,
-                                                                  test_the_adapter_never_repairs_an_overlap_it_is_handed)
+                                                                  test_the_adapter_never_repairs_an_overlap_it_is_handed,
+                                                                  test_the_adapter_never_imports_the_pyannote_cloud_sdk)
 
 - [ ] T3  Checkpoint resolution: `ModelStore.assert_available`, the `BLOCKED.md` #4 message, and
           the revision agreement with `diarization_acceptance.COMMUNITY_REVISION`.

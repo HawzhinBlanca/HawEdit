@@ -807,3 +807,76 @@ def test_check_reports_a_stored_key_without_printing_it(
     )
     assert FAKE_KEY not in rejected, "--check printed a rejected key"
     assert bad == 1, "--check reported success for a key the API rejected"
+
+
+# --- HF_TOKEN: the second credential, verified the same way as the first -------------------
+
+
+def _hf_ok(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
+    return 200, '{"name": "hawzhin", "type": "user"}'
+
+
+def test_an_hf_token_is_verified_before_it_is_stored(tmp_path: Path) -> None:
+    """A revoked token and a working token are the same string shape.
+
+    The gated Community-1 download 401s either way (`BLOCKED.md` #4), and it does so several
+    gigabytes into a fetch. Asking the service up front is the only check worth having, and it
+    is the same argument `validate_gemini_key` already makes for Google.
+    """
+    accepted = credentials.validate_hf_token("hf_" + "x" * 34, transport=_hf_ok)
+    assert accepted.valid
+    assert "hawzhin" in accepted.detail
+
+    refused = credentials.validate_hf_token("hf_bad", transport=rejecting_transport)
+    assert not refused.valid
+
+    # Nothing may be written for a token the provider rejected.
+    env = tmp_path / "credentials.env"
+    if refused.valid:  # pragma: no cover - guards the assertion below against inversion
+        raise AssertionError("the rejecting transport produced a valid check")
+    assert not env.exists()
+
+
+def test_an_hf_token_response_is_bounded_like_the_gemini_one() -> None:
+    """The same untrusted-response rules, because it is the same class of input.
+
+    A hostile or broken endpoint must not be able to spend this process's memory, and the
+    submitted token must never survive into a diagnostic string.
+    """
+    token = "hf_" + "y" * 34
+    oversized = credentials.validate_hf_token(
+        token,
+        transport=lambda _url, _headers: (
+            200,
+            "N" * (credentials._MAX_KEY_CHECK_RESPONSE_BYTES + 1),
+        ),
+    )
+    assert not oversized.valid
+    assert len(oversized.detail) <= credentials._MAX_KEY_CHECK_DETAIL_CHARS
+
+    leaked = credentials.validate_hf_token(
+        token, transport=lambda _url, _headers: (0, f"offline while sending {token}")
+    )
+    assert not leaked.valid
+    assert token not in leaked.detail
+    assert "[REDACTED]" in leaked.detail
+
+    # A header-unsafe token must never reach the wire at all.
+    def exploding(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
+        raise AssertionError("a header-unsafe token reached the transport")
+
+    assert not credentials.validate_hf_token("hf token\\n", transport=exploding).valid
+
+
+def test_credential_status_checks_each_credential_with_its_own_provider(tmp_path: Path) -> None:
+    """`credential_status` hard-coded the Gemini validator, so asking it about HF_TOKEN would
+    have sent the token to Google. The dispatch is by credential name."""
+    env = tmp_path / "credentials.env"
+    credentials.write_credential(
+        credentials.HF_TOKEN, "hf_" + "z" * 34, env_file=env, check_ignored=False
+    )
+    stored, check = credentials.credential_status(
+        credentials.HF_TOKEN, env_file=env, transport=_hf_ok
+    )
+    assert stored is not None
+    assert check is not None and check.valid

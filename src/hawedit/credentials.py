@@ -44,6 +44,7 @@ from hawedit.http_transport import open_without_redirects
 __all__ = [
     "ENV_FILE",
     "GEMINI_API_KEY",
+    "HF_TOKEN",
     "CredentialError",
     "KeyCheck",
     "credential_status",
@@ -52,10 +53,17 @@ __all__ = [
     "read_credential",
     "restrict_to_owner",
     "validate_gemini_key",
+    "validate_hf_token",
     "write_credential",
 ]
 
 GEMINI_API_KEY: Final = "GEMINI_API_KEY"
+
+# The gated §7 checkpoint `pyannote/speaker-diarization-community-1` is what this unlocks —
+# `BLOCKED.md` #4. Stored beside the Gemini key rather than left to the environment, because
+# an environment variable set in one shell is not set in the next one, and the failure it
+# produces is a multi-gigabyte download that 401s.
+HF_TOKEN: Final = "HF_TOKEN"
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
 
@@ -443,6 +451,72 @@ def validate_gemini_key(key: str, transport: Transport = _https_get) -> KeyCheck
     return KeyCheck(True, f"key accepted; {len(names)} model(s) visible", names)
 
 
+def validate_hf_token(token: str, transport: Transport = _https_get) -> KeyCheck:
+    """Ask Hugging Face whether this token works, rather than whether it looks like one.
+
+    Same argument as `validate_gemini_key`: a revoked token and a working token are the same
+    string shape, and the difference only shows up several gigabytes into a gated download that
+    then 401s. `whoami-v2` is the cheapest call that requires authentication.
+
+    Accepting the licence on the repository page is a *separate* act from holding a valid token,
+    and this cannot see it — `BLOCKED.md` #4 stays open until a gated fetch actually succeeds.
+    A valid token here means the credential is real, not that Community-1 is downloadable.
+    """
+    import json
+
+    if not _is_header_safe_key(token):
+        return KeyCheck(
+            False,
+            "token is not a header-safe bounded printable ASCII value; nothing was sent",
+        )
+
+    status, body = transport(
+        "https://huggingface.co/api/whoami-v2", {"Authorization": f"Bearer {token}"}
+    )
+    if _response_exceeds_limit(body):
+        return KeyCheck(
+            False,
+            _safe_key_check_detail(
+                "could not validate the Hugging Face token: ",
+                f"response exceeded {_MAX_KEY_CHECK_RESPONSE_BYTES} bytes",
+                token,
+            ),
+        )
+    if status == 0:
+        return KeyCheck(
+            False,
+            _safe_key_check_detail("could not reach Hugging Face: ", body, token),
+        )
+    if status != 200:
+        try:
+            message = json.loads(body)["error"]
+        except (ValueError, KeyError, TypeError):
+            message = body[:200]
+        return KeyCheck(
+            False,
+            _safe_key_check_detail(
+                f"Hugging Face rejected this token (HTTP {status}): ", message, token
+            ),
+        )
+
+    try:
+        name = str(json.loads(body)["name"])
+    except (ValueError, KeyError, TypeError) as exc:
+        return KeyCheck(
+            False,
+            _safe_key_check_detail("unreadable response from Hugging Face: ", exc, token),
+        )
+    return KeyCheck(True, f"token accepted for {name}")
+
+
+# Which provider answers for which credential. A single hard-coded validator would have sent a
+# Hugging Face token to Google the first time anyone asked `credential_status` about it.
+_VALIDATORS: Final[dict[str, Callable[[str, Transport], KeyCheck]]] = {
+    GEMINI_API_KEY: validate_gemini_key,
+    HF_TOKEN: validate_hf_token,
+}
+
+
 def credential_status(
     name: str = GEMINI_API_KEY,
     env_file: Path = ENV_FILE,
@@ -452,7 +526,10 @@ def credential_status(
     key = read_credential(name, env_file)
     if key is None:
         return None, None
-    return key, validate_gemini_key(key, transport)
+    validate = _VALIDATORS.get(name)
+    if validate is None:
+        raise CredentialError(f"no validator is registered for {name!r}")
+    return key, validate(key, transport)
 
 
 # --- the panel ----------------------------------------------------------------------------

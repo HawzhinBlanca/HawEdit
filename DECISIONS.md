@@ -13263,3 +13263,10 @@ Until she says otherwise the extra stands as declared and remains uninstalled he
 is unset and the weights 401 anyway (`BLOCKED.md` #4), so nothing about this dependency is
 exercised by any current run.
 
+**Decided 2026-08-26: option 1.** Hawa accepted the dependency on the condition the SDK is held
+shut by a test rather than by a promise. `diarization-adapter` T2 therefore carries
+`test_the_adapter_never_imports_the_pyannote_cloud_sdk`, which asserts that importing and
+running the adapter leaves `pyannoteai` absent from `sys.modules`. That converts "nothing in
+this project constructs a client" from a statement about our intentions into an assertion the
+gate re-checks on every run — which is the only form of that claim worth having.
+
