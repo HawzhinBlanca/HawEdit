@@ -10,6 +10,7 @@ from types import ModuleType
 
 import pytest
 
+from hawedit import credentials
 from hawedit import models as model_contract
 from hawedit.environment import EnvironmentAuditError
 from hawedit.model_fetch import (
@@ -22,6 +23,7 @@ from hawedit.model_fetch import (
     build_fetch_plan,
     fetch_checkpoint,
     main,
+    resolve_hf_token,
     validate_private_stage,
 )
 from hawedit.models import (
@@ -647,7 +649,12 @@ def test_one_failed_target_does_not_hide_later_work_or_exit_zero(
     monkeypatch.setattr(ModelStore, "status", lambda _self: ())
     attempted: list[Path] = []
 
-    def fetch(item: FetchItem, _store: ModelStore, _download: object) -> CheckpointIntegrityReport:
+    def fetch(
+        item: FetchItem,
+        _store: ModelStore,
+        _download: object,
+        _token: str | None = None,
+    ) -> CheckpointIntegrityReport:
         attempted.append(item.destination)
         if item is first:
             raise ModelFetchError("first transfer failed")
@@ -678,7 +685,7 @@ def test_final_target_readiness_not_status_printing_drives_exit(
     monkeypatch.setattr("hawedit.model_fetch._download_client", lambda: lambda **_kwargs: None)
     monkeypatch.setattr(
         "hawedit.model_fetch.fetch_checkpoint",
-        lambda _item, _store, _download: CheckpointIntegrityReport(
+        lambda _item, _store, _download, _token=None: CheckpointIntegrityReport(
             MODEL_ID, REPOSITORY, REVISION, files_verified=1, size_bytes=7
         ),
     )
@@ -751,3 +758,82 @@ def test_download_client_refuses_transitive_profile_drift_before_import(
 
     with pytest.raises(ModelFetchError, match="environment refused: urllib3 drifted"):
         _download_client()
+
+
+# --- the gated token has to reach the download, not just exist -----------------------------
+
+
+def test_a_stored_hf_token_is_honoured_without_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """model_fetch read `os.environ` directly, so a stored token was invisible to it.
+
+    An environment variable set in one shell is not set in the next one, and the failure that
+    produces is a multi-gigabyte gated download that 401s. `read_credential` already resolves
+    environment first and the owner-only store second; this just uses it.
+    """
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    env = tmp_path / "credentials.env"
+    assert resolve_hf_token(env) is None, "nothing stored, nothing in the environment"
+
+    credentials.write_credential(
+        credentials.HF_TOKEN, "hf_" + "a" * 34, env_file=env, check_ignored=False
+    )
+    assert resolve_hf_token(env) == "hf_" + "a" * 34
+
+    # The environment still wins when both are present — that is `read_credential`'s order and
+    # it is what lets CI override a developer's stored token.
+    monkeypatch.setenv("HF_TOKEN", "hf_from_environment")
+    assert resolve_hf_token(env) == "hf_from_environment"
+
+
+def test_the_gated_download_receives_the_token_explicitly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`snapshot_download` was called with no token at all, so a gated fetch depended entirely
+    on huggingface_hub finding HF_TOKEN in ambient environment state. Storing a credential
+    without this would have been a feature that silently does nothing."""
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+    item = _item(tmp_path)
+    seen: list[object] = []
+
+    def download(**kwargs: object) -> object:
+        seen.append(kwargs.get("token"))
+        staging = Path(str(kwargs["local_dir"]))
+        (staging / "config.json").write_text("{}", encoding="utf-8")
+        return staging
+
+    def verify(
+        _self: ModelStore, model_id: str, selected: Path | None = None
+    ) -> CheckpointIntegrityReport:
+        assert selected is not None
+        return _report(selected)
+
+    monkeypatch.setattr(ModelStore, "verify_checkpoint", verify)
+    fetch_checkpoint(item, store, download, token="hf_" + "b" * 34)
+    assert seen == ["hf_" + "b" * 34]
+
+
+def test_an_ungated_fetch_still_sends_no_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential is not sent to a host that did not ask for one."""
+    store = ModelStore(root=tmp_path, metadata_root=tmp_path)
+    item = _item(tmp_path)
+    seen: list[object] = []
+
+    def download(**kwargs: object) -> object:
+        seen.append(kwargs.get("token", "ABSENT"))
+        staging = Path(str(kwargs["local_dir"]))
+        (staging / "config.json").write_text("{}", encoding="utf-8")
+        return staging
+
+    def verify(
+        _self: ModelStore, model_id: str, selected: Path | None = None
+    ) -> CheckpointIntegrityReport:
+        assert selected is not None
+        return _report(selected)
+
+    monkeypatch.setattr(ModelStore, "verify_checkpoint", verify)
+    fetch_checkpoint(item, store, download)
+    assert seen == [None]

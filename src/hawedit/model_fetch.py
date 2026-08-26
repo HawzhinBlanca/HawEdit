@@ -31,6 +31,7 @@ from typing import Final, Protocol, cast
 from hawedit import models as model_contract
 from hawedit import windows_security as _windows_security
 from hawedit.cli import program_name, use_utf8_streams
+from hawedit.credentials import ENV_FILE, HF_TOKEN, read_credential
 from hawedit.environment import EnvironmentAuditError, audit_installed_profile
 from hawedit.models import (
     CheckpointIntegrityReport,
@@ -96,6 +97,7 @@ class Download(Protocol):
         revision: str,
         local_dir: str,
         resume_download: bool,
+        token: str | None = None,
     ) -> object: ...
 
 
@@ -442,8 +444,16 @@ def fetch_checkpoint(
     item: FetchItem,
     store: ModelStore,
     download: Download,
+    token: str | None = None,
 ) -> CheckpointIntegrityReport:
-    """Fetch one exact revision into a private stage and publish it without replacement."""
+    """Fetch one exact revision into a private stage and publish it without replacement.
+
+    `token` is passed through to the downloader rather than left in the environment for it to
+    discover. A credential that authenticates a request should be an argument to that request:
+    ambient state is why a token stored in one place could not be used from another, and why
+    an ungated fetch could pick one up by accident. `None` sends nothing, so a host that did
+    not ask for a credential does not receive one.
+    """
     destination = item.destination
     with (
         _model_root_boundary(destination.parent) as root_identity,
@@ -484,6 +494,7 @@ def fetch_checkpoint(
                 revision=item.revision,
                 local_dir=str(staging),
                 resume_download=True,
+                token=token,
             )
             _assert_same_model_root(root_identity)
             # The downloader is not trusted merely because it returned. Validate its complete
@@ -524,6 +535,17 @@ def fetch_checkpoint(
             if isinstance(exc, ModelFetchError):
                 raise
             raise ModelFetchError(f"{type(exc).__name__}: {_safe_error(exc)}") from exc
+
+
+def resolve_hf_token(env_file: Path = ENV_FILE) -> str | None:
+    """The Hugging Face token, from the environment first and the owner-only store second.
+
+    This module read `os.environ["HF_TOKEN"]` directly, so a token stored through the
+    credentials panel was invisible to the one command that needed it. `read_credential`
+    already implements the precedence that matters — environment wins, which is what lets CI
+    override a developer's stored token — so this only has to use it.
+    """
+    return read_credential(HF_TOKEN, env_file)
 
 
 def _download_client() -> Download:
@@ -631,15 +653,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for item in plan.items:
         print(f"==> {item.entry.model_id}: {item.repository}@{item.revision} -> {item.destination}")
-        if item.entry.gated and not os.environ.get("HF_TOKEN"):
+        token = resolve_hf_token()
+        if item.entry.gated and not token:
             print(
-                f"SKIPPED: {item.repository} is gated and HF_TOKEN is not set",
+                f"SKIPPED: {item.repository} is gated and HF_TOKEN is not set. Store one with "
+                f"`hawedit-credentials` or set it in the environment (BLOCKED.md #4).",
                 file=sys.stderr,
             )
             failures = True
             continue
         try:
-            report = fetch_checkpoint(item, store, download)
+            # Only a gated repository is sent the credential. An ungated one did not ask for
+            # it, and a token travels no further than the request that needs it.
+            report = fetch_checkpoint(item, store, download, token if item.entry.gated else None)
         except ModelFetchError as exc:
             print(f"FAILED: {item.entry.model_id}: {_safe_error(exc)}", file=sys.stderr)
             failures = True
