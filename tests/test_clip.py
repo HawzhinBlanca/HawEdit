@@ -21,10 +21,13 @@ import pytest
 
 from hawedit.boundary import Boundary, BoundaryInputs, BoundaryInvariantViolated, fuse_boundary
 from hawedit.clip import (
+    MAX_MISLEADING_EDIT_RISK,
+    MIN_HOOK_SCORE,
     Clip,
     ClipTranscript,
     DiscoveryPath,
     Editorial,
+    EditorialBelowThreshold,
     Output,
     Qc,
     RejectedCandidate,
@@ -737,3 +740,69 @@ def test_the_fully_populated_clip_leaves_no_field_at_its_default() -> None:
         f"{left_at_default} carry their default value, so a `to_dict` that dropped them would "
         f"round-trip identically and the property test above would not see it"
     )
+
+
+# --- the editorial gate: the judge's answer has to be able to stop the encoder -------------
+
+
+def test_a_clip_the_judge_scored_below_the_hook_floor_is_refused() -> None:
+    """Measured on the first genuinely judged run: live Gemini scored the auto-selected clip
+    hook 0.20, self_contained False, misleading_edit_risk 0.40 — and Stage 6 rendered it.
+
+    `assert_renderable` checked that an editorial block *existed* and never read a number from
+    it, while its own neighbouring message said "§8.2 calls the misleading-edit rate the metric
+    that matters for a media organisation". The judge did its job; nothing acted on it.
+    """
+    clip = a_clip(editorial=an_editorial(hook_score=0.20))
+    with pytest.raises(EditorialBelowThreshold, match="hook"):
+        clip.assert_renderable()
+
+
+def test_a_clip_over_the_misleading_edit_ceiling_is_refused() -> None:
+    """§8.2's headline metric. 0.40 against a ceiling of 0.05 is not a near miss."""
+    clip = a_clip(editorial=an_editorial(misleading_edit_risk=0.40))
+    with pytest.raises(EditorialBelowThreshold, match="misleading"):
+        clip.assert_renderable()
+
+
+def test_the_thresholds_are_the_ones_the_owner_set() -> None:
+    """Hawa set these on 2026-08-26: hook >= 0.75, misleading-edit risk <= 0.05.
+
+    Pinned so a later edit to either number is a visible change to a decision, not a tweak.
+    """
+    assert MIN_HOOK_SCORE == 0.75
+    assert MAX_MISLEADING_EDIT_RISK == 0.05
+
+
+def test_a_clip_exactly_on_each_threshold_is_allowed() -> None:
+    """The boundary belongs to the passing side, and that is checked rather than assumed —
+    `>=` and `<=` are the difference between a rule and an off-by-one nobody sees."""
+    a_clip(editorial=an_editorial(hook_score=MIN_HOOK_SCORE)).assert_renderable()
+    a_clip(
+        editorial=an_editorial(misleading_edit_risk=MAX_MISLEADING_EDIT_RISK)
+    ).assert_renderable()
+
+
+def test_a_clip_the_judge_called_not_self_contained_is_refused() -> None:
+    """A clip that needs the rest of the episode to make sense is not a clip.
+
+    §5 lists `self_contained` beside the scores; the same run that scored 0.20 also returned
+    False here, and it shipped.
+    """
+    clip = a_clip(editorial=an_editorial(self_contained=False))
+    with pytest.raises(EditorialBelowThreshold, match="self-contained"):
+        clip.assert_renderable()
+
+
+def test_the_refusal_names_the_score_and_the_threshold_it_missed() -> None:
+    """A refusal an operator cannot act on costs them the run twice."""
+    clip = a_clip(editorial=an_editorial(hook_score=0.20))
+    with pytest.raises(EditorialBelowThreshold) as raised:
+        clip.assert_renderable()
+    message = str(raised.value)
+    assert "0.20" in message and "0.75" in message
+
+
+def test_a_good_verdict_still_renders() -> None:
+    """The control. A gate that refuses everything satisfies every test above."""
+    a_clip().assert_renderable()

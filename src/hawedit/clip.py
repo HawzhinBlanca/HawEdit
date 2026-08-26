@@ -43,10 +43,13 @@ from hawedit.registry import resolve_role
 from hawedit.transcripts import AsrProvenance, Word, validate_media_id, validate_media_sha256
 
 __all__ = [
+    "MAX_MISLEADING_EDIT_RISK",
+    "MIN_HOOK_SCORE",
     "Clip",
     "ClipTranscript",
     "DiscoveryPath",
     "Editorial",
+    "EditorialBelowThreshold",
     "Output",
     "Qc",
     "RejectedCandidate",
@@ -214,6 +217,28 @@ def assert_sv6d_within_window(sv6d: Sv6d, in_ms: int, out_ms: int) -> None:
                 f"({window_ms} ms long). A label may name a length as well as a moment, but a "
                 f"time this far outside is a claim about footage the model was never shown."
             )
+
+
+# Set by Hawa on 2026-08-26, after the first genuinely judged run measured what their absence
+# costs. Live Gemini scored the auto-selected clip hook **0.20**, `self_contained` **False** and
+# misleading-edit risk **0.40**, and Stage 6 rendered it anyway: `assert_renderable` checked that
+# an editorial block *existed* and never read a number out of it, while the message three lines
+# below it said "§8.2 calls the misleading-edit rate the metric that matters for a media
+# organisation". The judge had already done its job. Nothing acted on the answer.
+#
+# Numbers, not judgement calls dressed as constants: these are the owner's, recorded with the
+# date they were set, so changing either is a visible change to a decision.
+MIN_HOOK_SCORE: Final = 0.75
+MAX_MISLEADING_EDIT_RISK: Final = 0.05
+
+
+class EditorialBelowThreshold(ValueError):
+    """The judge scored this clip below what §8.2 permits to ship.
+
+    Separate from the QC refusals it sits beside because it is a different claim: QC is about
+    whether a human looked, and this is about what the model said when it did. A caller that
+    wants to ship anyway has to say so in a way that appears in a diff.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,6 +702,29 @@ class Clip:
                 f"clip {self.clip_id!r} has no editorial block: it was never judged, so its "
                 f"meaning fidelity and misleading-edit risk are unknown. §8.2 calls the "
                 f"misleading-edit rate the metric that matters for a media organisation."
+            )
+        # The scores, not merely their presence. Each is checked separately and named in the
+        # refusal: an operator who is told only "editorial gate" has to re-run to find out
+        # which number, and the run that produced it cost a billed model call.
+        if self.editorial.hook_score < MIN_HOOK_SCORE:
+            raise EditorialBelowThreshold(
+                f"clip {self.clip_id!r} scored hook {self.editorial.hook_score:.2f}, below the "
+                f"{MIN_HOOK_SCORE:.2f} floor. §3 Stage 4 judged this clip and said it does not "
+                f"open well enough to ship; rendering it spends an encode to publish something "
+                f"the judge already rejected."
+            )
+        if self.editorial.misleading_edit_risk > MAX_MISLEADING_EDIT_RISK:
+            raise EditorialBelowThreshold(
+                f"clip {self.clip_id!r} scored misleading-edit risk "
+                f"{self.editorial.misleading_edit_risk:.2f}, over the "
+                f"{MAX_MISLEADING_EDIT_RISK:.2f} ceiling. §8.2 calls this the metric that "
+                f"matters for a media organisation — an edit that changes what someone is "
+                f"understood to have said is the one failure no amount of polish redeems."
+            )
+        if not self.editorial.self_contained:
+            raise EditorialBelowThreshold(
+                f"clip {self.clip_id!r} was judged not self-contained: it needs the rest of the "
+                f"episode to make sense, which a viewer scrolling past it does not have."
             )
         if self.output is None:
             raise ValueError(

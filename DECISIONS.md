@@ -13270,3 +13270,48 @@ running the adapter leaves `pyannoteai` absent from `sys.modules`. That converts
 this project constructs a client" from a statement about our intentions into an assertion the
 gate re-checks on every run — which is the only form of that claim worth having.
 
+
+---
+
+## D-253
+
+**The judge's answer becomes a gate.** §3 Stage 4 scored every clip and nothing ever read the
+score. `Clip.assert_renderable` checked that an editorial block *existed* — and the message it
+raises when one does not says *"§8.2 calls the misleading-edit rate the metric that matters for
+a media organisation"* — then rendered whatever the numbers were.
+
+Measured on the first genuinely judged run, 2026-08-26, with a live `gemini-2.5-pro` key.
+Path A found 26 candidates over the real 38-minute episode, `--auto-select` took the best
+survivor, Stage 4 scored it, and Stage 6 encoded it:
+
+| | scored | ships? |
+|---|---|---|
+| `hook_score` | **0.20** | yes |
+| `self_contained` | **False** | yes |
+| `misleading_edit_risk` | **0.40** | yes |
+
+`work/judged1/ZAR38MinTest-s11-12` is that artifact: a 10.6-second aside about property
+valuations, rendered at 1080x1920 with burned-in captions, indistinguishable from a good clip to
+anything downstream. The pipeline paid for a billed model call to learn the clip was unusable and
+then spent an encode publishing it. Every check in this repository was green.
+
+**Thresholds set by Hawa on 2026-08-26: `MIN_HOOK_SCORE = 0.75`, `MAX_MISLEADING_EDIT_RISK =
+0.05`.** Recorded with the date and the owner because they are a judgement, not a measurement —
+changing either is a visible change to a decision rather than a tweak to a constant. The
+`self_contained` refusal carries no threshold: it is already a boolean the judge returns, and a
+clip that needs the rest of the episode is not a clip.
+
+**`EditorialBelowThreshold` is a distinct exception, not one of the QC `ValueError`s it sits
+beside.** They answer different questions. QC asks whether a human looked; this asks what the
+model said when it did. A caller that means to ship anyway has to catch a differently-named
+thing, which appears in a diff.
+
+**Each score is checked separately and named in its refusal, with the value and the threshold.**
+A refusal that says only "editorial gate" costs the operator another run to find out which
+number — and the run that produced it was billed.
+
+**The boundary belongs to the passing side** (`>=` and `<=`), pinned by its own test, because
+that is the difference between a rule and an off-by-one nobody notices for a year.
+
+This does not change what Stage 4 produces or how discovery ranks. A clip refused here is a
+clip the judge already rejected; all that changes is that the encoder now hears about it.
