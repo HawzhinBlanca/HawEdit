@@ -47,6 +47,8 @@ from hawedit.pipeline import (
     MAX_INTERNAL_SILENCE_MS,
     PipelineRun,
     StageSkipped,
+    _automatic_sentence_selection,
+    _sentence_run_for_candidate,
     assert_devices_available,
     build_parser,
     build_visual_composer,
@@ -5052,3 +5054,70 @@ def test_the_runner_refuses_a_stage_1_transcript_in_another_language(tmp_path: P
     # Nothing was written: the store must be untouched so a re-run with the right transcript
     # is not blocked by invariant #1.
     assert not (tmp_path / "transcripts" / "fixture.transcript.raw.json").exists()
+
+
+# --- judge-top-n T1: the selector splits so the caller can own the loop --------------------
+
+
+def _ranked(candidate_id: str, in_ms: int, out_ms: int, rank: int) -> MergedCandidate:
+    return MergedCandidate(
+        candidate_id=candidate_id,
+        media_id="fixture",
+        in_ms=in_ms,
+        out_ms=out_ms,
+        discovery_path=DiscoveryPath.VERBAL,
+        sources=(candidate_id,),
+        verbal_rank=rank,
+        visual_rank=None,
+        verbal_score=0.5,
+        visual_score=None,
+        sv6d=None,
+    )
+
+
+_RUN_SENTENCES = (
+    _spoken(1_000, 2_000),
+    _spoken(2_000, 3_000),
+    _spoken(5_000, 6_000),
+    _spoken(10_000, 11_000),
+)
+
+
+def test_the_selector_returns_a_run_for_one_candidate() -> None:
+    """The per-candidate half, extracted so the caller can ask it about every candidate.
+
+    Judging only rank #1 is what produced two runs scoring hook 0.20 out of 26 and 18
+    candidates. Asking more than one requires this to be answerable per candidate rather than
+    once for the whole set.
+    """
+    best = _ranked("a", 4_000, 7_000, rank=0)
+    second = _ranked("b", 500, 3_500, rank=1)
+
+    assert _sentence_run_for_candidate(best, _RUN_SENTENCES) == (2,)
+    # The longest contiguous complete run inside the span, not merely the first sentence.
+    assert _sentence_run_for_candidate(second, _RUN_SENTENCES) == (0, 1)
+
+
+def test_a_candidate_containing_no_whole_sentence_yields_no_run() -> None:
+    """D-185 measured this as common rather than rare: 7 candidates spanning 3.48-3.96 s
+    against sentences with a 6.72 s median, and zero wholly inside any candidate.
+
+    It has to be answerable without spending a billed call to find out.
+    """
+    assert _sentence_run_for_candidate(_ranked("c", 1_200, 1_800, rank=0), _RUN_SENTENCES) == ()
+    assert _sentence_run_for_candidate(_ranked("d", 3_100, 4_900, rank=0), _RUN_SENTENCES) == ()
+
+
+def test_auto_selection_still_picks_what_it_picked_before() -> None:
+    """T1 is a refactor. The whole-set behaviour must be byte-identical to the loop it replaced:
+    candidates in `_candidate_priority` order, first one with an eligible run wins."""
+    best = _ranked("a", 4_000, 7_000, rank=0)
+    second = _ranked("b", 500, 3_500, rank=1)
+
+    assert _automatic_sentence_selection((best, second), _RUN_SENTENCES) == (2,)
+    assert _automatic_sentence_selection((second, best), _RUN_SENTENCES) == (2,)
+
+    # A rank-0 candidate with nothing inside it is skipped, not allowed to end the search.
+    barren = _ranked("e", 1_200, 1_800, rank=0)
+    assert _automatic_sentence_selection((barren, second), _RUN_SENTENCES) == (0, 1)
+    assert _automatic_sentence_selection((), _RUN_SENTENCES) == ()

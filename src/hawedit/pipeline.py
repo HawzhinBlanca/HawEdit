@@ -988,28 +988,47 @@ def _rejected_candidates(
     return tuple(rejected)
 
 
+def _sentence_run_for_candidate(
+    candidate: MergedCandidate, sentences: Sequence[Sentence]
+) -> tuple[int, ...]:
+    """The longest complete contiguous sentence run wholly inside one candidate, or `()`.
+
+    Extracted from `_automatic_sentence_selection` so the question can be asked of *every*
+    candidate rather than answered once for the whole set. Stage 4 judged only the best-ranked
+    survivor, and the run lived or died on that single sample: measured twice, 26 candidates and
+    18 candidates, one judged each time, hook 0.20 both times. Asking more than one starts here.
+
+    Empty is a real answer and a common one. D-185 measured 7 candidates spanning 3.48-3.96 s
+    against sentences with a 6.72 s median and **zero** wholly inside any candidate — so a caller
+    can learn a candidate is uncuttable without spending a billed Stage 4 call to find out.
+    """
+    eligible = _complete_sentences_within(candidate, sentences)
+    if not eligible:
+        return ()
+    runs: list[list[int]] = [[eligible[0]]]
+    for index in eligible[1:]:
+        if index == runs[-1][-1] + 1:
+            runs[-1].append(index)
+        else:
+            runs.append([index])
+    best = max(
+        runs,
+        key=lambda run: (
+            sentences[run[-1]].end_ms - sentences[run[0]].start_ms,
+            -run[0],
+        ),
+    )
+    return tuple(best)
+
+
 def _automatic_sentence_selection(
     candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence]
 ) -> tuple[int, ...]:
     """Choose complete contiguous sentence anchors wholly contained by the best survivor."""
     for candidate in sorted(candidates, key=_candidate_priority):
-        eligible = _complete_sentences_within(candidate, sentences)
-        if not eligible:
-            continue
-        runs: list[list[int]] = [[eligible[0]]]
-        for index in eligible[1:]:
-            if index == runs[-1][-1] + 1:
-                runs[-1].append(index)
-            else:
-                runs.append([index])
-        best = max(
-            runs,
-            key=lambda run: (
-                sentences[run[-1]].end_ms - sentences[run[0]].start_ms,
-                -run[0],
-            ),
-        )
-        return tuple(best)
+        run = _sentence_run_for_candidate(candidate, sentences)
+        if run:
+            return run
     return ()
 
 
