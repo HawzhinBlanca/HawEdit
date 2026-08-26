@@ -1,0 +1,1 @@
+TS=2026-08-26T09:34:35Z FEATURE=diarization-adapter TASK=T1 TESTS=test_the_diarization_extra_pins_a_four_x_pyannote VERIFY=pass REPORT=.gate/last-test-run.xml

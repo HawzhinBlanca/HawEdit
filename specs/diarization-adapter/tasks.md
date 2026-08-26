@@ -2,7 +2,7 @@
 # Rows flip to [x] ONLY via scripts/update-ledger.sh, after verify.sh passes and the cited
 # tests are found in the report that run wrote.
 
-- [ ] T1  ADR: pyannote.audio dependency, licence audit (MIT code / CC-BY-4.0 model, neither
+- [x] T1  ADR: pyannote.audio dependency, licence audit (MIT code / CC-BY-4.0 model, neither
           NonCommercial per D-002), the round-never-repair conversion rule, and the AC-6
           refusal. Adds the `diarization` extra to pyproject with the version that actually
           resolves against the pinned torch==2.13.0 — recorded from the resolved wheel, not
