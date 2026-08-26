@@ -19,7 +19,7 @@
                                             test_a_credential_that_fails_verification_is_not_stored,
                                             test_the_panel_names_what_each_credential_unlocks)
 
-- [ ] T4  Headless fallback to the existing terminal panel, and the `hawedit-setup` console
+- [x] T4  Headless fallback to the existing terminal panel, and the `hawedit-setup` console
           script.                   (tests: test_no_display_falls_back_to_the_terminal_panel,
                                             test_the_setup_console_script_is_declared)
 
