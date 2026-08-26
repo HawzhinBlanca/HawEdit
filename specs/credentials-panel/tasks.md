@@ -2,7 +2,7 @@
 # Rows flip to [x] ONLY via scripts/update-ledger.sh, after verify.sh passes and the cited
 # tests are found in the report that run wrote.
 
-- [ ] T1  `HF_TOKEN` becomes a stored credential: constant, `validate_hf_token` against the HF
+- [x] T1  `HF_TOKEN` becomes a stored credential: constant, `validate_hf_token` against the HF
           whoami endpoint with the same bounded-response and header-safety rules
           `validate_gemini_key` uses, and `credential_status` reporting it.
                                     (tests: test_an_hf_token_is_verified_before_it_is_stored,
