@@ -7,7 +7,7 @@
           identical.                (tests: test_the_selector_returns_a_run_for_one_candidate,
                                             test_auto_selection_still_picks_what_it_picked_before)
 
-- [ ] T2  Judge up to N candidates, skipping ineligible ones before any billed call; persist
+- [x] T2  Judge up to N candidates, skipping ineligible ones before any billed call; persist
           each verdict as it arrives.
                                     (tests: test_more_than_one_candidate_can_be_judged,
                                             test_an_ineligible_candidate_costs_no_billed_call,
