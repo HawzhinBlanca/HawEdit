@@ -44,10 +44,12 @@ from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
 from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import (
+    DEFAULT_JUDGE_TOP_N,
     MAX_INTERNAL_SILENCE_MS,
     PipelineRun,
     StageSkipped,
     _automatic_sentence_selection,
+    _judgeable_plans,
     _sentence_run_for_candidate,
     assert_devices_available,
     build_parser,
@@ -3091,6 +3093,18 @@ def _argv_refusals() -> tuple[str, ...]:
 
 _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
     (
+        # The judging loop exists only on the automatic path. Accepting the flag beside
+        # `--sentences` would silently do nothing while the operator believed N were scored.
+        "judge-top-n where it cannot act",
+        ["--judge-top-n", "5"],
+        "--judge-top-n requires --auto-select",
+    ),
+    (
+        "judging fewer than one candidate",
+        ["--judge-top-n", "0", "--auto-select"],
+        "--judge-top-n must be at least 1",
+    ),
+    (
         "two Stage 1 sources",
         ["--transcript", "x.json", "--omni-asr"],
         "--transcript and --omni-asr are mutually exclusive Stage 1 sources",
@@ -4750,6 +4764,18 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         ("--gemini", "--verdict", "missing.json"),
         "mutually exclusive Stage 4 sources",
     ),
+    (
+        # The loop lives only on the automatic path; accepting the flag beside `--sentences`
+        # would silently do nothing while the operator believed five candidates were scored.
+        "judge-top-n without auto-select",
+        ("--judge-top-n", "5"),
+        "--judge-top-n requires --auto-select",
+    ),
+    (
+        "judging fewer than one candidate",
+        ("--judge-top-n", "0", "--auto-select"),
+        "--judge-top-n must be at least 1",
+    ),
     ("Gemini without Stage 1", ("--gemini",), "cloud discovery requires"),
     (
         "Vertex without Stage 1",
@@ -5331,3 +5357,69 @@ def test_no_passing_candidate_refuses_and_names_every_score(tmp_path: Path) -> N
     assert "0.20" in reason and "0.31" in reason, f"every score must be named: {reason}"
     assert "v1" in reason and "v2" in reason, f"every candidate must be named: {reason}"
     assert run.render is None or isinstance(run.render, StageSkipped)
+
+
+# --- judge-top-n T4: the flag ---------------------------------------------------------------
+
+
+def test_judge_top_n_defaults_and_is_bounded() -> None:
+    """Hawa set the default at 5 on 2026-08-26: roughly $2-$3.50 a run at §3's Stage 4 rates.
+
+    Left unset it resolves to that; the parser default is `None` so an explicit value can be
+    told apart from an absent one, which is what lets the flag be refused when it cannot act.
+    """
+    assert build_parser().parse_args(["source.mp4"]).judge_top_n is None
+    assert DEFAULT_JUDGE_TOP_N == 5
+
+    parsed = build_parser().parse_args(["source.mp4", "--judge-top-n", "3"])
+    assert parsed.judge_top_n == 3
+
+
+def test_judging_fewer_than_one_candidate_is_refused() -> None:
+    """Zero billed calls is not a cheaper run, it is a run that cannot produce a clip."""
+    with pytest.raises(ValueError, match="at least 1"):
+        _judgeable_plans((), (), 0)
+
+
+def test_the_flag_is_refused_when_it_cannot_act(tmp_path: Path) -> None:
+    """The loop only exists on the `--auto-select` path — `--sentences` is a decision the
+    operator already made, and re-ranking it would judge footage they did not ask for.
+
+    Accepting `--judge-top-n 5` there would silently do nothing, which §1 calls the expensive
+    kind of wrong: the operator would believe five candidates were considered.
+    """
+    transcript = tmp_path / "transcript.json"
+    transcript.write_text(a_transcript("fixture").to_json(), encoding="utf-8")
+    code = main(
+        [
+            str(FIXTURE),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--media-id",
+            "fixture",
+            "--transcript",
+            str(transcript),
+            "--judge-top-n",
+            "5",
+        ]
+    )
+    assert code == 2, "a flag that cannot act must be refused, not ignored"
+
+
+def test_n_of_one_is_todays_behaviour(tmp_path: Path) -> None:
+    """The escape hatch back to the original cost. One candidate judged, one billed call."""
+    judge = _RecordingJudge()
+    run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="judged",
+        transcript=a_transcript("judged"),
+        discover=lambda _n: [
+            _verbal("v1", 0, 1_800, rank=1),
+            _verbal("v2", 1_900, 4_200, rank=2),
+        ],
+        judge=judge,
+        auto_select=True,
+        judge_top_n=1,
+    )
+    assert len(judge.seen) == 1, "N=1 must cost exactly one billed call"

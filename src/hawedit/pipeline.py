@@ -1030,6 +1030,13 @@ def _sentence_run_for_candidate(
     return tuple(best)
 
 
+# Set by Hawa on 2026-08-26. Each judged candidate is one billed Stage 4 request — §3's table
+# puts that at roughly $0.36-0.72 with video — so five is about $2-3.50 a run, and a run that
+# finds nothing shippable still pays for all of them. One is the escape hatch back to the
+# original cost, and reproduces the original behaviour exactly.
+DEFAULT_JUDGE_TOP_N: Final = 5
+
+
 def _verdict_is_shippable(verdict: JudgeVerdict) -> bool:
     """Whether §2's editorial thresholds would let this verdict become a clip.
 
@@ -2545,6 +2552,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--zdr-confirmed-by", default="", help="person who verified zero-data-retention"
     )
+    parser.add_argument(
+        "--judge-top-n",
+        type=int,
+        # `None`, not the default value, so an explicit request can be told apart from an
+        # absent one — which is what lets the flag be refused where it could not act.
+        default=None,
+        help=(
+            f"how many Stage 3 survivors Stage 4 scores before the best passing one is cut "
+            f"(default {DEFAULT_JUDGE_TOP_N}; each is one billed request; requires "
+            f"--auto-select)"
+        ),
+    )
     parser.add_argument("--sentences", help="comma-separated sentence indexes to cut, e.g. 0,1")
     parser.add_argument("--qc-pass", action="store_true", help="record a human QC pass (§2)")
     parser.add_argument("--json", action="store_true", help="print the run report as JSON")
@@ -2634,6 +2653,17 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         raise ValueError("--visual-query must contain non-whitespace Sorani retrieval text")
     if args.visual and not (args.visual_query or args.gemini or args.vertex_project):
         raise ValueError("--visual without Path A requires --visual-query")
+    if args.judge_top_n is not None and not args.auto_select:
+        # Accepting it here would silently do nothing: the loop exists only on the automatic
+        # path, because `--sentences` is a decision the operator already made and re-ranking
+        # it would judge footage they did not ask for. An operator who passed
+        # `--judge-top-n 5` would believe five candidates were considered. §1: fail visible.
+        raise ValueError(
+            "--judge-top-n requires --auto-select; with --sentences the span is already "
+            "chosen and only that one is judged"
+        )
+    if args.judge_top_n is not None and args.judge_top_n < 1:
+        raise ValueError("--judge-top-n must be at least 1")
     if args.qc_pass and not (args.sentences or args.auto_select):
         raise ValueError("--qc-pass requires --sentences or --auto-select")
     visual_query = args.visual_query.strip() if args.visual_query is not None else ""
@@ -2753,6 +2783,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         temporal_grounder=temporal_grounder,
         subject_tracker=subject_tracker,
         auto_select=args.auto_select,
+        judge_top_n=(DEFAULT_JUDGE_TOP_N if args.judge_top_n is None else args.judge_top_n),
         visual_fps=args.visual_fps,
         visual_max_frames=args.visual_max_frames,
         on_event=on_event,
