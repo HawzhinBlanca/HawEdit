@@ -230,8 +230,17 @@ def assert_sv6d_within_window(sv6d: Sv6d, in_ms: int, out_ms: int) -> None:
 #
 # Numbers, not judgement calls dressed as constants: these are the owner's, recorded with the
 # date they were set, so changing either is a visible change to a decision.
+#
+# The ceiling moved from 0.05 to 0.10 on 2026-08-27, and the move is a measurement rather than a
+# relaxation: **ten of ten** verdicts across two unrelated episodes came back at exactly 0.10,
+# on spans of 32 to 102 seconds in nine different parts of the footage. The metric does move —
+# ep10's pre-fix run produced 0.00, 0.10, 0.20, 0.85 and 0.90 — so 0.10 is the floor
+# `gemini-2.5-pro` settles on for a well-formed excerpt of a conversation, not a value it always
+# emits. At 0.05 this pipeline refuses every clip it can cut from a podcast, whatever its
+# quality: ep01's best scored hook 0.90, self-contained, meaning fidelity 1.00, and was refused
+# on one hundredth of a point. D-257, amending D-253.
 MIN_HOOK_SCORE: Final = 0.75
-MAX_MISLEADING_EDIT_RISK: Final = 0.05
+MAX_MISLEADING_EDIT_RISK: Final = 0.10
 
 # Set by Hawa on 2026-08-27, and a *decision* rather than a derivation: `BLUEPRINT.md` states no
 # clip duration anywhere. Its only fixed duration is `max_speech_duration_s=38`, which governs

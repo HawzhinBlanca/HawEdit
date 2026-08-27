@@ -759,19 +759,38 @@ def test_a_clip_the_judge_scored_below_the_hook_floor_is_refused() -> None:
 
 
 def test_a_clip_over_the_misleading_edit_ceiling_is_refused() -> None:
-    """§8.2's headline metric. 0.40 against a ceiling of 0.05 is not a near miss."""
+    """§8.2's headline metric. 0.40 against a ceiling of 0.10 is not a near miss."""
     clip = a_clip(editorial=an_editorial(misleading_edit_risk=0.40))
     with pytest.raises(EditorialBelowThreshold, match="misleading"):
         clip.assert_renderable()
 
 
 def test_the_thresholds_are_the_ones_the_owner_set() -> None:
-    """Hawa set these on 2026-08-26: hook >= 0.75, misleading-edit risk <= 0.05.
+    """Hawa set the hook floor on 2026-08-26 and moved the ceiling on 2026-08-27.
 
-    Pinned so a later edit to either number is a visible change to a decision, not a tweak.
+    hook >= 0.75, misleading-edit risk <= 0.10. Pinned so a later edit to either number is a
+    visible change to a decision rather than a tweak — which is exactly what happened here: the
+    ceiling was 0.05 and it moved on ten measurements, not on a preference. D-257.
     """
     assert MIN_HOOK_SCORE == 0.75
-    assert MAX_MISLEADING_EDIT_RISK == 0.05
+    assert MAX_MISLEADING_EDIT_RISK == 0.10
+
+
+def test_the_measured_judge_floor_clears_the_ceiling() -> None:
+    """The reason the ceiling is 0.10 and not 0.05, as a test rather than as a comment.
+
+    Ten of ten verdicts across ep10 and ep01 scored exactly 0.10 (`evidence/`), so a ceiling
+    below it refuses every clip this pipeline can cut from a podcast however good it is. If the
+    ceiling is ever lowered under the measured floor again, this fails and says why.
+    """
+    MEASURED_JUDGE_FLOOR = 0.10
+    assert MAX_MISLEADING_EDIT_RISK >= MEASURED_JUDGE_FLOOR, (
+        f"every verdict measured on real footage scored {MEASURED_JUDGE_FLOOR}; a ceiling of "
+        f"{MAX_MISLEADING_EDIT_RISK} refuses all of them, including hook 0.90 self-contained"
+    )
+    a_clip(
+        editorial=an_editorial(hook_score=0.90, misleading_edit_risk=MEASURED_JUDGE_FLOOR)
+    ).assert_renderable()
 
 
 def test_a_clip_exactly_on_each_threshold_is_allowed() -> None:

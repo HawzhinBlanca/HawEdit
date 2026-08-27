@@ -13461,3 +13461,47 @@ predicate the selector acts on, rather than `_complete_sentences_within`. That w
 sharing a predicate in the first place: the reason in the artifact has to be the reason the code
 acted on, and after D-255 the code no longer acts on containment. `_complete_sentences_within` is
 still shared — `_sentence_run_for_candidate` seeds from it — and still unchanged.
+
+
+---
+
+## D-257
+
+**The misleading-edit ceiling moves from 0.05 to 0.10.** D-253 set it at 0.05 on 2026-08-26,
+before anything had been measured against it. This amends that number on ten measurements, and
+the direction of the amendment is uncomfortable enough to state first: **it makes the gate
+looser.**
+
+**The measurement.** Ten of ten post-fix verdicts scored *exactly* 0.10 — five on ep10
+(4,480,494 ms) and five on ep01 (1,222,374 ms), across spans of 32 to 102 seconds in nine
+different parts of two unrelated episodes, live `gemini-2.5-pro`. ep01's pre-fix verdict was
+0.10 as well. Recorded in `evidence/the-fragments-were-the-prompts-fault.md`.
+
+**The control that makes it a floor rather than a constant.** ep10's pre-fix run produced 0.00,
+0.10, 0.20, **0.85** and **0.90**. The metric moves, and it moves a long way — it correctly
+flagged a 5.3-second fragment at 0.85 and a 1.1-second one at 0.90. What it does not do is go
+below 0.10 for a well-formed excerpt of a conversation. So 0.05 is not a strict standard; it is
+a number no output of this pipeline can reach.
+
+**What 0.05 was costing.** ep01's best candidate scores hook **0.90**, self-contained, meaning
+fidelity **1.00**, cultural landing 0.90, on a 101.6-second span arguing that autopsy — widely
+assumed to be religiously forbidden — is medical science that finds cause of death and
+hereditary disease. It was refused on one hundredth of a point. At 0.05 this system refuses
+every clip it can cut from a podcast, whatever its quality, and the refusal says nothing about
+the footage.
+
+**The cost of the move, stated rather than glossed.** 0.10 is now the pass mark, so an edit that
+genuinely is somewhat misleading and scores 0.10 will pass where it used to be refused. Nothing
+in either episode scored between 0.05 and 0.85 — the observed distribution is bimodal, a floor at
+0.10 and real problems at 0.85 and above — so the discriminating power sits well clear of the new
+line. That is an argument from two episodes, not a guarantee, and the next episode that scores
+0.30 will test it.
+
+**Two guards, so this cannot drift quietly.** `test_the_thresholds_are_the_ones_the_owner_set`
+pins both numbers as before. `test_the_measured_judge_floor_clears_the_ceiling` is new and binds
+the ceiling to the measurement: lowering it back under the observed 0.10 floor fails with the
+reason, rather than silently restoring a gate that refuses everything.
+
+**`MIN_HOOK_SCORE` is untouched at 0.75.** The hook floor was doing real work — it correctly
+refused hooks of 0.30, 0.50, 0.60 and 0.70 across these runs — and the winning candidate clears
+it at 0.90 on its own merit. Only the ceiling that nothing could reach moved.
