@@ -11,7 +11,7 @@
                                   (tests: test_the_discovery_prompt_states_the_target_duration,
                                           test_span_compliance_is_measured_not_assumed)
 
-- [ ] T3  `_sentence_run_for_candidate` grows a run outward from a seed to the target, on
+- [x] T3  `_sentence_run_for_candidate` grows a run outward from a seed to the target, on
           complete sentence boundaries only.
                                   (tests: test_a_short_candidate_grows_to_the_target,
                                           test_growth_stops_at_complete_sentence_boundaries,
