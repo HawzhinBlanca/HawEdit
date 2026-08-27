@@ -13365,3 +13365,54 @@ overall is measured in `specs/candidate-span` T5, not assumed here.
 it to hit a number would invent an edit nobody asked for; the judge already scores hook and
 self-containment, so it can say if a span is too long. ep01 contains a 105 s sentence, so a seed
 inside it grows to that single sentence and exceeds the maximum — accepted, not cut.
+
+
+---
+
+## D-255
+
+**A Stage 3 candidate is a seed, and the span that reaches Stage 4 is grown around it.**
+D-254 recorded the target range; this records what now happens to a candidate that misses it.
+`_grown_sentence_run` takes the seed inside or around a candidate and extends it outward on
+complete sentence boundaries until it reaches `MIN_CANDIDATE_SPAN_MS`, alternating sides so the
+moment the judge found does not end up at an edge of its own clip.
+
+**Growth seeds from overlap, not from containment, and that is the substantive change.** Until
+now a candidate was eligible only if a complete sentence lay *wholly inside* it. Measured on the
+real 20-minute episode: sentences at a 10.2 s median against candidates of about 5 s, so 14 of
+15 candidates contained no complete sentence while sitting comfortably inside one. Containment
+was failing in the direction nobody checked. `_complete_sentences_overlapping` inverts the test
+instead of loosening `_complete_sentences_within`, which is untouched — that predicate is shared
+with `_rejected_candidates` so the reason in the artifact is the reason the code acted on, and
+widening it in place would have silently rewritten the meaning of every rejection ever recorded.
+
+**This supersedes part of D-185.** That entry recorded "no complete sentence fits a candidate
+window" as a correct and common outcome — 7 candidates of 3.48–3.96 s against 184 sentences with
+a 6.72 s median, zero wholly inside any. The arithmetic stands; the conclusion no longer does. A
+window shorter than a sentence now grows into the sentence it sits in. `_nothing_fits_a_candidate`
+still fires, but only for a candidate that overlaps no complete sentence *at all* — a window
+landing in silence, or between two sentences §4.2 could not confirm finished.
+
+**The grown span becomes the candidate's span.** `_judgeable_plans` returns
+`replace(candidate, in_ms=..., out_ms=...)` at the grown anchors, because a grown span is
+deliberately larger than its seed and every containment check downstream — `_candidate_for_judging`,
+`_rejected_candidates` — would otherwise refuse the thing Stage 3 had just chosen. One span per
+candidate, and the verdict is recorded against the footage that was judged rather than against
+the seed it grew from. The Stage 3 score still describes the seed; it is used for priority
+ordering only, and Stage 4 is the authority on the grown span.
+
+**Three existing tests changed, named here rather than left for a reader to find in a diff:**
+
+| test | was | is |
+|---|---|---|
+| `test_automatic_selection_uses_complete_sentences_inside_the_best_survivor` | clip `s0-0`, two words | clip `s0-1`, four words — growth takes both sentences the fixture has |
+| `test_an_overwriting_auto_selected_run_also_refuses_before_the_judge` | collision planted on sentence 0 | planted on the grown selection `(0, 1)` |
+| `test_auto_select_choosing_nothing_says_why_in_the_numbers` | a 120 ms window at 0 ms | the same 120 ms window at 1,750 ms, inside the silence, where it overlaps no sentence |
+
+None was weakened. Each pinned a selection that growth widens on purpose, and each still asserts
+its original property against the selection the code now makes. The third is the one worth
+watching: it is D-185's own measurement, and it now needs a window in silence to reproduce.
+
+**Not yet measured.** The hypothesis that misleading-edit risk falls when a fragment becomes an
+argument rests on six verdicts across two episodes. `specs/candidate-span` T5 re-runs both and
+records the before and after, including if the risk does not fall.

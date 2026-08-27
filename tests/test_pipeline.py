@@ -54,6 +54,7 @@ from hawedit.pipeline import (
     PipelineRun,
     StageSkipped,
     _automatic_sentence_selection,
+    _grown_sentence_run,
     _judgeable_plans,
     _print_report,
     _sentence_run_for_candidate,
@@ -1242,10 +1243,12 @@ def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
         auto_select=True,
     )
     assert run.clip is not None
-    assert run.clip.clip_id == "automatic-s0-0"
-    assert tuple(word.w for word in run.clip.transcript.words) == tuple(
-        word.w for word in WORDS[:2]
-    )
+    # `s0-1`, not `s0-0`: the candidate is 1.7 s and D-254's minimum is 30 s, so T3 grows the
+    # seed outward on complete sentence boundaries. This fixture holds two sentences and the
+    # grown run takes both — it still cannot reach 30 s, and growth returns what it reached.
+    # The property under test is unchanged: the selection is complete sentences, whole.
+    assert run.clip.clip_id == "automatic-s0-1"
+    assert tuple(word.w for word in run.clip.transcript.words) == tuple(word.w for word in WORDS)
 
 
 @needs_ffmpeg
@@ -1757,7 +1760,7 @@ def test_there_is_no_natural_silence_to_extend_to_inside_a_pause() -> None:
 # =========================================================================================
 
 
-def _existing_artifact(work_dir: Path, media_id: str, sentence: int) -> Path:
+def _existing_artifact(work_dir: Path, media_id: str, sentences: tuple[int, ...]) -> Path:
     """Plant a *finished* delivery, exactly as a completed run leaves it.
 
     Written through `ArtifactBundle`, the production writer, so the plant cannot drift from what
@@ -1774,7 +1777,7 @@ def _existing_artifact(work_dir: Path, media_id: str, sentence: int) -> Path:
     from hawedit.pipeline import _clip_id
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    clip_id = _clip_id(media_id, (sentence,))
+    clip_id = _clip_id(media_id, sentences)
     bundle = ArtifactBundle.create(work_dir, clip_id)
     for suffix in ("ass", "mp4", "srt", "edl", "json"):
         bundle.write_text(suffix, "a previous run left this here")
@@ -1788,7 +1791,7 @@ def test_an_overwriting_run_refuses_before_the_billed_judge_call(tmp_path: Path)
     from hawedit.discovery import Candidate
 
     work = tmp_path / "work"
-    planted = _existing_artifact(work, "billed", 0)
+    planted = _existing_artifact(work, "billed", (0,))
 
     calls: list[JudgeRequest] = []
 
@@ -1830,7 +1833,10 @@ def test_an_overwriting_auto_selected_run_also_refuses_before_the_judge(tmp_path
     from hawedit.discovery import Candidate
 
     work = tmp_path / "work"
-    _existing_artifact(work, "autobilled", 0)
+    # Sentences 0 *and* 1: `--auto-select` grows a 1.7 s seed outward (T3), so the selection it
+    # names is the whole fixture rather than sentence 0 alone. Planting the collision on the
+    # selection the run actually makes is what keeps this a test of the guard.
+    _existing_artifact(work, "autobilled", (0, 1))
 
     calls: list[JudgeRequest] = []
 
@@ -3766,7 +3772,9 @@ def test_a_skipped_stage_3_still_prints_exactly_its_skip_line(
 # --- D-185: --auto-select chose nothing and would not say why -------------------------------
 
 
-def _auto_select_run(tmp_path: Path, window_ms: int, media_id: str) -> PipelineRun:
+def _auto_select_run(
+    tmp_path: Path, window_ms: int, media_id: str, start_ms: int = 0
+) -> PipelineRun:
     """A run whose only candidate is `window_ms` long, auto-selecting against real sentences."""
     from hawedit.clip import DiscoveryPath
     from hawedit.discovery import Candidate
@@ -3777,7 +3785,15 @@ def _auto_select_run(tmp_path: Path, window_ms: int, media_id: str) -> PipelineR
         media_id=media_id,
         transcript=a_transcript(media_id),
         discover=lambda _n: [
-            Candidate("v1", media_id, 0, window_ms, DiscoveryPath.VERBAL, rank=1, score=0.9)
+            Candidate(
+                "v1",
+                media_id,
+                start_ms,
+                start_ms + window_ms,
+                DiscoveryPath.VERBAL,
+                rank=1,
+                score=0.9,
+            )
         ],
         auto_select=True,
     )
@@ -3785,14 +3801,21 @@ def _auto_select_run(tmp_path: Path, window_ms: int, media_id: str) -> PipelineR
 
 @needs_ffmpeg
 def test_auto_select_choosing_nothing_says_why_in_the_numbers(tmp_path: Path) -> None:
-    """§5 selects complete sentences *wholly inside* a candidate, so a retrieval unit shorter
-    than a sentence contains none however good the retrieval was — and the operator used to
-    read only "complete selected sentences was not available", the symptom.
+    """§5 selects complete sentences a candidate can anchor, and a candidate that anchors none
+    used to leave the operator reading "complete selected sentences was not available" — the
+    symptom rather than the cause.
 
     Measured on the real 38-minute file: 7 candidates of 3.48–3.96 s against 184 complete
     sentences with a median of 6.72 s, 0 wholly inside any of them.
+
+    **T3 narrowed when this fires, and the fixture moved with it.** A window shorter than a
+    sentence is no longer enough on its own: growth seeds from the sentences a candidate
+    *overlaps*, so a 120 ms window sitting inside a sentence now grows into it. What still
+    produces nothing is a window that overlaps no complete sentence at all — this one sits in
+    the 1,700–2,000 ms silence between them. The reason text below is unchanged, and so is the
+    thing it must not go back to saying.
     """
-    run = _auto_select_run(tmp_path, window_ms=120, media_id="tootight")
+    run = _auto_select_run(tmp_path, window_ms=120, media_id="tootight", start_ms=1_750)
     assert run.clip is None, "this fixture must fail to select, or it measures nothing"
 
     boundary = dict(run.skipped())["boundary"]
@@ -5542,3 +5565,114 @@ def test_span_compliance_counts_only_what_path_a_answered() -> None:
         candidates=(_a_span("visual", 0, 45_000, verbal=False),),
     )
     assert visual_only.to_dict()["discovery"]["in_target_span"] == {"asked": 0, "in_range": 0}
+
+
+# --- candidate-span T3: a seed grows into something that can carry a point -------------------
+
+
+def _unfinished(start_ms: int, end_ms: int) -> Sentence:
+    """A sentence §4.2 could not confirm finished. Kurdish invariant #2: never render one."""
+    return Sentence(
+        words=(Word(w="وشە", start_ms=start_ms, end_ms=end_ms, conf=0.9),), complete=False
+    )
+
+
+# Twenty complete five-second sentences, 0..100 s. Long enough that growth can actually reach
+# the 30 s minimum, which the older fixtures in this file are deliberately too small to do.
+_EPISODE_SENTENCES = tuple(_spoken(index * 5_000, (index + 1) * 5_000) for index in range(20))
+
+
+def _run_span_ms(run: tuple[int, ...], sentences: tuple[Sentence, ...]) -> int:
+    return sentences[run[-1]].end_ms - sentences[run[0]].start_ms
+
+
+def test_a_short_candidate_grows_to_the_target() -> None:
+    """The 5.3-second span is the real one. It scored hook 0.90 and misleading-edit 0.85.
+
+    Measured on the 75-minute episode with live gemini-2.5-pro: the strongest candidate in the
+    set was five seconds long, and a five-second cut of a conversation is close to definitionally
+    not self-contained. The seed is kept and the span around it is grown to D-254's minimum on
+    complete sentence boundaries, alternating outward so the moment the judge liked does not end
+    up at an edge of the clip.
+    """
+    seeded = _ranked("hot", 40_000, 45_300, rank=1)
+    grown = _grown_sentence_run(seeded, _EPISODE_SENTENCES)
+
+    assert _run_span_ms(grown, _EPISODE_SENTENCES) >= MIN_CANDIDATE_SPAN_MS, (
+        "the grown span still cannot carry a whole argument, which is the entire mechanism"
+    )
+    assert grown == (5, 6, 7, 8, 9, 10), (
+        "growth alternates outward from the seed; sentence 8 is the seed and stays away from "
+        "both edges"
+    )
+    assert 8 in grown, "the moment the judge found must survive its own clip"
+    # It stops *at* the minimum rather than running on to the maximum: every second of grown
+    # video is billed at roughly 300 tokens.
+    assert _run_span_ms(grown, _EPISODE_SENTENCES) == MIN_CANDIDATE_SPAN_MS
+
+
+def test_growth_stops_at_complete_sentence_boundaries() -> None:
+    """Kurdish invariant #2 outranks the target range.
+
+    An incomplete sentence is one §4.2 could not confirm finished, and rendering one is the
+    invariant this system refuses to break. So growth stops at that fence and returns a span
+    short of the minimum — a real answer about the footage — rather than crossing it.
+    """
+    fenced = (
+        _spoken(0, 5_000),
+        _unfinished(5_000, 10_000),
+        _spoken(10_000, 15_000),
+        _spoken(15_000, 20_000),
+        _spoken(20_000, 25_000),
+        _unfinished(25_000, 30_000),
+        _spoken(30_000, 35_000),
+    )
+    grown = _grown_sentence_run(_ranked("hot", 15_000, 20_000, rank=1), fenced)
+
+    assert grown == (2, 3, 4), "growth crossed a sentence §4.2 could not confirm finished"
+    assert all(fenced[index].complete for index in grown)
+    assert _run_span_ms(grown, fenced) < MIN_CANDIDATE_SPAN_MS, (
+        "this test is blind unless growth genuinely stopped short of the target"
+    )
+
+
+def test_a_candidate_already_in_range_is_left_alone() -> None:
+    """A candidate the model got right is not something to improve.
+
+    Also the over-long case, settled by the owner on 2026-08-27: a 90 s+ span is a real clip,
+    and trimming it to hit a number would invent an edit nobody asked for. Both take the same
+    branch — at or above the minimum, the ungrown answer stands.
+    """
+    in_range = _ranked("fine", 0, 45_000, rank=1)
+    assert _grown_sentence_run(in_range, _EPISODE_SENTENCES) == _sentence_run_for_candidate(
+        in_range, _EPISODE_SENTENCES
+    )
+
+    over_long = _ranked("long", 0, 100_000, rank=1)
+    assert _grown_sentence_run(over_long, _EPISODE_SENTENCES) == _sentence_run_for_candidate(
+        over_long, _EPISODE_SENTENCES
+    )
+    assert (
+        _run_span_ms(_grown_sentence_run(over_long, _EPISODE_SENTENCES), _EPISODE_SENTENCES)
+        > MAX_CANDIDATE_SPAN_MS
+    ), "the over-long span was cut to fit the maximum"
+
+
+def test_a_candidate_smaller_than_every_sentence_still_seeds() -> None:
+    """ep01's case, and the reason growth cannot depend on containment.
+
+    Measured on the real 20-minute episode: 1 of 15 candidates was eligible, because its
+    sentences run a 10.2 s median against candidates of about 5 s, so no complete sentence lay
+    *wholly inside* almost any of them. Seeding from the sentences a candidate overlaps inverts
+    that containment test instead of loosening `_complete_sentences_within`, which stays exactly
+    as it is because `_rejected_candidates` shares it.
+    """
+    long_sentences = tuple(_spoken(index * 20_000, (index + 1) * 20_000) for index in range(6))
+    inside_one = _ranked("tiny", 25_000, 30_300, rank=1)
+
+    assert _sentence_run_for_candidate(inside_one, long_sentences) == (), (
+        "the fixture no longer reproduces ep01; this test would prove nothing"
+    )
+    grown = _grown_sentence_run(inside_one, long_sentences)
+    assert grown == (0, 1), "the overlapped sentence is the seed, and it grows from there"
+    assert _run_span_ms(grown, long_sentences) >= MIN_CANDIDATE_SPAN_MS

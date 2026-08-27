@@ -1039,11 +1039,19 @@ def _sentence_run_for_candidate(
     against sentences with a 6.72 s median and **zero** wholly inside any candidate — so a caller
     can learn a candidate is uncuttable without spending a billed Stage 4 call to find out.
     """
-    eligible = _complete_sentences_within(candidate, sentences)
-    if not eligible:
+    return _longest_run(_complete_sentences_within(candidate, sentences), sentences)
+
+
+def _longest_run(indices: Sequence[int], sentences: Sequence[Sentence]) -> tuple[int, ...]:
+    """The longest contiguous stretch of `indices`, measured in time rather than in count.
+
+    Ties break on the earlier start, so a re-run never reshuffles a selection someone is
+    reviewing — the same reason Path A's ranking breaks ties on start time.
+    """
+    if not indices:
         return ()
-    runs: list[list[int]] = [[eligible[0]]]
-    for index in eligible[1:]:
+    runs: list[list[int]] = [[indices[0]]]
+    for index in indices[1:]:
         if index == runs[-1][-1] + 1:
             runs[-1].append(index)
         else:
@@ -1056,6 +1064,76 @@ def _sentence_run_for_candidate(
         ),
     )
     return tuple(best)
+
+
+def _complete_sentences_overlapping(
+    candidate: MergedCandidate, sentences: Sequence[Sentence]
+) -> list[int]:
+    """Indices of the complete sentences a candidate touches at all.
+
+    The inverse of `_complete_sentences_within`, and a separate function rather than a loosened
+    one: `_complete_sentences_within` is shared with `_rejected_candidates` so the reason in the
+    artifact is the reason the code acted on, and widening it in place would silently rewrite
+    every rejection record's meaning.
+
+    This exists because containment fails in both directions. Measured on the real 20-minute
+    episode: sentences at a 10.2 s median against candidates of about 5 s, so 14 of 15
+    candidates had no complete sentence *inside* them while sitting comfortably inside one.
+    """
+    return [
+        index
+        for index, sentence in enumerate(sentences)
+        if sentence.complete
+        and sentence.start_ms < candidate.out_ms
+        and sentence.end_ms > candidate.in_ms
+    ]
+
+
+def _grown_sentence_run(
+    candidate: MergedCandidate, sentences: Sequence[Sentence]
+) -> tuple[int, ...]:
+    """The sentence run to judge: the seed inside or around `candidate`, grown to D-254's range.
+
+    Stage 3 candidates are seeds rather than final spans. Path A was asked for "a short social
+    clip" and told nothing about how long a clip is, so it answered with 1.1-second spans and
+    §2's gate refused them as fragments — the system refusing what it asked for. T2 put the
+    range in the prompt; this is the half that does not depend on a model honouring it.
+
+    Three rules, in order:
+
+    * **At or above the minimum, nothing moves.** A candidate the model got right is not
+      something to improve, and an over-long one is a real clip: trimming it to hit a number
+      would invent an edit nobody asked for (owner decision, 2026-08-27, D-254).
+    * **Below it, grow outward alternately**, starting behind the seed. Alternating keeps the
+      moment the judge liked away from both edges — a hook buried at the end is as useless as
+      one with no setup in front of it.
+    * **Complete sentences only, and Kurdish invariant #2 outranks the target.** Growth stops at
+      a sentence §4.2 could not confirm finished and returns a span short of the minimum. That
+      is a real answer about the footage, and T4 is what refuses to judge it.
+
+    Growth can overshoot the maximum by at most the one sentence that crossed the minimum. That
+    is accepted rather than cut: ep01 contains a single 105 s sentence, and half of it is not a
+    sentence.
+    """
+    seed = _sentence_run_for_candidate(candidate, sentences) or _longest_run(
+        _complete_sentences_overlapping(candidate, sentences), sentences
+    )
+    if not seed or candidate.out_ms - candidate.in_ms >= MIN_CANDIDATE_SPAN_MS:
+        return seed
+    first, last = seed[0], seed[-1]
+    behind = True
+    while sentences[last].end_ms - sentences[first].start_ms < MIN_CANDIDATE_SPAN_MS:
+        can_prepend = first > 0 and sentences[first - 1].complete
+        can_append = last + 1 < len(sentences) and sentences[last + 1].complete
+        if not can_prepend and not can_append:
+            break
+        # Behind when it is that side's turn, and whenever the other side is fenced off.
+        if can_prepend and (behind or not can_append):
+            first -= 1
+        else:
+            last += 1
+        behind = not behind
+    return tuple(range(first, last + 1))
 
 
 # Set by Hawa on 2026-08-26. Each judged candidate is one billed Stage 4 request — §3's table
@@ -1123,9 +1201,17 @@ def _judgeable_plans(
         raise ValueError(f"judge_top_n must be at least 1, got {limit}")
     plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
     for candidate in sorted(candidates, key=_candidate_priority):
-        run = _sentence_run_for_candidate(candidate, sentences)
+        run = _grown_sentence_run(candidate, sentences)
         if run:
-            plans.append((candidate, run))
+            # The candidate carries the span it grew into, not the seed it came from. A grown
+            # span is deliberately larger than its seed, so every containment check downstream
+            # — `_candidate_for_judging`, `_rejected_candidates` — would otherwise refuse the
+            # thing this stage just chose. §5 wants one span per candidate; this makes the
+            # grown one that span, and the verdict is then recorded against the footage that
+            # was actually judged rather than against the seed.
+            grown = anchors_for(tuple(sentences[index] for index in run))
+            assert grown is not None, "every index in a grown run is a complete sentence"
+            plans.append((replace(candidate, in_ms=grown[0], out_ms=grown[1]), run))
         if len(plans) == limit:
             break
     return tuple(plans)
@@ -1800,7 +1886,12 @@ def run_pipeline(
     # also means the record exists on a run whose Stage 4 is blocked, which is every run on this
     # machine until `BLOCKED.md` #3 clears.
     selected_candidate: MergedCandidate | None = None
-    if merged and selected_anchors is not None:
+    if judge_plans:
+        # Already chosen, and already grown. Searching `merged` for a candidate *containing*
+        # the selected span would fail by construction here: the span was grown outward past
+        # the seed on purpose, so the seed no longer contains it.
+        selected_candidate = judge_plans[0][0]
+    elif merged and selected_anchors is not None:
         selected_candidate = _candidate_for_judging(merged, selected_anchors)
     elif merged and judge is not None and not selected:
         selected_candidate = _candidate_for_judging(merged, None)
