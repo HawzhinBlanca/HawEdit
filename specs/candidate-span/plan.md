@@ -67,12 +67,20 @@ file. I had been citing it as §3 in earlier messages; that was wrong.
   to sentences will therefore behave differently per episode; that upstream cause is out of
   scope here and stays recorded as the segment-packing finding.
 
-## Decisions needed from the owner
+## Decisions, settled by the owner 2026-08-27
 
-1. **The target range.** The runbook says 20–55 s. That is a reasonable default and it is not
-   mine to assert as a requirement.
-2. **What happens to a candidate longer than the maximum** — clamp it by trimming whole
-   sentences, or leave it and let the judge decide. I lean **leave it**: a 60 s candidate is a
-   real clip, and trimming to hit a number invents an edit nobody asked for.
+1. **Target range 30–90 s.** Not the runbook's 20–55 s and not my recommendation — Hawa chose
+   the wider, longer window deliberately, for the best odds that a grown span contains a whole
+   argument rather than a fragment. That is the mechanism this whole change rests on, so
+   favouring context over cost is coherent. Two consequences to hold onto: it is the most
+   expensive option (~300 tokens/sec of video, so a 30 s floor is roughly 6× a 5 s seed on every
+   judged candidate), and a 30 s *minimum* is a real eligibility bar — a seed that cannot reach
+   30 s on complete sentence boundaries becomes ineligible where today it might have been judged.
+   T5 measures whether eligibility rises or falls overall.
+2. **Over-long candidates are left alone.** A 90 s+ candidate is a real clip; trimming it to hit
+   a number would invent an edit nobody asked for, and the judge already scores self-containment
+   and hook, so it can say if the span is too long. Note ep01 has a 105 s sentence — a seed
+   inside it grows to that one sentence and exceeds the maximum, and that is accepted rather
+   than cut.
 
-Approved-by:
+Approved-by: Hawa (in chat, 2026-08-27) — 30–90 s, over-long left intact.
