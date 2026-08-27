@@ -78,6 +78,18 @@ floor", and those are different facts. Options, for the owner:
 3. Do not refuse at all; let §2's editorial gate refuse fragments as it already does. Cost:
    contradicts AC-4 and spends billed calls on spans we already know are too short.
 
+**T4 answered the question the probe raised, and D-256 records the cost.** Hawa chose the
+operator flag: `--min-clip-seconds` defaults to `MIN_CANDIDATE_SPAN_MS`, `run_pipeline` takes
+`min_clip_ms` with the same default, and the ten fixture call sites lower it to 4,000 with a
+comment saying the source is 4.1 s long. The floor is now per-run overridable and a flag is not a
+diff — what holds the line is that the default is still the constant.
+
+**AC-7 landed here rather than in its own row.** `_rejected_candidates` consults
+`_grown_sentence_run` now, because after D-255 that is the predicate the selector acts on.
+`_nothing_fits_a_candidate` gained a second shape for the same reason: "grew but stayed short"
+and "could not seed at all" are different facts, and D-185's wording is kept verbatim for the
+second.
+
 ## Divergence from BLUEPRINT
 
 **None — but the number is not in it either.** `BLUEPRINT.md` states no clip duration anywhere;
