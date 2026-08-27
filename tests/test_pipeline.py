@@ -37,7 +37,12 @@ import pytest
 
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.captions import find_ffmpeg
-from hawedit.clip import DiscoveryPath, Qc
+from hawedit.clip import (
+    MAX_CANDIDATE_SPAN_MS,
+    MIN_CANDIDATE_SPAN_MS,
+    DiscoveryPath,
+    Qc,
+)
 from hawedit.diarization import Segment
 from hawedit.discovery import Candidate, MergedCandidate
 from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
@@ -45,9 +50,7 @@ from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import (
     DEFAULT_JUDGE_TOP_N,
-    MAX_CANDIDATE_SPAN_MS,
     MAX_INTERNAL_SILENCE_MS,
-    MIN_CANDIDATE_SPAN_MS,
     PipelineRun,
     StageSkipped,
     _automatic_sentence_selection,
@@ -5480,3 +5483,62 @@ def test_the_target_range_is_a_named_decision() -> None:
         "if the frozen spec ever states a clip duration, this constant must cite it instead "
         "of standing as an owner decision"
     )
+
+
+# --- candidate-span T2: the answer is counted, not assumed ----------------------------------
+
+
+def _a_span(candidate_id: str, in_ms: int, out_ms: int, *, verbal: bool) -> MergedCandidate:
+    return MergedCandidate(
+        candidate_id=candidate_id,
+        media_id="ep10",
+        in_ms=in_ms,
+        out_ms=out_ms,
+        discovery_path=DiscoveryPath.VERBAL if verbal else DiscoveryPath.VISUAL,
+        sources=(candidate_id,),
+        verbal_rank=1 if verbal else None,
+        visual_rank=None if verbal else 1,
+        verbal_score=0.9 if verbal else None,
+        visual_score=None if verbal else 0.5,
+    )
+
+
+def test_span_compliance_is_measured_not_assumed() -> None:
+    """A prompt is a request. This repository has learned that twice already.
+
+    `encoder_available` exists because a build listing an encoder is not one that can use it,
+    and D-249 measured `-crf` being silently ignored by NVENC. A model told a duration is the
+    same case: T2 puts the range in the prompt, and this counts what actually came back. The
+    fixture deliberately ignores the instruction in both directions, so a report that assumed
+    compliance would read 3 of 3 here.
+    """
+    run = PipelineRun(
+        media_id="ep10",
+        source="x",
+        work_dir="w",
+        candidates=(
+            _a_span("in-range", 0, 45_000, verbal=True),
+            _a_span("too-short", 60_000, 65_300, verbal=True),
+            _a_span("too-long", 100_000, 220_000, verbal=True),
+            _a_span("visual", 300_000, 345_000, verbal=False),
+        ),
+    )
+    reported = run.to_dict()["discovery"]["in_target_span"]
+
+    assert reported == {"asked": 3, "in_range": 1}, (
+        "Path A returned three spans and one of them honoured the range; a report claiming "
+        "otherwise would hide the thing D-254 exists to watch"
+    )
+
+
+def test_span_compliance_counts_only_what_path_a_answered() -> None:
+    """The control. Counting the whole merged set would credit Path B for Path A's compliance,
+    and a visual-only run would report a compliance figure for a prompt nobody sent.
+    """
+    visual_only = PipelineRun(
+        media_id="ep10",
+        source="x",
+        work_dir="w",
+        candidates=(_a_span("visual", 0, 45_000, verbal=False),),
+    )
+    assert visual_only.to_dict()["discovery"]["in_target_span"] == {"asked": 0, "in_range": 0}

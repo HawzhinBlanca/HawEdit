@@ -65,7 +65,9 @@ from hawedit.captions import (
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import (
+    MAX_CANDIDATE_SPAN_MS,
     MAX_MISLEADING_EDIT_RISK,
+    MIN_CANDIDATE_SPAN_MS,
     MIN_HOOK_SCORE,
     Clip,
     ClipTranscript,
@@ -317,6 +319,32 @@ class PipelineRun:
             "stage": "discovery",
             "candidates": len(self.candidates),
             "by_path": dict(sorted(by_path.items())),
+            "in_target_span": self._span_compliance(),
+        }
+
+    def _span_compliance(self) -> dict[str, int]:
+        """How many of Path A's spans landed inside D-254's target range.
+
+        A prompt is a request, not a guarantee. `encoder_available` exists because a build
+        listing an encoder is not one that can use it, and D-249 measured `-crf` being silently
+        ignored by NVENC; a model told a duration is the same case, so the instruction goes in
+        the prompt and the answer is counted here.
+
+        Derived from the spans themselves rather than recorded beside them, for the reason
+        `by_path` is: a second record can disagree with the candidates it describes. Counted
+        over Path A's answers only — crediting Path B for Path A's compliance would report a
+        figure for a prompt nobody sent.
+        """
+        spans = [
+            candidate.out_ms - candidate.in_ms
+            for candidate in self.candidates
+            if candidate.verbal_rank is not None
+        ]
+        return {
+            "asked": len(spans),
+            "in_range": sum(
+                1 for span in spans if MIN_CANDIDATE_SPAN_MS <= span <= MAX_CANDIDATE_SPAN_MS
+            ),
         }
 
     def _editorial_ran(self) -> dict[str, Any] | None:
@@ -1035,25 +1063,6 @@ def _sentence_run_for_candidate(
 # finds nothing shippable still pays for all of them. One is the escape hatch back to the
 # original cost, and reproduces the original behaviour exactly.
 DEFAULT_JUDGE_TOP_N: Final = 5
-
-
-# Set by Hawa on 2026-08-27, and a *decision* rather than a derivation: `BLUEPRINT.md` states no
-# clip duration anywhere. Its only fixed duration is `max_speech_duration_s=38`, which governs
-# ASR input. The 20-55 s figure quoted around this project comes from the pro-kurdish-reel
-# operator runbook, not from §3, so this range stands on the same footing as `MIN_HOOK_SCORE`
-# and changing it should read as a changed decision.
-#
-# Why the wide, long window rather than the runbook's: a grown span is likelier to contain a
-# whole argument, and that is the entire mechanism. Measured on the real 75-minute episode, the
-# strongest candidate scored hook 0.90 with misleading-edit **0.85** across 5.3 seconds — a
-# five-second cut of a conversation is close to definitionally not self-contained, which is
-# exactly what that risk score measures.
-#
-# The minimum is an eligibility bar in both directions: a seed that cannot reach it on complete
-# sentence boundaries becomes ineligible where today it might have been judged. Whether
-# eligibility rises or falls overall is measured in T5, not assumed.
-MIN_CANDIDATE_SPAN_MS: Final = 30_000
-MAX_CANDIDATE_SPAN_MS: Final = 90_000
 
 
 def _verdict_is_shippable(verdict: JudgeVerdict) -> bool:
@@ -2889,9 +2898,19 @@ def _print_report(run: PipelineRun) -> None:
         rejected = " · ".join(
             f"{path} {count}" for path, count in sorted(run._rejected_by_path().items())
         )
+        # D-254's range is an instruction to a model, so the compliance figure belongs beside
+        # the count rather than in the JSON alone. Printed only when Path A ran: on a
+        # visual-only run "0 in range" would describe a prompt nobody sent.
+        compliance = ran["in_target_span"]
+        in_target = (
+            f" · {compliance['in_range']}/{compliance['asked']} verbal span(s) in the "
+            f"{MIN_CANDIDATE_SPAN_MS // 1_000}-{MAX_CANDIDATE_SPAN_MS // 1_000}s target"
+            if compliance["asked"]
+            else ""
+        )
         print(
             f"stage 3 {ran['candidates']} candidate(s) [{by_path}] · "
-            f"{len(run.rejected)} rejected{f' [{rejected}]' if rejected else ''}"
+            f"{len(run.rejected)} rejected{f' [{rejected}]' if rejected else ''}{in_target}"
         )
     # Stage 1 scores its own output and nothing said so. Measured on the real 38-minute
     # source: `select_for_validation` escalated 294 of 545 segments — 54% of the transcript —

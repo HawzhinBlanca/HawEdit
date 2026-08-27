@@ -43,7 +43,9 @@ from hawedit.registry import resolve_role
 from hawedit.transcripts import AsrProvenance, Word, validate_media_id, validate_media_sha256
 
 __all__ = [
+    "MAX_CANDIDATE_SPAN_MS",
     "MAX_MISLEADING_EDIT_RISK",
+    "MIN_CANDIDATE_SPAN_MS",
     "MIN_HOOK_SCORE",
     "Clip",
     "ClipTranscript",
@@ -230,6 +232,24 @@ def assert_sv6d_within_window(sv6d: Sv6d, in_ms: int, out_ms: int) -> None:
 # date they were set, so changing either is a visible change to a decision.
 MIN_HOOK_SCORE: Final = 0.75
 MAX_MISLEADING_EDIT_RISK: Final = 0.05
+
+# Set by Hawa on 2026-08-27, and a *decision* rather than a derivation: `BLUEPRINT.md` states no
+# clip duration anywhere. Its only fixed duration is `max_speech_duration_s=38`, which governs
+# ASR input. The 20-55 s figure quoted around this project comes from the pro-kurdish-reel
+# operator runbook, not from §3, so this range stands on the same footing as `MIN_HOOK_SCORE`
+# and changing it should read as a changed decision.
+#
+# Why the wide, long window rather than the runbook's: a grown span is likelier to contain a
+# whole argument, and that is the entire mechanism. Measured on the real 75-minute episode, the
+# strongest candidate scored hook 0.90 with misleading-edit **0.85** across 5.3 seconds — a
+# five-second cut of a conversation is close to definitionally not self-contained, which is
+# exactly what that risk score measures.
+#
+# The minimum is an eligibility bar in both directions: a seed that cannot reach it on complete
+# sentence boundaries becomes ineligible where today it might have been judged. Whether
+# eligibility rises or falls overall is measured in T5, not assumed.
+MIN_CANDIDATE_SPAN_MS: Final = 30_000
+MAX_CANDIDATE_SPAN_MS: Final = 90_000
 
 
 class EditorialBelowThreshold(ValueError):

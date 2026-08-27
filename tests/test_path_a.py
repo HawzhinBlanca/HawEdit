@@ -30,7 +30,11 @@ from typing import Any
 
 import pytest
 
-from hawedit.clip import DiscoveryPath
+from hawedit.clip import (
+    MAX_CANDIDATE_SPAN_MS,
+    MIN_CANDIDATE_SPAN_MS,
+    DiscoveryPath,
+)
 from hawedit.discovery import merge_candidates
 from hawedit.gemini import GeminiUnavailable, Governance, JudgeUnusable
 from hawedit.judge import InputMode, RequestTooLarge
@@ -325,6 +329,28 @@ def test_the_schema_is_sent_rather_than_asked_for_in_prose() -> None:
     generation = api.bodies[-1]["generationConfig"]
     assert generation["responseSchema"] == CANDIDATE_SCHEMA
     assert generation["temperature"] == 0.0
+
+
+def test_the_discovery_prompt_states_the_target_duration() -> None:
+    """Path A was asked for clips and told nothing about how long a clip is.
+
+    The prompt said "every moment that could stand alone as a short social clip" and the schema
+    required only `out_ms > in_ms`, so Gemini answered with 1.1-second spans and D-253's gate
+    then refused them as fragments — the system refusing what it asked for. Measured on the real
+    75-minute episode: judged spans of 6.3, 22.9, 5.3, 13.9 and 1.1 seconds, and the two
+    shortest carried the two highest misleading-edit risks (0.85, 0.90). D-254.
+
+    Asserted against the constants rather than against the words, so the prompt cannot say one
+    number while `_span_compliance` measures another.
+    """
+    api = Api()
+    a_path_a(api).discover(a_transcript())
+
+    assert str(MIN_CANDIDATE_SPAN_MS // 1_000) in api.prompt, (
+        "the judge was never told the minimum it is being measured against"
+    )
+    assert str(MAX_CANDIDATE_SPAN_MS // 1_000) in api.prompt, "the judge was never told the maximum"
+    assert "second" in api.prompt, "a bare number is not a duration"
 
 
 def test_the_convenience_function_matches_the_class() -> None:

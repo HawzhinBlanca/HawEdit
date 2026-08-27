@@ -28,6 +28,14 @@ parts of a ten-hour transcript the Kurdish judge gets to read.
 against the transcript's own time range, because a candidate that runs past the media is a
 clip that cannot be cut — and it would reach Stage 5 as a boundary to fuse rather than as a
 mistake to reject.
+
+**The prompt says how long a clip is, and `PipelineRun._span_compliance` counts the answer.**
+For a while it did neither: "a short social clip" with a schema requiring only
+`out_ms > in_ms`, so the judge returned 1.1-second spans and §2's gate refused them as
+fragments — the system refusing what it asked for. The range is stated here now, and stating it
+is only half. A prompt is a request: `encoder_available` exists because a build listing an
+encoder is not one that can use it, and D-249 measured `-crf` being silently ignored by NVENC.
+D-254.
 """
 
 from __future__ import annotations
@@ -39,7 +47,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Final
 
-from hawedit.clip import DiscoveryPath
+from hawedit.clip import MAX_CANDIDATE_SPAN_MS, MIN_CANDIDATE_SPAN_MS, DiscoveryPath
 from hawedit.discovery import Candidate
 from hawedit.gemini import (
     GeminiJudge,
@@ -85,9 +93,15 @@ clip. Do not restrict yourself to the most obvious ones, and do not skip a momen
 purely spoken — a talking head with no motion is exactly what this pass exists to catch, and
 nothing else in the system can see it.
 
+A clip here runs {min_s} to {max_s} seconds. A one- or five-second span is a fragment rather
+than a clip: it cannot carry a whole thought, and a later stage will refuse it as a misleading
+edit. So return the span that holds the complete point — the setup that makes it land and the
+payoff that follows — not the single strongest sentence inside it.
+
 For each candidate return:
 - in_ms, out_ms: the span, in milliseconds from the start of the source. Both MUST fall within
-  {start_ms}..{end_ms}, and out_ms MUST be greater than in_ms.
+  {start_ms}..{end_ms}, out_ms MUST be greater than in_ms, and out_ms - in_ms SHOULD fall
+  between {min_ms} and {max_ms}.
 - score: how strong a clip it would make (0..1).
 - reason_ckb: one short sentence, IN CENTRAL KURDISH (Sorani, Arabic script), saying why.
 
@@ -158,6 +172,13 @@ class PathADiscovery:
         return _PROMPT.format(
             start_ms=words[0].start_ms if words else 0,
             end_ms=words[-1].end_ms if words else 0,
+            # Formatted from the constants, never retyped: a prompt quoting one number while
+            # `_span_compliance` counts against another would report a compliance rate for an
+            # instruction that was never sent.
+            min_s=MIN_CANDIDATE_SPAN_MS // 1_000,
+            max_s=MAX_CANDIDATE_SPAN_MS // 1_000,
+            min_ms=MIN_CANDIDATE_SPAN_MS,
+            max_ms=MAX_CANDIDATE_SPAN_MS,
             timings=_timing_table(transcript),
             text=transcript.text_ckb,
         )
