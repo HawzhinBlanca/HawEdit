@@ -2706,9 +2706,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timelens", action="store_true", help="run TimeLens2 in Stage 5")
     parser.add_argument("--timelens-device", default="cuda:1")
     parser.add_argument(
+        # Kept registered and hidden so D-258's inversion can answer an old invocation with a
+        # sentence naming its replacement. Removed from the parser entirely, argparse would
+        # answer "unrecognized arguments", which reads as a typo rather than as a decision.
         "--face-reframe",
         action="store_true",
-        help="track the dominant face and dynamically move the vertical crop",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--static-crop",
+        action="store_true",
+        help=(
+            "hold the vertical crop at the centre of frame instead of tracking faces. The "
+            "default tracks, because a centred crop was measured putting an empty wall on "
+            "screen with both speakers cut off at the edges (D-258)"
+        ),
     )
     parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
@@ -2809,6 +2821,17 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         Exactly what `run_pipeline` raises, plus `ValueError` for a combination of flags that
         cannot produce a coherent run.
     """
+    if args.face_reframe:
+        # First, ahead of every other check: an obsolete flag is a fact about the invocation
+        # rather than about a combination, and answering it after an unrelated prerequisite
+        # sends the operator to fix the wrong thing. Removed from the parser entirely, argparse
+        # would say "unrecognized arguments", which reads as a typo instead of a decision.
+        # D-258 inverted it.
+        raise ValueError(
+            "--face-reframe is now the default and the flag is gone; pass --static-crop for "
+            "the old centred behaviour"
+        )
+
     if args.transcript and args.omni_asr:
         raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
     if (
@@ -2868,8 +2891,9 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         )
     if args.auto_select and not (args.transcript or args.omni_asr):
         raise ValueError("--auto-select requires --transcript or --omni-asr")
-    if (args.timelens or args.face_reframe) and not (args.sentences or args.auto_select):
-        raise ValueError("--timelens and --face-reframe require --sentences or --auto-select")
+    if args.timelens and not (args.sentences or args.auto_select):
+        raise ValueError("--timelens requires --sentences or --auto-select")
+
     if (args.confidential or args.zero_data_retention or args.zdr_confirmed_by) and not (
         args.gemini or args.vertex_project
     ):
@@ -2946,11 +2970,31 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
             device=args.timelens_device,
         )
 
+    # Tracking is what an operator gets without asking. Measured on the real 20-minute
+    # episode: the centred crop rendered an empty wall and table with both speakers cut off at
+    # the edges, and the identical run with tracking rendered a usable clip. A default that
+    # produces something nobody would post is not a default. D-258.
+    #
+    # Only when sentences exist to reframe: `run_pipeline` reaches Stage 6 only through a
+    # selection, and constructing a tracker for a run that stops at Stage 2 would import
+    # OpenCV to do nothing.
     subject_tracker = None
-    if args.face_reframe:
-        from hawedit.reframe import OpenCvFaceTracker
-
-        subject_tracker = OpenCvFaceTracker()
+    reframe_degraded: str | None = None
+    if not args.static_crop and (args.sentences or args.auto_select):
+        try:
+            from hawedit.reframe import OpenCvFaceTracker
+        except ImportError as exc:
+            # §1 is fail visible, not silent. Falling back without saying so would leave an
+            # operator comparing two runs that differ in framing for no stated reason.
+            reframe_degraded = (
+                f"face tracking is the default but OpenCV is not installed ({exc}); the crop "
+                f"was held at the centre of frame. Install the media extra, or pass "
+                f"--static-crop to ask for this deliberately."
+            )
+        else:
+            subject_tracker = OpenCvFaceTracker()
+    if reframe_degraded is not None:
+        print(f"NOTE reframe: {reframe_degraded}", file=sys.stderr)
 
     return run_pipeline(
         args.source,

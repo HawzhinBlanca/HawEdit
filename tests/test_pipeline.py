@@ -24,6 +24,7 @@ shot cuts (§3 Stage 5), and renders a vertical clip with burned-in Kurdish capt
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import shutil
@@ -69,6 +70,7 @@ from hawedit.pipeline import (
     main,
     run_pipeline,
 )
+from hawedit.render import Reframe
 from hawedit.sentences import Sentence
 from hawedit.transcripts import (
     AsrProvenance,
@@ -3208,9 +3210,16 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--auto-select needs a Stage 3 producer that can actually produce",
     ),
     (
-        "Stage 5 and reframing with nothing selected",
+        "Stage 5 with nothing selected",
         ["--transcript", "x.json", "--timelens"],
-        "--timelens and --face-reframe require --sentences or --auto-select",
+        "--timelens requires --sentences or --auto-select",
+    ),
+    (
+        # D-258 inverted the flag. argparse would answer "unrecognized arguments", which reads
+        # as a typo rather than as a decision, so the refusal names its replacement.
+        "an invocation still passing the flag that was inverted",
+        ["--face-reframe"],
+        "--face-reframe is now the default and the flag is gone",
     ),
     (
         "claiming ZDR governance with nothing being sent anywhere",
@@ -4876,12 +4885,12 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "TimeLens without selection",
         ("--timelens",),
-        "--timelens and --face-reframe require",
+        "--timelens requires",
     ),
     (
-        "reframing without selection",
+        "an invocation still passing the flag that was inverted",
         ("--face-reframe",),
-        "--timelens and --face-reframe require",
+        "--face-reframe is now the default and the flag is gone",
     ),
     (
         "confidential without cloud",
@@ -5825,3 +5834,110 @@ def test_the_cli_applies_the_target_minimum_by_default(
 
     _build_and_run(build_parser().parse_args([*argv, "--min-clip-seconds", "7.5"]))
     assert seen["min_clip_ms"] == 7_500, "the operator's override never reached the pipeline"
+
+
+# --- reframe-composition T1: tracking is what you get without asking ------------------------
+
+
+def _tracker_for(argv: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> object:
+    """Drive `_build_and_run` far enough to see which subject tracker it built."""
+    seen: dict[str, Any] = {}
+
+    def recorder(*_args: Any, **kwargs: Any) -> PipelineRun:
+        seen.update(kwargs)
+        return PipelineRun(media_id="cli", source="s", work_dir="w")
+
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", recorder)
+    transcript = tmp_path / "transcript.raw.json"
+    transcript.write_text(a_transcript("cli").to_json(), encoding="utf-8")
+    _build_and_run(
+        build_parser().parse_args(
+            [
+                str(FIXTURE),
+                "--transcript",
+                str(transcript),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--sentences",
+                "0",
+                *argv,
+            ]
+        )
+    )
+    return seen.get("subject_tracker")
+
+
+def test_face_tracking_is_the_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The old default rendered a wall.
+
+    Measured 2026-08-27 on the real 20-minute episode: the same clip, same span, rendered twice.
+    With the centred crop both speakers sat cut off at the edges of frame and the middle held an
+    empty wall and table; with tracking it was a usable clip. A default that produces something
+    nobody would post is not a default. D-258.
+    """
+    assert _tracker_for([], tmp_path, monkeypatch) is not None, (
+        "an operator who asks for nothing must get the framing that works"
+    )
+
+
+def test_static_crop_opts_out_and_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old behaviour stays reachable, and the artifact still names which was used.
+
+    `Reframe.STATIC_CENTRE` travels onto the clip contract, so two runs that differ in framing
+    are distinguishable afterwards without anyone having to remember which was which.
+    """
+    assert _tracker_for(["--static-crop"], tmp_path, monkeypatch) is None
+    assert Reframe.STATIC_CENTRE.value == "static_centre"
+
+
+def test_the_replaced_flag_says_what_replaced_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inverting a flag breaks every saved invocation that used it.
+
+    argparse would answer "unrecognized arguments: --face-reframe", which reads as a typo rather
+    than as a decision. The refusal names its replacement instead.
+    """
+    transcript = tmp_path / "transcript.raw.json"
+    transcript.write_text(a_transcript("cli").to_json(), encoding="utf-8")
+    with pytest.raises(ValueError, match="--static-crop for the old centred behaviour"):
+        _build_and_run(
+            build_parser().parse_args(
+                [
+                    str(FIXTURE),
+                    "--transcript",
+                    str(transcript),
+                    "--work-dir",
+                    str(tmp_path / "work"),
+                    "--sentences",
+                    "0",
+                    "--face-reframe",
+                ]
+            )
+        )
+
+
+def test_a_missing_face_tracker_degrades_visibly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """OpenCV is an extra, and the default must not hard-fail on a missing optional dependency.
+
+    §1 is fail visible, not silent: falling back without saying so would leave an operator
+    comparing two runs that differ in framing for no stated reason.
+    """
+    real_import = builtins.__import__
+
+    def refuse(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "hawedit.reframe":
+            raise ImportError("No module named 'cv2'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    tracker = _tracker_for([], tmp_path, monkeypatch)
+
+    assert tracker is None, "a missing tracker must not stop the run"
+    noted = capsys.readouterr().err
+    assert "face tracking is the default but OpenCV is not installed" in noted, noted
+    assert "--static-crop" in noted, "the note must say how to ask for this deliberately"
