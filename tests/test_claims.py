@@ -175,6 +175,40 @@ def test_the_diarization_benchmark_is_not_marked_done_without_a_benchmark() -> N
         )
 
 
+def test_the_measured_span_evidence_is_recorded() -> None:
+    """`specs/candidate-span` rests on a hypothesis, and T5 exists to be able to refute it.
+
+    The claim behind D-254, D-255 and D-256 was that misleading-edit risk falls when a fragment
+    becomes an argument. It was inferred from six verdicts. A change argued from a measurement
+    has to carry the measurement, and this binds the file so the numbers cannot quietly go
+    missing while the ADRs keep citing them.
+
+    It also pins the part that went against the plan. The plan built growth as the half that
+    does not depend on a model honouring an instruction — and on ep10 the model honoured it
+    completely, growth fired zero times, and the prompt did all of the work. That is the finding
+    most likely to be tidied away later, so the file has to keep saying it.
+    """
+    evidence = ROOT / "evidence" / "the-fragments-were-the-prompts-fault.md"
+    assert evidence.exists(), (
+        "specs/candidate-span T5 is the row that measures whether the change worked; without "
+        f"{evidence.relative_to(ROOT)} the ADRs cite numbers no file holds"
+    )
+    recorded = evidence.read_text(encoding="utf-8")
+
+    for number in ("0.85", "0.90", "0.10", "0.80", "11 of 11"):
+        assert number in recorded, (
+            f"the before/after turns on {number} and the evidence no longer states it"
+        )
+    assert "zero times" in recorded, (
+        "growth firing zero times on this episode is the result that contradicted the plan; an "
+        "evidence file that drops it reads as though the growth work is what was measured"
+    )
+    assert "0.05" in recorded, (
+        "the run's actual finding is that D-253's 0.05 ceiling may be unreachable — a verdict "
+        "of hook 0.80, self-contained, refused on one hundredth of a point"
+    )
+
+
 def test_every_ledger_row_marked_partial_names_its_shortfall() -> None:
     """PARTIAL without a named shortfall is DONE with extra steps."""
     for line in PROGRESS.splitlines():
