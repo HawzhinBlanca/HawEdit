@@ -1,1 +1,2 @@
 TS=2026-08-27T08:27:40Z FEATURE=candidate-span TASK=T1 TESTS=test_the_target_range_is_a_named_decision VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-08-27T09:17:11Z FEATURE=candidate-span TASK=T2 TESTS=test_the_discovery_prompt_states_the_target_duration,test_span_compliance_is_measured_not_assumed,test_span_compliance_counts_only_what_path_a_answered VERIFY=pass REPORT=.gate/last-test-run.xml

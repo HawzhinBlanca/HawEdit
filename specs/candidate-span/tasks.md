@@ -6,7 +6,7 @@
           rather than a derivation from §3 (BLUEPRINT states no clip duration).
                                   (tests: test_the_target_range_is_a_named_decision)
 
-- [ ] T2  Path A's prompt states the range, and the response is measured against it — an
+- [x] T2  Path A's prompt states the range, and the response is measured against it — an
           instruction to a model is a request, not a guarantee.
                                   (tests: test_the_discovery_prompt_states_the_target_duration,
                                           test_span_compliance_is_measured_not_assumed)
