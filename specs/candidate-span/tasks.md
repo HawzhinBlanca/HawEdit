@@ -2,7 +2,7 @@
 # Rows flip to [x] ONLY via scripts/update-ledger.sh, after verify.sh passes and the cited
 # tests are found in the report that run wrote.
 
-- [ ] T1  ADR for the target range: the owner's numbers, the date, and why it is a decision
+- [x] T1  ADR for the target range: the owner's numbers, the date, and why it is a decision
           rather than a derivation from §3 (BLUEPRINT states no clip duration).
                                   (tests: test_the_target_range_is_a_named_decision)
 

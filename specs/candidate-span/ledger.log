@@ -1,0 +1,1 @@
+TS=2026-08-27T08:27:40Z FEATURE=candidate-span TASK=T1 TESTS=test_the_target_range_is_a_named_decision VERIFY=pass REPORT=.gate/last-test-run.xml
