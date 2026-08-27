@@ -637,7 +637,7 @@ def _not_reached(stage: str, dependency: str) -> StageSkipped:
 
 
 def _nothing_fits_a_candidate(
-    candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence]
+    candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence], minimum: int
 ) -> StageSkipped:
     """Why `--auto-select` chose nothing, in the numbers the run already has.
 
@@ -657,6 +657,31 @@ def _nothing_fits_a_candidate(
     spans = sorted(candidate.out_ms - candidate.in_ms for candidate in candidates)
     lengths = sorted(s.end_ms - s.start_ms for s in sentences if s.complete)
     median = lengths[len(lengths) // 2] if lengths else 0
+    # T3 gave every candidate a second chance, so "nothing fits" now has two causes and they
+    # want different answers from the operator. A candidate that grew but stayed short says the
+    # episode ran out of complete sentences around it; one that could not seed at all says the
+    # window landed where no complete sentence is. Reporting the first as the second sends
+    # someone to widen a retrieval window that was never the problem.
+    grown = sorted(
+        _run_span_ms(_grown_sentence_run(candidate, sentences, minimum), sentences)
+        for candidate in candidates
+    )
+    if grown and grown[-1] > 0:
+        return StageSkipped(
+            stage="boundary",
+            reason=(
+                f"--auto-select examined {len(candidates)} candidate(s) spanning "
+                f"{spans[0] / 1000:.2f}–{spans[-1] / 1000:.2f}s and grew each one outward on "
+                f"complete sentence boundaries, but the longest reached only "
+                f"{grown[-1] / 1000:.2f}s against the {minimum / 1000:.2f}s minimum (D-254). "
+                f"The transcript has {len(lengths)} complete sentence(s) of "
+                f"{(lengths[0] / 1000) if lengths else 0:.2f}–"
+                f"{(lengths[-1] / 1000) if lengths else 0:.2f}s, median {median / 1000:.2f}s — "
+                f"so this is the episode running out of complete sentences, not a window too "
+                f"narrow to hold one."
+            ),
+            blocked_by=("a candidate that grows to the target minimum",),
+        )
     return StageSkipped(
         stage="boundary",
         reason=(
@@ -981,6 +1006,7 @@ def _rejected_candidates(
     chosen: MergedCandidate,
     sentences: Sequence[Sentence],
     selected_span: tuple[int, int] | None,
+    minimum: int,
 ) -> tuple[RejectedCandidate, ...]:
     """§5: "Every rejected candidate keeps a `reject_reason` and its `discovery_path`."
 
@@ -998,10 +1024,16 @@ def _rejected_candidates(
     for candidate in candidates:
         if candidate.candidate_id == chosen.candidate_id:
             continue
-        if sentences and not _complete_sentences_within(candidate, sentences):
+        grown = _grown_sentence_run(candidate, sentences, minimum) if sentences else ()
+        if sentences and not grown:
             reason = (
-                "no complete sentence lies wholly inside this candidate, so it cannot anchor "
-                "a clip (Kurdish invariant #2)"
+                "no complete sentence overlaps this candidate, so there is nothing to grow a "
+                "clip around (Kurdish invariant #2)"
+            )
+        elif sentences and _run_span_ms(grown, sentences) < minimum:
+            reason = (
+                f"grew to {_run_span_ms(grown, sentences) / 1000:.2f}s on complete sentence "
+                f"boundaries, short of the {minimum / 1000:.2f}s minimum (D-254)"
             )
         elif selected_span is not None and not (
             candidate.in_ms <= selected_span[0] and candidate.out_ms >= selected_span[1]
@@ -1089,8 +1121,13 @@ def _complete_sentences_overlapping(
     ]
 
 
+def _run_span_ms(run: Sequence[int], sentences: Sequence[Sentence]) -> int:
+    """How long a sentence run runs, or 0 for an empty one."""
+    return sentences[run[-1]].end_ms - sentences[run[0]].start_ms if run else 0
+
+
 def _grown_sentence_run(
-    candidate: MergedCandidate, sentences: Sequence[Sentence]
+    candidate: MergedCandidate, sentences: Sequence[Sentence], minimum: int
 ) -> tuple[int, ...]:
     """The sentence run to judge: the seed inside or around `candidate`, grown to D-254's range.
 
@@ -1118,11 +1155,11 @@ def _grown_sentence_run(
     seed = _sentence_run_for_candidate(candidate, sentences) or _longest_run(
         _complete_sentences_overlapping(candidate, sentences), sentences
     )
-    if not seed or candidate.out_ms - candidate.in_ms >= MIN_CANDIDATE_SPAN_MS:
+    if not seed or candidate.out_ms - candidate.in_ms >= minimum:
         return seed
     first, last = seed[0], seed[-1]
     behind = True
-    while sentences[last].end_ms - sentences[first].start_ms < MIN_CANDIDATE_SPAN_MS:
+    while sentences[last].end_ms - sentences[first].start_ms < minimum:
         can_prepend = first > 0 and sentences[first - 1].complete
         can_append = last + 1 < len(sentences) and sentences[last + 1].complete
         if not can_prepend and not can_append:
@@ -1185,6 +1222,7 @@ def _judgeable_plans(
     candidates: Sequence[MergedCandidate],
     sentences: Sequence[Sentence],
     limit: int,
+    minimum: int,
 ) -> tuple[tuple[MergedCandidate, tuple[int, ...]], ...]:
     """The first `limit` candidates that could actually become a clip, in priority order.
 
@@ -1194,6 +1232,10 @@ def _judgeable_plans(
     zero wholly inside any candidate — so at N=5 a naive loop would spend five billed calls to
     learn nothing. Eligibility is decided here, from data this run already has.
 
+    A run that growth could not bring to `minimum` is refused here too, for the same reason
+    and at the same cost: §2's editorial gate would score it as a fragment — measured, hook 0.90
+    against misleading-edit 0.85 on 5.3 s — and that verdict is billed before it is read.
+
     Raises:
         ValueError: `limit` is not positive.
     """
@@ -1201,8 +1243,8 @@ def _judgeable_plans(
         raise ValueError(f"judge_top_n must be at least 1, got {limit}")
     plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
     for candidate in sorted(candidates, key=_candidate_priority):
-        run = _grown_sentence_run(candidate, sentences)
-        if run:
+        run = _grown_sentence_run(candidate, sentences, minimum)
+        if run and _run_span_ms(run, sentences) >= minimum:
             # The candidate carries the span it grew into, not the seed it came from. A grown
             # span is deliberately larger than its seed, so every containment check downstream
             # — `_candidate_for_judging`, `_rejected_candidates` — would otherwise refuse the
@@ -1494,6 +1536,10 @@ def run_pipeline(
     # 1 reproduces the single-judgement behaviour, and its cost, exactly. Each
     # additional candidate is one more billed Stage 4 request.
     judge_top_n: int = 1,
+    # D-254's floor, and the default rather than an opt-in: a caller who does not think about
+    # clip length should get the owner's answer, not no answer. A source genuinely shorter than
+    # the floor lowers it explicitly — see `--min-clip-seconds`.
+    min_clip_ms: int = MIN_CANDIDATE_SPAN_MS,
     visual_fps: float | None = None,
     visual_max_frames: int = MAX_FRAMES_PER_WINDOW,
     ffmpeg: Path | None = None,
@@ -1842,7 +1888,7 @@ def run_pipeline(
         # candidates and 18 candidates, one judged each time, hook 0.20 both times.
         # `_candidate_priority` orders by discovery rank and knows nothing about editorial
         # quality, so nothing established rank #1 was the *best* candidate.
-        judge_plans = _judgeable_plans(merged, sentences, judge_top_n)
+        judge_plans = _judgeable_plans(merged, sentences, judge_top_n, min_clip_ms)
         automatic = judge_plans[0][1] if judge_plans else ()
         if not automatic:
             # `--auto-select` ran, examined every candidate and chose nothing. Reported as a
@@ -1856,7 +1902,7 @@ def run_pipeline(
             # of 6.72 s, and **0** wholly inside any candidate. The window ceiling is
             # `max_frames / fps`, so this machine's 8-frame limit (`BLOCKED.md` #17) at the
             # declared 2.0 fps yields a 4 s retrieval unit against §3's 32 s. D-185.
-            run = replace(run, boundary=_nothing_fits_a_candidate(merged, sentences))
+            run = replace(run, boundary=_nothing_fits_a_candidate(merged, sentences, min_clip_ms))
         select_sentences, selected, selected_anchors = _prepare_selection(
             transcript, sentences, automatic
         )
@@ -1898,7 +1944,9 @@ def run_pipeline(
     if selected_candidate is not None:
         run = replace(
             run,
-            rejected=_rejected_candidates(merged, selected_candidate, sentences, selected_anchors),
+            rejected=_rejected_candidates(
+                merged, selected_candidate, sentences, selected_anchors, min_clip_ms
+            ),
         )
 
     # --- §3 Stage 4 -----------------------------------------------------------------------
@@ -2001,7 +2049,9 @@ def run_pipeline(
                 selected_candidate = winner
                 run = replace(
                     run,
-                    rejected=_rejected_candidates(merged, winner, sentences, selected_anchors),
+                    rejected=_rejected_candidates(
+                        merged, winner, sentences, selected_anchors, min_clip_ms
+                    ),
                 )
             run = replace(run, editorial=None)
     log.finished("editorial", _skip_reason(run.editorial))
@@ -2683,6 +2733,19 @@ def build_parser() -> argparse.ArgumentParser:
             f"--auto-select)"
         ),
     )
+    parser.add_argument(
+        "--min-clip-seconds",
+        type=float,
+        # `None` rather than the value, so "the operator asked for the default" and "the
+        # operator asked for 30" are the same run and neither needs special-casing below.
+        default=None,
+        help=(
+            f"the shortest span Stage 4 will score, in seconds (default "
+            f"{MIN_CANDIDATE_SPAN_MS // 1_000}, D-254). Lower it only for a source genuinely "
+            f"shorter than the target: below it a clip is a fragment, and the judge scores it "
+            f"as one"
+        ),
+    )
     parser.add_argument("--sentences", help="comma-separated sentence indexes to cut, e.g. 0,1")
     parser.add_argument("--qc-pass", action="store_true", help="record a human QC pass (§2)")
     parser.add_argument("--json", action="store_true", help="print the run report as JSON")
@@ -2783,6 +2846,9 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         )
     if args.judge_top_n is not None and args.judge_top_n < 1:
         raise ValueError("--judge-top-n must be at least 1")
+
+    if args.min_clip_seconds is not None and args.min_clip_seconds <= 0:
+        raise ValueError("--min-clip-seconds must be greater than 0")
     if args.qc_pass and not (args.sentences or args.auto_select):
         raise ValueError("--qc-pass requires --sentences or --auto-select")
     visual_query = args.visual_query.strip() if args.visual_query is not None else ""
@@ -2903,6 +2969,11 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         subject_tracker=subject_tracker,
         auto_select=args.auto_select,
         judge_top_n=(DEFAULT_JUDGE_TOP_N if args.judge_top_n is None else args.judge_top_n),
+        min_clip_ms=(
+            MIN_CANDIDATE_SPAN_MS
+            if args.min_clip_seconds is None
+            else round(args.min_clip_seconds * 1_000)
+        ),
         visual_fps=args.visual_fps,
         visual_max_frames=args.visual_max_frames,
         on_event=on_event,

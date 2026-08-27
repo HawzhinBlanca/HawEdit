@@ -13416,3 +13416,48 @@ watching: it is D-185's own measurement, and it now needs a window in silence to
 **Not yet measured.** The hypothesis that misleading-edit risk falls when a fragment becomes an
 argument rests on six verdicts across two episodes. `specs/candidate-span` T5 re-runs both and
 records the before and after, including if the risk does not fall.
+
+
+---
+
+## D-256
+
+**D-254's floor is a refusal, and `--min-clip-seconds` is the way out of it.** A candidate whose
+grown span cannot reach the minimum is not judged: §2's editorial gate has already been measured
+scoring a fragment — hook 0.90 against misleading-edit **0.85** on 5.3 s — and reading that
+verdict costs a billed Stage 4 request. Refusing before the call is the same argument D-185 made
+for eligibility, applied to a length instead of a containment.
+
+**Measured before deciding, not after.** Adding the refusal and running `tests/test_pipeline.py`
+failed **10 tests**, every one for the same reason: the unit fixture transcript is **4.1 seconds
+long** and no amount of growth reaches 30 s. That is not a bug in the refusal. It is AC-4
+conflating two different facts — *this candidate is a fragment* and *this episode is shorter than
+the floor* — and a 4-second source is a real case, not only a test artefact.
+
+**Hawa chose the operator flag** over lengthening the fixtures or dropping the refusal
+(2026-08-27). `--min-clip-seconds` defaults to `MIN_CANDIDATE_SPAN_MS`, and `run_pipeline` takes
+`min_clip_ms` with the same default — a caller who does not think about clip length gets the
+owner's answer rather than no answer. The alternatives are recorded because they were real: new
+fixture footage would have meant a new source video for the render tests, and letting the
+editorial gate do the refusing would have spent a billed call on every span already known to be
+too short.
+
+**The cost, stated plainly: the floor is now per-run overridable, and a flag is not a diff.**
+D-254 said changing the range should read as a changed decision. An operator lowering the floor
+on one run does not produce that diff. Two things hold the line. The default is the constant, so
+changing what everyone gets is still an edit to `clip.py`. And every fixture call site that
+lowers it carries a comment saying the source is 4.1 seconds long, so a lowered floor in this
+repository always reads as a statement about the footage.
+
+**Two failures, two answers.** `_nothing_fits_a_candidate` now distinguishes a candidate that
+grew but stayed short — the episode ran out of complete sentences — from one that could not seed
+at all, which is a window landing where no complete sentence is. Reporting the first as the
+second sends an operator to widen a retrieval window that was never the problem. D-185's wording
+and its `blocked_by` are kept verbatim for the second case, because for that case they are still
+exactly true.
+
+**AC-7 moved with the decision.** `_rejected_candidates` now consults `_grown_sentence_run`, the
+predicate the selector acts on, rather than `_complete_sentences_within`. That was the point of
+sharing a predicate in the first place: the reason in the artifact has to be the reason the code
+acted on, and after D-255 the code no longer acts on containment. `_complete_sentences_within` is
+still shared — `_sentence_run_for_candidate` seeds from it — and still unchanged.

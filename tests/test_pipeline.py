@@ -54,9 +54,13 @@ from hawedit.pipeline import (
     PipelineRun,
     StageSkipped,
     _automatic_sentence_selection,
+    _build_and_run,
     _grown_sentence_run,
     _judgeable_plans,
+    _nothing_fits_a_candidate,
     _print_report,
+    _rejected_candidates,
+    _run_span_ms,
     _sentence_run_for_candidate,
     assert_devices_available,
     build_parser,
@@ -1241,6 +1245,9 @@ def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
         ],
         judge=Judge(),
         auto_select=True,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every candidate
+        # in it on length alone. Naming the floor says "this source is a toy" at the call site.
+        min_clip_ms=4_000,
     )
     assert run.clip is not None
     # `s0-1`, not `s0-0`: the candidate is 1.7 s and D-254's minimum is 30 s, so T3 grows the
@@ -1861,6 +1868,9 @@ def test_an_overwriting_auto_selected_run_also_refuses_before_the_judge(tmp_path
             ],
             auto_select=True,
             judge=Judge(),
+            # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every candidate
+            # in it on length alone. Naming the floor says "this source is a toy" at the call site.
+            min_clip_ms=4_000,
         )
 
     assert calls == [], f"the billed judge ran {len(calls)} time(s) before the refusal"
@@ -2373,8 +2383,11 @@ def test_the_reason_recorded_is_the_reason_the_code_acted_on(tmp_path: Path) -> 
     """A generic reason on every rejection would satisfy the test above and measure nothing.
 
     The fixture's two sentences run 100..1700 and 2000..4100 ms, so a candidate at 1700..1950
-    contains neither — it was ruled out by eligibility, not by rank, and the record has to say
-    which. `_complete_sentences_within` is shared with the selector so the two cannot drift.
+    overlaps neither — it was ruled out by eligibility, not by rank, and the record has to say
+    which. The predicate is `_grown_sentence_run`, the one the selector acts on, so the reason
+    in the artifact cannot drift from the decision that produced it (AC-7). It moved here when
+    T3 made growth the thing eligibility is decided by; before that it was
+    `_complete_sentences_within`, which is still shared but no longer what rules a candidate out.
     """
     from hawedit.discovery import Candidate
 
@@ -2389,6 +2402,9 @@ def test_the_reason_recorded_is_the_reason_the_code_acted_on(tmp_path: Path) -> 
             Candidate("silent", "reasons", 1_700, 1_950, DiscoveryPath.VERBAL, 3, 0.80),
         ],
         judge=_a_stub_judge(),
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every candidate
+        # in it on length alone. Naming the floor says "this source is a toy" at the call site.
+        min_clip_ms=4_000,
     )
 
     reasons = {r.in_ms: r.reject_reason for r in run.rejected}
@@ -3117,6 +3133,11 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--judge-top-n must be at least 1",
     ),
     (
+        "a clip minimum that cannot hold a clip",
+        ["--min-clip-seconds", "0"],
+        "--min-clip-seconds must be greater than 0",
+    ),
+    (
         "two Stage 1 sources",
         ["--transcript", "x.json", "--omni-asr"],
         "--transcript and --omni-asr are mutually exclusive Stage 1 sources",
@@ -3796,6 +3817,9 @@ def _auto_select_run(
             )
         ],
         auto_select=True,
+        # A 4.1 s fixture against D-254's 30 s floor would refuse on length before this test
+        # could measure anything about window width.
+        min_clip_ms=4_000,
     )
 
 
@@ -4805,6 +4829,11 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         ("--judge-top-n", "0", "--auto-select"),
         "--judge-top-n must be at least 1",
     ),
+    (
+        "a clip minimum that cannot hold a clip",
+        ("--min-clip-seconds", "0"),
+        "--min-clip-seconds must be greater than 0",
+    ),
     ("Gemini without Stage 1", ("--gemini",), "cloud discovery requires"),
     (
         "Vertex without Stage 1",
@@ -5208,6 +5237,10 @@ def test_more_than_one_candidate_can_be_judged(tmp_path: Path) -> None:
         judge=judge,
         auto_select=True,
         judge_top_n=3,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every
+        # candidate in it on length alone. Naming the floor here says 'this source is
+        # a toy' at the call site instead of leaving a reader to wonder.
+        min_clip_ms=4_000,
     )
     assert len(judge.seen) == 2, "both eligible candidates should have reached the judge"
     assert {request.candidate_id for request in judge.seen} == {"v1", "v2"}
@@ -5234,6 +5267,10 @@ def test_an_ineligible_candidate_costs_no_billed_call(tmp_path: Path) -> None:
         judge=judge,
         auto_select=True,
         judge_top_n=5,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every
+        # candidate in it on length alone. Naming the floor here says 'this source is
+        # a toy' at the call site instead of leaving a reader to wonder.
+        min_clip_ms=4_000,
     )
     assert [request.candidate_id for request in judge.seen] == ["real"], (
         "the candidate containing no whole sentence must be skipped before the billed call"
@@ -5261,6 +5298,10 @@ def test_every_verdict_is_persisted_even_when_render_is_refused(tmp_path: Path) 
         judge=judge,
         auto_select=True,
         judge_top_n=3,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every
+        # candidate in it on length alone. Naming the floor here says 'this source is
+        # a toy' at the call site instead of leaving a reader to wonder.
+        min_clip_ms=4_000,
     )
     persisted = sorted(path.name for path in (work / "stage4").rglob("verdict.json"))
     assert len(persisted) == len(judge.seen), (
@@ -5312,6 +5353,10 @@ def test_the_best_passing_candidate_wins_not_the_first(tmp_path: Path) -> None:
         judge=judge,
         auto_select=True,
         judge_top_n=3,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every
+        # candidate in it on length alone. Naming the floor here says 'this source is
+        # a toy' at the call site instead of leaving a reader to wonder.
+        min_clip_ms=4_000,
     )
     assert len(judge.seen) == 2, "both candidates should have been judged"
     assert run.clip is not None and run.clip.editorial is not None
@@ -5339,6 +5384,10 @@ def test_a_stronger_but_failing_candidate_does_not_win(tmp_path: Path) -> None:
         judge=_FailingHighScorer({"v1": 0.80, "v2": 0.99}, failing="v2"),
         auto_select=True,
         judge_top_n=3,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every
+        # candidate in it on length alone. Naming the floor here says 'this source is
+        # a toy' at the call site instead of leaving a reader to wonder.
+        min_clip_ms=4_000,
     )
     assert run.clip is not None and run.clip.editorial is not None
     assert run.clip.editorial.hook_score == 0.80, (
@@ -5379,6 +5428,10 @@ def test_no_passing_candidate_refuses_and_names_every_score(tmp_path: Path) -> N
         judge=judge,
         auto_select=True,
         judge_top_n=3,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every
+        # candidate in it on length alone. Naming the floor here says 'this source is
+        # a toy' at the call site instead of leaving a reader to wonder.
+        min_clip_ms=4_000,
     )
     skipped = dict(run.skipped())
     assert "editorial" in skipped, "no shippable verdict must be a visible refusal"
@@ -5407,7 +5460,7 @@ def test_judge_top_n_defaults_and_is_bounded() -> None:
 def test_judging_fewer_than_one_candidate_is_refused() -> None:
     """Zero billed calls is not a cheaper run, it is a run that cannot produce a clip."""
     with pytest.raises(ValueError, match="at least 1"):
-        _judgeable_plans((), (), 0)
+        _judgeable_plans((), (), 0, MIN_CANDIDATE_SPAN_MS)
 
 
 def test_the_flag_is_refused_when_it_cannot_act(tmp_path: Path) -> None:
@@ -5450,6 +5503,10 @@ def test_n_of_one_is_todays_behaviour(tmp_path: Path) -> None:
         judge=judge,
         auto_select=True,
         judge_top_n=1,
+        # The fixture transcript is 4.1 s long, so D-254's 30 s floor refuses every
+        # candidate in it on length alone. Naming the floor here says 'this source is
+        # a toy' at the call site instead of leaving a reader to wonder.
+        min_clip_ms=4_000,
     )
     assert len(judge.seen) == 1, "N=1 must cost exactly one billed call"
 
@@ -5582,10 +5639,6 @@ def _unfinished(start_ms: int, end_ms: int) -> Sentence:
 _EPISODE_SENTENCES = tuple(_spoken(index * 5_000, (index + 1) * 5_000) for index in range(20))
 
 
-def _run_span_ms(run: tuple[int, ...], sentences: tuple[Sentence, ...]) -> int:
-    return sentences[run[-1]].end_ms - sentences[run[0]].start_ms
-
-
 def test_a_short_candidate_grows_to_the_target() -> None:
     """The 5.3-second span is the real one. It scored hook 0.90 and misleading-edit 0.85.
 
@@ -5596,7 +5649,7 @@ def test_a_short_candidate_grows_to_the_target() -> None:
     up at an edge of the clip.
     """
     seeded = _ranked("hot", 40_000, 45_300, rank=1)
-    grown = _grown_sentence_run(seeded, _EPISODE_SENTENCES)
+    grown = _grown_sentence_run(seeded, _EPISODE_SENTENCES, MIN_CANDIDATE_SPAN_MS)
 
     assert _run_span_ms(grown, _EPISODE_SENTENCES) >= MIN_CANDIDATE_SPAN_MS, (
         "the grown span still cannot carry a whole argument, which is the entire mechanism"
@@ -5627,7 +5680,9 @@ def test_growth_stops_at_complete_sentence_boundaries() -> None:
         _unfinished(25_000, 30_000),
         _spoken(30_000, 35_000),
     )
-    grown = _grown_sentence_run(_ranked("hot", 15_000, 20_000, rank=1), fenced)
+    grown = _grown_sentence_run(
+        _ranked("hot", 15_000, 20_000, rank=1), fenced, MIN_CANDIDATE_SPAN_MS
+    )
 
     assert grown == (2, 3, 4), "growth crossed a sentence §4.2 could not confirm finished"
     assert all(fenced[index].complete for index in grown)
@@ -5644,16 +5699,19 @@ def test_a_candidate_already_in_range_is_left_alone() -> None:
     branch — at or above the minimum, the ungrown answer stands.
     """
     in_range = _ranked("fine", 0, 45_000, rank=1)
-    assert _grown_sentence_run(in_range, _EPISODE_SENTENCES) == _sentence_run_for_candidate(
-        in_range, _EPISODE_SENTENCES
-    )
+    assert _grown_sentence_run(
+        in_range, _EPISODE_SENTENCES, MIN_CANDIDATE_SPAN_MS
+    ) == _sentence_run_for_candidate(in_range, _EPISODE_SENTENCES)
 
     over_long = _ranked("long", 0, 100_000, rank=1)
-    assert _grown_sentence_run(over_long, _EPISODE_SENTENCES) == _sentence_run_for_candidate(
-        over_long, _EPISODE_SENTENCES
-    )
+    assert _grown_sentence_run(
+        over_long, _EPISODE_SENTENCES, MIN_CANDIDATE_SPAN_MS
+    ) == _sentence_run_for_candidate(over_long, _EPISODE_SENTENCES)
     assert (
-        _run_span_ms(_grown_sentence_run(over_long, _EPISODE_SENTENCES), _EPISODE_SENTENCES)
+        _run_span_ms(
+            _grown_sentence_run(over_long, _EPISODE_SENTENCES, MIN_CANDIDATE_SPAN_MS),
+            _EPISODE_SENTENCES,
+        )
         > MAX_CANDIDATE_SPAN_MS
     ), "the over-long span was cut to fit the maximum"
 
@@ -5673,6 +5731,97 @@ def test_a_candidate_smaller_than_every_sentence_still_seeds() -> None:
     assert _sentence_run_for_candidate(inside_one, long_sentences) == (), (
         "the fixture no longer reproduces ep01; this test would prove nothing"
     )
-    grown = _grown_sentence_run(inside_one, long_sentences)
+    grown = _grown_sentence_run(inside_one, long_sentences, MIN_CANDIDATE_SPAN_MS)
     assert grown == (0, 1), "the overlapped sentence is the seed, and it grows from there"
     assert _run_span_ms(grown, long_sentences) >= MIN_CANDIDATE_SPAN_MS
+
+
+# --- candidate-span T4: a fragment is refused before it is billed ---------------------------
+
+
+def test_a_candidate_that_cannot_reach_the_minimum_is_refused() -> None:
+    """Growth is an attempt, not a promise, and the attempt can fail.
+
+    An episode can simply run out of complete sentences around a seed — at its edges, or across
+    a stretch §4.2 could not confirm finished. What comes back is then a fragment, and §2's
+    editorial gate has already been measured scoring one: hook 0.90 against misleading-edit 0.85
+    on 5.3 seconds. That verdict costs a billed Stage 4 request to read, so the refusal belongs
+    before the call rather than after it.
+    """
+    short_episode = (_spoken(0, 4_000), _spoken(4_000, 8_000))
+    candidate = _ranked("doomed", 1_000, 2_000, rank=1)
+
+    grown = _grown_sentence_run(candidate, short_episode, MIN_CANDIDATE_SPAN_MS)
+    assert grown == (0, 1), "growth must take everything available before giving up"
+    assert _run_span_ms(grown, short_episode) < MIN_CANDIDATE_SPAN_MS
+
+    assert _judgeable_plans((candidate,), short_episode, 5, MIN_CANDIDATE_SPAN_MS) == (), (
+        "a span the gate will refuse as a fragment must not reach a billed judge first"
+    )
+    # The control: the same candidate against a floor its episode can satisfy.
+    assert _judgeable_plans((candidate,), short_episode, 5, 8_000) != ()
+
+
+def test_the_reason_names_the_length_and_the_floor() -> None:
+    """ "Ineligible" without the numbers costs the operator another run to learn what was close.
+
+    Two different failures live here and they want different answers: an episode that ran out of
+    complete sentences is not a retrieval window that landed in silence, and telling an operator
+    the second when the first happened sends them to widen a window that was never the problem.
+    """
+    short_episode = (_spoken(0, 4_000), _spoken(4_000, 8_000))
+    ran_out = _ranked("doomed", 1_000, 2_000, rank=1)
+    silent = _ranked("silent", 8_500, 9_000, rank=2)
+
+    skipped = _nothing_fits_a_candidate((ran_out,), short_episode, MIN_CANDIDATE_SPAN_MS)
+    assert "8.00s" in skipped.reason, skipped.reason
+    assert "30.00s minimum" in skipped.reason, skipped.reason
+    assert skipped.blocked_by == ("a candidate that grows to the target minimum",)
+
+    # The other cause keeps D-185's wording, because for that candidate it is still true.
+    nothing = _nothing_fits_a_candidate((silent,), short_episode, MIN_CANDIDATE_SPAN_MS)
+    assert nothing.blocked_by == ("no complete sentence fits a candidate window",)
+
+    rejected = _rejected_candidates(
+        (ran_out, silent),
+        _ranked("won", 0, 8_000, rank=0),
+        short_episode,
+        None,
+        MIN_CANDIDATE_SPAN_MS,
+    )
+    reasons = {record.in_ms: record.reject_reason for record in rejected}
+    assert "grew to 8.00s" in reasons[1_000] and "30.00s minimum" in reasons[1_000], reasons
+    assert "nothing to grow a clip around" in reasons[8_500], reasons
+
+
+def test_the_cli_applies_the_target_minimum_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag nothing reads is decoration. Measured at the seam, not asserted about the parser.
+
+    `--min-clip-seconds` exists because a source genuinely shorter than the floor still deserves
+    a clip; the point of the default is that an operator who never thinks about clip length gets
+    the owner's number rather than no floor at all.
+    """
+    seen: dict[str, Any] = {}
+
+    def recorder(*_args: Any, **kwargs: Any) -> PipelineRun:
+        seen.update(kwargs)
+        return PipelineRun(media_id="cli", source="s", work_dir="w")
+
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", recorder)
+    transcript = tmp_path / "transcript.raw.json"
+    transcript.write_text(a_transcript("cli").to_json(), encoding="utf-8")
+    argv = [
+        str(FIXTURE),
+        "--transcript",
+        str(transcript),
+        "--work-dir",
+        str(tmp_path / "work"),
+    ]
+
+    _build_and_run(build_parser().parse_args(argv))
+    assert seen["min_clip_ms"] == MIN_CANDIDATE_SPAN_MS, "the CLI default is not D-254's floor"
+
+    _build_and_run(build_parser().parse_args([*argv, "--min-clip-seconds", "7.5"]))
+    assert seen["min_clip_ms"] == 7_500, "the operator's override never reached the pipeline"
