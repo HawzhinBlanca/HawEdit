@@ -1,0 +1,1 @@
+TS=2026-08-27T18:09:50Z FEATURE=reframe-composition TASK=T1 TESTS=test_face_tracking_is_the_default,test_static_crop_opts_out_and_is_recorded,test_a_missing_face_tracker_degrades_visibly,test_the_replaced_flag_says_what_replaced_it VERIFY=pass REPORT=.gate/last-test-run.xml

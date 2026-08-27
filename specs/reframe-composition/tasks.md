@@ -2,7 +2,7 @@
 # Rows flip to [x] ONLY via scripts/update-ledger.sh, after verify.sh passes and the cited
 # tests are found in the report that run wrote.
 
-- [ ] T1  Face tracking is the default and `--static-crop` opts out; a missing OpenCV degrades
+- [x] T1  Face tracking is the default and `--static-crop` opts out; a missing OpenCV degrades
           to static centre visibly rather than silently.
                                   (tests: test_face_tracking_is_the_default,
                                           test_static_crop_opts_out_and_is_recorded,
