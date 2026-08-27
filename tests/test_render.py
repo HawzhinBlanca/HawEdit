@@ -36,6 +36,7 @@ from hawedit.render import (
     DELIVERY_AUDIO_RATE,
     DELIVERY_LUFS,
     ENCODER_PROBE_SIZE,
+    FACE_COMPOSITION_LINE,
     NVENC_MIN_FRAME,
     VERTICAL_HEIGHT,
     VERTICAL_WIDTH,
@@ -51,6 +52,7 @@ from hawedit.render import (
     frame_rate,
     quality_args,
     render_clip,
+    vertical_framing,
 )
 from hawedit.sentences import Sentence
 from hawedit.transcripts import AsrProvenance, Word
@@ -1318,3 +1320,52 @@ def test_a_real_encode_lands_on_the_loudness_target(tmp_path: Path) -> None:
 
     assert integrated(quiet) < -20.0, "the input really is quiet"
     assert abs(integrated(loud) - DELIVERY_LUFS) <= 1.5, "single-pass loudnorm lands on target"
+
+
+# --- reframe-composition T2: the crop is placed from the measured face box -------------------
+
+
+def test_a_well_framed_source_is_not_zoomed() -> None:
+    """ep10's own numbers: a face 28.5% of frame height, centred 33% down.
+
+    Measured 2026-08-27 across 246 detections in 60 samples. A source shot like this is already
+    on the rule-of-thirds line, and any unconditional tightening would make the owner's own
+    footage worse while fixing footage that is not theirs. The target is set below what a good
+    frame achieves precisely so a good frame clears it untouched. D-258.
+    """
+    crop_w, crop_h, y = vertical_framing(1080, 607, 1080, face_center_y=360, face_height=308)
+
+    assert (crop_w, crop_h) == (607, 1080), "a well-framed source was zoomed"
+    assert y == 0, "the full-height crop has nowhere to move, and must not pretend otherwise"
+
+
+def test_a_small_face_is_tightened_to_the_composition_line() -> None:
+    """The other measured source: a face 11.6% of frame height, centred 45% down.
+
+    309 detections across 60 samples of a 1920x1080 wide shot. Tightening is capped at
+    MAX_VERTICAL_ZOOM because every bit of it is upscale on a source already carried 1.78x to
+    reach 1920 tall.
+    """
+    crop_w, crop_h, y = vertical_framing(1080, 607, 1080, face_center_y=481, face_height=125)
+
+    assert crop_h == 720, f"expected the 1.5x cap, got {1080 / crop_h:.2f}x"
+    assert crop_w == 404, "the aspect ratio must survive the zoom"
+    assert abs(crop_w / crop_h - 9 / 16) < 0.01
+    assert y == 481 - int(FACE_COMPOSITION_LINE * crop_h), "the face is not on the line"
+    assert 0 < y <= 1080 - crop_h, "the crop left the frame"
+    # The point of the exercise: less dead wall above the subject than the full-height crop.
+    assert y > 0, "nothing was trimmed from the top"
+
+
+def test_an_unmeasured_focus_point_crops_as_it_always_did() -> None:
+    """AC-6. 37 FocusPoint construction sites predate vertical framing, and every artifact ever
+    rendered came from a crop centred vertically. None of them may move."""
+    assert vertical_framing(1080, 607, 1080, None, None) == (607, 1080, 0)
+    assert crop_filter(1920, 1080) == crop_filter(1920, 1080, face_center_y=None, face_height=None)
+
+
+def test_a_zero_face_height_is_refused_rather_than_dividing() -> None:
+    """A face of no height is not a measurement, and `share = 0 / crop_h` would zoom to the cap
+    on a detector bug rather than saying the input was wrong."""
+    with pytest.raises(ValueError, match="face height must be positive"):
+        vertical_framing(1080, 607, 1080, face_center_y=500, face_height=0)

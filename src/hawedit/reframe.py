@@ -59,12 +59,28 @@ def _safe_speaker_label(value: object) -> None:
 
 @dataclass(frozen=True, slots=True)
 class FocusPoint:
+    """Where a face was, at an instant on the media clock.
+
+    `center_y` and `face_height` are OPTIONAL and default to `None`, which means *unmeasured*
+    rather than zero — the same distinction D-033 drew for `payoff_at_ms`. Every caller written
+    before vertical framing existed keeps constructing two-argument points and keeps getting the
+    crop it always got.
+    """
+
     at_ms: int
     center_x: int
+    center_y: int | None = None
+    face_height: int | None = None
 
     def __post_init__(self) -> None:
         _exact_non_negative_int(self.at_ms, "focus point timestamp")
         _exact_non_negative_int(self.center_x, "focus point horizontal centre")
+        if self.center_y is not None:
+            _exact_non_negative_int(self.center_y, "focus point vertical centre")
+        if self.face_height is not None:
+            _exact_non_negative_int(self.face_height, "focus point face height")
+            if self.face_height == 0:
+                raise ValueError("a measured face height cannot be zero")
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,13 +253,38 @@ class OpenCvFaceTracker:
                 if chosen is not None:
                     center = chosen[0] + chosen[2] // 2
                     # The detected centre, not a running mean of it. `stabilize` decides what
-                    # the camera does; this reports only what was seen.
-                    points.append(FocusPoint(round(at), center))
+                    # the camera does; this reports only what was seen. The vertical half of
+                    # the box travels with it: `render.vertical_framing` needs how far down the
+                    # frame the face sits and how much of it the face fills, and a tracker that
+                    # measured both and reported one is why the crop could only ever be centred.
+                    points.append(
+                        FocusPoint(round(at), center, chosen[1] + chosen[3] // 2, chosen[3])
+                    )
                     previous = center
                 at += step_ms
         finally:
             capture.release()
         return tuple(points)
+
+
+def median_face_box(points: Sequence[FocusPoint]) -> tuple[int | None, int | None]:
+    """The clip's vertical framing, as `(center_y, face_height)`, or `(None, None)`.
+
+    **One placement for the whole clip, deliberately.** The horizontal crop moves because people
+    take turns talking; the vertical one does not, because nobody stands up mid-sentence at a
+    podcast table. A per-sample vertical path would reintroduce exactly the shimmer `stabilize`
+    exists to remove, in the axis where there is nothing to follow — so the medians are taken
+    once, over the whole raw track, and a single wild detection cannot drag either.
+
+    `(None, None)` when no point carried a measurement, which is what every caller written
+    before vertical framing produces, and which `render.vertical_framing` treats as "leave the
+    crop where it has always been".
+    """
+    verticals = sorted(p.center_y for p in points if p.center_y is not None)
+    heights = sorted(p.face_height for p in points if p.face_height is not None)
+    if not verticals or not heights:
+        return None, None
+    return verticals[len(verticals) // 2], heights[len(heights) // 2]
 
 
 def stabilize(

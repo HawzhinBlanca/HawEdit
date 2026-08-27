@@ -114,6 +114,7 @@ from hawedit.reframe import (
     SpeakerAssociationError,
     SpeakerSubjectTracker,
     SubjectTracker,
+    median_face_box,
     stabilize,
     validate_speaker_focus_points,
 )
@@ -2190,6 +2191,11 @@ def run_pipeline(
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
     focus_points: tuple[FocusPoint, ...] = ()
+    # The clip's single vertical placement, measured before `_steady_camera` replaces the track
+    # with keyframes that carry no face box. `None` means unmeasured, and the crop then sits
+    # where it always sat.
+    face_center_y: int | None = None
+    face_height: int | None = None
     reframe_mode = Reframe.STATIC_CENTRE
     if speaker_tracker is not None:
         if ingested.diarization is None:
@@ -2272,6 +2278,7 @@ def run_pipeline(
             )
         _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
         if focus_points:
+            face_center_y, face_height = median_face_box(focus_points)
             focus_points = _steady_camera(focus_points, source, ffmpeg)
             reframe_mode = Reframe.FACE_TRACKED
 
@@ -2405,6 +2412,11 @@ def run_pipeline(
             source_width=width,
             source_height=height,
             focus_points=tuple((point.at_ms, point.center_x) for point in focus_points),
+            # From the *raw* track rather than the stabilized keyframes: `stabilize` answers
+            # "where should the camera be", which is a question about the horizontal axis only,
+            # and its keyframes carry no face box. D-258.
+            face_center_y=face_center_y,
+            face_height=face_height,
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
         )

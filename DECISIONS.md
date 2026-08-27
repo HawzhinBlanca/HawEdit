@@ -13505,3 +13505,61 @@ reason, rather than silently restoring a gate that refuses everything.
 **`MIN_HOOK_SCORE` is untouched at 0.75.** The hook floor was doing real work — it correctly
 refused hooks of 0.30, 0.50, 0.60 and 0.70 across these runs — and the winning candidate clears
 it at 0.90 on its own merit. Only the ceiling that nothing could reach moved.
+
+
+---
+
+## D-258
+
+**Face tracking is the default, and the vertical crop is placed from the measured face box.**
+
+**The default rendered a wall.** Measured 2026-08-27 on a real 20-minute episode: the same clip,
+the same span, rendered twice, differing only in `--face-reframe`. Without it both speakers sat
+cut off at the edges of frame while the middle held an empty wall and table; with it the crop
+followed the subject and the clip was usable. The flag was opt-in, so the documented invocation
+produced the unusable one. A default that renders something nobody would post is not a default.
+
+`--static-crop` is the opt-out. `--face-reframe` stays registered but hidden and is refused ahead
+of every other check with a sentence naming its replacement — removed from the parser it would
+have died as "unrecognized arguments", which reads as a typo rather than as a decision. OpenCV is
+an extra, so a missing tracker degrades to the centred crop and says so on stderr: §1 is fail
+visible, and a silent fallback would leave an operator comparing two runs that differ in framing
+for no stated reason.
+
+**The vertical crop had never moved.** `vertical_crop_size` returns the full source height for any
+16:9 source, so `y = (source_height - crop_h) // 2` has been 0 on every clip ever rendered.
+Framing a subject vertically therefore requires taking *less* than the full height, which is a
+zoom — and this footage is 1920x1080 at ~850 kbps, already upscaled 1.78x to reach 1920 tall.
+
+**Measured before choosing a number.** OpenCV frontal and profile cascades, both facings, 60
+samples per source 20 s apart:
+
+| source | detections | face centre | face height |
+|---|---|---|---|
+| `ep10-0zC2bd03stw` | 246 | 33% down | **28.5%** of frame |
+| `01-MmQ9XPggSig` | 309 | 45% down | **11.6%** |
+
+The first is already composed on the rule-of-thirds line. **A blanket zoom would have fixed the
+second and ruined the first**, so `TARGET_FACE_HEIGHT_SHARE` is 0.22 — set *below* what a
+well-shot source achieves, a floor a good frame clears untouched rather than an ideal every frame
+is dragged to. `FACE_COMPOSITION_LINE` is 0.38. Same rule as D-254's: what the source got right is
+not something to improve.
+
+**`MAX_VERTICAL_ZOOM` is 1.5, and it is the honest part.** Bringing an 11.6% face to 22% needs
+1.9x, so 3.4x total upscale on footage that cannot carry it. Capped at 1.5x the face reaches 17.4%
+and the total is 2.67x: better framed, visibly softer. A source shot that wide is better fixed at
+the camera than in this pipeline, and that trade is recorded rather than hidden.
+
+**One vertical placement per clip, from the raw track.** The horizontal crop moves because people
+take turns talking; the vertical one does not, because nobody stands up mid-sentence at a podcast
+table. A per-sample vertical path would reintroduce the shimmer `stabilize` exists to remove, in
+the axis with nothing to follow. `median_face_box` takes the medians once, before `_steady_camera`
+replaces the track with keyframes that carry no box.
+
+**Nothing moves for a caller that measured nothing.** `FocusPoint.center_y` and `face_height`
+default to `None` — unmeasured rather than zero, as D-033 established for `payoff_at_ms` — so all
+37 existing construction sites and every artifact ever rendered are unaffected.
+
+**Still not what §3 Stage 6 specifies.** `Reframe.SPEAKER_TRACKED` needs diarization
+(`BLOCKED.md` #4), so the default follows the dominant face rather than the person talking, and on
+a two-shot it will sometimes hold on a listener. Better than a wall; not the thing.

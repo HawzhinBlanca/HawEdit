@@ -262,6 +262,68 @@ def linked_libraries(ffmpeg: Path) -> str:
     return result.stdout
 
 
+# Measured 2026-08-27 with the OpenCV frontal and profile cascades, 60 samples per source,
+# 20 s apart, on two 1920x1080 Kurdish podcast sources:
+#
+#   ep10-0zC2bd03stw   246 detections   face centre 33% down   face height 28.5% of frame
+#   01-MmQ9XPggSig     309 detections   face centre 45% down   face height 11.6% of frame
+#
+# The first is already composed on the rule-of-thirds line with a face filling more than a
+# quarter of the frame, and any unconditional tightening would make it worse. So the target is
+# set *below* what a well-shot source already achieves: it is a floor that a good frame clears
+# without being touched, not an ideal every frame is dragged to. D-258.
+TARGET_FACE_HEIGHT_SHARE: Final = 0.22
+# Where the face centre sits in the crop. Standard upper-third framing for a talking head, and
+# close to the 33% the well-shot source measures on its own.
+FACE_COMPOSITION_LINE: Final = 0.38
+# The cap, and the honest part. A 1920x1080 source is already upscaled 1.78x to reach 1920 tall;
+# bringing an 11.6% face to 22% needs a further 1.9x, so 3.4x total on ~850 kbps footage that
+# cannot carry it. Capped at 1.5x the face reaches 17.4% and the total upscale is 2.67x: better
+# framed and visibly softer. A source shot that wide is better fixed at the camera.
+MAX_VERTICAL_ZOOM: Final = 1.5
+
+
+def vertical_framing(
+    source_height: int,
+    crop_w: int,
+    crop_h: int,
+    face_center_y: int | None,
+    face_height: int | None,
+) -> tuple[int, int, int]:
+    """The crop rectangle after composing for the face: `(crop_w, crop_h, y)`.
+
+    Returns the input untouched, with `y` at the centre, whenever nothing was measured or the
+    face already fills at least `TARGET_FACE_HEIGHT_SHARE` of the crop. That is the common case
+    on a well-shot source and it must cost nothing: for any 16:9 source `crop_h` is the full
+    height, so the crop is the whole frame and there is no vertical decision to make.
+
+    When the face is smaller than the target the crop tightens toward it — both dimensions, so
+    the 9:16 aspect is preserved — and slides so the face centre lands on
+    `FACE_COMPOSITION_LINE`. Tightening is bounded by `MAX_VERTICAL_ZOOM` because every bit of it
+    is upscale on a source that has none to spare.
+    """
+    if face_height is not None and face_height <= 0:
+        raise ValueError(f"a measured face height must be positive, got {face_height}")
+
+    zoom = 1.0
+    if face_height is not None and crop_h > 0:
+        share = face_height / crop_h
+        if share < TARGET_FACE_HEIGHT_SHARE:
+            zoom = min(TARGET_FACE_HEIGHT_SHARE / share, MAX_VERTICAL_ZOOM)
+    if zoom > 1.0:
+        # Even dimensions: an odd crop is a yuv420p encode failure, not a framing choice.
+        crop_w = max(2, int(crop_w / zoom) // 2 * 2)
+        crop_h = max(2, int(crop_h / zoom) // 2 * 2)
+
+    if face_center_y is None:
+        return crop_w, crop_h, (source_height - crop_h) // 2
+    # Clamp rather than raise, for the reason the horizontal path clamps: a detector reporting a
+    # face near the frame edge is correct about the face and merely asking for a crop that does
+    # not fit. Sliding it into frame keeps the subject.
+    y = max(0, min(face_center_y - int(FACE_COMPOSITION_LINE * crop_h), source_height - crop_h))
+    return crop_w, crop_h, y
+
+
 def vertical_crop_size(
     source_width: int,
     source_height: int,
@@ -300,6 +362,9 @@ def crop_filter(
     clip_in_ms: int = 0,
     target_width: int = VERTICAL_WIDTH,
     target_height: int = VERTICAL_HEIGHT,
+    *,
+    face_center_y: int | None = None,
+    face_height: int | None = None,
 ) -> str:
     """The ffmpeg filter chain that takes a landscape frame to a vertical one.
 
@@ -316,6 +381,9 @@ def crop_filter(
         ValueError: the source is smaller than the crop it would need.
     """
     crop_w, crop_h = vertical_crop_size(source_width, source_height, target_width, target_height)
+    # Before the horizontal expression is built, because every clamp in it is against `crop_w`
+    # and a tightened crop has a different one.
+    crop_w, crop_h, y = vertical_framing(source_height, crop_w, crop_h, face_center_y, face_height)
 
     if focus_points:
         ordered = sorted(focus_points)
@@ -352,7 +420,6 @@ def crop_filter(
         # correct about the face and merely asking for a crop that does not fit. Sliding it
         # into frame keeps the subject; refusing would drop the clip.
         x = max(0, min(focus_x - crop_w // 2, source_width - crop_w))
-    y = (source_height - crop_h) // 2
 
     return f"crop={crop_w}:{crop_h}:{x}:{y},scale={target_width}:{target_height}"
 
@@ -456,6 +523,9 @@ def render_clip(
     ffmpeg: Path | None = None,
     crf: int = 20,
     reframe: Reframe | None = None,
+    *,
+    face_center_y: int | None = None,
+    face_height: int | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -545,6 +615,8 @@ def render_clip(
                 source_height,
                 focus_x,
                 focus_points=focus_points,
+                face_center_y=face_center_y,
+                face_height=face_height,
                 clip_in_ms=clip.in_ms,
             ),
             subtitle_filter(ass_path, fonts_dir),

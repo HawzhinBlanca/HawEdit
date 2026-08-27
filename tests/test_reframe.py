@@ -14,6 +14,7 @@ from hawedit.reframe import (
     SpeakerAssociationError,
     SpeakerFocusPoint,
     choose_face,
+    median_face_box,
     stabilize,
     validate_speaker_focus_points,
 )
@@ -298,3 +299,36 @@ def test_stabilize_refuses_input_it_cannot_order() -> None:
 def test_stabilize_invents_no_camera_path_from_an_empty_track() -> None:
     """No track means a static centre crop, which is an honest label. Never a fabricated pan."""
     assert stabilize((), dead_zone_px=60) == ()
+
+
+# --- reframe-composition T2: the box the tracker measured survives the trip -------------------
+
+
+def test_the_median_face_box_is_one_placement_for_the_whole_clip() -> None:
+    """The horizontal crop moves because people take turns talking; the vertical one does not.
+
+    A per-sample vertical path would reintroduce exactly the shimmer `stabilize` exists to
+    remove, in the axis where there is nothing to follow — nobody stands up mid-sentence at a
+    podcast table. So the medians are taken once over the raw track, where a single wild
+    detection cannot drag either. D-258.
+    """
+    track = (
+        FocusPoint(0, 500, 360, 300),
+        FocusPoint(500, 510, 370, 310),
+        FocusPoint(1_000, 505, 9_000, 4_000),  # one wild detection
+    )
+    assert median_face_box(track) == (370, 310), "a single bad sample moved the framing"
+
+
+def test_an_unmeasured_track_asks_for_no_vertical_placement() -> None:
+    """Every `FocusPoint` built before vertical framing existed carries two arguments, and the
+    crop those callers get must not move. `(None, None)` is what says so."""
+    assert median_face_box((FocusPoint(0, 500), FocusPoint(500, 520))) == (None, None)
+    assert median_face_box(()) == (None, None)
+
+
+def test_a_focus_point_cannot_claim_a_face_of_no_height() -> None:
+    """Zero is not a measurement. `render.vertical_framing` divides by it, and a detector bug
+    that reported it would zoom straight to the cap instead of being refused at the door."""
+    with pytest.raises(ValueError, match="face height cannot be zero"):
+        FocusPoint(0, 500, 360, 0)
