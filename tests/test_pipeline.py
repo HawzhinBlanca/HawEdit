@@ -50,6 +50,7 @@ from hawedit.pipeline import (
     StageSkipped,
     _automatic_sentence_selection,
     _judgeable_plans,
+    _print_report,
     _sentence_run_for_candidate,
     assert_devices_available,
     build_parser,
@@ -5423,3 +5424,34 @@ def test_n_of_one_is_todays_behaviour(tmp_path: Path) -> None:
         judge_top_n=1,
     )
     assert len(judge.seen) == 1, "N=1 must cost exactly one billed call"
+
+
+def test_the_escalation_line_quotes_a_reason_that_actually_escalated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The count and the reason have to describe the same segments.
+
+    Measured on the real 20-minute episode: the report read "277/306 segment(s) (91%) escalated
+    for human validation — confident (mean logprob -5.699) and the models agree". That reason
+    belongs to `escalation[0]`, whose `escalate` is **False** — so an alarming count was printed
+    beside a reassuring explanation of a segment that was never escalated. A reader would take
+    it as "91% flagged, but the models agree, so it is fine".
+    """
+    from hawedit.escalation import EscalationDecision
+
+    run = PipelineRun(
+        media_id="m",
+        source="s",
+        work_dir="w",
+        escalation=(
+            EscalationDecision(segment_id="0-1", escalate=False, reason="confident and agreeing"),
+            EscalationDecision(segment_id="1-2", escalate=True, reason="the models disagree"),
+        ),
+    )
+    _print_report(run)
+    line = next(text for text in capsys.readouterr().out.splitlines() if text.startswith("stage 1"))
+    assert "1/2" in line
+    assert "the models disagree" in line
+    assert "confident and agreeing" not in line, (
+        "the quoted reason must belong to a segment that was actually escalated"
+    )

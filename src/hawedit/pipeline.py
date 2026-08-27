@@ -2883,9 +2883,15 @@ def _print_report(run: PipelineRun) -> None:
         escalated = sum(1 for decision in run.escalation if decision.escalate)
         if escalated:
             share = 100 * escalated / len(run.escalation)
+            # The first *escalated* decision, not the first decision. Measured on the real
+            # 20-minute episode: `escalation[0].escalate` is False and its reason reads
+            # "confident (mean logprob -5.699) and the models agree", so the report paired an
+            # alarming count with a reassuring explanation of a segment that was never flagged.
+            # A reader takes that as "91% flagged, but the models agree, so it is fine".
+            first_flagged = next(decision for decision in run.escalation if decision.escalate)
             print(
                 f"stage 1 {escalated}/{len(run.escalation)} segment(s) ({share:.0f}%) escalated "
-                f"for human validation — {run.escalation[0].reason}"
+                f"for human validation — {first_flagged.reason}"
             )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")
