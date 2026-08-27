@@ -38,9 +38,24 @@ happens around a seed instead of by loosening that predicate, so the shared mean
 | file | change |
 |---|---|
 | `src/hawedit/path_a.py` | the target range in `_PROMPT`; compliance measured on the response |
-| `src/hawedit/pipeline.py` | `_sentence_run_for_candidate` grows around a seed; the range constants |
+| `src/hawedit/clip.py` | the range constants, beside D-253's thresholds (T2 moved them here) |
+| `src/hawedit/pipeline.py` | `_sentence_run_for_candidate` grows around a seed; `_span_compliance` counts |
 | `tests/test_path_a.py`, `tests/test_pipeline.py` | prompt assertion, growth, eligibility, non-regression |
 | `DECISIONS.md` | ADR: the target range, its owner and date, and why it is not derived |
+
+## Learned while implementing
+
+**T2 moved the range constants to `clip.py`.** The plan put them in `pipeline.py`, but the
+prompt and the measurement both need them, and a Stage 3 producer importing the orchestrator
+inverts the dependency and pulls all of `pipeline` into any `path_a` import. `clip.py` already
+holds `MIN_HOOK_SCORE`, which D-254 names as the footing this range stands on, and both modules
+already import from it. `mypy --strict` has `implicit_reexport = False`, so T1's test moved its
+import too — the constants are not re-exported from `pipeline`.
+
+**Compliance is derived, not recorded.** `PipelineRun._span_compliance` counts spans off
+`self.candidates` exactly as `by_path` does, so no second record can disagree with the
+candidates it describes. It counts `verbal_rank is not None` only: a visual-only run must not
+report a compliance figure for a prompt nobody sent, which is what the control test pins.
 
 ## Divergence from BLUEPRINT
 
