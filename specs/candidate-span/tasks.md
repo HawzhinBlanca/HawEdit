@@ -22,7 +22,7 @@
                                   (tests: test_a_candidate_that_cannot_reach_the_minimum_is_refused,
                                           test_an_ineligible_candidate_costs_no_billed_call)
 
-- [ ] T5  **Measure it on real footage.** Re-run ep10 and ep01 and record eligibility counts and
+- [x] T5  **Measure it on real footage.** Re-run ep10 and ep01 and record eligibility counts and
           verdict scores before/after in `evidence/`. The hypothesis is that misleading-edit risk
           falls when a fragment becomes an argument; this is where it is confirmed or refuted.
                                   (tests: test_the_measured_span_evidence_is_recorded)
