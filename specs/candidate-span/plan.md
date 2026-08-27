@@ -57,6 +57,27 @@ import too — the constants are not re-exported from `pipeline`.
 candidates it describes. It counts `verbal_rank is not None` only: a visual-only run must not
 report a compliance figure for a prompt nobody sent, which is what the control test pins.
 
+**T3 grew the candidate, not just the run.** `_judgeable_plans` returns
+`replace(candidate, in_ms=..., out_ms=...)` at the grown anchors. Without it `_candidate_for_judging`
+refuses with "the selected sentence span is not contained by any candidate" — correctly, since a
+grown span is larger than its seed by design. Recorded as D-255, which also names the three
+existing tests whose expectations growth changes and supersedes D-185's "nothing fits" outcome.
+
+**T4 as written breaks 10 tests, and the reason is a real question rather than a bug.** Measured
+by probe: adding `grown span >= MIN` to `_judgeable_plans` and running `tests/test_pipeline.py`
+fails 10, every one of them because the unit fixture transcript is **4.1 seconds long** and no
+amount of growth reaches 30 s. AC-4 says a candidate that cannot reach the minimum is ineligible;
+it does not distinguish "this candidate is a fragment" from "this episode is shorter than the
+floor", and those are different facts. Options, for the owner:
+
+1. Thread a `min_clip_ms` parameter (default `MIN_CANDIDATE_SPAN_MS`) so a short source — and a
+   unit fixture — can still be judged. Cost: the floor becomes per-run overridable, and a flag is
+   not a diff.
+2. Keep the floor absolute and lengthen the fixtures. Cost: the fixture MP4 is 4.1 s, so the
+   render tests need new footage too.
+3. Do not refuse at all; let §2's editorial gate refuse fragments as it already does. Cost:
+   contradicts AC-4 and spends billed calls on spans we already know are too short.
+
 ## Divergence from BLUEPRINT
 
 **None — but the number is not in it either.** `BLUEPRINT.md` states no clip duration anywhere;
