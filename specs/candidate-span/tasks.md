@@ -17,7 +17,7 @@
                                           test_growth_stops_at_complete_sentence_boundaries,
                                           test_a_candidate_already_in_range_is_left_alone)
 
-- [ ] T4  A candidate that cannot reach the minimum is ineligible with that reason and costs no
+- [x] T4  A candidate that cannot reach the minimum is ineligible with that reason and costs no
           billed call; existing eligibility tests still pass.
                                   (tests: test_a_candidate_that_cannot_reach_the_minimum_is_refused,
                                           test_an_ineligible_candidate_costs_no_billed_call)
