@@ -13315,3 +13315,53 @@ that is the difference between a rule and an off-by-one nobody notices for a yea
 
 This does not change what Stage 4 produces or how discovery ranks. A clip refused here is a
 clip the judge already rejected; all that changes is that the encoder now hears about it.
+
+
+---
+
+## D-254
+
+**Stage 3 was asked for clips and told nothing about how long a clip is.** Path A's prompt says
+*"find every moment that could stand alone as a short social clip"*, its schema requires only
+`out_ms > in_ms`, and nothing anywhere states a duration. So Gemini returns 1.1-second spans,
+and D-253's gate then refuses them for being fragments. The system refuses what it asked for.
+
+**Measured across two real episodes**, full pipeline, live `gemini-2.5-pro`, `--judge-top-n 5`:
+
+| | ep01 (20 min) | ep10 (75 min) |
+|---|---|---|
+| candidates returned | 15 | 18 |
+| eligible to judge | **1** | **5** |
+| §4.2 sentences | 63 | 798 |
+| median sentence | 10.2 s | 2.7 s |
+| best verdict | hook 0.70, misleading 0.10 | hook 0.90, misleading **0.85** |
+
+Judged span durations on ep10 were 6.3, 22.9, 5.3, 13.9 and 1.1 seconds. **The two shortest
+carry the two highest misleading-edit risks and are the only two the judge called not
+self-contained.** The strong material exists — 0.90 is well clear of the 0.75 floor — and it
+arrives in spans too short to be safe.
+
+**The target range is 30–90 s, set by Hawa, and it is a decision rather than a derivation.**
+`BLUEPRINT.md` states no clip duration anywhere; its only fixed duration is
+`max_speech_duration_s=38`, which governs ASR *input*. The 20–55 s figure quoted repeatedly
+around this project — including by me, as though it were §3 — comes from
+`.claude/skills/pro-kurdish-reel/SKILL.md` line 18, an operator runbook committed in the same
+session. Citing a runbook as frozen spec is how a preference becomes a requirement nobody
+decided, so the number is recorded here with its owner and date, on the same footing as D-253's
+thresholds.
+
+She chose wider and longer than the runbook, and than my recommendation. The reasoning is sound:
+the whole mechanism is that a grown span contains a whole argument instead of a fragment, so
+favouring context over cost is coherent with the thing being fixed.
+
+**Two consequences, recorded rather than glossed.** It is the most expensive option — §3 bills
+video at roughly 300 tokens/sec, so a 30 s floor is about 6× a 5 s seed on *every* judged
+candidate, and at `--judge-top-n 5` that dominates the per-run cost. And a 30 s **minimum** is an
+eligibility bar in both directions: a seed that cannot reach it on complete sentence boundaries
+becomes ineligible where today it might have been judged. Whether eligibility rises or falls
+overall is measured in `specs/candidate-span` T5, not assumed here.
+
+**Candidates longer than the maximum are left intact.** A 90 s+ span is a real clip, and trimming
+it to hit a number would invent an edit nobody asked for; the judge already scores hook and
+self-containment, so it can say if a span is too long. ep01 contains a 105 s sentence, so a seed
+inside it grows to that single sentence and exceeds the maximum — accepted, not cut.

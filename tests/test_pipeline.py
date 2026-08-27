@@ -45,7 +45,9 @@ from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import (
     DEFAULT_JUDGE_TOP_N,
+    MAX_CANDIDATE_SPAN_MS,
     MAX_INTERNAL_SILENCE_MS,
+    MIN_CANDIDATE_SPAN_MS,
     PipelineRun,
     StageSkipped,
     _automatic_sentence_selection,
@@ -5454,4 +5456,27 @@ def test_the_escalation_line_quotes_a_reason_that_actually_escalated(
     assert "the models disagree" in line
     assert "confident and agreeing" not in line, (
         "the quoted reason must belong to a segment that was actually escalated"
+    )
+
+
+# --- candidate-span T1: the target range is a decision, not a derivation --------------------
+
+
+def test_the_target_range_is_a_named_decision() -> None:
+    """BLUEPRINT.md states no clip duration anywhere.
+
+    Its only fixed duration is `max_speech_duration_s=38`, which governs ASR *input*. The
+    20-55 s figure quoted around this project comes from `.claude/skills/pro-kurdish-reel`,
+    an operator runbook, not from §3 — so this range is the owner's decision on the same
+    footing as `MIN_HOOK_SCORE`, and changing it should read as a changed decision rather
+    than a tweaked constant.
+    """
+    assert MIN_CANDIDATE_SPAN_MS == 30_000
+    assert MAX_CANDIDATE_SPAN_MS == 90_000
+    assert MIN_CANDIDATE_SPAN_MS < MAX_CANDIDATE_SPAN_MS
+
+    blueprint = (ROOT / "BLUEPRINT.md").read_text(encoding="utf-8")
+    assert "30-90" not in blueprint and "30–90" not in blueprint, (
+        "if the frozen spec ever states a clip duration, this constant must cite it instead "
+        "of standing as an owner decision"
     )

@@ -1037,6 +1037,25 @@ def _sentence_run_for_candidate(
 DEFAULT_JUDGE_TOP_N: Final = 5
 
 
+# Set by Hawa on 2026-08-27, and a *decision* rather than a derivation: `BLUEPRINT.md` states no
+# clip duration anywhere. Its only fixed duration is `max_speech_duration_s=38`, which governs
+# ASR input. The 20-55 s figure quoted around this project comes from the pro-kurdish-reel
+# operator runbook, not from §3, so this range stands on the same footing as `MIN_HOOK_SCORE`
+# and changing it should read as a changed decision.
+#
+# Why the wide, long window rather than the runbook's: a grown span is likelier to contain a
+# whole argument, and that is the entire mechanism. Measured on the real 75-minute episode, the
+# strongest candidate scored hook 0.90 with misleading-edit **0.85** across 5.3 seconds — a
+# five-second cut of a conversation is close to definitionally not self-contained, which is
+# exactly what that risk score measures.
+#
+# The minimum is an eligibility bar in both directions: a seed that cannot reach it on complete
+# sentence boundaries becomes ineligible where today it might have been judged. Whether
+# eligibility rises or falls overall is measured in T5, not assumed.
+MIN_CANDIDATE_SPAN_MS: Final = 30_000
+MAX_CANDIDATE_SPAN_MS: Final = 90_000
+
+
 def _verdict_is_shippable(verdict: JudgeVerdict) -> bool:
     """Whether §2's editorial thresholds would let this verdict become a clip.
 
