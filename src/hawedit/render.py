@@ -265,21 +265,28 @@ def linked_libraries(ffmpeg: Path) -> str:
 # Measured 2026-08-27 with the OpenCV frontal and profile cascades, 60 samples per source,
 # 20 s apart, on two 1920x1080 Kurdish podcast sources:
 #
-#   ep10-0zC2bd03stw   246 detections   face centre 33% down   face height 28.5% of frame
-#   01-MmQ9XPggSig     309 detections   face centre 45% down   face height 11.6% of frame
+#   ep10-0zC2bd03stw   1920x1080   246 detections   centre 33% down   face height 28.5%
+#   ep29-VbX8UWwl1c4   2560x1440   163 detections   centre 31% down   face height 16.2%
+#   01-MmQ9XPggSig     1920x1080   309 detections   centre 45% down   face height 11.6%
 #
-# The first is already composed on the rule-of-thirds line with a face filling more than a
-# quarter of the frame, and any unconditional tightening would make it worse. So the target is
-# set *below* what a well-shot source already achieves: it is a floor that a good frame clears
-# without being touched, not an ideal every frame is dragged to. D-258.
-TARGET_FACE_HEIGHT_SHARE: Final = 0.22
+# The first two are the owner's own channel and both are well composed on the rule-of-thirds
+# line; the third is a wide shot from a different channel. So the target is a floor that every
+# well-shot source clears untouched, not an ideal every frame is dragged to — and it is set
+# below **16.2%**, not below 28.5%.
+#
+# It was 0.22 for one commit, derived from ep10 alone, and ep29 disproved it. Measured: at 0.22
+# ep29's 810x1440 crop tightens to 598x1062, so the upscale to 1080 wide goes from 1.33x to
+# 1.81x — throwing away exactly the sharpness 1440p bought — and the crop cuts into the top of
+# the subject's head. One source is not a distribution. D-258.
+TARGET_FACE_HEIGHT_SHARE: Final = 0.15
 # Where the face centre sits in the crop. Standard upper-third framing for a talking head, and
 # close to the 33% the well-shot source measures on its own.
 FACE_COMPOSITION_LINE: Final = 0.38
-# The cap, and the honest part. A 1920x1080 source is already upscaled 1.78x to reach 1920 tall;
-# bringing an 11.6% face to 22% needs a further 1.9x, so 3.4x total on ~850 kbps footage that
-# cannot carry it. Capped at 1.5x the face reaches 17.4% and the total upscale is 2.67x: better
-# framed and visibly softer. A source shot that wide is better fixed at the camera.
+# The cap, and the honest part. Tightening is never free: a 1920x1080 source is already upscaled
+# 1.78x to reach 1920 tall, so every bit of zoom comes straight out of sharpness. The 11.6% wide
+# shot reaches 15% at 1.29x, taking its upscale to 2.30x — better framed and visibly softer, and
+# a source shot that wide is better fixed at the camera than here. The cap bounds how far that
+# trade can ever go.
 MAX_VERTICAL_ZOOM: Final = 1.5
 
 

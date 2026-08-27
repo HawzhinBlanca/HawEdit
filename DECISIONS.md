@@ -13531,24 +13531,34 @@ for no stated reason.
 Framing a subject vertically therefore requires taking *less* than the full height, which is a
 zoom — and this footage is 1920x1080 at ~850 kbps, already upscaled 1.78x to reach 1920 tall.
 
-**Measured before choosing a number.** OpenCV frontal and profile cascades, both facings, 60
-samples per source 20 s apart:
+**Measured before choosing a number, and then corrected by a third measurement.** OpenCV frontal
+and profile cascades, both facings, 60 samples per source:
 
-| source | detections | face centre | face height |
-|---|---|---|---|
-| `ep10-0zC2bd03stw` | 246 | 33% down | **28.5%** of frame |
-| `01-MmQ9XPggSig` | 309 | 45% down | **11.6%** |
+| source | resolution | detections | face centre | face height |
+|---|---|---|---|---|
+| `ep10-0zC2bd03stw` | 1920x1080 | 246 | 33% down | **28.5%** |
+| `ep29-VbX8UWwl1c4` | 2560x1440 | 163 | 31% down | **16.2%** |
+| `01-MmQ9XPggSig` | 1920x1080 | 309 | 45% down | **11.6%** |
 
-The first is already composed on the rule-of-thirds line. **A blanket zoom would have fixed the
-second and ruined the first**, so `TARGET_FACE_HEIGHT_SHARE` is 0.22 — set *below* what a
-well-shot source achieves, a floor a good frame clears untouched rather than an ideal every frame
-is dragged to. `FACE_COMPOSITION_LINE` is 0.38. Same rule as D-254's: what the source got right is
-not something to improve.
+The first two are the owner's own channel and both are well composed on the rule-of-thirds line;
+the third is a wide shot from a different channel. **A blanket zoom would have fixed the third and
+ruined the first two**, so `TARGET_FACE_HEIGHT_SHARE` is a floor a good frame clears untouched
+rather than an ideal every frame is dragged to. `FACE_COMPOSITION_LINE` is 0.38. Same rule as
+D-254's: what the source got right is not something to improve.
 
-**`MAX_VERTICAL_ZOOM` is 1.5, and it is the honest part.** Bringing an 11.6% face to 22% needs
-1.9x, so 3.4x total upscale on footage that cannot carry it. Capped at 1.5x the face reaches 17.4%
-and the total is 2.67x: better framed, visibly softer. A source shot that wide is better fixed at
-the camera than in this pipeline, and that trade is recorded rather than hidden.
+**The floor is 0.15, and it was 0.22 for one commit.** 0.22 came from ep10 alone. ep29 arrived,
+measured 16.2%, and disproved it: at 0.22 its 810x1440 crop tightens to 598x1062, so the upscale
+to 1080 wide goes from **1.33x to 1.81x** — throwing away exactly the sharpness 1440p bought — and
+the crop cuts into the top of the subject's head. Rendered both ways and compared frame to frame
+before changing the number. One source is not a distribution, and a constant derived from one is
+a guess wearing a measurement's clothes.
+
+**`MAX_VERTICAL_ZOOM` is 1.5, and it is the honest part.** Tightening is never free: a 1920x1080
+source is already upscaled 1.78x to reach 1920 tall, so every bit of zoom comes straight out of
+sharpness. The 11.6% wide shot reaches the 15% floor at 1.29x, taking its upscale to 2.30x —
+better framed and visibly softer. A source shot that wide is better fixed at the camera than in
+this pipeline, and that trade is recorded rather than hidden. The cap bounds how far it can ever
+go: a face small enough to demand more stays under-sized instead of being upscaled into mush.
 
 **One vertical placement per clip, from the raw track.** The horizontal crop moves because people
 take turns talking; the vertical one does not, because nobody stands up mid-sentence at a podcast

@@ -37,7 +37,9 @@ from hawedit.render import (
     DELIVERY_LUFS,
     ENCODER_PROBE_SIZE,
     FACE_COMPOSITION_LINE,
+    MAX_VERTICAL_ZOOM,
     NVENC_MIN_FRAME,
+    TARGET_FACE_HEIGHT_SHARE,
     VERTICAL_HEIGHT,
     VERTICAL_WIDTH,
     Encoder,
@@ -52,6 +54,7 @@ from hawedit.render import (
     frame_rate,
     quality_args,
     render_clip,
+    vertical_crop_size,
     vertical_framing,
 )
 from hawedit.sentences import Sentence
@@ -1326,17 +1329,23 @@ def test_a_real_encode_lands_on_the_loudness_target(tmp_path: Path) -> None:
 
 
 def test_a_well_framed_source_is_not_zoomed() -> None:
-    """ep10's own numbers: a face 28.5% of frame height, centred 33% down.
+    """Both of the owner's own sources, measured, and neither may be touched.
 
-    Measured 2026-08-27 across 246 detections in 60 samples. A source shot like this is already
-    on the rule-of-thirds line, and any unconditional tightening would make the owner's own
-    footage worse while fixing footage that is not theirs. The target is set below what a good
-    frame achieves precisely so a good frame clears it untouched. D-258.
+    ep10 at 1920x1080: 246 detections, face 28.5% of frame height, centred 33% down.
+    ep29 at 2560x1440: 163 detections, face 16.2%, centred 31% down.
+
+    The target was 0.22 for one commit, derived from ep10 alone, and ep29 disproved it — at 0.22
+    its 810x1440 crop tightened to 598x1062, taking the upscale from 1.33x to 1.81x and cutting
+    into the top of the subject's head. One source is not a distribution, so the floor sits below
+    the *lower* of the two. D-258.
     """
-    crop_w, crop_h, y = vertical_framing(1080, 607, 1080, face_center_y=360, face_height=308)
-
-    assert (crop_w, crop_h) == (607, 1080), "a well-framed source was zoomed"
-    assert y == 0, "the full-height crop has nowhere to move, and must not pretend otherwise"
+    ep10_w, ep10_h = vertical_crop_size(1920, 1080)
+    assert vertical_framing(1080, ep10_w, ep10_h, 360, 308) == (ep10_w, ep10_h, 0)
+    ep29_w, ep29_h = vertical_crop_size(2560, 1440)
+    assert vertical_framing(1440, ep29_w, ep29_h, 443, 234) == (ep29_w, ep29_h, 0), (
+        "ep29 is well composed at 1440p and tightening it would spend the sharpness that "
+        "resolution bought"
+    )
 
 
 def test_a_small_face_is_tightened_to_the_composition_line() -> None:
@@ -1346,15 +1355,31 @@ def test_a_small_face_is_tightened_to_the_composition_line() -> None:
     MAX_VERTICAL_ZOOM because every bit of it is upscale on a source already carried 1.78x to
     reach 1920 tall.
     """
-    crop_w, crop_h, y = vertical_framing(1080, 607, 1080, face_center_y=481, face_height=125)
+    base_w, base_h = vertical_crop_size(1920, 1080)
+    crop_w, crop_h, y = vertical_framing(1080, base_w, base_h, face_center_y=481, face_height=125)
 
-    assert crop_h == 720, f"expected the 1.5x cap, got {1080 / crop_h:.2f}x"
-    assert crop_w == 404, "the aspect ratio must survive the zoom"
-    assert abs(crop_w / crop_h - 9 / 16) < 0.01
+    assert (crop_w, crop_h) == (466, 832), "the wide shot was not tightened toward the target"
+    assert abs(125 / crop_h - TARGET_FACE_HEIGHT_SHARE) < 0.01, "it did not reach the floor"
+    assert abs(crop_w / crop_h - 9 / 16) < 0.01, "the aspect ratio must survive the zoom"
     assert y == 481 - int(FACE_COMPOSITION_LINE * crop_h), "the face is not on the line"
-    assert 0 < y <= 1080 - crop_h, "the crop left the frame"
     # The point of the exercise: less dead wall above the subject than the full-height crop.
-    assert y > 0, "nothing was trimmed from the top"
+    assert 0 < y <= 1080 - crop_h, "nothing was trimmed from the top, or the crop left the frame"
+
+
+def test_tightening_stops_at_the_cap_however_small_the_face() -> None:
+    """The cap is what stops a distant subject from being upscaled into mush.
+
+    Tightening is never free — every bit of it comes straight out of sharpness on a source
+    already carried 1.78x to reach 1920 tall — so a face small enough to demand more than
+    MAX_VERTICAL_ZOOM gets the cap and stays under-sized rather than getting a soft frame.
+    """
+    base_w, base_h = vertical_crop_size(1920, 1080)
+    crop_w, crop_h, _y = vertical_framing(1080, base_w, base_h, face_center_y=540, face_height=40)
+
+    assert abs(1080 / crop_h - MAX_VERTICAL_ZOOM) < 0.02, f"the cap leaked: {1080 / crop_h:.2f}x"
+    assert 40 / crop_h < TARGET_FACE_HEIGHT_SHARE, (
+        "a face this small cannot reach the floor, and the cap is what says so"
+    )
 
 
 def test_an_unmeasured_focus_point_crops_as_it_always_did() -> None:
