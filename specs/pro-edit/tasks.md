@@ -6,7 +6,7 @@
           Records the owner's scope decision and the splicing risk.
                                   (tests: test_the_edit_extension_is_a_named_decision)
 
-- [ ] T2  The hook card: the judge's `title_ckb` is burned over the opening instead of discarded.
+- [x] T2  The hook card: the judge's `title_ckb` is burned over the opening instead of discarded.
                                   (tests: test_the_hook_card_uses_the_judges_own_title,
                                           test_a_clip_without_a_title_renders_unchanged)
 

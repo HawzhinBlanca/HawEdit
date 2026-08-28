@@ -1,1 +1,2 @@
 TS=2026-08-28T14:22:09Z FEATURE=pro-edit TASK=T1 TESTS=test_the_edit_extension_is_a_named_decision VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-08-28T14:55:16Z FEATURE=pro-edit TASK=T2 TESTS=test_the_hook_card_uses_the_judges_own_title,test_a_clip_without_a_title_renders_unchanged,test_a_long_title_wraps_rather_than_running_off_the_frame VERIFY=pass REPORT=.gate/last-test-run.xml
