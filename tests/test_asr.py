@@ -30,8 +30,10 @@ from typing import Any
 import pytest
 
 from hawedit.asr import (
+    CHAMPION_ADAPTER_ENV,
     LONG_AUDIO_THRESHOLD_S,
     ASRResult,
+    ChampionUnavailable,
     Hardware,
     IncomparableHardware,
     MeasurementSession,
@@ -46,6 +48,7 @@ from hawedit.asr import (
     adapter_fingerprint,
     create_omni_asr_producer,
     long_audio_failure_rate,
+    resolve_champion_adapter,
     transcribe_prepared_segments,
     validate_adapter,
 )
@@ -1461,3 +1464,51 @@ def test_the_delivered_clip_sidecar_carries_the_adapter_too(tmp_path: Path) -> N
 
     assert shipped["asr"]["adapter"] == identity
     assert ClipTranscript.from_dict(shipped).asr.adapter == identity, "it must survive a round trip"
+
+
+# --- Champion Supremacy: the fine-tuned decoder is not optional ------------------------------
+
+
+def test_a_missing_champion_is_a_hard_stop_not_a_fallback(tmp_path: Path) -> None:
+    """The owner's canon, decided 2026-08-11 and marked FINAL: nothing may divert the champion.
+
+    The incident behind it is 494 of 494 clips drafted by the wrong engine — a dataset that
+    looked finished, whose mixed provenance poisoned every measurement taken from it. So an
+    absent bundle raises; it never quietly returns `None` and lets the base decoder draft.
+    """
+    with pytest.raises(ChampionUnavailable) as caught:
+        resolve_champion_adapter(candidates=(str(tmp_path / "nowhere"),), env={})
+
+    message = str(caught.value)
+    assert "nowhere" in message, "the refusal must name what it tried"
+    assert CHAMPION_ADAPTER_ENV in message, "and how to point it at the bundle"
+    assert "--stock-decoder" in message, "and how to ask for the base deliberately"
+
+
+def test_a_half_bundle_is_not_a_champion(tmp_path: Path) -> None:
+    """Config without weights is a directory, not a decoder.
+
+    `adapter_fingerprint` covers config *and* weights so a retrain is a different model to every
+    reader; accepting a bundle missing either would key reuse on an identity that cannot be
+    computed.
+    """
+    half = tmp_path / "half"
+    half.mkdir()
+    (half / "adapter_config.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ChampionUnavailable):
+        resolve_champion_adapter(candidates=(str(half),), env={})
+
+
+def test_the_environment_override_wins_over_the_defaults(tmp_path: Path) -> None:
+    """A machine that keeps the bundle elsewhere must not have to edit the source."""
+    bundle = tmp_path / "champion"
+    bundle.mkdir()
+    (bundle / "adapter_config.json").write_text("{}", encoding="utf-8")
+    (bundle / "adapter_model.safetensors").write_bytes(b"\x00")
+
+    found = resolve_champion_adapter(
+        candidates=(str(tmp_path / "nowhere"),),
+        env={CHAMPION_ADAPTER_ENV: str(bundle)},
+    )
+    assert found == bundle

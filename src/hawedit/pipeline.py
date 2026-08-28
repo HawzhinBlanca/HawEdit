@@ -2674,6 +2674,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--stock-decoder",
+        action="store_true",
+        help=(
+            "draft with the base OmniASR decoder instead of the owner's fine-tuned champion. "
+            "The champion is the default because the base hallucinates words it does not emit; "
+            "asking for the base is a deliberate choice and is recorded in the transcript"
+        ),
+    )
+    parser.add_argument(
         "--verdict", type=Path, help="a JudgeVerdict JSON document to stand in for Stage 4"
     )
     parser.add_argument(
@@ -2837,6 +2846,14 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         Exactly what `run_pipeline` raises, plus `ValueError` for a combination of flags that
         cannot produce a coherent run.
     """
+    if args.stock_decoder and args.omni_asr_adapter:
+        raise ValueError(
+            "--stock-decoder and --omni-asr-adapter ask for different decoders; pick one"
+        )
+
+    if args.stock_decoder and not args.omni_asr:
+        raise ValueError("--stock-decoder applies only to a Stage 1 run; it needs --omni-asr")
+
     if args.face_reframe:
         # First, ahead of every other check: an obsolete flag is a fact about the invocation
         # rather than about a combination, and answering it after an unrelated prerequisite
@@ -2949,12 +2966,20 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
 
     canonical_asr = None
     if args.omni_asr:
-        from hawedit.asr import create_omni_asr_producer
+        from hawedit.asr import create_omni_asr_producer, resolve_champion_adapter
 
+        # The champion drafts everything unless the operator deliberately says otherwise. Its
+        # absence raises rather than falling back to the base decoder: the owner's Champion
+        # Supremacy canon (2026-08-11, FINAL) forbids a quiet divert, and the measured reason is
+        # that the base emits hallucinations the champion does not. An explicit --stock-decoder
+        # is still allowed, because a deliberate choice is not a divert.
+        adapter = args.omni_asr_adapter
+        if adapter is None and not args.stock_decoder:
+            adapter = resolve_champion_adapter()
         canonical_asr = create_omni_asr_producer(
             args.omni_asr_runtime,
             distro=args.wsl_distro,
-            lora_adapter=args.omni_asr_adapter,
+            lora_adapter=adapter,
         )
 
     assert_devices_available(

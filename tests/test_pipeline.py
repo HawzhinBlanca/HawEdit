@@ -3222,6 +3222,16 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--face-reframe is now the default and the flag is gone",
     ),
     (
+        "two decoders asked for at once",
+        ["--omni-asr", "--stock-decoder", "--omni-asr-adapter", "x"],
+        "ask for different decoders",
+    ),
+    (
+        "the base decoder without a Stage 1 run to draft with it",
+        ["--transcript", "x.json", "--stock-decoder"],
+        "--stock-decoder applies only to a Stage 1 run",
+    ),
+    (
         "claiming ZDR governance with nothing being sent anywhere",
         ["--transcript", "x.json", "--sentences", "0", "--zero-data-retention"],
         "governance flags apply only with a Gemini or Vertex route",
@@ -4891,6 +4901,16 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "an invocation still passing the flag that was inverted",
         ("--face-reframe",),
         "--face-reframe is now the default and the flag is gone",
+    ),
+    (
+        "two decoders asked for at once",
+        ("--omni-asr", "--stock-decoder", "--omni-asr-adapter", "x"),
+        "ask for different decoders",
+    ),
+    (
+        "the base decoder without a Stage 1 run to draft with it",
+        ("--stock-decoder",),
+        "--stock-decoder applies only to a Stage 1 run",
     ),
     (
         "confidential without cloud",

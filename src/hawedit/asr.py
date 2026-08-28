@@ -30,7 +30,7 @@ import os
 import subprocess
 import time
 import wave
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -68,10 +68,12 @@ from hawedit.wsl_setup import (
 )
 
 __all__ = [
+    "CHAMPION_ADAPTER_ENV",
     "LONG_AUDIO_THRESHOLD_S",
     "ASRAdapter",
     "ASRResult",
     "CanonicalTranscriptProducer",
+    "ChampionUnavailable",
     "Hardware",
     "IncomparableHardware",
     "Measurement",
@@ -85,6 +87,7 @@ __all__ = [
     "WslOmniAsrProducer",
     "create_omni_asr_producer",
     "long_audio_failure_rate",
+    "resolve_champion_adapter",
     "validate_adapter",
 ]
 
@@ -199,6 +202,59 @@ class CanonicalTranscriptProducer(Protocol):
         work_dir: Path,
         ffmpeg: Path | None = None,
     ) -> RawTranscript: ...
+
+
+# Where the owner's fine-tuned decoder lives. WSL paths, in the UNC forms Windows can read,
+# because `adapter_fingerprint` reads the bundle host-side — the reuse decision happens before
+# the worker is invoked, so an identity that only exists inside WSL cannot key anything.
+CHAMPION_ADAPTER_CANDIDATES: Final = (
+    r"\\wsl.localhost\Ubuntu\home\ai\cortex_champion_model",
+    r"\\wsl$\Ubuntu\home\ai\cortex_champion_model",
+)
+CHAMPION_ADAPTER_ENV: Final = "HAWEDIT_CHAMPION_ADAPTER"
+
+
+class ChampionUnavailable(RuntimeError):
+    """The fine-tuned decoder could not be found, and this run refuses to draft without it."""
+
+
+def resolve_champion_adapter(
+    candidates: Sequence[str] = CHAMPION_ADAPTER_CANDIDATES,
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    """The champion bundle, or a refusal. Never a silent fall back to the base decoder.
+
+    **The owner's canon, decided 2026-08-11 and marked FINAL:** the champion transcribes every
+    clip, nothing may divert it, and a failure halts the run rather than degrading it. The
+    incident behind that rule is 494 of 494 clips drafted by the wrong engine — a dataset that
+    looked finished and whose mixed provenance poisoned every measurement taken from it.
+
+    It is not a cosmetic preference. Measured on this machine against the same in-memory
+    checkpoint, base and champion differ on **3 of 3** real Sorani clips, and at 1:00 the base
+    opens with a hallucinated `سانە` the champion does not emit
+    (`evidence/the-champion-adapter-would-have-shipped-the-base-models-words.md`).
+
+    Raises:
+        ChampionUnavailable: no bundle found, naming every path tried and how to point at one.
+    """
+    environ = os.environ if env is None else env
+    override = environ.get(CHAMPION_ADAPTER_ENV, "").strip()
+    tried: list[str] = []
+    for raw in ([override] if override else []) + list(candidates):
+        bundle = Path(raw)
+        tried.append(str(bundle))
+        if (bundle / "adapter_config.json").is_file() and (
+            bundle / "adapter_model.safetensors"
+        ).is_file():
+            return bundle
+    raise ChampionUnavailable(
+        "the fine-tuned OmniASR-7B champion is required for Stage 1 and no bundle was found. "
+        f"Tried: {', '.join(tried)}. Set {CHAMPION_ADAPTER_ENV} to the bundle, pass "
+        "--omni-asr-adapter, or ask for the base decoder deliberately with --stock-decoder. "
+        "Falling back on its own is what the owner's Champion Supremacy canon forbids: the base "
+        "model hallucinates words the champion does not emit, and a transcript drafted by the "
+        "wrong engine poisons every measurement taken from it."
+    )
 
 
 def adapter_fingerprint(adapter_dir: Path) -> str:

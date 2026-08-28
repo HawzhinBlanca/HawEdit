@@ -13610,3 +13610,46 @@ artifact, and a verdict about spans nobody watches would be evidence about nothi
 **Speaker tracking stays blocked.** `pyannote/speaker-diarization-community-1` is gated and the
 licence is unaccepted, so the crop follows the largest face rather than the person talking. The
 artifact must keep recording `face_tracked` rather than claiming what it does not do.
+
+
+---
+
+## D-260
+
+**The champion drafts every clip, and its absence halts the run.** `--omni-asr` now resolves the
+owner's fine-tuned OmniASR-7B LoRA by default; a missing bundle raises `ChampionUnavailable`
+rather than quietly returning `None` and letting the base decoder draft.
+
+**This implements an owner canon, not a preference.** *Champion Supremacy*, decided 2026-08-11 and
+marked FINAL: "the champion transcribes **every** clip. Nothing may divert it — not
+`use_finetuned_asr`, not a decode error, not a busy server." Its second rule is that a failure
+halts rather than degrades, and its third binds agents too: *"An honest halt is always acceptable;
+a flattering 'finished' is never."* The incidents behind it are **494 of 494 clips drafted by the
+wrong engine** and **25 silently degraded clips** — a dataset that looked finished, whose mixed
+provenance poisoned every measurement taken from it.
+
+**It is not cosmetic, and this repository had already measured that.**
+`evidence/the-champion-adapter-would-have-shipped-the-base-models-words.md`: base and champion run
+against the same in-memory checkpoint differ on **3 of 3** real Sorani clips, and at 1:00 the base
+opens with a hallucinated `سانە` the champion does not emit.
+
+**Every run in this session drafted with the base decoder.** ep01, ep10 and ep29 all recorded
+`adapter: None`, because the champion was an opt-in flag nobody passed. Their transcripts, their
+escalation rates — 91%, 68%, 48% — and every editorial verdict taken from them are the base
+model's words. That is precisely the mixed provenance the canon exists to prevent, and it happened
+here because the default was wrong.
+
+**The bundle is found host-side**, at `\\wsl.localhost\Ubuntu\home\ai\cortex_champion_model` or the `\\wsl$` form, overridable with
+`HAWEDIT_CHAMPION_ADAPTER`. Host-side because `adapter_fingerprint` keys transcript reuse *before*
+the worker is invoked, so an identity that only exists inside WSL cannot key anything. Resolved
+fingerprint on this machine: `lora:22b2c9eed5a67425`.
+
+**`--stock-decoder` remains, because a deliberate choice is not a divert.** The canon permits the
+owner to select a smaller engine explicitly; what it forbids is the system choosing one. The flag
+is refused alongside `--omni-asr-adapter` (two decoders asked for at once) and without
+`--omni-asr` (nothing to draft with), and the choice is recorded in `AsrProvenance` either way.
+
+**`BLOCKED.md` #21 is unchanged and still open.** The champion runs and is recorded; what it still
+lacks is a §7 registry row, because that needs a licence for weights Hawa trained. Making it the
+default does not need the row — the adapter path takes no registry lookup — but
+`python -m hawedit.models` still cannot report on it.
