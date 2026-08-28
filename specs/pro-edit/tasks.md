@@ -21,7 +21,7 @@
                                           test_captions_shift_with_the_removed_silence,
                                           test_the_removed_total_is_recorded)
 
-- [ ] T5  Punch-ins: the crop changes scale on sentence boundaries, so no clip is one framing
+- [x] T5  Punch-ins: the crop changes scale on sentence boundaries, so no clip is one framing
           throughout.
                                   (tests: test_the_crop_changes_scale_at_least_once,
                                           test_a_scale_change_lands_on_a_sentence_boundary,
