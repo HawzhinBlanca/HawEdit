@@ -8,7 +8,7 @@
                                           test_static_crop_opts_out_and_is_recorded,
                                           test_a_missing_face_tracker_degrades_visibly)
 
-- [ ] T2  `FocusPoint` carries the measured face box, and `crop_filter` places the crop
+- [x] T2  `FocusPoint` carries the measured face box, and `crop_filter` places the crop
           vertically from it — leaving a well-composed source alone.
                                   (tests: test_a_well_framed_source_is_not_zoomed,
                                           test_a_small_face_is_tightened_to_the_composition_line,
