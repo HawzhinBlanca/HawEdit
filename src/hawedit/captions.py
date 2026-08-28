@@ -148,13 +148,16 @@ class CaptionTheme:
     margin_l: int = 60
     margin_r: int = 60
     margin_v: int = 140
+    # 2 = bottom-centre, which is what every theme used before the hook card needed the top.
+    alignment: int = 2
 
     def style_row(self, name: str, font_name: str, font_size: int) -> str:
         """One `Style:` line. `%g` keeps `3.0` as `3` so existing goldens still match."""
         return (
             f"Style: {name},{font_name},{font_size},{self.primary},{self.secondary},"
             f"{self.outline_colour},{self.back_colour},{int(self.bold)},0,0,0,100,100,0,0,1,"
-            f"{self.outline:g},{self.shadow:g},2,{self.margin_l},{self.margin_r},"
+            f"{self.outline:g},{self.shadow:g},{self.alignment},{self.margin_l},"
+            f"{self.margin_r},"
             f"{self.margin_v},1"
         )
 
@@ -182,6 +185,26 @@ REPORT_THEME: Final = CaptionTheme()
 # 108 lands in that band while leaving the widest popup (22 characters, ~620 px) comfortably
 # inside the 920 px the left and right margins leave for it.
 VIRAL_FONT_SIZE: Final = 108
+
+# The opening card. A social clip is scrolled past in the first second or it is not watched, and
+# Stage 4 already writes a Kurdish title for every verdict — `title_ckb` — which the render threw
+# away for as long as it existed. Measured on the ep29 delivery: the judge wrote a real title and
+# the burned clip opened on speech with nothing on screen but karaoke. D-259.
+HOOK_CARD_MS: Final = 1_800
+HOOK_CARD_FONT_SIZE: Final = 84
+# Top third rather than the caption band: the card and the first caption overlap in time, and two
+# pieces of text in the same place is worse than none.
+HOOK_CARD_THEME: Final = CaptionTheme(
+    primary="&H00FFFFFF",
+    secondary="&H00FFFFFF",
+    bold=True,
+    outline=5.0,
+    shadow=3.0,
+    margin_l=60,
+    margin_r=60,
+    margin_v=220,
+    alignment=8,
+)
 
 VIRAL_THEME: Final = CaptionTheme(
     primary="&H0000E5FF",
@@ -553,6 +576,25 @@ def subtitle_filter(ass_path: Path, fonts_dir: Path) -> str:
     )
 
 
+def wrap_title_lines(title: str, max_chars: int = DEFAULT_MAX_CHARS_PER_LINE) -> list[str]:
+    """Break a hook card's title on whitespace, greedily, at `max_chars`.
+
+    Separate from `wrap_caption_lines` because that one wraps *aligned words* and carries their
+    timings; a title has no timings, it is one string the judge wrote. Sharing it would mean
+    inventing `Word`s with fake timestamps to satisfy a signature.
+    """
+    words = title.split()
+    if not words:
+        return []
+    lines = [words[0]]
+    for word in words[1:]:
+        if len(lines[-1]) + 1 + len(word) <= max_chars:
+            lines[-1] = f"{lines[-1]} {word}"
+        else:
+            lines.append(word)
+    return lines
+
+
 def wrap_caption_lines(
     words: Sequence[Word],
     max_chars: int = DEFAULT_MAX_CHARS_PER_LINE,
@@ -750,6 +792,7 @@ def build_ass(
     clip_duration_ms: int | None = None,
     theme: CaptionTheme = REPORT_THEME,
     max_words_per_event: int | None = None,
+    title_ckb: str | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -806,6 +849,11 @@ def build_ass(
             "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
             "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
             theme.style_row("Kurdish", font_name, font_size),
+            *(
+                [HOOK_CARD_THEME.style_row("Hook", font_name, HOOK_CARD_FONT_SIZE)]
+                if title_ckb
+                else []
+            ),
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -828,6 +876,16 @@ def build_ass(
         )
 
     events: list[str] = []
+    if title_ckb:
+        # Layer 1, above the karaoke: they overlap in time by design — the card holds while the
+        # first words are already being spoken, which is what a scroll-stopping open looks like.
+        events.append(
+            f"Dialogue: 1,{_ass_time(0)},{_ass_time(HOOK_CARD_MS)},Hook,,0,0,0,,"
+            + "\\N".join(
+                _escape_ass_text(line)
+                for line in wrap_title_lines(title_ckb, max_chars=max_chars_per_line)
+            )
+        )
     for sentence in sentences:
         if max_words_per_event is None:
             lines = wrap_caption_lines(sentence.words, max_chars=max_chars_per_line)

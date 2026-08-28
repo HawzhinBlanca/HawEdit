@@ -1615,3 +1615,23 @@ def test_every_decision_the_root_documents_cite_exists() -> None:
         cited = set(re.findall(r"\b(D-\d{3})\b", path.read_text(encoding="utf-8")))
         missing = sorted(cited - recorded)
         assert not missing, f"{path.name} cites decisions that do not exist: {missing}"
+
+
+def test_the_edit_extension_is_a_named_decision() -> None:
+    """§3 Stage 6 is one sentence and `specs/pro-edit` extends it.
+
+    BLUEPRINT asks for "Reframing, captions, encode" and says nothing about cutting, pacing,
+    titles or assembly. Extending a frozen spec is legitimate; doing it without an ADR is how a
+    system quietly stops matching the document it claims to implement. Same footing as D-254's
+    target range, which BLUEPRINT also does not state.
+    """
+    decisions = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+    assert "## D-259" in decisions, "the edit extension needs an ADR before it needs code"
+
+    blueprint = (ROOT / "BLUEPRINT.md").read_text(encoding="utf-8")
+    stage_six = blueprint[blueprint.index("### Stage 6") :][:600]
+    for absent in ("punch-in", "b-roll", "hook card", "assembly"):
+        assert absent not in stage_six.lower(), (
+            f"BLUEPRINT's Stage 6 now mentions {absent!r}; this work is no longer a divergence "
+            f"and D-259 must cite the § instead of standing as an owner decision"
+        )

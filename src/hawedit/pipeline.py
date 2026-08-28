@@ -2398,6 +2398,10 @@ def run_pipeline(
                 # on screen for fifteen seconds. Both were true of every clip shipped before
                 # this line existed. D-247.
                 theme=VIRAL_THEME,
+                # The judge already wrote a Kurdish title for this clip and the render threw it
+                # away. A social clip is scrolled past in its first second, and Stage 4's own
+                # words are a better hook than nothing on screen. D-259.
+                title_ckb=clip.output.title_ckb if clip.output else None,
                 max_chars_per_line=POPUP_MAX_CHARS,
                 max_words_per_event=POPUP_MAX_WORDS,
             ),

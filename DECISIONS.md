@@ -13573,3 +13573,40 @@ default to `None` — unmeasured rather than zero, as D-033 established for `pay
 **Still not what §3 Stage 6 specifies.** `Reframe.SPEAKER_TRACKED` needs diarization
 (`BLOCKED.md` #4), so the default follows the dominant face rather than the person talking, and on
 a two-shot it will sometimes hold on a listener. Better than a wall; not the thing.
+
+
+---
+
+## D-259
+
+**§3 Stage 6 is one sentence, and this extends it.** The spec says *"Reframing, captions,
+encode."* It does not ask for cutting, pacing, titles or assembly, and it does not forbid them.
+So every part of `specs/pro-edit` is a deliberate extension on the same footing as D-254's target
+range, recorded here rather than smuggled in as an implementation detail.
+
+**What the render actually produced, measured on the ep29 delivery.** One unbroken 34.65 s shot:
+**zero** camera cuts inside the span, **one** crop rectangle for the whole clip — `crop_filter`
+fixes `crop_w`/`crop_h` before building the filter string, so a scale change is not merely absent
+but structurally impossible — no vertical movement, and 30 uniform karaoke caption events. The
+judge's `title_ckb` was written by Stage 4 and discarded. Internal silence was 1.20 s across three
+gaps, 3.5% of the clip, which is the one thing that was already fine.
+
+That is an excerpt with subtitles. It passed every check in a 3,278-test suite, because **no test
+asserted anything about visual variety** — not a cut count, not a scale change, not a shot
+duration.
+
+**Hawa asked for both punch-ins and multi-moment splicing** (2026-08-28), having been told
+splicing is precisely what `misleading_edit_risk` penalises, plus hook cards, silence tightening,
+speaker-tracked reframe and emphasis captions.
+
+**The order is deliberate: safe work first, the risky thing last.** A hook card, emphasis and
+silence tightening cannot change what anyone is understood to have said. Punch-ins change only how
+the same continuous speech is framed. Assembly changes which words sit beside which, and that is
+the one thing §2's editorial gate exists to police — so it lands after the safe work has already
+made the clip look edited, and the judge scores the **assembly**, never the source spans. Fifteen
+of fifteen verdicts so far scored 0.10 on single continuous spans; a spliced reel is a different
+artifact, and a verdict about spans nobody watches would be evidence about nothing.
+
+**Speaker tracking stays blocked.** `pyannote/speaker-diarization-community-1` is gated and the
+licence is unaccepted, so the crop follows the largest face rather than the person talking. The
+artifact must keep recording `face_tracked` rather than claiming what it does not do.

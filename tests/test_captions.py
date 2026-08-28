@@ -54,6 +54,7 @@ from hawedit.captions import (
     render_caption_png,
     subtitle_filter,
     wrap_caption_lines,
+    wrap_title_lines,
 )
 from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
@@ -1211,3 +1212,71 @@ def test_the_viral_font_size_is_set_from_measured_ink_not_from_the_point_number(
     # The widest popup the chunker can emit must still fit between the margins. At 108 pt
     # Kurdish measures about 28 px per character, and the theme leaves 1080 - 80 - 80 = 920.
     assert 1080 - VIRAL_THEME.margin_l - VIRAL_THEME.margin_r > POPUP_MAX_CHARS * 28
+
+
+# --- pro-edit T2: the judge's own title becomes the hook card --------------------------------
+
+
+def _a_hook_sentence() -> Sentence:
+    return Sentence(
+        words=(
+            Word(w="ماڵێک", start_ms=0, end_ms=500, conf=0.9),
+            Word(w="دانیشتوون.", start_ms=500, end_ms=1_200, conf=0.9),
+        ),
+        complete=True,
+    )
+
+
+def test_the_hook_card_uses_the_judges_own_title() -> None:
+    """Stage 4 writes `title_ckb` for every verdict and the render discarded it.
+
+    Measured on the ep29 delivery: the judge wrote a real Kurdish title and the burned clip
+    opened on speech with nothing on screen but karaoke. A social clip is scrolled past in its
+    first second. D-259.
+    """
+    title = "ئایا توێکاری حەرامە؟"
+    ass = build_ass(
+        (_a_hook_sentence(),),
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        max_words_per_event=3,
+        title_ckb=title,
+    )
+
+    assert "Style: Hook," in ass, "the card needs its own style or it inherits the caption band"
+    hook_events = [line for line in ass.splitlines() if line.startswith("Dialogue: 1,")]
+    assert len(hook_events) == 1, f"expected exactly one hook event, got {len(hook_events)}"
+    assert title.split()[0] in hook_events[0], "the judge's words are not on the card"
+    # Layer 1, above the karaoke, and overlapping it in time by design.
+    assert hook_events[0].startswith("Dialogue: 1,0:00:00.00,")
+    # The card sits at the top; the captions keep the bottom band they were tuned for.
+    hook_style = next(line for line in ass.splitlines() if line.startswith("Style: Hook,"))
+    assert ",8," in hook_style, "the card must not land in the caption band"
+
+
+def test_a_clip_without_a_title_renders_unchanged() -> None:
+    """Every clip rendered before the hook card existed, and the golden among them.
+
+    A title is optional because Stage 4 can be skipped entirely — `--verdict`, a blocked judge,
+    a run that stops at Stage 5. None of those may gain a style row or an event.
+    """
+    without = build_ass((_a_hook_sentence(),), style=CaptionStyle.WORD_HIGHLIGHT)
+    assert "Style: Hook," not in without
+    assert "Dialogue: 1," not in without
+    assert build_ass((_a_hook_sentence(),), style=CaptionStyle.WORD_HIGHLIGHT, title_ckb="") == (
+        without
+    ), "an empty title must be the same as no title, not an empty card"
+
+
+def test_a_long_title_wraps_rather_than_running_off_the_frame() -> None:
+    """`wrap_title_lines` exists because a title is prose, not aligned words.
+
+    `wrap_caption_lines` wraps `Word`s and carries their timings; sharing it would mean inventing
+    timestamps to satisfy a signature.
+    """
+    lines = wrap_title_lines("یەک دوو سێ چوار پێنج شەش حەوت هەشت نۆ دە", max_chars=12)
+
+    assert len(lines) > 1, "a title longer than the line budget must wrap"
+    assert all(len(line) <= 12 for line in lines), lines
+    assert " ".join(lines).split() == "یەک دوو سێ چوار پێنج شەش حەوت هەشت نۆ دە".split(), (
+        "wrapping must not lose or reorder a word"
+    )
