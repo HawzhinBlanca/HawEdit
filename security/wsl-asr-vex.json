@@ -5,14 +5,14 @@
   "expires": "2026-09-08",
   "applicability": {
     "python": "3.12",
-    "source_sha256": "fa8172836a7ac6eefb938b30f1c281755b9a6ef5fb0e76e7eb3e0e1e7c657a35",
+    "source_sha256": "8812dfd0ef7ad934bcdbb13b70d2452ed1103f6e6c49e371c6e5c288f48516a3",
     "packages": {
       "omnilingual-asr": "0.2.0",
       "torch": "2.8.0",
       "transformers": "4.57.6"
     },
     "build_lock_sha256": "b153285953b96583bf60945783364662f6ab58f8fc1cb6f58fbdd2caa454a9a9",
-    "runtime_lock_sha256": "190844f326d409b8d6b7b9536a880e2a77a9eebfe056369688337ce6386f5aea",
+    "runtime_lock_sha256": "5e558b24e69da83e27e9ca5f49c13abdcfd03694080522e13b8688a827077e85",
     "assets": [
       {
         "name": "omniASR LLM-7B v2 weights",

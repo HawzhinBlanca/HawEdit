@@ -89,6 +89,9 @@ asr = [
     "omnilingual-asr==0.2.0; platform_system != 'Windows'", # Apache-2.0
     "fairseq2==0.6; platform_system != 'Windows'",          # MIT (D-201; the wheel metadata, not BSD-3-Clause)
     "qwen-asr==0.0.6; platform_system != 'Windows'",        # Apache-2.0
+    # The champion adapter is a PEFT LoRA and D-181 measured this missing from the runtime,
+    # which is why --omni-asr-adapter had never once loaded. D-260 makes it the default.
+    "peft==0.19.1; platform_system != 'Windows'",           # Apache-2.0 (verified on PyPI)
 ]
 cloud = [
     "google-auth==2.56.3", # Apache-2.0 — measured Vertex ADC bearer authentication

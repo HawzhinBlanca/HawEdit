@@ -296,7 +296,14 @@ def test_dependency_locks_are_complete_hash_requirements_with_named_sdist_except
     runtime_entries = re.findall(r"(?m)^([a-z0-9-]+)==([^\s\\]+)", RUNTIME_REQUIREMENTS)
     build_entries = re.findall(r"(?m)^([a-z0-9-]+)==([^\s\\]+)", BUILD_REQUIREMENTS)
 
-    assert len(runtime_entries) == 137
+    # 138 since 2026-08-28, when peft==0.19.1 was added for the champion adapter (D-261).
+    # The full --extra asr resolve under the lock's own documented command added exactly
+    # that one distribution and moved nothing else, so the other 137 lines are untouched.
+    assert len(runtime_entries) == 138
+    assert dict(runtime_entries)["peft"] == "0.19.1", (
+        "the champion adapter is a PEFT LoRA; without this the adapter path raises "
+        "ImportError inside WSL after every WAV cut, which is what D-181 measured"
+    )
     assert len(dict(runtime_entries)) == len(runtime_entries)
     assert {name for name, _version in build_entries} == {"cmake", "pip", "setuptools", "wheel"}
     assert set(SDIST_EXCEPTIONS) == {"kenlm", "sox"}

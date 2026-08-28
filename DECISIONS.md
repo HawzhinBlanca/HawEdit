@@ -13653,3 +13653,49 @@ is refused alongside `--omni-asr-adapter` (two decoders asked for at once) and w
 lacks is a §7 registry row, because that needs a licence for weights Hawa trained. Making it the
 default does not need the row — the adapter path takes no registry lookup — but
 `python -m hawedit.models` still cannot report on it.
+
+
+---
+
+## D-261
+
+**`peft==0.19.1` joins the OmniASR runtime lock, because without it the champion cannot load.**
+
+**D-181 measured this and predicted today's failure exactly.** Its third finding was `peft
+MISSING` from the runtime venv, and it wrote that the adapter path "would have raised
+`ImportError` inside WSL *after* Stage 0 and 545 WAV cuts". That is what happened on 2026-08-28,
+at 775 cuts: the run completed ingest, cut every segment, then failed all 775 identically. The
+finding was recorded and the dependency was never provisioned, so **`--omni-asr-adapter` has
+never once loaded on this machine** — it shipped in D-181 as a flag that could not work.
+
+**The failure did not say so, and that is a second defect.** `_load_adapted_llm` raises a precise
+message — *"--omni-asr-adapter needs PEFT in the OmniASR runtime. Re-run hawedit-asr-setup"* — but
+per-segment failures are collected rather than raised (D-135: "a raised exception becomes a
+recorded failure rather than an aborted run"), so 775 identical `ImportError`s surfaced as
+`canonical ASR aligned none of 775 speech regions`, with the real reason past the pipeline's
+1,024-byte error budget. The operator was told the symptom. Recorded here; not yet fixed.
+
+**Resolved with the lock's own documented command**, `uv 0.11.26` — the version its header names —
+`--extra asr --python-version 3.12 --python-platform x86_64-manylinux_2_28 --generate-hashes
+--exclude-newer 2026-08-09T10:22:16Z`. The full resolve **adds exactly one distribution and moves
+nothing else**: no removals, no version changes across the other 137. So the reviewed lines were
+left untouched and one line was inserted, rather than regenerating a lock whose every entry has
+been reviewed. (`peft` alone resolves `accelerate==1.14.0`; inside the real constraint set it
+stays at the locked `1.12.0`.)
+
+**Licence audited rather than assumed**, as D-002 requires: PyPI reports Apache-2.0 with the OSI
+classifier. Not NonCommercial, so not a refusal. The lock binds the **wheel**
+(`sha256:2113f72a…`), because this runtime installs binary-only except for the named sdist
+exceptions, and `0.19.1` is the version `adapter_config.json` records as having written the
+bundle — read from the bundle in D-181, not chosen here.
+
+**Three bindings moved with it and all three are evidence, not bookkeeping.**
+`RUNTIME_LOCK_SHA256` changes, so `security/wsl-asr-vex.json` was rebound to it; the receipt binds
+the complete installed name/version set, so re-provisioning is required before any adapted run;
+and `test_dependency_locks_are_complete_hash_requirements_with_named_sdist_exceptions` pins the
+count, which moved 137 to 138 with the reason written into the test rather than the number quietly
+edited.
+
+**What this does not settle.** `BLOCKED.md` #21 stands: the champion still has no §7 registry row,
+because that needs a licence for weights Hawa trained. PEFT being installable is about the
+*runtime*; the adapter's own terms are a separate question and this loop does not guess a licence.
