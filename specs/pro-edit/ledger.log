@@ -1,0 +1,1 @@
+TS=2026-08-28T14:22:09Z FEATURE=pro-edit TASK=T1 TESTS=test_the_edit_extension_is_a_named_decision VERIFY=pass REPORT=.gate/last-test-run.xml

@@ -2,7 +2,7 @@
 # Rows flip to [x] ONLY via scripts/update-ledger.sh, after verify.sh passes and the cited
 # tests are found in the report that run wrote.
 
-- [ ] T1  ADR: this extends §3 Stage 6, which specifies only "reframing, captions, encode".
+- [x] T1  ADR: this extends §3 Stage 6, which specifies only "reframing, captions, encode".
           Records the owner's scope decision and the splicing risk.
                                   (tests: test_the_edit_extension_is_a_named_decision)
 
