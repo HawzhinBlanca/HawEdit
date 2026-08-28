@@ -123,6 +123,7 @@ from hawedit.render import (
     RenderError,
     RenderResult,
     frame_rate,
+    punch_in_schedule,
     render_clip,
     vertical_crop_size,
 )
@@ -2421,6 +2422,14 @@ def run_pipeline(
             # and its keyframes carry no face box. D-258.
             face_center_y=face_center_y,
             face_height=face_height,
+            # Every sentence start after the first is a legal instant to change framing; the
+            # schedule drops the ones too close together to hold. A clip whose sentences are all
+            # shorter than MIN_SHOT_MS gets an empty schedule and the single framing it had
+            # before, which is the honest answer rather than a strobe. D-259.
+            punch_ins=punch_in_schedule(
+                [sentence.start_ms - clip.in_ms for sentence in selected],
+                clip.out_ms - clip.in_ms,
+            ),
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
         )

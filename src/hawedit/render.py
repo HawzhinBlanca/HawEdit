@@ -289,6 +289,58 @@ FACE_COMPOSITION_LINE: Final = 0.38
 # trade can ever go.
 MAX_VERTICAL_ZOOM: Final = 1.5
 
+# How much tighter a punch-in sits than the base framing. Small on purpose: a punch-in is a change
+# of emphasis, not a different shot, and past about a third it reads as a zoom effect rather than
+# as an edit.
+PUNCH_IN_ZOOM: Final = 1.25
+# The floor on how often the framing may change. Measured against the delivered ep29 clip: 34.65 s
+# in one unbroken framing. A social edit cuts far more often than that, but a change every second
+# is a strobe, so each framing holds at least this long and every change lands on a sentence
+# boundary — a cut mid-word reads as a glitch, not as a beat. D-259.
+MIN_SHOT_MS: Final = 3_000
+
+
+def punch_in_schedule(
+    boundaries_ms: Sequence[int],
+    clip_duration_ms: int,
+    *,
+    min_shot_ms: int = MIN_SHOT_MS,
+    zoom: float = PUNCH_IN_ZOOM,
+) -> tuple[tuple[int, float], ...]:
+    """Alternating wide/tight framings, one per kept boundary, clip-relative.
+
+    `boundaries_ms` are sentence starts measured from the clip's own zero — the only instants a
+    framing may change, because a cut inside a word reads as a glitch. Boundaries closer together
+    than `min_shot_ms` are dropped rather than merged: holding a framing is the default and a
+    change has to earn its place.
+
+    Returns `()` when nothing survives, which is the honest answer for a clip too short or too
+    sparse to cut, and which leaves `crop_filter` on exactly the path it took before punch-ins
+    existed.
+
+    Raises:
+        ValueError: a non-positive duration, or a zoom that would widen instead of tighten.
+    """
+    if clip_duration_ms <= 0:
+        raise ValueError(f"clip duration must be positive, got {clip_duration_ms}")
+    if zoom < 1.0:
+        raise ValueError(f"a punch-in tightens, so zoom must be at least 1.0, got {zoom}")
+
+    kept: list[int] = []
+    for at_ms in sorted(boundaries_ms):
+        # A change at the first frame is the opening framing rather than a cut, and one at or
+        # past the end would never be seen.
+        if at_ms <= 0 or at_ms >= clip_duration_ms:
+            continue
+        previous = kept[-1] if kept else 0
+        if at_ms - previous < min_shot_ms:
+            continue
+        kept.append(at_ms)
+    if not kept:
+        return ()
+    # The clip opens wide; every kept boundary flips it.
+    return tuple((at_ms, zoom if index % 2 == 0 else 1.0) for index, at_ms in enumerate(kept))
+
 
 def vertical_framing(
     source_height: int,
@@ -361,6 +413,33 @@ def vertical_crop_size(
     return crop_w, crop_h
 
 
+def _interpolated(points: Sequence[tuple[float, int]], fallback: int) -> str:
+    """A piecewise-linear ffmpeg expression over `(seconds, value)` pairs.
+
+    Extracted so the punch-in path can interpolate the *raw* face centres. The non-punch path
+    interpolates positions that were already clamped against a fixed crop width — correct while
+    the width never changes, and wrong the moment it does, because a position computed for the
+    opening width drifts the subject sideways once the crop tightens.
+    """
+    if not points:
+        return str(fallback)
+    ordered = sorted(points)
+    expression = str(ordered[-1][1])
+    for index in range(len(ordered) - 2, -1, -1):
+        start_s, here = ordered[index]
+        end_s, there = ordered[index + 1]
+        span = end_s - start_s
+        segment = (
+            str(here)
+            if span <= 0 or here == there
+            else f"({here}+({there - here})*(t-{start_s:.3f})/{span:.3f})"
+        )
+        expression = f"if(lt(t\\,{end_s:.3f})\\,{segment}\\,{expression})"
+    if ordered[0][0] > 0:
+        expression = f"if(lt(t\\,{ordered[0][0]:.3f})\\,{ordered[0][1]}\\,{expression})"
+    return expression
+
+
 def crop_filter(
     source_width: int,
     source_height: int,
@@ -372,6 +451,7 @@ def crop_filter(
     *,
     face_center_y: int | None = None,
     face_height: int | None = None,
+    punch_ins: Sequence[tuple[int, float]] = (),
 ) -> str:
     """The ffmpeg filter chain that takes a landscape frame to a vertical one.
 
@@ -428,7 +508,38 @@ def crop_filter(
         # into frame keeps the subject; refusing would drop the clip.
         x = max(0, min(focus_x - crop_w // 2, source_width - crop_w))
 
-    return f"crop={crop_w}:{crop_h}:{x}:{y},scale={target_width}:{target_height}"
+    if not punch_ins:
+        return f"crop={crop_w}:{crop_h}:{x}:{y},scale={target_width}:{target_height}"
+
+    # A punch-in changes the crop *size*, and ffmpeg evaluates `w`/`h` once at configuration —
+    # only `x`/`y` are per-frame. So the size changes by command rather than by expression: all
+    # four of crop's options carry the `T` flag, and that was proven on real footage before being
+    # designed around, the way D-249 learned to with `-crf`.
+    #
+    # `x` and `y` are rewritten in terms of ffmpeg's own `out_w`/`out_h` so the crop re-centres
+    # itself the instant its size changes.
+    centre_x: int | str = (
+        _interpolated(
+            [((at_ms - clip_in_ms) / 1000, centre) for at_ms, centre in focus_points],
+            source_width // 2,
+        )
+        if focus_points
+        else (source_width // 2 if focus_x is None else focus_x)
+    )
+    centre_y = face_center_y if face_center_y is not None else source_height // 2
+    x_expr = f"min(max({centre_x}-out_w/2\\,0)\\,in_w-out_w)"
+    y_expr = f"min(max({centre_y}-out_h/2\\,0)\\,in_h-out_h)"
+
+    commands = ";".join(
+        f"{at_ms / 1000:.3f} crop w {max(2, int(crop_w / factor)) // 2 * 2};"
+        f"{at_ms / 1000:.3f} crop h {max(2, int(crop_h / factor)) // 2 * 2}"
+        for at_ms, factor in punch_ins
+    )
+    return (
+        f"sendcmd=c='{commands}',"
+        f"crop={crop_w}:{crop_h}:{x_expr}:{y_expr},"
+        f"scale={target_width}:{target_height}"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,6 +644,7 @@ def render_clip(
     *,
     face_center_y: int | None = None,
     face_height: int | None = None,
+    punch_ins: Sequence[tuple[int, float]] = (),
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -624,6 +736,7 @@ def render_clip(
                 focus_points=focus_points,
                 face_center_y=face_center_y,
                 face_height=face_height,
+                punch_ins=punch_ins,
                 clip_in_ms=clip.in_ms,
             ),
             subtitle_filter(ass_path, fonts_dir),

@@ -21,9 +21,11 @@ producing something plausible.
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 import tempfile
 from dataclasses import replace
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -38,6 +40,7 @@ from hawedit.render import (
     ENCODER_PROBE_SIZE,
     FACE_COMPOSITION_LINE,
     MAX_VERTICAL_ZOOM,
+    MIN_SHOT_MS,
     NVENC_MIN_FRAME,
     TARGET_FACE_HEIGHT_SHARE,
     VERTICAL_HEIGHT,
@@ -52,6 +55,7 @@ from hawedit.render import (
     encoder_available,
     frame_duration_ms,
     frame_rate,
+    punch_in_schedule,
     quality_args,
     render_clip,
     vertical_crop_size,
@@ -1394,3 +1398,84 @@ def test_a_zero_face_height_is_refused_rather_than_dividing() -> None:
     on a detector bug rather than saying the input was wrong."""
     with pytest.raises(ValueError, match="face height must be positive"):
         vertical_framing(1080, 607, 1080, face_center_y=500, face_height=0)
+
+
+# --- pro-edit T5: the framing changes, and only on a sentence boundary -----------------------
+
+
+def test_the_crop_changes_scale_at_least_once() -> None:
+    """The delivered ep29 clip ran 34.65 s in one unbroken framing.
+
+    `crop_filter` fixed `crop_w`/`crop_h` before building its filter string, so a scale change
+    was not merely absent but structurally impossible. ffmpeg evaluates `w`/`h` once at
+    configuration and only `x`/`y` per frame, so the size is changed by command — every one of
+    crop's four options carries the `T` flag, verified on this build and on real footage before
+    being designed around. D-259.
+    """
+    schedule = punch_in_schedule([0, 4_000, 9_000], 12_000)
+    chain = crop_filter(2560, 1440, focus_x=1288, punch_ins=schedule)
+
+    assert chain.startswith("sendcmd=c='"), chain
+    assert "crop w" in chain and "crop h" in chain, "the size never changes"
+    # Both directions: a punch-in that never returns is a zoom, not an edit.
+    widths = re.findall(r"crop w (\d+)", chain)
+    assert len(set(widths)) > 1, f"every commanded width is the same: {widths}"
+
+
+def test_a_scale_change_lands_on_a_sentence_boundary() -> None:
+    """A cut inside a word reads as a glitch rather than as a beat.
+
+    Boundaries closer together than `MIN_SHOT_MS` are dropped rather than merged: holding a
+    framing is the default and a change has to earn its place.
+    """
+    boundaries = [0, 500, 4_000, 4_200, 9_000, 30_000]
+    schedule = punch_in_schedule(boundaries, 12_000)
+    times = [at_ms for at_ms, _ in schedule]
+
+    assert all(at_ms in boundaries for at_ms in times), f"{times} is not a subset of the starts"
+    assert 0 not in times, "the opening framing is not a cut"
+    assert 30_000 not in times, "a change past the end would never be seen"
+    assert all(later - earlier >= MIN_SHOT_MS for earlier, later in pairwise(times)), (
+        f"{times} changes framing faster than {MIN_SHOT_MS} ms"
+    )
+    assert times[0] >= MIN_SHOT_MS, "the opening framing must hold as long as any other"
+
+
+def test_existing_single_framing_callers_are_unchanged() -> None:
+    """The golden render is a pixel comparison and every artifact ever cut took this path.
+
+    An empty schedule is the common case — a clip whose sentences are all shorter than the
+    minimum shot — and it must produce the byte-identical filter string it always did.
+    """
+    plain = crop_filter(2560, 1440, focus_x=1288)
+
+    assert crop_filter(2560, 1440, focus_x=1288, punch_ins=()) == plain
+    assert "sendcmd" not in plain
+    assert punch_in_schedule([0, 800, 1_600], 2_400) == (), (
+        "a clip too sparse to cut must ask for no cuts, not for a strobe"
+    )
+
+
+def test_a_punch_in_recentres_itself_when_the_crop_tightens() -> None:
+    """Baked-in pixel positions would drift the subject sideways on every punch-in.
+
+    The non-punch path interpolates positions already clamped against a fixed crop width, which
+    is correct while the width never changes and wrong the moment it does. The punch path
+    expresses `x` in ffmpeg's own `out_w`, so the crop re-centres itself as it resizes.
+    """
+    chain = crop_filter(2560, 1440, focus_x=1288, punch_ins=punch_in_schedule([4_000], 12_000))
+
+    assert "out_w" in chain and "in_w-out_w" in chain, chain
+    assert "out_h" in chain and "in_h-out_h" in chain, chain
+
+
+@pytest.mark.parametrize(
+    ("duration", "zoom", "message"),
+    [(0, 1.25, "duration must be positive"), (12_000, 0.8, "zoom must be at least 1.0")],
+)
+def test_a_schedule_that_cannot_mean_anything_is_refused(
+    duration: int, zoom: float, message: str
+) -> None:
+    """A zoom below 1.0 widens, which is not a punch-in; a clip of no length has no boundaries."""
+    with pytest.raises(ValueError, match=message):
+        punch_in_schedule([4_000], duration, zoom=zoom)
