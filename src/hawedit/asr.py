@@ -596,7 +596,15 @@ class OmniAsrBackend:
             )
         )
 
-        tokenizer = load_tokenizer(card)
+        # The *tokenizer* card, not the model card. `load_tokenizer` runs
+        # `resolve_tokenizer_reference`, a `while True` that follows `tokenizer_ref` until a card
+        # has none — and handed the model card it never terminated. Measured 2026-08-29: the
+        # worker spun for 3 h 20 m at 99% of one core inside `deepcopy` in fairseq2's asset
+        # metadata provider, having read 418 MB of a 31.2 GB checkpoint and loaded no model at
+        # all. Asking for the tokenizer by name skips the indirection entirely: that card carries
+        # no `tokenizer_ref`, so the loop exits on its first test. The model card keeps its
+        # `tokenizer_ref` because `load_model` below still resolves through it.
+        tokenizer = load_tokenizer(tokenizer_card)
         vocab_size = int(tokenizer.vocab_info.size)
         config = copy.deepcopy(get_config(get_dependency_resolver(), Wav2Vec2LlamaConfig, "7b"))
         config.llama_config.vocab_size = vocab_size
