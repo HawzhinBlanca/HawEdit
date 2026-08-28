@@ -564,7 +564,15 @@ class OmniAsrBackend:
 
         LoraConfig.__post_init__ = register_fairseq2_linear
 
-        card = f"hawedit_adapted_{self.llm_card}"
+        # Derived names are new names, so they carry no environment tag. `CANONICAL_LLM_CARD`
+        # ends in `@` — fairseq2's marker for "no environment look-up" — and concatenating onto
+        # it put that `@` in the middle: `hawedit_adapted_omniASR_LLM_7B_v2@_tokenizer` parses as
+        # card `hawedit_adapted_omniASR_LLM_7B_v2`, environment `_tokenizer`. That is the *model*
+        # card, whose `tokenizer_ref` is the same string, so `resolve_tokenizer_reference` handed
+        # itself back forever. Measured 2026-08-29 by dumping the spinning frame: `ref_card` was
+        # the identical object to `card`, and the worker burned 3 h 20 m before it was killed.
+        base_name = self.llm_card.split("@", 1)[0]
+        card = f"hawedit_adapted_{base_name}"
         tokenizer_card = f"{card}_tokenizer"
         store = get_asset_store()
         store._metadata_providers = [
