@@ -41,6 +41,7 @@ from hawedit.wsl_setup import (
     package_fingerprint,
     probe_wsl_runtime,
     provision_wsl_runtime,
+    wsl_native_path,
     wsl_path,
     wsl_prefix,
 )
@@ -1299,3 +1300,39 @@ def test_the_asr_producer_uses_the_shared_prefix_rather_than_its_own() -> None:
     producer = WslOmniAsrProducer(distro="Ubuntu")
     assert producer._prefix() == wsl_prefix("Ubuntu", producer.wsl_executable)
     assert "--exec" in producer._prefix()
+
+
+# --- a path already inside WSL is not a Windows path -----------------------------------------
+
+
+def test_a_unc_path_into_the_distribution_is_already_linux_native() -> None:
+    """`wslpath` does not recognise `\\wsl.localhost`, and answers a path that exists nowhere.
+
+    Measured while making the fine-tuned champion the default decoder (D-260). The adapter lives
+    at `/home/ai/cortex_champion_model` inside WSL and is read host-side through the UNC form to
+    fingerprint it. Handed to `wslpath` that became `/mnt/c/wsl.localhost/Ubuntu/home/ai/...`, so
+    the worker was pointed at nothing and Stage 1 aligned none of 775 speech regions.
+    """
+    assert (
+        wsl_native_path(Path(r"\\wsl.localhost\Ubuntu\home\ai\cortex_champion_model"))
+        == "/home/ai/cortex_champion_model"
+    )
+    # The other prefix Windows exposes, and a distribution name that is not the default.
+    assert wsl_native_path(Path(r"\\wsl$\Ubuntu-22.04\home\ai")) == "/home/ai"
+    # Case is not significant in a UNC host name.
+    assert wsl_native_path(Path(r"\\WSL.LOCALHOST\Ubuntu\etc\hosts")) == "/etc/hosts"
+
+
+def test_the_distribution_root_is_the_filesystem_root() -> None:
+    r"""`\\wsl.localhost\Ubuntu` names the root, not an empty path."""
+    assert wsl_native_path(Path(r"\\wsl.localhost\Ubuntu")) == "/"
+
+
+def test_a_windows_path_is_not_mistaken_for_a_wsl_one() -> None:
+    r"""The control. Every existing caller passes a drive path and must keep reaching `wslpath`.
+
+    Returning a translation here would send `C:\Users\...` through as `/Users/...`, which is a
+    real directory on a Linux filesystem and therefore a silent wrong answer rather than an error.
+    """
+    assert wsl_native_path(Path(r"C:\Users\Wareen\Desktop")) is None
+    assert wsl_native_path(Path(r"D:\media\source.mp4")) is None

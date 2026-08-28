@@ -480,8 +480,37 @@ def wsl_prefix(distro: str | None, executable: str = "wsl.exe") -> list[str]:
     return prefix
 
 
+# Windows exposes a running distribution's own filesystem under these prefixes. A path beneath
+# one is already Linux-native and must be handed back as-is: `wslpath` does not recognise them and
+# answers `/mnt/c/wsl.localhost/...`, a path that exists nowhere. Measured while making the
+# fine-tuned champion the default decoder (D-260) — the adapter lives at /home/ai inside WSL, is
+# read host-side through `\\wsl.localhost\Ubuntu\...` to fingerprint it, and reached the worker
+# as `/mnt/c/wsl.localhost/Ubuntu/home/ai/cortex_champion_model`.
+_WSL_UNC_PREFIXES: Final = ("//wsl.localhost/", "//wsl$/")
+
+
+def wsl_native_path(path: Path) -> str | None:
+    r"""The Linux path for a UNC path into a distribution, or `None` if it is not one.
+
+    The distribution name is dropped rather than checked: a caller that reached this bundle
+    through `\\wsl.localhost\Ubuntu` is already talking about that distribution's filesystem,
+    and the worker runs inside it.
+    """
+    text = path.as_posix()
+    for prefix in _WSL_UNC_PREFIXES:
+        if text.lower().startswith(prefix):
+            remainder = text[len(prefix) :]
+            _distro, separator, inner = remainder.partition("/")
+            # `\\wsl.localhost\Ubuntu` alone names the root of the distribution.
+            return f"/{inner}" if separator else "/"
+    return None
+
+
 def wsl_path(path: Path, distro: str | None = None, executable: str = "wsl.exe") -> str:
     """Translate without the backslash-loss bug in ``wsl.exe`` argument forwarding."""
+    native = wsl_native_path(path)
+    if native is not None:
+        return native
     result = subprocess.run(
         [*wsl_prefix(distro, executable), "wslpath", "-a", "-u", path.resolve().as_posix()],
         capture_output=True,
