@@ -5961,3 +5961,49 @@ def test_a_missing_face_tracker_degrades_visibly(
     noted = capsys.readouterr().err
     assert "face tracking is the default but OpenCV is not installed" in noted, noted
     assert "--static-crop" in noted, "the note must say how to ask for this deliberately"
+
+
+def test_the_default_run_does_not_enable_diarization() -> None:
+    """AC-2: The default pipeline run does not enable speaker diarization."""
+    parsed = build_parser().parse_args(["source.mp4"])
+    assert parsed.diarize is False
+    assert parsed.diarize_device == "cpu"
+
+
+def test_the_diarize_flag_reaches_run_pipeline_as_a_producer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-1: Passing --diarize constructs a concrete PyannoteDiarizer and passes it."""
+    from hawedit.pyannote_adapter import PyannoteDiarizer
+
+    transcript = tmp_path / "transcript.raw.json"
+    transcript.write_text(a_transcript("cli").to_json(), encoding="utf-8")
+
+    captured_diarizer: Any = None
+
+    def fake_run_pipeline(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_diarizer
+        captured_diarizer = kwargs.get("diarizer")
+        return None
+
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", fake_run_pipeline)
+
+    _build_and_run(
+        build_parser().parse_args(
+            [
+                str(FIXTURE),
+                "--transcript",
+                str(transcript),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--sentences",
+                "0",
+                "--diarize",
+                "--diarize-device",
+                "cuda:0",
+            ]
+        )
+    )
+
+    assert isinstance(captured_diarizer, PyannoteDiarizer)
+    assert captured_diarizer.device == "cuda:0"

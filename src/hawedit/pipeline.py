@@ -2748,6 +2748,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="choose complete contiguous sentences contained by the best Stage 3 survivor",
     )
+    parser.add_argument(
+        "--diarize",
+        action="store_true",
+        help="run Stage 0 pyannote speaker diarization",
+    )
+    parser.add_argument(
+        "--diarize-device",
+        default="cpu",
+        help="device for Stage 0 speaker diarization (pyannote) — §6: CPU",
+    )
     parser.add_argument("--timelens", action="store_true", help="run TimeLens2 in Stage 5")
     parser.add_argument("--timelens-device", default="cuda:1")
     parser.add_argument(
@@ -3057,12 +3067,19 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
     if reframe_degraded is not None:
         print(f"NOTE reframe: {reframe_degraded}", file=sys.stderr)
 
+    diarizer = None
+    if args.diarize:
+        from hawedit.pyannote_adapter import create_diarizer
+
+        diarizer = create_diarizer(device=args.diarize_device)
+
     return run_pipeline(
         args.source,
         args.work_dir,
         media_id=args.media_id,
         transcript=transcript,
         asr=canonical_asr,
+        diarizer=diarizer,
         select_sentences=selection,
         qc=Qc(auto_pass=False, flags=(), human_reviewed=True) if args.qc_pass else None,
         verdict=verdict,
