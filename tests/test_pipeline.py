@@ -6007,3 +6007,32 @@ def test_the_diarize_flag_reaches_run_pipeline_as_a_producer(
 
     assert isinstance(captured_diarizer, PyannoteDiarizer)
     assert captured_diarizer.device == "cuda:0"
+
+
+def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -> None:
+    """pro-edit T7 / AC-9: When diarizer is unavailable, reframe stays face-tracked.
+
+    The runner must never claim speaker tracking (speaker_face) without validated turns.
+    """
+    from hawedit.pipeline import Delivery
+    from hawedit.pyannote_adapter import PyannoteDiarizer
+
+    result = run_pipeline(
+        FIXTURE,
+        transcript=a_transcript(FIXTURE.stem),
+        verdict=a_verdict(100, 1_700),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        work_dir=tmp_path / "work",
+        select_sentences=(0,),
+        diarizer=PyannoteDiarizer(),
+    )
+
+    assert result.render is not None
+    assert isinstance(result.delivery, Delivery)
+    contract = json.loads(Path(result.delivery.editing_json_path).read_text(encoding="utf-8"))
+    assert contract["output"]["crop_target"] in {"face_tracked", "static_centre"}
+    assert contract["output"]["crop_target"] != "speaker_face"
+    assert result.clip is not None
+    assert result.clip.output is not None
+    assert result.clip.output.crop_target in {"face_tracked", "static_centre"}
+    assert result.clip.output.crop_target != "speaker_face"
