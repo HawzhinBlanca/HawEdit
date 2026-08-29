@@ -10,7 +10,7 @@
                                   (tests: test_the_hook_card_uses_the_judges_own_title,
                                           test_a_clip_without_a_title_renders_unchanged)
 
-- [ ] T3  Emphasis: the longest word of each caption event carries the accent, as a style change
+- [x] T3  Emphasis: the longest word of each caption event carries the accent, as a style change
           only — never a text change.
                                   (tests: test_the_longest_word_carries_the_emphasis,
                                           test_emphasis_never_alters_the_caption_text)
