@@ -32,6 +32,29 @@ single continuous spans. A spliced reel is a different artifact; scoring the sou
 shipping the assembly would be a verdict about footage nobody watches. So the judge sees the
 assembled span set, and §2's thresholds apply to that verdict (AC-7, AC-8).
 
+## Learned while implementing
+
+**T4 silence tightening is measured as not worth building on this material, and the row stays
+open rather than being quietly dropped.** On the delivered 64.1 s champion clip: seven gaps over
+250 ms totalling 2.78 s (4.3%), three over 400 ms totalling 1.52 s (2.4%), and **zero over
+600 ms**. The longest pause in the clip is 580 ms, which is a breath rather than dead air — cutting
+it would make the speech sound clipped, which is a worse defect than the 2.4% it saves.
+
+The cost is not small either. Removing time couples to three other timing systems at once: the
+punch-in `sendcmd` timestamps are in output time, the crop `x` expression is a function of `t`,
+and every ASS caption carries absolute stamps. A silence cut that shifts one and not the others
+desynchronises the clip, and the failure would be invisible in a test and obvious in the video.
+
+**Where it would earn its place** is material with real dead air — a hesitant speaker, an
+interview with long thinking pauses. This source is a produced podcast with a fluent guest. The
+threshold for revisiting is a measured clip with gaps over 600 ms, which this one does not have.
+
+**T5's boundaries changed after the row was flipped.** `punch_in_schedule` was fed sentence starts
+and fired *once* in a 34.65 s clip carrying two sentences. It now takes `cut_points_ms` — pauses of
+at least 120 ms between words — and a `SHOT_CUT_GUARD_MS` that drops any punch-in within 1.5 s of a
+camera cut the source already made. Both changes came from watching the render, not from a failing
+test.
+
 ## Divergence from BLUEPRINT
 
 **Yes, and it is the point.** §3 Stage 6 says *"Reframing, captions, encode."* It does not ask for
