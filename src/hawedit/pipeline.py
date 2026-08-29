@@ -122,6 +122,7 @@ from hawedit.render import (
     Reframe,
     RenderError,
     RenderResult,
+    cut_points_ms,
     frame_rate,
     punch_in_schedule,
     render_clip,
@@ -2427,7 +2428,10 @@ def run_pipeline(
             # shorter than MIN_SHOT_MS gets an empty schedule and the single framing it had
             # before, which is the honest answer rather than a strobe. D-259.
             punch_ins=punch_in_schedule(
-                [sentence.start_ms - clip.in_ms for sentence in selected],
+                cut_points_ms(
+                    tuple(word for sentence in selected for word in sentence.words),
+                    clip.in_ms,
+                ),
                 clip.out_ms - clip.in_ms,
             ),
             reframe=reframe_mode,

@@ -40,6 +40,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
+from itertools import pairwise
 from pathlib import Path
 from typing import Final
 
@@ -53,6 +54,7 @@ from hawedit.captions import (
 )
 from hawedit.clip import Clip
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
+from hawedit.transcripts import Word
 
 __all__ = [
     "DELIVERY_AUDIO_RATE",
@@ -298,6 +300,33 @@ PUNCH_IN_ZOOM: Final = 1.25
 # is a strobe, so each framing holds at least this long and every change lands on a sentence
 # boundary — a cut mid-word reads as a glitch, not as a beat. D-259.
 MIN_SHOT_MS: Final = 3_000
+# The shortest gap between words that counts as a place to cut. A breath, not a sentence end.
+#
+# Measured on the delivered ep29 clip: 34.65 s carrying **two** sentences, so cutting only on
+# sentence starts allowed exactly **one** framing change in the whole clip. The same clip has
+# five pauses of 120 ms or more, which `MIN_SHOT_MS` then thins to three usable cuts. One change
+# in 35 s is not an edit; three is a rhythm.
+#
+# A pause between words is also a *better* cut point than a sentence start, not merely a more
+# frequent one: it is where the speaker themselves broke, which is where a human editor cuts.
+# The rule that matters — never cut inside a word — is satisfied either way.
+CUT_PAUSE_MS: Final = 120
+
+
+def cut_points_ms(words: Sequence[Word], clip_in_ms: int) -> tuple[int, ...]:
+    """Clip-relative instants where a framing change may land, from the word alignment.
+
+    Every gap of at least `CUT_PAUSE_MS` between consecutive words, timed at the *later* word's
+    start so the new framing arrives with the new speech rather than during the silence.
+
+    Empty when the speech has no pauses that long, which leaves `punch_in_schedule` with nothing
+    to keep and the clip with the single framing it had before punch-ins existed.
+    """
+    points: list[int] = []
+    for earlier, later in pairwise(words):
+        if later.start_ms - earlier.end_ms >= CUT_PAUSE_MS:
+            points.append(later.start_ms - clip_in_ms)
+    return tuple(points)
 
 
 def punch_in_schedule(

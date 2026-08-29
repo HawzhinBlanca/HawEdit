@@ -52,6 +52,7 @@ from hawedit.render import (
     assert_encoded_span,
     audio_filter,
     crop_filter,
+    cut_points_ms,
     encoder_available,
     frame_duration_ms,
     frame_rate,
@@ -1479,3 +1480,44 @@ def test_a_schedule_that_cannot_mean_anything_is_refused(
     """A zoom below 1.0 widens, which is not a punch-in; a clip of no length has no boundaries."""
     with pytest.raises(ValueError, match=message):
         punch_in_schedule([4_000], duration, zoom=zoom)
+
+
+# --- pro-edit: cuts land on breaths, not only on sentence starts -----------------------------
+
+
+def test_a_cut_lands_on_a_pause_between_words() -> None:
+    """Measured on the delivered ep29 clip: 34.65 s carrying two sentences, so cutting only on
+    sentence starts allowed exactly one framing change in the whole clip.
+
+    The same clip has five pauses of 120 ms or more, which MIN_SHOT_MS thins to three usable
+    cuts. One change in 35 s is not an edit; three is a rhythm. A pause is also a better cut
+    point than a sentence start, not merely a more frequent one — it is where the speaker
+    themselves broke.
+    """
+    words = (
+        Word(w="یەک", start_ms=0, end_ms=500, conf=0.9),
+        Word(w="دوو", start_ms=700, end_ms=1_200, conf=0.9),
+        Word(w="سێ", start_ms=1_250, end_ms=1_800, conf=0.9),
+    )
+    # The 200 ms gap qualifies; the 50 ms one does not.
+    assert cut_points_ms(words, 0) == (700,)
+
+
+def test_a_cut_is_timed_to_the_new_speech_not_the_silence() -> None:
+    """The framing arrives with the next word rather than during the pause, so the change reads
+    as motivated by what is being said."""
+    words = (
+        Word(w="یەک", start_ms=10_000, end_ms=10_400, conf=0.9),
+        Word(w="دوو", start_ms=11_000, end_ms=11_500, conf=0.9),
+    )
+    assert cut_points_ms(words, 10_000) == (1_000,), "clip-relative, at the later word's start"
+
+
+def test_speech_without_pauses_asks_for_no_cuts() -> None:
+    """Continuous speech has nowhere to cut that is not inside a word, and the honest answer is
+    the single framing the clip had before punch-ins existed."""
+    words = tuple(
+        Word(w="w", start_ms=index * 400, end_ms=index * 400 + 390, conf=0.9) for index in range(8)
+    )
+    assert cut_points_ms(words, 0) == ()
+    assert punch_in_schedule(cut_points_ms(words, 0), 3_200) == ()
