@@ -1635,3 +1635,23 @@ def test_the_edit_extension_is_a_named_decision() -> None:
             f"BLUEPRINT's Stage 6 now mentions {absent!r}; this work is no longer a divergence "
             f"and D-259 must cite the § instead of standing as an owner decision"
         )
+
+
+def test_the_measured_edit_evidence_is_recorded() -> None:
+    """`specs/pro-edit` T8. The features were argued from what the finished video showed, so the
+    record has to carry the before and after rather than the argument.
+
+    It also pins the finding that outlives the feature: every real defect here was invisible to a
+    3,300-test suite and visible in the output. An evidence file that dropped that would read as
+    though the tests had caught them.
+    """
+    evidence = ROOT / "evidence" / "what-the-edit-features-changed.md"
+    assert evidence.exists(), "pro-edit T8 measures the change; without the file it measured none"
+    recorded = evidence.read_text(encoding="utf-8")
+
+    for number in ("34.65", "64.1", "11", "0.77", "271"):
+        assert number in recorded, f"the before/after turns on {number} and it is not stated"
+    assert "Watching the video is the test" in recorded, (
+        "the finding that every real defect was invisible to the suite is the one most likely to "
+        "be tidied away later"
+    )
