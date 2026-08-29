@@ -150,12 +150,19 @@ class CaptionTheme:
     margin_v: int = 140
     # 2 = bottom-centre, which is what every theme used before the hook card needed the top.
     alignment: int = 2
+    # 1 = outline and shadow, which is what every theme used before the hook card. 3 draws an
+    # opaque box behind the text instead, and then `outline` is the box's padding rather than a
+    # stroke width. Measured on the first edited clip: the card rendered white over a light
+    # shirt and a lit face, readable only because of its outline — a plate is what makes it
+    # readable on *any* footage rather than on footage that happens to be dark.
+    border_style: int = 1
 
     def style_row(self, name: str, font_name: str, font_size: int) -> str:
         """One `Style:` line. `%g` keeps `3.0` as `3` so existing goldens still match."""
         return (
             f"Style: {name},{font_name},{font_size},{self.primary},{self.secondary},"
-            f"{self.outline_colour},{self.back_colour},{int(self.bold)},0,0,0,100,100,0,0,1,"
+            f"{self.outline_colour},{self.back_colour},{int(self.bold)},0,0,0,100,100,0,0,"
+            f"{self.border_style},"
             f"{self.outline:g},{self.shadow:g},{self.alignment},{self.margin_l},"
             f"{self.margin_r},"
             f"{self.margin_v},1"
@@ -198,12 +205,18 @@ HOOK_CARD_THEME: Final = CaptionTheme(
     primary="&H00FFFFFF",
     secondary="&H00FFFFFF",
     bold=True,
-    outline=5.0,
-    shadow=3.0,
+    # With `border_style=3` this is the plate's padding, not a stroke width.
+    outline=18.0,
+    shadow=0.0,
+    # 40% opaque black. ASS alpha runs the other way from intuition: 00 is opaque, FF invisible.
+    back_colour="&H66000000",
     margin_l=60,
     margin_r=60,
-    margin_v=220,
+    # Higher than the 220 the first edited clip used, which put the card across the subject's
+    # forehead. A hook card belongs above the face, not on it.
+    margin_v=120,
     alignment=8,
+    border_style=3,
 )
 
 VIRAL_THEME: Final = CaptionTheme(
@@ -760,6 +773,24 @@ def _escape_ass_text(text: str) -> str:
     return _ASS_OVERRIDE.sub("", text)
 
 
+# How much larger the accented word is drawn. Scale rather than colour, because the colour
+# channels are already spoken for: `\kf` sweeps `secondary` into `primary`, so recolouring a word
+# would fight the highlight that tracks the voice.
+EMPHASIS_SCALE: Final = 118
+
+
+def emphasis_index(words: Sequence[Word]) -> int | None:
+    """Which word in one caption event carries the accent, or `None` if none should.
+
+    The longest word, which is a proxy for the carrying one and needs no model. Ties go to the
+    earliest so a re-render never moves the accent. `None` for a single-word event: emphasising
+    the only word on screen accents nothing, it just makes the caption bigger.
+    """
+    if len(words) < 2:
+        return None
+    return max(range(len(words)), key=lambda index: (len(words[index].w), -index))
+
+
 def _karaoke(words: Sequence[Word], start_ms: int) -> str:
     """Karaoke spans for one run of words, tiling every gap so the sweep tracks the voice.
 
@@ -769,13 +800,20 @@ def _karaoke(words: Sequence[Word], start_ms: int) -> str:
     """
     parts: list[str] = []
     cursor = start_ms
-    for word in words:
+    accent = emphasis_index(words)
+    for index, word in enumerate(words):
         gap_cs = max(0, (word.start_ms - cursor) // 10)
         if gap_cs:
             # An empty karaoke span holds the highlight through the silence.
             parts.append(f"{{\\kf{gap_cs}}}")
         span_cs = max(1, (word.end_ms - word.start_ms) // 10)
-        parts.append(f"{{\\kf{span_cs}}}{_escape_ass_text(word.w)} ")
+        text = _escape_ass_text(word.w)
+        if index == accent:
+            # A style override around the word, never a change to the word. The text a viewer
+            # reads is the raw surface form either way — Kurdish invariant #1 governs the
+            # transcript, and a caption that edits it to look better is editing the transcript.
+            text = f"{{\\fscx{EMPHASIS_SCALE}\\fscy{EMPHASIS_SCALE}}}{text}{{\\fscx100\\fscy100}}"
+        parts.append(f"{{\\kf{span_cs}}}{text} ")
         cursor = word.end_ms
     return "".join(parts).strip()
 

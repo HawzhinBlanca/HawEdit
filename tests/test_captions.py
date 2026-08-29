@@ -49,6 +49,7 @@ from hawedit.captions import (
     chunk_caption_events,
     compare_golden_render,
     decode_to_rgb,
+    emphasis_index,
     find_ffmpeg,
     parse_dialogue_times,
     render_caption_png,
@@ -1280,3 +1281,74 @@ def test_a_long_title_wraps_rather_than_running_off_the_frame() -> None:
     assert " ".join(lines).split() == "یەک دوو سێ چوار پێنج شەش حەوت هەشت نۆ دە".split(), (
         "wrapping must not lose or reorder a word"
     )
+
+
+# --- pro-edit T3: the key word carries the accent, as a style change only ---------------------
+
+
+def test_the_longest_word_carries_the_emphasis() -> None:
+    """A proxy for the carrying word that needs no model, and ties go to the earliest so a
+    re-render never moves the accent."""
+    words = (
+        Word(w="لە", start_ms=0, end_ms=200, conf=0.9),
+        Word(w="کاتژمێردا", start_ms=200, end_ms=900, conf=0.9),
+        Word(w="بکە", start_ms=900, end_ms=1_200, conf=0.9),
+    )
+    assert emphasis_index(words) == 1, "the longest word did not carry it"
+
+    tie = (
+        Word(w="یەک", start_ms=0, end_ms=300, conf=0.9),
+        Word(w="دوو", start_ms=300, end_ms=600, conf=0.9),
+    )
+    assert emphasis_index(tie) == 0, "a tie must resolve to the earliest, not drift"
+
+
+def test_a_single_word_event_is_not_emphasised() -> None:
+    """Accenting the only word on screen accents nothing; it just makes the caption bigger."""
+    assert emphasis_index((Word(w="تەنیا", start_ms=0, end_ms=400, conf=0.9),)) is None
+    assert emphasis_index(()) is None
+
+
+def test_emphasis_never_alters_the_caption_text() -> None:
+    """Kurdish invariant #1 governs the transcript, and a caption that edits a word to look
+    better is editing the transcript. The accent is an override *around* the word.
+    """
+    sentence = Sentence(
+        words=(
+            Word(w="لە", start_ms=0, end_ms=200, conf=0.9),
+            Word(w="کاتژمێردا", start_ms=200, end_ms=900, conf=0.9),
+        ),
+        complete=True,
+    )
+    ass = build_ass((sentence,), style=CaptionStyle.WORD_HIGHLIGHT, max_words_per_event=3)
+
+    assert "\\fscx118" in ass, "no accent was applied"
+    assert "\\fscx100" in ass, "the accent was never closed, so it runs to the end of the event"
+    # Every surface form still appears, unmodified, in reading order.
+    for word in sentence.words:
+        assert word.w in ass, f"{word.w!r} was altered by the accent"
+
+
+def test_the_hook_card_is_drawn_on_a_plate() -> None:
+    """Measured on the first edited clip: the card rendered white over a light shirt and a lit
+    face, readable only because of its outline. A plate makes it readable on *any* footage.
+    """
+    ass = build_ass(
+        (
+            Sentence(
+                words=(Word(w="ماڵێک", start_ms=0, end_ms=500, conf=0.9),),
+                complete=True,
+            ),
+        ),
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        max_words_per_event=3,
+        title_ckb="سەردێڕ",
+    )
+    hook_style = next(line for line in ass.splitlines() if line.startswith("Style: Hook,"))
+    fields = hook_style.split(",")
+
+    # Index 15: field 0 is the "Style: Name" prefix, so BorderStyle sits one later than
+    # the Format line reads.
+    assert fields[15] == "3", f"BorderStyle is {fields[15]}, so the card has no plate"
+    kurdish = next(line for line in ass.splitlines() if line.startswith("Style: Kurdish,"))
+    assert kurdish.split(",")[15] == "1", "the caption band must keep outline-and-shadow"
