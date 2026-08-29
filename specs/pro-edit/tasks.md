@@ -37,7 +37,7 @@
           stays face-tracked and says so.
                                   (tests: test_an_unavailable_diarizer_never_claims_speaker_tracking)
 
-- [ ] T8  **Measure it on real footage.** Render ep29 before and after and record what changed in
+- [x] T8  **Measure it on real footage.** Render ep29 before and after and record what changed in
           `evidence/`, including whether the judge's misleading-edit score moves on an assembly.
                                   (tests: test_the_measured_edit_evidence_is_recorded)
 
