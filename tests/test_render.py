@@ -1521,3 +1521,43 @@ def test_speech_without_pauses_asks_for_no_cuts() -> None:
     )
     assert cut_points_ms(words, 0) == ()
     assert punch_in_schedule(cut_points_ms(words, 0), 3_200) == ()
+
+
+def test_a_punch_in_beside_a_real_camera_cut_is_dropped() -> None:
+    """Measured on the 56 s multi-angle clip: the source changes camera at 0.57 s, 17.09 s and
+    26.01 s, and a punch-in landed at 26.78 s — 0.77 s after an angle change.
+
+    The camera cuts, then the crop jumps scale before the eye has settled. Two changes that close
+    read as a glitch rather than as rhythm, and the source cut *is already* the framing change,
+    so the punch-in on top of it is redundant as well as jarring.
+    """
+    breaths = [11_030, 20_820, 26_780, 34_230, 39_670]
+    source_cuts = [566, 17_086, 26_006]
+
+    without = [at_ms for at_ms, _ in punch_in_schedule(breaths, 56_572)]
+    with_guard = [at_ms for at_ms, _ in punch_in_schedule(breaths, 56_572, avoid_ms=source_cuts)]
+
+    assert 26_780 in without, "the fixture no longer reproduces the double-cut"
+    assert 26_780 not in with_guard, "the punch-in beside the camera cut survived"
+    assert set(without) - set(with_guard) == {26_780}, "it dropped more than the offender"
+
+
+def test_the_guard_is_symmetric_around_a_camera_cut() -> None:
+    """A punch-in shortly *before* an angle change is the same defect arriving in the other
+    order, so the guard looks both ways."""
+    just_before = [9_000]
+    just_after = [11_000]
+    camera_cut = [10_000]
+
+    assert punch_in_schedule(just_before, 30_000, avoid_ms=camera_cut) == ()
+    assert punch_in_schedule(just_after, 30_000, avoid_ms=camera_cut) == ()
+    # Far enough away and it survives, or the guard would suppress everything.
+    assert punch_in_schedule([20_000], 30_000, avoid_ms=camera_cut) != ()
+
+
+def test_a_source_that_never_cuts_keeps_every_punch_in() -> None:
+    """The control. A single-camera source has no angle changes to avoid, and suppressing
+    punch-ins there would leave exactly the flat clip they exist to fix."""
+    breaths = [4_000, 9_000, 14_000]
+
+    assert punch_in_schedule(breaths, 20_000, avoid_ms=()) == punch_in_schedule(breaths, 20_000)

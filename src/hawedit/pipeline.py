@@ -2433,6 +2433,13 @@ def run_pipeline(
                     clip.in_ms,
                 ),
                 clip.out_ms - clip.in_ms,
+                # Stage 0 already found where this video cuts camera. A punch-in beside one is a
+                # double-cut, and the source's own change is the better of the two.
+                avoid_ms=[
+                    cut_ms - clip.in_ms
+                    for cut_ms in ingested.shot_cuts_ms
+                    if clip.in_ms <= cut_ms <= clip.out_ms
+                ],
             ),
             reframe=reframe_mode,
             ffmpeg=ffmpeg,

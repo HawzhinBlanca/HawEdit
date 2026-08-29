@@ -311,6 +311,17 @@ MIN_SHOT_MS: Final = 3_000
 # frequent one: it is where the speaker themselves broke, which is where a human editor cuts.
 # The rule that matters — never cut inside a word — is satisfied either way.
 CUT_PAUSE_MS: Final = 120
+# How far a punch-in must stay from a cut the *source* already made.
+#
+# Measured on the 56 s multi-angle clip: the source changes camera at 0.57 s, 17.09 s and
+# 26.01 s, and a punch-in landed at **26.78 s** — 0.77 s after an angle change. The camera cuts,
+# then the crop jumps scale before the eye has settled. Two changes that close read as a glitch
+# rather than as rhythm, and the source cut *is already* the framing change, so the punch-in on
+# top of it is redundant as well as jarring.
+#
+# Symmetric, because a punch-in shortly *before* an angle change is the same defect arriving in
+# the other order.
+SHOT_CUT_GUARD_MS: Final = 1_500
 
 
 def cut_points_ms(words: Sequence[Word], clip_in_ms: int) -> tuple[int, ...]:
@@ -335,13 +346,19 @@ def punch_in_schedule(
     *,
     min_shot_ms: int = MIN_SHOT_MS,
     zoom: float = PUNCH_IN_ZOOM,
+    avoid_ms: Sequence[int] = (),
+    guard_ms: int = SHOT_CUT_GUARD_MS,
 ) -> tuple[tuple[int, float], ...]:
     """Alternating wide/tight framings, one per kept boundary, clip-relative.
 
-    `boundaries_ms` are sentence starts measured from the clip's own zero — the only instants a
-    framing may change, because a cut inside a word reads as a glitch. Boundaries closer together
-    than `min_shot_ms` are dropped rather than merged: holding a framing is the default and a
-    change has to earn its place.
+    `boundaries_ms` are instants measured from the clip's own zero where a framing may change —
+    breaths between words, from `cut_points_ms`. Boundaries closer together than `min_shot_ms`
+    are dropped rather than merged: holding a framing is the default and a change has to earn its
+    place.
+
+    `avoid_ms` are instants the *source* already cuts at. A punch-in within `guard_ms` of one is
+    dropped: the angle change is the framing change, and a second one 0.77 s later — measured —
+    reads as a glitch rather than as rhythm.
 
     Returns `()` when nothing survives, which is the honest answer for a clip too short or too
     sparse to cut, and which leaves `crop_filter` on exactly the path it took before punch-ins
@@ -360,6 +377,9 @@ def punch_in_schedule(
         # A change at the first frame is the opening framing rather than a cut, and one at or
         # past the end would never be seen.
         if at_ms <= 0 or at_ms >= clip_duration_ms:
+            continue
+        if any(abs(at_ms - cut_ms) < guard_ms for cut_ms in avoid_ms):
+            # The source already changes the picture here; adding to it is a double-cut.
             continue
         previous = kept[-1] if kept else 0
         if at_ms - previous < min_shot_ms:
