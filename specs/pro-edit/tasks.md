@@ -27,7 +27,7 @@
                                           test_a_scale_change_lands_on_a_sentence_boundary,
                                           test_existing_single_framing_callers_are_unchanged)
 
-- [ ] T6  Assembly: several moments become one reel, and the judge scores the assembly rather
+- [x] T6  Assembly: several moments become one reel, and the judge scores the assembly rather
           than the source spans.
                                   (tests: test_an_assembled_reel_is_judged_as_one,
                                           test_the_verdict_is_recorded_against_the_assembly,
