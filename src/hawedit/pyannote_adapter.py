@@ -94,7 +94,7 @@ class PyannoteDiarizer(Diarizer):
 
         try:
             resolved_dir = self.model_dir or ModelStore().assert_available(self.model_id)
-        except ModelNotProvisioned as exc:
+        except (ModelNotProvisioned, RuntimeError) as exc:
             raise DiarizationUnavailable(
                 f"pyannote model {self.model_id!r} is not available (BLOCKED.md #4): {exc}"
             ) from exc
