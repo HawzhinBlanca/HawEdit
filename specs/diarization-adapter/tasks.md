@@ -24,7 +24,7 @@
                                                            (tests: test_missing_pyannote_is_reported_as_a_missing_extra,
                                                                   test_an_unavailable_diarizer_leaves_the_rest_of_stage_0_intact)
 
-- [ ] T5  `--diarize` / `--diarize-device` on `build_parser`; `_build_and_run` constructs and
+- [x] T5  `--diarize` / `--diarize-device` on `build_parser`; `_build_and_run` constructs and
           passes `diarizer=`. Default-off must stay invisible to all six existing callers.
                                                            (tests: test_the_default_run_does_not_enable_diarization,
                                                                   test_the_diarize_flag_reaches_run_pipeline_as_a_producer,
