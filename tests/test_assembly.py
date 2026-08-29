@@ -50,9 +50,7 @@ class MockEditorialJudge:
         )
 
 
-def _make_sentence(
-    words_with_times: list[tuple[str, int, int]], complete: bool = True
-) -> Sentence:
+def _make_sentence(words_with_times: list[tuple[str, int, int]], complete: bool = True) -> Sentence:
     words = tuple(
         Word(w=w, start_ms=start, end_ms=end, conf=0.95) for w, start, end in words_with_times
     )
