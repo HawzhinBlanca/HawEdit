@@ -33,7 +33,7 @@
                                           test_the_verdict_is_recorded_against_the_assembly,
                                           test_editorial_thresholds_apply_to_the_assembly)
 
-- [ ] T7  Speaker-tracked reframe, once `BLOCKED.md` diarization clears. Until then the reframe
+- [x] T7  Speaker-tracked reframe, once `BLOCKED.md` diarization clears. Until then the reframe
           stays face-tracked and says so.
                                   (tests: test_an_unavailable_diarizer_never_claims_speaker_tracking)
 

@@ -3,3 +3,4 @@ TS=2026-08-28T14:55:16Z FEATURE=pro-edit TASK=T2 TESTS=test_the_hook_card_uses_t
 TS=2026-08-28T15:04:24Z FEATURE=pro-edit TASK=T5 TESTS=test_the_crop_changes_scale_at_least_once,test_a_scale_change_lands_on_a_sentence_boundary,test_existing_single_framing_callers_are_unchanged,test_a_punch_in_recentres_itself_when_the_crop_tightens VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-08-29T03:42:02Z FEATURE=pro-edit TASK=T3 TESTS=test_the_longest_word_carries_the_emphasis,test_emphasis_never_alters_the_caption_text,test_a_single_word_event_is_not_emphasised,test_the_hook_card_is_drawn_on_a_plate VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-08-29T05:43:59Z FEATURE=pro-edit TASK=T8 TESTS=test_the_measured_edit_evidence_is_recorded VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-08-29T13:26:40Z FEATURE=pro-edit TASK=T7 TESTS=test_an_unavailable_diarizer_never_claims_speaker_tracking VERIFY=pass REPORT=.gate/last-test-run.xml
