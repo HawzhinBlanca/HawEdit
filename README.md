@@ -583,6 +583,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `keyframes.py` | §3 Stage 4 | Real source-timestamped JPEG extraction for the multimodal judge, capped at 20 images and 5 MiB per bounded read. |
 | `reframe.py` | §3 Stage 6 | Dominant-face continuity plus strict speaker-labelled focus evidence reconciled to exclusive diarization turns; the production active-speaker associator remains external. |
 | `assembly.py` | §3 Stage 6 extension | Multi-moment story assembly, timeline re-offsetting, and unified editorial scoring across spliced spans. |
+| `silence.py` | §3 Stage 6 extension | Silence tightening, pause shortening, timeline shifting, and removed silence tracking in output contract. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `events.py` | §3 | What a run says about itself *before* it returns: one stage-transition event per start and per end, to a sink that defaults to discarding. A skip carries the same reason the report will carry, so the timeline cannot go green over a stage that refused. Owns the JSONL ledger format both ways — `JsonlEventSink` writes it, `read_events` reads it back — so reading a run's timeline needs no durable-execution engine imported. |

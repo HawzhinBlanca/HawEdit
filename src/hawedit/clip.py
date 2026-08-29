@@ -488,6 +488,7 @@ class Output:
     # additive for the same reason as `Editorial.payoff_at_ms` — see D-033. An empty tuple
     # here genuinely means "none", because a post with no hashtags is a real deliverable.
     hashtags_ckb: tuple[str, ...] = ()
+    silence_removed_ms: int = 0
 
     def __post_init__(self) -> None:
         for name in ("title_ckb", "description_ckb", "crop_target", "caption_style"):
@@ -502,6 +503,7 @@ class Output:
             isinstance(tag, str) for tag in self.hashtags_ckb
         ):
             raise ValueError("output.hashtags_ckb must be a tuple of strings")
+        _strict_json_int(self.silence_removed_ms, "output.silence_removed_ms", minimum=0)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -511,6 +513,7 @@ class Output:
             "caption_style": self.caption_style,
             "durations": list(self.durations),
             "hashtags_ckb": list(self.hashtags_ckb),
+            "silence_removed_ms": self.silence_removed_ms,
         }
 
     @staticmethod
@@ -521,10 +524,11 @@ class Output:
             required=frozenset(
                 {"title_ckb", "description_ckb", "crop_target", "caption_style", "durations"}
             ),
-            optional=frozenset({"hashtags_ckb"}),
+            optional=frozenset({"hashtags_ckb", "silence_removed_ms"}),
         )
         raw_durations = _strict_json_array(fields["durations"], "output.durations")
         raw_hashtags = _strict_json_array(fields.get("hashtags_ckb", []), "output.hashtags_ckb")
+        raw_silence = fields.get("silence_removed_ms", 0)
         return Output(
             title_ckb=_strict_json_string(fields["title_ckb"], "output.title_ckb"),
             description_ckb=_strict_json_string(
@@ -537,6 +541,9 @@ class Output:
             ),
             hashtags_ckb=tuple(
                 _strict_json_string(tag, "output.hashtags_ckb member") for tag in raw_hashtags
+            ),
+            silence_removed_ms=_strict_json_int(
+                raw_silence, "output.silence_removed_ms", minimum=0
             ),
         )
 
