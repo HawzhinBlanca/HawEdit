@@ -19,7 +19,7 @@
                                                            (tests: test_absent_weights_are_refused_by_naming_blocker_four,
                                                                   test_a_checkpoint_revision_the_acceptance_kit_did_not_pin_is_refused)
 
-- [ ] T4  Missing `pyannote.audio` surfaces as `DiarizationUnavailable` naming the extra, and the
+- [x] T4  Missing `pyannote.audio` surfaces as `DiarizationUnavailable` naming the extra, and the
           run continues to a structured Stage 0 skip rather than crashing (D-240).
                                                            (tests: test_missing_pyannote_is_reported_as_a_missing_extra,
                                                                   test_an_unavailable_diarizer_leaves_the_rest_of_stage_0_intact)
