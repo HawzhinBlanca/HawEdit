@@ -14,7 +14,7 @@
                                                                   test_the_adapter_never_repairs_an_overlap_it_is_handed,
                                                                   test_the_adapter_never_imports_the_pyannote_cloud_sdk)
 
-- [ ] T3  Checkpoint resolution: `ModelStore.assert_available`, the `BLOCKED.md` #4 message, and
+- [x] T3  Checkpoint resolution: `ModelStore.assert_available`, the `BLOCKED.md` #4 message, and
           the revision agreement with `diarization_acceptance.COMMUNITY_REVISION`.
                                                            (tests: test_absent_weights_are_refused_by_naming_blocker_four,
                                                                   test_a_checkpoint_revision_the_acceptance_kit_did_not_pin_is_refused)

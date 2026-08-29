@@ -1,2 +1,3 @@
 TS=2026-08-26T09:34:35Z FEATURE=diarization-adapter TASK=T1 TESTS=test_the_diarization_extra_pins_a_four_x_pyannote VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-08-29T11:21:47Z FEATURE=diarization-adapter TASK=T2 TESTS=test_float_seconds_become_exact_integer_milliseconds,test_a_turn_that_rounds_to_zero_length_is_refused_not_dropped,test_the_adapter_never_repairs_an_overlap_it_is_handed,test_the_adapter_never_imports_the_pyannote_cloud_sdk VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-08-29T11:29:55Z FEATURE=diarization-adapter TASK=T3 TESTS=test_absent_weights_are_refused_by_naming_blocker_four,test_a_checkpoint_revision_the_acceptance_kit_did_not_pin_is_refused VERIFY=pass REPORT=.gate/last-test-run.xml
