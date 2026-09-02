@@ -149,6 +149,24 @@ def test_a_legal_revision_renders_a_real_second_mp4(
 
 
 @needs_ffmpeg
+def test_proposals_bind_matching_qc_record_to_rendered_clips(
+    real_run: tuple[Path, PipelineRun],
+) -> None:
+    """Proposals render path binds the human approver and rendered MP4 SHA-256 to Qc."""
+    work, _ = real_run
+    _approve(work, "qc-bound", final_in_ms=50, final_out_ms=4140)
+    record = render_boundary_revision(work, "qc-bound")
+    assert record["status"] == "rendered"
+    clip = record["clip"]
+    assert clip["qc"]["human_reviewed"] is True
+    assert clip["qc"]["reviewed_by"] == "hawa"
+    assert len(clip["qc"]["reviewed_sha256"]) == 64
+    rendered_file = Path(record["render_path"])
+    expected_sha = hashlib.sha256(rendered_file.read_bytes()).hexdigest().lower()
+    assert clip["qc"]["reviewed_sha256"] == expected_sha
+
+
+@needs_ffmpeg
 def test_the_revised_render_duration_matches_the_narrower_span(
     real_run: tuple[Path, PipelineRun],
 ) -> None:
