@@ -35,18 +35,22 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Sequence
-from typing import Final
+from typing import Any, Final
 
 from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, wrap_caption_lines
+from hawedit.clip import Clip
+from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, assert_deliverable_order
 
 __all__ = [
     "DeliveryError",
+    "DeliveryRefused",
     "build_edl",
     "build_srt",
     "ms_to_srt_time",
     "ms_to_timecode",
     "parse_srt_times",
+    "reconcile_delivery",
 ]
 
 _SRT_TIME = re.compile(
@@ -57,6 +61,16 @@ _SRT_TIME = re.compile(
 
 class DeliveryError(ValueError):
     """A sidecar this module would not be able to ship honestly."""
+
+
+class DeliveryRefused(DeliveryError):
+    """Refusal of delivery when independent measurement contradicts contract claims."""
+
+    def __init__(self, reason: str, expected: Any, measured: Any) -> None:
+        super().__init__(f"{reason}: expected {expected!r}, measured {measured!r}")
+        self.reason = reason
+        self.expected = expected
+        self.measured = measured
 
 
 def _nonnegative_milliseconds(value: object, label: str) -> int:
@@ -309,3 +323,143 @@ def build_edl(
             f"{source_in} {source_out} {record_in} {record_out}"
         )
     return "\n".join(lines) + "\n"
+
+
+def reconcile_delivery(
+    clip: Clip,
+    measurement: ClipMeasurement,
+    *,
+    captions_burned_in: bool = True,
+    planned_punch_ins: Sequence[tuple[int, float]] = (),
+    source_shot_cuts_ms: Sequence[int] = (),
+    fps: float = 25.0,
+    delivery_lufs: float = -14.0,
+    target_true_peak_db: float = -0.9,
+    shot_cut_guard_ms: int = 1500,
+    lufs_tolerance: float | None = None,
+    min_face_share: float | None = None,
+) -> None:
+    """Reconcile contract claims against independently measured ground truth.
+
+    Raises DeliveryRefused(reason, expected, measured) on any mismatch across the 7
+    non-negotiable Level C verification clauses.
+    """
+    frame_ms = int(round(1000.0 / fps)) if fps > 0 else 40
+    # Tolerance is 1 frame plus sub-frame millisecond quantization slack (at 25 fps, 60 ms)
+    tolerance_ms = frame_ms + int(round(frame_ms / 2))
+
+    # Clause 1: Duration
+    span_ms = clip.out_ms - clip.in_ms
+    expected_duration_ms = span_ms - (clip.output.silence_removed_ms if clip.output else 0)
+    expected_frames = round(expected_duration_ms * fps / 1000.0)
+    measured_frames = measurement.video.frames_count or round(
+        measurement.video.duration_ms * fps / 1000.0
+    )
+    if (
+        abs(expected_duration_ms - measurement.video.duration_ms) > tolerance_ms
+        or abs(expected_frames - measured_frames) > 1
+    ):
+        raise DeliveryRefused(
+            "duration_mismatch",
+            expected=expected_duration_ms,
+            measured=measurement.video.duration_ms,
+        )
+
+    # Clause 2: Resolution & Geometry (1080x1920 vertical)
+    if measurement.video.width != 1080 or measurement.video.height != 1920:
+        raise DeliveryRefused(
+            "geometry_mismatch",
+            expected=(1080, 1920),
+            measured=(measurement.video.width, measurement.video.height),
+        )
+
+    # Clause 3: Audio Dynamics (LUFS and true-peak)
+    if lufs_tolerance is not None:
+        effective_lufs_tol = lufs_tolerance
+    elif measurement.audio.duration_ms >= 10_000:
+        effective_lufs_tol = 0.5
+    elif measurement.audio.duration_ms >= 3_000:
+        effective_lufs_tol = 2.5
+    else:
+        # ITU-R BS.1770 / EBU R128 requires 3s minimum integration gating window
+        effective_lufs_tol = 5.0
+    if abs(measurement.audio.integrated_lufs - delivery_lufs) > effective_lufs_tol:
+        raise DeliveryRefused(
+            "loudness_violation",
+            expected=delivery_lufs,
+            measured=measurement.audio.integrated_lufs,
+        )
+    if measurement.audio.true_peak_db > target_true_peak_db:
+        raise DeliveryRefused(
+            "true_peak_violation",
+            expected=f"<= {target_true_peak_db}",
+            measured=measurement.audio.true_peak_db,
+        )
+
+    # Clause 4: Silence Removal Math
+    expected_silence_removed = clip.output.silence_removed_ms if clip.output else 0
+    measured_audio_dur = measurement.audio.duration_ms
+    measured_removed = span_ms - measured_audio_dur
+    if abs(expected_silence_removed - measured_removed) > tolerance_ms:
+        raise DeliveryRefused(
+            "silence_math_mismatch",
+            expected=expected_silence_removed,
+            measured=measured_removed,
+        )
+
+    # Clause 5: Visual Cuts and Planned Punch-Ins
+    measured_cuts = measurement.scenes.get("cuts_ms", [])
+    for at_ms, _ in planned_punch_ins:
+        matched = any(abs(at_ms - cut_ms) <= tolerance_ms for cut_ms in measured_cuts)
+        if not matched:
+            raise DeliveryRefused(
+                "missing_punch_in_cut",
+                expected=at_ms,
+                measured=measured_cuts,
+            )
+
+    clip_source_cuts = [
+        sc - clip.in_ms for sc in source_shot_cuts_ms if clip.in_ms <= sc <= clip.out_ms
+    ]
+    punch_in_times = [p[0] for p in planned_punch_ins]
+    for cut_ms in measured_cuts:
+        near_punch = any(abs(cut_ms - pt) <= tolerance_ms for pt in punch_in_times)
+        near_source = any(abs(cut_ms - sc) <= shot_cut_guard_ms for sc in clip_source_cuts)
+        if not (near_punch or near_source):
+            raise DeliveryRefused(
+                "unplanned_rogue_cut",
+                expected=f"within {shot_cut_guard_ms}ms of source cut or ±1 frame of punch-in",
+                measured=cut_ms,
+            )
+
+    # Clause 6: Caption Burn-in Ink Energy
+    if captions_burned_in:
+        if measurement.captions.ink_energy_detected_share < 0.95:
+            raise DeliveryRefused(
+                "caption_ink_missing",
+                expected=">= 0.95 ink energy share",
+                measured=measurement.captions.ink_energy_detected_share,
+            )
+    elif measurement.captions.ink_energy_detected_share > 0.0:
+        raise DeliveryRefused(
+            "unexpected_caption_ink",
+            expected=0.0,
+            measured=measurement.captions.ink_energy_detected_share,
+        )
+
+    # Clause 7: Face Tracking In-Frame Presence
+    required_face_share = (
+        min_face_share
+        if min_face_share is not None
+        else (0.90 if measurement.video.duration_ms >= 3_000 else 0.50)
+    )
+    if (
+        clip.output
+        and clip.output.crop_target == "face_tracked"
+        and measurement.faces.face_detected_share < required_face_share
+    ):
+        raise DeliveryRefused(
+            "face_tracking_unsubstantiated",
+            expected=f">= {required_face_share:.2f} face detected share",
+            measured=measurement.faces.face_detected_share,
+        )

@@ -1788,7 +1788,7 @@ def _existing_artifact(work_dir: Path, media_id: str, sentences: tuple[int, ...]
     work_dir.mkdir(parents=True, exist_ok=True)
     clip_id = _clip_id(media_id, sentences)
     bundle = ArtifactBundle.create(work_dir, clip_id)
-    for suffix in ("ass", "mp4", "srt", "edl", "json"):
+    for suffix in ArtifactBundle.suffixes():
         bundle.write_text(suffix, "a previous run left this here")
     bundle.publish()
     return bundle.final_dir
@@ -1989,6 +1989,7 @@ def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) 
     assert _sidecars_on_disk(work, "safe-s0-0") == [
         "safe-s0-0.edl",
         "safe-s0-0.json",
+        "safe-s0-0.measured.json",
         "safe-s0-0.srt",
     ]
 
@@ -2979,7 +2980,9 @@ def _abandoned_attempt(work: Path, media_id: str, sentence: int = 0) -> tuple[st
 
     work.mkdir(parents=True, exist_ok=True)
     clip_id = _clip_id(media_id, (sentence,))
-    ass_path, render_path, _srt, _edl, editing_json_path = _delivery_artifact_paths(work, clip_id)
+    ass_path, render_path, _srt, _edl, editing_json_path, _measured = _delivery_artifact_paths(
+        work, clip_id
+    )
     for path in (ass_path, render_path, editing_json_path):
         path.write_text("from the attempt that was interrupted", encoding="utf-8")
     return tuple(p.name for p in (ass_path, render_path, editing_json_path))
@@ -4728,6 +4731,7 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
     assert _sidecars_on_disk(work, f"{media_id}-s0-0") == [
         f"{media_id}-s0-0.edl",
         f"{media_id}-s0-0.json",
+        f"{media_id}-s0-0.measured.json",
         f"{media_id}-s0-0.srt",
     ]
     edl = Path(run.delivery.edl_path).read_text(encoding="utf-8")

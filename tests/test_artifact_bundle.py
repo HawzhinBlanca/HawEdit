@@ -12,7 +12,7 @@ import pytest
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleAlreadyExists, BundleError
 
-SUFFIXES = ("ass", "mp4", "srt", "edl", "json")
+SUFFIXES = ("ass", "mp4", "srt", "edl", "json", "measured.json")
 
 
 def stage_complete(bundle: ArtifactBundle, marker: str = "one") -> None:

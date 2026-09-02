@@ -76,7 +76,12 @@ from hawedit.clip import (
     RejectedCandidate,
 )
 from hawedit.credentials import CredentialError
-from hawedit.delivery import DeliveryError, build_edl, build_srt
+from hawedit.delivery import (
+    DeliveryError,
+    build_edl,
+    build_srt,
+    reconcile_delivery,
+)
 from hawedit.diarization import turn_bounds_for_anchors
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.escalation import (
@@ -106,6 +111,7 @@ from hawedit.judge import (
     RequestTooLarge,
 )
 from hawedit.keyframes import KeyframeError, extract_judge_frames
+from hawedit.measure import measure_clip
 from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
 from hawedit.qwen_visual import EmbedderUnavailable
@@ -224,13 +230,17 @@ class Delivery:
     srt_path: str
     edl_path: str
     editing_json_path: str
+    measured_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "srt_path": self.srt_path,
             "edl_path": self.edl_path,
             "editing_json_path": self.editing_json_path,
         }
+        if self.measured_path:
+            result["measured_path"] = self.measured_path
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -2367,9 +2377,14 @@ def run_pipeline(
         log.finished("render", unjudged.reason)
         return replace(run, render=unjudged)
 
-    _, final_render, final_srt, final_edl, final_json = _delivery_artifact_paths(
-        work_dir, clip.clip_id
-    )
+    (
+        _final_ass,
+        final_render,
+        final_srt,
+        final_edl,
+        final_json,
+        final_measured,
+    ) = _delivery_artifact_paths(work_dir, clip.clip_id)
     # Kept as well as hoisted, and it costs nothing: the guard above runs before the expensive
     # stages, this one runs immediately before the first write. Anything that appeared in the
     # work directory while the models were running is still caught here.
@@ -2437,6 +2452,20 @@ def run_pipeline(
         if source_dimensions is None:
             source_dimensions = proxy_dimensions(source, ffmpeg)
         width, height = source_dimensions
+        planned_punch_ins = punch_in_schedule(
+            cut_points_ms(
+                tuple(word for sentence in selected for word in sentence.words),
+                clip.in_ms,
+            ),
+            clip.out_ms - clip.in_ms,
+            # Stage 0 already found where this video cuts camera. A punch-in beside one is a
+            # double-cut, and the source's own change is the better of the two.
+            avoid_ms=[
+                cut_ms - clip.in_ms
+                for cut_ms in ingested.shot_cuts_ms
+                if clip.in_ms <= cut_ms <= clip.out_ms
+            ],
+        )
         rendered = render_clip(
             clip,
             source,
@@ -2455,20 +2484,7 @@ def run_pipeline(
             # schedule drops the ones too close together to hold. A clip whose sentences are all
             # shorter than MIN_SHOT_MS gets an empty schedule and the single framing it had
             # before, which is the honest answer rather than a strobe. D-259.
-            punch_ins=punch_in_schedule(
-                cut_points_ms(
-                    tuple(word for sentence in selected for word in sentence.words),
-                    clip.in_ms,
-                ),
-                clip.out_ms - clip.in_ms,
-                # Stage 0 already found where this video cuts camera. A punch-in beside one is a
-                # double-cut, and the source's own change is the better of the two.
-                avoid_ms=[
-                    cut_ms - clip.in_ms
-                    for cut_ms in ingested.shot_cuts_ms
-                    if clip.in_ms <= cut_ms <= clip.out_ms
-                ],
-            ),
+            punch_ins=planned_punch_ins,
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
         )
@@ -2494,7 +2510,7 @@ def run_pipeline(
 
     log.finished("render")
 
-    # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL -----------------------------
+    # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL · measured.json ------------
     # Nothing is public yet: the render and all sidecars live in one private sibling directory.
     log.started("delivery")
     try:
@@ -2509,15 +2525,29 @@ def run_pipeline(
         # The EDL's source timecodes are the *source's* timeline — where this clip was cut
         # from — so it takes the source's own frame rate. NTSC 30000/1001 selects SMPTE
         # drop-frame numbering; unsupported rates land here instead of silently drifting.
+        fps = frame_rate(source, ffmpeg)
         edl = build_edl(
             clip_in_ms=clip.in_ms,
             clip_out_ms=clip.out_ms,
-            fps=frame_rate(source, ffmpeg),
+            fps=fps,
             title=f"{identifier} {clip.clip_id}",
         )
         bundle.write_text("json", editing_json)
         bundle.write_text("srt", srt)
         bundle.write_text("edl", edl)
+
+        # Independent Level C reconciliation gate before publication (T1.2 / ADR D-263)
+        measurement = measure_clip(render_path, ass_path=ass_path, ffmpeg=ffmpeg)
+        bundle.write_text("measured.json", measurement.to_json())
+        reconcile_delivery(
+            clip=clip,
+            measurement=measurement,
+            captions_burned_in=rendered.captions_burned_in,
+            planned_punch_ins=planned_punch_ins,
+            source_shot_cuts_ms=ingested.shot_cuts_ms,
+            fps=fps,
+        )
+
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         bundle.publish()
     except (
@@ -2563,6 +2593,7 @@ def run_pipeline(
             srt_path=str(final_srt),
             edl_path=str(final_edl),
             editing_json_path=str(final_json),
+            measured_path=str(final_measured),
         ),
     )
 

@@ -31,14 +31,18 @@ from typing import Final
 import pytest
 
 from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, build_ass, find_ffmpeg
+from hawedit.clip import Clip
 from hawedit.delivery import (
     DeliveryError,
+    DeliveryRefused,
     build_edl,
     build_srt,
     ms_to_srt_time,
     ms_to_timecode,
     parse_srt_times,
+    reconcile_delivery,
 )
+from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.transcripts import Word
 
@@ -732,3 +736,258 @@ def test_edl_clip_bounds_require_exact_integer_milliseconds(value: object) -> No
         build_edl(clip_in_ms=value, clip_out_ms=1_000, fps=25)  # type: ignore[arg-type]
     with pytest.raises(DeliveryError, match="EDL clip out-point.*non-negative integer"):
         build_edl(clip_in_ms=0, clip_out_ms=value, fps=25)  # type: ignore[arg-type]
+
+
+# =========================================================================================
+# Level C Reconciliation Gate — T1.2
+# =========================================================================================
+
+
+def _make_valid_reconciliation_pair() -> tuple[Clip, ClipMeasurement]:
+    from hawedit.boundary import BoundaryInputs, fuse_boundary
+    from hawedit.clip import (
+        ClipTranscript,
+        DiscoveryPath,
+        Editorial,
+        Output,
+        Qc,
+    )
+    from hawedit.measure import (
+        AudioMeasurement,
+        CaptionMeasurement,
+        ClipMeasurement,
+        FaceTrackMeasurement,
+        FileSummary,
+        VideoMeasurement,
+    )
+    from hawedit.transcripts import AsrProvenance
+
+    boundary = fuse_boundary(
+        BoundaryInputs(anchor_in_ms=500, anchor_out_ms=2_500, sentence_complete=True)
+    )
+    clip = Clip(
+        clip_id="test-reconcile-clip",
+        media_id="test-media",
+        media_sha256="1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        in_ms=boundary.final_in_ms,
+        out_ms=boundary.final_out_ms,
+        discovery_path=DiscoveryPath.VERBAL,
+        boundary=boundary,
+        transcript=ClipTranscript(
+            raw_ckb="دەق",
+            norm_ckb="دەق",
+            en_aux=None,
+            words=(),
+            asr=AsrProvenance(canonical="omniASR_LLM_7B_v2"),
+        ),
+        editorial=Editorial(
+            hook_score=0.8,
+            self_contained=True,
+            meaning_fidelity=0.9,
+            misleading_edit_risk=0.05,
+            cultural_landing=0.7,
+            narrative_role="payoff",
+            judge="gemini-2.5-pro",
+        ),
+        output=Output(
+            title_ckb="سەردێڕ",
+            description_ckb="وەسف",
+            crop_target="face_tracked",
+            caption_style="word_highlight",
+            durations=(2,),
+            silence_removed_ms=0,
+        ),
+        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+    )
+
+    duration_ms = clip.out_ms - clip.in_ms
+    measurement = ClipMeasurement(
+        schema=1,
+        file=FileSummary(path="/tmp/test.mp4", sha256="abc", size_bytes=1000),
+        video=VideoMeasurement(
+            width=1080,
+            height=1920,
+            fps=25.0,
+            fps_ratio="25/1",
+            duration_ms=duration_ms,
+            frames_count=int(duration_ms * 25 / 1000),
+            bitrate_kbps=3000.0,
+            codec="h264",
+            pix_fmt="yuv420p",
+            color_space="bt709",
+            color_transfer="bt709",
+            color_primaries="bt709",
+        ),
+        audio=AudioMeasurement(
+            codec="aac",
+            sample_rate=48000,
+            channels=2,
+            duration_ms=duration_ms,
+            integrated_lufs=-14.0,
+            true_peak_db=-1.0,
+            lra_lu=2.0,
+            silences=[],
+            total_silence_ms=0,
+            silence_share=0.0,
+        ),
+        scenes={"cuts_ms": [500]},
+        faces=FaceTrackMeasurement(
+            sample_interval_ms=200,
+            samples_count=10,
+            face_detected_frames_count=10,
+            face_detected_share=1.0,
+            median_face_height_share=0.25,
+            median_y_center_share=0.38,
+        ),
+        captions=CaptionMeasurement(
+            events_count=2,
+            ink_energy_detected_share=1.0,
+            median_contrast_ratio=4.5,
+        ),
+        vmaf=None,
+        tool_metadata={"measured_at": "2026-09-02T12:00:00Z"},
+    )
+    return clip, measurement
+
+
+def test_reconcile_delivery_passes_valid_measurement() -> None:
+    clip, measurement = _make_valid_reconciliation_pair()
+    reconcile_delivery(
+        clip,
+        measurement,
+        captions_burned_in=True,
+        planned_punch_ins=[(500, 1.25)],
+        source_shot_cuts_ms=[clip.in_ms + 500],
+    )
+
+
+def test_delivery_refuses_duration_mismatch() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+    broken_video = replace(measurement.video, duration_ms=measurement.video.duration_ms + 500)
+    broken_measurement = replace(measurement, video=broken_video)
+
+    with pytest.raises(DeliveryRefused, match="duration_mismatch") as exc_info:
+        reconcile_delivery(clip, broken_measurement)
+    assert exc_info.value.reason == "duration_mismatch"
+
+
+def test_delivery_refuses_geometry_mismatch() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+    broken_video = replace(measurement.video, width=720)
+    broken_measurement = replace(measurement, video=broken_video)
+
+    with pytest.raises(DeliveryRefused, match="geometry_mismatch") as exc_info:
+        reconcile_delivery(clip, broken_measurement)
+    assert exc_info.value.reason == "geometry_mismatch"
+
+
+def test_delivery_refuses_loudness_or_peak_violation() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+
+    # Integrated loudness too soft (-20.0 LUFS)
+    broken_audio = replace(measurement.audio, integrated_lufs=-20.0)
+    broken_meas = replace(measurement, audio=broken_audio)
+    with pytest.raises(DeliveryRefused, match="loudness_violation") as exc_info:
+        reconcile_delivery(clip, broken_meas)
+    assert exc_info.value.reason == "loudness_violation"
+
+    # True peak exceeds target (+0.5 dBFS > -0.9 dBFS)
+    broken_audio_tp = replace(measurement.audio, true_peak_db=0.5)
+    broken_meas_tp = replace(measurement, audio=broken_audio_tp)
+    with pytest.raises(DeliveryRefused, match="true_peak_violation") as exc_info_tp:
+        reconcile_delivery(clip, broken_meas_tp)
+    assert exc_info_tp.value.reason == "true_peak_violation"
+
+
+def test_delivery_refuses_silence_math_mismatch() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+    assert clip.output is not None
+    # Contract says 500 ms removed, video duration matches that, but audio duration does not
+    broken_output = replace(clip.output, silence_removed_ms=500)
+    broken_clip = replace(clip, output=broken_output)
+    expected_dur = (clip.out_ms - clip.in_ms) - 500
+    broken_video = replace(
+        measurement.video,
+        duration_ms=expected_dur,
+        frames_count=int(expected_dur * 25 / 1000),
+    )
+    broken_meas = replace(measurement, video=broken_video)
+
+    with pytest.raises(DeliveryRefused, match="silence_math_mismatch") as exc_info:
+        reconcile_delivery(broken_clip, broken_meas)
+    assert exc_info.value.reason == "silence_math_mismatch"
+
+
+def test_delivery_refuses_unplanned_cuts_or_missing_punch_ins() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+
+    # Missing planned punch-in at 800 ms
+    with pytest.raises(DeliveryRefused, match="missing_punch_in_cut") as exc_info:
+        reconcile_delivery(
+            clip,
+            measurement,
+            planned_punch_ins=[(800, 1.25)],
+            source_shot_cuts_ms=[],
+        )
+    assert exc_info.value.reason == "missing_punch_in_cut"
+
+    # Unplanned rogue cut at 1500 ms (no source cut or punch-in anywhere near it)
+    broken_scenes = {"cuts_ms": [500, 1500]}
+    broken_meas = replace(measurement, scenes=broken_scenes)
+    with pytest.raises(DeliveryRefused, match="unplanned_rogue_cut") as exc_info_rogue:
+        reconcile_delivery(
+            clip,
+            broken_meas,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[],
+        )
+    assert exc_info_rogue.value.reason == "unplanned_rogue_cut"
+
+
+def test_delivery_refuses_a_caption_claim_the_frames_do_not_show() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+
+    # Claimed burned in, but measured ink share is only 50% (< 95%)
+    broken_caps = replace(measurement.captions, ink_energy_detected_share=0.50)
+    broken_meas = replace(measurement, captions=broken_caps)
+    with pytest.raises(DeliveryRefused, match="caption_ink_missing") as exc_info:
+        reconcile_delivery(
+            clip,
+            broken_meas,
+            captions_burned_in=True,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[clip.in_ms + 500],
+        )
+    assert exc_info.value.reason == "caption_ink_missing"
+
+
+def test_delivery_refuses_face_tracking_claim_when_frames_lack_face() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+
+    # Claimed face_tracked, but face detected share is only 56.2% (< 90%)
+    broken_faces = replace(measurement.faces, face_detected_share=0.562)
+    broken_meas = replace(measurement, faces=broken_faces)
+    with pytest.raises(DeliveryRefused, match="face_tracking_unsubstantiated") as exc_info:
+        reconcile_delivery(
+            clip,
+            broken_meas,
+            captions_burned_in=True,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[clip.in_ms + 500],
+            min_face_share=0.90,
+        )
+    assert exc_info.value.reason == "face_tracking_unsubstantiated"

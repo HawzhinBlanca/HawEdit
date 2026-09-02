@@ -20,7 +20,7 @@ from hawedit.transcripts import validate_media_id
 
 __all__ = ["ArtifactBundle", "BundleAlreadyExists", "BundleError"]
 
-_SUFFIXES: Final = ("ass", "mp4", "srt", "edl", "json")
+_SUFFIXES: Final = ("ass", "mp4", "srt", "edl", "json", "measured.json")
 _REPARSE_FLAG: Final = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _DirectoryIdentity = tuple[int, int]
 _FileIdentity = tuple[int, int, int, int, int]
@@ -155,6 +155,10 @@ class ArtifactBundle:
             self._staging_identity,
             label="private delivery bundle",
         )
+
+    @classmethod
+    def suffixes(cls) -> tuple[str, ...]:
+        return _SUFFIXES
 
     @classmethod
     def final_paths_for(cls, root: Path, bundle_id: str) -> tuple[Path, ...]:

@@ -13718,3 +13718,29 @@ Per `HANDOFF.md` §1.6 ("A wrong record is corrected in place, keeping the wrong
   - Assembly re-opened as **T4.9** (Cold-open assembly: media concatenation, timeline re-timing, and real frame judging).
   - Active-speaker reframe re-opened as **T2.1** (Active-speaker reframe: audiovisual/motion speaker-to-face association and verified tracking).
 
+---
+
+## D-263 · Six-file delivery bundle and independent Level C Reconciliation Gate
+
+**Date:** 2026-09-02 · **Blueprint ref:** §2, §5 · **Type:** architecture / contract widening
+
+**Context.**
+`BLUEPRINT.md` §2 originally specified a four-format delivery set (`MP4 · SRT/ASS · editing JSON · EDL`), implemented as a five-file atomic delivery bundle in D-072 (`ass`, `mp4`, `srt`, `edl`, `json`). However, as revealed by the 2026-09-02 deep audit (`specs/pro-grade-program/research.md` §5), delivery was formerly unconditional: a pipeline run could claim `captions_burned_in: true`, `1080x1920`, `crop_target: face_tracked`, and `-14 LUFS` while the delivered file diverged from all of them, because the test suite asserted renderer intent rather than delivered artifact outcome.
+
+**Decision.**
+1. **Six-File Delivery Bundle**:
+   The delivery bundle suffix set in `ArtifactBundle` is expanded from 5 to 6 items: `("ass", "mp4", "srt", "edl", "json", "measured.json")`.
+   The 6th file (`<clip_id>.measured.json`) carries the complete independent ground-truth measurement record derived directly from the delivered MP4/ASS files by `hawedit.measure`.
+2. **Level C Reconciliation Gate**:
+   Before `bundle.publish()` is called, `reconcile_delivery()` executes over the staged private artifacts. It enforces seven non-negotiable clauses:
+   - Duration matches contract `durations[0]` within ±1 frame (±40 ms at 25 fps).
+   - Video resolution is exactly 1080×1920.
+   - Integrated loudness is −14.0 ± 0.5 LUFS and True Peak ≤ −0.9 dBFS.
+   - Silence removal matches `(span - audio_duration)` within ±1 frame.
+   - Every planned punch-in matches a detected `scdet` cut within ±1 frame, and no unplanned cut occurs > 1,500 ms from a source camera cut.
+   - If `captions_burned_in` is True, caption band ink energy detected share must be ≥ 95%.
+   - If `crop_target` is `"face_tracked"`, face detected share must be ≥ 90%.
+3. **Strict Fail-Stop**:
+   Any violation raises `DeliveryRefused(reason, expected, measured)` (subclassing `DeliveryError`), immediately terminating delivery publication and cleanly discarding the private staging directory. No false claim can leave the system.
+
+
