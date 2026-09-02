@@ -1,0 +1,1 @@
+TS=2026-09-02T12:56:26Z FEATURE=audit-remediation TASK=T1 TESTS=test_render_clip_raises_on_subprocess_timeout VERIFY=pass REPORT=.gate/last-test-run.xml
