@@ -32,15 +32,18 @@ alignment (D-151).
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Final
 
 from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, wrap_caption_lines
 from hawedit.clip import Clip
 from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, assert_deliverable_order
+from hawedit.timeline import build_episode_otio_timeline, build_otio_timeline, serialize_otio
 
 __all__ = [
     "DeliveryError",
@@ -50,6 +53,8 @@ __all__ = [
     "ms_to_srt_time",
     "ms_to_timecode",
     "parse_srt_times",
+    "publish_delivery_bundle",
+    "publish_episode_timeline",
     "reconcile_delivery",
 ]
 
@@ -476,3 +481,75 @@ def reconcile_delivery(
             expected=measurement.file.sha256.lower(),
             measured=clip.qc.reviewed_sha256.lower(),
         )
+
+
+def publish_delivery_bundle(
+    output_dir: Path,
+    clip: Clip,
+    source_media_path: str | Path,
+    fps: float,
+    selected_sentences: Sequence[Sentence] = (),
+    punch_ins: tuple[int, ...] = (),
+    speaker_turns: tuple[tuple[int, int, str], ...] = (),
+) -> dict[str, Path]:
+    """Emit the editorial handoff bundle (EDL, SRT, JSON contract, and Resolve OTIO timeline)."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results: dict[str, Path] = {}
+
+    edl_text = build_edl(
+        clip_in_ms=clip.in_ms,
+        clip_out_ms=clip.out_ms,
+        fps=fps,
+        title=f"HawEdit {clip.clip_id}",
+    )
+    edl_path = output_dir / f"{clip.clip_id}.edl"
+    edl_path.write_text(edl_text, encoding="utf-8")
+    results["edl"] = edl_path
+
+    if selected_sentences:
+        srt_text = build_srt(
+            selected_sentences,
+            clip_in_ms=clip.in_ms,
+            clip_duration_ms=clip.out_ms - clip.in_ms,
+        )
+        srt_path = output_dir / f"{clip.clip_id}.srt"
+        srt_path.write_text(srt_text, encoding="utf-8")
+        results["srt"] = srt_path
+
+    json_path = output_dir / f"{clip.clip_id}.json"
+    json_path.write_text(json.dumps(clip.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    results["json"] = json_path
+
+    otio_doc = build_otio_timeline(
+        clip=clip,
+        source_media_path=str(source_media_path),
+        fps=fps,
+        punch_ins=punch_ins,
+        speaker_turns=speaker_turns,
+    )
+    otio_path = output_dir / f"{clip.clip_id}.otio"
+    otio_path.write_text(serialize_otio(otio_doc), encoding="utf-8")
+    results["otio"] = otio_path
+
+    return results
+
+
+def publish_episode_timeline(
+    output_dir: Path,
+    clips: list[Clip],
+    source_media_path: str | Path,
+    fps: float,
+    episode_title: str = "HawEdit Episode",
+) -> Path:
+    """Publish an episode-level OpenTimelineIO (.otio) timeline assembling all clips."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    otio_doc = build_episode_otio_timeline(
+        clips=clips,
+        source_media_path=str(source_media_path),
+        fps=fps,
+        episode_title=episode_title,
+    )
+    otio_path = output_dir / "timeline.otio"
+    otio_path.write_text(serialize_otio(otio_doc), encoding="utf-8")
+    return otio_path
+

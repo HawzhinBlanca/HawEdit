@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from hawedit.boundary import Boundary
 from hawedit.clip import (
@@ -14,6 +15,7 @@ from hawedit.clip import (
     Qc,
     Sv6d,
 )
+from hawedit.delivery import publish_delivery_bundle, publish_episode_timeline
 from hawedit.timeline import (
     build_clip_markers,
     build_episode_otio_timeline,
@@ -192,3 +194,44 @@ def test_serialize_otio_produces_valid_json() -> None:
     loaded = json.loads(serialized)
     assert loaded["OTIO_SCHEMA"] == "Timeline.1"
     assert loaded["name"] == "HawEdit_test-clip-01"
+
+
+def test_publish_delivery_bundle_writes_all_editorial_sidecars(tmp_path: Path) -> None:
+    clip = a_clip(in_ms=2_000, out_ms=32_000)
+    bundle_files = publish_delivery_bundle(
+        output_dir=tmp_path,
+        clip=clip,
+        source_media_path="ep29.mp4",
+        fps=25.0,
+        punch_ins=(10_000,),
+    )
+
+    assert "edl" in bundle_files
+    assert "json" in bundle_files
+    assert "otio" in bundle_files
+    assert bundle_files["edl"].is_file() and bundle_files["edl"].stat().st_size > 0
+    assert bundle_files["json"].is_file() and bundle_files["json"].stat().st_size > 0
+    assert bundle_files["otio"].is_file() and bundle_files["otio"].stat().st_size > 0
+
+    otio_content = json.loads(bundle_files["otio"].read_text(encoding="utf-8"))
+    assert otio_content["OTIO_SCHEMA"] == "Timeline.1"
+    assert otio_content["name"] == "HawEdit_test-clip-01"
+
+
+def test_publish_episode_timeline_writes_episode_otio(tmp_path: Path) -> None:
+    clip1 = a_clip(in_ms=1_000, out_ms=10_000)
+    clip2 = a_clip(in_ms=15_000, out_ms=25_000)
+    otio_file = publish_episode_timeline(
+        output_dir=tmp_path,
+        clips=[clip1, clip2],
+        source_media_path="ep29.mp4",
+        fps=25.0,
+        episode_title="Episode 29 Master",
+    )
+
+    assert otio_file.is_file()
+    assert otio_file.name == "timeline.otio"
+    content = json.loads(otio_file.read_text(encoding="utf-8"))
+    assert content["OTIO_SCHEMA"] == "Timeline.1"
+    assert content["name"] == "Episode 29 Master"
+
