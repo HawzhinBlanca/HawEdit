@@ -33,7 +33,7 @@ import pytest
 
 from hawedit.boundary import BoundaryInputs, fuse_boundary
 from hawedit.captions import build_ass, ffprobe_for, find_ffmpeg
-from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
+from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Provenance, Qc
 from hawedit.ingest import probe_duration_ms
 from hawedit.render import (
     DELIVERY_AUDIO_RATE,
@@ -137,6 +137,7 @@ def _clip(*, qc: Qc | None = None, complete: bool = True) -> Clip:
                 reviewed_sha256="0" * 64,
             )
         ),
+        provenance=Provenance.current(),
     )
 
 

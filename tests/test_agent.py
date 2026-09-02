@@ -410,6 +410,7 @@ def _clip_dict(
     qc: dict[str, object] | None = _GOOD_QC,
     editorial: dict[str, object] | None = _PRESENT,
     output: dict[str, object] | None = _PRESENT,
+    provenance: dict[str, object] | None = _PRESENT,
 ) -> dict[str, object]:
     return {
         "clip_id": "fixture-0",
@@ -417,6 +418,7 @@ def _clip_dict(
         "qc": qc,
         "editorial": editorial,
         "output": output,
+        "provenance": provenance,
     }
 
 
@@ -429,6 +431,7 @@ def test_run_quality_checks_all_pass(tmp_path: Path) -> None:
         "qc_gate",
         "editorial_present",
         "output_present",
+        "provenance_present",
     }
     assert all(c.passed for c in report.checks)
 
@@ -441,10 +444,11 @@ def test_run_quality_checks_flags_an_illegal_boundary(tmp_path: Path) -> None:
     by_name = {c.name: c for c in report.checks}
     assert by_name["boundary_invariant"].passed is False
     assert "mid-sentence" in by_name["boundary_invariant"].detail
-    # Itemized, not short-circuited: the other three still ran and still passed.
+    # Itemized, not short-circuited: the others still ran and still passed.
     assert by_name["qc_gate"].passed is True
     assert by_name["editorial_present"].passed is True
     assert by_name["output_present"].passed is True
+    assert by_name["provenance_present"].passed is True
 
 
 def test_run_quality_checks_flags_a_missing_boundary(tmp_path: Path) -> None:
@@ -497,13 +501,21 @@ def test_run_quality_checks_flags_a_missing_output_block(tmp_path: Path) -> None
     assert report.all_passed is False
 
 
+def test_run_quality_checks_flags_a_missing_provenance_block(tmp_path: Path) -> None:
+    _write_report(tmp_path, clip=_clip_dict(provenance=None))
+    report = run_quality_checks(tmp_path)
+    by_name = {c.name: c for c in report.checks}
+    assert by_name["provenance_present"].passed is False
+    assert report.all_passed is False
+
+
 def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> None:
     """The property that matters most: `all_passed` and "would `Clip.assert_renderable()`
     raise" cannot honestly disagree. Built from a real `Clip`, not a hand-typed dict, so this
     checks the two real implementations against each other rather than against a shape that
     could itself have drifted from `clip.py`."""
     from hawedit.boundary import Boundary, BoundaryInvariantViolated
-    from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
+    from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Provenance, Qc
     from hawedit.transcripts import AsrProvenance, Word
 
     boundary = Boundary(**_GOOD_BOUNDARY)  # type: ignore[arg-type]
@@ -547,6 +559,7 @@ def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> Non
             reviewed_at="2026-09-02T19:00:00Z",
             reviewed_sha256="0" * 64,
         ),
+        provenance=Provenance.current(),
     )
     illegal_boundary = replace(boundary, final_out_ms=3000)  # ends before anchor_out_ms=4100
     for clip, should_raise in (
@@ -556,6 +569,7 @@ def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> Non
         (replace(good_clip, qc=Qc(auto_pass=False, flags=(), human_reviewed=False)), True),
         (replace(good_clip, editorial=None), True),
         (replace(good_clip, output=None), True),
+        (replace(good_clip, provenance=None), True),
     ):
         raised = False
         try:

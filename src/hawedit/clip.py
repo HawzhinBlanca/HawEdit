@@ -59,6 +59,7 @@ __all__ = [
     "Editorial",
     "EditorialBelowThreshold",
     "Output",
+    "Provenance",
     "Qc",
     "QcRecord",
     "RejectedCandidate",
@@ -736,6 +737,145 @@ class Qc:
 
 
 @dataclass(frozen=True, slots=True)
+class Provenance:
+    """§7.6 / Task T1.6: A clip must say what made it.
+
+    Names the exact renderer commit, model checkpoint revisions digest, judge prompt
+    hash and response ID, threshold values in force, VAD/scene cut guards, crop geometry
+    constants, FFmpeg runtime version and build configuration, and execution profile.
+    """
+
+    git_commit: str
+    revisions_digest: str
+    judge_prompt_sha256: str
+    judge_response_id: str
+    thresholds: dict[str, float]
+    vad_scene: dict[str, float | int]
+    crop_constants: dict[str, float | int]
+    ffmpeg: dict[str, str]
+    profile: str = "production"
+
+    def __post_init__(self) -> None:
+        _strict_json_string(self.git_commit, "provenance.git_commit")
+        _strict_json_string(self.revisions_digest, "provenance.revisions_digest")
+        _strict_json_string(self.judge_prompt_sha256, "provenance.judge_prompt_sha256")
+        _strict_json_string(self.judge_response_id, "provenance.judge_response_id")
+        _strict_json_string(self.profile, "provenance.profile")
+        if not isinstance(self.thresholds, dict) or not self.thresholds:
+            raise ValueError("provenance.thresholds must be a non-empty dictionary of floats")
+        if not isinstance(self.vad_scene, dict) or not self.vad_scene:
+            raise ValueError("provenance.vad_scene must be a non-empty dictionary of numbers")
+        if not isinstance(self.crop_constants, dict) or not self.crop_constants:
+            raise ValueError("provenance.crop_constants must be a non-empty dictionary of numbers")
+        if not isinstance(self.ffmpeg, dict) or not self.ffmpeg:
+            raise ValueError("provenance.ffmpeg must be a non-empty dictionary of strings")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "git_commit": self.git_commit,
+            "revisions_digest": self.revisions_digest,
+            "judge_prompt_sha256": self.judge_prompt_sha256,
+            "judge_response_id": self.judge_response_id,
+            "thresholds": dict(self.thresholds),
+            "vad_scene": dict(self.vad_scene),
+            "crop_constants": dict(self.crop_constants),
+            "ffmpeg": dict(self.ffmpeg),
+            "profile": self.profile,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> Provenance:
+        fields = _json_object_fields(
+            data,
+            field="provenance",
+            required=frozenset(
+                {
+                    "git_commit",
+                    "revisions_digest",
+                    "judge_prompt_sha256",
+                    "judge_response_id",
+                    "thresholds",
+                    "vad_scene",
+                    "crop_constants",
+                    "ffmpeg",
+                }
+            ),
+            optional=frozenset({"profile"}),
+        )
+        raw_thresholds = fields["thresholds"]
+        if not isinstance(raw_thresholds, dict) or not raw_thresholds:
+            raise ValueError("provenance.thresholds must be a non-empty dictionary")
+        raw_vad = fields["vad_scene"]
+        if not isinstance(raw_vad, dict) or not raw_vad:
+            raise ValueError("provenance.vad_scene must be a non-empty dictionary")
+        raw_crop = fields["crop_constants"]
+        if not isinstance(raw_crop, dict) or not raw_crop:
+            raise ValueError("provenance.crop_constants must be a non-empty dictionary")
+        raw_ffmpeg = fields["ffmpeg"]
+        if not isinstance(raw_ffmpeg, dict) or not raw_ffmpeg:
+            raise ValueError("provenance.ffmpeg must be a non-empty dictionary")
+
+        return Provenance(
+            git_commit=_strict_json_string(fields["git_commit"], "provenance.git_commit"),
+            revisions_digest=_strict_json_string(
+                fields["revisions_digest"], "provenance.revisions_digest"
+            ),
+            judge_prompt_sha256=_strict_json_string(
+                fields["judge_prompt_sha256"], "provenance.judge_prompt_sha256"
+            ),
+            judge_response_id=_strict_json_string(
+                fields["judge_response_id"], "provenance.judge_response_id"
+            ),
+            thresholds={k: float(v) for k, v in raw_thresholds.items()},
+            vad_scene=dict(raw_vad),
+            crop_constants=dict(raw_crop),
+            ffmpeg={k: str(v) for k, v in raw_ffmpeg.items()},
+            profile=_strict_optional_json_string(fields.get("profile"), "provenance.profile")
+            or "production",
+        )
+
+    @classmethod
+    def current(
+        cls,
+        git_commit: str = "unknown",
+        revisions_digest: str = "0" * 64,
+        judge_prompt_sha256: str = "0" * 64,
+        judge_response_id: str = "resp-default",
+        profile: str = "production",
+        ffmpeg_version: str = "7.1",
+        ffmpeg_buildconf_hash: str = "0" * 64,
+    ) -> Provenance:
+        return cls(
+            git_commit=git_commit,
+            revisions_digest=revisions_digest,
+            judge_prompt_sha256=judge_prompt_sha256,
+            judge_response_id=judge_response_id,
+            thresholds={
+                "min_hook_score": MIN_HOOK_SCORE,
+                "max_misleading_edit_risk": MAX_MISLEADING_EDIT_RISK,
+                "min_meaning_fidelity": 0.70,
+                "min_cultural_landing": 0.70,
+            },
+            vad_scene={
+                "scene_threshold": 0.30,
+                "vad_onset_ms": 300,
+                "shot_cut_guard_ms": 400,
+            },
+            crop_constants={
+                "target_width": 1080,
+                "target_height": 1920,
+                "face_composition_line": 0.38,
+                "max_vertical_zoom": 1.20,
+            },
+            ffmpeg={
+                "version": ffmpeg_version,
+                "buildconf_hash": ffmpeg_buildconf_hash,
+            },
+            profile=profile,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RejectedCandidate:
     """§5: "Rejection is a first-class outcome."
 
@@ -816,6 +956,7 @@ class Clip:
     editorial: Editorial | None = None
     output: Output | None = None
     qc: Qc | None = None
+    provenance: Provenance | None = None
 
     def __post_init__(self) -> None:
         validate_media_id(self.clip_id)
@@ -838,6 +979,8 @@ class Clip:
             raise ValueError("clip.output must be Output or None")
         if self.qc is not None and not isinstance(self.qc, Qc):
             raise ValueError("clip.qc must be Qc or None")
+        if self.provenance is not None and not isinstance(self.provenance, Provenance):
+            raise ValueError("clip.provenance must be Provenance or None")
         if self.in_ms != self.boundary.final_in_ms:
             raise ValueError(
                 f"in_ms ({self.in_ms}) does not match the boundary's final_in_ms "
@@ -913,6 +1056,12 @@ class Clip:
                 f"clip {self.clip_id!r} has no output block — no title, crop target or "
                 f"caption style to render with."
             )
+        if self.provenance is None:
+            raise ValueError(
+                f"clip {self.clip_id!r} carries no provenance block. §7.6 requires every "
+                "shipped clip to name renderer git SHA, revisions digest, judge prompt hash, "
+                "thresholds, crop constants, and ffmpeg buildconf that shaped it."
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -928,6 +1077,7 @@ class Clip:
             "editorial": self.editorial.to_dict() if self.editorial else None,
             "output": self.output.to_dict() if self.output else None,
             "qc": self.qc.to_dict() if self.qc else None,
+            "provenance": self.provenance.to_dict() if self.provenance else None,
         }
 
     @staticmethod
@@ -946,7 +1096,9 @@ class Clip:
                     "transcript",
                 }
             ),
-            optional=frozenset({"media_sha256", "speaker", "editorial", "output", "qc"}),
+            optional=frozenset(
+                {"media_sha256", "speaker", "editorial", "output", "qc", "provenance"}
+            ),
         )
 
         def object_value(name: str, value: object) -> dict[str, Any]:
@@ -966,6 +1118,7 @@ class Clip:
         editorial = optional_object("editorial")
         output = optional_object("output")
         qc = optional_object("qc")
+        prov = optional_object("provenance")
         return Clip(
             clip_id=_strict_json_string(fields["clip_id"], "clip.clip_id"),
             media_id=_strict_json_string(fields["media_id"], "clip.media_id"),
@@ -981,4 +1134,5 @@ class Clip:
             editorial=Editorial.from_dict(editorial) if editorial is not None else None,
             output=Output.from_dict(output) if output is not None else None,
             qc=Qc.from_dict(qc) if qc is not None else None,
+            provenance=Provenance.from_dict(prov) if prov is not None else None,
         )

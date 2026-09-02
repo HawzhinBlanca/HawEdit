@@ -589,6 +589,17 @@ def run_quality_checks(work_dir: Path) -> QualityReport:
         )
     )
 
+    provenance_present = clip.get("provenance") is not None
+    checks.append(
+        QualityCheck(
+            name="provenance_present",
+            passed=provenance_present,
+            detail="present"
+            if provenance_present
+            else "no provenance block — git commit, revisions digest, and ffmpeg unrecorded",
+        )
+    )
+
     return QualityReport(
         media_id=report["media_id"],
         checks=tuple(checks),

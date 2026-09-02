@@ -12,6 +12,7 @@ from hawedit.clip import (
     DiscoveryPath,
     Editorial,
     Output,
+    Provenance,
     Qc,
     Sv6d,
 )
@@ -94,6 +95,7 @@ def a_clip(
             reviewed_at="2026-09-02T19:00:00Z",
             reviewed_sha256="0" * 64,
         ),
+        provenance=Provenance.current(),
     )
 
 

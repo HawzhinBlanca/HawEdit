@@ -482,6 +482,22 @@ def reconcile_delivery(
             measured=clip.qc.reviewed_sha256.lower(),
         )
 
+    # Clause 9: Provenance & Runtime Alignment (Task T1.6 / Proof C)
+    if clip.provenance and clip.provenance.ffmpeg:
+        contract_ffmpeg_ver = clip.provenance.ffmpeg.get("version")
+        measured_ffmpeg_ver = measurement.tool_metadata.get("ffmpeg_version")
+        if (
+            contract_ffmpeg_ver
+            and measured_ffmpeg_ver
+            and contract_ffmpeg_ver not in measured_ffmpeg_ver
+            and measured_ffmpeg_ver not in contract_ffmpeg_ver
+        ):
+            raise DeliveryRefused(
+                "ffmpeg_version_mismatch",
+                expected=contract_ffmpeg_ver,
+                measured=measured_ffmpeg_ver,
+            )
+
 
 def publish_delivery_bundle(
     output_dir: Path,

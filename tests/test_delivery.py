@@ -25,13 +25,14 @@ rate. 29.97 is where that becomes a refusal rather than a rounding.
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
 import pytest
 
 from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, build_ass, find_ffmpeg
-from hawedit.clip import Clip
+from hawedit.clip import Clip, Provenance
 from hawedit.delivery import (
     DeliveryError,
     DeliveryRefused,
@@ -1001,8 +1002,6 @@ def test_delivery_refuses_face_tracking_claim_when_frames_lack_face() -> None:
 
 
 def test_delivery_refuses_qc_sha256_mismatch() -> None:
-    from dataclasses import replace
-
     clip, measurement = _make_valid_reconciliation_pair()
 
     # Measurement has different SHA-256 than what human reviewer signed off on
@@ -1017,3 +1016,24 @@ def test_delivery_refuses_qc_sha256_mismatch() -> None:
             source_shot_cuts_ms=[clip.in_ms + 500],
         )
     assert exc_info.value.reason == "qc_sha256_mismatch"
+
+
+def test_delivery_refuses_ffmpeg_version_mismatch() -> None:
+    clip, measurement = _make_valid_reconciliation_pair()
+    prov_clip = replace(
+        clip,
+        provenance=Provenance.current(ffmpeg_version="7.1"),
+    )
+    diff_tool_metadata = dict(measurement.tool_metadata)
+    diff_tool_metadata["ffmpeg_version"] = "ffmpeg version 5.1.2-ubuntu"
+    broken_meas = replace(measurement, tool_metadata=diff_tool_metadata)
+
+    with pytest.raises(DeliveryRefused, match="ffmpeg_version_mismatch") as exc_info:
+        reconcile_delivery(
+            prov_clip,
+            broken_meas,
+            captions_burned_in=True,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[clip.in_ms + 500],
+        )
+    assert exc_info.value.reason == "ffmpeg_version_mismatch"

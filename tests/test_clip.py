@@ -29,6 +29,7 @@ from hawedit.clip import (
     Editorial,
     EditorialBelowThreshold,
     Output,
+    Provenance,
     Qc,
     QcRecord,
     RejectedCandidate,
@@ -88,6 +89,15 @@ def an_editorial(**overrides: object) -> Editorial:
     return Editorial(**payload)  # type: ignore[arg-type]
 
 
+def a_provenance(**overrides: object) -> Provenance:
+    base = Provenance.current()
+    if overrides:
+        payload = base.to_dict()
+        payload.update(overrides)
+        return Provenance.from_dict(payload)
+    return base
+
+
 def a_clip(**overrides: object) -> Clip:
     boundary = a_boundary()
     payload: dict[str, object] = {
@@ -116,6 +126,7 @@ def a_clip(**overrides: object) -> Clip:
             reviewed_at="2026-09-02T19:00:00Z",
             reviewed_sha256="0" * 64,
         ),
+        "provenance": a_provenance(),
     }
     payload.update(overrides)
     return Clip(**payload)  # type: ignore[arg-type]
@@ -340,6 +351,7 @@ def test_the_clip_serialises_to_the_section_5_shape() -> None:
         "editorial",
         "output",
         "qc",
+        "provenance",
     }
     assert record["discovery_path"] == "verbal"
     assert record["boundary"]["sentence_complete"] is True
@@ -998,4 +1010,88 @@ def test_qc_record_refusals() -> None:
             mp4_sha256="a" * 64,
             seconds_watched=10,
             verdict="",
+        )
+
+
+# --- Provenance in the contract (Task T1.6 / §7.6) ---------------------------------------
+
+
+def test_a_contract_names_every_constant_that_shaped_it() -> None:
+    """Task T1.6 / §7.6: A clip must say what made it.
+
+    Names git SHA of the renderer, revisions.json digest, judge prompt sha256 +
+    response id, the threshold values in force, VAD/scene thresholds, every crop
+    constant used, ffmpeg version and buildconf hash, and profile.
+    """
+    clip = a_clip()
+    assert clip.provenance is not None
+    data = clip.to_dict()
+
+    assert "provenance" in data
+    prov = data["provenance"]
+    assert isinstance(prov, dict)
+
+    # 1. Renderer and checkpoint identity
+    assert isinstance(prov["git_commit"], str) and prov["git_commit"]
+    assert len(prov["revisions_digest"]) == 64
+    assert len(prov["judge_prompt_sha256"]) == 64
+    assert isinstance(prov["judge_response_id"], str) and prov["judge_response_id"]
+
+    # 2. Threshold values in force
+    thresholds = prov["thresholds"]
+    assert thresholds["min_hook_score"] == MIN_HOOK_SCORE
+    assert thresholds["max_misleading_edit_risk"] == MAX_MISLEADING_EDIT_RISK
+    assert thresholds["min_meaning_fidelity"] >= 0.70
+    assert thresholds["min_cultural_landing"] >= 0.70
+
+    # 3. VAD / Scene cut thresholds
+    vad_scene = prov["vad_scene"]
+    assert vad_scene["scene_threshold"] == 0.30
+    assert vad_scene["vad_onset_ms"] == 300
+    assert vad_scene["shot_cut_guard_ms"] == 400
+
+    # 4. Crop constants
+    crop = prov["crop_constants"]
+    assert crop["target_width"] == 1080
+    assert crop["target_height"] == 1920
+    assert crop["face_composition_line"] == 0.38
+    assert crop["max_vertical_zoom"] == 1.20
+
+    # 5. FFmpeg version and build configuration
+    ffmpeg_info = prov["ffmpeg"]
+    assert "version" in ffmpeg_info
+    assert len(ffmpeg_info["buildconf_hash"]) == 64
+
+    # 6. Profile
+    assert prov["profile"] == "production"
+
+
+def test_render_gate_refuses_clip_without_provenance() -> None:
+    """The render gate refuses any clip carrying no provenance block (§7.6)."""
+    clip = a_clip(provenance=None)
+    with pytest.raises(ValueError, match="provenance"):
+        clip.assert_renderable()
+
+
+def test_provenance_round_trips_through_json() -> None:
+    """Clip with provenance serializes to JSON and round-trips identically."""
+    clip = a_clip()
+    serialized = json.dumps(clip.to_dict())
+    reloaded = Clip.from_dict(json.loads(serialized))
+    assert reloaded.provenance == clip.provenance
+    assert reloaded == clip
+
+
+def test_provenance_refuses_empty_dictionaries() -> None:
+    """Provenance strictly refuses missing or empty constant dictionaries."""
+    with pytest.raises(ValueError, match="thresholds"):
+        Provenance(
+            git_commit="abc",
+            revisions_digest="0" * 64,
+            judge_prompt_sha256="0" * 64,
+            judge_response_id="resp",
+            thresholds={},
+            vad_scene={"scene_threshold": 0.3},
+            crop_constants={"target_width": 1080},
+            ffmpeg={"version": "7.1"},
         )
