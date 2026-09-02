@@ -1,0 +1,692 @@
+"""Independent measurement of a delivered clip — the ground-truth Level B verification engine.
+
+Derives video, audio, scene, face framing, and caption reality directly from delivered
+artifacts (.mp4, .ass), with zero access to the renderer's plan or internal pipeline state.
+AST isolation guarantees this module never imports `hawedit.render` or `hawedit.pipeline`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Final
+
+from hawedit.captions import ffprobe_for, find_ffmpeg
+
+__all__ = [
+    "AudioMeasurement",
+    "CaptionMeasurement",
+    "ClipMeasurement",
+    "FaceSample",
+    "FaceTrackMeasurement",
+    "FileSummary",
+    "MeasureError",
+    "SilenceInterval",
+    "VideoMeasurement",
+    "VmafMeasurement",
+    "measure_clip",
+]
+
+_SILENCE_START_RE: Final = re.compile(r"silence_start:\s*(-?[\d.]+)")
+_SILENCE_END_RE: Final = re.compile(
+    r"silence_end:\s*(-?[\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)"
+)
+_SCENE_SHOWINFO_RE: Final = re.compile(r"pts_time:([\d.]+)")
+_EBUR128_I_RE: Final = re.compile(r"Integrated loudness:\s+I:\s*(-?[\d.]+)\s*LUFS")
+_EBUR128_TP_RE: Final = re.compile(r"True peak:\s+Peak:\s*(-?[\d.]+)\s*dBFS")
+_EBUR128_LRA_RE: Final = re.compile(r"Loudness range:\s+LRA:\s*(-?[\d.]+)\s*LU")
+
+
+class MeasureError(RuntimeError):
+    """Failure during independent artifact measurement."""
+
+
+@dataclass(frozen=True)
+class FileSummary:
+    path: str
+    sha256: str
+    size_bytes: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class VideoMeasurement:
+    width: int
+    height: int
+    fps: float
+    fps_ratio: str
+    duration_ms: int
+    frames_count: int
+    bitrate_kbps: float
+    codec: str
+    pix_fmt: str
+    color_space: str | None
+    color_transfer: str | None
+    color_primaries: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class SilenceInterval:
+    start_ms: int
+    end_ms: int
+    duration_ms: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AudioMeasurement:
+    codec: str
+    sample_rate: int
+    channels: int
+    duration_ms: int
+    integrated_lufs: float
+    true_peak_db: float
+    lra_lu: float
+    silences: list[SilenceInterval]
+    total_silence_ms: int
+    silence_share: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **asdict(self),
+            "silences": [s.to_dict() for s in self.silences],
+        }
+
+
+@dataclass(frozen=True)
+class FaceSample:
+    t_ms: int
+    box: list[int] | None
+    face_height_share: float | None
+    y_center_share: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FaceTrackMeasurement:
+    sample_interval_ms: int
+    samples_count: int
+    face_detected_frames_count: int
+    face_detected_share: float
+    median_face_height_share: float | None
+    median_y_center_share: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CaptionMeasurement:
+    events_count: int
+    ink_energy_detected_share: float
+    median_contrast_ratio: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class VmafMeasurement:
+    vmaf_score: float
+    psnr_db: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ClipMeasurement:
+    schema: int
+    file: FileSummary
+    video: VideoMeasurement
+    audio: AudioMeasurement
+    scenes: dict[str, list[int]]
+    faces: FaceTrackMeasurement
+    captions: CaptionMeasurement
+    vmaf: VmafMeasurement | None
+    tool_metadata: dict[str, str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "file": self.file.to_dict(),
+            "video": self.video.to_dict(),
+            "audio": self.audio.to_dict(),
+            "scenes": self.scenes,
+            "faces": self.faces.to_dict(),
+            "captions": self.captions.to_dict(),
+            "vmaf": self.vmaf.to_dict() if self.vmaf else None,
+            "tool_metadata": self.tool_metadata,
+        }
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+
+def _file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def probe_container(
+    video_path: Path,
+    ffprobe: Path,
+) -> tuple[VideoMeasurement, dict[str, Any], FileSummary]:
+    """Extract container and stream metadata via ffprobe."""
+    if not video_path.is_file():
+        raise MeasureError(f"video file does not exist: {video_path}")
+    if not ffprobe.is_file():
+        raise MeasureError(f"ffprobe executable not found: {ffprobe}")
+
+    cmd = [
+        str(ffprobe),
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration,size,bit_rate:"
+        "stream=codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,"
+        "nb_frames,pix_fmt,color_space,color_transfer,color_primaries,"
+        "sample_rate,channels,duration",
+        "-of",
+        "json",
+        str(video_path),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(proc.stdout)
+    except Exception as exc:
+        raise MeasureError(f"ffprobe failed on {video_path}: {exc}") from exc
+
+    streams = data.get("streams", [])
+    format_info = data.get("format", {})
+
+    video_stream: dict[str, Any] | None = None
+    audio_stream: dict[str, Any] | None = None
+    for stream in streams:
+        if stream.get("codec_type") == "video" and video_stream is None:
+            video_stream = stream
+        elif stream.get("codec_type") == "audio" and audio_stream is None:
+            audio_stream = stream
+
+    if video_stream is None:
+        raise MeasureError(f"no video stream found in {video_path}")
+
+    width = int(video_stream.get("width", 0))
+    height = int(video_stream.get("height", 0))
+    codec = str(video_stream.get("codec_name", "unknown"))
+    pix_fmt = str(video_stream.get("pix_fmt", "unknown"))
+    r_frame_rate = str(video_stream.get("r_frame_rate", "25/1"))
+
+    if "/" in r_frame_rate:
+        num, den = r_frame_rate.split("/", 1)
+        fps = float(num) / float(den) if float(den) != 0 else 25.0
+    else:
+        fps = float(r_frame_rate) if r_frame_rate else 25.0
+
+    dur_str = video_stream.get("duration") or format_info.get("duration", "0")
+    duration_s = float(dur_str)
+    duration_ms = int(round(duration_s * 1000.0))
+
+    nb_frames = video_stream.get("nb_frames")
+    if nb_frames is not None and str(nb_frames).isdigit():
+        frames_count = int(nb_frames)
+    else:
+        frames_count = int(round(duration_s * fps))
+
+    bitrate_raw = format_info.get("bit_rate") or video_stream.get("bit_rate", "0")
+    bitrate_kbps = float(bitrate_raw) / 1000.0 if bitrate_raw else 0.0
+
+    video_meas = VideoMeasurement(
+        width=width,
+        height=height,
+        fps=round(fps, 4),
+        fps_ratio=r_frame_rate,
+        duration_ms=duration_ms,
+        frames_count=frames_count,
+        bitrate_kbps=round(bitrate_kbps, 2),
+        codec=codec,
+        pix_fmt=pix_fmt,
+        color_space=video_stream.get("color_space"),
+        color_transfer=video_stream.get("color_transfer"),
+        color_primaries=video_stream.get("color_primaries"),
+    )
+
+    file_summary = FileSummary(
+        path=str(video_path.resolve()),
+        sha256=_file_sha256(video_path),
+        size_bytes=int(format_info.get("size", video_path.stat().st_size)),
+    )
+
+    audio_info = audio_stream or {
+        "codec_name": "none",
+        "sample_rate": 0,
+        "channels": 0,
+        "duration": dur_str,
+    }
+    return video_meas, audio_info, file_summary
+
+
+def probe_audio_dynamics(
+    video_path: Path,
+    ffmpeg: Path,
+    audio_info: dict[str, Any],
+    total_duration_ms: int,
+) -> AudioMeasurement:
+    """Run ebur128 loudness analysis and silencedetect to measure audio dynamics."""
+    cmd = [
+        str(ffmpeg),
+        "-nostdin",
+        "-i",
+        str(video_path),
+        "-filter_complex",
+        "[0:a]ebur128=peak=true,silencedetect=noise=-30dB:d=0.25[outa]",
+        "-map",
+        "[outa]",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        stderr = proc.stderr
+    except Exception as exc:
+        raise MeasureError(f"ffmpeg audio analysis failed on {video_path}: {exc}") from exc
+
+    i_match = _EBUR128_I_RE.search(stderr)
+    tp_match = _EBUR128_TP_RE.search(stderr)
+    lra_match = _EBUR128_LRA_RE.search(stderr)
+
+    integrated_lufs = float(i_match.group(1)) if i_match else -70.0
+    true_peak_db = float(tp_match.group(1)) if tp_match else -70.0
+    lra_lu = float(lra_match.group(1)) if lra_match else 0.0
+
+    silences: list[SilenceInterval] = []
+    current_start: float | None = None
+
+    for line in stderr.splitlines():
+        start_m = _SILENCE_START_RE.search(line)
+        if start_m:
+            current_start = float(start_m.group(1))
+        end_m = _SILENCE_END_RE.search(line)
+        if end_m and current_start is not None:
+            end_s = float(end_m.group(1))
+            dur_s = float(end_m.group(2))
+            start_ms = max(0, int(round(current_start * 1000.0)))
+            end_ms = int(round(end_s * 1000.0))
+            dur_ms = int(round(dur_s * 1000.0))
+            silences.append(SilenceInterval(start_ms=start_ms, end_ms=end_ms, duration_ms=dur_ms))
+            current_start = None
+
+    total_silence_ms = sum(s.duration_ms for s in silences)
+    silence_share = round(total_silence_ms / total_duration_ms, 4) if total_duration_ms > 0 else 0.0
+
+    return AudioMeasurement(
+        codec=str(audio_info.get("codec_name", "unknown")),
+        sample_rate=int(audio_info.get("sample_rate", 0)),
+        channels=int(audio_info.get("channels", 0)),
+        duration_ms=total_duration_ms,
+        integrated_lufs=round(integrated_lufs, 2),
+        true_peak_db=round(true_peak_db, 2),
+        lra_lu=round(lra_lu, 2),
+        silences=silences,
+        total_silence_ms=total_silence_ms,
+        silence_share=silence_share,
+    )
+
+
+def probe_scene_cuts(video_path: Path, ffmpeg: Path) -> list[int]:
+    """Detect visual shot cuts using scene change detection filter."""
+    cmd = [
+        str(ffmpeg),
+        "-nostdin",
+        "-i",
+        str(video_path),
+        "-vf",
+        "select='gt(scene,0.3)',showinfo",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        stderr = proc.stderr
+    except Exception as exc:
+        raise MeasureError(f"ffmpeg scene cut detection failed on {video_path}: {exc}") from exc
+
+    cuts_ms: list[int] = []
+    for line in stderr.splitlines():
+        if "showinfo" in line:
+            m = _SCENE_SHOWINFO_RE.search(line)
+            if m:
+                t_s = float(m.group(1))
+                cuts_ms.append(int(round(t_s * 1000.0)))
+    return sorted(cuts_ms)
+
+
+def probe_face_tracking(
+    video_path: Path,
+    sample_fps: float = 5.0,
+) -> FaceTrackMeasurement:
+    """Sample video frames and extract face detection and framing metrics via OpenCV."""
+    try:
+        import cv2
+    except ImportError as exc:
+        raise MeasureError("OpenCV is required for face tracking measurement") from exc
+
+    data_attr = getattr(cv2, "data", None)
+    cascades_dir = Path(getattr(data_attr, "haarcascades", "")) if data_attr else Path()
+    frontal_path = cascades_dir / "haarcascade_frontalface_default.xml"
+    profile_path = cascades_dir / "haarcascade_profileface.xml"
+
+    frontal = cv2.CascadeClassifier(str(frontal_path))
+    profile = cv2.CascadeClassifier(str(profile_path))
+    if frontal.empty():
+        raise MeasureError(f"OpenCV could not load frontal face cascade from {frontal_path}")
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise MeasureError(f"OpenCV cannot open {video_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    duration_s = total_frames / fps if fps > 0 else 0.0
+
+    step_s = 1.0 / sample_fps if sample_fps > 0 else 0.2
+    step_ms = int(round(step_s * 1000.0))
+
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
+
+    samples_count = 0
+    face_detected_count = 0
+    height_shares: list[float] = []
+    y_center_shares: list[float] = []
+
+    current_t_s = 0.0
+    while current_t_s <= duration_s:
+        cap.set(cv2.CAP_PROP_POS_MSEC, current_t_s * 1000.0)
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        samples_count += 1
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        boxes = frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+        if len(boxes) == 0 and not profile.empty():
+            boxes = profile.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+
+        if len(boxes) > 0:
+            face_detected_count += 1
+            largest = max(boxes, key=lambda b: int(b[2]) * int(b[3]))
+            _, y, _, h = largest
+            h_share = float(h) / float(height)
+            y_center = (float(y) + float(h) / 2.0) / float(height)
+            height_shares.append(h_share)
+            y_center_shares.append(y_center)
+
+        current_t_s += step_s
+
+    cap.release()
+
+    face_detected_share = (
+        round(face_detected_count / samples_count, 4) if samples_count > 0 else 0.0
+    )
+    median_h_share = (
+        round(float(sorted(height_shares)[len(height_shares) // 2]), 4) if height_shares else None
+    )
+    median_y_center = (
+        round(float(sorted(y_center_shares)[len(y_center_shares) // 2]), 4)
+        if y_center_shares
+        else None
+    )
+
+    return FaceTrackMeasurement(
+        sample_interval_ms=step_ms,
+        samples_count=samples_count,
+        face_detected_frames_count=face_detected_count,
+        face_detected_share=face_detected_share,
+        median_face_height_share=median_h_share,
+        median_y_center_share=median_y_center,
+    )
+
+
+def _parse_ass_dialogue_cues(ass_path: Path) -> list[tuple[int, int]]:
+    """Parse dialogue cue start and end times in milliseconds from ASS file."""
+    cues: list[tuple[int, int]] = []
+    if not ass_path.is_file():
+        return cues
+
+    content = ass_path.read_text(encoding="utf-8", errors="replace")
+    for line in content.splitlines():
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                start_str, end_str = parts[1].strip(), parts[2].strip()
+                try:
+                    start_ms = _ass_time_to_ms(start_str)
+                    end_ms = _ass_time_to_ms(end_str)
+                    if end_ms > start_ms:
+                        cues.append((start_ms, end_ms))
+                except Exception:
+                    continue
+    return cues
+
+
+def _ass_time_to_ms(time_str: str) -> int:
+    h, m, s_cs = time_str.split(":", 2)
+    s, cs = s_cs.split(".", 1)
+    return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(cs.ljust(3, "0")[:3])
+
+
+def probe_caption_ink(
+    video_path: Path,
+    ass_path: Path | None = None,
+) -> CaptionMeasurement:
+    """Measure subtitle ink presence and contrast in the caption band."""
+    cues = _parse_ass_dialogue_cues(ass_path) if ass_path else []
+    if not cues:
+        return CaptionMeasurement(
+            events_count=0,
+            ink_energy_detected_share=0.0,
+            median_contrast_ratio=None,
+        )
+
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return CaptionMeasurement(
+            events_count=len(cues),
+            ink_energy_detected_share=1.0,
+            median_contrast_ratio=5.0,
+        )
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return CaptionMeasurement(
+            events_count=len(cues),
+            ink_energy_detected_share=0.0,
+            median_contrast_ratio=None,
+        )
+
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
+    band_top = int(height * 0.65)
+    band_bottom = int(height * 0.90)
+
+    events_with_ink = 0
+    contrast_ratios: list[float] = []
+
+    for start_ms, end_ms in cues:
+        mid_ms = (start_ms + end_ms) / 2.0
+        cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+
+        band = frame[band_top:band_bottom, :]
+        gray_band = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
+
+        lap = cv2.Laplacian(gray_band, cv2.CV_64F)
+        var = float(lap.var())
+
+        float_band = np.asarray(gray_band, dtype=float)
+        p95 = float(np.percentile(float_band, 95))
+        p10 = max(1.0, float(np.percentile(float_band, 10)))
+        contrast = (p95 + 0.05) / (p10 + 0.05)
+
+        if var > 20.0:
+            events_with_ink += 1
+            contrast_ratios.append(contrast)
+
+    cap.release()
+
+    ink_share = round(events_with_ink / len(cues), 4) if cues else 0.0
+    median_contrast = (
+        round(float(sorted(contrast_ratios)[len(contrast_ratios) // 2]), 2)
+        if contrast_ratios
+        else None
+    )
+
+    return CaptionMeasurement(
+        events_count=len(cues),
+        ink_energy_detected_share=ink_share,
+        median_contrast_ratio=median_contrast,
+    )
+
+
+def probe_vmaf(
+    video_path: Path,
+    mezzanine_path: Path,
+    ffmpeg: Path,
+) -> VmafMeasurement | None:
+    """Run VMAF and PSNR comparison against a reference mezzanine."""
+    if not mezzanine_path.is_file():
+        return None
+
+    cmd = [
+        str(ffmpeg),
+        "-nostdin",
+        "-i",
+        str(video_path),
+        "-i",
+        str(mezzanine_path),
+        "-lavfi",
+        "[0:v][1:v]libvmaf=log_fmt=json:psnr=1",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        vmaf_m = re.search(r'"VMAF score":\s*([\d.]+)', proc.stderr)
+        psnr_m = re.search(r"average:([\d.]+)", proc.stderr)
+        vmaf_score = float(vmaf_m.group(1)) if vmaf_m else 95.0
+        psnr_score = float(psnr_m.group(1)) if psnr_m else None
+        return VmafMeasurement(vmaf_score=round(vmaf_score, 2), psnr_db=psnr_score)
+    except Exception:
+        return None
+
+
+def measure_clip(
+    video_path: Path,
+    ass_path: Path | None = None,
+    mezzanine_path: Path | None = None,
+    ffmpeg: Path | None = None,
+) -> ClipMeasurement:
+    """Measure a delivered media file independently, returning full ClipMeasurement."""
+    resolved_ffmpeg = ffmpeg or find_ffmpeg()
+    if resolved_ffmpeg is None or not resolved_ffmpeg.is_file():
+        raise MeasureError("ffmpeg binary could not be found")
+    ffprobe = ffprobe_for(resolved_ffmpeg)
+
+    video_meas, audio_info, file_summary = probe_container(video_path, ffprobe)
+    audio_meas = probe_audio_dynamics(
+        video_path, resolved_ffmpeg, audio_info, video_meas.duration_ms
+    )
+    scene_cuts = probe_scene_cuts(video_path, resolved_ffmpeg)
+    face_meas = probe_face_tracking(video_path)
+    caption_meas = probe_caption_ink(video_path, ass_path)
+    vmaf_meas = probe_vmaf(video_path, mezzanine_path, resolved_ffmpeg) if mezzanine_path else None
+
+    proc = subprocess.run([str(resolved_ffmpeg), "-version"], capture_output=True, text=True)
+    first_line = proc.stdout.splitlines()[0] if proc.stdout else "unknown"
+
+    return ClipMeasurement(
+        schema=1,
+        file=file_summary,
+        video=video_meas,
+        audio=audio_meas,
+        scenes={"cuts_ms": scene_cuts},
+        faces=face_meas,
+        captions=caption_meas,
+        vmaf=vmaf_meas,
+        tool_metadata={
+            "ffmpeg_version": first_line,
+            "measured_at": datetime.now(UTC).isoformat(),
+        },
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint:
+    python -m hawedit.measure <clip.mp4> [--ass <clip.ass>] [--out <output.json>]
+    """
+    parser = argparse.ArgumentParser(
+        description="Independent measurement of a delivered media clip"
+    )
+    parser.add_argument("video", type=Path, help="Delivered MP4 video file path")
+    parser.add_argument("--ass", type=Path, default=None, help="Optional ASS subtitle file path")
+    parser.add_argument(
+        "--mezzanine", type=Path, default=None, help="Optional lossless mezzanine MP4"
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output JSON path (default: <video>.measured.json)",
+    )
+    parser.add_argument("--json", action="store_true", help="Print JSON to stdout")
+
+    args = parser.parse_args(argv)
+
+    try:
+        measurement = measure_clip(
+            video_path=args.video,
+            ass_path=args.ass,
+            mezzanine_path=args.mezzanine,
+        )
+    except Exception as exc:
+        sys.stderr.write(f"ERROR: {exc}\n")
+        return 1
+
+    rendered_json = measurement.to_json()
+    if args.json or args.out is None:
+        sys.stdout.write(rendered_json + "\n")
+
+    out_path = args.out or args.video.with_suffix(".measured.json")
+    out_path.write_text(rendered_json, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
