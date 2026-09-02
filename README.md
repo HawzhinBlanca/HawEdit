@@ -626,6 +626,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `windows_security.py` | §7 | Native protected-DACL creation and inspection for Windows checkpoint staging. |
 | `vex.py` | §6/§7 | Identity-bound WSL-ASR vulnerability disposition gate over pip-audit output and runtime receipts. |
 | `repurposing.py` | §8.2 | Per-path Recall@K, temporal IoU, misleading-edit rate, cost per source hour. |
+| `measure.py` | Phase 1 | Independent ground-truth Level B measurement of delivered MP4/ASS media artifacts, extracting ffprobe container properties, EBU R128 loudness dynamics, silencedetect pause intervals, scene cuts, 5 fps OpenCV face tracking statistics, and caption band ink energy / contrast with zero imports of render or pipeline. |
 
 ## Two conventions worth knowing before reading the code
 
