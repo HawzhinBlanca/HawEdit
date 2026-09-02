@@ -13699,3 +13699,22 @@ edited.
 **What this does not settle.** `BLOCKED.md` #21 stands: the champion still has no §7 registry row,
 because that needs a licence for weights Hawa trained. PEFT being installable is about the
 *runtime*; the adapter's own terms are a separate question and this loop does not guess a licence.
+
+---
+
+## D-262 · Correction of pro-edit rows T6 (assembly) and T7 (speaker tracking)
+
+**Date:** 2026-09-02 · **Blueprint ref:** §3 Stage 3, Stage 6 · **Type:** ledger correction
+
+**Context & Audit Finding.**
+Audit on 2026-09-02 identified that pro-edit ledger rows T6 and T7 were marked completed on 2026-08-29 based on unit test passes that tested negative/mock conditions rather than functional pipeline capabilities:
+1. **T6 (assembly)**: Flipped on `MockEditorialJudge` tests. What was proven: text assembly and data structures in isolation. What was NOT proven: media rendering, video concatenation, and end-to-end integration into the delivery pipeline (assembly had zero production callers).
+2. **T7 (speaker tracking)**: Flipped on `test_an_unavailable_diarizer_never_claims_speaker_tracking`. What was proven: that an unavailable diarizer does not falsely claim speaker tracking in the contract. What was NOT proven: visual speaker-face association and active speaker-tracking camera framing (`SpeakerSubjectTracker` protocol in `reframe.py` remained an abstract protocol without concrete implementation).
+
+**Correction.**
+Per `HANDOFF.md` §1.6 ("A wrong record is corrected in place, keeping the wrong claim"):
+- The historical claims and commits for T6 and T7 are preserved in the ledger history.
+- Both capabilities are formally re-opened in the pro-grade master sheet:
+  - Assembly re-opened as **T4.9** (Cold-open assembly: media concatenation, timeline re-timing, and real frame judging).
+  - Active-speaker reframe re-opened as **T2.1** (Active-speaker reframe: audiovisual/motion speaker-to-face association and verified tracking).
+

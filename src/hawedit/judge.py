@@ -46,8 +46,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
 
-from hawedit.boundary import _json_object_fields, _strict_bool
-from hawedit.clip import Editorial, Output, Sv6d, _sv6d_from_json
+from hawedit.boundary import json_object_fields, strict_bool
+from hawedit.clip import Editorial, Output, Sv6d, sv6d_from_json
 from hawedit.discovery import MergedCandidate
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import ModelEntry, resolve_role
@@ -372,7 +372,7 @@ class JudgeVerdict:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> JudgeVerdict:
-        fields = _json_object_fields(
+        fields = json_object_fields(
             data,
             field="persisted verdict",
             required=_VERDICT_REQUIRED_FIELDS,
@@ -389,7 +389,7 @@ class JudgeVerdict:
         return JudgeVerdict(
             candidate_id=fields["candidate_id"],
             hook_score=fields["hook_score"],
-            self_contained=_strict_bool(fields["self_contained"], "self_contained"),
+            self_contained=strict_bool(fields["self_contained"], "self_contained"),
             payoff_at_ms=fields["payoff_at_ms"],
             meaning_fidelity=fields["meaning_fidelity"],
             misleading_edit_risk=fields["misleading_edit_risk"],
@@ -401,7 +401,7 @@ class JudgeVerdict:
             judge=fields["judge"],
             clip_in_ms=fields["clip_in_ms"],
             clip_out_ms=fields["clip_out_ms"],
-            sv6d=_sv6d_from_json(fields.get("sv6d"), "persisted verdict.sv6d"),
+            sv6d=sv6d_from_json(fields.get("sv6d"), "persisted verdict.sv6d"),
         )
 
     @staticmethod

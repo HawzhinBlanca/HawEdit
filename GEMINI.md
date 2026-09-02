@@ -2,7 +2,7 @@
 
 This file establishes operating instructions for Google Antigravity and Gemini CLI agents in HawEdit.
 
-Operating rules are defined in `AGENTS.md` and `.agents/rules/strict-fail-stop.md`.
+Operating rules are defined in `AGENTS.md`, `.agents/rules/strict-fail-stop.md`, and `.agents/rules/canonical-source-video.md`.
 
 ## Mandatory Operating Directives
 

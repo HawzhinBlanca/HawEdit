@@ -17,7 +17,7 @@ import json
 import sys
 
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
-from hawedit.pipeline import _BUILD_ERRORS, build_parser
+from hawedit.pipeline import BUILD_ERRORS, build_parser
 
 __all__ = ["main"]
 
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     with machine_readable_stdout() as report_stream:
         try:
             payload = run_durable(raw, run_id=run_id)
-        except _BUILD_ERRORS as exc:
+        except BUILD_ERRORS as exc:
             print(f"✗ {exc}", file=sys.stderr)
             return 2
 

@@ -1429,7 +1429,11 @@ def _vad_onset_for_anchor(
 
 
 def _steady_camera(
-    points: tuple[FocusPoint, ...], source: Path, ffmpeg: Path | None
+    points: tuple[FocusPoint, ...],
+    source: Path,
+    ffmpeg: Path | None,
+    source_dimensions: tuple[int, int] | None = None,
+    shot_cuts_ms: Sequence[int] = (),
 ) -> tuple[FocusPoint, ...]:
     """Hold the camera still between real moves, at a dead zone sized to the visible crop.
 
@@ -1438,9 +1442,16 @@ def _steady_camera(
     — wide enough that a speaker shifting in their chair does not move the camera, narrow
     enough that standing up does.
     """
-    width, height = _proxy_dimensions(source, ffmpeg)
+    width, height = (
+        source_dimensions if source_dimensions is not None else proxy_dimensions(source, ffmpeg)
+    )
     crop_w, _ = vertical_crop_size(width, height)
-    return stabilize(points, dead_zone_px=max(1, crop_w // 10))
+    return stabilize(
+        points,
+        dead_zone_px=max(1, crop_w // 10),
+        shot_cuts_ms=shot_cuts_ms,
+        max_pan_px=max(1, int(crop_w * 0.6)),
+    )
 
 
 def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
@@ -2193,6 +2204,7 @@ def run_pipeline(
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
     focus_points: tuple[FocusPoint, ...] = ()
+    source_dimensions: tuple[int, int] | None = None
     # The clip's single vertical placement, measured before `_steady_camera` replaces the track
     # with keyframes that carry no face box. `None` means unmeasured, and the crop then sits
     # where it always sat.
@@ -2263,7 +2275,14 @@ def run_pipeline(
                 render=_operational_failure("render", "speaker/face association", exc),
             )
         if focus_points:
-            focus_points = _steady_camera(focus_points, source, ffmpeg)
+            source_dimensions = proxy_dimensions(source, ffmpeg)
+            focus_points = _steady_camera(
+                focus_points,
+                source,
+                ffmpeg,
+                source_dimensions,
+                shot_cuts_ms=ingested.shot_cuts_ms,
+            )
             reframe_mode = Reframe.SPEAKER_TRACKED
 
     if not focus_points and subject_tracker is not None:
@@ -2281,7 +2300,14 @@ def run_pipeline(
         _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
         if focus_points:
             face_center_y, face_height = median_face_box(focus_points)
-            focus_points = _steady_camera(focus_points, source, ffmpeg)
+            source_dimensions = proxy_dimensions(source, ffmpeg)
+            focus_points = _steady_camera(
+                focus_points,
+                source,
+                ffmpeg,
+                source_dimensions,
+                shot_cuts_ms=ingested.shot_cuts_ms,
+            )
             reframe_mode = Reframe.FACE_TRACKED
 
     crop_target = {
@@ -2408,7 +2434,9 @@ def run_pipeline(
                 max_words_per_event=POPUP_MAX_WORDS,
             ),
         )
-        width, height = _proxy_dimensions(source, ffmpeg)
+        if source_dimensions is None:
+            source_dimensions = proxy_dimensions(source, ffmpeg)
+        width, height = source_dimensions
         rendered = render_clip(
             clip,
             source,
@@ -2553,7 +2581,7 @@ def _pauses_between(ingested: IngestResult) -> tuple[tuple[int, int], ...]:
     )
 
 
-def _proxy_dimensions(source: Path, ffmpeg: Path | None) -> tuple[int, int]:
+def proxy_dimensions(source: Path, ffmpeg: Path | None) -> tuple[int, int]:
     """Source frame size, probed rather than assumed — the crop arithmetic depends on it."""
     output = probe_stream(source, "stream=width,height", ffmpeg, video_only=True)
     try:
@@ -2561,6 +2589,9 @@ def _proxy_dimensions(source: Path, ffmpeg: Path | None) -> tuple[int, int]:
     except ValueError as exc:
         raise IngestError(f"could not read frame dimensions from {source}: {output!r}") from exc
     return width, height
+
+
+_proxy_dimensions = proxy_dimensions
 
 
 def visible_cuda_devices() -> int:
@@ -3102,11 +3133,11 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
     )
 
 
-# `_build_and_run` raises through here; the CLI is the one caller that turns a raised exception
+# `build_and_run` raises through here; the CLI is the one caller that turns a raised exception
 # into a printed line and an exit code rather than propagating it, so the catch stays here and
-# not inside `_build_and_run` — a second caller (`durable.py`) needs the exception itself, not
+# not inside `build_and_run` — a second caller (`durable.py`) needs the exception itself, not
 # stderr and a 2.
-_BUILD_ERRORS = (
+BUILD_ERRORS: Final[tuple[type[Exception], ...]] = (
     CredentialError,
     FileExistsError,
     FileNotFoundError,
@@ -3118,13 +3149,15 @@ _BUILD_ERRORS = (
     TypeError,
     ValueError,
 )
+_BUILD_ERRORS = BUILD_ERRORS
+build_and_run = _build_and_run
 
 
 def _run_from_args(args: argparse.Namespace, report_stream: TextIO) -> int:
     """Everything after argument parsing. `report_stream` is where the one document goes."""
     try:
         run = _build_and_run(args)
-    except _BUILD_ERRORS as exc:
+    except BUILD_ERRORS as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2
 

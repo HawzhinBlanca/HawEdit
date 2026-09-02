@@ -58,6 +58,7 @@ __all__ = [
     "Sv6d",
     "assert_sv6d_within_window",
     "parse_timestamps_ms",
+    "sv6d_from_json",
 ]
 
 # A timestamp citation in an SV6D label. Accepts `84.6s`, `84600ms`, `1:24` and `00:01:52`,
@@ -132,7 +133,7 @@ class Sv6d:
         }
 
 
-def _sv6d_from_json(value: object, field: str) -> Sv6d | None:
+def sv6d_from_json(value: object, field: str) -> Sv6d | None:
     if value is None:
         return None
     fields = _json_object_fields(
@@ -146,6 +147,9 @@ def _sv6d_from_json(value: object, field: str) -> Sv6d | None:
             for dimension in Sv6d.DIMENSIONS
         }
     )
+
+
+_sv6d_from_json = sv6d_from_json
 
 
 def parse_timestamps_ms(label: str) -> tuple[int, ...]:

@@ -527,28 +527,13 @@ def crop_filter(
             max(0, min(center - crop_w // 2, source_width - crop_w)) for _, center in ordered
         ]
         times = [(at_ms - clip_in_ms) / 1000 for at_ms, _ in ordered]
-        # Interpolated, not stepped. This used to snap to each sample at the midpoint between
-        # them, so a tracker sampling twice a second moved the crop twice a second for the
-        # whole clip — the horizontal shimmer that made every tracked render unusable. A
-        # straight line between neighbouring keyframes is a pan; a step between them is a
-        # glitch. `reframe.stabilize` supplies equal-valued neighbours for the holds, so this
-        # sits still wherever the camera is meant to sit still.
-        expression = str(positions[-1])
-        for index in range(len(positions) - 2, -1, -1):
-            start_s, end_s = times[index], times[index + 1]
-            here, there = positions[index], positions[index + 1]
-            span = end_s - start_s
-            segment = (
-                str(here)
-                if span <= 0 or here == there
-                else f"({here}+({there - here})*(t-{start_s:.3f})/{span:.3f})"
-            )
-            expression = f"if(lt(t\\,{end_s:.3f})\\,{segment}\\,{expression})"
-        # Before the first keyframe there is nothing to interpolate from: hold the opening
-        # position rather than extrapolating backwards off the front of the clip.
-        if times[0] > 0:
-            expression = f"if(lt(t\\,{times[0]:.3f})\\,{positions[0]}\\,{expression})"
-        x: int | str = expression
+        # Interpolated, not stepped. A straight line between neighbouring keyframes is a pan;
+        # a step between them is a glitch. `reframe.stabilize` supplies equal-valued neighbours
+        # for the holds, so this sits still wherever the camera is meant to sit still.
+        x: int | str = _interpolated(
+            list(zip(times, positions, strict=True)),
+            (source_width - crop_w) // 2,
+        )
     elif focus_x is None:
         x = (source_width - crop_w) // 2
     else:
@@ -802,57 +787,64 @@ def render_clip(
     ) as staging_file:
         staging = Path(staging_file.name)
 
+    timeout_s = max(60.0, (duration_ms / 1000.0) * 10.0)
     try:
-        result = subprocess.run(
-            [
-                str(binary),
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-threads",
-                "1",  # §6: parallelism across clips, not inside one encode
-                "-ss",
-                f"{clip.in_ms / 1000:.3f}",
-                "-t",
-                f"{duration_ms / 1000:.3f}",
-                "-i",
-                str(source),
-                "-vf",
-                filters,
-                "-af",
-                audio_filter(),
-                "-c:v",
-                encoder.value,
-                *quality_args(encoder, crf),
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                DELIVERY_AUDIO_BITRATE,
-                "-ar",
-                str(DELIVERY_AUDIO_RATE),
-                "-ac",
-                "2",
-                # The moov atom belongs at the front of a file that will be streamed. Without
-                # this it is written last, and a player has to fetch the end of the file before
-                # it can start — which for a delivery artifact is the whole point of the format.
-                "-movflags",
-                "+faststart",
-                # A second, output-side duration. The input-side `-t` above bounds what is
-                # decoded; this bounds what is written. Without it the AAC encoder pads its
-                # final frame and the 48 kHz resample rounds up, and the container comes out
-                # 38 ms long on the real fixture — inside `assert_encoded_span`'s one-frame
-                # tolerance, but 38 ms of source that no one reviewed. With it the artifact is
-                # exactly the span §8.3 says it is: measured 4162 ms for a 4162 ms clip.
-                "-t",
-                f"{duration_ms / 1000:.3f}",
-                "-y",
-                str(staging),
-            ],
-            capture_output=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    str(binary),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-threads",
+                    "1",  # §6: parallelism across clips, not inside one encode
+                    "-ss",
+                    f"{clip.in_ms / 1000:.3f}",
+                    "-t",
+                    f"{duration_ms / 1000:.3f}",
+                    "-i",
+                    str(source),
+                    "-vf",
+                    filters,
+                    "-af",
+                    audio_filter(),
+                    "-c:v",
+                    encoder.value,
+                    *quality_args(encoder, crf),
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    DELIVERY_AUDIO_BITRATE,
+                    "-ar",
+                    str(DELIVERY_AUDIO_RATE),
+                    "-ac",
+                    "2",
+                    # The moov atom belongs at the front of a file that will be streamed. Without
+                    # this it is written last, and a player has to fetch the end of the file before
+                    # it can start — which for a delivery artifact is the whole point of the format.
+                    "-movflags",
+                    "+faststart",
+                    # A second, output-side duration. The input-side `-t` above bounds what is
+                    # decoded; this bounds what is written. Without it the AAC encoder pads its
+                    # final frame and the 48 kHz resample rounds up, and the container comes out
+                    # 38 ms long on the real fixture — inside `assert_encoded_span`'s one-frame
+                    # tolerance, but 38 ms of source that no one reviewed. With it the artifact is
+                    # exactly the span §8.3 says it is: measured 4162 ms for a 4162 ms clip.
+                    "-t",
+                    f"{duration_ms / 1000:.3f}",
+                    "-y",
+                    str(staging),
+                ],
+                capture_output=True,
+                check=False,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RenderError(
+                f"encode timed out after {timeout_s:.1f}s: ffmpeg did not finish in time"
+            ) from exc
         if result.returncode != 0 or not staging.exists() or staging.stat().st_size == 0:
             raise RenderError(
                 f"encode failed ({result.returncode}): "

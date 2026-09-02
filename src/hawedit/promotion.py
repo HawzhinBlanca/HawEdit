@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeDecision, ShadowVerdict
-from hawedit.proposals import _interactive_confirm
+from hawedit.proposals import interactive_confirm
 
 __all__ = [
     "DEFAULT_PROMOTION_LEDGER",
@@ -161,7 +161,7 @@ def promote_judge(
     decision: JudgeDecision,
     approved_by: str,
     ledger_path: Path = DEFAULT_PROMOTION_LEDGER,
-    confirm: Callable[[str], bool] = _interactive_confirm,
+    confirm: Callable[[str], bool] = interactive_confirm,
 ) -> Path:
     """Turn `decide_judge`'s recommendation into an active, recorded version.
 
@@ -206,7 +206,7 @@ def promote_judge(
 def rollback_judge(
     approved_by: str,
     ledger_path: Path = DEFAULT_PROMOTION_LEDGER,
-    confirm: Callable[[str], bool] = _interactive_confirm,
+    confirm: Callable[[str], bool] = interactive_confirm,
 ) -> Path:
     """Restore the judge to what it was immediately before the most recent promotion.
 

@@ -332,3 +332,37 @@ def test_a_focus_point_cannot_claim_a_face_of_no_height() -> None:
     that reported it would zoom straight to the cap instead of being refused at the door."""
     with pytest.raises(ValueError, match="face height cannot be zero"):
         FocusPoint(0, 500, 360, 0)
+
+
+def test_stabilize_steps_instantaneously_at_shot_cuts_without_panning() -> None:
+    """Across a shot cut, reframing must be an instant cut step, never a 400ms pan."""
+    track = (
+        FocusPoint(0, 500),
+        FocusPoint(500, 500),
+        FocusPoint(1_000, 200),  # shot cut happens at 1000ms
+        FocusPoint(1_500, 200),
+        FocusPoint(2_000, 200),
+    )
+    keyframes = stabilize(track, dead_zone_px=60, shot_cuts_ms=(1_000,))
+    assert FocusPoint(1_000, 500) in keyframes
+    assert FocusPoint(1_001, 200) in keyframes
+    # Ensure there is no 400ms pan keyframe like 1400ms
+    assert not any(1_001 < k.at_ms < 1_500 for k in keyframes)
+
+
+def test_stabilize_prevents_slow_panning_across_distant_empty_space_on_wide_shots() -> None:
+    """Within a single continuous shot, the camera must not slowly pan across empty furniture."""
+    # A single-shot wide table detection switching from left speaker 300 to right listener 900
+    wide_track = (
+        FocusPoint(0, 300),
+        FocusPoint(500, 300),
+        FocusPoint(1_000, 300),
+        FocusPoint(1_500, 900),
+        FocusPoint(2_000, 900),
+        FocusPoint(2_500, 900),
+        FocusPoint(3_000, 300),
+    )
+    keyframes = stabilize(wide_track, dead_zone_px=60, max_pan_px=250)
+    # The camera should hold at 300 without panning across the empty table to 900
+    positions = {k.center_x for k in keyframes}
+    assert positions == {300}

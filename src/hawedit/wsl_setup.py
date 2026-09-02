@@ -695,7 +695,7 @@ def _create_runtime_candidate(source_root: Path) -> tuple[Path, tuple[int, int]]
     return candidate, identity
 
 
-def _publish_runtime_candidate(path: Path, document: Mapping[str, object]) -> None:
+def publish_runtime_candidate(path: Path, document: Mapping[str, object]) -> None:
     """Populate the pre-created candidate through a no-follow, single-link descriptor."""
     payload = (json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
         "utf-8"
@@ -747,6 +747,9 @@ def _publish_runtime_candidate(path: Path, document: Mapping[str, object]) -> No
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+
+
+_publish_runtime_candidate = publish_runtime_candidate
 
 
 def _read_bound_json(path: Path, label: str) -> dict[str, object]:
@@ -1024,7 +1027,7 @@ from hawedit.omni_assets import (
     provision_omni_assets,
 )
 from hawedit.wsl_asr_locks import LOCKED_DISTRIBUTIONS
-from hawedit.wsl_setup import _publish_runtime_candidate
+from hawedit.wsl_setup import publish_runtime_candidate
 
 # Download into fairseq2's exact cache layout, but publish nothing until HawEdit's
 # application-owned size and SHA-256 identities match. The worker hashes them again
@@ -1095,7 +1098,7 @@ receipt = {
         for report in assets
     ],
 }
-_publish_runtime_candidate(Path(os.environ["HAWEDIT_WSL_RECEIPT_CANDIDATE"]), receipt)
+publish_runtime_candidate(Path(os.environ["HAWEDIT_WSL_RECEIPT_CANDIDATE"]), receipt)
 print(f"OmniASR import OK; CUDA GPUs visible: {torch.cuda.device_count()}")
 PY
 """.strip()

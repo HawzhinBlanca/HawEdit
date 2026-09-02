@@ -108,7 +108,7 @@ from typing import Any
 
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.learning import DecisionOutcome, ReasonCode, record_decision_delta
-from hawedit.proposals import _interactive_confirm
+from hawedit.proposals import interactive_confirm
 from hawedit.transcripts import validate_media_id
 
 __all__ = [
@@ -253,7 +253,7 @@ def commit_start_pipeline(
     proposal: StartPipelineProposal,
     approved_by: str,
     reason_code: ReasonCode,
-    confirm: Callable[[str], bool] = _interactive_confirm,
+    confirm: Callable[[str], bool] = interactive_confirm,
 ) -> dict[str, Any]:
     """Start the durable pipeline run `proposal` describes. The only write in this module.
 
@@ -400,7 +400,7 @@ def commit_cancel_run(
     proposal: CancelRunProposal,
     approved_by: str,
     reason_code: ReasonCode,
-    confirm: Callable[[str], bool] = _interactive_confirm,
+    confirm: Callable[[str], bool] = interactive_confirm,
 ) -> dict[str, Any]:
     """Cancel the DBOS workflow `proposal` names. The only write in this section.
 
@@ -555,7 +555,7 @@ def commit_resume_run(
     proposal: ResumeRunProposal,
     approved_by: str,
     reason_code: ReasonCode,
-    confirm: Callable[[str], bool] = _interactive_confirm,
+    confirm: Callable[[str], bool] = interactive_confirm,
 ) -> dict[str, Any]:
     """Resume the DBOS workflow `proposal` names. The only write in this section.
 

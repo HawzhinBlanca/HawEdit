@@ -87,7 +87,9 @@ from dbos import DBOS, SetWorkflowID
 
 from hawedit.atomic_fs import write_text_atomic
 from hawedit.events import JsonlEventSink, read_events
-from hawedit.pipeline import _build_and_run, build_parser
+from hawedit.pipeline import build_and_run, build_parser
+
+_build_and_run = build_and_run
 
 __all__ = [
     "configure_dbos",

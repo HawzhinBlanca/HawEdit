@@ -44,7 +44,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final
 
 from hawedit.credentials import GEMINI_API_KEY, read_credential
@@ -515,8 +515,6 @@ class GeminiJudge:
             self._headers(),
             self._transport,
         )
-        from dataclasses import replace
-
         counted_request = replace(request, tokens=counted)
         counted_request.assert_within_tier()
         if max_tokens is not None and counted > max_tokens:

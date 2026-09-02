@@ -65,6 +65,7 @@ __all__ = [
     "UnalignedSpeech",
     "Word",
     "assert_model_input",
+    "json_object_fields",
     "kurdish_letter_share",
     "normalize_transcript",
     "validate_media_id",
@@ -360,7 +361,7 @@ def _decode_transcript_json(payload: str, *, label: str) -> dict[str, Any]:
     return decoded
 
 
-def _json_object_fields(
+def json_object_fields(
     value: object,
     *,
     field: str,
@@ -375,6 +376,9 @@ def _json_object_fields(
     if missing or extra:
         raise ValueError(f"{field} has invalid fields; missing={missing}, extra={extra}")
     return value
+
+
+_json_object_fields = json_object_fields
 
 
 def _json_object_array(value: object, *, field: str) -> tuple[dict[str, Any], ...]:

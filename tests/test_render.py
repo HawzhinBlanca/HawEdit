@@ -27,6 +27,7 @@ import tempfile
 from dataclasses import replace
 from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1195,6 +1196,34 @@ def test_a_failed_encode_is_refused_with_ffmpegs_own_words(tmp_path: Path) -> No
     # would satisfy the match above while telling an operator nothing, and the reason this
     # message exists at all is that ffmpeg is the only thing that knows why it stopped.
     assert "output format" in str(refused.value), refused.value
+
+
+def test_render_clip_raises_on_subprocess_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A subprocess timeout raises RenderError naming the deadline, and never hangs indefinitely."""
+    clip = _clip()
+    ass = _write_ass(tmp_path)
+    output = tmp_path / "timeout.mp4"
+    real_run = subprocess.run
+
+    def _timed_out(cmd: Any, *args: Any, **kwargs: Any) -> Any:
+        if "-ss" in cmd:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=60.0)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _timed_out)
+
+    with pytest.raises(RenderError, match="encode timed out after"):
+        render_clip(
+            clip=clip,
+            source=FIXTURE,
+            ass_path=ass,
+            output=output,
+            source_width=SOURCE_WIDTH,
+            source_height=SOURCE_HEIGHT,
+            fonts_dir=FONTS,
+        )
 
 
 def test_a_source_too_small_to_crop_is_refused(tmp_path: Path) -> None:

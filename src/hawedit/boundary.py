@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 
-def _strict_bool(value: object, field: str) -> bool:
+def strict_bool(value: object, field: str) -> bool:
     """Accept only a real boolean.
 
     `bool("false")` is `True`, so a JSON document carrying the string "false" for
@@ -56,7 +56,10 @@ def _strict_bool(value: object, field: str) -> bool:
     return value
 
 
-def _json_object_fields(
+_strict_bool = strict_bool
+
+
+def json_object_fields(
     value: object,
     *,
     field: str,
@@ -72,6 +75,9 @@ def _json_object_fields(
     if missing or extra:
         raise ValueError(f"{field} has invalid fields; missing={missing}, extra={extra}")
     return value
+
+
+_json_object_fields = json_object_fields
 
 
 def _strict_json_int(value: object, field: str, *, minimum: int | None = None) -> int:
@@ -135,6 +141,8 @@ __all__ = [
     "IncompleteSentence",
     "assert_boundary_invariant",
     "fuse_boundary",
+    "json_object_fields",
+    "strict_bool",
 ]
 
 # The three constants §3 Stage 5 states literally.

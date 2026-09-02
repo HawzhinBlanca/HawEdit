@@ -131,7 +131,7 @@ from hawedit.learning import (
     read_decision_deltas,
     record_decision_delta,
 )
-from hawedit.pipeline import FONTS_DIR, _proxy_dimensions
+from hawedit.pipeline import FONTS_DIR, proxy_dimensions
 from hawedit.render import RenderError, frame_rate, render_clip
 from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.transcripts import Word, validate_media_id
@@ -150,6 +150,7 @@ __all__ = [
     "commit_render",
     "compare_versions",
     "inspect_artifact",
+    "interactive_confirm",
     "propose_boundary_revision",
     "propose_caption_revision",
     "propose_render",
@@ -305,7 +306,7 @@ def propose_boundary_revision(
     )
 
 
-def _interactive_confirm(prompt: str) -> bool:
+def interactive_confirm(prompt: str) -> bool:
     """The default approval channel: a real terminal prompt.
 
     Anything other than a bare, case-insensitive "y" is a refusal — an empty line, a typo, and
@@ -317,6 +318,9 @@ def _interactive_confirm(prompt: str) -> bool:
     except EOFError:
         return False
     return answer.strip().lower() == "y"
+
+
+_interactive_confirm = interactive_confirm
 
 
 def commit_boundary_revision(
@@ -533,7 +537,7 @@ def render_boundary_revision(
             clip_duration_ms=clip_duration_ms,
         ),
     )
-    width, height = _proxy_dimensions(source, ffmpeg)
+    width, height = proxy_dimensions(source, ffmpeg)
     try:
         render_clip(
             revised_clip,
@@ -862,7 +866,7 @@ def render_caption_revision(
             selected, style=style, clip_in_ms=revised_clip.in_ms, clip_duration_ms=clip_duration_ms
         ),
     )
-    width, height = _proxy_dimensions(source, ffmpeg)
+    width, height = proxy_dimensions(source, ffmpeg)
     try:
         render_clip(
             revised_clip,

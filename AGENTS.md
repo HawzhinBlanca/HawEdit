@@ -52,6 +52,7 @@ that — for a partial check the answer is `--fast`, which cannot print the succ
 - **A number carries the hardware and library versions it was measured on.** Report a
   measurement with where it came from, or do not report it. Judgment recorded as judgment is
   fine; judgment presented as a measurement is not.
+- **Single-writer checkout policy:** Exactly one active agent may modify the primary checkout at any time. Parallel workflows or concurrent agents must operate in dedicated git worktrees or branches.
 
 ## Hard boundaries (also enforced by hooks — do not attempt to bypass)
 - **Never edit:** `.env*`, `secrets/**`, `**/*.pem`, `.venv/**`, `.venv-wsl/**`, `.gate/**`,
