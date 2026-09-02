@@ -1,2 +1,3 @@
 TS=2026-09-02T23:25:04Z FEATURE=frontier-rating-2026-09 TASK=T1 TESTS=test_build_otio_timeline_schema_conformance VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-02T23:37:12Z FEATURE=frontier-rating-2026-09 TASK=T2 TESTS=test_publish_delivery_bundle_writes_all_editorial_sidecars VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-02T23:46:15Z FEATURE=frontier-rating-2026-09 TASK=T3 TESTS=test_build_clip_markers_includes_hook_and_payoff VERIFY=pass REPORT=.gate/last-test-run.xml
