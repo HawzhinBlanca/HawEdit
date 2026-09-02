@@ -1,1 +1,2 @@
 TS=2026-09-02T12:56:26Z FEATURE=audit-remediation TASK=T1 TESTS=test_render_clip_raises_on_subprocess_timeout VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-02T13:12:04Z FEATURE=audit-remediation TASK=T2 TESTS=test_run_durable_reports_the_same_thing_a_direct_call_would VERIFY=pass REPORT=.gate/last-test-run.xml
