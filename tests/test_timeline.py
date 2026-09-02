@@ -234,4 +234,3 @@ def test_publish_episode_timeline_writes_episode_otio(tmp_path: Path) -> None:
     content = json.loads(otio_file.read_text(encoding="utf-8"))
     assert content["OTIO_SCHEMA"] == "Timeline.1"
     assert content["name"] == "Episode 29 Master"
-

@@ -552,4 +552,3 @@ def publish_episode_timeline(
     otio_path = output_dir / "timeline.otio"
     otio_path.write_text(serialize_otio(otio_doc), encoding="utf-8")
     return otio_path
-
