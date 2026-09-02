@@ -4,4 +4,4 @@
 - [x] T2 Audio Dynamics & Scene Cuts Probing
 - [x] T3 Face Framing & Caption Ink Analysis
 - [x] T4 CLI Entrypoint & JSON Serialization
-- [ ] T5 Verification Gate & AST Isolation Proof
+- [x] T5 Verification Gate & AST Isolation Proof
