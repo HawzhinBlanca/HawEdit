@@ -1,0 +1,1 @@
+TS=2026-09-02T23:00:59Z FEATURE=evidence-binding TASK=T1 TESTS=test_new_evidence_names_its_commit_media_and_host VERIFY=pass REPORT=.gate/last-test-run.xml
