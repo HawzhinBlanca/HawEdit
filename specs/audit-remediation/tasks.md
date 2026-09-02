@@ -3,4 +3,4 @@
 - [x] T1 Render Timeout & Deduplication
 - [x] T2 Encapsulation & Public Exports
 - [x] T3 Steady Camera Dimension Reuse & Gemini Import Cleanup
-- [ ] T4 Full Verification
+- [x] T4 Full Verification
