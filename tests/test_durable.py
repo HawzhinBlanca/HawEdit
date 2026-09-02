@@ -60,6 +60,7 @@ from hawedit.transcripts import AsrProvenance, RawTranscript, Word  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
 FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
+_RENDER_SHA256 = "f4c4ba3c8bb540762eaa182cecb319e52267c8ce4e1b7743647efb3de11492e0"
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 
@@ -243,7 +244,16 @@ def test_a_full_run_through_the_durable_workflow_still_renders(tmp_path: Path) -
             _write_transcript(tmp_path),
             "--sentences",
             "0,1",
-            "--qc-pass",
+            "--qc-record",
+            json.dumps(
+                {
+                    "reviewer": "Hawa",
+                    "reviewed_at": "2026-09-02T19:00:00Z",
+                    "mp4_sha256": _RENDER_SHA256,
+                    "seconds_watched": 57.0,
+                    "verdict": "pass",
+                }
+            ),
             "--verdict",
             _write_verdict(tmp_path),
         ],

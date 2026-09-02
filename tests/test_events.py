@@ -259,7 +259,14 @@ def test_no_stage_ends_without_having_started(tmp_path: Path) -> None:
         media_id="fixture",
         transcript=a_transcript(),
         select_sentences=(0, 1),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=Qc(
+            auto_pass=True,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="f4c4ba3c8bb540762eaa182cecb319e52267c8ce4e1b7743647efb3de11492e0",
+        ),
         verdict=a_verdict(100, 4_100),
         on_event=events.append,
     )
@@ -283,7 +290,14 @@ def test_a_full_run_reports_every_stage_through_delivery(tmp_path: Path) -> None
         media_id="fixture",
         transcript=a_transcript(),
         select_sentences=(0, 1),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=Qc(
+            auto_pass=True,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="f4c4ba3c8bb540762eaa182cecb319e52267c8ce4e1b7743647efb3de11492e0",
+        ),
         verdict=a_verdict(100, 4_100),
         on_event=events.append,
     )
@@ -314,7 +328,14 @@ def test_a_run_nobody_watches_produces_the_same_report(tmp_path: Path) -> None:
             media_id="fixture",
             transcript=a_transcript(),
             select_sentences=(0, 1),
-            qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+            qc=Qc(
+                auto_pass=True,
+                flags=(),
+                human_reviewed=True,
+                reviewed_by="Hawa",
+                reviewed_at="2026-09-02T19:00:00Z",
+                reviewed_sha256="f4c4ba3c8bb540762eaa182cecb319e52267c8ce4e1b7743647efb3de11492e0",
+            ),
             verdict=a_verdict(100, 4_100),
             **kwargs,  # type: ignore[arg-type]
         )

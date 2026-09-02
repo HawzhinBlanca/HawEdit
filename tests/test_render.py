@@ -125,7 +125,18 @@ def _clip(*, qc: Qc | None = None, complete: bool = True) -> Clip:
             caption_style="word_highlight",
             durations=(30,),
         ),
-        qc=qc if qc is not None else Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=(
+            qc
+            if qc is not None
+            else Qc(
+                auto_pass=True,
+                flags=(),
+                human_reviewed=True,
+                reviewed_by="Hawa",
+                reviewed_at="2026-09-02T19:00:00Z",
+                reviewed_sha256="0" * 64,
+            )
+        ),
     )
 
 

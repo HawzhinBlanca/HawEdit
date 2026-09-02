@@ -23,6 +23,7 @@ plus the human QC gate that diagram marks "(always)".
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -42,6 +43,11 @@ from hawedit.boundary import (
 from hawedit.registry import resolve_role
 from hawedit.transcripts import AsrProvenance, Word, validate_media_id, validate_media_sha256
 
+_SHA256_HEX_RE: Final = re.compile(r"^[0-9a-f]{64}$")
+_ISO_TIMESTAMP_RE: Final = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
 __all__ = [
     "MAX_CANDIDATE_SPAN_MS",
     "MAX_MISLEADING_EDIT_RISK",
@@ -54,6 +60,7 @@ __all__ = [
     "EditorialBelowThreshold",
     "Output",
     "Qc",
+    "QcRecord",
     "RejectedCandidate",
     "Sv6d",
     "assert_sv6d_within_window",
@@ -553,12 +560,93 @@ class Output:
 
 
 @dataclass(frozen=True, slots=True)
+class QcRecord:
+    """A verified, signed human QC review record (§2 / Task T1.3)."""
+
+    reviewer: str
+    reviewed_at: str
+    mp4_sha256: str
+    seconds_watched: float
+    verdict: str
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reviewer, str) or not self.reviewer.strip():
+            raise ValueError("qc_record.reviewer must be a non-empty string")
+        if not isinstance(self.reviewed_at, str) or not _ISO_TIMESTAMP_RE.match(self.reviewed_at):
+            raise ValueError(
+                f"qc_record.reviewed_at must be an ISO-8601 timestamp: {self.reviewed_at!r}"
+            )
+        if not isinstance(self.mp4_sha256, str) or not _SHA256_HEX_RE.match(
+            self.mp4_sha256.lower()
+        ):
+            raise ValueError(
+                f"qc_record.mp4_sha256 must be a 64-char lowercase hex SHA-256: {self.mp4_sha256!r}"
+            )
+        if not isinstance(self.seconds_watched, int | float) or self.seconds_watched <= 0:
+            raise ValueError(
+                f"qc_record.seconds_watched must be a positive number: {self.seconds_watched!r}"
+            )
+        if not isinstance(self.verdict, str) or not self.verdict.strip():
+            raise ValueError("qc_record.verdict must be a non-empty string")
+        if not isinstance(self.notes, str):
+            raise ValueError("qc_record.notes must be a string")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "reviewer": self.reviewer,
+            "reviewed_at": self.reviewed_at,
+            "mp4_sha256": self.mp4_sha256.lower(),
+            "seconds_watched": float(self.seconds_watched),
+            "verdict": self.verdict,
+            "notes": self.notes,
+        }
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> QcRecord:
+        fields = _json_object_fields(
+            data,
+            field="qc_record",
+            required=frozenset(
+                {"reviewer", "reviewed_at", "mp4_sha256", "seconds_watched", "verdict"}
+            ),
+            optional=frozenset({"notes"}),
+        )
+        return QcRecord(
+            reviewer=_strict_json_string(fields["reviewer"], "qc_record.reviewer"),
+            reviewed_at=_strict_json_string(fields["reviewed_at"], "qc_record.reviewed_at"),
+            mp4_sha256=_strict_json_string(fields["mp4_sha256"], "qc_record.mp4_sha256"),
+            seconds_watched=_strict_json_number(
+                fields["seconds_watched"], "qc_record.seconds_watched", minimum=0.001
+            ),
+            verdict=_strict_json_string(fields["verdict"], "qc_record.verdict"),
+            notes=_strict_optional_json_string(fields.get("notes"), "qc_record.notes") or "",
+        )
+
+    @classmethod
+    def from_json(cls, text: str) -> QcRecord:
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON in qc_record: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("qc_record must be a JSON object")
+        return cls.from_dict(parsed)
+
+
+@dataclass(frozen=True, slots=True)
 class Qc:
     """§5's `qc` block. §2's diagram puts a human QC gate before output, always."""
 
     auto_pass: bool
     flags: tuple[str, ...] = ()
     human_reviewed: bool = False
+    reviewed_by: str | None = None
+    reviewed_at: str | None = None
+    reviewed_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _strict_bool(self.auto_pass, "qc.auto_pass")
@@ -567,13 +655,44 @@ class Qc:
             not isinstance(flag, str) or not flag.strip() for flag in self.flags
         ):
             raise ValueError("qc.flags must be a tuple of non-empty strings")
+        if self.human_reviewed:
+            if not isinstance(self.reviewed_by, str) or not self.reviewed_by.strip():
+                raise ValueError("qc.human_reviewed requires a non-empty reviewed_by string")
+            if not isinstance(self.reviewed_at, str) or not _ISO_TIMESTAMP_RE.match(
+                self.reviewed_at
+            ):
+                raise ValueError(
+                    "qc.human_reviewed requires a valid ISO-8601 reviewed_at timestamp: "
+                    f"{self.reviewed_at!r}"
+                )
+            if not isinstance(self.reviewed_sha256, str) or not _SHA256_HEX_RE.match(
+                self.reviewed_sha256.lower()
+            ):
+                raise ValueError(
+                    "qc.human_reviewed requires a 64-character lowercase hex reviewed_sha256: "
+                    f"{self.reviewed_sha256!r}"
+                )
+        else:
+            if (
+                self.reviewed_by is not None
+                or self.reviewed_at is not None
+                or self.reviewed_sha256 is not None
+            ):
+                raise ValueError("qc review metadata requires human_reviewed=True")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "auto_pass": self.auto_pass,
             "flags": list(self.flags),
             "human_reviewed": self.human_reviewed,
         }
+        if self.reviewed_by is not None:
+            data["reviewed_by"] = self.reviewed_by
+        if self.reviewed_at is not None:
+            data["reviewed_at"] = self.reviewed_at
+        if self.reviewed_sha256 is not None:
+            data["reviewed_sha256"] = self.reviewed_sha256.lower()
+        return data
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Qc:
@@ -581,15 +700,38 @@ class Qc:
             data,
             field="qc",
             required=frozenset({"auto_pass"}),
-            optional=frozenset({"flags", "human_reviewed"}),
+            optional=frozenset(
+                {"flags", "human_reviewed", "reviewed_by", "reviewed_at", "reviewed_sha256"}
+            ),
         )
         raw_flags = _strict_json_array(fields.get("flags", []), "qc.flags")
         if not all(isinstance(flag, str) for flag in raw_flags):
             raise ValueError("qc.flags must be a JSON array of strings")
+        human_rev = _strict_bool(fields.get("human_reviewed", False), "qc.human_reviewed")
+        rev_by = _strict_optional_json_string(fields.get("reviewed_by"), "qc.reviewed_by")
+        rev_at = _strict_optional_json_string(fields.get("reviewed_at"), "qc.reviewed_at")
+        rev_sha = _strict_optional_json_string(fields.get("reviewed_sha256"), "qc.reviewed_sha256")
         return Qc(
             auto_pass=_strict_bool(fields["auto_pass"], "qc.auto_pass"),
             flags=tuple(raw_flags),
-            human_reviewed=_strict_bool(fields.get("human_reviewed", False), "qc.human_reviewed"),
+            human_reviewed=human_rev,
+            reviewed_by=rev_by,
+            reviewed_at=rev_at,
+            reviewed_sha256=rev_sha,
+        )
+
+    @classmethod
+    def from_record(
+        cls, record: QcRecord, auto_pass: bool = False, flags: tuple[str, ...] = ()
+    ) -> Qc:
+        """Construct a valid human-reviewed Qc block from a verified QcRecord."""
+        return cls(
+            auto_pass=auto_pass,
+            flags=flags,
+            human_reviewed=True,
+            reviewed_by=record.reviewer,
+            reviewed_at=record.reviewed_at,
+            reviewed_sha256=record.mp4_sha256.lower(),
         )
 
 

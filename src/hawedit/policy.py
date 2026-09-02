@@ -248,6 +248,7 @@ BLOCKED_OPERATIONS: Final[tuple[str, ...]] = (
     "source-code mutation",
     "unrestricted web browsing or arbitrary MCP servers",
     "direct publishing without a separate approval token",
+    "human review record creation or bypass",
 )
 
 # Substrings that would indicate one of `BLOCKED_OPERATIONS` had been registered as a tool.
@@ -274,6 +275,9 @@ _FORBIDDEN_NAME_FRAGMENTS: Final[tuple[str, ...]] = (
     "browse",
     "fetch_url",
     "http",
+    "review_record",
+    "qc_record",
+    "qc_pass",
 )
 
 

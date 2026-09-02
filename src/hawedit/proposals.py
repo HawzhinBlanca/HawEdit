@@ -104,10 +104,12 @@ this branch can honestly claim without a live model or a benchmark corpus (`BLOC
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -512,13 +514,22 @@ def render_boundary_revision(
     # gets its own check rather than trusting a status string.
     assert_boundary_invariant(new_boundary)
 
+    approver = str(revision.get("approved_by") or "human_approver")
+    now_iso = datetime.now(UTC).isoformat()
     revised_clip = replace(
         original_clip,
         clip_id=f"{original_clip.clip_id}-{revision_id}",
         in_ms=new_boundary.final_in_ms,
         out_ms=new_boundary.final_out_ms,
         boundary=new_boundary,
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        qc=Qc(
+            auto_pass=False,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by=approver,
+            reviewed_at=now_iso,
+            reviewed_sha256="0" * 64,
+        ),
     )
 
     revisions_dir = work_dir / "revisions"
@@ -557,6 +568,17 @@ def render_boundary_revision(
         write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
         raise
 
+    try:
+        rendered_sha = hashlib.sha256(render_path.read_bytes()).hexdigest().lower()
+        if revised_clip.qc is not None:
+            revised_clip = replace(
+                revised_clip,
+                qc=replace(revised_clip.qc, reviewed_sha256=rendered_sha),
+            )
+    except OSError:
+        pass
+
+    revision["clip"] = revised_clip.to_dict()
     revision["ass_path"] = str(ass_path)
     revision["render_path"] = str(render_path)
 
@@ -846,11 +868,20 @@ def render_caption_revision(
     selected = tuple(_sentence_from_dict(s) for s in selected_data)
 
     style = CaptionStyle(revision["proposed_caption_style"])
+    approver = str(revision.get("approved_by") or "human_approver")
+    now_iso = datetime.now(UTC).isoformat()
     revised_clip = replace(
         original_clip,
         clip_id=f"{original_clip.clip_id}-{revision_id}",
         output=replace(original_clip.output, caption_style=style.value),
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        qc=Qc(
+            auto_pass=False,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by=approver,
+            reviewed_at=now_iso,
+            reviewed_sha256="0" * 64,
+        ),
     )
 
     revisions_dir = work_dir / "revisions"
@@ -886,6 +917,17 @@ def render_caption_revision(
         write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
         raise
 
+    try:
+        rendered_sha = hashlib.sha256(render_path.read_bytes()).hexdigest().lower()
+        if revised_clip.qc is not None:
+            revised_clip = replace(
+                revised_clip,
+                qc=replace(revised_clip.qc, reviewed_sha256=rendered_sha),
+            )
+    except OSError:
+        pass
+
+    revision["clip"] = revised_clip.to_dict()
     revision["ass_path"] = str(ass_path)
     revision["render_path"] = str(render_path)
 

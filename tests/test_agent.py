@@ -539,7 +539,14 @@ def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> Non
             caption_style="line",
             durations=(30,),
         ),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=Qc(
+            auto_pass=True,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="0" * 64,
+        ),
     )
     illegal_boundary = replace(boundary, final_out_ms=3000)  # ends before anchor_out_ms=4100
     for clip, should_raise in (

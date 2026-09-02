@@ -91,7 +91,14 @@ def real_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, PipelineRu
         media_id="fixture",
         transcript=a_transcript(),
         select_sentences=(0, 1),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=Qc(
+            auto_pass=True,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="f4c4ba3c8bb540762eaa182cecb319e52267c8ce4e1b7743647efb3de11492e0",
+        ),
         verdict=a_verdict(100, 4_100),
     )
     assert run.clip is not None, "fixture setup must produce a real clip to revise"

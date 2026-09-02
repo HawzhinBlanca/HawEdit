@@ -797,13 +797,20 @@ def _make_valid_reconciliation_pair() -> tuple[Clip, ClipMeasurement]:
             durations=(2,),
             silence_removed_ms=0,
         ),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=Qc(
+            auto_pass=True,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="0" * 64,
+        ),
     )
 
     duration_ms = clip.out_ms - clip.in_ms
     measurement = ClipMeasurement(
         schema=1,
-        file=FileSummary(path="/tmp/test.mp4", sha256="abc", size_bytes=1000),
+        file=FileSummary(path="/tmp/test.mp4", sha256="0" * 64, size_bytes=1000),
         video=VideoMeasurement(
             width=1080,
             height=1920,
@@ -991,3 +998,22 @@ def test_delivery_refuses_face_tracking_claim_when_frames_lack_face() -> None:
             min_face_share=0.90,
         )
     assert exc_info.value.reason == "face_tracking_unsubstantiated"
+
+
+def test_delivery_refuses_qc_sha256_mismatch() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+
+    # Measurement has different SHA-256 than what human reviewer signed off on
+    broken_file = replace(measurement.file, sha256="f" * 64)
+    broken_meas = replace(measurement, file=broken_file)
+    with pytest.raises(DeliveryRefused, match="qc_sha256_mismatch") as exc_info:
+        reconcile_delivery(
+            clip,
+            broken_meas,
+            captions_burned_in=True,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[clip.in_ms + 500],
+        )
+    assert exc_info.value.reason == "qc_sha256_mismatch"

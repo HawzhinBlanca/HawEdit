@@ -463,3 +463,16 @@ def reconcile_delivery(
             expected=f">= {required_face_share:.2f} face detected share",
             measured=measurement.faces.face_detected_share,
         )
+
+    # Clause 8: Human Review Binding (Task T1.3 / Register Row 4)
+    if (
+        clip.qc
+        and clip.qc.human_reviewed
+        and clip.qc.reviewed_sha256 is not None
+        and clip.qc.reviewed_sha256.lower() != measurement.file.sha256.lower()
+    ):
+        raise DeliveryRefused(
+            "qc_sha256_mismatch",
+            expected=measurement.file.sha256.lower(),
+            measured=clip.qc.reviewed_sha256.lower(),
+        )

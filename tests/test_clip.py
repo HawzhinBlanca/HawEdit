@@ -30,6 +30,7 @@ from hawedit.clip import (
     EditorialBelowThreshold,
     Output,
     Qc,
+    QcRecord,
     RejectedCandidate,
     Sv6d,
     assert_sv6d_within_window,
@@ -107,7 +108,14 @@ def a_clip(**overrides: object) -> Clip:
             caption_style="word_highlight",
             durations=(15, 30, 60),
         ),
-        "qc": Qc(auto_pass=True, flags=(), human_reviewed=True),
+        "qc": Qc(
+            auto_pass=True,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="0" * 64,
+        ),
     }
     payload.update(overrides)
     return Clip(**payload)  # type: ignore[arg-type]
@@ -185,7 +193,16 @@ def test_an_automatic_pass_cannot_replace_human_review() -> None:
 
 
 def test_a_human_reviewed_clip_is_renderable_even_without_auto_pass() -> None:
-    clip = a_clip(qc=Qc(auto_pass=False, flags=("checked",), human_reviewed=True))
+    clip = a_clip(
+        qc=Qc(
+            auto_pass=False,
+            flags=("checked",),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="0" * 64,
+        )
+    )
     clip.assert_renderable()
 
 
@@ -634,9 +651,14 @@ def test_qc_flags_must_be_a_tuple_of_non_empty_strings() -> None:
             Qc(auto_pass=False, flags=flags, human_reviewed=False)  # type: ignore[arg-type]
 
     # The control: a real flag tuple, and the empty tuple that means "nothing flagged".
-    assert Qc(auto_pass=False, flags=("needs_review",), human_reviewed=True).flags == (
-        "needs_review",
-    )
+    assert Qc(
+        auto_pass=False,
+        flags=("needs_review",),
+        human_reviewed=True,
+        reviewed_by="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        reviewed_sha256="0" * 64,
+    ).flags == ("needs_review",)
     assert Qc(auto_pass=True, flags=(), human_reviewed=False).flags == ()
 
 
@@ -681,7 +703,14 @@ def a_fully_populated_clip() -> Clip:
             durations=(15, 30, 60),
             hashtags_ckb=("#کوردی", "#هەواڵ"),
         ),
-        qc=Qc(auto_pass=False, flags=("low_confidence",), human_reviewed=True),
+        qc=Qc(
+            auto_pass=False,
+            flags=("low_confidence",),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="1" * 64,
+        ),
     )
 
 
@@ -825,3 +854,148 @@ def test_the_refusal_names_the_score_and_the_threshold_it_missed() -> None:
 def test_a_good_verdict_still_renders() -> None:
     """The control. A gate that refuses everything satisfies every test above."""
     a_clip().assert_renderable()
+
+
+# --- Human QC Review Record (Task T1.3 / ADR D-263) --------------------------------------
+
+
+def test_no_code_path_sets_human_reviewed_without_a_matching_record() -> None:
+    """Task T1.3 / Register Row 4: human review is a record, not a flag.
+
+    A clip cannot claim human_reviewed=True without an attributed reviewer, an ISO
+    timestamp, and a matching SHA-256 hash.
+    """
+    # 1. Bare human_reviewed=True without metadata raises ValueError
+    with pytest.raises(ValueError, match="qc.human_reviewed requires a non-empty reviewed_by"):
+        Qc(auto_pass=False, flags=(), human_reviewed=True)
+
+    # 2. Empty or whitespace reviewer raises ValueError
+    with pytest.raises(ValueError, match="qc.human_reviewed requires a non-empty reviewed_by"):
+        Qc(
+            auto_pass=False,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="  ",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="0" * 64,
+        )
+
+    # 3. Invalid ISO timestamp raises ValueError
+    with pytest.raises(ValueError, match="valid ISO-8601 reviewed_at timestamp"):
+        Qc(
+            auto_pass=False,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="yesterday",
+            reviewed_sha256="0" * 64,
+        )
+
+    # 4. Non-64-hex hash raises ValueError
+    with pytest.raises(ValueError, match="64-character lowercase hex reviewed_sha256"):
+        Qc(
+            auto_pass=False,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="not_a_valid_sha256",
+        )
+
+    # 5. Review metadata without human_reviewed=True raises ValueError
+    with pytest.raises(ValueError, match="requires human_reviewed=True"):
+        Qc(
+            auto_pass=False,
+            flags=(),
+            human_reviewed=False,
+            reviewed_by="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            reviewed_sha256="0" * 64,
+        )
+
+    # 6. Valid record succeeds
+    qc = Qc(
+        auto_pass=False,
+        flags=(),
+        human_reviewed=True,
+        reviewed_by="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        reviewed_sha256="0" * 64,
+    )
+    assert qc.human_reviewed is True
+    assert qc.reviewed_by == "Hawa"
+    assert qc.reviewed_at == "2026-09-02T19:00:00Z"
+    assert qc.reviewed_sha256 == "0" * 64
+
+
+def test_qc_record_validates_and_round_trips() -> None:
+    """Verify QcRecord fields and JSON serialization."""
+    record = QcRecord(
+        reviewer="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        mp4_sha256="a" * 64,
+        seconds_watched=57.5,
+        verdict="pass",
+        notes="All speech clear and framed well",
+    )
+    assert record.reviewer == "Hawa"
+    assert record.seconds_watched == 57.5
+
+    # Round trip
+    serialized = record.to_json()
+    reloaded = QcRecord.from_json(serialized)
+    assert reloaded == record
+
+    # Qc factory
+    qc = Qc.from_record(record)
+    assert qc.human_reviewed is True
+    assert qc.reviewed_by == "Hawa"
+    assert qc.reviewed_sha256 == "a" * 64
+
+
+def test_qc_record_refusals() -> None:
+    """QcRecord strictly validates inputs at construction."""
+    with pytest.raises(ValueError, match="reviewer"):
+        QcRecord(
+            reviewer="",
+            reviewed_at="2026-09-02T19:00:00Z",
+            mp4_sha256="a" * 64,
+            seconds_watched=10,
+            verdict="pass",
+        )
+
+    with pytest.raises(ValueError, match="reviewed_at"):
+        QcRecord(
+            reviewer="Hawa",
+            reviewed_at="bad-date",
+            mp4_sha256="a" * 64,
+            seconds_watched=10,
+            verdict="pass",
+        )
+
+    with pytest.raises(ValueError, match="mp4_sha256"):
+        QcRecord(
+            reviewer="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            mp4_sha256="short",
+            seconds_watched=10,
+            verdict="pass",
+        )
+
+    with pytest.raises(ValueError, match="seconds_watched"):
+        QcRecord(
+            reviewer="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            mp4_sha256="a" * 64,
+            seconds_watched=0,
+            verdict="pass",
+        )
+
+    with pytest.raises(ValueError, match="verdict"):
+        QcRecord(
+            reviewer="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            mp4_sha256="a" * 64,
+            seconds_watched=10,
+            verdict="",
+        )

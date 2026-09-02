@@ -73,6 +73,7 @@ from hawedit.clip import (
     ClipTranscript,
     DiscoveryPath,
     Qc,
+    QcRecord,
     RejectedCandidate,
 )
 from hawedit.credentials import CredentialError
@@ -2876,7 +2877,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--sentences", help="comma-separated sentence indexes to cut, e.g. 0,1")
-    parser.add_argument("--qc-pass", action="store_true", help="record a human QC pass (§2)")
+    parser.add_argument(
+        "--qc-record",
+        type=str,
+        default=None,
+        help="path to a JSON file or inline JSON string carrying human review record (Task T1.3)",
+    )
     parser.add_argument("--json", action="store_true", help="print the run report as JSON")
     return parser
 
@@ -2997,8 +3003,8 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
 
     if args.min_clip_seconds is not None and args.min_clip_seconds <= 0:
         raise ValueError("--min-clip-seconds must be greater than 0")
-    if args.qc_pass and not (args.sentences or args.auto_select):
-        raise ValueError("--qc-pass requires --sentences or --auto-select")
+    if args.qc_record and not (args.sentences or args.auto_select):
+        raise ValueError("--qc-record requires --sentences or --auto-select")
     visual_query = args.visual_query.strip() if args.visual_query is not None else ""
     # Path B is a producer only when it has something to retrieve against. `--visual`
     # alone plans windows but cannot rank or surface one, so accepting it for auto-selection
@@ -3135,6 +3141,13 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
 
         diarizer = create_diarizer(device=args.diarize_device)
 
+    qc: Qc | None = None
+    if args.qc_record:
+        rec_path = Path(args.qc_record)
+        rec_text = rec_path.read_text(encoding="utf-8") if rec_path.is_file() else args.qc_record
+        parsed_record = QcRecord.from_json(rec_text)
+        qc = Qc.from_record(parsed_record)
+
     return run_pipeline(
         args.source,
         args.work_dir,
@@ -3143,7 +3156,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         asr=canonical_asr,
         diarizer=diarizer,
         select_sentences=selection,
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=True) if args.qc_pass else None,
+        qc=qc,
         verdict=verdict,
         discover=discover,
         visual_composer=visual_composer,

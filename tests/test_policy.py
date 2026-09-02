@@ -225,3 +225,21 @@ def test_every_declared_policy_has_a_note() -> None:
     """A declared approval class with no stated reason is a decision nobody recorded."""
     undocumented = [policy.name for policy in TOOL_POLICIES if not policy.note.strip()]
     assert not undocumented, f"ToolPolicy entries with no note: {undocumented}"
+
+
+def test_the_agent_surface_cannot_write_a_review_record(tmp_path: Path) -> None:
+    """Task T1.3 / Proof A: the agent tool surface cannot write or register a review record."""
+    from pydantic_ai.models.test import TestModel
+
+    _write_report(tmp_path)
+    for label, builder in _all_agent_builders():
+        agent = builder(TestModel(), Deps(work_dir=tmp_path))
+        for name in _registered_tool_names(agent):
+            assert (
+                "review_record" not in name and "qc_record" not in name and "qc_pass" not in name
+            ), f"{label} registered {name!r}, which violates human QC review isolation"
+
+    # And attempting to declare a review record tool raises PolicyViolation
+    for forbidden in ("write_review_record", "create_qc_record", "qc_pass_tool"):
+        with pytest.raises(PolicyViolation, match="blocked-capability"):
+            assert_tools_are_declared({forbidden})

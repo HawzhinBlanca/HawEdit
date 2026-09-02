@@ -43,6 +43,7 @@ from hawedit.clip import (
     MIN_CANDIDATE_SPAN_MS,
     DiscoveryPath,
     Qc,
+    QcRecord,
 )
 from hawedit.diarization import Segment
 from hawedit.discovery import Candidate, MergedCandidate
@@ -85,6 +86,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
 FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
+
+FIXTURE_RENDER_S0_1_SHA256 = "f4c4ba3c8bb540762eaa182cecb319e52267c8ce4e1b7743647efb3de11492e0"
+FIXTURE_RENDER_S0_SHA256 = "373fe39d308e042f56014ec0544d34259689e62b9681148b591bd0da12df9e11"
+NTSC30_RENDER_SHA256 = "5864ac268634d8845d5cb383741da6258694c1d032708d70c39ee6a9445222f5"
+NTSC60_RENDER_SHA256 = "a66829ceb0b199c7bcfe1b431a28b1559015d926cf4c8e2ab6a463e954ffbdca"
+SPEAKER_TRACKED_RENDER_SHA256 = "6ceba45fade2c32e7b546e4f4c94f760fdc2827e315a075061cc6b4d97e50ae1"
+SPEAKER_AMBIGUOUS_RENDER_SHA256 = "6ceba45fade2c32e7b546e4f4c94f760fdc2827e315a075061cc6b4d97e50ae1"
+
+
+def _test_qc(
+    auto_pass: bool = True,
+    flags: tuple[str, ...] = (),
+    reviewed_sha256: str = FIXTURE_RENDER_S0_1_SHA256,
+) -> Qc:
+    return Qc(
+        auto_pass=auto_pass,
+        flags=flags,
+        human_reviewed=True,
+        reviewed_by="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        reviewed_sha256=reviewed_sha256,
+    )
 
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
@@ -263,7 +286,7 @@ def full_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         media_id="fixture",
         transcript=a_transcript(),
         select_sentences=(0, 1),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True),
         verdict=a_verdict(100, 4_100),
     )
 
@@ -739,13 +762,29 @@ def test_the_cli_can_load_the_documented_stage_4_verdict(
                 str(verdict_path),
                 "--sentences",
                 "0,1",
-                "--qc-pass",
+                "--qc-record",
+                json.dumps(
+                    {
+                        "reviewer": "Hawa",
+                        "reviewed_at": "2026-09-02T19:00:00Z",
+                        "mp4_sha256": "0" * 64,
+                        "seconds_watched": 57.0,
+                        "verdict": "pass",
+                    }
+                ),
             ]
         )
         == 1
     )
     assert isinstance(captured["verdict"], JudgeVerdict)
-    assert captured["qc"] == Qc(auto_pass=False, flags=(), human_reviewed=True)
+    assert captured["qc"] == Qc(
+        auto_pass=False,
+        flags=(),
+        human_reviewed=True,
+        reviewed_by="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        reviewed_sha256="0" * 64,
+    )
 
 
 @pytest.mark.parametrize(
@@ -1164,7 +1203,7 @@ def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: P
         media_id="variants",
         transcript=a_transcript("variants"),
         select_sentences=(0,),
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
         verdict=a_verdict(100, 1_700),
     )
     assert first.render is not None and not isinstance(first.render, StageSkipped)
@@ -1177,7 +1216,7 @@ def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: P
         media_id="variants",
         transcript=a_transcript("variants"),
         select_sentences=(0, 1),
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+        qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_1_SHA256),
         verdict=a_verdict(100, 4_100),
     )
     assert second.render is not None and not isinstance(second.render, StageSkipped)
@@ -1191,7 +1230,7 @@ def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: P
             media_id="variants",
             transcript=a_transcript("variants"),
             select_sentences=(0,),
-            qc=Qc(auto_pass=False, flags=(), human_reviewed=True),
+            qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
             verdict=a_verdict(100, 1_700),
         )
 
@@ -1401,7 +1440,7 @@ def test_render_refuses_and_discards_if_source_changes_before_publication(
         media_id="render-drift",
         transcript=a_transcript("render-drift", media_sha256=source_sha256),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True),
         verdict=replace(a_verdict(100, 1_700), candidate_id="render-drift-0"),
     )
 
@@ -1500,7 +1539,7 @@ def test_speaker_tracking_receives_only_overlapping_turns_and_labels_the_artifac
         diarizer=_MeasuredDiarizer(),
         select_sentences=(0,),
         verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-tracked-0"),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True, reviewed_sha256=SPEAKER_TRACKED_RENDER_SHA256),
         speaker_tracker=SpeakerTracker(),
         subject_tracker=FaceFallback(),
     )
@@ -1539,7 +1578,7 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
         diarizer=_MeasuredDiarizer(),
         select_sentences=(0,),
         verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-ambiguous-0"),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True, reviewed_sha256=SPEAKER_AMBIGUOUS_RENDER_SHA256),
         speaker_tracker=AmbiguousSpeakerTracker(),
         subject_tracker=FaceFallback(),
     )
@@ -1931,7 +1970,7 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
         media_id="paths",
         transcript=a_transcript("paths"),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
         verdict=a_verdict(100, 1_700),
     )
     assert run.render is not None and not isinstance(run.render, StageSkipped), run.render
@@ -1982,7 +2021,7 @@ def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) 
         media_id="safe",
         transcript=a_transcript("safe"),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
         verdict=a_verdict(100, 1_700),
     )
     assert not isinstance(run.delivery, StageSkipped), run.delivery
@@ -2020,7 +2059,7 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
         media_id="nospace",
         transcript=a_transcript("nospace"),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True),
         verdict=a_verdict(100, 1_700),
     )
     assert isinstance(run.delivery, StageSkipped)
@@ -2684,7 +2723,7 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         transcript=a_transcript("whole"),
         diarizer=_MeasuredDiarizer(),
         select_sentences=(0, 1),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True),
         discover=lambda _n: [Candidate("best", "whole", 100, 4_100, DiscoveryPath.VERBAL, 1, 0.9)],
         visual_composer=Composer(),  # type: ignore[arg-type]
         judge=Judge(),
@@ -3204,8 +3243,8 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
     ),
     (
         "passing QC on nothing",
-        ["--transcript", "x.json", "--qc-pass"],
-        "--qc-pass requires --sentences or --auto-select",
+        ["--transcript", "x.json", "--qc-record", "rec.json"],
+        "--qc-record requires --sentences or --auto-select",
     ),
     (
         "auto-select with no producer that can produce",
@@ -3342,7 +3381,7 @@ def test_a_complete_argv_reaches_the_run(tmp_path: Path) -> None:
     enough to fail on the transcript file it names, which is read after the last refusal.
     """
     code, stderr = _cli_exit(
-        ["--transcript", "no-such.json", "--sentences", "0", "--qc-pass"], tmp_path
+        ["--transcript", "no-such.json", "--sentences", "0", "--qc-record", "rec.json"], tmp_path
     )
     assert code == 2, stderr
     assert "no-such.json" in stderr, stderr
@@ -4317,7 +4356,7 @@ def test_atomic_bundle_failure_reasons_are_single_line_and_bounded(
         media_id="bounded-bundle-error",
         transcript=a_transcript("bounded-bundle-error"),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True),
         verdict=a_verdict(100, 1_700),
     )
 
@@ -4724,7 +4763,10 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
             media_id, media_sha256=hashlib.sha256(ntsc.read_bytes()).hexdigest()
         ),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(
+            True,
+            reviewed_sha256=NTSC30_RENDER_SHA256 if "30" in media_id else NTSC60_RENDER_SHA256,
+        ),
         verdict=a_verdict(100, 1_700),
     )
     assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
@@ -4756,7 +4798,7 @@ def test_an_ass_staging_failure_is_reported_and_leaves_no_private_bundle(
         media_id="noass",
         transcript=a_transcript("noass"),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True),
         verdict=a_verdict(100, 1_700),
     )
 
@@ -4799,7 +4841,7 @@ def test_an_unsupported_fractional_edl_never_writes_a_sidecar_at_all(
             "fractional", media_sha256=hashlib.sha256(fractional.read_bytes()).hexdigest()
         ),
         select_sentences=(0,),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True),
         verdict=a_verdict(100, 1_700),
     )
     assert isinstance(run.delivery, StageSkipped)
@@ -4890,7 +4932,7 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         ("--transcript", "missing.json", "--visual"),
         "--visual without Path A",
     ),
-    ("QC without selection", ("--qc-pass",), "--qc-pass requires"),
+    ("QC without selection", ("--qc-record", "rec.json"), "--qc-record requires"),
     (
         "auto-selection without discovery",
         ("--transcript", "missing.json", "--auto-select"),
@@ -5015,7 +5057,7 @@ def test_the_case_table_is_bound_bidirectionally_to_every_preflight_refusal() ->
 def test_a_legal_argv_gets_past_every_preflight_refusal(tmp_path: Path) -> None:
     """Control: an implementation that refused every invocation passes negative cases alone."""
     code, stderr = _query_preflight_exit(
-        ["--transcript", "missing.json", "--sentences", "0", "--qc-pass"], tmp_path
+        ["--transcript", "missing.json", "--sentences", "0", "--qc-record", "rec.json"], tmp_path
     )
 
     assert code == 2, stderr
@@ -6025,7 +6067,7 @@ def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -
         FIXTURE,
         transcript=a_transcript(FIXTURE.stem),
         verdict=a_verdict(100, 1_700),
-        qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+        qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
         work_dir=tmp_path / "work",
         select_sentences=(0,),
         diarizer=PyannoteDiarizer(),
@@ -6040,3 +6082,68 @@ def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -
     assert result.clip.output is not None
     assert result.clip.output.crop_target in {"face_tracked", "static_centre"}
     assert result.clip.output.crop_target != "speaker_face"
+
+
+def test_cli_qc_record_validates_and_binds_to_clip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task T1.3 / Proof A: CLI parses --qc-record JSON file and binds to Qc."""
+    source = tmp_path / "x.mp4"
+    source.touch()
+    transcript_path = tmp_path / "t.json"
+    transcript_path.write_text(a_transcript().to_json(), encoding="utf-8")
+    verdict_path = tmp_path / "v.json"
+    verdict_path.write_text(
+        json.dumps(a_verdict(0, 4_300).to_dict(), ensure_ascii=False), encoding="utf-8"
+    )
+    record_path = tmp_path / "qc_record.json"
+    record = QcRecord(
+        reviewer="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        mp4_sha256="0" * 64,
+        seconds_watched=57.0,
+        verdict="pass",
+        notes="All speech verified",
+    )
+    record_path.write_text(record.to_json(), encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(source_arg: Path, work_arg: Path, **kwargs: object) -> PipelineRun:
+        captured.update(kwargs)
+        return PipelineRun(media_id="source", source=str(source_arg), work_dir=str(work_arg))
+
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", fake_run)
+    exit_code = main(
+        [
+            str(source),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--transcript",
+            str(transcript_path),
+            "--verdict",
+            str(verdict_path),
+            "--sentences",
+            "0,1",
+            "--qc-record",
+            str(record_path),
+        ]
+    )
+    assert exit_code == 1
+    assert captured["qc"] == Qc(
+        auto_pass=False,
+        flags=(),
+        human_reviewed=True,
+        reviewed_by="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        reviewed_sha256="0" * 64,
+    )
+
+
+def test_cli_refuses_removed_qc_pass_flag(tmp_path: Path) -> None:
+    """Task T1.3: --qc-pass is retired; passing it exits with an argument error."""
+    source = tmp_path / "x.mp4"
+    source.touch()
+    with pytest.raises(SystemExit) as exc_info:
+        main([str(source), "--sentences", "0,1", "--qc-pass"])
+    assert exc_info.value.code != 0
