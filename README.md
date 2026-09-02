@@ -627,6 +627,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `vex.py` | §6/§7 | Identity-bound WSL-ASR vulnerability disposition gate over pip-audit output and runtime receipts. |
 | `repurposing.py` | §8.2 | Per-path Recall@K, temporal IoU, misleading-edit rate, cost per source hour. |
 | `measure.py` | Phase 1 | Independent ground-truth Level B measurement of delivered MP4/ASS media artifacts, extracting ffprobe container properties, EBU R128 loudness dynamics, silencedetect pause intervals, scene cuts, 5 fps OpenCV face tracking statistics, and caption band ink energy / contrast with zero imports of render or pipeline. |
+| `timeline.py` | Editorial | Schema-compliant OpenTimelineIO (`.otio`) timeline and marker generator for DaVinci Resolve Studio handoff with colored editorial markers for Hook, Payoff, Punch-Ins, and Speaker turns. |
 
 ## Two conventions worth knowing before reading the code
 
