@@ -1,0 +1,1 @@
+TS=2026-09-02T16:36:52Z FEATURE=independent-measurement TASK=T1 TESTS=test_measure_probes_container_and_streams_accurately VERIFY=pass REPORT=.gate/last-test-run.xml
