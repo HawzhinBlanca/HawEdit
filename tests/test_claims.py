@@ -209,6 +209,153 @@ def test_the_measured_span_evidence_is_recorded() -> None:
     )
 
 
+_EVIDENCE_CUTOFF = "2026-09-02T23:59:59+03:00"
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT_HEX = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+
+
+def _evidence_creation_dates(git_root: Path = ROOT) -> dict[str, str]:
+    """Oldest commit ISO timestamp for every file in evidence/, asked of git."""
+    res = subprocess.run(
+        ["git", "log", "--diff-filter=A", "--name-only", "--format=COMMIT:%cI", "--", "evidence/"],
+        cwd=git_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    first_seen: dict[str, str] = {}
+    current_commit_date = ""
+    for line in res.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("COMMIT:"):
+            current_commit_date = line[len("COMMIT:") :]
+        elif current_commit_date:
+            rel = line.replace("\\", "/")
+            name = Path(rel).name
+            first_seen[name] = current_commit_date
+    return first_seen
+
+
+def _parse_evidence_header(content: str) -> dict[str, str]:
+    """Extract key-value pairs from a top-level YAML or frontmatter header block."""
+    lines = content.splitlines()[:40]
+    in_block = False
+    data: dict[str, str] = {}
+    for line in lines:
+        stripped = line.strip()
+        if stripped in ("```yaml", "```yml", "---"):
+            if not in_block:
+                in_block = True
+                continue
+            else:
+                break
+        if in_block:
+            if stripped in ("```", "---"):
+                break
+            if ":" in line:
+                key, _, val = line.partition(":")
+                k = key.strip()
+                v = val.strip()
+                if k:
+                    data[k] = v
+    return data
+
+
+def validate_evidence_header(path_name: str, text: str, git_root: Path = ROOT) -> None:
+    """Task T1.5 / §7.5: validate that an evidence file carries commit, media_sha256,
+    host, and command, and that the commit exists in git history."""
+    header = _parse_evidence_header(text)
+    assert header, f"{path_name} lacks a valid ```yaml header block"
+    for required_key in ("commit", "media_sha256", "host", "command"):
+        assert header.get(required_key), (
+            f"{path_name} header block is missing non-empty '{required_key}'"
+        )
+
+    commit = header["commit"].strip()
+    assert _COMMIT_HEX.match(commit), (
+        f"{path_name} commit {commit!r} is not a valid 40 or 64 hex SHA"
+    )
+    exists = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=git_root,
+        capture_output=True,
+        check=False,
+    )
+    assert exists.returncode == 0, (
+        f"{path_name} cites commit {commit} which does not exist in git history"
+    )
+
+    media_sha = header["media_sha256"].strip()
+    assert media_sha.lower().startswith("n/a") or _SHA256_HEX.match(media_sha.lower()), (
+        f"{path_name} media_sha256 {media_sha!r} must be 64-hex SHA-256 or 'n/a'"
+    )
+
+
+def test_new_evidence_names_its_commit_media_and_host() -> None:
+    """Task T1.5 / §7.5: every evidence/*.md created after 2026-09-02 must carry commit,
+    media_sha256 (or n/a), host, and command in a header block; test_claims refuses otherwise
+    and checks the commit exists in history. Existing files are untouched."""
+    evidence_dir = ROOT / "evidence"
+    assert evidence_dir.is_dir(), "evidence directory must exist"
+    dates = _evidence_creation_dates()
+
+    for path in sorted(evidence_dir.glob("*.md")):
+        created = dates.get(path.name)
+        if created is None or created > _EVIDENCE_CUTOFF:
+            validate_evidence_header(path.name, path.read_text(encoding="utf-8"))
+
+
+def test_evidence_header_validation_refusals() -> None:
+    """Unit checks verifying validate_evidence_header refuses missing/malformed fields."""
+    import pytest
+
+    # 1. Missing header block
+    with pytest.raises(AssertionError, match="lacks a valid ```yaml header block"):
+        validate_evidence_header("test.md", "# Just a title without header\nSome findings.")
+
+    # 2. Missing required key
+    incomplete = "```yaml\ncommit: 0123456789abcdef0123456789abcdef01234567\nhost: HAWAPC01\n```\n"
+    with pytest.raises(AssertionError, match="missing non-empty 'media_sha256'"):
+        validate_evidence_header("test.md", incomplete)
+
+    # 3. Invalid commit hex
+    invalid_commit = (
+        "```yaml\ncommit: not-a-sha\nmedia_sha256: n/a: no media\n"
+        "host: HAWAPC01\ncommand: pytest\n```\n"
+    )
+    with pytest.raises(AssertionError, match="not a valid 40 or 64 hex SHA"):
+        validate_evidence_header("test.md", invalid_commit)
+
+    # 4. Nonexistent commit
+    fake_sha = "f" * 40
+    nonexistent = (
+        f"```yaml\ncommit: {fake_sha}\nmedia_sha256: n/a: no media\n"
+        "host: HAWAPC01\ncommand: pytest\n```\n"
+    )
+    with pytest.raises(AssertionError, match="which does not exist in git history"):
+        validate_evidence_header("test.md", nonexistent)
+
+    # 5. Invalid media SHA
+    valid_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    invalid_media = (
+        f"```yaml\ncommit: {valid_commit}\nmedia_sha256: bad_media_hash\n"
+        "host: HAWAPC01\ncommand: pytest\n```\n"
+    )
+    with pytest.raises(AssertionError, match="must be 64-hex SHA-256 or 'n/a'"):
+        validate_evidence_header("test.md", invalid_media)
+
+    # 6. Valid header passes without error
+    valid_header = (
+        f"```yaml\ncommit: {valid_commit}\nmedia_sha256: n/a: no media\n"
+        "host: HAWAPC01\ncommand: pytest\n```\n"
+    )
+    validate_evidence_header("test.md", valid_header)
+
+
 def test_every_ledger_row_marked_partial_names_its_shortfall() -> None:
     """PARTIAL without a named shortfall is DONE with extra steps."""
     for line in PROGRESS.splitlines():
