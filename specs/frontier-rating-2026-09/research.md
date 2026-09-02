@@ -59,6 +59,38 @@ format beyond CMX 3600 is an ADR. `D-041` binds captions to the clip timeline. `
 #4 (diarization), #17 (8-frame window), #18 (Path A query), #21 (adapter licence). Model lock
 canon: cloud judge is Gemini 2.5 Pro only; Kurdish-specific models first.
 
-## Frontier comparison and the achievable September 2026 state
+## Frontier facts that bound the rating (web research 2026-09-02; vendor vs independent marked)
 
-_(pending the two web-research reports — filled below when they land)_
+- **No clipper lists Central Kurdish.** Opus Clip (25 langs), Vizard (37), Descript (Latin
+  script only), Submagic (49, Arabic yes), Klap, Captions, Quso, Spikes, 2short, Kapwing, Munch
+  (pivoted to done-for-you posts, Aug 2026) — none has ckb. Best external ckb engine:
+  ElevenLabs Scribe **32.1 % WER** FLEURS (vendor). OmniASR LLM-7B: **CER 6.0** ckb (Meta CSV).
+- **Selection accuracy in the field** (vendor benchmarks, one duplicated corpus): Opus 92 %
+  single-speaker / **68 % multi-speaker**, Vizard 78/55, Descript 85/72; Opus discards
+  ~40 % (BIGVU, competitor, 2026-07). Nobody exports **EDL or OTIO**; only Opus (XML, Pro) and
+  Descript (FCPXML/Premiere XML) hand a timeline to Resolve.
+- **Resolve 21** (final 2026-06-03): still **no clip-selection**. Resolve 20 added SmartSwitch
+  (speaker-based multicam), IntelliCut (silence removal), Animated Subtitles; Smart Reframe is
+  Studio-only, subject-tracking, no audio. Scripting API v21: import AAF/EDL/XML/FCPXML/OTIO,
+  `AppendToTimeline`, `AddMarker`; **no transform-keyframe API**; EDL/OTIO carry no transforms.
+- **Models, licence-clean, fit a 3090:** pyannote community-1 (CC-BY-4.0, gated) is the best
+  open diarizer; Light-ASD / LR-ASD (MIT, ≤1 M params, 94.1–94.45 AVA mAP) for active speaker;
+  YuNet (MIT) over Haar; TimeLens2-4B (2026-07) SOTA open grounding; VideoChat3-4B 2026-07;
+  Gemini 2.5 Pro stable, no shutdown date; 3.1 Pro preview at 1.6× the price. Video input at low
+  resolution ≈ **$0.01/min** on 2.5 Pro. SCRFD/insightface, DiariZen, MMS aligner: **NC, reject**.
+- **Engagement prediction has one measured validity number:** SROCC **0.71** (SnapUGC, 120 k
+  videos). Every "virality score" is marketing on top of that ceiling.
+- **Browser Use `video-use`** (MIT): Scribe → LLM edits text → ffmpeg; a rough-cut agent, no
+  selection, no reframing, no NLE export. **Palmier Pro**: a macOS NLE with an MCP server and
+  XML export; not a clipper. Neither competes on the selection problem.
+
+## The achievable state this month (what the plan should target)
+
+HawEdit as the **Sorani editorial brain plus proof**; Resolve as the finishing room. Ship per
+episode: N sentence-complete clips, an OTIO timeline with cuts and markers (hook, payoff,
+punch-in, speaker turns), SRT + ASS, editing JSON carrying the reframe keyframes, a preview
+render, and the measured-and-reconciled sidecar. Drop from HawEdit what Resolve does better
+(final colour, mix, brand kit, push-ins, encode polish). Keep and finish what nobody else has:
+OmniASR + champion, sentence-hard boundaries, judge with frames, diarization + Light-ASD
+speaker markers, RTL captions, the reconciliation gate. Needs: #4 click, Resolve Studio
+purchase, labels (H2/H13). Plan follows in `plan.md`; `pro-grade-program/tasks.md` shrinks.
