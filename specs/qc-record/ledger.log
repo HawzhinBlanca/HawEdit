@@ -2,3 +2,4 @@ TS=2026-09-02T21:58:16Z FEATURE=qc-record TASK=T1 TESTS=test_no_code_path_sets_h
 TS=2026-09-02T22:13:08Z FEATURE=qc-record TASK=T2 TESTS=test_the_agent_surface_cannot_write_a_review_record VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-02T22:21:40Z FEATURE=qc-record TASK=T3 TESTS=test_delivery_refuses_qc_sha256_mismatch VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-02T22:30:34Z FEATURE=qc-record TASK=T4 TESTS=test_cli_qc_record_validates_and_binds_to_clip VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-02T22:49:50Z FEATURE=qc-record TASK=T5 TESTS=test_proposals_bind_matching_qc_record_to_rendered_clips VERIFY=pass REPORT=.gate/last-test-run.xml
