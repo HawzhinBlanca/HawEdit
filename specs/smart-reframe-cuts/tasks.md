@@ -2,4 +2,4 @@
 
 - [x] T1 Cut Boundary Snapping in Reframe & Pipeline
 - [x] T2 Wide Shot Subject Persistence
-- [ ] T3 Verification Gate
+- [x] T3 Verification Gate
