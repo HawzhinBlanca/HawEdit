@@ -1,1 +1,2 @@
 TS=2026-09-02T12:18:49Z FEATURE=smart-reframe-cuts TASK=T1 TESTS=test_stabilize_steps_instantaneously_at_shot_cuts_without_panning VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-02T12:28:40Z FEATURE=smart-reframe-cuts TASK=T2 TESTS=test_stabilize_prevents_slow_panning_across_distant_empty_space_on_wide_shots VERIFY=pass REPORT=.gate/last-test-run.xml
