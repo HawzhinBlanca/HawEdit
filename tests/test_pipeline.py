@@ -2067,6 +2067,41 @@ def test_a_write_failing_partway_through_the_sidecars_leaves_none(
     assert _sidecars_on_disk(work, "nospace-s0-0") == []
 
 
+@needs_ffmpeg
+def test_reconciliation_failure_skips_delivery_and_discards_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clip failing Level C reconciliation is refused before publish:
+    delivery is marked StageSkipped, the private staging directory is discarded,
+    and no public bundle appears in the work directory. ADR D-263 / T1.2.
+    """
+    import hawedit.pipeline as pipeline_mod
+    from hawedit.delivery import DeliveryRefused
+
+    def refusing_reconcile(*args: object, **kwargs: object) -> None:
+        raise DeliveryRefused(
+            "geometry_mismatch",
+            expected="1080x1920 vertical",
+            measured="720x1280",
+        )
+
+    monkeypatch.setattr(pipeline_mod, "reconcile_delivery", refusing_reconcile)
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="reconcile_refused",
+        transcript=a_transcript("reconcile_refused"),
+        select_sentences=(0,),
+        qc=_test_qc(True),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert isinstance(run.delivery, StageSkipped)
+    assert "geometry_mismatch" in run.delivery.reason
+    assert _sidecars_on_disk(work, "reconcile_refused-s0-0") == []
+
+
 def test_the_cli_defaults_put_each_visual_model_where_section_6_puts_it() -> None:
     """§6, VIDEO PHASE: `GPU 0 → VideoChat3-4B` and `GPU 1 → Embedding / Reranker / TimeLens2`.
 
