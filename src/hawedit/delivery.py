@@ -498,6 +498,18 @@ def reconcile_delivery(
                 measured=measured_ffmpeg_ver,
             )
 
+    # Clause 10: Production Profile Requirements (Task T1.9)
+    if (
+        clip.provenance
+        and clip.provenance.profile == "production"
+        and not (clip.qc and clip.qc.human_reviewed and clip.qc.reviewed_sha256)
+    ):
+        raise DeliveryRefused(
+            "production_profile_unreviewed",
+            expected="valid human review record with sha256 binding in production profile",
+            measured="unreviewed or missing qc record",
+        )
+
 
 def publish_delivery_bundle(
     output_dir: Path,

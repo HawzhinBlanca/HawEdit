@@ -80,6 +80,7 @@ from hawedit.clip import (
 from hawedit.credentials import CredentialError
 from hawedit.delivery import (
     DeliveryError,
+    DeliveryRefused,
     build_edl,
     build_srt,
     reconcile_delivery,
@@ -1571,6 +1572,7 @@ def run_pipeline(
     ffmpeg: Path | None = None,
     on_event: EventSink = discard,
     speaker_tracker: SpeakerSubjectTracker | None = None,
+    profile: str = "default",
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -2358,7 +2360,7 @@ def run_pipeline(
             else None
         ),
         qc=_qc_with_measured_flags(qc, selected),
-        provenance=Provenance.current(),
+        provenance=Provenance.current(profile=profile),
     )
     run = replace(run, boundary=boundary, clip=clip, selected_sentences=tuple(selected))
     log.finished("boundary")
@@ -2518,6 +2520,21 @@ def run_pipeline(
     log.started("delivery")
     try:
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
+        if profile == "production":
+            if qc is None or not qc.human_reviewed or not qc.reviewed_sha256:
+                raise DeliveryRefused(
+                    "production_profile_unreviewed",
+                    expected="valid human review record with sha256 binding in production profile",
+                    measured="unreviewed or missing review record",
+                )
+            skipped_stages = run.skipped()
+            if skipped_stages:
+                skipped_names = [s[0] for s in skipped_stages]
+                raise DeliveryRefused(
+                    "production_profile_skipped_stage",
+                    expected="zero skipped stages in production profile",
+                    measured=f"skipped stages: {skipped_names}",
+                )
         # Build all three before writing any. This used to write the JSON, then the SRT, then
         # build the EDL — formerly an NTSC 29.97 fps source legitimately refused because
         # drop-frame support did not exist. The build-first ordering remains load-bearing for
@@ -2885,6 +2902,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="path to a JSON file or inline JSON string carrying human review record (Task T1.3)",
     )
+    parser.add_argument(
+        "--profile",
+        choices=("default", "production"),
+        default="default",
+        help=(
+            "execution profile; production refuses delivery if any stage was skipped or unreviewed"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="print the run report as JSON")
     return parser
 
@@ -3176,6 +3201,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         visual_fps=args.visual_fps,
         visual_max_frames=args.visual_max_frames,
         on_event=on_event,
+        profile=getattr(args, "profile", "default"),
     )
 
 

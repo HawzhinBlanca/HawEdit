@@ -6147,3 +6147,59 @@ def test_cli_refuses_removed_qc_pass_flag(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main([str(source), "--sentences", "0,1", "--qc-pass"])
     assert exc_info.value.code != 0
+
+
+def test_cli_parses_profile_argument() -> None:
+    """Task T1.9: CLI supports --profile default and --profile production."""
+    parser = build_parser()
+    args_default = parser.parse_args(["video.mp4"])
+    assert args_default.profile == "default"
+
+    args_prod = parser.parse_args(["video.mp4", "--profile", "production"])
+    assert args_prod.profile == "production"
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["video.mp4", "--profile", "invalid_profile"])
+
+
+@needs_ffmpeg
+def test_the_production_profile_cannot_deliver_with_a_skipped_stage(
+    tmp_path: Path,
+) -> None:
+    """Task T1.9: A run in production profile refuses delivery if any stage is StageSkipped."""
+    work = tmp_path / "work"
+    # Run pipeline with profile="production"
+    # Stage 0 (diarizer) is omitted, so diarization is skipped.
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="fixture",
+        transcript=a_transcript(),
+        select_sentences=(0, 1),
+        qc=_test_qc(True),
+        verdict=a_verdict(100, 4_100),
+        profile="production",
+    )
+    assert isinstance(run.delivery, StageSkipped)
+    assert "production_profile_skipped_stage" in run.delivery.reason
+    # Delivery bundle must not be published
+    assert not (work / "delivery" / "fixture-clip-0.mp4").exists()
+
+
+@needs_ffmpeg
+def test_the_contract_records_the_profile_used(tmp_path: Path) -> None:
+    """Task T1.9: Clip provenance records the profile used for the run."""
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="fixture",
+        transcript=a_transcript(),
+        select_sentences=(0, 1),
+        qc=_test_qc(True),
+        verdict=a_verdict(100, 4_100),
+        profile="production",
+    )
+    assert run.clip is not None
+    assert run.clip.provenance is not None
+    assert run.clip.provenance.profile == "production"

@@ -1037,3 +1037,22 @@ def test_delivery_refuses_ffmpeg_version_mismatch() -> None:
             source_shot_cuts_ms=[clip.in_ms + 500],
         )
     assert exc_info.value.reason == "ffmpeg_version_mismatch"
+
+
+def test_delivery_refuses_production_profile_without_human_review() -> None:
+    clip, measurement = _make_valid_reconciliation_pair()
+    # Production profile with no human review
+    unreviewed_clip = replace(
+        clip,
+        qc=None,
+        provenance=Provenance.current(profile="production"),
+    )
+    with pytest.raises(DeliveryRefused, match="production_profile_unreviewed") as exc_info:
+        reconcile_delivery(
+            unreviewed_clip,
+            measurement,
+            captions_burned_in=True,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[clip.in_ms + 500],
+        )
+    assert exc_info.value.reason == "production_profile_unreviewed"
