@@ -13761,5 +13761,33 @@ Implement an FFmpeg-native speech audio conditioning chain preceding the two-pas
 5. **Zero External Dependencies**: Implemented strictly using FFmpeg C filters built into the platform distribution, adding zero Python dependencies, zero neural weights, and zero runtime latency.
 6. **Backward Compatibility**: Working and test renders (`deliverable=False`) bypass the speech chain to retain exact single-pass execution speed and fixture audio hash consistency.
 
+---
+
+## D-265 · Content-type profile: podcast, interview, news, social
+
+**Date:** 2026-09-04 · **Blueprint ref:** §2, §3 Stage 3, Stage 4, Stage 6 · **Type:** architecture / editorial customization
+
+**Context.**
+`BLUEPRINT.md` originally used a single static set of editorial constants across all video inputs (e.g. `MIN_CANDIDATE_SPAN_MS = 30_000`, `PUNCH_IN_ZOOM = 1.25`, `TARGET_FACE_HEIGHT_SHARE = 0.15`). However, as noted in `specs/pro-grade-program/tasks.md` Task T4.5 and `HANDOFF.md` §5, HawEdit processes fundamentally distinct genres of Kurdish video material:
+1. Longform podcast discussions (e.g. ep29) characterized by thoughtful dialogue, 30–60s spans, and relaxed visual pacing.
+2. Structured interviews featuring dynamic back-and-forth Q&A exchanges.
+3. Formal news broadcasts (e.g. KAAE material) where jump zooms or punch-ins are unacceptable for journalistic decorum and the anchor occupies a larger fraction of the frame.
+4. Fast-paced social clips (Reels / TikTok) requiring high-energy 15–30s cuts, 2.5s punch-in cadences, and word-by-word animated karaoke subtitles (`WORD_HIGHLIGHT`).
+
+**Decision.**
+1. **ContentType Enum & Profiles**:
+   Introduce `hawedit.content_type` with four canonical content types: `podcast`, `interview`, `news`, `social`.
+   Each profile specifies:
+   - `min_clip_ms`: minimum candidate span (podcast: 30s; interview: 25s; news: 15s; social: 15s).
+   - `caption_style`: default caption layout (`POPUP` for podcast/interview/news, `WORD_HIGHLIGHT` for social).
+   - `punch_in_cadence_ms`: punch-in interval (podcast: 4,000 ms; interview: 3,000 ms; news: 0 [disabled]; social: 2,500 ms).
+   - `eased_push`: continuous smoothstep push-in enabled for podcast/interview/social; disabled (`False`) for news.
+   - `target_face_height_share`: framing share (podcast/interview/social: 0.15; news: 0.18 for seated anchor closeup).
+2. **CLI & Pipeline Integration**:
+   - Add `--content-type {podcast,interview,news,social}` to CLI parser (default: `podcast`).
+   - Profile values serve as intelligent editorial defaults; explicit CLI overrides (e.g. `--caption-style`, `--min-clip-seconds`, `--eased-push`) always take precedence.
+3. **Backward Compatibility**:
+   The default profile (`podcast`) preserves exact existing behavior on ep29 and existing test fixtures.
+
 
 

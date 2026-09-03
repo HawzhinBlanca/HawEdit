@@ -6369,3 +6369,51 @@ def test_winner_selection_breaks_ties_on_visual_variety(tmp_path: Path) -> None:
     )
     assert run_variety.clip is not None
     assert run_variety.clip.clip_id == "fixture-s0-0"
+
+
+def test_pipeline_content_type_argument_is_parsed() -> None:
+    """Task T4.5: --content-type argument is parsed with default podcast."""
+    parser = build_parser()
+    args_default = parser.parse_args([str(FIXTURE)])
+    assert args_default.content_type == "podcast"
+
+    args_news = parser.parse_args([str(FIXTURE), "--content-type", "news"])
+    assert args_news.content_type == "news"
+
+    args_social = parser.parse_args([str(FIXTURE), "--content-type", "social"])
+    assert args_social.content_type == "social"
+
+
+def test_run_pipeline_respects_content_type_defaults(tmp_path: Path) -> None:
+    """Task T4.5: run_pipeline configures caption style and thresholds from content_type profile."""
+    work = tmp_path / "content_type_work"
+    transcript = a_transcript()
+    verdict = a_verdict(100, 4_100)
+
+    # News profile defaults to line captions
+    run_news = run_pipeline(
+        FIXTURE,
+        work / "news",
+        media_id="fixture",
+        transcript=transcript,
+        select_sentences=(0, 1),
+        verdict=verdict,
+        content_type="news",
+    )
+    assert run_news.clip is not None
+    assert run_news.clip.output is not None
+    assert run_news.clip.output.caption_style == "line"
+
+    # Social profile defaults to word_highlight animated karaoke
+    run_social = run_pipeline(
+        FIXTURE,
+        work / "social",
+        media_id="fixture",
+        transcript=transcript,
+        select_sentences=(0, 1),
+        verdict=verdict,
+        content_type="social",
+    )
+    assert run_social.clip is not None
+    assert run_social.clip.output is not None
+    assert run_social.clip.output.caption_style == "word_highlight"

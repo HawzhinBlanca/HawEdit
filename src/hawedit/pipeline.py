@@ -66,7 +66,6 @@ from hawedit.captions import (
     POPUP_MAX_WORDS,
     VIRAL_FONT_SIZE,
     VIRAL_THEME,
-    CaptionStyle,
     build_ass,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
@@ -83,6 +82,7 @@ from hawedit.clip import (
     QcRecord,
     RejectedCandidate,
 )
+from hawedit.content_type import ContentType, get_content_type_profile
 from hawedit.credentials import CredentialError
 from hawedit.delivery import (
     DeliveryError,
@@ -1609,6 +1609,7 @@ def run_pipeline(
     first_frame_gate: bool = False,
     eased_push: bool = False,
     visual_variety: bool = False,
+    content_type: ContentType | str | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1667,6 +1668,10 @@ def run_pipeline(
             "unranked read_scenes injection is not a valid Path B producer; use VisualComposer "
             "so Qwen retrieval/reranking bounds the scenes sent to VideoChat3"
         )
+
+    ct_profile = get_content_type_profile(content_type)
+    if min_clip_ms == MIN_CANDIDATE_SPAN_MS and ct_profile.min_clip_ms != MIN_CANDIDATE_SPAN_MS:
+        min_clip_ms = ct_profile.min_clip_ms
 
     identifier = validate_media_id(media_id or source.stem)
     if transcript is not None and transcript.media_id != identifier:
@@ -2462,6 +2467,7 @@ def run_pipeline(
             verdict.to_output(
                 crop_target=crop_target,
                 durations=(max(1, round((boundary.final_out_ms - boundary.final_in_ms) / 1000)),),
+                caption_style=ct_profile.caption_style.value,
             )
             if verdict is not None
             else None
@@ -2543,7 +2549,7 @@ def run_pipeline(
             build_ass(
                 selected,
                 font_size=VIRAL_FONT_SIZE,
-                style=CaptionStyle.WORD_HIGHLIGHT,
+                style=ct_profile.caption_style,
                 clip_in_ms=clip.in_ms,
                 clip_duration_ms=clip.out_ms - clip.in_ms,
                 # Not a taste setting, and so not a flag. Every clip this runner produces is
@@ -2573,11 +2579,15 @@ def run_pipeline(
             for cut_ms in ingested.shot_cuts_ms
             if clip.in_ms <= cut_ms <= clip.out_ms
         ]
-        if eased_push or profile == "deliverable":
+        planned_punch_ins: tuple[tuple[int, float], ...]
+        if ct_profile.punch_in_cadence_ms == 0:
+            planned_punch_ins = ()
+        elif eased_push or profile == "deliverable" or ct_profile.eased_push:
             spans = shot_spans(
                 cut_pts,
                 clip.out_ms - clip.in_ms,
                 source_cuts_ms=source_cuts,
+                min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
             planned_punch_ins = eased_push_schedule(spans)
         else:
@@ -2585,6 +2595,7 @@ def run_pipeline(
                 cut_pts,
                 clip.out_ms - clip.in_ms,
                 avoid_ms=source_cuts,
+                min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
         rendered = render_clip(
             clip,
@@ -3002,6 +3013,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--content-type",
+        choices=[c.value for c in ContentType],
+        default="podcast",
+        help=(
+            "source content format profile driving editorial defaults (Task T4.5, ADR D-265): "
+            "podcast (default), interview, news, social"
+        ),
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3346,6 +3366,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         profile=getattr(args, "profile", "default"),
         eased_push=args.eased_push,
         visual_variety=args.visual_variety,
+        content_type=getattr(args, "content_type", "podcast"),
     )
 
 

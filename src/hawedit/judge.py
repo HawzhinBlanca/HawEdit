@@ -363,7 +363,12 @@ class JudgeVerdict:
             reason_ckb=self.reason_ckb,
         )
 
-    def to_output(self, crop_target: str, durations: tuple[int, ...]) -> Output:
+    def to_output(
+        self,
+        crop_target: str,
+        durations: tuple[int, ...],
+        caption_style: str = "word_highlight",
+    ) -> Output:
         """Fill §5's `output` block with the judge's Kurdish title and description.
 
         `crop_target` and `durations` are not the judge's to decide — they are delivery
@@ -373,7 +378,7 @@ class JudgeVerdict:
             title_ckb=self.title_ckb,
             description_ckb=self.description_ckb,
             crop_target=crop_target,
-            caption_style="word_highlight",
+            caption_style=caption_style,
             durations=durations,
             hashtags_ckb=self.hashtags_ckb,
         )
