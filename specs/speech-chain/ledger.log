@@ -1,0 +1,1 @@
+TS=2026-09-03T15:44:55Z FEATURE=speech-chain TASK=T1 TESTS=test_audio_filter_speech_chain_formatting VERIFY=pass REPORT=.gate/last-test-run.xml
