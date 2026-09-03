@@ -2231,6 +2231,37 @@ def run_pipeline(
         and word.end_ms > boundary.final_in_ms
     ]
     if uncaptioned:
+        # Task T4.8: Boundary extension that completes a sentence.
+        # If the unselected speech belongs to complete sentences fully enclosed within
+        # the fused boundary, absorb those sentences into selected rather than skipping.
+        touched_sentences = [
+            s for s in sentences if s not in selected and any(w in uncaptioned for w in s.words)
+        ]
+        can_complete_all = bool(touched_sentences) and all(
+            s.complete
+            and all(
+                w.start_ms >= boundary.final_in_ms and w.end_ms <= boundary.final_out_ms
+                for w in s.words
+            )
+            for s in touched_sentences
+        )
+        if can_complete_all:
+            new_selected = sorted(
+                list(selected) + touched_sentences,
+                key=lambda s: s.words[0].start_ms if s.words else 0,
+            )
+            selected = tuple(new_selected)
+            selected_words = {word for sentence in selected for word in sentence.words}
+            uncaptioned = [
+                word
+                for sentence in sentences
+                for word in sentence.words
+                if word not in selected_words
+                and word.start_ms < boundary.final_out_ms
+                and word.end_ms > boundary.final_in_ms
+            ]
+
+    if uncaptioned:
         first = uncaptioned[0]
         would_ship_uncaptioned = StageSkipped(
             stage="boundary",

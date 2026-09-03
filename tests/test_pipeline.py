@@ -622,6 +622,35 @@ def test_soft_boundary_expansion_cannot_swallow_uncaptioned_speech(tmp_path: Pat
     assert run.boundary.blocked_by == ("uncaptioned speech",)
 
 
+@needs_ffmpeg
+def test_boundary_extension_absorbs_fully_enclosed_sentence(tmp_path: Path) -> None:
+    """Task T4.8 / AC-1: complete sentence fully inside extended boundary is absorbed."""
+    transcript = RawTranscript(
+        media_id="absorbed",
+        text_ckb="یەکەم. بەڵێ.",
+        words=(
+            Word(w="یەکەم.", start_ms=100, end_ms=1_400, conf=0.9),
+            Word(w="بەڵێ.", start_ms=1_450, end_ms=1_550, conf=0.9),
+        ),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
+    )
+    # 200 ms tail after 1400 ms reaches 1600 ms, fully enclosing "بەڵێ." (1450..1550 ms)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="absorbed",
+        transcript=transcript,
+        select_sentences=(0,),
+    )
+    # The boundary should not be skipped; "بەڵێ." should be absorbed into clip words
+    assert not isinstance(run.boundary, StageSkipped)
+    if run.clip is not None:
+        words = [w.w for w in run.clip.transcript.words]
+        assert "بەڵێ." in words
+        assert "یەکەم." in words
+
+
 def test_a_missing_source_file_is_named(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="absent.mp4"):
         run_pipeline(tmp_path / "absent.mp4", tmp_path / "work")
