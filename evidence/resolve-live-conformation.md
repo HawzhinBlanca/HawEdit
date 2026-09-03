@@ -1,5 +1,16 @@
 # Evidence — DaVinci Resolve Studio Live Conformation
 
+```yaml
+commit: b01d6d080fe51f3b753344e393420e89af6d9d47
+media_id: ep29-VbX8UWwl1c4
+clip_id: ep29-VbX8UWwl1c4-s25-25
+media_sha256: b42da4783cd03f6a27cbe430f72a2a5693330e26712a34cf60f58d56bd8316d4
+host: HAWAPC01
+command: python -m hawedit.resolve import work/ep29-VbX8UWwl1c4-s25-25 --timeline EP29_Live_Reel
+date: 2026-09-03T14:33:00Z
+proof_level: Level B (live conformation in DaVinci Resolve Studio 21)
+```
+
 > Measured on `HAWAPC01` (Windows 11 Pro, AMD Ryzen Threadripper 3990X, 2× RTX 3090 Ti 24 GB)
 > DaVinci Resolve Studio 21 live instance (`UUID: bff00616-fcf4-4439-bd91-04c5af14b0a4`).
 > Date: 2026-09-03.
