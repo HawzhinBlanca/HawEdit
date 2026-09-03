@@ -1,1 +1,2 @@
 TS=2026-09-03T18:59:19Z FEATURE=face-detector-tracker TASK=T1 TESTS=test_opencv_face_tracker_defaults_to_5fps_and_enabled_tracker,test_create_tracker_returns_valid_cv2_tracker VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T19:07:52Z FEATURE=face-detector-tracker TASK=T2 TESTS=test_face_tracker_bridges_detection_dropouts_via_tracker VERIFY=pass REPORT=.gate/last-test-run.xml
