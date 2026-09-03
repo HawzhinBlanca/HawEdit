@@ -1,1 +1,2 @@
 TS=2026-09-03T15:05:41Z FEATURE=two-pass-loudnorm TASK=T1 TESTS=test_audio_filter_linear_formatting,test_audio_filter_default_preserves_dynamic_chain,test_loudness_stats_dict_roundtrip VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T15:13:57Z FEATURE=two-pass-loudnorm TASK=T2 TESTS=test_contract_records_two_pass_loudness VERIFY=pass REPORT=.gate/last-test-run.xml
