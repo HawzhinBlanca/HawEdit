@@ -1,0 +1,1 @@
+TS=2026-09-03T21:51:20Z FEATURE=visual-variety-selection TASK=T1 TESTS=test_calculate_visual_variety_computes_cuts_per_second VERIFY=pass REPORT=.gate/last-test-run.xml
