@@ -1,0 +1,1 @@
+TS=2026-09-03T18:21:51Z FEATURE=shaped-line-breaking TASK=T1 TESTS=test_measure_rendered_caption_width_measures_ink_and_caches VERIFY=pass REPORT=.gate/last-test-run.xml
