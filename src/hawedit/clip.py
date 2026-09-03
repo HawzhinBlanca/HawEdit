@@ -26,11 +26,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, ClassVar, Final
 
 from hawedit.boundary import (
