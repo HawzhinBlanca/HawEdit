@@ -2072,7 +2072,14 @@ def run_pipeline(
                         blocked_by=("§2 editorial thresholds",),
                     ),
                 )
-            winner, winning_run, verdict = max(shippable, key=lambda item: item[2].hook_score)
+            winner, winning_run, verdict = max(
+                shippable,
+                key=lambda item: (
+                    item[2].hook_score,
+                    getattr(item[2], "payoff_strength", 0.0),
+                    getattr(item[2], "ends_on_a_beat", False),
+                ),
+            )
             if judge_plans and tuple(winning_run) != tuple(select_sentences):
                 # A later candidate won, so everything downstream — captions, boundary, clip id
                 # and artifact names — has to follow it rather than rank #1's selection.

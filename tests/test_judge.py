@@ -783,3 +783,62 @@ def test_direct_verdict_construction_rejects_schema_invalid_structures() -> None
         a_verdict(title_ckb={"کورد": "not a string"})
     with pytest.raises(ValueError, match="hashtags_ckb"):
         a_verdict(hashtags_ckb=({"کورد": True},))
+
+
+def test_verdict_hook_type_validates_canonical_taxonomy() -> None:
+    """Task T4.4 / AC-1: hook_type must be one of the 5 canonical types."""
+    for valid_type in ("question", "claim", "contrast", "story_open", "confession"):
+        verdict = a_verdict(hook_type=valid_type)
+        assert verdict.hook_type == valid_type
+
+    with pytest.raises(ValueError, match="hook_type 'humor' is not one of"):
+        a_verdict(hook_type="humor")
+
+
+@pytest.mark.parametrize("bad_strength", (-0.1, 1.05, "0.5", True))
+def test_verdict_payoff_strength_validates_range(bad_strength: object) -> None:
+    """Task T4.4 / AC-2: payoff_strength must be a JSON number in [0.0, 1.0]."""
+    with pytest.raises(ValueError, match="payoff_strength"):
+        a_verdict(payoff_strength=bad_strength)
+
+
+@pytest.mark.parametrize("bad_beat", (1, 0, "true", None))
+def test_verdict_ends_on_a_beat_requires_boolean(bad_beat: object) -> None:
+    """Task T4.4 / AC-2: ends_on_a_beat must be boolean."""
+    with pytest.raises(ValueError, match="ends_on_a_beat"):
+        a_verdict(ends_on_a_beat=bad_beat)
+
+
+def test_verdict_reason_ckb_requires_kurdish_script() -> None:
+    """Task T4.4 / AC-3: reason_ckb must contain Kurdish script."""
+    with pytest.raises(ValueError, match="contains no Kurdish script"):
+        a_verdict(reason_ckb="This is purely English text without Kurdish letters.")
+
+
+def test_verdict_and_editorial_hook_taxonomy_roundtrip() -> None:
+    """Task T4.4 / AC-4: serialization roundtrip and projection to Editorial."""
+    verdict = a_verdict(
+        hook_type="contrast",
+        payoff_strength=0.92,
+        ends_on_a_beat=True,
+        reason_ckb="بەراوردکارییەکی سەرنجڕاکێشە.",
+    )
+    # Projection to Editorial
+    editorial = verdict.to_editorial()
+    assert editorial.hook_type == "contrast"
+    assert editorial.payoff_strength == 0.92
+    assert editorial.ends_on_a_beat is True
+    assert editorial.reason_ckb == "بەراوردکارییەکی سەرنجڕاکێشە."
+
+    # Serialization roundtrip
+    dict_repr = verdict.to_dict()
+    assert dict_repr["hook_type"] == "contrast"
+    assert dict_repr["payoff_strength"] == 0.92
+    assert dict_repr["ends_on_a_beat"] is True
+    assert dict_repr["reason_ckb"] == "بەراوردکارییەکی سەرنجڕاکێشە."
+
+    restored = JudgeVerdict.from_dict(dict_repr)
+    assert restored.hook_type == "contrast"
+    assert restored.payoff_strength == 0.92
+    assert restored.ends_on_a_beat is True
+    assert restored.reason_ckb == "بەراوردکارییەکی سەرنجڕاکێشە."

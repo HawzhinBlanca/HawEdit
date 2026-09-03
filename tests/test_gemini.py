@@ -85,6 +85,10 @@ def verdict_fields(**overrides: Any) -> dict[str, Any]:
         "title_ckb": TITLE,
         "description_ckb": DESCRIPTION,
         "hashtags_ckb": ["#کوردی"],
+        "hook_type": "claim",
+        "payoff_strength": 0.85,
+        "ends_on_a_beat": True,
+        "reason_ckb": "پەیامێکی ڕوون و کاریگەرە.",
     }
     fields.update(overrides)
     return fields

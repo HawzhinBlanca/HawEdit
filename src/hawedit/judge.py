@@ -55,6 +55,7 @@ from hawedit.registry import ModelEntry, resolve_role
 __all__ = [
     "CANDIDATE_SLICE_TOKENS_PER_HOUR",
     "FULL_TRANSCRIPT_TOKENS_PER_HOUR",
+    "HOOK_TYPES",
     "JUDGE_ROLES",
     "KURDISH_EDITORIAL_JUDGE",
     "MAX_JUDGE_FRAME_BYTES",
@@ -113,6 +114,7 @@ MIN_REGRESSION_ITEMS: Final = 20
 
 
 NARRATIVE_ROLES: Final = frozenset({"setup", "escalation", "payoff", "aside"})
+HOOK_TYPES: Final = frozenset({"question", "claim", "contrast", "story_open", "confession"})
 
 _VERDICT_REQUIRED_FIELDS: Final = frozenset(
     {
@@ -217,6 +219,10 @@ class JudgeVerdict:
     clip_in_ms: int
     clip_out_ms: int
     sv6d: Sv6d | None = None
+    hook_type: str = "claim"
+    payoff_strength: float = 0.5
+    ends_on_a_beat: bool = True
+    reason_ckb: str = "پەسەندکراوە لەسەر بنەمای بەهێزی دەربڕین."
 
     def __post_init__(self) -> None:
         if not isinstance(self.self_contained, bool):
@@ -294,6 +300,23 @@ class JudgeVerdict:
             tuple(_kurdish_field(tag, "hashtag") for tag in self.hashtags_ckb),
         )
 
+        if self.hook_type not in HOOK_TYPES:
+            raise ValueError(
+                f"hook_type {self.hook_type!r} is not one of {sorted(HOOK_TYPES)}. "
+                f"Blueprint §4 taxonomy requires one of the 5 canonical hook types."
+            )
+        if not isinstance(self.ends_on_a_beat, bool):
+            raise ValueError("ends_on_a_beat must be a JSON boolean")
+        if (
+            isinstance(self.payoff_strength, bool)
+            or not isinstance(self.payoff_strength, int | float)
+            or not 0.0 <= self.payoff_strength <= 1.0
+        ):
+            raise ValueError(
+                f"payoff_strength must be a JSON number within [0, 1], got {self.payoff_strength}"
+            )
+        object.__setattr__(self, "reason_ckb", _kurdish_field(self.reason_ckb, "reason_ckb"))
+
         # Role-checked, not routability-checked. The shadow is *evaluated*, so its verdicts
         # have to exist — refusing to construct one would make the shadow test impossible and
         # leave "switch only when 3.1 Pro beats 2.5 Pro" unenforceable for want of a 3.1 Pro
@@ -334,6 +357,10 @@ class JudgeVerdict:
             judge=self.judge,
             sv6d=self.sv6d,
             payoff_at_ms=self.payoff_at_ms,
+            hook_type=self.hook_type,
+            payoff_strength=self.payoff_strength,
+            ends_on_a_beat=self.ends_on_a_beat,
+            reason_ckb=self.reason_ckb,
         )
 
     def to_output(self, crop_target: str, durations: tuple[int, ...]) -> Output:
@@ -368,6 +395,10 @@ class JudgeVerdict:
             "clip_in_ms": self.clip_in_ms,
             "clip_out_ms": self.clip_out_ms,
             "sv6d": self.sv6d.to_dict() if self.sv6d else None,
+            "hook_type": self.hook_type,
+            "payoff_strength": self.payoff_strength,
+            "ends_on_a_beat": self.ends_on_a_beat,
+            "reason_ckb": self.reason_ckb,
         }
 
     @staticmethod
@@ -376,7 +407,9 @@ class JudgeVerdict:
             data,
             field="persisted verdict",
             required=_VERDICT_REQUIRED_FIELDS,
-            optional=frozenset({"sv6d"}),
+            optional=frozenset(
+                {"sv6d", "hook_type", "payoff_strength", "ends_on_a_beat", "reason_ckb"}
+            ),
         )
         raw_hashtags = fields["hashtags_ckb"]
         if not isinstance(raw_hashtags, list) or not all(
@@ -402,6 +435,10 @@ class JudgeVerdict:
             clip_in_ms=fields["clip_in_ms"],
             clip_out_ms=fields["clip_out_ms"],
             sv6d=sv6d_from_json(fields.get("sv6d"), "persisted verdict.sv6d"),
+            hook_type=str(fields.get("hook_type", "claim")),
+            payoff_strength=float(fields.get("payoff_strength", 0.5)),
+            ends_on_a_beat=strict_bool(fields.get("ends_on_a_beat", True), "ends_on_a_beat"),
+            reason_ckb=str(fields.get("reason_ckb", "پەسەندکراوە لەسەر بنەمای بەهێزی دەربڕین.")),
         )
 
     @staticmethod

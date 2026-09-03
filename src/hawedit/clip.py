@@ -53,6 +53,7 @@ _ISO_TIMESTAMP_RE: Final = re.compile(
 )
 
 __all__ = [
+    "HOOK_TYPES",
     "MAX_CANDIDATE_SPAN_MS",
     "MAX_MISLEADING_EDIT_RISK",
     "MIN_CANDIDATE_SPAN_MS",
@@ -94,6 +95,8 @@ _SCORE_FIELDS: Final = (
     "misleading_edit_risk",
     "cultural_landing",
 )
+
+HOOK_TYPES: Final = frozenset({"question", "claim", "contrast", "story_open", "confession"})
 
 
 class DiscoveryPath(Enum):
@@ -302,6 +305,10 @@ class Editorial:
     # did not exist. Added as an OPTIONAL field so every §5 document written before this still
     # deserializes — see D-033. `None` means unmeasured, not "at zero".
     payoff_at_ms: int | None = None
+    hook_type: str | None = None
+    payoff_strength: float | None = None
+    ends_on_a_beat: bool | None = None
+    reason_ckb: str | None = None
 
     def __post_init__(self) -> None:
         _strict_bool(self.self_contained, "editorial.self_contained")
@@ -313,6 +320,18 @@ class Editorial:
             _strict_json_int(self.payoff_at_ms, "editorial.payoff_at_ms", minimum=0)
         if self.sv6d is not None and not isinstance(self.sv6d, Sv6d):
             raise ValueError("editorial.sv6d must be an Sv6d value or None")
+        if self.hook_type is not None and self.hook_type not in HOOK_TYPES:
+            raise ValueError(
+                f"editorial.hook_type must be one of {sorted(HOOK_TYPES)}, got {self.hook_type!r}"
+            )
+        if self.payoff_strength is not None:
+            _strict_json_number(
+                self.payoff_strength, "editorial.payoff_strength", minimum=0.0, maximum=1.0
+            )
+        if self.ends_on_a_beat is not None:
+            _strict_bool(self.ends_on_a_beat, "editorial.ends_on_a_beat")
+        if self.reason_ckb is not None:
+            _strict_json_string(self.reason_ckb, "editorial.reason_ckb")
         entry = resolve_role(
             self.judge,
             frozenset({"kurdish_editorial_judge", "judge_shadow"}),
@@ -336,6 +355,10 @@ class Editorial:
             "judge": self.judge,
             "sv6d": self.sv6d.to_dict() if self.sv6d else None,
             "payoff_at_ms": self.payoff_at_ms,
+            "hook_type": self.hook_type,
+            "payoff_strength": self.payoff_strength,
+            "ends_on_a_beat": self.ends_on_a_beat,
+            "reason_ckb": self.reason_ckb,
         }
 
     @staticmethod
@@ -354,7 +377,16 @@ class Editorial:
                     "judge",
                 }
             ),
-            optional=frozenset({"sv6d", "payoff_at_ms"}),
+            optional=frozenset(
+                {
+                    "sv6d",
+                    "payoff_at_ms",
+                    "hook_type",
+                    "payoff_strength",
+                    "ends_on_a_beat",
+                    "reason_ckb",
+                }
+            ),
         )
         raw_payoff = fields.get("payoff_at_ms")
         return Editorial(
@@ -389,6 +421,28 @@ class Editorial:
                 None
                 if raw_payoff is None
                 else _strict_json_int(raw_payoff, "editorial.payoff_at_ms", minimum=0)
+            ),
+            hook_type=(
+                None
+                if fields.get("hook_type") is None
+                else _strict_json_string(fields["hook_type"], "editorial.hook_type")
+            ),
+            payoff_strength=(
+                None
+                if fields.get("payoff_strength") is None
+                else _strict_json_number(
+                    fields["payoff_strength"], "editorial.payoff_strength", minimum=0.0, maximum=1.0
+                )
+            ),
+            ends_on_a_beat=(
+                None
+                if fields.get("ends_on_a_beat") is None
+                else _strict_bool(fields["ends_on_a_beat"], "editorial.ends_on_a_beat")
+            ),
+            reason_ckb=(
+                None
+                if fields.get("reason_ckb") is None
+                else _strict_json_string(fields["reason_ckb"], "editorial.reason_ckb")
             ),
         )
 

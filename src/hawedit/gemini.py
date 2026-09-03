@@ -215,6 +215,13 @@ VERDICT_SCHEMA: Final[dict[str, Any]] = {
         "title_ckb": {"type": "string"},
         "description_ckb": {"type": "string"},
         "hashtags_ckb": {"type": "array", "items": {"type": "string"}},
+        "hook_type": {
+            "type": "string",
+            "enum": ["question", "claim", "contrast", "story_open", "confession"],
+        },
+        "payoff_strength": {"type": "number"},
+        "ends_on_a_beat": {"type": "boolean"},
+        "reason_ckb": {"type": "string"},
     },
     "required": [
         "hook_score",
@@ -227,6 +234,10 @@ VERDICT_SCHEMA: Final[dict[str, Any]] = {
         "title_ckb",
         "description_ckb",
         "hashtags_ckb",
+        "hook_type",
+        "payoff_strength",
+        "ends_on_a_beat",
+        "reason_ckb",
     ],
 }
 
@@ -245,13 +256,20 @@ Validated visual evidence:
 
 Judge it on:
 - hook_score: how strongly the opening seconds hold attention (0..1)
+- hook_type: the category of opening hook — one of question, claim, contrast,
+  story_open, confession
 - self_contained: whether it makes sense with no surrounding context
 - payoff_at_ms: the millisecond position of the payoff. MUST be between {in_ms} and {out_ms}.
+- payoff_strength: how strongly and satisfyingly the clip resolves or delivers on its hook (0..1)
+- ends_on_a_beat: true if the ending lands cleanly on an emphatic beat or pause;
+  false if it cuts mid-thought
 - meaning_fidelity: how faithfully the cut preserves what the speaker meant (0..1)
 - misleading_edit_risk: risk the cut changes the meaning (0..1). This is the number a media
   organisation is judged on. Be pessimistic.
 - cultural_landing: how well this lands with a Kurdish audience specifically (0..1)
 - narrative_role: one of setup, escalation, payoff, aside
+- reason_ckb: brief justification for your evaluation in Central Kurdish
+  (Sorani, Arabic script) ONLY.
 - title_ckb, description_ckb, hashtags_ckb: IN CENTRAL KURDISH (Sorani, Arabic script) ONLY.
   Never Latin script, never English, never Kurmanji. This is a Kurdish product.
 
@@ -594,6 +612,13 @@ class GeminiJudge:
                 judge=self.model_id,
                 clip_in_ms=request.clip_in_ms,
                 clip_out_ms=request.clip_out_ms,
+                hook_type=_strict_string(fields.get("hook_type", "claim"), "hook_type"),
+                payoff_strength=float(fields.get("payoff_strength", 0.5)),
+                ends_on_a_beat=_strict_bool(fields.get("ends_on_a_beat", True), "ends_on_a_beat"),
+                reason_ckb=_strict_string(
+                    fields.get("reason_ckb", "پەسەندکراوە لەسەر بنەمای بەهێزی دەربڕین."),
+                    "reason_ckb",
+                ),
             )
         except (ValueError, TypeError) as exc:
             raise JudgeUnusable(f"the judge's verdict failed validation: {exc}") from exc
