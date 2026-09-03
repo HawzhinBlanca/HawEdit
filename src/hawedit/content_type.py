@@ -54,25 +54,25 @@ CONTENT_TYPE_PROFILES: Final[dict[ContentType, ContentTypeProfile]] = {
     ContentType.PODCAST: ContentTypeProfile(
         content_type=ContentType.PODCAST,
         min_clip_ms=MIN_CANDIDATE_SPAN_MS,  # 30_000 (30s)
-        caption_style=CaptionStyle.LINE,
+        caption_style=CaptionStyle.WORD_HIGHLIGHT,
         punch_in_cadence_ms=4_000,  # relaxed cadence for longform discussion
-        eased_push=True,
+        eased_push=False,
         target_face_height_share=0.15,
         silence_threshold_ms=0,
     ),
     ContentType.INTERVIEW: ContentTypeProfile(
         content_type=ContentType.INTERVIEW,
         min_clip_ms=25_000,  # 25s
-        caption_style=CaptionStyle.LINE,
+        caption_style=CaptionStyle.WORD_HIGHLIGHT,
         punch_in_cadence_ms=3_000,  # moderate cadence for back-and-forth Q&A
-        eased_push=True,
+        eased_push=False,
         target_face_height_share=0.15,
         silence_threshold_ms=0,
     ),
     ContentType.NEWS: ContentTypeProfile(
         content_type=ContentType.NEWS,
         min_clip_ms=15_000,  # 15s
-        caption_style=CaptionStyle.LINE,
+        caption_style=CaptionStyle.LINE,  # formal lower band line captions for broadcast news
         punch_in_cadence_ms=0,  # disabled: news broadcast anchors are never jump-zoomed
         eased_push=False,  # stable locked broadcast camera
         target_face_height_share=0.18,  # anchor seated closer to camera
@@ -83,7 +83,7 @@ CONTENT_TYPE_PROFILES: Final[dict[ContentType, ContentTypeProfile]] = {
         min_clip_ms=15_000,  # 15s
         caption_style=CaptionStyle.WORD_HIGHLIGHT,  # vibrant word-by-word animated karaoke
         punch_in_cadence_ms=2_500,  # energetic cadence
-        eased_push=True,
+        eased_push=False,
         target_face_height_share=0.15,
         silence_threshold_ms=0,
     ),

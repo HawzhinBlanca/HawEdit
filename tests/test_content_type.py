@@ -56,7 +56,7 @@ def test_social_profile_uses_word_highlight_and_fast_cadence() -> None:
     """Task T4.5: Social profile uses energetic punch-ins and karaoke caption styling."""
     social = get_content_type_profile(ContentType.SOCIAL)
     assert social.punch_in_cadence_ms == 2_500
-    assert social.eased_push is True
+    assert social.eased_push is False
     assert social.min_clip_ms == 15_000
     assert social.caption_style == CaptionStyle.WORD_HIGHLIGHT
 
@@ -66,8 +66,8 @@ def test_podcast_profile_preserves_ep29_defaults() -> None:
     podcast = get_content_type_profile(ContentType.PODCAST)
     assert podcast.min_clip_ms == 30_000
     assert podcast.punch_in_cadence_ms == 4_000
-    assert podcast.eased_push is True
-    assert podcast.caption_style == CaptionStyle.LINE
+    assert podcast.eased_push is False
+    assert podcast.caption_style == CaptionStyle.WORD_HIGHLIGHT
 
 
 def test_interview_profile_sets_moderate_cadence() -> None:
@@ -75,5 +75,5 @@ def test_interview_profile_sets_moderate_cadence() -> None:
     interview = get_content_type_profile(ContentType.INTERVIEW)
     assert interview.min_clip_ms == 25_000
     assert interview.punch_in_cadence_ms == 3_000
-    assert interview.eased_push is True
-    assert interview.caption_style == CaptionStyle.LINE
+    assert interview.eased_push is False
+    assert interview.caption_style == CaptionStyle.WORD_HIGHLIGHT
