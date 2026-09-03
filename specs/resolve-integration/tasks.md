@@ -1,6 +1,6 @@
 # Tasks — DaVinci Resolve Studio Live Integration (`specs/resolve-integration`)
 
-- [ ] T1 Implement `src/hawedit/resolve.py` bridge module
+- [x] T1 Implement `src/hawedit/resolve.py` bridge module
 - [ ] T2 Implement CLI command in `src/hawedit/resolve.py`
 - [ ] T3 Implement unit test suite in `tests/test_resolve.py`
 - [ ] T4 Execute live import into running DaVinci Resolve Studio instance and record proof

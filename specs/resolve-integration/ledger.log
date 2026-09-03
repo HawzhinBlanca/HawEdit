@@ -1,0 +1,1 @@
+TS=2026-09-03T11:15:03Z FEATURE=resolve-integration TASK=T1 TESTS=test_import_to_resolve_conforms_916_vertical_timeline_and_markers,test_get_resolve_raises_informative_error_when_unavailable VERIFY=pass REPORT=.gate/last-test-run.xml
