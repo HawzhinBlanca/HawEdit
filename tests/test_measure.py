@@ -11,6 +11,7 @@ from hawedit.measure import (
     ClipMeasurement,
     MeasureError,
     main,
+    measure_caption_events_contrast,
     measure_clip,
 )
 
@@ -107,3 +108,32 @@ def test_measure_cli_emits_valid_json(tmp_path: Path) -> None:
     assert data["schema"] == 1
     assert data["video"]["width"] == 640
     assert data["video"]["height"] == 360
+
+
+def test_measure_caption_events_contrast_evaluates_video_background(tmp_path: Path) -> None:
+    if not FIXTURE_VIDEO.is_file():
+        pytest.skip("needs fixture video")
+
+    ass_text = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.50,0:00:01.50,Kurdish,,0,0,0,,دەقی یەکەم
+Dialogue: 0,0:00:02.00,0:00:03.00,Kurdish,,0,0,0,,دەقی دووەم
+"""
+    ass_path = tmp_path / "test.ass"
+    ass_path.write_text(ass_text, encoding="utf-8")
+
+    records = measure_caption_events_contrast(FIXTURE_VIDEO, ass_path)
+    assert len(records) == 2
+
+    for start_ms, end_ms, cr, needs_plate in records:
+        assert isinstance(start_ms, int)
+        assert isinstance(end_ms, int)
+        assert end_ms > start_ms
+        assert isinstance(cr, float)
+        assert cr >= 1.0
+        assert isinstance(needs_plate, bool)

@@ -31,10 +31,13 @@ from hawedit.captions import (
     DEFAULT_BOTTOM_CAPTION_BAND,
     DEFAULT_MAX_CHARS_PER_LINE,
     DEFAULT_MAX_LINE_WIDTH_PX,
+    DEFAULT_PLATE_COLOUR,
+    DEFAULT_PLATE_PADDING,
     DEFAULT_TOP_CAPTION_BAND,
     DEFAULT_TOP_MARGIN_V,
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
+    MIN_LEGIBILITY_CONTRAST_RATIO,
     POPUP_MAX_CHARS,
     POPUP_MAX_WIDTH_PX,
     REPORT_THEME,
@@ -54,12 +57,16 @@ from hawedit.captions import (
     build_ass,
     chunk_caption_events,
     compare_golden_render,
+    contrast_ratio,
     decode_to_rgb,
     emphasis_index,
+    event_needs_plate,
     find_ffmpeg,
     intersects_caption_band,
     measure_rendered_caption_width,
+    parse_ass_colour,
     parse_dialogue_times,
+    relative_luminance,
     render_caption_png,
     should_use_top_caption_placement,
     subtitle_filter,
@@ -1571,3 +1578,116 @@ def test_face_aware_caption_placement_renders_ink_in_upper_band(tmp_path: Path) 
     # Bottom caption band (Y > 1200) must be 100% blank
     bottom_slice = img[1200:, :]
     assert cv2.countNonZero(bottom_slice) == 0, "Bottom caption band contained unexpected ink"
+
+
+def test_parse_ass_colour_decodes_hex_to_rgb() -> None:
+    assert DEFAULT_PLATE_COLOUR == "&H80000000"
+    assert DEFAULT_PLATE_PADDING == 16.0
+    assert MIN_LEGIBILITY_CONTRAST_RATIO == 4.5
+    # ASS &HAABBGGRR
+    assert parse_ass_colour("&H0000E5FF") == (255, 229, 0)  # Yellow
+    assert parse_ass_colour("&H00FFFFFF") == (255, 255, 255)  # White
+    assert parse_ass_colour("&H00000000") == (0, 0, 0)  # Black
+    assert parse_ass_colour("&H80000000") == (0, 0, 0)  # 50% Black
+    # 6-digit &HBBGGRR
+    assert parse_ass_colour("&HFF0000") == (0, 0, 255)  # Blue
+
+
+def test_relative_luminance_and_contrast_ratio_matches_wcag() -> None:
+    lum_white = relative_luminance(255, 255, 255)
+    lum_black = relative_luminance(0, 0, 0)
+    assert lum_white == 1.0
+    assert lum_black == 0.0
+
+    # WCAG contrast between white and black is exactly 21:1
+    cr_max = contrast_ratio(lum_white, lum_black)
+    assert round(cr_max, 1) == 21.0
+
+    # Contrast between white and light gray (lum ~ 0.58) is under 4.5:1 (illegible without plate)
+    lum_light_gray = relative_luminance(200, 200, 200)
+    cr_low = contrast_ratio(lum_white, lum_light_gray)
+    assert cr_low < MIN_LEGIBILITY_CONTRAST_RATIO
+
+
+def test_event_needs_plate_matches_temporal_overlap() -> None:
+    intervals = ((1000, 2500), (4000, 5000))
+    assert event_needs_plate(500, 900, intervals) is False
+    assert event_needs_plate(1200, 2000, intervals) is True
+    assert event_needs_plate(2400, 3000, intervals) is True
+    assert event_needs_plate(2600, 3900, intervals) is False
+    assert event_needs_plate(1000, 2000, None) is False
+
+
+def test_build_ass_emits_kurdish_plate_style_for_plate_intervals() -> None:
+    s1 = Sentence(words=words(("پلێت", 0, 1000)), complete=True)
+    s2 = Sentence(words=words(("ئاسایی", 1000, 2000)), complete=True)
+
+    plate_intervals = ((0, 1000),)
+    ass_text = build_ass(
+        (s1, s2),
+        font_name="Noto Naskh Arabic",
+        font_size=VIRAL_FONT_SIZE,
+        theme=VIRAL_THEME,
+        plate_intervals=plate_intervals,
+    )
+
+    assert "Style: KurdishPlate,Noto Naskh Arabic" in ass_text
+    # border_style=3 and plate_colour &H80000000
+    assert ",3,16,0," in ass_text
+
+    dialogues = [line for line in ass_text.splitlines() if line.startswith("Dialogue:")]
+    assert ",KurdishPlate," in dialogues[0]
+    assert ",Kurdish," in dialogues[1]
+
+
+def test_caption_plate_renders_dark_backing_on_white_background(tmp_path: Path) -> None:
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("ffmpeg binary not available")
+
+    # Render a plate-backed caption over a pure white synthetic background
+    s = Sentence(words=words(("تێکستی_پلێت", 0, 1000)), complete=True)
+    ass_text = build_ass(
+        (s,),
+        font_name="Noto Naskh Arabic",
+        font_size=VIRAL_FONT_SIZE,
+        theme=VIRAL_THEME,
+        plate_intervals=((0, 1000),),
+    )
+    ass_path = tmp_path / "plate.ass"
+    ass_path.write_text(ass_text, encoding="utf-8")
+
+    import subprocess
+
+    vf = subtitle_filter(ass_path, FONTS_DIR)
+    cmd = [
+        str(ffmpeg),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=white:s=1080x1920:d=1",
+        "-vf",
+        vf,
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-",
+    ]
+    raw = subprocess.run(cmd, check=True, capture_output=True).stdout
+    assert len(raw) == 1080 * 1920 * 3
+
+    # Check that in the caption region (Y=1400..1600), pixels have been darkened by the plate
+    import numpy as np
+
+    arr = np.frombuffer(raw, dtype=np.uint8).reshape((1920, 1080, 3))
+    caption_region = arr[1400:1600, 200:880]
+    # On a pure white canvas without plate, all pixels are (255, 255, 255)
+    # With plate, the backing box darkens the canvas to < 200
+    darkened = np.sum((caption_region[:, :, 0] < 200) & (caption_region[:, :, 1] < 200))
+    assert darkened > 5000, f"Expected darkened plate pixels behind text, got {darkened}"

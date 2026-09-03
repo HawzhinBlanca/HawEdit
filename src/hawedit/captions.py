@@ -41,10 +41,13 @@ __all__ = [
     "DEFAULT_BOTTOM_CAPTION_BAND",
     "DEFAULT_MAX_CHARS_PER_LINE",
     "DEFAULT_MAX_LINE_WIDTH_PX",
+    "DEFAULT_PLATE_COLOUR",
+    "DEFAULT_PLATE_PADDING",
     "DEFAULT_TOP_CAPTION_BAND",
     "DEFAULT_TOP_MARGIN_V",
     "GOLDEN_CAPTION_TEXT",
     "KURDISH_REQUIRED_GLYPHS",
+    "MIN_LEGIBILITY_CONTRAST_RATIO",
     "POPUP_MAX_CHARS",
     "POPUP_MAX_GAP_MS",
     "POPUP_MAX_MS",
@@ -68,11 +71,15 @@ __all__ = [
     "build_ass",
     "chunk_caption_events",
     "compare_golden_render",
+    "contrast_ratio",
     "decode_to_rgb",
+    "event_needs_plate",
     "find_ffmpeg",
     "intersects_caption_band",
     "measure_rendered_caption_width",
+    "parse_ass_colour",
     "parse_dialogue_times",
+    "relative_luminance",
     "render_caption_png",
     "should_use_top_caption_placement",
     "subtitle_filter",
@@ -188,6 +195,26 @@ class CaptionTheme:
             f"{mv},1"
         )
 
+    def plate_style_row(
+        self,
+        name: str,
+        font_name: str,
+        font_size: int,
+        *,
+        alignment: int | None = None,
+        margin_v: int | None = None,
+        plate_padding: float = 16.0,
+        plate_colour: str = "&H80000000",
+    ) -> str:
+        """One `Style:` line with border_style=3 (bounding plate behind text)."""
+        align = self.alignment if alignment is None else alignment
+        mv = self.margin_v if margin_v is None else margin_v
+        return (
+            f"Style: {name},{font_name},{font_size},{self.primary},{self.secondary},"
+            f"{self.outline_colour},{plate_colour},{int(self.bold)},0,0,0,100,100,0,0,"
+            f"3,{plate_padding:g},0,{align},{self.margin_l},{self.margin_r},{mv},1"
+        )
+
 
 # What §4.3 has always emitted. Kept as the default so every existing caller, golden render
 # and delivery sidecar is byte-identical to before this theme existed.
@@ -282,6 +309,56 @@ def should_use_top_caption_placement(
         if f_start < end_ms and f_end > start_ms and intersects_caption_band(f_top, f_bottom, band):
             return True
     return False
+
+
+# Task T2.8: Caption legibility and adaptive background plate definitions.
+DEFAULT_PLATE_COLOUR: Final = "&H80000000"
+DEFAULT_PLATE_PADDING: Final = 16.0
+MIN_LEGIBILITY_CONTRAST_RATIO: Final = 4.5
+
+
+def parse_ass_colour(colour: str) -> tuple[int, int, int]:
+    """Parse an ASS colour string (&HAABBGGRR or &HBBGGRR) into (R, G, B) integers [0, 255]."""
+    cleaned = colour.strip().lstrip("&H").lstrip("&h").rstrip("&")
+    if len(cleaned) == 8:
+        b = int(cleaned[2:4], 16)
+        g = int(cleaned[4:6], 16)
+        r = int(cleaned[6:8], 16)
+    elif len(cleaned) == 6:
+        b = int(cleaned[0:2], 16)
+        g = int(cleaned[2:4], 16)
+        r = int(cleaned[4:6], 16)
+    else:
+        return (255, 255, 255)
+    return (r, g, b)
+
+
+def relative_luminance(r: int, g: int, b: int) -> float:
+    """Calculate standard WCAG 2.1 relative luminance L in [0.0, 1.0]."""
+
+    def _channel(c: int) -> float:
+        s = c / 255.0
+        return s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * _channel(r) + 0.7152 * _channel(g) + 0.0722 * _channel(b)
+
+
+def contrast_ratio(lum1: float, lum2: float) -> float:
+    """Calculate standard WCAG 2.1 contrast ratio between two relative luminances."""
+    lighter = max(lum1, lum2)
+    darker = min(lum1, lum2)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def event_needs_plate(
+    start_ms: int,
+    end_ms: int,
+    plate_intervals: Sequence[tuple[int, int]] | None,
+) -> bool:
+    """Check whether a caption event [start_ms, end_ms] intersects any plate interval."""
+    if not plate_intervals:
+        return False
+    return any(p_start < end_ms and p_end > start_ms for p_start, p_end in plate_intervals)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1031,6 +1108,7 @@ def build_ass(
     max_popup_width_px: int | None = None,
     fonts_dir: Path | None = None,
     face_intervals: Sequence[tuple[int, int, int, int]] | None = None,
+    plate_intervals: Sequence[tuple[int, int]] | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -1089,6 +1167,17 @@ def build_ass(
             theme.style_row("Kurdish", font_name, font_size),
             *(
                 [
+                    theme.plate_style_row(
+                        "KurdishPlate",
+                        font_name,
+                        font_size,
+                    )
+                ]
+                if plate_intervals
+                else []
+            ),
+            *(
+                [
                     theme.style_row(
                         "KurdishTop",
                         font_name,
@@ -1098,6 +1187,19 @@ def build_ass(
                     )
                 ]
                 if face_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.plate_style_row(
+                        "KurdishTopPlate",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                    )
+                ]
+                if face_intervals and plate_intervals
                 else []
             ),
             *(
@@ -1115,6 +1217,17 @@ def build_ass(
         if style is CaptionStyle.WORD_HIGHLIGHT:
             return _karaoke(words, words[0].start_ms)
         return " ".join(_escape_ass_text(word.w) for word in words)
+
+    def choose_style(start_ms: int, end_ms: int) -> str:
+        is_top = should_use_top_caption_placement(start_ms, end_ms, face_intervals)
+        is_plate = event_needs_plate(start_ms, end_ms, plate_intervals)
+        if is_top and is_plate:
+            return "KurdishTopPlate"
+        if is_top:
+            return "KurdishTop"
+        if is_plate:
+            return "KurdishPlate"
+        return "Kurdish"
 
     # The clip's timeline, not the source's. The kf spans are durations and are unaffected
     # — only the two absolute stamps below ever needed the offset, and for as long as they did
@@ -1144,13 +1257,7 @@ def build_ass(
                 max_chars=max_chars_per_line,
                 max_width_px=max_line_width_px,
             )
-            style_name = (
-                "KurdishTop"
-                if should_use_top_caption_placement(
-                    sentence.start_ms, sentence.end_ms, face_intervals
-                )
-                else "Kurdish"
-            )
+            style_name = choose_style(sentence.start_ms, sentence.end_ms)
             events.append(
                 event(
                     sentence.start_ms,
@@ -1177,11 +1284,7 @@ def build_ass(
             end_ms = chunk[-1].end_ms
             if following is not None and following - end_ms <= _POPUP_HOLD_MS:
                 end_ms = following
-            style_name = (
-                "KurdishTop"
-                if should_use_top_caption_placement(chunk[0].start_ms, end_ms, face_intervals)
-                else "Kurdish"
-            )
+            style_name = choose_style(chunk[0].start_ms, end_ms)
             events.append(event(chunk[0].start_ms, end_ms, render(chunk), style_name=style_name))
 
     return header + "\n" + "\n".join(events) + "\n"

@@ -18,7 +18,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.captions import ffprobe_for, find_ffmpeg
+from hawedit.captions import (
+    DEFAULT_BOTTOM_CAPTION_BAND,
+    MIN_LEGIBILITY_CONTRAST_RATIO,
+    contrast_ratio,
+    ffprobe_for,
+    find_ffmpeg,
+    parse_ass_colour,
+    relative_luminance,
+)
 
 __all__ = [
     "AudioMeasurement",
@@ -31,6 +39,7 @@ __all__ = [
     "SilenceInterval",
     "VideoMeasurement",
     "VmafMeasurement",
+    "measure_caption_events_contrast",
     "measure_clip",
 ]
 
@@ -579,6 +588,63 @@ def probe_caption_ink(
         ink_energy_detected_share=ink_share,
         median_contrast_ratio=median_contrast,
     )
+
+
+def measure_caption_events_contrast(
+    video_path: Path,
+    ass_path: Path,
+    *,
+    text_colour: str = "&H00FFFFFF",
+    min_contrast: float = MIN_LEGIBILITY_CONTRAST_RATIO,
+    band: tuple[int, int] = DEFAULT_BOTTOM_CAPTION_BAND,
+) -> list[tuple[int, int, float, bool]]:
+    """Measure per-event contrast between text colour and caption band video luminance.
+
+    Returns a list of (start_ms, end_ms, contrast_ratio, needs_plate) records.
+    If contrast_ratio < min_contrast, needs_plate is True.
+    """
+    cues = _parse_ass_dialogue_cues(ass_path)
+    if not cues:
+        return []
+
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return [(start_ms, end_ms, 5.0, False) for start_ms, end_ms in cues]
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return []
+
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
+    scale_y = height / 1920.0
+    band_top = max(0, int(band[0] * scale_y))
+    band_bottom = min(height, int(band[1] * scale_y))
+
+    r_t, g_t, b_t = parse_ass_colour(text_colour)
+    lum_text = relative_luminance(r_t, g_t, b_t)
+
+    records: list[tuple[int, int, float, bool]] = []
+    for start_ms, end_ms in cues:
+        mid_ms = (start_ms + end_ms) / 2.0
+        cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+
+        band_slice = frame[band_top:band_bottom, :]
+        gray = cv2.cvtColor(band_slice, cv2.COLOR_BGR2GRAY)
+        float_gray = np.asarray(gray, dtype=float)
+        med_val = int(np.median(float_gray))
+        lum_bg = relative_luminance(med_val, med_val, med_val)
+
+        cr = round(contrast_ratio(lum_text, lum_bg), 2)
+        needs_plate = bool(cr < min_contrast)
+        records.append((start_ms, end_ms, cr, needs_plate))
+
+    cap.release()
+    return records
 
 
 def probe_vmaf(
