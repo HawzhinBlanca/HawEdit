@@ -504,4 +504,3 @@ def test_face_tracker_bridges_detection_dropouts_via_tracker(
     assert points[0].center_x == 140
     assert 145 <= points[1].center_x <= 170
     assert points[2].center_x == 180
-
