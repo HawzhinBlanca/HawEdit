@@ -199,6 +199,17 @@ def choose_face(
     )
 
 
+def _create_tracker(cv2_mod: Any) -> Any:
+    for name in ("TrackerCSRT", "TrackerKCF", "TrackerMIL"):
+        cls = getattr(cv2_mod, name, None)
+        if cls is not None and hasattr(cls, "create"):
+            return cls.create()
+        factory = getattr(cv2_mod, f"{name}_create", None)
+        if callable(factory):
+            return factory()
+    return None
+
+
 class OpenCvFaceTracker:
     """Track the dominant continuous face at a bounded sampling rate.
 
@@ -212,10 +223,11 @@ class OpenCvFaceTracker:
     rug on screen for the first eight seconds of the clip.
     """
 
-    def __init__(self, sample_fps: float = 2.0) -> None:
+    def __init__(self, sample_fps: float = 5.0, *, enable_tracker: bool = True) -> None:
         if sample_fps <= 0 or not math.isfinite(sample_fps):
             raise ValueError("face-tracking fps must be finite and positive")
         self.sample_fps = sample_fps
+        self.enable_tracker = enable_tracker
 
     def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
         if out_ms <= in_ms:
@@ -242,6 +254,7 @@ class OpenCvFaceTracker:
         step_ms = 1000 / self.sample_fps
         points: list[FocusPoint] = []
         previous: int | None = None
+        tracker: Any = None
 
         def boxes(classifier: Any, image: Any) -> list[tuple[int, int, int, int]]:
             return [
@@ -260,6 +273,7 @@ class OpenCvFaceTracker:
                     break
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 width = gray.shape[1]
+                height = gray.shape[0]
                 faces = boxes(frontal, gray) + boxes(profile, gray)
                 # The profile cascade is trained on one facing only. The other is the same
                 # detector over the mirrored frame, with each box reflected back.
@@ -278,6 +292,31 @@ class OpenCvFaceTracker:
                         FocusPoint(round(at), center, chosen[1] + chosen[3] // 2, chosen[3])
                     )
                     previous = center
+                    if self.enable_tracker:
+                        if tracker is None:
+                            tracker = _create_tracker(cv2)
+                        if tracker is not None:
+                            try:
+                                tracker.init(frame, (chosen[0], chosen[1], chosen[2], chosen[3]))
+                            except Exception:
+                                tracker = None
+                elif self.enable_tracker and tracker is not None:
+                    tracked_ok = False
+                    bbox = None
+                    try:
+                        tracked_ok, bbox = tracker.update(frame)
+                    except Exception:
+                        tracker = None
+                    if tracked_ok and bbox is not None:
+                        bx, by, bw, bh = (int(v) for v in bbox)
+                        if bw > 0 and bh > 0 and bx + bw <= width and by + bh <= height:
+                            center = bx + bw // 2
+                            points.append(FocusPoint(round(at), center, by + bh // 2, bh))
+                            previous = center
+                        else:
+                            tracker = None
+                    else:
+                        tracker = None
                 at += step_ms
         finally:
             capture.release()

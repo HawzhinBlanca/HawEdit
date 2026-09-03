@@ -13,6 +13,7 @@ from hawedit.reframe import (
     OpenCvFaceTracker,
     SpeakerAssociationError,
     SpeakerFocusPoint,
+    _create_tracker,
     choose_face,
     median_face_box,
     probe_first_frame_face,
@@ -438,3 +439,69 @@ def test_probe_first_frame_face_detects_face_and_respects_spatial_anchor(
     )
     assert ok_drift is False
     assert pt_drift is None
+
+
+def test_opencv_face_tracker_defaults_to_5fps_and_enabled_tracker() -> None:
+    tracker = OpenCvFaceTracker()
+    assert tracker.sample_fps == 5.0
+    assert tracker.enable_tracker is True
+
+
+def test_create_tracker_returns_valid_cv2_tracker() -> None:
+    import cv2
+
+    tracker = _create_tracker(cv2)
+    assert tracker is not None
+
+
+def test_face_tracker_bridges_detection_dropouts_via_tracker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When face detection drops out for a frame, between-sample tracking bridges the gap."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "synthetic_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        x = 100 + i * 20
+        cv2.rectangle(frame, (x, 100), (x + 80, 180), (255, 255, 255), -1)
+        writer.write(frame)
+    writer.release()
+
+    call_count = {"frontal": 0}
+
+    class _DropoutClassifier:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self.kind == "frontal":
+                count = call_count["frontal"]
+                call_count["frontal"] += 1
+                if count == 0:
+                    return [(100, 100, 80, 80)]
+                elif count == 1:
+                    return []  # Dropout!
+                else:
+                    return [(140, 100, 80, 80)]
+            return []
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _DropoutClassifier("frontal" if "frontal" in str(p) else "profile"),
+    )
+
+    tracker = OpenCvFaceTracker(sample_fps=5.0, enable_tracker=True)
+    points = tracker.track(video_path, 0, 600)
+    assert len(points) == 3
+    assert points[0].center_x == 140
+    assert 145 <= points[1].center_x <= 170
+    assert points[2].center_x == 180
+
