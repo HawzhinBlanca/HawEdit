@@ -105,15 +105,16 @@ def get_resolve() -> Any:
 
 def _find_bundle_file(bundle_path: Path, extension: str) -> Path | None:
     """Find the single file matching the given extension in bundle directory or path."""
-    if bundle_path.is_file():
-        stem = bundle_path.stem
-        candidate = bundle_path.parent / f"{stem}.{extension}"
+    resolved = bundle_path.resolve()
+    if resolved.is_file():
+        stem = resolved.stem
+        candidate = resolved.parent / f"{stem}.{extension}"
         if candidate.exists():
-            return candidate
+            return candidate.resolve()
         return None
 
-    matches = sorted(bundle_path.glob(f"*.{extension}"))
-    return matches[0] if matches else None
+    matches = sorted(resolved.glob(f"*.{extension}"))
+    return matches[0].resolve() if matches else None
 
 
 def import_to_resolve(
@@ -127,7 +128,7 @@ def import_to_resolve(
     resolve_app: Any = None,
 ) -> ResolveImportResult:
     """Import a delivery bundle into DaVinci Resolve as a conformed 9:16 vertical timeline."""
-    path = Path(bundle_dir)
+    path = Path(bundle_dir).resolve()
     if not path.exists():
         raise FileNotFoundError(f"Bundle path does not exist: {path}")
 
@@ -171,9 +172,42 @@ def import_to_resolve(
     if json_path and json_path.exists():
         try:
             raw_data = json.loads(json_path.read_text(encoding="utf-8"))
-            clip = Clip.from_dict(raw_data)
-            # Default punch-ins from output count or standard hook window
-            markers = build_clip_markers(clip, fps=fps)
+            try:
+                clip = Clip.from_dict(raw_data)
+                markers = build_clip_markers(clip, fps=fps)
+            except Exception:
+                markers = []
+                in_ms = int(raw_data.get("in_ms", 0))
+                out_ms = int(raw_data.get("out_ms", 0))
+                hook_dur = max(1, int(round(3.0 * fps)))
+                markers.append(
+                    {
+                        "name": "Hook (0-3s)",
+                        "color": "Red",
+                        "marked_range": {
+                            "start_time": {"value": 0.0},
+                            "duration": {"value": float(hook_dur)},
+                        },
+                        "metadata": {"type": "hook"},
+                    }
+                )
+                ed = raw_data.get("editorial") or {}
+                payoff_ms = ed.get("payoff_at_ms")
+                if payoff_ms is not None and in_ms <= payoff_ms <= out_ms:
+                    p_offset_s = (payoff_ms - in_ms) / 1000.0
+                    p_frame = int(round(p_offset_s * fps))
+                    markers.append(
+                        {
+                            "name": "Payoff / Core Insight",
+                            "color": "Blue",
+                            "marked_range": {
+                                "start_time": {"value": float(p_frame)},
+                                "duration": {"value": float(max(1, int(round(1.5 * fps))))},
+                            },
+                            "metadata": {"type": "payoff"},
+                        }
+                    )
+
             for marker in markers:
                 marked_range = marker.get("marked_range", {})
                 start_time = marked_range.get("start_time", {})

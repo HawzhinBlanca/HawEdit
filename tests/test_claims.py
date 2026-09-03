@@ -1813,3 +1813,14 @@ def test_reconciliation_refusal_evidence_ep29_s25_25_is_recorded() -> None:
     content = evidence.read_text(encoding="utf-8")
     assert "face_tracking_unsubstantiated" in content
     assert "56.18%" in content
+
+
+def test_resolve_live_conformation_evidence_is_recorded() -> None:
+    """Task T4: DaVinci Resolve Studio live editorial conformation proof must be recorded."""
+    evidence = ROOT / "evidence" / "resolve-live-conformation.md"
+    assert evidence.exists(), "resolve-live-conformation evidence must exist"
+    content = evidence.read_text(encoding="utf-8")
+    assert "1080 x 1920" in content
+    assert "Hook (0-3s)" in content
+    assert "Payoff / Core Insight" in content
+    assert "EP29_Live_Reel" in content
