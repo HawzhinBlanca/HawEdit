@@ -5,4 +5,4 @@
 - [x] T3 Implement reconciliation tests for visual cut alignment, caption ink energy, and face tracking
 - [x] T4 Widen `ArtifactBundle` to 6 delivery artifacts including `<clip>.measured.json`
 - [x] T5 Integrate reconciliation gate into `src/hawedit/pipeline.py` delivery stage
-- [ ] T6 Re-deliver `ep29-s25-25` through the gate and record honest Level B refusal evidence
+- [x] T6 Re-deliver `ep29-s25-25` through the gate and record honest Level B refusal evidence
