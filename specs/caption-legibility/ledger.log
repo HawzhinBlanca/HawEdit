@@ -1,1 +1,2 @@
 TS=2026-09-03T20:02:48Z FEATURE=caption-legibility TASK=T1 TESTS=test_parse_ass_colour_decodes_hex_to_rgb,test_relative_luminance_and_contrast_ratio_matches_wcag,test_event_needs_plate_matches_temporal_overlap,test_build_ass_emits_kurdish_plate_style_for_plate_intervals VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T20:11:27Z FEATURE=caption-legibility TASK=T2 TESTS=test_caption_plate_renders_dark_backing_on_white_background,test_measure_caption_events_contrast_evaluates_video_background VERIFY=pass REPORT=.gate/last-test-run.xml
