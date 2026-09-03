@@ -67,6 +67,7 @@ from hawedit.pipeline import (
     assert_devices_available,
     build_parser,
     build_visual_composer,
+    calculate_visual_variety,
     dead_air_flags,
     main,
     run_pipeline,
@@ -6274,3 +6275,97 @@ def test_pipeline_eased_push_argument_is_parsed() -> None:
     parser = build_parser()
     args = parser.parse_args([str(FIXTURE), "--eased-push"])
     assert args.eased_push is True
+
+
+def test_pipeline_visual_variety_argument_is_parsed() -> None:
+    """Task T4.6: --visual-variety flag is parsed by pipeline parser."""
+    parser = build_parser()
+    args = parser.parse_args([str(FIXTURE), "--visual-variety"])
+    assert args.visual_variety is True
+
+
+def test_calculate_visual_variety_computes_cuts_per_second() -> None:
+    """Task T4.6: calculate_visual_variety returns interior cuts per second."""
+    cuts = [0, 5_000, 15_000, 20_000, 25_000]
+    # Edge cuts (0, 20000) are excluded; only 5000 and 15000 are strictly interior
+    assert calculate_visual_variety((0, 20_000), cuts) == 0.1
+    assert calculate_visual_variety((500, 4_500), cuts) == 0.0
+    assert calculate_visual_variety((0, 10_000), []) == 0.0
+    assert calculate_visual_variety((10_000, 10_000), cuts) == 0.0
+    assert calculate_visual_variety((10_000, 5_000), cuts) == 0.0
+
+
+def test_winner_selection_breaks_ties_on_visual_variety(tmp_path: Path) -> None:
+    """Task T4.6: visual variety tiebreaker favors multi-angle cuts when enabled."""
+    work = tmp_path / "variety_work"
+    # cand2 covers 2000..4100 ms (1 cut in 2.1s -> 0.476 cuts/s)
+    cand2 = Candidate(
+        candidate_id="c2",
+        media_id="fixture",
+        in_ms=2_000,
+        out_ms=4_100,
+        path=DiscoveryPath.VERBAL,
+        rank=1,
+    )
+    # cand1 covers 100..1700 ms (1 cut in 1.6s -> 0.625 cuts/s)
+    cand1 = Candidate(
+        candidate_id="c1",
+        media_id="fixture",
+        in_ms=100,
+        out_ms=1_700,
+        path=DiscoveryPath.VERBAL,
+        rank=2,
+    )
+
+    verd2 = replace(
+        a_verdict(2_000, 4_100),
+        candidate_id="c2",
+        hook_score=0.85,
+        payoff_strength=0.75,
+        ends_on_a_beat=True,
+    )
+    verd1 = replace(
+        a_verdict(100, 1_700),
+        candidate_id="c1",
+        hook_score=0.85,
+        payoff_strength=0.75,
+        ends_on_a_beat=True,
+    )
+
+    class MockEqualJudge:
+        model_id: str = "mock-judge"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return verd2 if request.candidate_id == "c2" else verd1
+
+    # Without visual_variety (default): cand2 wins because it is evaluated first at rank 1
+    run_default = run_pipeline(
+        FIXTURE,
+        work / "default",
+        media_id="fixture",
+        transcript=a_transcript(),
+        discover=lambda _: (cand2, cand1),
+        judge=MockEqualJudge(),
+        auto_select=True,
+        judge_top_n=2,
+        min_clip_ms=1_500,
+        visual_variety=False,
+    )
+    assert run_default.clip is not None
+    assert run_default.clip.clip_id == "fixture-s1-1"
+
+    # With visual_variety: cand1 wins because it has 0.625 cuts/s vs cand2's 0.476 cuts/s
+    run_variety = run_pipeline(
+        FIXTURE,
+        work / "variety",
+        media_id="fixture",
+        transcript=a_transcript(),
+        discover=lambda _: (cand2, cand1),
+        judge=MockEqualJudge(),
+        auto_select=True,
+        judge_top_n=2,
+        min_clip_ms=1_500,
+        visual_variety=True,
+    )
+    assert run_variety.clip is not None
+    assert run_variety.clip.clip_id == "fixture-s0-0"

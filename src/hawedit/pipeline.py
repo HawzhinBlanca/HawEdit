@@ -1551,6 +1551,30 @@ def _natural_silence_for_anchor(ingested: IngestResult, anchor_out_ms: int) -> i
     return max(segment.end_ms for segment in containing) if containing else None
 
 
+def calculate_visual_variety(
+    span: tuple[int, int],
+    shot_cuts_ms: Sequence[int],
+) -> float:
+    """Calculate the visual variety (source cuts per second) of a clip span (Task T4.6).
+
+    Count source camera cut points strictly within the interior (start_ms < cut < end_ms)
+    and divide by the span duration in seconds.
+
+    Args:
+        span: (start_ms, end_ms) interval in milliseconds.
+        shot_cuts_ms: sequence of detected source cut timestamps in milliseconds.
+
+    Returns:
+        Source camera cuts per second (float >= 0.0).
+    """
+    start_ms, end_ms = span
+    duration_s = (end_ms - start_ms) / 1000.0
+    if duration_s <= 0:
+        return 0.0
+    cuts_in_span = sum(1 for cut_ms in shot_cuts_ms if start_ms < cut_ms < end_ms)
+    return cuts_in_span / duration_s
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
@@ -1584,6 +1608,7 @@ def run_pipeline(
     profile: str = "default",
     first_frame_gate: bool = False,
     eased_push: bool = False,
+    visual_variety: bool = False,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -2075,14 +2100,24 @@ def run_pipeline(
                         blocked_by=("§2 editorial thresholds",),
                     ),
                 )
-            winner, winning_run, verdict = max(
-                shippable,
-                key=lambda item: (
-                    item[2].hook_score,
-                    getattr(item[2], "payoff_strength", 0.0),
-                    getattr(item[2], "ends_on_a_beat", False),
-                ),
-            )
+
+            def _shippable_sort_key(
+                item: tuple[MergedCandidate, tuple[int, ...], JudgeVerdict],
+            ) -> tuple[float, float, bool, float]:
+                cand, _winning, verd = item
+                variety = (
+                    calculate_visual_variety(cand.span, ingested.shot_cuts_ms)
+                    if visual_variety
+                    else 0.0
+                )
+                return (
+                    verd.hook_score,
+                    getattr(verd, "payoff_strength", 0.0),
+                    getattr(verd, "ends_on_a_beat", False),
+                    variety,
+                )
+
+            winner, winning_run, verdict = max(shippable, key=_shippable_sort_key)
             if judge_plans and tuple(winning_run) != tuple(select_sentences):
                 # A later candidate won, so everything downstream — captions, boundary, clip id
                 # and artifact names — has to follow it rather than rank #1's selection.
@@ -2959,6 +2994,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--visual-variety",
+        action="store_true",
+        help=(
+            "break candidate judging ties using source cuts per second within the span "
+            "(Task T4.6; default off)"
+        ),
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3302,6 +3345,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         on_event=on_event,
         profile=getattr(args, "profile", "default"),
         eased_push=args.eased_push,
+        visual_variety=args.visual_variety,
     )
 
 
