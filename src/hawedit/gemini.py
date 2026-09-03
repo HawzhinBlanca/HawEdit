@@ -234,10 +234,6 @@ VERDICT_SCHEMA: Final[dict[str, Any]] = {
         "title_ckb",
         "description_ckb",
         "hashtags_ckb",
-        "hook_type",
-        "payoff_strength",
-        "ends_on_a_beat",
-        "reason_ckb",
     ],
 }
 
