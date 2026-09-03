@@ -1,2 +1,3 @@
 TS=2026-09-03T15:44:55Z FEATURE=speech-chain TASK=T1 TESTS=test_audio_filter_speech_chain_formatting VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-03T15:53:26Z FEATURE=speech-chain TASK=T2 TESTS=test_audio_filter_speech_chain_formatting VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T16:01:46Z FEATURE=speech-chain TASK=T3 TESTS=test_audio_filter_speech_chain_formatting,test_deliverable_render_incorporates_speech_chain VERIFY=pass REPORT=.gate/last-test-run.xml
