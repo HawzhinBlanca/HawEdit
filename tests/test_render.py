@@ -1602,3 +1602,27 @@ def test_a_source_that_never_cuts_keeps_every_punch_in() -> None:
     breaths = [4_000, 9_000, 14_000]
 
     assert punch_in_schedule(breaths, 20_000, avoid_ms=()) == punch_in_schedule(breaths, 20_000)
+
+
+def test_a_punch_in_keeps_the_face_on_the_composition_line() -> None:
+    """Task T2.4: dynamic punch-in zooms must keep the face anchored on
+    FACE_COMPOSITION_LINE (0.38 of out_h) rather than dropping it to centre (0.50 of out_h).
+    """
+    filter_expr = crop_filter(
+        source_width=1920,
+        source_height=1080,
+        focus_x=960,
+        face_center_y=420,
+        punch_ins=((5000, 1.15),),
+    )
+    assert f"420-{FACE_COMPOSITION_LINE}*out_h" in filter_expr
+    assert "-out_h/2" not in filter_expr.split(":")[3]
+
+    filter_expr_no_face = crop_filter(
+        source_width=1920,
+        source_height=1080,
+        focus_x=960,
+        face_center_y=None,
+        punch_ins=((5000, 1.15),),
+    )
+    assert "out_h/2" in filter_expr_no_face

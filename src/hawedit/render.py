@@ -560,9 +560,12 @@ def crop_filter(
         if focus_points
         else (source_width // 2 if focus_x is None else focus_x)
     )
-    centre_y = face_center_y if face_center_y is not None else source_height // 2
     x_expr = f"min(max({centre_x}-out_w/2\\,0)\\,in_w-out_w)"
-    y_expr = f"min(max({centre_y}-out_h/2\\,0)\\,in_h-out_h)"
+    if face_center_y is not None:
+        y_expr = f"min(max({face_center_y}-{FACE_COMPOSITION_LINE}*out_h\\,0)\\,in_h-out_h)"
+    else:
+        centre_y = source_height // 2
+        y_expr = f"min(max({centre_y}-out_h/2\\,0)\\,in_h-out_h)"
 
     commands = ";".join(
         f"{at_ms / 1000:.3f} crop w {max(2, int(crop_w / factor)) // 2 * 2};"
