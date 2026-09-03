@@ -1,0 +1,1 @@
+TS=2026-09-03T22:58:51Z FEATURE=content-type-profile TASK=T1 TESTS=test_content_type_enum_members_and_string_values VERIFY=pass REPORT=.gate/last-test-run.xml
