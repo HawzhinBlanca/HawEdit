@@ -1,2 +1,3 @@
 TS=2026-09-03T00:28:12Z FEATURE=provenance-contract TASK=T1 TESTS=test_a_contract_names_every_constant_that_shaped_it,test_render_gate_refuses_clip_without_provenance,test_provenance_round_trips_through_json VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-03T00:36:37Z FEATURE=provenance-contract TASK=T2 TESTS=test_delivery_refuses_ffmpeg_version_mismatch VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T00:44:57Z FEATURE=provenance-contract TASK=T3 TESTS=test_a_contract_names_every_constant_that_shaped_it,test_render_gate_refuses_clip_without_provenance,test_delivery_refuses_ffmpeg_version_mismatch VERIFY=pass REPORT=.gate/last-test-run.xml
