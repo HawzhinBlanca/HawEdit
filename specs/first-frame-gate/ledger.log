@@ -1,0 +1,1 @@
+TS=2026-09-03T12:51:54Z FEATURE=first-frame-gate TASK=T1 TESTS=test_probe_first_frame_face_reports_no_face_on_digit_fixture VERIFY=pass REPORT=.gate/last-test-run.xml
