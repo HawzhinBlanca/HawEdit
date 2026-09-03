@@ -1,1 +1,2 @@
 TS=2026-09-03T14:02:54Z FEATURE=deliverable-encode TASK=T1 TESTS=test_delivery_color_args_target_rec709,test_deliverable_video_args_nvenc_matches_pro_grade_profile,test_deliverable_video_args_x264_matches_pro_grade_profile,test_deliverable_video_args_working_render_preserves_crf VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T14:11:57Z FEATURE=deliverable-encode TASK=T2 TESTS=test_crop_filter_lanczos_and_unsharp_flags VERIFY=pass REPORT=.gate/last-test-run.xml
