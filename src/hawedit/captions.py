@@ -39,11 +39,13 @@ from hawedit.transcripts import Word
 
 __all__ = [
     "DEFAULT_MAX_CHARS_PER_LINE",
+    "DEFAULT_MAX_LINE_WIDTH_PX",
     "GOLDEN_CAPTION_TEXT",
     "KURDISH_REQUIRED_GLYPHS",
     "POPUP_MAX_CHARS",
     "POPUP_MAX_GAP_MS",
     "POPUP_MAX_MS",
+    "POPUP_MAX_WIDTH_PX",
     "POPUP_MAX_WORDS",
     "REPORT_THEME",
     "VIRAL_FONT_SIZE",
@@ -65,6 +67,7 @@ __all__ = [
     "compare_golden_render",
     "decode_to_rgb",
     "find_ffmpeg",
+    "measure_rendered_caption_width",
     "parse_dialogue_times",
     "render_caption_png",
     "subtitle_filter",
@@ -79,6 +82,7 @@ KURDISH_REQUIRED_GLYPHS: Final[frozenset[str]] = frozenset("ڕڵۆێچژپگە" 
 # Caption line width. Long RTL lines are hard to read on a vertical crop; this is a
 # reporting default, adjustable per output format.
 DEFAULT_MAX_CHARS_PER_LINE: Final = 32
+DEFAULT_MAX_LINE_WIDTH_PX: Final = 850
 
 _ASS_OVERRIDE = re.compile(r"[{}]")
 
@@ -113,6 +117,7 @@ class CaptionStyle(Enum):
 # unusable for social delivery even though every timestamp in it was correct.
 POPUP_MAX_WORDS: Final = 3
 POPUP_MAX_CHARS: Final = 22
+POPUP_MAX_WIDTH_PX: Final = 700
 POPUP_MAX_MS: Final = 2_000
 # A pause inside one popup leaves it on screen with nothing being said. Break there instead:
 # the alignment already knows where the speaker stopped.
@@ -608,33 +613,157 @@ def wrap_title_lines(title: str, max_chars: int = DEFAULT_MAX_CHARS_PER_LINE) ->
     return lines
 
 
+_WIDTH_CACHE: dict[tuple[str, str, int, int], int] = {}
+
+
+def measure_rendered_caption_width(
+    text: str,
+    *,
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = VIRAL_FONT_SIZE,
+    ffmpeg: Path | None = None,
+    fonts_dir: Path | None = None,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
+) -> int:
+    """Measure the horizontal ink extent in pixels of rendered Kurdish text at PlayRes.
+
+    Renders the candidate string through libass via FFmpeg with `shaping=complex` onto a
+    blank background and measures the bounding width of non-zero pixels. Cached in-memory
+    to make incremental line-breaking checks near instantaneous.
+    """
+    cleaned = text.strip()
+    if not cleaned:
+        return 0
+
+    cache_key = (cleaned, font_name, font_size, canvas_width)
+    cached = _WIDTH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    binary = ffmpeg or find_ffmpeg()
+    if binary is None:
+        return int(len(cleaned) * font_size * 0.25)
+
+    if fonts_dir is None:
+        from hawedit.pipeline import FONTS_DIR
+
+        resolved_fonts = FONTS_DIR
+    else:
+        resolved_fonts = fonts_dir
+
+    import subprocess
+    import tempfile
+
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return int(len(cleaned) * font_size * 0.25)
+
+    escaped = _escape_ass_text(cleaned)
+    ass_content = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {canvas_width}\n"
+        f"PlayResY: {canvas_height}\n"
+        "WrapStyle: 2\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
+        "-1,0,0,0,100,100,0,0,1,2.0,0.0,2,0,0,0,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        f"Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{escaped}\n"
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        ass_path = Path(td) / "measure.ass"
+        ass_path.write_text(ass_content, encoding="utf-8")
+        vf = subtitle_filter(ass_path, resolved_fonts)
+        cmd = [
+            str(binary),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s={canvas_width}x{canvas_height}:d=1",
+            "-vf",
+            vf,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ]
+        try:
+            res = subprocess.run(cmd, check=True, capture_output=True)
+            arr = np.frombuffer(res.stdout, dtype=np.uint8).reshape((canvas_height, canvas_width))
+            pts = cv2.findNonZero(arr)
+            width = int(cv2.boundingRect(pts)[2]) if pts is not None else 0
+        except (subprocess.CalledProcessError, ValueError, OSError):
+            width = int(len(cleaned) * font_size * 0.25)
+
+    _WIDTH_CACHE[cache_key] = width
+    return width
+
+
 def wrap_caption_lines(
     words: Sequence[Word],
     max_chars: int = DEFAULT_MAX_CHARS_PER_LINE,
+    *,
+    max_width_px: int | None = None,
 ) -> tuple[tuple[Word, ...], ...]:
     """Break a caption into lines at word boundaries from the alignment.
 
     §4.3.5: "Insert line breaks yourself from the word alignment." A word longer than
-    `max_chars` gets its own line rather than being dropped or split — a missing word in a
-    caption is worse than a long line, and splitting Arabic-script mid-word breaks shaping.
+    `max_chars` or `max_width_px` gets its own line rather than being dropped or split — a
+    missing word in a caption is worse than a long line, and splitting Arabic-script mid-word
+    breaks shaping.
     """
     if max_chars < 1:
         raise ValueError("max_chars must be positive")
+    if max_width_px is not None and max_width_px < 1:
+        raise ValueError("max_width_px must be positive")
 
-    lines: list[tuple[Word, ...]] = []
-    current: list[Word] = []
+    if max_width_px is not None:
+        lines: list[tuple[Word, ...]] = []
+        current: list[Word] = []
+        for word in words:
+            if not current:
+                current = [word]
+                continue
+            candidate_text = " ".join(w.w for w in [*current, word])
+            cand_w = measure_rendered_caption_width(candidate_text)
+            if cand_w > max_width_px:
+                lines.append(tuple(current))
+                current = [word]
+            else:
+                current.append(word)
+        if current:
+            lines.append(tuple(current))
+        return tuple(lines)
+
+    lines_by_char: list[tuple[Word, ...]] = []
+    current_by_char: list[Word] = []
     width = 0
     for word in words:
-        addition = len(word.w) + (1 if current else 0)
-        if current and width + addition > max_chars:
-            lines.append(tuple(current))
-            current, width = [word], len(word.w)
+        addition = len(word.w) + (1 if current_by_char else 0)
+        if current_by_char and width + addition > max_chars:
+            lines_by_char.append(tuple(current_by_char))
+            current_by_char, width = [word], len(word.w)
         else:
-            current.append(word)
+            current_by_char.append(word)
             width += addition
-    if current:
-        lines.append(tuple(current))
-    return tuple(lines)
+    if current_by_char:
+        lines_by_char.append(tuple(current_by_char))
+    return tuple(lines_by_char)
 
 
 def chunk_caption_events(
@@ -642,6 +771,7 @@ def chunk_caption_events(
     *,
     max_words: int = POPUP_MAX_WORDS,
     max_chars: int = POPUP_MAX_CHARS,
+    max_width_px: int | None = None,
     max_ms: int = POPUP_MAX_MS,
     max_gap_ms: int = POPUP_MAX_GAP_MS,
 ) -> tuple[tuple[Word, ...], ...]:
@@ -665,6 +795,8 @@ def chunk_caption_events(
         raise ValueError("max_words must be positive")
     if max_chars < 1:
         raise ValueError("max_chars must be positive")
+    if max_width_px is not None and max_width_px < 1:
+        raise ValueError("max_width_px must be positive")
     if max_ms < 1:
         raise ValueError("max_ms must be positive")
     if max_gap_ms < 0:
@@ -675,15 +807,22 @@ def chunk_caption_events(
     width = 0
     for word in words:
         addition = len(word.w) + (1 if current else 0)
-        # A single word wider than `max_chars` still gets its own event: dropping it would
-        # caption speech that was never said, and splitting Arabic script mid-word breaks
-        # shaping (§4.3.5's reasoning, applied to time instead of line width).
-        closes = bool(current) and (
-            len(current) >= max_words
-            or width + addition > max_chars
-            or word.end_ms - current[0].start_ms > max_ms
-            or word.start_ms - current[-1].end_ms > max_gap_ms
-        )
+        closes = False
+        if current:
+            if max_width_px is not None:
+                candidate_text = " ".join(w.w for w in [*current, word])
+                cand_w = measure_rendered_caption_width(candidate_text)
+                exceeds_width = cand_w > max_width_px
+            else:
+                exceeds_width = width + addition > max_chars
+
+            closes = (
+                len(current) >= max_words
+                or exceeds_width
+                or word.end_ms - current[0].start_ms > max_ms
+                or word.start_ms - current[-1].end_ms > max_gap_ms
+            )
+
         if closes:
             chunks.append(tuple(current))
             current, width = [word], len(word.w)
@@ -831,6 +970,9 @@ def build_ass(
     theme: CaptionTheme = REPORT_THEME,
     max_words_per_event: int | None = None,
     title_ckb: str | None = None,
+    max_line_width_px: int | None = None,
+    max_popup_width_px: int | None = None,
+    fonts_dir: Path | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -926,7 +1068,11 @@ def build_ass(
         )
     for sentence in sentences:
         if max_words_per_event is None:
-            lines = wrap_caption_lines(sentence.words, max_chars=max_chars_per_line)
+            lines = wrap_caption_lines(
+                sentence.words,
+                max_chars=max_chars_per_line,
+                max_width_px=max_line_width_px,
+            )
             events.append(
                 event(
                     sentence.start_ms,
@@ -941,6 +1087,7 @@ def build_ass(
             sentence.words,
             max_words=max_words_per_event,
             max_chars=max_chars_per_line,
+            max_width_px=max_popup_width_px,
         )
         for index, chunk in enumerate(chunks):
             # Hold a popup until the next one starts when the hole between them is short: a

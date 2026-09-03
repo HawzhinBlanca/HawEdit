@@ -24,13 +24,16 @@ from __future__ import annotations
 import unicodedata
 from pathlib import Path
 
+import cv2
 import pytest
 
 from hawedit.captions import (
     DEFAULT_MAX_CHARS_PER_LINE,
+    DEFAULT_MAX_LINE_WIDTH_PX,
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
     POPUP_MAX_CHARS,
+    POPUP_MAX_WIDTH_PX,
     REPORT_THEME,
     VIRAL_FONT_SIZE,
     VIRAL_THEME,
@@ -51,6 +54,7 @@ from hawedit.captions import (
     decode_to_rgb,
     emphasis_index,
     find_ffmpeg,
+    measure_rendered_caption_width,
     parse_dialogue_times,
     render_caption_png,
     subtitle_filter,
@@ -1352,3 +1356,123 @@ def test_the_hook_card_is_drawn_on_a_plate() -> None:
     assert fields[15] == "3", f"BorderStyle is {fields[15]}, so the card has no plate"
     kurdish = next(line for line in ass.splitlines() if line.startswith("Style: Kurdish,"))
     assert kurdish.split(",")[15] == "1", "the caption band must keep outline-and-shadow"
+
+
+def test_measure_rendered_caption_width_measures_ink_and_caches() -> None:
+    """Task T2.9: measure_rendered_caption_width measures positive ink extent and caches."""
+    assert measure_rendered_caption_width("") == 0
+    assert measure_rendered_caption_width("   ") == 0
+
+    text = "ڕۆژنامەوانی کوردی"
+    width1 = measure_rendered_caption_width(text)
+    assert width1 > 100
+
+    width2 = measure_rendered_caption_width(text)
+    assert width1 == width2
+
+
+def test_wrap_caption_lines_respects_max_width_px() -> None:
+    """AC-1: wrap_caption_lines breaks lines before ink width exceeds max_width_px."""
+    line_words = words(
+        ("ڕۆژنامەوانییە", 0, 100),
+        ("بەپێزەکانی", 100, 200),
+        ("ئەمڕۆمان", 200, 300),
+        ("لێرەیە", 300, 400),
+    )
+    # Without max_width_px and high max_chars, it's 1 line
+    single = wrap_caption_lines(line_words, max_chars=100)
+    assert len(single) == 1
+
+    # With max_width_px=500, it breaks into multiple lines
+    wrapped = wrap_caption_lines(line_words, max_chars=100, max_width_px=500)
+    assert len(wrapped) > 1
+
+    # Preserves every word in reading order
+    assert [w.w for line in wrapped for w in line] == [w.w for w in line_words]
+
+
+def test_chunk_caption_events_respects_max_width_px() -> None:
+    """AC-2: chunk_caption_events closes events before ink width exceeds max_width_px."""
+    assert POPUP_MAX_WIDTH_PX == 700
+    line_words = words(
+        ("ڕۆژنامەوانییە", 0, 100),
+        ("بەپێزەکانی", 100, 200),
+        ("ئەمڕۆمان", 200, 300),
+        ("لێرەیە", 300, 400),
+    )
+    # With max_width_px=400, chunks close before exceeding 400 px
+    chunks = chunk_caption_events(line_words, max_words=10, max_chars=100, max_width_px=400)
+    assert len(chunks) > 1
+    assert [w.w for chunk in chunks for w in chunk] == [w.w for w in line_words]
+
+
+def test_oversized_word_gets_own_line_under_width_limit() -> None:
+    """AC-3: A single oversized word gets its own line/chunk rather than being dropped or split."""
+    long_word = "پێشکەشکردنەکەیان"
+    line_words = words((long_word, 0, 100), ("باشە", 100, 200))
+    # Set limit smaller than the long word's rendered width
+    lines = wrap_caption_lines(line_words, max_chars=100, max_width_px=150)
+    assert len(lines) == 2
+    assert lines[0][0].w == long_word
+    assert lines[1][0].w == "باشە"
+
+    chunks = chunk_caption_events(line_words, max_words=10, max_chars=100, max_width_px=150)
+    assert len(chunks) == 2
+    assert chunks[0][0].w == long_word
+    assert chunks[1][0].w == "باشە"
+
+
+def test_shaped_line_breaking_validates_positive_width() -> None:
+    """Non-positive max_width_px must be rejected with ValueError."""
+    line_words = words(("ئەمە", 0, 100))
+    with pytest.raises(ValueError, match="max_width_px must be positive"):
+        wrap_caption_lines(line_words, max_width_px=0)
+    with pytest.raises(ValueError, match="max_width_px must be positive"):
+        chunk_caption_events(line_words, max_width_px=0)
+
+
+def test_shaped_width_breaking_prevents_margin_overflow(tmp_path: Path) -> None:
+    """AC-4: Pixel test proving long-ligature Kurdish line no longer overflows margins."""
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("ffmpeg not available for pixel test")
+
+    # A line with wide Kurdish ligatures that overflows margins if not broken
+    text_words = words(
+        ("ڕۆژنامەوانییە", 0, 100),
+        ("بەپێزەکانی", 100, 200),
+        ("ئەمڕۆمان", 200, 300),
+        ("لێرەیە", 300, 400),
+    )
+    # Wrapped lines under shaped width
+    lines = wrap_caption_lines(text_words, max_chars=100, max_width_px=DEFAULT_MAX_LINE_WIDTH_PX)
+    assert len(lines) >= 2, "must be wrapped into multiple lines"
+
+    # Build ASS with wrapped lines
+    ass_text = build_ass(
+        (Sentence(words=text_words, complete=True),),
+        font_name="Noto Naskh Arabic",
+        font_size=VIRAL_FONT_SIZE,
+        theme=VIRAL_THEME,
+        max_line_width_px=DEFAULT_MAX_LINE_WIDTH_PX,
+    )
+    ass_path = tmp_path / "shaped.ass"
+    ass_path.write_text(ass_text, encoding="utf-8")
+
+    png_path = tmp_path / "shaped.png"
+    render_caption_png(ffmpeg, ass_path, FONTS_DIR, png_path, width=1080, height=1920)
+
+    img = cv2.imread(str(png_path), cv2.IMREAD_GRAYSCALE)
+    assert img is not None, "rendered PNG must be readable"
+    pts = cv2.findNonZero(img)
+    assert pts is not None, "rendered caption must produce ink pixels"
+
+    x, y, w, h = cv2.boundingRect(pts)
+    left_margin = VIRAL_THEME.margin_l
+    right_margin = 1080 - VIRAL_THEME.margin_r
+
+    # Ink must be strictly contained within horizontal margins
+    assert x >= left_margin - 5, f"ink spills into left margin: x={x} < margin_l={left_margin}"
+    assert x + w <= right_margin + 5, (
+        f"ink spills into right margin: right_edge={x + w} > right_margin={right_margin}"
+    )
