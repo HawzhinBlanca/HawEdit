@@ -1,2 +1,3 @@
 TS=2026-09-03T18:21:51Z FEATURE=shaped-line-breaking TASK=T1 TESTS=test_measure_rendered_caption_width_measures_ink_and_caches VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-03T18:30:13Z FEATURE=shaped-line-breaking TASK=T2 TESTS=test_wrap_caption_lines_respects_max_width_px,test_chunk_caption_events_respects_max_width_px,test_oversized_word_gets_own_line_under_width_limit VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T18:38:37Z FEATURE=shaped-line-breaking TASK=T3 TESTS=test_shaped_line_breaking_validates_positive_width,test_shaped_width_breaking_prevents_margin_overflow VERIFY=pass REPORT=.gate/last-test-run.xml
