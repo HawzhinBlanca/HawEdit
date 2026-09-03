@@ -2522,6 +2522,7 @@ def run_pipeline(
             punch_ins=planned_punch_ins,
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
+            deliverable=(profile == "production"),
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:

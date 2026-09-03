@@ -58,6 +58,7 @@ from hawedit.transcripts import Word
 
 __all__ = [
     "DELIVERY_AUDIO_RATE",
+    "DELIVERY_COLOR_ARGS",
     "DELIVERY_LUFS",
     "DELIVERY_TRUE_PEAK_DB",
     "ENCODER_PROBE_SIZE",
@@ -71,6 +72,7 @@ __all__ = [
     "assert_encoded_span",
     "audio_filter",
     "crop_filter",
+    "deliverable_video_args",
     "encoder_available",
     "frame_duration_ms",
     "frame_rate",
@@ -96,6 +98,20 @@ NVENC_MIN_FRAME: Final = (145, 49)
 # size, because that is the frame the encoder will really be handed, and because anything
 # smaller can fail for reasons that say nothing about availability. See `encoder_available`.
 ENCODER_PROBE_SIZE: Final = (VERTICAL_WIDTH, VERTICAL_HEIGHT)
+
+# Broadcast delivery targets Rec.709 color tags to ensure standard sRGB/Rec.709 display
+# consistency across modern mobile devices and video platforms (Task T2.10). Both container
+# tags and bitstream SPS VUI parameters are populated so decoder probes read bt709.
+DELIVERY_COLOR_ARGS: Final[tuple[str, ...]] = (
+    "-color_primaries",
+    "bt709",
+    "-color_trc",
+    "bt709",
+    "-colorspace",
+    "bt709",
+    "-bsf:v",
+    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+)
 
 
 class RenderError(RuntimeError):
@@ -135,6 +151,61 @@ def quality_args(encoder: Encoder, crf: int) -> list[str]:
         # bitrate ceiling and the cq value stops mattering again at the top of the range.
         return ["-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
     return ["-crf", str(crf)]
+
+
+def deliverable_video_args(
+    encoder: Encoder,
+    crf: int = 20,
+    fps: float = 25.0,
+    *,
+    deliverable: bool = True,
+) -> list[str]:
+    """The encoder flags for broadcast delivery vs working renders (Task T2.10).
+
+    Deliverable profile targets 8–12 Mbps vertical output at 1080x1920:
+    - NVENC: -preset p6 -profile:v high -bf 3 -spatial-aq 1 -temporal-aq 1
+      -rc vbr -cq <crf> -b:v 0 -g <2*fps>
+    - libx264: -preset slow -profile:v high -bf 3 -crf <crf> -g <2*fps>
+
+    Working renders keep -cq 27 / -crf 27 via quality_args.
+    """
+    if not deliverable:
+        return quality_args(encoder, crf)
+
+    gop = str(max(1, round(2 * fps)))
+    if encoder is Encoder.NVENC:
+        return [
+            "-preset",
+            "p6",
+            "-profile:v",
+            "high",
+            "-bf",
+            "3",
+            "-spatial-aq",
+            "1",
+            "-temporal-aq",
+            "1",
+            "-rc",
+            "vbr",
+            "-cq",
+            str(crf),
+            "-b:v",
+            "0",
+            "-g",
+            gop,
+        ]
+    return [
+        "-preset",
+        "slow",
+        "-profile:v",
+        "high",
+        "-bf",
+        "3",
+        "-crf",
+        str(crf),
+        "-g",
+        gop,
+    ]
 
 
 def audio_filter() -> str:
@@ -501,6 +572,8 @@ def crop_filter(
     face_center_y: int | None = None,
     face_height: int | None = None,
     punch_ins: Sequence[tuple[int, float]] = (),
+    lanczos: bool = False,
+    unsharp: bool = False,
 ) -> str:
     """The ffmpeg filter chain that takes a landscape frame to a vertical one.
 
@@ -512,6 +585,8 @@ def crop_filter(
             the seam the speaker-tracking path plugs into: §3 Stage 6 derives it from
             diarization plus face detection, and until that exists every caller passes `None`
             and gets a crop that is honestly labelled `Reframe.STATIC_CENTRE`.
+        lanczos: use high-quality Lanczos scaling instead of default bicubic (Task T2.10).
+        unsharp: apply light luma unsharp sharpening post-scaling (Task T2.10).
 
     Raises:
         ValueError: the source is smaller than the crop it would need.
@@ -542,8 +617,12 @@ def crop_filter(
         # into frame keeps the subject; refusing would drop the clip.
         x = max(0, min(focus_x - crop_w // 2, source_width - crop_w))
 
+    scale_flags = ":flags=lanczos" if lanczos else ""
+    unsharp_filter = ",unsharp=5:5:0.5:5:5:0.0" if unsharp else ""
+
     if not punch_ins:
-        return f"crop={crop_w}:{crop_h}:{x}:{y},scale={target_width}:{target_height}"
+        scale_part = f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
+        return f"crop={crop_w}:{crop_h}:{x}:{y},{scale_part}"
 
     # A punch-in changes the crop *size*, and ffmpeg evaluates `w`/`h` once at configuration —
     # only `x`/`y` are per-frame. So the size changes by command rather than by expression: all
@@ -575,7 +654,7 @@ def crop_filter(
     return (
         f"sendcmd=c='{commands}',"
         f"crop={crop_w}:{crop_h}:{x_expr}:{y_expr},"
-        f"scale={target_width}:{target_height}"
+        f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
     )
 
 
@@ -682,6 +761,8 @@ def render_clip(
     face_center_y: int | None = None,
     face_height: int | None = None,
     punch_ins: Sequence[tuple[int, float]] = (),
+    fps: float | None = None,
+    deliverable: bool = False,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -775,6 +856,8 @@ def render_clip(
                 face_height=face_height,
                 punch_ins=punch_ins,
                 clip_in_ms=clip.in_ms,
+                lanczos=deliverable,
+                unsharp=deliverable,
             ),
             subtitle_filter(ass_path, fonts_dir),
         ]
@@ -790,6 +873,11 @@ def render_clip(
     ) as staging_file:
         staging = Path(staging_file.name)
 
+    decode_threads = [] if deliverable else ["-threads", "1"]
+    color_metadata = list(DELIVERY_COLOR_ARGS) if deliverable else []
+    clip_fps = fps if fps is not None else frame_rate(source, binary)
+    video_args = deliverable_video_args(encoder, crf, fps=clip_fps, deliverable=deliverable)
+
     timeout_s = max(60.0, (duration_ms / 1000.0) * 10.0)
     try:
         try:
@@ -799,8 +887,7 @@ def render_clip(
                     "-hide_banner",
                     "-loglevel",
                     "error",
-                    "-threads",
-                    "1",  # §6: parallelism across clips, not inside one encode
+                    *decode_threads,
                     "-ss",
                     f"{clip.in_ms / 1000:.3f}",
                     "-t",
@@ -813,9 +900,10 @@ def render_clip(
                     audio_filter(),
                     "-c:v",
                     encoder.value,
-                    *quality_args(encoder, crf),
+                    *video_args,
                     "-pix_fmt",
                     "yuv420p",
+                    *color_metadata,
                     "-c:a",
                     "aac",
                     "-b:a",

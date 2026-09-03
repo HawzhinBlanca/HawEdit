@@ -37,6 +37,7 @@ from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output,
 from hawedit.ingest import probe_duration_ms
 from hawedit.render import (
     DELIVERY_AUDIO_RATE,
+    DELIVERY_COLOR_ARGS,
     DELIVERY_LUFS,
     ENCODER_PROBE_SIZE,
     FACE_COMPOSITION_LINE,
@@ -54,6 +55,7 @@ from hawedit.render import (
     audio_filter,
     crop_filter,
     cut_points_ms,
+    deliverable_video_args,
     encoder_available,
     frame_duration_ms,
     frame_rate,
@@ -1291,6 +1293,118 @@ def test_nvenc_gets_a_quality_flag_it_actually_honours() -> None:
 
 def test_x264_keeps_crf_which_is_the_flag_it_honours() -> None:
     assert quality_args(Encoder.X264, 20) == ["-crf", "20"]
+
+
+def test_delivery_color_args_target_rec709() -> None:
+    """Standard Rec.709 tags ensure color consistency across modern mobile/web targets."""
+    assert DELIVERY_COLOR_ARGS == (
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-bsf:v",
+        "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+    )
+
+
+def test_deliverable_video_args_nvenc_matches_pro_grade_profile() -> None:
+    """Task T2.10: NVENC profile with high preset, B-frames, AQ, CQ and GOP."""
+    args = deliverable_video_args(Encoder.NVENC, crf=20, fps=25.0, deliverable=True)
+    expected = [
+        "-preset",
+        "p6",
+        "-profile:v",
+        "high",
+        "-bf",
+        "3",
+        "-spatial-aq",
+        "1",
+        "-temporal-aq",
+        "1",
+        "-rc",
+        "vbr",
+        "-cq",
+        "20",
+        "-b:v",
+        "0",
+        "-g",
+        "50",
+    ]
+    assert args == expected
+
+
+def test_deliverable_video_args_x264_matches_pro_grade_profile() -> None:
+    """Task T2.10: libx264 deliverable profile carries slow preset, B-frames, CRF and GOP."""
+    args = deliverable_video_args(Encoder.X264, crf=20, fps=30.0, deliverable=True)
+    expected = [
+        "-preset",
+        "slow",
+        "-profile:v",
+        "high",
+        "-bf",
+        "3",
+        "-crf",
+        "20",
+        "-g",
+        "60",
+    ]
+    assert args == expected
+
+
+def test_deliverable_video_args_working_render_preserves_crf() -> None:
+    """Working renders (deliverable=False) preserve base quality arguments."""
+    assert deliverable_video_args(Encoder.NVENC, 27, deliverable=False) == quality_args(
+        Encoder.NVENC, 27
+    )
+    assert deliverable_video_args(Encoder.X264, 27, deliverable=False) == quality_args(
+        Encoder.X264, 27
+    )
+
+
+def test_crop_filter_lanczos_and_unsharp_flags() -> None:
+    """Task T2.10: Lanczos scaling and light unsharp filtering in crop filter chain."""
+    plain = crop_filter(1920, 1080)
+    assert ":flags=lanczos" not in plain
+    assert "unsharp=" not in plain
+
+    enhanced = crop_filter(1920, 1080, lanczos=True, unsharp=True)
+    assert ":flags=lanczos" in enhanced
+    assert ",unsharp=5:5:0.5:5:5:0.0" in enhanced
+
+    punch_in_enhanced = crop_filter(
+        2560, 1440, punch_ins=((1000, 1.15),), lanczos=True, unsharp=True
+    )
+    assert ":flags=lanczos" in punch_in_enhanced
+    assert ",unsharp=5:5:0.5:5:5:0.0" in punch_in_enhanced
+
+
+@needs_ffmpeg
+def test_deliverable_render_carries_rec709_color_tags(tmp_path: Path) -> None:
+    """Delivered clip carries bt709 color primaries, transfer and space."""
+    work = tmp_path / "deliverable_render"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip.mp4"
+    result = render_clip(
+        _clip(),
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        deliverable=True,
+    )
+    assert Path(result.path).exists()
+    primaries = _probe(Path(result.path), "stream=color_primaries").strip()
+    trc = _probe(Path(result.path), "stream=color_transfer").strip()
+    space = _probe(Path(result.path), "stream=color_space").strip()
+    assert primaries == "bt709"
+    assert trc == "bt709"
+    assert space == "bt709"
 
 
 def test_delivery_audio_is_normalised_to_the_platform_target() -> None:
