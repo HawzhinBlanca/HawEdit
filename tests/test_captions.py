@@ -28,8 +28,11 @@ import cv2
 import pytest
 
 from hawedit.captions import (
+    DEFAULT_BOTTOM_CAPTION_BAND,
     DEFAULT_MAX_CHARS_PER_LINE,
     DEFAULT_MAX_LINE_WIDTH_PX,
+    DEFAULT_TOP_CAPTION_BAND,
+    DEFAULT_TOP_MARGIN_V,
     GOLDEN_CAPTION_TEXT,
     KURDISH_REQUIRED_GLYPHS,
     POPUP_MAX_CHARS,
@@ -54,9 +57,11 @@ from hawedit.captions import (
     decode_to_rgb,
     emphasis_index,
     find_ffmpeg,
+    intersects_caption_band,
     measure_rendered_caption_width,
     parse_dialogue_times,
     render_caption_png,
+    should_use_top_caption_placement,
     subtitle_filter,
     wrap_caption_lines,
     wrap_title_lines,
@@ -1476,3 +1481,93 @@ def test_shaped_width_breaking_prevents_margin_overflow(tmp_path: Path) -> None:
     assert x + w <= right_margin + 5, (
         f"ink spills into right margin: right_edge={x + w} > right_margin={right_margin}"
     )
+
+
+def test_intersects_caption_band_detects_overlap_and_clearance() -> None:
+    assert DEFAULT_BOTTOM_CAPTION_BAND == (1300, 1650)
+    assert DEFAULT_TOP_CAPTION_BAND == (200, 520)
+    assert intersects_caption_band(1400, 1500) is True
+    assert intersects_caption_band(1200, 1350) is True  # crosses top boundary
+    assert intersects_caption_band(1600, 1700) is True  # crosses bottom boundary
+    assert intersects_caption_band(500, 900) is False  # completely above
+    assert intersects_caption_band(1700, 1850) is False  # completely below
+
+
+def test_should_use_top_caption_placement_evaluates_time_and_space() -> None:
+    # Event: 1000..3000 ms
+    # Temporal mismatch: face at 500..800 ms in bottom band
+    assert (
+        should_use_top_caption_placement(1000, 3000, face_intervals=((500, 800, 1350, 1550),))
+        is False
+    )
+
+    # Spatial mismatch: face at 1500..2500 ms in upper third (Y=600..900)
+    assert (
+        should_use_top_caption_placement(1000, 3000, face_intervals=((1500, 2500, 600, 900),))
+        is False
+    )
+
+    # Temporal + spatial match: face at 2000..2500 ms in bottom band (Y=1350..1550)
+    assert (
+        should_use_top_caption_placement(1000, 3000, face_intervals=((2000, 2500, 1350, 1550),))
+        is True
+    )
+
+
+def test_build_ass_emits_kurdish_top_for_overlapping_events() -> None:
+    s1 = Sentence(words=words(("خوارەوە", 0, 1000)), complete=True)
+    s2 = Sentence(words=words(("سەروو", 1000, 2000)), complete=True)
+
+    # Only s1 overlaps with a face in the bottom band
+    face_intervals = ((0, 1000, 1350, 1550),)
+
+    ass_text = build_ass(
+        (s1, s2),
+        font_name="Noto Naskh Arabic",
+        font_size=VIRAL_FONT_SIZE,
+        theme=VIRAL_THEME,
+        face_intervals=face_intervals,
+    )
+
+    # KurdishTop style must be declared with alignment 8 and margin_v 240
+    assert "Style: KurdishTop,Noto Naskh Arabic" in ass_text
+    assert f",8,{VIRAL_THEME.margin_l},{VIRAL_THEME.margin_r},{DEFAULT_TOP_MARGIN_V},1" in ass_text
+
+    dialogue_lines = [line for line in ass_text.splitlines() if line.startswith("Dialogue:")]
+    # First dialogue line should use KurdishTop to avoid face overlap
+    assert ",KurdishTop," in dialogue_lines[0]
+    # Second dialogue line should retain default Kurdish bottom style
+    assert ",Kurdish," in dialogue_lines[1]
+
+
+def test_face_aware_caption_placement_renders_ink_in_upper_band(tmp_path: Path) -> None:
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("ffmpeg binary not available")
+
+    # Build ASS with an event placed at top
+    s = Sentence(words=words(("سەرووی_شاشە", 0, 1000)), complete=True)
+    ass_text = build_ass(
+        (s,),
+        font_name="Noto Naskh Arabic",
+        font_size=VIRAL_FONT_SIZE,
+        theme=VIRAL_THEME,
+        face_intervals=((0, 1000, 1350, 1550),),
+    )
+    ass_path = tmp_path / "top.ass"
+    ass_path.write_text(ass_text, encoding="utf-8")
+
+    png_path = tmp_path / "top.png"
+    render_caption_png(ffmpeg, ass_path, FONTS_DIR, png_path, width=1080, height=1920)
+
+    img = cv2.imread(str(png_path), cv2.IMREAD_GRAYSCALE)
+    assert img is not None
+    pts = cv2.findNonZero(img)
+    assert pts is not None
+
+    x, y, w, h = cv2.boundingRect(pts)
+    # Ink must be strictly in the upper region of the screen (Y < 600 px)
+    assert y + h <= 600, f"Top placement ink spilt below Y=600: y+h={y + h}"
+    # Bottom caption band (Y > 1200) must be 100% blank
+    bottom_slice = img[1200:, :]
+    assert cv2.countNonZero(bottom_slice) == 0, "Bottom caption band contained unexpected ink"

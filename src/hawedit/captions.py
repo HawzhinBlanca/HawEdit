@@ -38,8 +38,11 @@ from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.transcripts import Word
 
 __all__ = [
+    "DEFAULT_BOTTOM_CAPTION_BAND",
     "DEFAULT_MAX_CHARS_PER_LINE",
     "DEFAULT_MAX_LINE_WIDTH_PX",
+    "DEFAULT_TOP_CAPTION_BAND",
+    "DEFAULT_TOP_MARGIN_V",
     "GOLDEN_CAPTION_TEXT",
     "KURDISH_REQUIRED_GLYPHS",
     "POPUP_MAX_CHARS",
@@ -67,9 +70,11 @@ __all__ = [
     "compare_golden_render",
     "decode_to_rgb",
     "find_ffmpeg",
+    "intersects_caption_band",
     "measure_rendered_caption_width",
     "parse_dialogue_times",
     "render_caption_png",
+    "should_use_top_caption_placement",
     "subtitle_filter",
     "wrap_caption_lines",
 ]
@@ -162,15 +167,25 @@ class CaptionTheme:
     # readable on *any* footage rather than on footage that happens to be dark.
     border_style: int = 1
 
-    def style_row(self, name: str, font_name: str, font_size: int) -> str:
+    def style_row(
+        self,
+        name: str,
+        font_name: str,
+        font_size: int,
+        *,
+        alignment: int | None = None,
+        margin_v: int | None = None,
+    ) -> str:
         """One `Style:` line. `%g` keeps `3.0` as `3` so existing goldens still match."""
+        align = self.alignment if alignment is None else alignment
+        mv = self.margin_v if margin_v is None else margin_v
         return (
             f"Style: {name},{font_name},{font_size},{self.primary},{self.secondary},"
             f"{self.outline_colour},{self.back_colour},{int(self.bold)},0,0,0,100,100,0,0,"
             f"{self.border_style},"
-            f"{self.outline:g},{self.shadow:g},{self.alignment},{self.margin_l},"
+            f"{self.outline:g},{self.shadow:g},{align},{self.margin_l},"
             f"{self.margin_r},"
-            f"{self.margin_v},1"
+            f"{mv},1"
         )
 
 
@@ -234,6 +249,39 @@ VIRAL_THEME: Final = CaptionTheme(
     margin_r=80,
     margin_v=360,
 )
+
+# Task T2.7: Face-aware caption placement band definitions.
+# At 1080x1920 PlayRes, the bottom caption band occupies Y = 1300..1650.
+# If a tracked face intersects this band, the caption dynamically moves to the top band
+# (Y = 200..520, Alignment 8, MarginV 240) so the speaker's face is never obscured.
+DEFAULT_BOTTOM_CAPTION_BAND: Final[tuple[int, int]] = (1300, 1650)
+DEFAULT_TOP_CAPTION_BAND: Final[tuple[int, int]] = (200, 520)
+DEFAULT_TOP_MARGIN_V: Final = 240
+
+
+def intersects_caption_band(
+    top_y: int,
+    bottom_y: int,
+    band: tuple[int, int] = DEFAULT_BOTTOM_CAPTION_BAND,
+) -> bool:
+    """Check whether a vertical interval [top_y, bottom_y] intersects a caption band."""
+    band_top, band_bottom = band
+    return bool(bottom_y >= band_top and top_y <= band_bottom)
+
+
+def should_use_top_caption_placement(
+    start_ms: int,
+    end_ms: int,
+    face_intervals: Sequence[tuple[int, int, int, int]] | None,
+    band: tuple[int, int] = DEFAULT_BOTTOM_CAPTION_BAND,
+) -> bool:
+    """Determine whether an event at [start_ms, end_ms] intersects any face in the caption band."""
+    if not face_intervals:
+        return False
+    for f_start, f_end, f_top, f_bottom in face_intervals:
+        if f_start < end_ms and f_end > start_ms and intersects_caption_band(f_top, f_bottom, band):
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -982,6 +1030,7 @@ def build_ass(
     max_line_width_px: int | None = None,
     max_popup_width_px: int | None = None,
     fonts_dir: Path | None = None,
+    face_intervals: Sequence[tuple[int, int, int, int]] | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -1039,6 +1088,19 @@ def build_ass(
             "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
             theme.style_row("Kurdish", font_name, font_size),
             *(
+                [
+                    theme.style_row(
+                        "KurdishTop",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                    )
+                ]
+                if face_intervals
+                else []
+            ),
+            *(
                 [HOOK_CARD_THEME.style_row("Hook", font_name, HOOK_CARD_FONT_SIZE)]
                 if title_ckb
                 else []
@@ -1057,11 +1119,11 @@ def build_ass(
     # The clip's timeline, not the source's. The kf spans are durations and are unaffected
     # — only the two absolute stamps below ever needed the offset, and for as long as they did
     # not have it, every clip cut from mid-episode shipped with no captions at all.
-    def event(start_ms: int, end_ms: int, text: str) -> str:
+    def event(start_ms: int, end_ms: int, text: str, style_name: str = "Kurdish") -> str:
         return (
             f"Dialogue: 0,{_ass_time(start_ms - clip_in_ms)},"
             f"{_ass_time(end_ms - clip_in_ms)},"
-            f"Kurdish,,0,0,0,,{text}"
+            f"{style_name},,0,0,0,,{text}"
         )
 
     events: list[str] = []
@@ -1082,11 +1144,19 @@ def build_ass(
                 max_chars=max_chars_per_line,
                 max_width_px=max_line_width_px,
             )
+            style_name = (
+                "KurdishTop"
+                if should_use_top_caption_placement(
+                    sentence.start_ms, sentence.end_ms, face_intervals
+                )
+                else "Kurdish"
+            )
             events.append(
                 event(
                     sentence.start_ms,
                     sentence.end_ms,
                     "\\N".join(render(line) for line in lines),
+                    style_name=style_name,
                 )
             )
             continue
@@ -1107,7 +1177,12 @@ def build_ass(
             end_ms = chunk[-1].end_ms
             if following is not None and following - end_ms <= _POPUP_HOLD_MS:
                 end_ms = following
-            events.append(event(chunk[0].start_ms, end_ms, render(chunk)))
+            style_name = (
+                "KurdishTop"
+                if should_use_top_caption_placement(chunk[0].start_ms, end_ms, face_intervals)
+                else "Kurdish"
+            )
+            events.append(event(chunk[0].start_ms, end_ms, render(chunk), style_name=style_name))
 
     return header + "\n" + "\n".join(events) + "\n"
 
