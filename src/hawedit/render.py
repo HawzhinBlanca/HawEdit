@@ -59,6 +59,8 @@ from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
 from hawedit.transcripts import Word
 
 __all__ = [
+    "DEFAULT_PUSH_STEP_MS",
+    "DEFAULT_PUSH_ZOOM",
     "DELIVERY_AUDIO_RATE",
     "DELIVERY_COLOR_ARGS",
     "DELIVERY_LUFS",
@@ -79,6 +81,7 @@ __all__ = [
     "crop_filter",
     "decide_wide_shot_layout",
     "deliverable_video_args",
+    "eased_push_schedule",
     "encoder_available",
     "frame_duration_ms",
     "frame_rate",
@@ -86,6 +89,7 @@ __all__ = [
     "measure_audio_loudness",
     "quality_args",
     "render_clip",
+    "shot_spans",
     "vertical_crop_size",
 ]
 
@@ -637,6 +641,109 @@ def punch_in_schedule(
         return ()
     # The clip opens wide; every kept boundary flips it.
     return tuple((at_ms, zoom if index % 2 == 0 else 1.0) for index, at_ms in enumerate(kept))
+
+
+DEFAULT_PUSH_ZOOM: Final = 1.08
+DEFAULT_PUSH_STEP_MS: Final = 100
+
+
+def shot_spans(
+    boundaries_ms: Sequence[int],
+    clip_duration_ms: int,
+    *,
+    source_cuts_ms: Sequence[int] = (),
+    min_shot_ms: int = MIN_SHOT_MS,
+    guard_ms: int = SHOT_CUT_GUARD_MS,
+) -> tuple[tuple[int, int], ...]:
+    """Partition clip duration into contiguous shot intervals [start_ms, end_ms] (Task T2.6).
+
+    Uses pause boundaries and source cuts to determine motivated shot cuts.
+    Boundaries closer together than min_shot_ms are dropped, and pause boundaries within
+    guard_ms of a source cut are discarded.
+
+    Returns:
+        tuple of (start_ms, end_ms) contiguous intervals spanning 0 to clip_duration_ms.
+    """
+    if clip_duration_ms <= 0:
+        raise ValueError(f"clip duration must be positive, got {clip_duration_ms}")
+
+    # Collect source cuts strictly within the clip interior
+    valid_source_cuts = [
+        cut_ms for cut_ms in sorted(source_cuts_ms) if 0 < cut_ms < clip_duration_ms
+    ]
+
+    # Filter pause boundaries avoiding source cuts
+    valid_boundaries = [
+        b_ms
+        for b_ms in sorted(boundaries_ms)
+        if 0 < b_ms < clip_duration_ms
+        and not any(abs(b_ms - cut_ms) < guard_ms for cut_ms in valid_source_cuts)
+    ]
+
+    # Combine all candidate cut points
+    all_candidates = sorted(set(valid_source_cuts + valid_boundaries))
+
+    kept_points: list[int] = [0]
+    for pt in all_candidates:
+        if pt - kept_points[-1] >= min_shot_ms and clip_duration_ms - pt >= 1_000:
+            kept_points.append(pt)
+
+    kept_points.append(clip_duration_ms)
+
+    spans: list[tuple[int, int]] = []
+    for start, end in pairwise(kept_points):
+        if end > start:
+            spans.append((start, end))
+
+    return tuple(spans)
+
+
+def eased_push_schedule(
+    shot_spans: Sequence[tuple[int, int]],
+    *,
+    push_zoom: float = DEFAULT_PUSH_ZOOM,
+    step_ms: int = DEFAULT_PUSH_STEP_MS,
+    base_zoom: float = 1.0,
+) -> tuple[tuple[int, float], ...]:
+    """Generate discrete keyframes implementing continuous eased push-ins per shot (Task T2.6).
+
+    Within each shot interval [start_ms, end_ms], smoothly interpolates the zoom factor
+    from base_zoom to base_zoom * push_zoom using cubic smoothstep easing (S(p) = 3p^2 - 2p^3).
+    At shot boundaries, the zoom factor resets to base_zoom, producing an instantaneous hard cut.
+
+    Returns:
+        tuple of (at_ms, factor) keyframes directly consumable by crop_filter.
+    """
+    if push_zoom < 1.0:
+        raise ValueError(f"push_zoom must be at least 1.0, got {push_zoom}")
+    if step_ms <= 0:
+        raise ValueError(f"step_ms must be positive, got {step_ms}")
+
+    keyframes: list[tuple[int, float]] = []
+
+    for start_ms, end_ms in shot_spans:
+        duration = end_ms - start_ms
+        if duration <= 0:
+            continue
+
+        num_steps = max(1, duration // step_ms)
+        for i in range(num_steps + 1):
+            t_ms = min(end_ms, start_ms + i * step_ms)
+            p = (t_ms - start_ms) / duration
+            # Cubic smoothstep easing: 3*p^2 - 2*p^3
+            ease = 3.0 * (p**2) - 2.0 * (p**3)
+            factor = base_zoom * (1.0 + (push_zoom - 1.0) * ease)
+            keyframes.append((t_ms, round(factor, 4)))
+
+    # Deduplicate consecutive identical timestamps if any, keeping latest
+    deduped: list[tuple[int, float]] = []
+    for at_ms, factor in keyframes:
+        if deduped and deduped[-1][0] == at_ms:
+            deduped[-1] = (at_ms, factor)
+        else:
+            deduped.append((at_ms, factor))
+
+    return tuple(deduped)
 
 
 def vertical_framing(

@@ -139,9 +139,11 @@ from hawedit.render import (
     RenderError,
     RenderResult,
     cut_points_ms,
+    eased_push_schedule,
     frame_rate,
     punch_in_schedule,
     render_clip,
+    shot_spans,
     vertical_crop_size,
 )
 from hawedit.sentences import (
@@ -1581,6 +1583,7 @@ def run_pipeline(
     speaker_tracker: SpeakerSubjectTracker | None = None,
     profile: str = "default",
     first_frame_gate: bool = False,
+    eased_push: bool = False,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -2526,20 +2529,28 @@ def run_pipeline(
         if source_dimensions is None:
             source_dimensions = proxy_dimensions(source, ffmpeg)
         width, height = source_dimensions
-        planned_punch_ins = punch_in_schedule(
-            cut_points_ms(
-                tuple(word for sentence in selected for word in sentence.words),
-                clip.in_ms,
-            ),
-            clip.out_ms - clip.in_ms,
-            # Stage 0 already found where this video cuts camera. A punch-in beside one is a
-            # double-cut, and the source's own change is the better of the two.
-            avoid_ms=[
-                cut_ms - clip.in_ms
-                for cut_ms in ingested.shot_cuts_ms
-                if clip.in_ms <= cut_ms <= clip.out_ms
-            ],
+        cut_pts = cut_points_ms(
+            tuple(word for sentence in selected for word in sentence.words),
+            clip.in_ms,
         )
+        source_cuts = [
+            cut_ms - clip.in_ms
+            for cut_ms in ingested.shot_cuts_ms
+            if clip.in_ms <= cut_ms <= clip.out_ms
+        ]
+        if eased_push or profile == "deliverable":
+            spans = shot_spans(
+                cut_pts,
+                clip.out_ms - clip.in_ms,
+                source_cuts_ms=source_cuts,
+            )
+            planned_punch_ins = eased_push_schedule(spans)
+        else:
+            planned_punch_ins = punch_in_schedule(
+                cut_pts,
+                clip.out_ms - clip.in_ms,
+                avoid_ms=source_cuts,
+            )
         rendered = render_clip(
             clip,
             source,
@@ -2940,6 +2951,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--eased-push",
+        action="store_true",
+        help=(
+            "use continuous eased push-ins (1.00->1.08) per shot instead of alternating "
+            "mechanical punch-in jumps (Task T2.6)"
+        ),
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3282,6 +3301,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         visual_max_frames=args.visual_max_frames,
         on_event=on_event,
         profile=getattr(args, "profile", "default"),
+        eased_push=args.eased_push,
     )
 
 

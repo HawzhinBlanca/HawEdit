@@ -60,6 +60,7 @@ from hawedit.render import (
     cut_points_ms,
     decide_wide_shot_layout,
     deliverable_video_args,
+    eased_push_schedule,
     encoder_available,
     frame_duration_ms,
     frame_rate,
@@ -67,6 +68,7 @@ from hawedit.render import (
     punch_in_schedule,
     quality_args,
     render_clip,
+    shot_spans,
     vertical_crop_size,
     vertical_framing,
 )
@@ -2021,3 +2023,87 @@ def test_render_clip_supports_blurred_fill_layout(tmp_path: Path) -> None:
             reframe=Reframe.BLURRED_FILL,
             focus_points=((0, 320),),
         )
+
+
+def test_shot_spans_partitions_clip_into_contiguous_intervals() -> None:
+    # 1. Standard pauses: 3200, 7100 in a 10s clip
+    spans = shot_spans([3200, 7100], 10_000)
+    assert spans == ((0, 3200), (3200, 7100), (7100, 10_000))
+
+    # 2. Contiguity holds across all adjacent spans
+    for earlier, later in pairwise(spans):
+        assert earlier[1] == later[0]
+
+    # 3. Boundaries closer than min_shot_ms (3000 ms) are dropped
+    spans_thinned = shot_spans([1500, 3500, 8000], 10_000)
+    # 1500 is < 3000 from 0, so dropped; 3500 is >= 3000, so kept; 8000 - 3500 = 4500, so kept
+    assert spans_thinned == ((0, 3500), (3500, 8000), (8000, 10_000))
+
+    # 4. Pause within guard_ms (1500 ms) of a source cut is discarded
+    spans_guarded = shot_spans(
+        boundaries_ms=[2000, 5200],
+        clip_duration_ms=10_000,
+        source_cuts_ms=[5000],
+    )
+    # 5200 dropped due to guard around 5000; 5000 kept as source cut
+    assert (0, 5000) in spans_guarded or any(s[0] == 5000 for s in spans_guarded)
+
+    # 5. Non-positive duration raises ValueError
+    with pytest.raises(ValueError, match="must be positive"):
+        shot_spans([], 0)
+
+
+def test_eased_push_schedule_generates_smoothstep_progression() -> None:
+    spans = ((0, 2000), (2000, 5000))
+    schedule = eased_push_schedule(spans, push_zoom=1.08, step_ms=100)
+
+    # First shot: 0 to 2000 ms
+    shot1_frames = [f for f in schedule if f[0] < 2000 or (f[0] == 2000 and f[1] == 1.08)]
+    assert shot1_frames[0] == (0, 1.0)
+
+    # Midpoint of shot 1 at 1000 ms: smoothstep(0.5) = 0.5 -> 1.0 + 0.08 * 0.5 = 1.04
+    midpoint_frame = next(f for f in shot1_frames if f[0] == 1000)
+    assert midpoint_frame == (1000, 1.04)
+
+    # Second shot starts back at 1.0 (hard cut) and grows to 1.08 at 5000 ms
+    shot2_frames = [f for f in schedule if f[0] >= 2000]
+    assert shot2_frames[0] == (2000, 1.0)
+    assert shot2_frames[-1] == (5000, 1.08)
+
+    # Monotonicity of shot 2
+    for f1, f2 in pairwise(shot2_frames):
+        assert f2[1] >= f1[1]
+
+    # Error conditions
+    with pytest.raises(ValueError, match="must be at least 1.0"):
+        eased_push_schedule(spans, push_zoom=0.9)
+    with pytest.raises(ValueError, match="step_ms must be positive"):
+        eased_push_schedule(spans, step_ms=0)
+
+
+@needs_ffmpeg
+def test_render_clip_supports_eased_push_in_schedule(tmp_path: Path) -> None:
+    work = tmp_path / "eased_push_render"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip_eased_push.mp4"
+
+    clip = _clip()
+    duration = clip.out_ms - clip.in_ms
+    spans = shot_spans([duration // 2], duration)
+    schedule = eased_push_schedule(spans, push_zoom=1.08, step_ms=100)
+
+    result = render_clip(
+        clip,
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        punch_ins=schedule,
+    )
+    assert Path(result.path).is_file()
+    assert result.width == VERTICAL_WIDTH
+    assert result.height == VERTICAL_HEIGHT

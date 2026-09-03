@@ -6267,3 +6267,10 @@ def test_the_contract_records_the_profile_used(tmp_path: Path) -> None:
     assert run.clip is not None
     assert run.clip.provenance is not None
     assert run.clip.provenance.profile == "production"
+
+
+def test_pipeline_eased_push_argument_is_parsed() -> None:
+    """Task T2.6: --eased-push flag is parsed by pipeline parser."""
+    parser = build_parser()
+    args = parser.parse_args([str(FIXTURE), "--eased-push"])
+    assert args.eased_push is True
