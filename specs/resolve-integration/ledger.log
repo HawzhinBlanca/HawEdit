@@ -1,3 +1,4 @@
 TS=2026-09-03T11:15:03Z FEATURE=resolve-integration TASK=T1 TESTS=test_import_to_resolve_conforms_916_vertical_timeline_and_markers,test_get_resolve_raises_informative_error_when_unavailable VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-03T11:23:33Z FEATURE=resolve-integration TASK=T2 TESTS=test_resolve_cli_parser VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-03T11:32:01Z FEATURE=resolve-integration TASK=T3 TESTS=test_import_to_resolve_refuses_missing_bundle,test_import_to_resolve_refuses_missing_edl,test_import_to_resolve_handles_timeline_creation_failure VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T11:48:49Z FEATURE=resolve-integration TASK=T4 TESTS=test_resolve_live_conformation_evidence_is_recorded VERIFY=pass REPORT=.gate/last-test-run.xml
