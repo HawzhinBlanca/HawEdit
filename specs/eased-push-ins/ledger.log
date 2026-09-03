@@ -1,1 +1,2 @@
 TS=2026-09-03T21:08:33Z FEATURE=eased-push-ins TASK=T1 TESTS=test_shot_spans_partitions_clip_into_contiguous_intervals,test_eased_push_schedule_generates_smoothstep_progression VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T21:17:15Z FEATURE=eased-push-ins TASK=T2 TESTS=test_render_clip_supports_eased_push_in_schedule,test_pipeline_eased_push_argument_is_parsed VERIFY=pass REPORT=.gate/last-test-run.xml
