@@ -2569,8 +2569,18 @@ def run_pipeline(
         # Build all three before writing any. This used to write the JSON, then the SRT, then
         # build the EDL — formerly an NTSC 29.97 fps source legitimately refused because
         # drop-frame support did not exist. The build-first ordering remains load-bearing for
-        # unsupported fractional rates and any future sidecar validation failure: no partial
-        # delivery set is briefly exposed before cleanup. D-072.
+        # Record two-pass linear loudnorm metrics in the editing contract (Task T3.1)
+        if rendered.loudness_pass1 is not None:
+            loudness_dict: dict[str, Any] = {
+                "pass1": rendered.loudness_pass1.to_dict(),
+            }
+            if rendered.loudness_pass2 is not None:
+                loudness_dict["pass2"] = rendered.loudness_pass2.to_dict()
+            if clip.output is not None:
+                clip = replace(
+                    clip,
+                    output=replace(clip.output, loudness=loudness_dict),
+                )
         editing_json = json.dumps(clip.to_dict(), ensure_ascii=False, indent=2)
         srt = build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms)
         # The EDL's source timecodes are the *source's* timeline — where this clip was cut

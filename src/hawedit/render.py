@@ -33,7 +33,9 @@ difference is real on this build rather than theoretical.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -42,7 +44,7 @@ from enum import Enum
 from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from hawedit.captions import (
     FontCoverageError,
@@ -66,6 +68,7 @@ __all__ = [
     "VERTICAL_HEIGHT",
     "VERTICAL_WIDTH",
     "Encoder",
+    "LoudnessStats",
     "Reframe",
     "RenderError",
     "RenderResult",
@@ -77,6 +80,7 @@ __all__ = [
     "frame_duration_ms",
     "frame_rate",
     "linked_libraries",
+    "measure_audio_loudness",
     "quality_args",
     "render_clip",
     "vertical_crop_size",
@@ -208,13 +212,155 @@ def deliverable_video_args(
     ]
 
 
-def audio_filter() -> str:
-    """Single-pass EBU R128 normalisation to the delivery target.
+@dataclass(frozen=True, slots=True)
+class LoudnessStats:
+    """EBU R128 loudness statistics from FFmpeg loudnorm filter output."""
 
-    Single pass rather than the two-pass measure-then-apply: the second pass buys accuracy
-    this does not need (a fraction of a LU on a speech clip) at the cost of decoding the audio
-    twice, and the clip is already cut to length before it gets here.
+    input_i: float
+    input_tp: float
+    input_lra: float
+    input_thresh: float
+    target_offset: float
+    output_i: float | None = None
+    output_tp: float | None = None
+    output_lra: float | None = None
+    output_thresh: float | None = None
+    normalization_type: str = "linear"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "input_i": self.input_i,
+            "input_tp": self.input_tp,
+            "input_lra": self.input_lra,
+            "input_thresh": self.input_thresh,
+            "target_offset": self.target_offset,
+            "output_i": self.output_i,
+            "output_tp": self.output_tp,
+            "output_lra": self.output_lra,
+            "output_thresh": self.output_thresh,
+            "normalization_type": self.normalization_type,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> LoudnessStats:
+        return LoudnessStats(
+            input_i=float(data["input_i"]),
+            input_tp=float(data["input_tp"]),
+            input_lra=float(data["input_lra"]),
+            input_thresh=float(data["input_thresh"]),
+            target_offset=float(data["target_offset"]),
+            output_i=float(data["output_i"]) if data.get("output_i") is not None else None,
+            output_tp=float(data["output_tp"]) if data.get("output_tp") is not None else None,
+            output_lra=float(data["output_lra"]) if data.get("output_lra") is not None else None,
+            output_thresh=float(data["output_thresh"])
+            if data.get("output_thresh") is not None
+            else None,
+            normalization_type=str(data.get("normalization_type", "linear")),
+        )
+
+
+def _parse_loudnorm_stats(stderr_text: str, default_norm_type: str = "linear") -> LoudnessStats:
+    """Extract and parse the loudnorm JSON block from FFmpeg stderr."""
+    match = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", stderr_text)
+    if not match:
+        raise RenderError(
+            f"failed to parse loudnorm JSON from FFmpeg output:\n{stderr_text[-1000:]}"
+        )
+    try:
+        data = json.loads(match.group(0))
+        return LoudnessStats(
+            input_i=float(data["input_i"]),
+            input_tp=float(data["input_tp"]),
+            input_lra=float(data["input_lra"]),
+            input_thresh=float(data["input_thresh"]),
+            target_offset=float(data["target_offset"]),
+            output_i=float(data["output_i"]) if "output_i" in data else None,
+            output_tp=float(data["output_tp"]) if "output_tp" in data else None,
+            output_lra=float(data["output_lra"]) if "output_lra" in data else None,
+            output_thresh=float(data["output_thresh"]) if "output_thresh" in data else None,
+            normalization_type=str(data.get("normalization_type", default_norm_type)),
+        )
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        raise RenderError(f"invalid loudnorm JSON statistics: {exc}") from exc
+
+
+def measure_audio_loudness(
+    source: Path,
+    in_ms: int,
+    duration_ms: int,
+    binary: Path | None = None,
+) -> LoudnessStats:
+    """Pass 1 of two-pass EBU R128 loudness measurement (Task T3.1).
+
+    Executes FFmpeg with loudnorm print_format=json into null muxer to measure
+    integrated loudness, true peak, loudness range, input threshold, and target offset.
     """
+    if binary is None:
+        binary = find_ffmpeg()
+    if not source.exists():
+        raise RenderError(f"cannot measure loudness: source file {source} does not exist")
+    if duration_ms <= 0:
+        raise RenderError(f"cannot measure loudness: invalid duration {duration_ms}ms")
+
+    cmd = [
+        str(binary),
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-nostats",
+        "-ss",
+        f"{in_ms / 1000:.3f}",
+        "-t",
+        f"{duration_ms / 1000:.3f}",
+        "-i",
+        str(source),
+        "-vn",
+        "-sn",
+        "-dn",
+        "-af",
+        f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:print_format=json",
+        "-f",
+        "null",
+        "-",
+    ]
+    timeout_s = max(30.0, (duration_ms / 1000.0) * 5.0)
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            check=False,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RenderError(
+            f"loudness measurement timed out after {timeout_s:.1f}s for {source}"
+        ) from exc
+
+    if proc.returncode != 0:
+        raise RenderError(
+            f"loudness measurement failed ({proc.returncode}): "
+            f"{proc.stderr.decode('utf-8', 'replace')[-800:]}"
+        )
+
+    stderr_text = proc.stderr.decode("utf-8", "replace")
+    return _parse_loudnorm_stats(stderr_text, default_norm_type="dynamic")
+
+
+def audio_filter(measured: LoudnessStats | None = None, linear: bool = False) -> str:
+    """EBU R128 normalisation to the delivery target.
+
+    If `measured` is provided and `linear=True`, applies two-pass linear normalisation
+    with static gain scaling and True Peak ceiling, eliminating dynamic volume pumping.
+    If `measured` is None, falls back to single-pass dynamic normalisation for working renders.
+    """
+    if measured is not None and linear:
+        return (
+            f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:"
+            f"measured_I={measured.input_i:.2f}:measured_TP={measured.input_tp:.2f}:"
+            f"measured_LRA={measured.input_lra:.2f}:measured_thresh={measured.input_thresh:.2f}:"
+            f"offset={measured.target_offset:.2f}:linear=true:print_format=json,"
+            f"aresample={DELIVERY_AUDIO_RATE}"
+        )
     return (
         f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11,"
         f"aresample={DELIVERY_AUDIO_RATE}"
@@ -676,6 +822,8 @@ class RenderResult:
     encoder: Encoder
     captions_burned_in: bool
     ffmpeg_version: str
+    loudness_pass1: LoudnessStats | None = None
+    loudness_pass2: LoudnessStats | None = None
 
     @property
     def duration_ms(self) -> int:
@@ -878,6 +1026,21 @@ def render_clip(
     clip_fps = fps if fps is not None else frame_rate(source, binary)
     video_args = deliverable_video_args(encoder, crf, fps=clip_fps, deliverable=deliverable)
 
+    loudness_p1: LoudnessStats | None = None
+    loudness_p2: LoudnessStats | None = None
+    if deliverable:
+        loudness_p1 = measure_audio_loudness(
+            source=source,
+            in_ms=clip.in_ms,
+            duration_ms=duration_ms,
+            binary=binary,
+        )
+        af_chain = audio_filter(measured=loudness_p1, linear=True)
+        loglevel_args = ["-loglevel", "info"]
+    else:
+        af_chain = audio_filter()
+        loglevel_args = ["-loglevel", "error"]
+
     timeout_s = max(60.0, (duration_ms / 1000.0) * 10.0)
     try:
         try:
@@ -885,8 +1048,7 @@ def render_clip(
                 [
                     str(binary),
                     "-hide_banner",
-                    "-loglevel",
-                    "error",
+                    *loglevel_args,
                     *decode_threads,
                     "-ss",
                     f"{clip.in_ms / 1000:.3f}",
@@ -897,7 +1059,7 @@ def render_clip(
                     "-vf",
                     filters,
                     "-af",
-                    audio_filter(),
+                    af_chain,
                     "-c:v",
                     encoder.value,
                     *video_args,
@@ -942,6 +1104,13 @@ def render_clip(
                 f"{result.stderr.decode('utf-8', 'replace')[-800:]}"
             )
 
+        if deliverable and loudness_p1 is not None:
+            stderr_text = result.stderr.decode("utf-8", "replace")
+            try:
+                loudness_p2 = _parse_loudnorm_stats(stderr_text, default_norm_type="linear")
+            except RenderError:
+                loudness_p2 = None
+
         # Measure before publication. A short/broken file is never visible under the delivery
         # name, even briefly.
         measured_ms = probe_duration_ms(staging, binary)
@@ -964,4 +1133,6 @@ def render_clip(
         encoder=encoder,
         captions_burned_in=True,
         ffmpeg_version=version,
+        loudness_pass1=loudness_p1,
+        loudness_pass2=loudness_p2,
     )

@@ -505,6 +505,7 @@ class Output:
     # here genuinely means "none", because a post with no hashtags is a real deliverable.
     hashtags_ckb: tuple[str, ...] = ()
     silence_removed_ms: int = 0
+    loudness: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for name in ("title_ckb", "description_ckb", "crop_target", "caption_style"):
@@ -520,9 +521,11 @@ class Output:
         ):
             raise ValueError("output.hashtags_ckb must be a tuple of strings")
         _strict_json_int(self.silence_removed_ms, "output.silence_removed_ms", minimum=0)
+        if self.loudness is not None and not isinstance(self.loudness, dict):
+            raise ValueError("output.loudness must be a dictionary or None")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "title_ckb": self.title_ckb,
             "description_ckb": self.description_ckb,
             "crop_target": self.crop_target,
@@ -531,6 +534,9 @@ class Output:
             "hashtags_ckb": list(self.hashtags_ckb),
             "silence_removed_ms": self.silence_removed_ms,
         }
+        if self.loudness is not None:
+            data["loudness"] = dict(self.loudness)
+        return data
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Output:
@@ -540,11 +546,12 @@ class Output:
             required=frozenset(
                 {"title_ckb", "description_ckb", "crop_target", "caption_style", "durations"}
             ),
-            optional=frozenset({"hashtags_ckb", "silence_removed_ms"}),
+            optional=frozenset({"hashtags_ckb", "silence_removed_ms", "loudness"}),
         )
         raw_durations = _strict_json_array(fields["durations"], "output.durations")
         raw_hashtags = _strict_json_array(fields.get("hashtags_ckb", []), "output.hashtags_ckb")
         raw_silence = fields.get("silence_removed_ms", 0)
+        raw_loudness = fields.get("loudness")
         return Output(
             title_ckb=_strict_json_string(fields["title_ckb"], "output.title_ckb"),
             description_ckb=_strict_json_string(
@@ -561,6 +568,7 @@ class Output:
             silence_removed_ms=_strict_json_int(
                 raw_silence, "output.silence_removed_ms", minimum=0
             ),
+            loudness=dict(raw_loudness) if isinstance(raw_loudness, dict) else None,
         )
 
 

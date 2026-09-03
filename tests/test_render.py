@@ -48,6 +48,7 @@ from hawedit.render import (
     VERTICAL_HEIGHT,
     VERTICAL_WIDTH,
     Encoder,
+    LoudnessStats,
     Reframe,
     RenderError,
     _publish_render,
@@ -59,6 +60,7 @@ from hawedit.render import (
     encoder_available,
     frame_duration_ms,
     frame_rate,
+    measure_audio_loudness,
     punch_in_schedule,
     quality_args,
     render_clip,
@@ -1740,3 +1742,146 @@ def test_a_punch_in_keeps_the_face_on_the_composition_line() -> None:
         punch_ins=((5000, 1.15),),
     )
     assert "out_h/2" in filter_expr_no_face
+
+
+def test_audio_filter_linear_formatting() -> None:
+    """Task T3.1: audio_filter formats measured two-pass parameters with linear=true."""
+    stats = LoudnessStats(
+        input_i=-21.5,
+        input_tp=-14.2,
+        input_lra=6.3,
+        input_thresh=-32.1,
+        target_offset=1.2,
+    )
+    chain = audio_filter(measured=stats, linear=True)
+    assert "measured_I=-21.50" in chain
+    assert "measured_TP=-14.20" in chain
+    assert "measured_LRA=6.30" in chain
+    assert "measured_thresh=-32.10" in chain
+    assert "offset=1.20" in chain
+    assert "linear=true" in chain
+    assert "print_format=json" in chain
+    assert f"aresample={DELIVERY_AUDIO_RATE}" in chain
+
+
+def test_audio_filter_default_preserves_dynamic_chain() -> None:
+    """The default audio_filter keeps dynamic loudnorm for fast working renders."""
+    chain = audio_filter()
+    assert "measured_I" not in chain
+    assert "linear=true" not in chain
+    assert "print_format=json" not in chain
+    assert "loudnorm=" in chain
+
+
+def test_loudness_stats_dict_roundtrip() -> None:
+    """LoudnessStats serializes losslessly to and from dict."""
+    stats = LoudnessStats(
+        input_i=-21.05,
+        input_tp=-18.06,
+        input_lra=2.3,
+        input_thresh=-31.05,
+        target_offset=0.03,
+        output_i=-14.02,
+        output_tp=-1.5,
+        output_lra=2.1,
+        output_thresh=-24.02,
+        normalization_type="linear",
+    )
+    d = stats.to_dict()
+    restored = LoudnessStats.from_dict(d)
+    assert restored == stats
+
+
+@needs_ffmpeg
+def test_measure_audio_loudness_parses_json_stats(tmp_path: Path) -> None:
+    """Task T3.1 / AC-1: Pass 1 loudnorm analysis parses valid statistics from audio."""
+    binary = find_ffmpeg()
+    assert binary is not None
+    audio_file = tmp_path / "test_audio.wav"
+    subprocess.run(
+        [
+            str(binary),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:duration=3:sample_rate=48000",
+            "-y",
+            str(audio_file),
+        ],
+        check=True,
+    )
+    stats = measure_audio_loudness(audio_file, in_ms=0, duration_ms=2000, binary=binary)
+    assert isinstance(stats, LoudnessStats)
+    assert stats.input_i < 0.0
+    assert stats.input_tp < 0.0
+    assert stats.input_lra >= 0.0
+    assert stats.input_thresh < 0.0
+
+
+@needs_ffmpeg
+def test_loudnorm_runs_linear_with_measured_inputs(tmp_path: Path) -> None:
+    """Task T3.1 / AC-3: deliverable render executes two-pass linear loudnorm."""
+    work = tmp_path / "deliverable_loudnorm"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip.mp4"
+    result = render_clip(
+        _clip(),
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        deliverable=True,
+    )
+    assert result.loudness_pass1 is not None
+    assert result.loudness_pass1.input_i < 0.0
+    assert result.loudness_pass2 is not None
+    assert result.loudness_pass2.normalization_type == "linear"
+    assert result.loudness_pass2.output_tp is not None
+    assert result.loudness_pass2.output_tp <= -1.0 + 1e-3
+    assert result.loudness_pass2.output_i is not None
+
+
+def test_contract_records_two_pass_loudness() -> None:
+    """Task T3.1 / AC-5: Output contract serializes and restores two-pass loudness dict."""
+    loudness_record = {
+        "pass1": {
+            "input_i": -20.5,
+            "input_tp": -12.1,
+            "input_lra": 3.4,
+            "input_thresh": -30.5,
+            "target_offset": 0.5,
+            "normalization_type": "dynamic",
+        },
+        "pass2": {
+            "input_i": -20.5,
+            "input_tp": -12.1,
+            "input_lra": 3.4,
+            "input_thresh": -30.5,
+            "target_offset": 0.5,
+            "output_i": -14.01,
+            "output_tp": -1.5,
+            "output_lra": 3.2,
+            "output_thresh": -24.01,
+            "normalization_type": "linear",
+        },
+    }
+    out = Output(
+        title_ckb="سەردێڕ",
+        description_ckb="ڕوونکردنەوە",
+        crop_target="static_centre",
+        caption_style="classic",
+        durations=(15, 30),
+        loudness=loudness_record,
+    )
+    d = out.to_dict()
+    assert "loudness" in d
+    assert d["loudness"] == loudness_record
+    restored = Output.from_dict(d)
+    assert restored.loudness == loudness_record
