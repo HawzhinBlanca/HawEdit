@@ -65,6 +65,7 @@ __all__ = [
     "DELIVERY_TRUE_PEAK_DB",
     "ENCODER_PROBE_SIZE",
     "NVENC_MIN_FRAME",
+    "SPEECH_CHAIN_FILTERS",
     "VERTICAL_HEIGHT",
     "VERTICAL_WIDTH",
     "Encoder",
@@ -134,6 +135,16 @@ DELIVERY_TRUE_PEAK_DB: Final = -1.0
 # resample for nothing.
 DELIVERY_AUDIO_RATE: Final = 48_000
 DELIVERY_AUDIO_BITRATE: Final = "192k"
+
+# Task T3.2 / D-264: Native speech conditioning chain for pro Kurdish social reels.
+# Order: Highpass rumble cut (80 Hz) -> Adaptive FFT denoiser (-25 dB) ->
+# Sibilance de-esser (6 kHz) -> Presence EQ (+1.5 dB @ 3 kHz).
+SPEECH_CHAIN_FILTERS: Final = (
+    "highpass=f=80:p=2,"
+    "afftdn=nf=-25:tn=1,"
+    "deesser=i=0.4:m=0.5:f=0.5:s=o,"
+    "equalizer=f=3000:t=q:w=1.5:g=1.5"
+)
 
 
 def quality_args(encoder: Encoder, crf: int) -> list[str]:
@@ -289,11 +300,14 @@ def measure_audio_loudness(
     in_ms: int,
     duration_ms: int,
     binary: Path | None = None,
+    speech_chain: bool = False,
 ) -> LoudnessStats:
-    """Pass 1 of two-pass EBU R128 loudness measurement (Task T3.1).
+    """Pass 1 of two-pass EBU R128 loudness measurement (Task T3.1 / T3.2).
 
     Executes FFmpeg with loudnorm print_format=json into null muxer to measure
     integrated loudness, true peak, loudness range, input threshold, and target offset.
+    If `speech_chain=True`, conditioning filters (highpass, afftdn, deesser, EQ)
+    are applied so measurement reflects the final conditioned signal.
     """
     if binary is None:
         binary = find_ffmpeg()
@@ -302,6 +316,12 @@ def measure_audio_loudness(
     if duration_ms <= 0:
         raise RenderError(f"cannot measure loudness: invalid duration {duration_ms}ms")
 
+    af_chain = (
+        f"{SPEECH_CHAIN_FILTERS},"
+        f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:print_format=json"
+        if speech_chain
+        else f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:print_format=json"
+    )
     cmd = [
         str(binary),
         "-hide_banner",
@@ -318,7 +338,7 @@ def measure_audio_loudness(
         "-sn",
         "-dn",
         "-af",
-        f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:print_format=json",
+        af_chain,
         "-f",
         "null",
         "-",
@@ -346,15 +366,22 @@ def measure_audio_loudness(
     return _parse_loudnorm_stats(stderr_text, default_norm_type="dynamic")
 
 
-def audio_filter(measured: LoudnessStats | None = None, linear: bool = False) -> str:
-    """EBU R128 normalisation to the delivery target.
+def audio_filter(
+    measured: LoudnessStats | None = None,
+    linear: bool = False,
+    speech_chain: bool = False,
+) -> str:
+    """EBU R128 normalisation to the delivery target, with optional speech conditioning.
 
+    If `speech_chain=True`, prepends highpass, afftdn denoiser, de-esser, and presence EQ.
     If `measured` is provided and `linear=True`, applies two-pass linear normalisation
     with static gain scaling and True Peak ceiling, eliminating dynamic volume pumping.
     If `measured` is None, falls back to single-pass dynamic normalisation for working renders.
     """
+    prefix = f"{SPEECH_CHAIN_FILTERS}," if speech_chain else ""
     if measured is not None and linear:
         return (
+            f"{prefix}"
             f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:"
             f"measured_I={measured.input_i:.2f}:measured_TP={measured.input_tp:.2f}:"
             f"measured_LRA={measured.input_lra:.2f}:measured_thresh={measured.input_thresh:.2f}:"
@@ -362,6 +389,7 @@ def audio_filter(measured: LoudnessStats | None = None, linear: bool = False) ->
             f"aresample={DELIVERY_AUDIO_RATE}"
         )
     return (
+        f"{prefix}"
         f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11,"
         f"aresample={DELIVERY_AUDIO_RATE}"
     )
@@ -1034,8 +1062,9 @@ def render_clip(
             in_ms=clip.in_ms,
             duration_ms=duration_ms,
             binary=binary,
+            speech_chain=True,
         )
-        af_chain = audio_filter(measured=loudness_p1, linear=True)
+        af_chain = audio_filter(measured=loudness_p1, linear=True, speech_chain=True)
         loglevel_args = ["-loglevel", "info"]
     else:
         af_chain = audio_filter()

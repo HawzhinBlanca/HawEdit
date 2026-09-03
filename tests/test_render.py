@@ -44,6 +44,7 @@ from hawedit.render import (
     MAX_VERTICAL_ZOOM,
     MIN_SHOT_MS,
     NVENC_MIN_FRAME,
+    SPEECH_CHAIN_FILTERS,
     TARGET_FACE_HEIGHT_SHARE,
     VERTICAL_HEIGHT,
     VERTICAL_WIDTH,
@@ -1885,3 +1886,47 @@ def test_contract_records_two_pass_loudness() -> None:
     assert d["loudness"] == loudness_record
     restored = Output.from_dict(d)
     assert restored.loudness == loudness_record
+
+
+def test_audio_filter_speech_chain_formatting() -> None:
+    """Task T3.2 / AC-1: audio_filter prepends speech conditioning chain when enabled."""
+    chain_with_speech = audio_filter(speech_chain=True)
+    assert chain_with_speech.startswith(SPEECH_CHAIN_FILTERS)
+    assert "highpass=f=80:p=2" in chain_with_speech
+    assert "afftdn=nf=-25:tn=1" in chain_with_speech
+    assert "deesser=i=0.4:m=0.5:f=0.5:s=o" in chain_with_speech
+    assert "equalizer=f=3000:t=q:w=1.5:g=1.5" in chain_with_speech
+    assert "loudnorm=" in chain_with_speech
+    assert f"aresample={DELIVERY_AUDIO_RATE}" in chain_with_speech
+
+    # Normal working render filter does not include speech chain
+    chain_plain = audio_filter(speech_chain=False)
+    assert "highpass" not in chain_plain
+    assert "afftdn" not in chain_plain
+    assert "deesser" not in chain_plain
+    assert "equalizer" not in chain_plain
+
+
+@needs_ffmpeg
+def test_deliverable_render_incorporates_speech_chain(tmp_path: Path) -> None:
+    """Task T3.2 / AC-4: deliverable render executes speech chain + loudnorm without error."""
+    work = tmp_path / "deliverable_speech_chain"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip_speech.mp4"
+    result = render_clip(
+        _clip(),
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        deliverable=True,
+    )
+    assert Path(result.path).exists()
+    assert result.loudness_pass1 is not None
+    assert result.loudness_pass2 is not None
+    assert result.loudness_pass2.output_i is not None
+    assert abs(result.loudness_pass2.output_i - (-14.0)) <= 6.0
