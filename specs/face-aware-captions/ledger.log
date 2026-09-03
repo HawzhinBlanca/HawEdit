@@ -1,1 +1,2 @@
 TS=2026-09-03T19:31:30Z FEATURE=face-aware-captions TASK=T1 TESTS=test_intersects_caption_band_detects_overlap_and_clearance,test_should_use_top_caption_placement_evaluates_time_and_space VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T19:40:00Z FEATURE=face-aware-captions TASK=T2 TESTS=test_build_ass_emits_kurdish_top_for_overlapping_events,test_face_aware_caption_placement_renders_ink_in_upper_band VERIFY=pass REPORT=.gate/last-test-run.xml
