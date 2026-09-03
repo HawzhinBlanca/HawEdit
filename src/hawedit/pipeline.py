@@ -72,6 +72,7 @@ from hawedit.clip import (
     Clip,
     ClipTranscript,
     DiscoveryPath,
+    Provenance,
     Qc,
     QcRecord,
     RejectedCandidate,
@@ -2357,6 +2358,7 @@ def run_pipeline(
             else None
         ),
         qc=_qc_with_measured_flags(qc, selected),
+        provenance=Provenance.current(),
     )
     run = replace(run, boundary=boundary, clip=clip, selected_sentences=tuple(selected))
     log.finished("boundary")

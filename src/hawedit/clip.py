@@ -23,8 +23,12 @@ plus the human QC gate that diagram marks "(always)".
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+from pathlib import Path
 import re
+import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, ClassVar, Final
@@ -736,6 +740,69 @@ class Qc:
         )
 
 
+def _probe_ffmpeg_version() -> str:
+    from shutil import which
+
+    configured = os.environ.get("HAWEDIT_FFMPEG")
+    bin_path = Path(configured) if configured and Path(configured).is_file() else None
+    if bin_path is None:
+        vendored = Path(__file__).resolve().parents[2] / ".ffmpeg"
+        for name in ("ffmpeg", "ffmpeg.exe"):
+            if (vendored / name).is_file():
+                bin_path = vendored / name
+                break
+    if bin_path is None:
+        located = which("ffmpeg")
+        if located:
+            bin_path = Path(located)
+    if bin_path is not None:
+        try:
+            proc = subprocess.run(
+                [str(bin_path), "-version"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if proc.stdout:
+                line = proc.stdout.splitlines()[0].strip()
+                if line:
+                    return line
+        except Exception:
+            pass
+    return "7.1"
+
+
+def _probe_revisions_digest() -> str:
+    for candidate in (
+        Path("models/revisions.json"),
+        Path(__file__).resolve().parents[2] / "models" / "revisions.json",
+    ):
+        if candidate.is_file():
+            try:
+                return hashlib.sha256(candidate.read_bytes()).hexdigest()
+            except Exception:
+                pass
+    return "0" * 64
+
+
+def _probe_git_commit() -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        sha = proc.stdout.strip()
+        if len(sha) == 40 and all(c in "0123456789abcdefABCDEF" for c in sha):
+            return sha
+    except Exception:
+        pass
+    return "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class Provenance:
     """§7.6 / Task T1.6: A clip must say what made it.
@@ -837,17 +904,19 @@ class Provenance:
     @classmethod
     def current(
         cls,
-        git_commit: str = "unknown",
-        revisions_digest: str = "0" * 64,
+        git_commit: str | None = None,
+        revisions_digest: str | None = None,
         judge_prompt_sha256: str = "0" * 64,
         judge_response_id: str = "resp-default",
         profile: str = "production",
-        ffmpeg_version: str = "7.1",
+        ffmpeg_version: str | None = None,
         ffmpeg_buildconf_hash: str = "0" * 64,
     ) -> Provenance:
         return cls(
-            git_commit=git_commit,
-            revisions_digest=revisions_digest,
+            git_commit=git_commit if git_commit is not None else _probe_git_commit(),
+            revisions_digest=revisions_digest
+            if revisions_digest is not None
+            else _probe_revisions_digest(),
             judge_prompt_sha256=judge_prompt_sha256,
             judge_response_id=judge_response_id,
             thresholds={
@@ -868,7 +937,9 @@ class Provenance:
                 "max_vertical_zoom": 1.20,
             },
             ffmpeg={
-                "version": ffmpeg_version,
+                "version": ffmpeg_version
+                if ffmpeg_version is not None
+                else _probe_ffmpeg_version(),
                 "buildconf_hash": ffmpeg_buildconf_hash,
             },
             profile=profile,
