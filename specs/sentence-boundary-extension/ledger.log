@@ -1,0 +1,1 @@
+TS=2026-09-03T16:20:59Z FEATURE=sentence-boundary-extension TASK=T1 TESTS=test_boundary_extension_absorbs_fully_enclosed_sentence VERIFY=pass REPORT=.gate/last-test-run.xml
