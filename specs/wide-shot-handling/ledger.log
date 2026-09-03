@@ -1,1 +1,2 @@
 TS=2026-09-03T20:35:25Z FEATURE=wide-shot-handling TASK=T1 TESTS=test_blurred_fill_filter_generates_valid_filter_chain,test_decide_wide_shot_layout_selects_correct_strategy VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T20:44:02Z FEATURE=wide-shot-handling TASK=T2 TESTS=test_render_clip_supports_blurred_fill_layout VERIFY=pass REPORT=.gate/last-test-run.xml
