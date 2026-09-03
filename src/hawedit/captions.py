@@ -616,6 +616,14 @@ def wrap_title_lines(title: str, max_chars: int = DEFAULT_MAX_CHARS_PER_LINE) ->
 _WIDTH_CACHE: dict[tuple[str, str, int, int], int] = {}
 
 
+def _default_fonts_dir() -> Path:
+    import sys
+
+    checkout = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+    installed = Path(sys.prefix) / "share" / "hawedit" / "assets" / "fonts"
+    return checkout if checkout.is_dir() else installed
+
+
 def measure_rendered_caption_width(
     text: str,
     *,
@@ -645,21 +653,10 @@ def measure_rendered_caption_width(
     if binary is None:
         return int(len(cleaned) * font_size * 0.25)
 
-    if fonts_dir is None:
-        from hawedit.pipeline import FONTS_DIR
-
-        resolved_fonts = FONTS_DIR
-    else:
-        resolved_fonts = fonts_dir
+    resolved_fonts = fonts_dir or _default_fonts_dir()
 
     import subprocess
     import tempfile
-
-    try:
-        import cv2
-        import numpy as np
-    except ImportError:
-        return int(len(cleaned) * font_size * 0.25)
 
     escaped = _escape_ass_text(cleaned)
     ass_content = (
@@ -704,9 +701,21 @@ def measure_rendered_caption_width(
         ]
         try:
             res = subprocess.run(cmd, check=True, capture_output=True)
-            arr = np.frombuffer(res.stdout, dtype=np.uint8).reshape((canvas_height, canvas_width))
-            pts = cv2.findNonZero(arr)
-            width = int(cv2.boundingRect(pts)[2]) if pts is not None else 0
+            raw = res.stdout
+            min_x = canvas_width
+            max_x = -1
+            for row_start in range(0, len(raw), canvas_width):
+                row = raw[row_start : row_start + canvas_width]
+                if any(row):
+                    first_x = next(i for i, b in enumerate(row) if b > 0)
+                    last_x = (
+                        canvas_width - 1 - next(i for i, b in enumerate(reversed(row)) if b > 0)
+                    )
+                    if first_x < min_x:
+                        min_x = first_x
+                    if last_x > max_x:
+                        max_x = last_x
+            width = max_x - min_x + 1 if max_x >= min_x else 0
         except (subprocess.CalledProcessError, ValueError, OSError):
             width = int(len(cleaned) * font_size * 0.25)
 
