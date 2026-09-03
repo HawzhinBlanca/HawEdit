@@ -2396,6 +2396,7 @@ def run_pipeline(
         Reframe.STATIC_CENTRE: "static_centre",
         Reframe.FACE_TRACKED: "face_tracked",
         Reframe.SPEAKER_TRACKED: "speaker_face",
+        Reframe.BLURRED_FILL: "blurred_fill",
     }[reframe_mode]
     clip = Clip(
         clip_id=_clip_id(identifier, select_sentences),

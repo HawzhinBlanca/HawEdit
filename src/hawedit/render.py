@@ -75,7 +75,9 @@ __all__ = [
     "RenderResult",
     "assert_encoded_span",
     "audio_filter",
+    "blurred_fill_filter",
     "crop_filter",
+    "decide_wide_shot_layout",
     "deliverable_video_args",
     "encoder_available",
     "frame_duration_ms",
@@ -422,6 +424,7 @@ class Reframe(Enum):
     STATIC_CENTRE = "static_centre"
     FACE_TRACKED = "face_tracked"
     SPEAKER_TRACKED = "speaker_tracked"
+    BLURRED_FILL = "blurred_fill"
 
 
 class Encoder(Enum):
@@ -832,6 +835,89 @@ def crop_filter(
     )
 
 
+def blurred_fill_filter(
+    source_width: int,
+    source_height: int,
+    target_width: int = VERTICAL_WIDTH,
+    target_height: int = VERTICAL_HEIGHT,
+    *,
+    blur_radius: int = 20,
+    brightness: float = -0.15,
+    lanczos: bool = False,
+    unsharp: bool = False,
+) -> str:
+    """The ffmpeg filter chain placing a wide 16:9 shot over a blurred, darkened 9:16 background.
+
+    Used when a shot's face share is too small for a close crop and zooming in would violate the
+    sharpness floor (Task T2.2). The wide source is scaled sharp to target_width and centered,
+    while the background is scaled to cover the canvas, blurred with boxblur, and darkened with eq.
+
+    Args:
+        source_width: original source video width.
+        source_height: original source video height.
+        target_width: output vertical width (default 1080).
+        target_height: output vertical height (default 1920).
+        blur_radius: boxblur luma radius for background (default 20).
+        brightness: eq brightness adjustment for background (default -0.15).
+        lanczos: use high-quality Lanczos scaling for foreground.
+        unsharp: apply light sharpening to the sharp foreground.
+
+    Raises:
+        ValueError: source dimensions are non-positive.
+    """
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError(f"source dimensions must be positive, got {source_width}x{source_height}")
+
+    scale_flags = ":flags=lanczos" if lanczos else ""
+    unsharp_filter = ",unsharp=5:5:0.5:5:5:0.0" if unsharp else ""
+
+    return (
+        f"split=2[fg][bg];"
+        f"[bg]scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
+        f"crop={target_width}:{target_height},"
+        f"boxblur={blur_radius}:2,eq=brightness={brightness}[bg_blur];"
+        f"[fg]scale={target_width}:-2{scale_flags}{unsharp_filter}[fg_sharp];"
+        f"[bg_blur][fg_sharp]overlay=(W-w)/2:(H-h)/2"
+    )
+
+
+def decide_wide_shot_layout(
+    face_height_share: float,
+    face_sharpness: float,
+    *,
+    closeup_sharpness_median: float | None = None,
+    target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
+    max_wide_zoom: float = 2.5,
+    default_sharpness_floor: float = 50.0,
+) -> tuple[str, float]:
+    """Decide wide-shot presentation: standard crop, deep zoom, or blurred-fill (Task T2.2).
+
+    When face_height_share is below target_face_height_share (0.18), either:
+    1. Zoom past MAX_VERTICAL_ZOOM (up to max_wide_zoom) if face sharpness is at or above
+       the sharpness floor (0.6 * closeup_sharpness_median).
+    2. Switch to blurred-fill layout if the face lacks sharpness to withstand deep digital zoom.
+
+    Returns:
+        (layout_mode, zoom_factor) where layout_mode is "crop", "zoom", or "blurred_fill".
+    """
+    if face_height_share <= 0:
+        raise ValueError(f"face_height_share must be positive, got {face_height_share}")
+
+    if face_height_share >= target_face_height_share:
+        return "crop", 1.0
+
+    floor = (
+        closeup_sharpness_median * 0.6
+        if closeup_sharpness_median is not None
+        else default_sharpness_floor
+    )
+    if face_sharpness >= floor:
+        zoom = min(target_face_height_share / face_height_share, max_wide_zoom)
+        return "zoom", round(zoom, 3)
+
+    return "blurred_fill", 1.0
+
+
 @dataclass(frozen=True, slots=True)
 class RenderResult:
     """One rendered clip, and the choices that produced it."""
@@ -962,7 +1048,9 @@ def render_clip(
         raise TypeError("reframe must be a Reframe value")
     if effective_reframe is Reframe.STATIC_CENTRE and focus_points:
         raise ValueError("static reframe mode cannot carry focus points")
-    if effective_reframe is not Reframe.STATIC_CENTRE and not focus_points:
+    if effective_reframe is Reframe.BLURRED_FILL and focus_points:
+        raise ValueError("blurred_fill reframe mode cannot carry focus points")
+    if effective_reframe not in (Reframe.STATIC_CENTRE, Reframe.BLURRED_FILL) and not focus_points:
         raise ValueError("dynamic reframe mode needs focus points")
 
     # The final name is a write-once publication target, never ffmpeg's working file. Checking
@@ -1021,23 +1109,27 @@ def render_clip(
             f"§8.3 asserts against on every shipped clip."
         )
     output.parent.mkdir(parents=True, exist_ok=True)
-    filters = ",".join(
-        [
-            crop_filter(
-                source_width,
-                source_height,
-                focus_x,
-                focus_points=focus_points,
-                face_center_y=face_center_y,
-                face_height=face_height,
-                punch_ins=punch_ins,
-                clip_in_ms=clip.in_ms,
-                lanczos=deliverable,
-                unsharp=deliverable,
-            ),
-            subtitle_filter(ass_path, fonts_dir),
-        ]
-    )
+    if effective_reframe is Reframe.BLURRED_FILL:
+        video_filter = blurred_fill_filter(
+            source_width,
+            source_height,
+            lanczos=deliverable,
+            unsharp=deliverable,
+        )
+    else:
+        video_filter = crop_filter(
+            source_width,
+            source_height,
+            focus_x,
+            focus_points=focus_points,
+            face_center_y=face_center_y,
+            face_height=face_height,
+            punch_ins=punch_ins,
+            clip_in_ms=clip.in_ms,
+            lanczos=deliverable,
+            unsharp=deliverable,
+        )
+    filters = ",".join([video_filter, subtitle_filter(ass_path, fonts_dir)])
 
     # Keep the container suffix: ffmpeg infers its muxer from the path. NamedTemporaryFile is
     # closed before ffmpeg starts so Windows can replace its empty placeholder with the encode.

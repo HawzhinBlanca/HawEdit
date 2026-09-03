@@ -55,8 +55,10 @@ from hawedit.render import (
     _publish_render,
     assert_encoded_span,
     audio_filter,
+    blurred_fill_filter,
     crop_filter,
     cut_points_ms,
+    decide_wide_shot_layout,
     deliverable_video_args,
     encoder_available,
     frame_duration_ms,
@@ -1930,3 +1932,92 @@ def test_deliverable_render_incorporates_speech_chain(tmp_path: Path) -> None:
     assert result.loudness_pass2 is not None
     assert result.loudness_pass2.output_i is not None
     assert abs(result.loudness_pass2.output_i - (-14.0)) <= 6.0
+
+
+def test_blurred_fill_filter_generates_valid_filter_chain() -> None:
+    filt = blurred_fill_filter(1920, 1080)
+    assert "split=2[fg][bg]" in filt
+    assert "scale=1080:1920:force_original_aspect_ratio=increase" in filt
+    assert "crop=1080:1920" in filt
+    assert "boxblur=20:2" in filt
+    assert "eq=brightness=-0.15" in filt
+    assert "scale=1080:-2" in filt
+    assert "overlay=(W-w)/2:(H-h)/2" in filt
+
+    # Deliverable flags
+    filt_deliverable = blurred_fill_filter(1920, 1080, lanczos=True, unsharp=True)
+    assert ":flags=lanczos" in filt_deliverable
+    assert ",unsharp=5:5:0.5:5:5:0.0" in filt_deliverable
+
+    # Non-positive dimensions rejected
+    with pytest.raises(ValueError, match="must be positive"):
+        blurred_fill_filter(0, 1080)
+    with pytest.raises(ValueError, match="must be positive"):
+        blurred_fill_filter(1920, -1)
+
+
+def test_decide_wide_shot_layout_selects_correct_strategy() -> None:
+    # 1. Close-up / medium shot: face height share >= 0.18
+    mode, zoom = decide_wide_shot_layout(0.22, face_sharpness=100.0)
+    assert mode == "crop"
+    assert zoom == 1.0
+
+    # 2. Wide shot with high sharpness: face height share 0.08, sharpness 120.0 (floor = 60.0)
+    mode, zoom = decide_wide_shot_layout(
+        0.08,
+        face_sharpness=120.0,
+        closeup_sharpness_median=100.0,
+    )
+    assert mode == "zoom"
+    assert zoom == 1.875
+
+    # 3. Wide shot with low sharpness: face height share 0.08, sharpness 35.0 (< floor 60.0)
+    mode, zoom = decide_wide_shot_layout(
+        0.08,
+        face_sharpness=35.0,
+        closeup_sharpness_median=100.0,
+    )
+    assert mode == "blurred_fill"
+    assert zoom == 1.0
+
+    # 4. Invalid input
+    with pytest.raises(ValueError, match="must be positive"):
+        decide_wide_shot_layout(-0.05, 50.0)
+
+
+@needs_ffmpeg
+def test_render_clip_supports_blurred_fill_layout(tmp_path: Path) -> None:
+    work = tmp_path / "blurred_fill_render"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip_blurred_fill.mp4"
+
+    result = render_clip(
+        _clip(),
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        reframe=Reframe.BLURRED_FILL,
+    )
+    assert Path(result.path).is_file()
+    assert result.reframe is Reframe.BLURRED_FILL
+    assert result.width == VERTICAL_WIDTH
+    assert result.height == VERTICAL_HEIGHT
+
+    # Refuse focus points when BLURRED_FILL is requested (it is not a crop-based reframe)
+    with pytest.raises(ValueError, match="blurred_fill reframe mode cannot carry focus points"):
+        render_clip(
+            _clip(),
+            FIXTURE,
+            ass,
+            FONTS,
+            work / "refused.mp4",
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            reframe=Reframe.BLURRED_FILL,
+            focus_points=((0, 320),),
+        )
