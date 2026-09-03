@@ -1,1 +1,2 @@
 TS=2026-09-02T19:30:22Z FEATURE=reconciliation-gate TASK=T1 TESTS=test_reconcile_delivery_passes_valid_measurement VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-03T10:01:37Z FEATURE=reconciliation-gate TASK=T2 TESTS=test_delivery_refuses_duration_mismatch,test_delivery_refuses_geometry_mismatch,test_delivery_refuses_loudness_or_peak_violation,test_delivery_refuses_silence_math_mismatch VERIFY=pass REPORT=.gate/last-test-run.xml

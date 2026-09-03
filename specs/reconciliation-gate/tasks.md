@@ -1,7 +1,7 @@
 # Tasks — Reconciliation Gate in Delivery (`specs/reconciliation-gate`)
 
 - [x] T1 Define `DeliveryRefused` exception and reconciliation engine in `src/hawedit/delivery.py`
-- [ ] T2 Implement reconciliation tests for duration, geometry, loudness, and silence math
+- [x] T2 Implement reconciliation tests for duration, geometry, loudness, and silence math
 - [ ] T3 Implement reconciliation tests for visual cut alignment, caption ink energy, and face tracking
 - [ ] T4 Widen `ArtifactBundle` to 6 delivery artifacts including `<clip>.measured.json`
 - [ ] T5 Integrate reconciliation gate into `src/hawedit/pipeline.py` delivery stage
