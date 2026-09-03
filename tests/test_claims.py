@@ -1802,3 +1802,14 @@ def test_the_measured_edit_evidence_is_recorded() -> None:
         "the finding that every real defect was invisible to the suite is the one most likely to "
         "be tidied away later"
     )
+
+
+def test_reconciliation_refusal_evidence_ep29_s25_25_is_recorded() -> None:
+    """Task T1.2 / T6: Level B refusal evidence for ep29-s25-25 must be recorded,
+    confirming zero silent fallbacks when face presence is unsubstantiated (56.18% < 90%).
+    """
+    evidence = ROOT / "evidence" / "reconciliation-refusal-ep29-s25-25.md"
+    assert evidence.exists(), "reconciliation-refusal evidence must exist"
+    content = evidence.read_text(encoding="utf-8")
+    assert "face_tracking_unsubstantiated" in content
+    assert "56.18%" in content
