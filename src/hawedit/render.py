@@ -56,6 +56,7 @@ from hawedit.captions import (
 )
 from hawedit.clip import Clip
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
+from hawedit.silence import SilencePlan, silence_trim_filter
 from hawedit.transcripts import Word
 
 __all__ = [
@@ -307,6 +308,7 @@ def measure_audio_loudness(
     duration_ms: int,
     binary: Path | None = None,
     speech_chain: bool = False,
+    retained_intervals_ms: Sequence[tuple[int, int]] = (),
 ) -> LoudnessStats:
     """Pass 1 of two-pass EBU R128 loudness measurement (Task T3.1 / T3.2).
 
@@ -314,6 +316,7 @@ def measure_audio_loudness(
     integrated loudness, true peak, loudness range, input threshold, and target offset.
     If `speech_chain=True`, conditioning filters (highpass, afftdn, deesser, EQ)
     are applied so measurement reflects the final conditioned signal.
+    If `retained_intervals_ms` has multiple segments, dead air is excised before measurement.
     """
     if binary is None:
         binary = find_ffmpeg()
@@ -328,6 +331,26 @@ def measure_audio_loudness(
         if speech_chain
         else f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:print_format=json"
     )
+
+    if len(retained_intervals_ms) > 1:
+        atrim_parts: list[str] = []
+        concat_in: list[str] = []
+        for idx, (s_ms, e_ms) in enumerate(retained_intervals_ms):
+            s_sec = s_ms / 1000.0
+            e_sec = e_ms / 1000.0
+            atrim_parts.append(
+                f"[0:a]atrim=start={s_sec:.3f}:end={e_sec:.3f},asetpts=PTS-STARTPTS[a{idx}]"
+            )
+            concat_in.append(f"[a{idx}]")
+        atrim_graph = (
+            f"{';'.join(atrim_parts)};"
+            f"{''.join(concat_in)}concat=n={len(retained_intervals_ms)}:v=0:a=1[a_tightened];"
+            f"[a_tightened]{af_chain}"
+        )
+        audio_stream_args = ["-filter_complex", atrim_graph]
+    else:
+        audio_stream_args = ["-af", af_chain]
+
     cmd = [
         str(binary),
         "-hide_banner",
@@ -343,8 +366,7 @@ def measure_audio_loudness(
         "-vn",
         "-sn",
         "-dn",
-        "-af",
-        af_chain,
+        *audio_stream_args,
         "-f",
         "null",
         "-",
@@ -1132,6 +1154,7 @@ def render_clip(
     punch_ins: Sequence[tuple[int, float]] = (),
     fps: float | None = None,
     deliverable: bool = False,
+    silence_plan: SilencePlan | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1253,6 +1276,12 @@ def render_clip(
     clip_fps = fps if fps is not None else frame_rate(source, binary)
     video_args = deliverable_video_args(encoder, crf, fps=clip_fps, deliverable=deliverable)
 
+    effective_duration_ms = (
+        (duration_ms - silence_plan.total_removed_ms)
+        if (silence_plan is not None and silence_plan.total_removed_ms > 0)
+        else duration_ms
+    )
+
     loudness_p1: LoudnessStats | None = None
     loudness_p2: LoudnessStats | None = None
     if deliverable:
@@ -1262,12 +1291,37 @@ def render_clip(
             duration_ms=duration_ms,
             binary=binary,
             speech_chain=True,
+            retained_intervals_ms=silence_plan.retained_intervals_ms if silence_plan else (),
         )
         af_chain = audio_filter(measured=loudness_p1, linear=True, speech_chain=True)
         loglevel_args = ["-loglevel", "info"]
     else:
         af_chain = audio_filter()
         loglevel_args = ["-loglevel", "error"]
+
+    if silence_plan is not None and silence_plan.total_removed_ms > 0:
+        trim_graph = silence_trim_filter(silence_plan.retained_intervals_ms)
+        sub_f = subtitle_filter(ass_path, fonts_dir)
+        if effective_reframe is Reframe.BLURRED_FILL:
+            v_chain = f"[v_tightened]{video_filter}[v_bf];[v_bf]{sub_f}[v_out]"
+        else:
+            v_chain = f"[v_tightened]{video_filter},{sub_f}[v_out]"
+        full_complex = f"{trim_graph};{v_chain};[a_tightened]{af_chain}[a_out]"
+        stream_filter_args = [
+            "-filter_complex",
+            full_complex,
+            "-map",
+            "[v_out]",
+            "-map",
+            "[a_out]",
+        ]
+    else:
+        stream_filter_args = [
+            "-vf",
+            filters,
+            "-af",
+            af_chain,
+        ]
 
     timeout_s = max(60.0, (duration_ms / 1000.0) * 10.0)
     try:
@@ -1284,10 +1338,7 @@ def render_clip(
                     f"{duration_ms / 1000:.3f}",
                     "-i",
                     str(source),
-                    "-vf",
-                    filters,
-                    "-af",
-                    af_chain,
+                    *stream_filter_args,
                     "-c:v",
                     encoder.value,
                     *video_args,
@@ -1314,7 +1365,7 @@ def render_clip(
                     # tolerance, but 38 ms of source that no one reviewed. With it the artifact is
                     # exactly the span §8.3 says it is: measured 4162 ms for a 4162 ms clip.
                     "-t",
-                    f"{duration_ms / 1000:.3f}",
+                    f"{effective_duration_ms / 1000:.3f}",
                     "-y",
                     str(staging),
                 ],
@@ -1342,7 +1393,7 @@ def render_clip(
         # Measure before publication. A short/broken file is never visible under the delivery
         # name, even briefly.
         measured_ms = probe_duration_ms(staging, binary)
-        assert_encoded_span(measured_ms, duration_ms, frame_duration_ms(staging, binary))
+        assert_encoded_span(measured_ms, effective_duration_ms, frame_duration_ms(staging, binary))
 
         _publish_render(staging, output)
     finally:
@@ -1353,7 +1404,7 @@ def render_clip(
         path=str(output),
         width=VERTICAL_WIDTH,
         height=VERTICAL_HEIGHT,
-        requested_duration_ms=duration_ms,
+        requested_duration_ms=effective_duration_ms,
         measured_duration_ms=measured_ms,
         # The explicit mode was validated against the crop evidence before any encode work,
         # so the artifact cannot claim speaker/face tracking without time-varying points.

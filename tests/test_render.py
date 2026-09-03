@@ -73,6 +73,7 @@ from hawedit.render import (
     vertical_framing,
 )
 from hawedit.sentences import Sentence
+from hawedit.silence import SilencePlan
 from hawedit.transcripts import AsrProvenance, Word
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2107,3 +2108,39 @@ def test_render_clip_supports_eased_push_in_schedule(tmp_path: Path) -> None:
     assert Path(result.path).is_file()
     assert result.width == VERTICAL_WIDTH
     assert result.height == VERTICAL_HEIGHT
+
+
+@needs_ffmpeg
+def test_render_clip_supports_silence_plan(tmp_path: Path) -> None:
+    work = tmp_path / "silence_render"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip_silence.mp4"
+
+    clip = _clip()
+    duration = clip.out_ms - clip.in_ms
+    # Excise a 500 ms pause: retained is [0, 800] and [1300, duration]
+    plan = SilencePlan(
+        clip_in_ms=clip.in_ms,
+        clip_out_ms=clip.out_ms,
+        threshold_ms=400,
+        target_gap_ms=100,
+        retained_intervals_ms=((0, 800), (1300, duration)),
+        removed_intervals_ms=((800, 1300),),
+        total_removed_ms=500,
+    )
+
+    result = render_clip(
+        clip,
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        silence_plan=plan,
+    )
+    assert Path(result.path).is_file()
+    assert result.requested_duration_ms == duration - 500
+    assert abs(result.measured_duration_ms - (duration - 500)) <= 50

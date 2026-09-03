@@ -13789,5 +13789,32 @@ Implement an FFmpeg-native speech audio conditioning chain preceding the two-pas
 3. **Backward Compatibility**:
    The default profile (`podcast`) preserves exact existing behavior on ep29 and existing test fixtures.
 
+---
+
+## D-266 · Silence tightening wired end-to-end
+
+**Date:** 2026-09-04 · **Blueprint ref:** §2, §3 Stage 6, §5 · **Type:** architecture / audio-video editorial splicing
+
+**Context.**
+`specs/pro-grade-program/tasks.md` Task T3.3 and `HANDOFF.md` §5 identify unvoiced pauses (400–1200 ms) in podcast dialogue as a primary factor degrading audience retention. While `src/hawedit/silence.py` contained mathematical word-shifting helpers (`tighten_silence`, `tighten_sentences`), they were never wired into `render_clip` or `pipeline.py`. Crucially, `reconcile_delivery` Clause 4 strictly verifies `measured_removed = span_ms - measured_audio_dur` against `clip.output.silence_removed_ms`. Without physical media splicing in FFmpeg, any non-zero silence tightening claim failed reconciliation immediately.
+
+**Decision.**
+1. **End-to-End Media Splicing**:
+   - `hawedit.silence` exposes `plan_silence_tightening(words, clip_in_ms, clip_out_ms, threshold_ms, target_gap_ms)` producing `SilencePlan`.
+   - When active ($\Delta_{\text{total}} > 0$), FFmpeg's `trim`/`atrim` and `concat` filtergraph splices retained intervals with sub-millisecond precision.
+   - `assert_encoded_span` checks measured file duration against `effective_duration_ms = duration_ms - silence_removed_ms`.
+2. **Deterministic Timeline Remapping**:
+   - All downstream elements are remapped to the concatenated timeline:
+     * Sentences and word boundaries (`tighten_sentences`), ensuring `.ass` subtitle events match tightened speech.
+     * Camera punch-in schedules (`planned_punch_ins`).
+     * Face tracking keyframes (`focus_points`).
+     * Source shot cuts within the clip span.
+3. **Strict Fail-Safe Defaults**:
+   - As mandated by Task T3.3 ("Threshold is a parameter with no default until Hawa sets it from a measured A/B"), silence tightening is disabled by default (`silence_threshold_ms = 0`).
+   - Enabled explicitly via `--silence-threshold-ms <ms>` (e.g. 500 ms) or profile setting.
+4. **Reconciliation Compliance**:
+   - Delivery reconciliation Clause 1 (`duration`), Clause 4 (`silence_math_mismatch`), Clause 5 (`missing_punch_in_cut`), and Clause 6 (`caption ink energy`) all pass with zero discrepancies.
+
+
 
 

@@ -6417,3 +6417,65 @@ def test_run_pipeline_respects_content_type_defaults(tmp_path: Path) -> None:
     assert run_social.clip is not None
     assert run_social.clip.output is not None
     assert run_social.clip.output.caption_style == "word_highlight"
+
+
+def test_pipeline_silence_tightening_arguments_are_parsed() -> None:
+    """Task T3.3: --silence-threshold-ms and --silence-target-gap-ms CLI arguments."""
+    parser = build_parser()
+    args_default = parser.parse_args([str(FIXTURE)])
+    assert args_default.silence_threshold_ms == 0
+    assert args_default.silence_target_gap_ms == 150
+
+    args_custom = parser.parse_args(
+        [
+            str(FIXTURE),
+            "--silence-threshold-ms",
+            "400",
+            "--silence-target-gap-ms",
+            "120",
+        ]
+    )
+    assert args_custom.silence_threshold_ms == 400
+    assert args_custom.silence_target_gap_ms == 120
+
+
+@needs_ffmpeg
+def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_path: Path) -> None:
+    """Task T3.3: run_pipeline excises dead air, resyncs timeline, and reconciles delivery."""
+    work = tmp_path / "silence_pipeline_work"
+    transcript = a_transcript("silence_test")
+    verdict = a_verdict(100, 4_100)
+
+    # Words have gap: 1700..2000 = 300 ms.
+    # With threshold=200, target_gap=80: excess pause = 300 - 80 = 220 ms.
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="silence_test",
+        transcript=transcript,
+        select_sentences=(0, 1),
+        verdict=verdict,
+        qc=_test_qc(
+            reviewed_sha256="a2d14db869a95936122a81f44d65e021141d7fcfb49ba65f72ede7fa76479280"
+        ),
+        silence_threshold_ms=200,
+        silence_target_gap_ms=80,
+    )
+    assert run.clip is not None
+    assert run.clip.output is not None
+    assert run.clip.output.silence_removed_ms == 220
+    assert not isinstance(run.render, StageSkipped)
+    assert not isinstance(run.delivery, StageSkipped)
+    assert run.delivery is not None
+
+    # Verify delivery bundle files
+    assert Path(run.delivery.srt_path).is_file()
+    assert Path(run.delivery.edl_path).is_file()
+    assert Path(run.delivery.editing_json_path).is_file()
+    assert Path(run.delivery.measured_path).is_file()
+
+    # Verify measured duration
+    measured = json.loads(Path(run.delivery.measured_path).read_text(encoding="utf-8"))
+    # Fixture span is 4162 ms; tightened is 4162 - 220 = 3942 ms (within 40ms tolerance)
+    assert abs(measured["video"]["duration_ms"] - (4162 - 220)) <= 40
+    assert abs(measured["audio"]["duration_ms"] - (4162 - 220)) <= 40

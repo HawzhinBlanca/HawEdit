@@ -152,6 +152,13 @@ from hawedit.sentences import (
     anchors_for,
     segment_sentences,
 )
+from hawedit.silence import (
+    SilencePlan,
+    plan_silence_tightening,
+    remap_timestamp,
+    tighten_clip,
+    tighten_sentences,
+)
 from hawedit.timelens import VisualEvidenceInterval, interval_for_fusion
 from hawedit.transcripts import (
     NormalizedTranscript,
@@ -1610,6 +1617,8 @@ def run_pipeline(
     eased_push: bool = False,
     visual_variety: bool = False,
     content_type: ContentType | str | None = None,
+    silence_threshold_ms: int = 0,
+    silence_target_gap_ms: int = 150,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -2540,6 +2549,40 @@ def run_pipeline(
     ass_path = bundle.staged_path("ass")
     render_path = bundle.staged_path("mp4")
 
+    silence_plan: SilencePlan | None = None
+    render_selected = selected
+    render_duration_ms = clip.out_ms - clip.in_ms
+    effective_clip = clip
+
+    if silence_threshold_ms > 0:
+        silence_plan = plan_silence_tightening(
+            clip_words,
+            clip_in_ms=clip.in_ms,
+            clip_out_ms=clip.out_ms,
+            threshold_ms=silence_threshold_ms,
+            target_gap_ms=silence_target_gap_ms,
+        )
+        if silence_plan.total_removed_ms > 0:
+            render_selected, _ = tighten_sentences(
+                selected,
+                threshold_ms=silence_threshold_ms,
+                target_gap_ms=silence_target_gap_ms,
+            )
+            render_duration_ms = silence_plan.effective_duration_ms
+            effective_clip, _ = tighten_clip(
+                clip,
+                threshold_ms=silence_threshold_ms,
+                target_gap_ms=silence_target_gap_ms,
+            )
+            if effective_clip.output is not None:
+                effective_clip = replace(
+                    effective_clip,
+                    output=replace(
+                        effective_clip.output,
+                        durations=(max(1, round(render_duration_ms / 1000)),),
+                    ),
+                )
+
     try:
         bundle.write_text(
             "ass",
@@ -2547,11 +2590,11 @@ def run_pipeline(
             # time, lands past the end of a clip cut from mid-episode, and libass draws
             # nothing — a playable MP4 with no captions and no error.
             build_ass(
-                selected,
+                render_selected,
                 font_size=VIRAL_FONT_SIZE,
                 style=ct_profile.caption_style,
                 clip_in_ms=clip.in_ms,
-                clip_duration_ms=clip.out_ms - clip.in_ms,
+                clip_duration_ms=render_duration_ms,
                 # Not a taste setting, and so not a flag. Every clip this runner produces is
                 # a vertical social cut, and the library defaults are built for a subtitle
                 # track being proofread: 140 px of bottom margin puts Kurdish text under the
@@ -2562,7 +2605,7 @@ def run_pipeline(
                 # The judge already wrote a Kurdish title for this clip and the render threw it
                 # away. A social clip is scrolled past in its first second, and Stage 4's own
                 # words are a better hook than nothing on screen. D-259.
-                title_ckb=clip.output.title_ckb if clip.output else None,
+                title_ckb=effective_clip.output.title_ckb if effective_clip.output else None,
                 max_chars_per_line=POPUP_MAX_CHARS,
                 max_words_per_event=POPUP_MAX_WORDS,
             ),
@@ -2571,21 +2614,34 @@ def run_pipeline(
             source_dimensions = proxy_dimensions(source, ffmpeg)
         width, height = source_dimensions
         cut_pts = cut_points_ms(
-            tuple(word for sentence in selected for word in sentence.words),
+            tuple(word for sentence in render_selected for word in sentence.words),
             clip.in_ms,
         )
-        source_cuts = [
-            cut_ms - clip.in_ms
-            for cut_ms in ingested.shot_cuts_ms
-            if clip.in_ms <= cut_ms <= clip.out_ms
-        ]
+        if silence_plan is not None and silence_plan.total_removed_ms > 0:
+            source_cuts = [
+                remap_timestamp(cut_ms, silence_plan)
+                for cut_ms in ingested.shot_cuts_ms
+                if clip.in_ms <= cut_ms <= clip.out_ms
+            ]
+            remapped_focus_points = tuple(
+                (remap_timestamp(point.at_ms, silence_plan) + clip.in_ms, point.center_x)
+                for point in focus_points
+            )
+        else:
+            source_cuts = [
+                cut_ms - clip.in_ms
+                for cut_ms in ingested.shot_cuts_ms
+                if clip.in_ms <= cut_ms <= clip.out_ms
+            ]
+            remapped_focus_points = tuple((point.at_ms, point.center_x) for point in focus_points)
+
         planned_punch_ins: tuple[tuple[int, float], ...]
         if ct_profile.punch_in_cadence_ms == 0:
             planned_punch_ins = ()
         elif eased_push or profile == "deliverable" or ct_profile.eased_push:
             spans = shot_spans(
                 cut_pts,
-                clip.out_ms - clip.in_ms,
+                render_duration_ms,
                 source_cuts_ms=source_cuts,
                 min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
@@ -2593,19 +2649,19 @@ def run_pipeline(
         else:
             planned_punch_ins = punch_in_schedule(
                 cut_pts,
-                clip.out_ms - clip.in_ms,
+                render_duration_ms,
                 avoid_ms=source_cuts,
                 min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
         rendered = render_clip(
-            clip,
+            effective_clip,
             source,
             ass_path,
             FONTS_DIR,
             render_path,
             source_width=width,
             source_height=height,
-            focus_points=tuple((point.at_ms, point.center_x) for point in focus_points),
+            focus_points=remapped_focus_points,
             # From the *raw* track rather than the stabilized keyframes: `stabilize` answers
             # "where should the camera be", which is a question about the horizontal axis only,
             # and its keyframes carry no face box. D-258.
@@ -2619,6 +2675,7 @@ def run_pipeline(
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
             deliverable=(profile == "production"),
+            silence_plan=silence_plan,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:
@@ -2672,13 +2729,17 @@ def run_pipeline(
             }
             if rendered.loudness_pass2 is not None:
                 loudness_dict["pass2"] = rendered.loudness_pass2.to_dict()
-            if clip.output is not None:
-                clip = replace(
-                    clip,
-                    output=replace(clip.output, loudness=loudness_dict),
+            if effective_clip.output is not None:
+                effective_clip = replace(
+                    effective_clip,
+                    output=replace(effective_clip.output, loudness=loudness_dict),
                 )
-        editing_json = json.dumps(clip.to_dict(), ensure_ascii=False, indent=2)
-        srt = build_srt(selected, clip_in_ms=clip.in_ms, clip_duration_ms=clip.out_ms - clip.in_ms)
+        editing_json = json.dumps(effective_clip.to_dict(), ensure_ascii=False, indent=2)
+        srt = build_srt(
+            render_selected,
+            clip_in_ms=clip.in_ms,
+            clip_duration_ms=render_duration_ms,
+        )
         # The EDL's source timecodes are the *source's* timeline — where this clip was cut
         # from — so it takes the source's own frame rate. NTSC 30000/1001 selects SMPTE
         # drop-frame numbering; unsupported rates land here instead of silently drifting.
@@ -2697,7 +2758,7 @@ def run_pipeline(
         measurement = measure_clip(render_path, ass_path=ass_path, ffmpeg=ffmpeg)
         bundle.write_text("measured.json", measurement.to_json())
         reconcile_delivery(
-            clip=clip,
+            clip=effective_clip,
             measurement=measurement,
             captions_burned_in=rendered.captions_burned_in,
             planned_punch_ins=planned_punch_ins,
@@ -2745,6 +2806,7 @@ def run_pipeline(
     rendered = replace(rendered, path=str(final_render))
     return replace(
         run,
+        clip=effective_clip,
         render=rendered,
         delivery=Delivery(
             srt_path=str(final_srt),
@@ -3020,6 +3082,21 @@ def build_parser() -> argparse.ArgumentParser:
             "source content format profile driving editorial defaults (Task T4.5, ADR D-265): "
             "podcast (default), interview, news, social"
         ),
+    )
+    parser.add_argument(
+        "--silence-threshold-ms",
+        type=int,
+        default=0,
+        help=(
+            "pause duration threshold in ms above which dead air is tightened "
+            "(Task T3.3, ADR D-266; default 0 = disabled)"
+        ),
+    )
+    parser.add_argument(
+        "--silence-target-gap-ms",
+        type=int,
+        default=150,
+        help="target pause duration in ms to retain when tightening dead air (default: 150)",
     )
     parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
@@ -3367,6 +3444,8 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         eased_push=args.eased_push,
         visual_variety=args.visual_variety,
         content_type=getattr(args, "content_type", "podcast"),
+        silence_threshold_ms=getattr(args, "silence_threshold_ms", 0),
+        silence_target_gap_ms=getattr(args, "silence_target_gap_ms", 150),
     )
 
 

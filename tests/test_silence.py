@@ -8,6 +8,9 @@ from hawedit.boundary import Boundary
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
 from hawedit.sentences import Sentence
 from hawedit.silence import (
+    plan_silence_tightening,
+    remap_timestamp,
+    silence_trim_filter,
     tighten_clip,
     tighten_sentences,
     tighten_silence,
@@ -198,3 +201,106 @@ def test_tighten_silence_short_or_empty_sequence() -> None:
     assert tighten_silence(()) == ((), 0)
     w = _make_word("تەنیا", 100, 300)
     assert tighten_silence((w,)) == ((w,), 0)
+
+
+def test_plan_silence_tightening_identifies_dead_air_and_retained_intervals() -> None:
+    words = (
+        _make_word("سلێمانی", 1000, 2000),
+        # Gap: 2000 to 3500 = 1500 ms (> 600 threshold). Keep 150 -> Excise 2150 to 3500 (1350 ms).
+        _make_word("جووانە", 3500, 4500),
+    )
+    # Clip: 500 to 6000 (total duration 5500 ms)
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=500,
+        clip_out_ms=6000,
+        threshold_ms=600,
+        target_gap_ms=150,
+    )
+
+    assert plan.total_removed_ms == 1350
+    assert plan.effective_duration_ms == 5500 - 1350  # 4150 ms
+    assert len(plan.removed_intervals_ms) == 1
+    # Relative to clip_in_ms (500):
+    # Cut in source is [2150, 3500] -> [1650, 3000] in clip time
+    assert plan.removed_intervals_ms[0] == (1650, 3000)
+    assert len(plan.retained_intervals_ms) == 2
+    assert plan.retained_intervals_ms[0] == (0, 1650)
+    assert plan.retained_intervals_ms[1] == (3000, 5500)
+
+
+def test_plan_silence_tightening_no_excess_pause_returns_single_interval() -> None:
+    words = (
+        _make_word("هەولێر", 1000, 1800),
+        # Gap: 1800 to 2200 = 400 ms (<= 600 threshold)
+        _make_word("گەورەیە", 2200, 3000),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=500,
+        clip_out_ms=4000,
+        threshold_ms=600,
+        target_gap_ms=150,
+    )
+
+    assert plan.total_removed_ms == 0
+    assert plan.effective_duration_ms == 3500
+    assert plan.removed_intervals_ms == ()
+    assert plan.retained_intervals_ms == ((0, 3500),)
+
+
+def test_plan_silence_tightening_input_validation() -> None:
+    words = (_make_word("وشە", 100, 200),)
+    with pytest.raises(ValueError, match="threshold_ms must be positive"):
+        plan_silence_tightening(words, 0, 1000, threshold_ms=0)
+    with pytest.raises(ValueError, match="target_gap_ms cannot be negative"):
+        plan_silence_tightening(words, 0, 1000, target_gap_ms=-1)
+    with pytest.raises(ValueError, match="must be strictly less than threshold_ms"):
+        plan_silence_tightening(words, 0, 1000, threshold_ms=400, target_gap_ms=400)
+    with pytest.raises(ValueError, match="clip_out_ms .* must be strictly greater than clip_in_ms"):
+        plan_silence_tightening(words, 1000, 1000)
+
+
+def test_remap_timestamp_shifts_events_accurately() -> None:
+    words = (
+        _make_word("یەک", 1000, 2000),
+        # Pause: 2000 to 4000 = 2000 ms. Keep 150 -> Remove 2150 to 4000 (1850 ms).
+        _make_word("دوو", 4000, 5000),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=0,
+        clip_out_ms=6000,
+        threshold_ms=600,
+        target_gap_ms=150,
+    )
+
+    # Before the excised interval:
+    assert remap_timestamp(0, plan) == 0
+    assert remap_timestamp(1500, plan) == 1500
+    assert remap_timestamp(2150, plan) == 2150
+
+    # Inside the excised interval (clamped to start of gap):
+    assert remap_timestamp(2500, plan) == 2150
+    assert remap_timestamp(3500, plan) == 2150
+
+    # At boundary of resume:
+    assert remap_timestamp(4000, plan) == 2150  # 4000 - 1850 = 2150
+
+    # After the excised interval (shifted by 1850 ms):
+    assert remap_timestamp(4500, plan) == 4500 - 1850  # 2650
+    assert remap_timestamp(6000, plan) == 6000 - 1850  # 4150 == effective_duration_ms
+
+
+def test_silence_trim_filter_generates_valid_ffmpeg_filtergraph() -> None:
+    # Single interval -> empty string
+    assert silence_trim_filter(((0, 5000),)) == ""
+    assert silence_trim_filter(()) == ""
+
+    # Two intervals
+    filt = silence_trim_filter(((0, 1500), (3000, 5000)))
+    assert "[0:v]trim=start=0.000:end=1.500,setpts=PTS-STARTPTS[v0]" in filt
+    assert "[0:a]atrim=start=0.000:end=1.500,asetpts=PTS-STARTPTS[a0]" in filt
+    assert "[0:v]trim=start=3.000:end=5.000,setpts=PTS-STARTPTS[v1]" in filt
+    assert "[0:a]atrim=start=3.000:end=5.000,asetpts=PTS-STARTPTS[a1]" in filt
+    assert "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_tightened][a_tightened]" in filt
