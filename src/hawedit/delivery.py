@@ -469,6 +469,21 @@ def reconcile_delivery(
             measured=measurement.faces.face_detected_share,
         )
 
+    # Clause 7b: First-Frame Subject Face Gate (Task T2.3)
+    if (
+        clip.output
+        and clip.output.crop_target == "face_tracked"
+        and min_face_share is not None
+        and min_face_share > 0.0
+        and measurement.faces.first_frame_face_share is not None
+        and measurement.faces.first_frame_face_share < 0.05
+    ):
+        raise DeliveryRefused(
+            "first_frame_lacks_subject",
+            expected=">= 0.05 face share in opening frame",
+            measured=measurement.faces.first_frame_face_share,
+        )
+
     # Clause 8: Human Review Binding (Task T1.3 / Register Row 4)
     if (
         clip.qc

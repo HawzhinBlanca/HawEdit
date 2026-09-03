@@ -846,6 +846,7 @@ def _make_valid_reconciliation_pair() -> tuple[Clip, ClipMeasurement]:
             face_detected_share=1.0,
             median_face_height_share=0.25,
             median_y_center_share=0.38,
+            first_frame_face_share=0.25,
         ),
         captions=CaptionMeasurement(
             events_count=2,
@@ -999,6 +1000,25 @@ def test_delivery_refuses_face_tracking_claim_when_frames_lack_face() -> None:
             min_face_share=0.90,
         )
     assert exc_info.value.reason == "face_tracking_unsubstantiated"
+
+
+def test_delivery_refuses_when_first_frame_lacks_subject() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+
+    broken_faces = replace(measurement.faces, first_frame_face_share=0.0)
+    broken_meas = replace(measurement, faces=broken_faces)
+    with pytest.raises(DeliveryRefused, match="first_frame_lacks_subject") as exc_info:
+        reconcile_delivery(
+            clip,
+            broken_meas,
+            captions_burned_in=True,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[clip.in_ms + 500],
+            min_face_share=0.90,
+        )
+    assert exc_info.value.reason == "first_frame_lacks_subject"
 
 
 def test_delivery_refuses_qc_sha256_mismatch() -> None:

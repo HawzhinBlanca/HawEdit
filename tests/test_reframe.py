@@ -15,6 +15,7 @@ from hawedit.reframe import (
     SpeakerFocusPoint,
     choose_face,
     median_face_box,
+    probe_first_frame_face,
     stabilize,
     validate_speaker_focus_points,
 )
@@ -366,3 +367,74 @@ def test_stabilize_prevents_slow_panning_across_distant_empty_space_on_wide_shot
     # The camera should hold at 300 without panning across the empty table to 900
     positions = {k.center_x for k in keyframes}
     assert positions == {300}
+
+
+def test_probe_first_frame_face_reports_no_face_on_digit_fixture() -> None:
+    # The fixture contains large digits rather than human faces, so probe_first_frame_face
+    # accurately reports (False, None) rather than fabricating a face.
+    has_face, pt = probe_first_frame_face(FIXTURE, timestamp_ms=500)
+    assert has_face is False
+    assert pt is None
+
+
+def test_probe_first_frame_face_detects_face_and_respects_spatial_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import numpy as np
+
+    class _MockCapture:
+        def __init__(self, *args: Any) -> None:
+            pass
+
+        def isOpened(self) -> bool:
+            return True
+
+        def set(self, prop: int, val: float) -> None:
+            pass
+
+        def read(self) -> tuple[bool, Any]:
+            frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            return True, frame
+
+        def release(self) -> None:
+            pass
+
+    class _MockDetector:
+        def __init__(self, faces: list[tuple[int, int, int, int]]) -> None:
+            self._faces = faces
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            return self._faces
+
+    import cv2
+
+    monkeypatch.setattr(cv2, "VideoCapture", _MockCapture)
+    mock_frontal = _MockDetector([(400, 200, 200, 200)])
+    mock_profile = _MockDetector([])
+
+    def _mock_cascade(path: str) -> Any:
+        if "frontal" in path:
+            return mock_frontal
+        return mock_profile
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _mock_cascade)
+
+    # Within expected x
+    ok, pt = probe_first_frame_face(
+        FIXTURE, timestamp_ms=500, expected_center_x=520, max_x_drift=50
+    )
+    assert ok is True
+    assert pt is not None
+    assert pt.center_x == 500
+    assert pt.center_y == 300
+    assert pt.face_height == 200
+
+    # Beyond expected x (drift too large)
+    ok_drift, pt_drift = probe_first_frame_face(
+        FIXTURE, timestamp_ms=500, expected_center_x=800, max_x_drift=50
+    )
+    assert ok_drift is False
+    assert pt_drift is None

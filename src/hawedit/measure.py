@@ -126,6 +126,7 @@ class FaceTrackMeasurement:
     face_detected_share: float
     median_face_height_share: float | None
     median_y_center_share: float | None
+    first_frame_face_share: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -419,6 +420,7 @@ def probe_face_tracking(
     face_detected_count = 0
     height_shares: list[float] = []
     y_center_shares: list[float] = []
+    first_frame_face_share: float | None = None
 
     current_t_s = 0.0
     while current_t_s <= duration_s:
@@ -443,6 +445,10 @@ def probe_face_tracking(
             y_center = (float(y) + float(h) / 2.0) / float(height)
             height_shares.append(h_share)
             y_center_shares.append(y_center)
+            if samples_count == 1:
+                first_frame_face_share = round(h_share, 4)
+        elif samples_count == 1:
+            first_frame_face_share = 0.0
 
         current_t_s += step_s
 
@@ -467,6 +473,7 @@ def probe_face_tracking(
         face_detected_share=face_detected_share,
         median_face_height_share=median_h_share,
         median_y_center_share=median_y_center,
+        first_frame_face_share=first_frame_face_share,
     )
 
 

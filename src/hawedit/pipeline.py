@@ -54,7 +54,13 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.atomic_fs import write_text_atomic
-from hawedit.boundary import Boundary, BoundaryInputs, IncompleteSentence, fuse_boundary
+from hawedit.boundary import (
+    Boundary,
+    BoundaryInputs,
+    FirstFrameLacksSubject,
+    IncompleteSentence,
+    fuse_boundary,
+)
 from hawedit.captions import (
     POPUP_MAX_CHARS,
     POPUP_MAX_WORDS,
@@ -124,6 +130,7 @@ from hawedit.reframe import (
     SpeakerSubjectTracker,
     SubjectTracker,
     median_face_box,
+    probe_first_frame_face,
     stabilize,
     validate_speaker_focus_points,
 )
@@ -1573,6 +1580,7 @@ def run_pipeline(
     on_event: EventSink = discard,
     speaker_tracker: SpeakerSubjectTracker | None = None,
     profile: str = "default",
+    first_frame_gate: bool = False,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -2159,37 +2167,59 @@ def run_pipeline(
             timelens_intervals, anchor_in, anchor_out, identifier
         )
 
-    boundary = fuse_boundary(
-        BoundaryInputs(
-            anchor_in_ms=anchor_in,
-            anchor_out_ms=anchor_out,
-            sentence_complete=True,
-            # The join this runner exists to make: the shot cuts and speech regions below were
-            # measured on *this* video by Stage 0 a few lines above, not supplied as fixtures.
-            shot_cuts_ms=ingested.shot_cuts_ms,
-            vad_onset_ms=_vad_onset_for_anchor(ingested, anchor_in, anchor_out),
-            # §3 Stage 5 takes the latest of five out-point signals. This runner computed the
-            # VAD silences a few hundred lines above (`_pauses_between`), spent them on §4.2's
-            # sentence segmentation and then never handed Stage 5 its own — so `fuse_boundary`
-            # had a `natural_silence` branch no caller could reach. Speaker-turn signals now
-            # come only from an enabled, validated exclusive diarizer; an absent producer stays
-            # an explicit StageSkipped rather than an invented boundary. D-070.
-            natural_silence_ms=_natural_silence_for_anchor(ingested, anchor_out),
-            speaker_turn_start_ms=speaker_turn_start,
-            speaker_turn_end_ms=speaker_turn_end,
-            timelens_interval_start_ms=(
-                timelens_interval.start_ms if timelens_interval is not None else None
-            ),
-            timelens_interval_end_ms=(
-                timelens_interval.end_ms if timelens_interval is not None else None
-            ),
-            # Stage 0 probed this file's length, so Stage 5 can be told where it stops. Without
-            # it the 200 ms tail alone runs past the end of a short source — which is what this
-            # runner had been doing, shipping a clip 138 ms shorter than the boundary it
-            # recorded, until `render_clip` started measuring the artifact.
-            media_duration_ms=ingested.duration_ms,
+    first_frame_validator = None
+    if first_frame_gate and subject_tracker is not None:
+
+        def _validate_first_frame(cand_ms: int, _reason: str | None) -> bool:
+            try:
+                ok, _pt = probe_first_frame_face(source, cand_ms)
+                return ok
+            except Exception:
+                return False
+
+        first_frame_validator = _validate_first_frame
+
+    try:
+        boundary = fuse_boundary(
+            BoundaryInputs(
+                anchor_in_ms=anchor_in,
+                anchor_out_ms=anchor_out,
+                sentence_complete=True,
+                # The join this runner exists to make: the shot cuts and speech regions below were
+                # measured on *this* video by Stage 0 a few lines above, not supplied as fixtures.
+                shot_cuts_ms=ingested.shot_cuts_ms,
+                vad_onset_ms=_vad_onset_for_anchor(ingested, anchor_in, anchor_out),
+                # §3 Stage 5 takes the latest of five out-point signals. This runner computed the
+                # VAD silences a few hundred lines above (`_pauses_between`), spent them on §4.2's
+                # sentence segmentation and then never handed Stage 5 its own — so `fuse_boundary`
+                # had a `natural_silence` branch no caller could reach. Speaker-turn signals now
+                # come only from an enabled, validated exclusive diarizer; an absent producer stays
+                # an explicit StageSkipped rather than an invented boundary. D-070.
+                natural_silence_ms=_natural_silence_for_anchor(ingested, anchor_out),
+                speaker_turn_start_ms=speaker_turn_start,
+                speaker_turn_end_ms=speaker_turn_end,
+                timelens_interval_start_ms=(
+                    timelens_interval.start_ms if timelens_interval is not None else None
+                ),
+                timelens_interval_end_ms=(
+                    timelens_interval.end_ms if timelens_interval is not None else None
+                ),
+                # Stage 0 probed this file's length, so Stage 5 can be told where it stops. Without
+                # it the 200 ms tail alone runs past the end of a short source — which is what this
+                # runner had been doing, shipping a clip 138 ms shorter than the boundary it
+                # recorded, until `render_clip` started measuring the artifact.
+                media_duration_ms=ingested.duration_ms,
+                first_frame_validator=first_frame_validator,
+            )
         )
-    )
+    except FirstFrameLacksSubject as exc:
+        skipped = StageSkipped(
+            stage="boundary",
+            reason=f"first frame lacks active subject: {exc}",
+            blocked_by=("first frame subject tracking",),
+        )
+        log.finished("boundary", skipped.reason)
+        return replace(run, boundary=skipped)
 
     selected_words = {word for sentence in selected for word in sentence.words}
     uncaptioned = [

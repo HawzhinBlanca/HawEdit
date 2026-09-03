@@ -27,6 +27,7 @@ from hawedit.boundary import (
     Boundary,
     BoundaryInputs,
     BoundaryInvariantViolated,
+    FirstFrameLacksSubject,
     IncompleteSentence,
     assert_boundary_invariant,
     fuse_boundary,
@@ -670,3 +671,47 @@ def test_a_cut_exactly_at_the_anchor_cannot_change_the_in_point() -> None:
     at_anchor = fuse_boundary(inputs(shot_cuts_ms=(ANCHOR_IN,)))
     assert at_anchor.final_in_ms == ANCHOR_IN
     assert at_anchor.in_extended_by is None
+
+
+def test_a_clip_never_opens_on_a_frame_without_the_subject() -> None:
+    """Task T2.3 / CRIT-1: outward in-point candidates are filtered against the first frame.
+
+    When a preceding shot cut lands in a shot without the speaker (e.g. host drinking),
+    the first-frame gate rejects that candidate and chooses the next outward candidate
+    whose first frame actually contains the subject (e.g. vad_onset or anchor_in).
+    """
+    preceding_cut = ANCHOR_IN - 350
+    vad_onset = ANCHOR_IN - 200
+    expected_vad_cand = vad_onset - VAD_LEAD_IN_MS  # ANCHOR_IN - 320
+
+    def mock_validator(cand_ms: int, _reason: str | None) -> bool:
+        # Preceding shot cut has no face (host drinking)
+        if cand_ms == preceding_cut:
+            return False
+        # VAD onset has the active speaker
+        if cand_ms == expected_vad_cand:
+            return True
+        return True
+
+    boundary = fuse_boundary(
+        inputs(
+            shot_cuts_ms=(preceding_cut,),
+            vad_onset_ms=vad_onset,
+            first_frame_validator=mock_validator,
+        )
+    )
+    # The preceding shot cut was rejected; vad_onset won
+    assert boundary.final_in_ms == expected_vad_cand
+    assert boundary.in_extended_by == "vad_onset"
+
+
+def test_first_frame_gate_refuses_when_all_in_candidates_lack_subject() -> None:
+    """Task T2.3 / CRIT-2: refuse the clip if no candidate in-point contains the subject."""
+    with pytest.raises(FirstFrameLacksSubject, match="no candidate frame contains"):
+        fuse_boundary(
+            inputs(
+                shot_cuts_ms=(ANCHOR_IN - 200,),
+                vad_onset_ms=ANCHOR_IN - 100,
+                first_frame_validator=lambda _ms, _reason: False,
+            )
+        )

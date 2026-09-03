@@ -22,6 +22,7 @@ __all__ = [
     "SpeakerSubjectTracker",
     "SubjectTracker",
     "choose_face",
+    "probe_first_frame_face",
     "stabilize",
     "validate_speaker_focus_points",
 ]
@@ -281,6 +282,80 @@ class OpenCvFaceTracker:
         finally:
             capture.release()
         return tuple(points)
+
+
+def probe_first_frame_face(
+    source: Path,
+    timestamp_ms: int,
+    *,
+    min_face_share: float = 0.08,
+    expected_center_x: int | None = None,
+    max_x_drift: int | None = None,
+) -> tuple[bool, FocusPoint | None]:
+    """Inspect the frame at `timestamp_ms` to verify the presence of the tracked subject.
+
+    Returns (True, FocusPoint) if a face meeting or exceeding `min_face_share` is found at the
+    expected spatial region. Returns (False, None) if no face is found, or if the detected face
+    is too small or at a discordant horizontal position indicating a cut to an off-subject angle.
+    """
+    try:
+        import cv2 as imported_cv2
+    except ImportError as exc:
+        raise RuntimeError("face tracking needs the media extra (OpenCV)") from exc
+    cv2: Any = imported_cv2
+
+    cascades = Path(cv2.data.haarcascades)
+    frontal = cv2.CascadeClassifier(str(cascades / "haarcascade_frontalface_default.xml"))
+    profile = cv2.CascadeClassifier(str(cascades / "haarcascade_profileface.xml"))
+    if frontal.empty() or profile.empty():
+        raise RuntimeError(f"OpenCV could not load face detector cascades at {cascades}")
+
+    capture = cv2.VideoCapture(str(source))
+    if not capture.isOpened():
+        raise RuntimeError(f"OpenCV could not open {source} to probe first frame")
+    try:
+        capture.set(cv2.CAP_PROP_POS_MSEC, float(timestamp_ms))
+        ok, frame = capture.read()
+        if not ok or frame is None:
+            return False, None
+        height, width = frame.shape[:2]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        def boxes(classifier: Any, image: Any) -> list[tuple[int, int, int, int]]:
+            return [
+                (int(x), int(y), int(w), int(h))
+                for x, y, w, h in classifier.detectMultiScale(
+                    image, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
+                )
+            ]
+
+        faces = boxes(frontal, gray) + boxes(profile, gray)
+        faces += [(width - (x + w), y, w, h) for x, y, w, h in boxes(profile, cv2.flip(gray, 1))]
+        if not faces:
+            return False, None
+
+        valid_faces = [f for f in faces if (float(f[3]) / float(height)) >= min_face_share]
+        if not valid_faces:
+            return False, None
+
+        chosen = choose_face(tuple(valid_faces), expected_center_x)
+        if chosen is None:
+            return False, None
+
+        center_x = chosen[0] + chosen[2] // 2
+        center_y = chosen[1] + chosen[3] // 2
+        face_h = chosen[3]
+
+        if (
+            expected_center_x is not None
+            and max_x_drift is not None
+            and abs(center_x - expected_center_x) > max_x_drift
+        ):
+            return False, None
+
+        return True, FocusPoint(timestamp_ms, center_x, center_y, face_h)
+    finally:
+        capture.release()
 
 
 def median_face_box(points: Sequence[FocusPoint]) -> tuple[int | None, int | None]:

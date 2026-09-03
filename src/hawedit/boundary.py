@@ -36,6 +36,7 @@ it as one input among five is what keeps a visual model from silently truncating
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -138,6 +139,7 @@ __all__ = [
     "Boundary",
     "BoundaryInputs",
     "BoundaryInvariantViolated",
+    "FirstFrameLacksSubject",
     "IncompleteSentence",
     "assert_boundary_invariant",
     "fuse_boundary",
@@ -157,6 +159,10 @@ class IncompleteSentence(ValueError):
 
 class BoundaryInvariantViolated(ValueError):
     """Raised when Kurdish invariant #2 fails. The render gate."""
+
+
+class FirstFrameLacksSubject(ValueError):
+    """Raised when no outward in-point candidate contains the active subject. Task T2.3."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +186,8 @@ class BoundaryInputs:
     # formula unclamped — which is honest, not safe: the 200 ms tail alone can push `final_out`
     # past the end of the file, and ffmpeg encodes that successfully and truncates it.
     media_duration_ms: int | None = None
+    # Optional first-frame validator (Task T2.3): accepts (candidate_ms, reason) -> bool.
+    first_frame_validator: Callable[[int, str | None], bool] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,7 +417,25 @@ def fuse_boundary(inputs: BoundaryInputs, confidence: float | None = None) -> Bo
     if preceding_cuts:
         in_candidates.append((min(preceding_cuts), "shot_cut"))
 
-    final_in_ms, in_extended_by = min(in_candidates, key=lambda candidate: candidate[0])
+    if inputs.first_frame_validator is not None:
+        # Task T2.3: Order candidates from earliest outward expansion to latest inward anchor.
+        # Pick the earliest candidate whose first frame passes validation.
+        ordered_candidates = sorted(in_candidates, key=lambda candidate: candidate[0])
+        passed_candidate = None
+        for cand_ms, reason in ordered_candidates:
+            effective_ms = max(0, cand_ms)
+            if inputs.first_frame_validator(effective_ms, reason):
+                passed_candidate = (cand_ms, reason)
+                break
+        if passed_candidate is None:
+            cands = [c[0] for c in ordered_candidates]
+            raise FirstFrameLacksSubject(
+                f"first-frame gate refused all in-point candidates {cands}: "
+                "no candidate frame contains the active subject"
+            )
+        final_in_ms, in_extended_by = passed_candidate
+    else:
+        final_in_ms, in_extended_by = min(in_candidates, key=lambda candidate: candidate[0])
     if final_in_ms < 0:
         # A clip cannot start before the media does. Clamping here is safe for the
         # invariant: 0 <= anchor_in always, because negative anchors are refused above.
