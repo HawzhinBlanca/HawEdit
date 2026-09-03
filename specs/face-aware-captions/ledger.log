@@ -1,0 +1,1 @@
+TS=2026-09-03T19:31:30Z FEATURE=face-aware-captions TASK=T1 TESTS=test_intersects_caption_band_detects_overlap_and_clearance,test_should_use_top_caption_placement_evaluates_time_and_space VERIFY=pass REPORT=.gate/last-test-run.xml
