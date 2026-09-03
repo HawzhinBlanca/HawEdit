@@ -1,0 +1,1 @@
+TS=2026-09-03T17:18:16Z FEATURE=hook-taxonomy TASK=T1 TESTS=test_verdict_hook_type_validates_canonical_taxonomy VERIFY=pass REPORT=.gate/last-test-run.xml
