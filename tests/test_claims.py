@@ -1847,3 +1847,47 @@ def test_the_reopened_rows_cite_the_correction_adr() -> None:
 
     for phrase in ("D-262", "pro-edit", "T6", "T7", "T4.9", "T2.1"):
         assert phrase in evidence_text, f"evidence file must discuss {phrase}"
+
+
+def test_real_media_tier_fixture_provenance_and_binding_is_recorded() -> None:
+    """Task T1.4: Real-media test tier provenance and binding must be recorded."""
+    import json
+
+    provenance_file = ROOT / "tests" / "media" / "provenance.json"
+    assert provenance_file.is_file(), "tests/media/provenance.json must exist"
+    meta = json.loads(provenance_file.read_text(encoding="utf-8"))
+    assert meta["schema"] == 1
+    assert meta["filename"] == "ep29-chunk50min.mp4"
+    assert meta["sha256"] == "47235f4251961518d9bbae1ecbda9c7f5166c5baa57a2be98f5ec0eb64e6f863"
+
+    evidence_file = ROOT / "evidence" / "real-media-tier.md"
+    assert evidence_file.is_file(), "evidence/real-media-tier.md must exist"
+    evidence_text = evidence_file.read_text(encoding="utf-8")
+    assert (
+        "media_sha256: 47235f4251961518d9bbae1ecbda9c7f5166c5baa57a2be98f5ec0eb64e6f863"
+        in evidence_text
+    )
+    assert "HAWAPC01" in evidence_text
+
+    conftest_file = ROOT / "tests" / "conftest.py"
+    assert conftest_file.is_file()
+    conftest_text = conftest_file.read_text(encoding="utf-8")
+    assert "pytest_ignore_collect" in conftest_text
+    assert "PINNED_EP29_CHUNK50MIN_SHA256" in conftest_text
+
+    media_test_file = ROOT / "tests" / "media" / "test_real_media_tier.py"
+    assert media_test_file.is_file(), "tests/media/test_real_media_tier.py must exist"
+
+
+def test_single_writer_checkout_policy_is_bound_in_agents_md() -> None:
+    """Task T0.4: AGENTS.md must bind the single-writer checkout policy."""
+    agents_md = ROOT / "AGENTS.md"
+    assert agents_md.is_file(), "AGENTS.md must exist"
+    agents_text = agents_md.read_text(encoding="utf-8")
+    assert "Single-writer checkout policy" in agents_text
+    assert "Exactly one active agent may modify the primary checkout at any time" in agents_text
+
+    canon_video_rule = ROOT / ".agents" / "rules" / "canonical-source-video.md"
+    assert canon_video_rule.is_file(), ".agents/rules/canonical-source-video.md must exist"
+    canon_text = canon_video_rule.read_text(encoding="utf-8")
+    assert "VbX8UWwl1c4" in canon_text
