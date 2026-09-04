@@ -1,1 +1,2 @@
 TS=2026-09-04T03:26:26Z FEATURE=profile-production TASK=T1 TESTS=test_cli_parses_profile_argument,test_the_contract_records_the_profile_used VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T03:35:35Z FEATURE=profile-production TASK=T2 TESTS=test_the_production_profile_cannot_deliver_with_a_skipped_stage,test_delivery_refuses_production_profile_without_human_review VERIFY=pass REPORT=.gate/last-test-run.xml
