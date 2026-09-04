@@ -1,0 +1,1 @@
+TS=2026-09-04T07:21:31Z FEATURE=mean-logprob-semantics TASK=T1 TESTS=test_mean_logprob_is_a_per_token_mean_in_nats VERIFY=pass REPORT=.gate/last-test-run.xml
