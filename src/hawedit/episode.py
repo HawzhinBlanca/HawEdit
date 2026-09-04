@@ -319,6 +319,10 @@ def reconcile_episode_manifest(
         ]
         for suffix in required_suffixes:
             target = clip_dir / f"{clip.clip_id}{suffix}"
+            if suffix == ".cover.png" and not target.is_file():
+                alt_cover = clip_dir / "cover.png"
+                if alt_cover.is_file():
+                    target = alt_cover
             if not target.is_file() or target.stat().st_size == 0:
                 raise EpisodeReconciliationError(
                     f"missing required delivery file for clip {clip.clip_id}: {target}"
