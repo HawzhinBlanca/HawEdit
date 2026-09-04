@@ -1,0 +1,1 @@
+TS=2026-09-04T08:28:18Z FEATURE=test-quality-floor TASK=T1 TESTS=test_the_gate_refuses_any_skipped_test VERIFY=pass REPORT=.gate/last-test-run.xml
