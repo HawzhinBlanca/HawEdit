@@ -1,0 +1,1 @@
+TS=2026-09-04T04:58:32Z FEATURE=judge-calibration TASK=T1 TESTS=test_prompt_template_contains_calibrated_sorani_rubric_anchors,test_clip_assert_renderable_gates_meaning_fidelity,test_clip_assert_renderable_gates_cultural_landing VERIFY=pass REPORT=.gate/last-test-run.xml
