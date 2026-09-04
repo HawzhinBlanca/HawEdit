@@ -1,1 +1,2 @@
 TS=2026-09-04T05:55:53Z FEATURE=run-cost-accounting TASK=T1 TESTS=test_billed_call_validates_invariants,test_run_event_billed_state_roundtrips_through_jsonl VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T06:05:06Z FEATURE=run-cost-accounting TASK=T2 TESTS=test_every_billed_call_is_in_the_run_report VERIFY=pass REPORT=.gate/last-test-run.xml
