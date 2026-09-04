@@ -1,0 +1,1 @@
+TS=2026-09-04T18:12:14Z FEATURE=reproducibility-proof TASK=T1 TESTS=test_two_renders_of_one_edit_agree VERIFY=pass REPORT=.gate/last-test-run.xml
