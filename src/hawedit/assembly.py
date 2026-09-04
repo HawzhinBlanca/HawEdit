@@ -10,24 +10,33 @@ strict §2 thresholds on hook strength and misleading-edit risk (AC-8).
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
+from hawedit.captions import CaptionStyle, build_ass, find_ffmpeg, subtitle_filter
 from hawedit.clip import (
     MAX_MISLEADING_EDIT_RISK,
     MIN_HOOK_SCORE,
     EditorialBelowThreshold,
 )
 from hawedit.judge import EditorialJudge, InputMode, JudgeRequest, JudgeVerdict
+from hawedit.keyframes import extract_judge_frames
 from hawedit.normalize import normalize_sorani
+from hawedit.render import crop_filter
 from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
 
 __all__ = [
     "AssembledReel",
     "AssemblySpan",
+    "assemble_cold_open",
     "assemble_spans",
+    "assembled_splice_filter",
+    "judge_assembled_reel_multimodal",
     "judge_assembly",
+    "render_assembled_reel",
 ]
 
 
@@ -188,6 +197,221 @@ def judge_assembly(reel: AssembledReel, judge: EditorialJudge) -> JudgeVerdict:
     verdict = judge.judge(request)
 
     # Enforce AC-8 editorial thresholds
+    if verdict.hook_score < MIN_HOOK_SCORE:
+        raise EditorialBelowThreshold(
+            f"Assembled reel hook score {verdict.hook_score:.2f} < {MIN_HOOK_SCORE:.2f}"
+        )
+    if verdict.misleading_edit_risk > MAX_MISLEADING_EDIT_RISK:
+        risk = verdict.misleading_edit_risk
+        raise EditorialBelowThreshold(
+            f"Assembled reel misleading edit risk {risk:.2f} > {MAX_MISLEADING_EDIT_RISK:.2f}"
+        )
+    if not verdict.self_contained:
+        raise EditorialBelowThreshold("Assembled reel was judged not self-contained")
+    if verdict.meaning_fidelity < 1.0:
+        raise EditorialBelowThreshold(
+            f"Assembled reel meaning fidelity {verdict.meaning_fidelity:.2f} is below 1.00"
+        )
+
+    return verdict
+
+
+def assemble_cold_open(
+    setup_sentences: Sequence[Sentence],
+    payoff_sentence: Sentence,
+) -> AssembledReel:
+    """Assemble a cold-open narrative placing the payoff sentence first (Task T4.9).
+
+    The payoff sentence acts as the opening 0–3s hook to maximize viewer engagement.
+    The setup sentences follow chronologically to provide the narrative foundation.
+    All word and sentence timestamps are re-offset onto a continuous timeline
+    [0, total_duration_ms].
+
+    Args:
+        setup_sentences: Non-empty sequence of setup/context sentences.
+        payoff_sentence: The climactic payoff sentence acting as the cold-open hook.
+
+    Returns:
+        AssembledReel containing [payoff_sentence] as span 0, followed by setup sentences as span 1.
+    """
+    if not payoff_sentence.complete:
+        raise ValueError("Payoff sentence must be complete (Kurdish invariant #2)")
+    if not payoff_sentence.words:
+        raise ValueError("Payoff sentence has no words")
+    if not setup_sentences:
+        raise ValueError("setup_sentences cannot be empty")
+    for s in setup_sentences:
+        if not s.complete:
+            raise ValueError("All setup sentences must be complete (Kurdish invariant #2)")
+        if not s.words:
+            raise ValueError("Setup sentence has no words")
+
+    span_groups = [[payoff_sentence], list(setup_sentences)]
+    return assemble_spans(span_groups)
+
+
+def assembled_splice_filter(spans: Sequence[AssemblySpan]) -> str:
+    """Generate the FFmpeg filtergraph splicing participating spans in order (Task T4.9).
+
+    Trims video and audio for each span, resets PTS, and concatenates them into
+    single continuous [v_concat] and [a_concat] streams.
+    """
+    if not spans:
+        raise ValueError("Cannot create splice filter for empty spans")
+
+    v_trims: list[str] = []
+    a_trims: list[str] = []
+    concat_inputs: list[str] = []
+
+    for i, span in enumerate(spans):
+        in_s = span.source_in_ms / 1000.0
+        out_s = span.source_out_ms / 1000.0
+        v_trims.append(f"[0:v]trim=start={in_s:.3f}:end={out_s:.3f},setpts=PTS-STARTPTS[v{i}]")
+        a_trims.append(f"[0:a]atrim=start={in_s:.3f}:end={out_s:.3f},asetpts=PTS-STARTPTS[a{i}]")
+        concat_inputs.append(f"[v{i}][a{i}]")
+
+    n = len(spans)
+    concat_clause = f"{''.join(concat_inputs)}concat=n={n}:v=1:a=1[v_concat][a_concat]"
+    return ";".join(v_trims + a_trims + [concat_clause])
+
+
+def render_assembled_reel(
+    reel: AssembledReel,
+    source_video_path: Path,
+    output_path: Path,
+    work_dir: Path,
+    *,
+    source_width: int = 1920,
+    source_height: int = 1080,
+    punch_ins: Sequence[tuple[int, float]] = (),
+    title_ckb: str | None = None,
+    caption_style: CaptionStyle = CaptionStyle.WORD_HIGHLIGHT,
+    fonts_dir: Path | None = None,
+    ffmpeg: Path | None = None,
+) -> Path:
+    """Render a real 9:16 vertical reel concatenating assembled spans with burned ASS subtitles."""
+    if not source_video_path.is_file():
+        raise FileNotFoundError(f"Source video not found: {source_video_path}")
+    if output_path.exists():
+        raise FileExistsError(f"Output file already exists: {output_path}")
+
+    binary = ffmpeg or find_ffmpeg()
+    if binary is None:
+        raise RuntimeError("ffmpeg binary not found")
+
+    resolved_fonts = fonts_dir or (Path(__file__).resolve().parents[2] / "assets" / "fonts")
+    if not resolved_fonts.is_dir():
+        raise FileNotFoundError(f"Fonts directory not found: {resolved_fonts}")
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    ass_path = work_dir / "assembled.ass"
+    ass_content = build_ass(
+        reel.assembled_sentences,
+        style=caption_style,
+        clip_in_ms=0,
+        clip_duration_ms=reel.total_duration_ms,
+        title_ckb=title_ckb,
+        fonts_dir=resolved_fonts,
+    )
+    ass_path.write_text(ass_content, encoding="utf-8")
+
+    splice_part = assembled_splice_filter(reel.spans)
+    sub_filter = subtitle_filter(ass_path, resolved_fonts)
+
+    video_filter = crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=1080,
+        target_height=1920,
+        punch_ins=punch_ins,
+    )
+
+    v_chain = f"[v_concat]{video_filter},{sub_filter}[v_out]"
+    a_chain = "[a_concat]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a_out]"
+    full_filter = f"{splice_part};{v_chain};{a_chain}"
+
+    duration_s = reel.total_duration_ms / 1000.0
+    cmd = [
+        str(binary),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source_video_path),
+        "-filter_complex",
+        full_filter,
+        "-map",
+        "[v_out]",
+        "-map",
+        "[a_out]",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-t",
+        f"{duration_s:.3f}",
+        str(output_path),
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"FFmpeg assembly render failed (exit {result.returncode}):\n{result.stderr}"
+        )
+
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise RuntimeError(f"Assembled render produced empty output at {output_path}")
+
+    return output_path
+
+
+def judge_assembled_reel_multimodal(
+    reel: AssembledReel,
+    rendered_mp4_path: Path,
+    judge: EditorialJudge,
+    work_dir: Path,
+    *,
+    frame_count: int = 5,
+    ffmpeg: Path | None = None,
+) -> JudgeVerdict:
+    """Judge an assembled reel using video frames extracted from the render (Task T4.9)."""
+    if not rendered_mp4_path.is_file():
+        raise FileNotFoundError(f"Rendered reel not found: {rendered_mp4_path}")
+
+    frames = extract_judge_frames(
+        source=rendered_mp4_path,
+        in_ms=0,
+        out_ms=reel.total_duration_ms,
+        work_dir=work_dir,
+        count=frame_count,
+        ffmpeg=ffmpeg,
+    )
+
+    approx_tokens = max(1, len(reel.norm_text.split()) * 2) + len(frames) * 300
+    candidate_id = f"assembly-coldopen-{len(reel.spans)}spans-{reel.total_duration_ms}ms"
+
+    request = JudgeRequest(
+        candidate_id=candidate_id,
+        mode=InputMode.STAGE_4_WITH_VIDEO,
+        tokens=approx_tokens,
+        keyframes=frames,
+        text_ckb=reel.norm_text,
+        clip_in_ms=0,
+        clip_out_ms=reel.total_duration_ms,
+    )
+
+    verdict = judge.judge(request)
+
+    # Gating AC-8 and Task T4.9 thresholds
     if verdict.hook_score < MIN_HOOK_SCORE:
         raise EditorialBelowThreshold(
             f"Assembled reel hook score {verdict.hook_score:.2f} < {MIN_HOOK_SCORE:.2f}"
