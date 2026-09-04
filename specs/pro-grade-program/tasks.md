@@ -130,7 +130,7 @@ Owner-owned inputs. The system ships the kit; Hawa supplies the humans. All exis
 | ID | Task | Proof | Decider |
 |---|---|---|---|
 | **H7** | **Blind pairwise comparison: system vs a human editor.** Commission one professional Kurdish editor to cut 5 clips from ep29 (same brief: 30–90 s, 9:16, captions). The system cuts 5 in production profile. ≥ 20 Kurdish viewers rate blind pairs (pre-registered form: hook, clarity, would-share, misleading?). Report win-rate with 95 % CI. **"Better than a team" is claimable only if the CI's lower bound exceeds 50 %.** Anything else is reported as the number it is. | D. Kit = T5.1. | **Hawa** commissions editor + raters |
-| **T5.1** | **The comparison kit.** Randomiser, blinded file naming, rating form (Sorani), analysis script (win-rate, CI, per-dimension), reviewer records per T1.3 format. Ships before H7 starts. | A: kit tests on synthetic ratings. | — |
+| **T5.1** | **The comparison kit [DONE].** Randomiser, blinded file naming, rating form (Sorani), analysis script (win-rate, CI, per-dimension), reviewer records per T1.3 format. Ships before H7 starts. | A: kit tests on synthetic ratings (`tests/test_comparison_kit.py`, 6 tests passing, ledger flipped). | — |
 | **H8** | Brand kit: speaker names per episode, logo, fonts (licences), end-card text. | — | **Hawa** |
 | **H9** | Licensed music for T3.4. | — | **Hawa** |
 | **H10** | Register the self-hosted runner (T0.3). | — | **Hawa** |
