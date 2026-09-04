@@ -1,1 +1,2 @@
 TS=2026-09-04T02:31:55Z FEATURE=cover-frame-variants TASK=T1 TESTS=test_generate_title_variants_produces_three_distinct_kurdish_variants,test_output_contract_roundtrips_title_variants_and_cover_frame_ms VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T02:41:02Z FEATURE=cover-frame-variants TASK=T2 TESTS=test_select_cover_frame_on_real_video,test_reconcile_delivery_enforces_clause_eleven_cover_boundary,test_publish_delivery_bundle_includes_cover_image,test_select_cover_frame_on_ep29_extracts_face_thumbnail VERIFY=pass REPORT=.gate/last-test-run.xml
