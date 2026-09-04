@@ -2144,3 +2144,96 @@ def test_render_clip_supports_silence_plan(tmp_path: Path) -> None:
     assert Path(result.path).is_file()
     assert result.requested_duration_ms == duration - 500
     assert abs(result.measured_duration_ms - (duration - 500)) <= 50
+
+
+@needs_ffmpeg
+def test_two_renders_of_one_edit_agree(tmp_path: Path) -> None:
+    """T1.7 (Reproducibility Proof, §7.8).
+
+    Re-render the same edit twice from identical inputs:
+    - ASS byte-identical
+    - contract identical minus timestamps
+    - video PSNR >= 45 dB (or inf) between the two
+    """
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+
+    ass_path1 = tmp_path / "captions1.ass"
+    ass_path2 = tmp_path / "captions2.ass"
+    text1 = build_ass((_sentence(),), play_res_x=1080, play_res_y=1920)
+    text2 = build_ass((_sentence(),), play_res_x=1080, play_res_y=1920)
+    ass_path1.write_text(text1, encoding="utf-8")
+    ass_path2.write_text(text2, encoding="utf-8")
+    assert ass_path1.read_bytes() == ass_path2.read_bytes(), "ASS files must be byte-identical"
+
+    clip1 = _clip()
+    clip2 = _clip()
+    dict1 = clip1.to_dict()
+    dict2 = clip2.to_dict()
+    assert dict1 == dict2, "Contract structures must be identical"
+
+    out1 = tmp_path / "render1.mp4"
+    out2 = tmp_path / "render2.mp4"
+
+    encoder = Encoder.NVENC if encoder_available(Encoder.NVENC, ffmpeg) else Encoder.X264
+
+    res1 = render_clip(
+        clip1,
+        FIXTURE,
+        ass_path1,
+        FONTS,
+        out1,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        encoder=encoder,
+        focus_points=((clip1.in_ms, SOURCE_WIDTH // 2), (clip1.out_ms, SOURCE_WIDTH // 2)),
+        reframe=Reframe.FACE_TRACKED,
+        ffmpeg=ffmpeg,
+        crf=20,
+        deliverable=True,
+    )
+    res2 = render_clip(
+        clip2,
+        FIXTURE,
+        ass_path2,
+        FONTS,
+        out2,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        encoder=encoder,
+        focus_points=((clip2.in_ms, SOURCE_WIDTH // 2), (clip2.out_ms, SOURCE_WIDTH // 2)),
+        reframe=Reframe.FACE_TRACKED,
+        ffmpeg=ffmpeg,
+        crf=20,
+        deliverable=True,
+    )
+
+    assert Path(res1.path).is_file()
+    assert Path(res2.path).is_file()
+    assert res1.measured_duration_ms == res2.measured_duration_ms
+
+    proc = subprocess.run(
+        [
+            str(ffmpeg),
+            "-nostdin",
+            "-i",
+            str(out1),
+            "-i",
+            str(out2),
+            "-lavfi",
+            "psnr",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    match = re.search(r"average:([\d.]+|inf)", proc.stderr)
+    assert match is not None, f"PSNR could not be parsed: {proc.stderr}"
+    val_str = match.group(1)
+    if val_str != "inf":
+        psnr_val = float(val_str)
+        assert psnr_val >= 45.0, f"PSNR {psnr_val} dB is below 45.0 dB reproducibility threshold"
+
