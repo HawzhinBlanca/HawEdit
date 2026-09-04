@@ -1,1 +1,2 @@
 TS=2026-09-03T23:47:57Z FEATURE=silence-tightening TASK=T1 TESTS=test_plan_silence_tightening_identifies_dead_air_and_retained_intervals,test_plan_silence_tightening_no_excess_pause_returns_single_interval,test_remap_timestamp_shifts_events_accurately,test_silence_trim_filter_generates_valid_ffmpeg_filtergraph VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T00:04:16Z FEATURE=silence-tightening TASK=T2 TESTS=test_render_clip_supports_silence_plan VERIFY=pass REPORT=.gate/last-test-run.xml
