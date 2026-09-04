@@ -1340,8 +1340,10 @@ def render_caption_png(
     width: int = 1080,
     height: int = 1920,
     shaping: str = "complex",
+    source_video: Path | None = None,
+    timestamp_s: float = 0.0,
 ) -> Path:
-    """Burn one caption frame onto a black background — the §4.3.6 golden render.
+    """Burn one caption frame onto a black background or video source — the §4.3.6 golden render.
 
     `width`/`height` must match the ASS `PlayResX`/`PlayResY`, or libass scales the text and
     the comparison measures the scaling rather than the shaping.
@@ -1357,26 +1359,42 @@ def render_caption_png(
     """
     import subprocess
 
-    filter_string = subtitle_filter(ass_path, fonts_dir)
+    sub_filter = subtitle_filter(ass_path, fonts_dir)
     if shaping != "complex":
-        wrong = filter_string.replace("shaping=complex", f"shaping={shaping}", 1)
-        if wrong == filter_string:
+        wrong = sub_filter.replace("shaping=complex", f"shaping={shaping}", 1)
+        if wrong == sub_filter:
             raise ValueError(
-                f"could not render with shaping={shaping!r}: {filter_string!r} carries no "
+                f"could not render with shaping={shaping!r}: {sub_filter!r} carries no "
                 f"`shaping=complex` to replace, so this would silently render the right way "
                 f"and the negative control would be measuring nothing"
             )
-        filter_string = wrong
+        sub_filter = wrong
+
+    if source_video is not None:
+        crop = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+        filter_string = f"{crop},{sub_filter}"
+        inputs = [
+            "-ss",
+            f"{timestamp_s:.3f}",
+            "-i",
+            str(source_video),
+        ]
+    else:
+        filter_string = sub_filter
+        inputs = [
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s={width}x{height}:d=1",
+        ]
+
     subprocess.run(
         [
             str(ffmpeg),
             "-hide_banner",
             "-loglevel",
             "error",
-            "-f",
-            "lavfi",
-            "-i",
-            f"color=c=black:s={width}x{height}:d=1",
+            *inputs,
             "-vf",
             filter_string,
             "-frames:v",

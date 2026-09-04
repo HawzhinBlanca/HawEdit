@@ -21,8 +21,10 @@ captions."
 
 from __future__ import annotations
 
+import hashlib
 import unicodedata
 from pathlib import Path
+from typing import Final
 
 import cv2
 import pytest
@@ -517,7 +519,25 @@ def test_a_missing_reference_says_how_to_generate_it(tmp_path: Path) -> None:
 # --- §4.3.6 the golden render, against a real ffmpeg -------------------------------------
 
 
-GOLDEN = Path(__file__).resolve().parent / "golden" / "kurdish-caption.png"
+GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
+GOLDEN = GOLDEN_DIR / "kurdish-caption.png"
+GOLDEN_VIRAL_KARAOKE = GOLDEN_DIR / "kurdish-viral-karaoke.png"
+GOLDEN_HOOK_CARD = GOLDEN_DIR / "kurdish-hook-card.png"
+GOLDEN_CAPTION_FIXTURE = GOLDEN_DIR / "kurdish-caption-fixture.png"
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.mp4"
+
+# Task T1.8: Pinned SHA256 digests for all committed reference goldens (anti-cheat).
+# Altering a golden file without an explicit, reviewed change fails this check.
+GOLDEN_DIGESTS: Final[dict[str, str]] = {
+    "kurdish-caption.png": ("e3d3f3e5d22df202e978b327e7cf73deee7d4c601319898e5ef79e5877fd1f90"),
+    "kurdish-viral-karaoke.png": (
+        "0f9e8e457aff772a89ba8f3d78b9e3c14f859ad12d176a5a25b95107289b567d"
+    ),
+    "kurdish-hook-card.png": ("12d1a92949a85a2706f56853914065bf15b29dfbdbb8843957164fd2f9e385b2"),
+    "kurdish-caption-fixture.png": (
+        "78a822e529d662ce39252467fddd8a1c4e46fe56687a3d206455ba94697bb343"
+    ),
+}
 
 
 FONTS_DIR = FONT.parent
@@ -642,6 +662,173 @@ def test_simple_shaping_fails_the_golden_test(tmp_path: Path) -> None:
     )
     with pytest.raises(AssertionError, match="differs"):
         compare_golden_render(GOLDEN, broken, ffmpeg=ffmpeg)
+
+
+def test_golden_files_match_their_pinned_digests() -> None:
+    """Every reference golden must exist and match its pinned sha256.
+
+    A golden test is only as strong as its reference. Silent edits to reference images
+    to make buggy renders pass is a textbook anti-cheat failure (§4.3.6, AGENTS.md).
+    """
+    assert GOLDEN_DIR.exists()
+    committed = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(GOLDEN_DIR.glob("*.png"))
+    }
+    assert committed == GOLDEN_DIGESTS, (
+        f"committed goldens and pinned digests mismatch: "
+        f"diff={set(committed.items()) ^ set(GOLDEN_DIGESTS.items())}"
+    )
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_the_render_matches_viral_karaoke_golden(tmp_path: Path) -> None:
+    """§4.3.6: VIRAL_THEME animated word highlight karaoke render matches committed golden."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "karaoke.ass"
+    ass_path.write_text(
+        build_ass(
+            (_golden_sentence(),),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    rendered = render_caption_png(ffmpeg, ass_path, FONTS_DIR, tmp_path / "rendered_karaoke.png")
+    compare_golden_render(GOLDEN_VIRAL_KARAOKE, rendered, ffmpeg=ffmpeg)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_simple_shaping_fails_viral_karaoke_golden(tmp_path: Path) -> None:
+    """Negative control: simple shaping must fail the viral karaoke golden comparison."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "karaoke.ass"
+    ass_path.write_text(
+        build_ass(
+            (_golden_sentence(),),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    broken = render_caption_png(
+        ffmpeg, ass_path, FONTS_DIR, tmp_path / "broken_karaoke.png", shaping="simple"
+    )
+    with pytest.raises(AssertionError, match="differs"):
+        compare_golden_render(GOLDEN_VIRAL_KARAOKE, broken, ffmpeg=ffmpeg)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_the_render_matches_hook_card_golden(tmp_path: Path) -> None:
+    """§4.3.6: Hook card opening frame matches committed golden."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "hook.ass"
+    ass_path.write_text(
+        build_ass(
+            (_golden_sentence(),),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            title_ckb="ڕۆژنامەوانی لە هەولێر",
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    rendered = render_caption_png(ffmpeg, ass_path, FONTS_DIR, tmp_path / "rendered_hook.png")
+    compare_golden_render(GOLDEN_HOOK_CARD, rendered, ffmpeg=ffmpeg)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_simple_shaping_fails_hook_card_golden(tmp_path: Path) -> None:
+    """Negative control: simple shaping must fail the hook card golden comparison."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "hook.ass"
+    ass_path.write_text(
+        build_ass(
+            (_golden_sentence(),),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            title_ckb="ڕۆژنامەوانی لە هەولێر",
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    broken = render_caption_png(
+        ffmpeg, ass_path, FONTS_DIR, tmp_path / "broken_hook.png", shaping="simple"
+    )
+    with pytest.raises(AssertionError, match="differs"):
+        compare_golden_render(GOLDEN_HOOK_CARD, broken, ffmpeg=ffmpeg)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_the_render_matches_caption_over_fixture_video_golden(tmp_path: Path) -> None:
+    """§4.3.6: Caption reframed and burned over real fixture video matches committed golden."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    assert FIXTURE.exists(), f"fixture video missing at {FIXTURE}"
+    ass_path = tmp_path / "fixture.ass"
+    ass_path.write_text(
+        build_ass(
+            (_golden_sentence(),),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    rendered = render_caption_png(
+        ffmpeg,
+        ass_path,
+        FONTS_DIR,
+        tmp_path / "rendered_fixture.png",
+        source_video=FIXTURE,
+        timestamp_s=0.500,
+    )
+    compare_golden_render(GOLDEN_CAPTION_FIXTURE, rendered, ffmpeg=ffmpeg)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_simple_shaping_fails_caption_over_fixture_video_golden(tmp_path: Path) -> None:
+    """Negative control: simple shaping must fail the caption-over-video golden comparison."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "fixture.ass"
+    ass_path.write_text(
+        build_ass(
+            (_golden_sentence(),),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    broken = render_caption_png(
+        ffmpeg,
+        ass_path,
+        FONTS_DIR,
+        tmp_path / "broken_fixture.png",
+        source_video=FIXTURE,
+        timestamp_s=0.500,
+        shaping="simple",
+    )
+    with pytest.raises(AssertionError, match="differs"):
+        compare_golden_render(GOLDEN_CAPTION_FIXTURE, broken, ffmpeg=ffmpeg)
 
 
 # --- §4.3.5 our own line breaks, on the decoded pixels -------------------------------------
