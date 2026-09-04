@@ -496,6 +496,9 @@ class RejectedValidatorCorrection:
 class SegmentConfidence:
     """One Stage 0 speech region's own mean log-probability, on the media clock.
 
+    Unit: natural logarithm (nats), <= 0.0. Each segment's `mean_logprob` is the duration-weighted
+    mean of constituent word log-probabilities derived from CTC forced-alignment frame emissions.
+
     §3 Stage 1 routes to the validator "any segment where LLM-7B and CTC-3B disagree materially"
     **and** any segment in the bottom log-probability quartile. `escalation.select_for_validation`
     implements that rule and had no caller, because its input did not survive Stage 1: every
@@ -527,7 +530,12 @@ class SegmentConfidence:
 
 @dataclass(frozen=True, slots=True)
 class AsrProvenance:
-    """Which models produced this transcript. Every name must be in §7."""
+    """Which models produced this transcript. Every name must be in §7.
+
+    `mean_logprob`: aggregate mean log-probability in natural logarithm units (nats, <= 0.0),
+    averaged across all speech segments where each segment's value is derived from frame-level
+    CTC forced-alignment posteriors.
+    """
 
     canonical: str
     aligner: str | None = None

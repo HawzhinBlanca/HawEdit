@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
 import os
 import stat
 import time
@@ -25,6 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from hawedit.asr import _mean_aligned_logprob
 from hawedit.registry import ModelExcluded, ModelNotInRegistry, WrongRole
 from hawedit.transcripts import (
     MIN_KURDISH_LETTER_SHARE,
@@ -1854,3 +1856,77 @@ def test_the_threshold_itself_must_be_a_fraction() -> None:
     for bad in (-0.1, 1.1):
         with pytest.raises(ValueError, match=r"within \[0, 1\]"):
             assert_kurdish_transcript(a_raw(), minimum=bad)
+
+
+def test_mean_logprob_is_a_per_token_mean_in_nats() -> None:
+    """T0.5: `mean_logprob` semantics verification.
+
+    1. Values are in nats (natural logarithm base e <= 0.0). Positive values or non-finite
+       values are rejected at trust boundaries (SegmentConfidence, AsrProvenance).
+    2. Word confidence is strictly mapped to (0, 1.0] via conf = exp(mean_logprob), and the
+       inverse is ln(conf).
+    3. Segment mean_logprob is the duration-weighted mean of constituent word log-probabilities
+       in nats: sum(ln(w.conf) * duration) / total_duration.
+    4. Exact recomputed match against ep29 segment 0 (418..2654 ms) from worker output:
+       recomputed value is -7.0829329306560185 nats (zero residual difference).
+    """
+    # 1. Natural log (nats <= 0.0) bound enforcement
+    # Probability 1.0 -> ln(1.0) = 0.0 nats
+    valid_seg = SegmentConfidence(start_ms=0, end_ms=1000, mean_logprob=0.0)
+    assert valid_seg.mean_logprob == 0.0
+
+    # Positive log-probability is mathematically impossible and inverted
+    with pytest.raises(ValueError, match=r"must be a finite log-probability <= 0"):
+        SegmentConfidence(start_ms=0, end_ms=1000, mean_logprob=0.0001)
+
+    with pytest.raises(ValueError, match=r"must be a finite log-probability <= 0"):
+        AsrProvenance(canonical="omniASR_LLM_7B_v2", mean_logprob=0.0001)
+
+    # 2. Bijection between logprob in nats and word confidence in (0, 1]
+    # For a synthetic token with mean logprob = -1.5 nats:
+    token_logprob = -1.5
+    conf = math.exp(token_logprob)
+    assert 0.0 < conf < 1.0
+    assert abs(math.log(conf) - token_logprob) < 1e-12
+
+    # 3. Mathematical identity of duration-weighted segment log-probability
+    synthetic_words = (
+        Word(w="سڵاو", start_ms=0, end_ms=500, conf=math.exp(-1.0)),
+        Word(w="هاوڕێیان", start_ms=500, end_ms=1500, conf=math.exp(-2.0)),
+    )
+    # 500ms at -1.0 nats + 1000ms at -2.0 nats over 1500ms total:
+    # (-500 - 2000) / 1500 = -1.666666...
+    expected_mean = ((-1.0 * 500) + (-2.0 * 1000)) / 1500
+    computed_mean = _mean_aligned_logprob(synthetic_words)
+    assert abs(computed_mean - expected_mean) < 1e-12
+
+    # 4. Ground-truth recomputation on ep29 segment 0 (work/stage1/omni-asr-worker-output.json)
+    ep29_seg0_words = (
+        Word(w="ئەمڕۆ", start_ms=418, end_ms=841, conf=0.00038727171958541395),
+        Word(w="لە", start_ms=841, end_ms=1103, conf=0.0003035772078680142),
+        Word(w="پۆدکاستی", start_ms=1103, end_ms=1264, conf=0.0008442481441471679),
+        Word(w="تایبەت", start_ms=1264, end_ms=1667, conf=0.0038195630328805444),
+        Word(w="بە", start_ms=1667, end_ms=1748, conf=0.0005233391028255475),
+        Word(w="خۆمان", start_ms=1748, end_ms=1788, conf=2.0694331616732215e-05),
+        Word(w="قسە", start_ms=1788, end_ms=2150, conf=0.00287670263914744),
+        Word(w="دەکەین", start_ms=2150, end_ms=2654, conf=0.00048389413735573796),
+    )
+    ep29_seg0_recomputed = _mean_aligned_logprob(ep29_seg0_words)
+    ep29_seg0_recorded = -7.0829329306560185
+    assert abs(ep29_seg0_recomputed - ep29_seg0_recorded) < 1e-12
+
+    # Verify SegmentConfidence and AsrProvenance cleanly accept this verified nats value
+    seg_conf = SegmentConfidence(
+        start_ms=418,
+        end_ms=2654,
+        mean_logprob=ep29_seg0_recomputed,
+        llm_text="ئەمڕۆ لە پۆدکاستی تایبەت بە خۆمان قسە دەکەین",
+    )
+    assert seg_conf.mean_logprob == ep29_seg0_recorded
+
+    asr_prov = AsrProvenance(
+        canonical="omniASR_LLM_7B_v2",
+        aligner="ctc_viterbi",
+        mean_logprob=-7.1582438553200785,
+    )
+    assert asr_prov.mean_logprob == -7.1582438553200785

@@ -740,6 +740,12 @@ class OmniAsrBackend:
 
 
 def _mean_aligned_logprob(words: Sequence[Word]) -> float:
+    """Compute duration-weighted mean log-probability in natural log units (nats, <= 0.0).
+
+    Each word's `conf` is `exp(mean_logprob)` derived from CTC frame-level posteriors.
+    Taking `ln(conf)` recovers the frame-averaged log-posterior in nats, and weighting
+    by word duration yields the segment's mean log-probability in nats.
+    """
     total_ms = sum(word.end_ms - word.start_ms for word in words)
     if total_ms <= 0:
         raise RuntimeError("CTC alignment produced no positive-duration words")

@@ -489,6 +489,7 @@ class ClipTranscript:
                 "adapter": self.asr.adapter,
                 "aligner": self.asr.aligner,
                 "validated_by": self.asr.validated_by,
+                # mean_logprob is in natural log units (nats, <= 0.0) from CTC frame posteriors.
                 "mean_logprob": self.asr.mean_logprob,
             },
         }
