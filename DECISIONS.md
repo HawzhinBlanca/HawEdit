@@ -13828,7 +13828,7 @@ As noted in `specs/pro-grade-program/tasks.md` Task T0.6, HawEdit invoked founda
 1. **`BilledCall` Dataclass**:
    Export `BilledCall(model, tokens, cost_usd_estimate, stage, candidate_id)` in `hawedit.judge`. Validate that `model` and `stage` are non-empty, and that `tokens` and `cost_usd_estimate` are non-negative.
 2. **`RunState.BILLED` Event**:
-   Extend `hawedit.events.RunState` with `BILLED = "billed"` and extend `RunEvent` to record `model`, `tokens`, `cost_usd_estimate`, and `candidate_id`. `RunEventLog.billed()` emits typed billed events immediately into append-only JSONL sinks.
+   Extend `hawedit.events.RunState` with member `BILLED` (`"billed"`) and extend `RunEvent` to record `model`, `tokens`, `cost_usd_estimate`, and `candidate_id`. `RunEventLog.billed()` emits typed billed events immediately into append-only JSONL sinks.
 3. **Pipeline Accumulation & Serialization**:
    - `PipelineRun` holds `billed_calls: tuple[BilledCall, ...] = ()`.
    - `PipelineRun.to_dict()` outputs `"billed_calls"`, `"total_cost_usd_estimate"`, and `"total_tokens_billed"`.
