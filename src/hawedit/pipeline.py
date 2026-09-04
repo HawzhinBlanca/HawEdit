@@ -3461,10 +3461,18 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         print(f"NOTE reframe: {reframe_degraded}", file=sys.stderr)
 
     diarizer = None
+    speaker_tracker = None
     if args.diarize:
         from hawedit.pyannote_adapter import create_diarizer
 
         diarizer = create_diarizer(device=args.diarize_device)
+        if not args.static_crop and (args.sentences or args.auto_select):
+            try:
+                from hawedit.reframe import MotionSpeakerTracker
+
+                speaker_tracker = MotionSpeakerTracker()
+            except ImportError:
+                speaker_tracker = None
 
     qc: Qc | None = None
     if args.qc_record:
@@ -3489,6 +3497,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         judge=judge,
         temporal_grounder=temporal_grounder,
         subject_tracker=subject_tracker,
+        speaker_tracker=speaker_tracker,
         auto_select=args.auto_select,
         judge_top_n=(DEFAULT_JUDGE_TOP_N if args.judge_top_n is None else args.judge_top_n),
         min_clip_ms=(

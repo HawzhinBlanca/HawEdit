@@ -10,6 +10,7 @@ import pytest
 from hawedit.diarization import Segment
 from hawedit.reframe import (
     FocusPoint,
+    MotionSpeakerTracker,
     OpenCvFaceTracker,
     SpeakerAssociationError,
     SpeakerFocusPoint,
@@ -504,3 +505,199 @@ def test_face_tracker_bridges_detection_dropouts_via_tracker(
     assert points[0].center_x == 140
     assert 145 <= points[1].center_x <= 170
     assert points[2].center_x == 180
+
+
+def test_motion_speaker_tracker_validates_constructor_and_runtime_arguments() -> None:
+    """Task T2.1: MotionSpeakerTracker enforces bounds on constructor parameters and spans."""
+    for bad_fps in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="fps must be finite and positive"):
+            MotionSpeakerTracker(sample_fps=bad_fps)
+
+    for bad_thresh in (-0.1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="motion threshold must be finite and non-negative"):
+            MotionSpeakerTracker(motion_threshold=bad_thresh)
+
+    for bad_ratio in (0.5, 0.99, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="ambiguity ratio must be >= 1.0"):
+            MotionSpeakerTracker(ambiguity_ratio=bad_ratio)
+
+    tracker = MotionSpeakerTracker(sample_fps=5.0)
+    assert callable(getattr(tracker, "track_speakers", None))
+
+    turns = (Segment(0, 1000, "SPEAKER_00"),)
+    with pytest.raises(ValueError, match="span has no duration"):
+        tracker.track_speakers(FIXTURE, 500, 500, turns)
+    with pytest.raises(ValueError, match="span has no duration"):
+        tracker.track_speakers(FIXTURE, 600, 500, turns)
+    with pytest.raises(ValueError, match="non-negative"):
+        tracker.track_speakers(FIXTURE, -10, 500, turns)
+
+
+def test_motion_speaker_tracker_returns_empty_when_no_overlapping_turns() -> None:
+    """Task T2.1: Returns empty tuple when no exclusive turns overlap the span."""
+    tracker = MotionSpeakerTracker(sample_fps=5.0)
+    # Empty turns
+    assert tracker.track_speakers(FIXTURE, 0, 1000, ()) == ()
+
+    # Turns strictly outside span
+    turns = (Segment(1500, 2500, "SPEAKER_00"),)
+    assert tracker.track_speakers(FIXTURE, 0, 1000, turns) == ()
+
+    # Non-empty overlapping turns on fixture with no faces
+    turns_overlap = (Segment(0, 1000, "SPEAKER_00"),)
+    assert tracker.track_speakers(FIXTURE, 0, 1000, turns_overlap) == ()
+
+
+def test_motion_speaker_tracker_tracks_single_speaker_on_synthetic_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task T2.1: Single detected face is tracked and associated with active speaker."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "single_speaker_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+    for _ in range(5):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        # Face at x=200, y=100, w=80, h=80 -> center_x = 240
+        cv2.rectangle(frame, (200, 100), (280, 180), (200, 200, 200), -1)
+        writer.write(frame)
+    writer.release()
+
+    class _SingleFaceClassifier:
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            return [(200, 100, 80, 80)]
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _SingleFaceClassifier(),
+    )
+
+    tracker = MotionSpeakerTracker(sample_fps=5.0)
+    turns = (Segment(0, 1000, "SPEAKER_00"),)
+    points = tracker.track_speakers(video_path, 0, 1000, turns)
+    assert len(points) >= 4
+    for pt in points:
+        assert pt.speaker == "SPEAKER_00"
+        assert pt.center_x == 240
+        assert 0 <= pt.at_ms < 1000
+
+    validated = validate_speaker_focus_points(points, turns, 0, 1000)
+    assert len(validated) == len(points)
+    assert all(vp.center_x == 240 for vp in validated)
+
+
+def test_motion_speaker_tracker_associates_speaker_via_mouth_motion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task T2.1: Two visible faces; mouth pixel-motion energy associates active speaker."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "two_speakers_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+
+    # Frame 0..2 (SPEAKER_00 turn 0..600ms): Left face moves mouth, Right is static
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        # Left face body
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        # Left mouth region (y=155..180): alternating values to induce motion
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (100, 155), (180, 180), (val, val, val), -1)
+
+        # Right face body + mouth (static)
+        cv2.rectangle(frame, (400, 100), (480, 180), (128, 128, 128), -1)
+        cv2.rectangle(frame, (400, 155), (480, 180), (80, 80, 80), -1)
+        writer.write(frame)
+
+    # Frame 3..5 (SPEAKER_01 turn 600..1200ms): Right face moves mouth, Left is static
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        # Left face (static)
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        cv2.rectangle(frame, (100, 155), (180, 180), (80, 80, 80), -1)
+
+        # Right face mouth moving
+        cv2.rectangle(frame, (400, 100), (480, 180), (128, 128, 128), -1)
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (400, 155), (480, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    writer.release()
+
+    class _TwoFacesClassifier:
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            return [(100, 100, 80, 80), (400, 100, 80, 80)]
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _TwoFacesClassifier(),
+    )
+
+    tracker = MotionSpeakerTracker(sample_fps=5.0, motion_threshold=2.0)
+    turns = (
+        Segment(0, 600, "SPEAKER_00"),
+        Segment(600, 1200, "SPEAKER_01"),
+    )
+    points = tracker.track_speakers(video_path, 0, 1200, turns)
+    assert len(points) >= 4
+
+    spk0_points = [p for p in points if p.speaker == "SPEAKER_00"]
+    spk1_points = [p for p in points if p.speaker == "SPEAKER_01"]
+
+    assert any(p.center_x == 140 for p in spk0_points)
+    assert any(p.center_x == 440 for p in spk1_points)
+
+    validated = validate_speaker_focus_points(points, turns, 0, 1200)
+    assert len(validated) == len(points)
+
+
+def test_motion_speaker_tracker_holds_speaker_position_on_ambiguity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task T2.1: On ambiguity or zero motion, holds speaker's confirmed position."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "ambiguity_hold_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+
+    for _ in range(4):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        cv2.rectangle(frame, (400, 100), (480, 180), (128, 128, 128), -1)
+        writer.write(frame)
+    writer.release()
+
+    class _TwoFacesClassifier:
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            return [(100, 100, 85, 85), (400, 100, 80, 80)]
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _TwoFacesClassifier(),
+    )
+
+    tracker = MotionSpeakerTracker(sample_fps=5.0)
+    turns = (Segment(0, 800, "SPEAKER_00"),)
+    points = tracker.track_speakers(video_path, 0, 800, turns)
+    assert len(points) >= 3
+    centers = {p.center_x for p in points}
+    assert len(centers) == 1
+    assert centers.pop() == 142

@@ -16,6 +16,7 @@ __all__ = [
     "DEFAULT_SETTLE_MS",
     "MIN_FACE_AREA",
     "FocusPoint",
+    "MotionSpeakerTracker",
     "OpenCvFaceTracker",
     "SpeakerAssociationError",
     "SpeakerFocusPoint",
@@ -320,6 +321,221 @@ class OpenCvFaceTracker:
                 at += step_ms
         finally:
             capture.release()
+        return tuple(points)
+
+
+class MotionSpeakerTracker:
+    """Associate visible faces with exclusive speaker turns via mouth pixel-motion energy.
+
+    Task T2.1 / Candidate (a): computes inter-frame pixel-motion energy in the lower third
+    (mouth region) of candidate Haar face boxes at >= 5 fps, correlating motion with the
+    active exclusive diarization turn.
+
+    Invariants:
+    - Only emits SpeakerFocusPoint during active exclusive diarization turns.
+    - Timestamps are strictly monotonically increasing within the clip span.
+    - On ambiguity (motion difference below threshold or multiple quiet/moving faces),
+      holds the speaker's last confirmed position ("on ambiguity hold, never wander").
+    """
+
+    def __init__(
+        self,
+        sample_fps: float = 5.0,
+        *,
+        min_face_area: int = MIN_FACE_AREA,
+        motion_threshold: float = 1.0,
+        ambiguity_ratio: float = 1.25,
+    ) -> None:
+        if sample_fps <= 0 or not math.isfinite(sample_fps):
+            raise ValueError("speaker-tracking fps must be finite and positive")
+        if motion_threshold < 0 or not math.isfinite(motion_threshold):
+            raise ValueError("motion threshold must be finite and non-negative")
+        if ambiguity_ratio < 1.0 or not math.isfinite(ambiguity_ratio):
+            raise ValueError("ambiguity ratio must be >= 1.0 and finite")
+        self.sample_fps = sample_fps
+        self.min_face_area = min_face_area
+        self.motion_threshold = motion_threshold
+        self.ambiguity_ratio = ambiguity_ratio
+
+    def track_speakers(
+        self,
+        source: Path,
+        in_ms: int,
+        out_ms: int,
+        turns: Sequence[Segment],
+    ) -> tuple[SpeakerFocusPoint, ...]:
+        _exact_non_negative_int(in_ms, "speaker-tracking in-point")
+        _exact_non_negative_int(out_ms, "speaker-tracking out-point")
+        if out_ms <= in_ms:
+            raise ValueError(f"speaker-tracking span has no duration: {in_ms}..{out_ms}ms")
+        assert_exclusive(turns)
+        overlapping_turns = tuple(
+            turn for turn in turns if turn.start_ms < out_ms and turn.end_ms > in_ms
+        )
+        if not overlapping_turns:
+            return ()
+
+        try:
+            import cv2 as imported_cv2
+        except ImportError as exc:
+            raise RuntimeError("speaker tracking needs the media extra (OpenCV)") from exc
+        cv2: Any = imported_cv2
+
+        cascades = Path(cv2.data.haarcascades)
+        detectors = {}
+        for name in ("haarcascade_frontalface_default.xml", "haarcascade_profileface.xml"):
+            classifier = cv2.CascadeClassifier(str(cascades / name))
+            if classifier.empty():
+                raise RuntimeError(f"OpenCV could not load its face detector at {cascades / name}")
+            detectors[name] = classifier
+        frontal = detectors["haarcascade_frontalface_default.xml"]
+        profile = detectors["haarcascade_profileface.xml"]
+
+        capture = cv2.VideoCapture(str(source))
+        if not capture.isOpened():
+            raise RuntimeError(f"OpenCV could not open {source} for speaker tracking")
+
+        step_ms = 1000.0 / self.sample_fps
+        points: list[SpeakerFocusPoint] = []
+        speaker_face_centers: dict[str, int] = {}
+        last_known_center: int | None = None
+        prev_gray: Any = None
+        previous_at: int | None = None
+
+        def boxes(classifier: Any, image: Any) -> list[tuple[int, int, int, int]]:
+            return [
+                (int(x), int(y), int(w), int(h))
+                for x, y, w, h in classifier.detectMultiScale(
+                    image, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
+                )
+            ]
+
+        try:
+            at = float(in_ms)
+            while at < out_ms:
+                capture.set(cv2.CAP_PROP_POS_MSEC, at)
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                width = gray.shape[1]
+                height = gray.shape[0]
+
+                at_int = int(round(at))
+                if at_int >= out_ms:
+                    break
+                if previous_at is not None and at_int <= previous_at:
+                    at_int = previous_at + 1
+                    if at_int >= out_ms:
+                        break
+
+                active = [
+                    turn for turn in overlapping_turns if turn.start_ms <= at_int < turn.end_ms
+                ]
+                if not active:
+                    prev_gray = gray
+                    at += step_ms
+                    continue
+
+                active_speaker = active[0].speaker
+
+                faces = boxes(frontal, gray) + boxes(profile, gray)
+                faces += [
+                    (width - (x + w), y, w, h) for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
+                ]
+                valid_faces = [f for f in faces if f[2] * f[3] >= self.min_face_area]
+
+                # Deduplicate overlapping face boxes
+                deduped_faces: list[tuple[int, int, int, int]] = []
+                for f in sorted(valid_faces, key=lambda b: b[2] * b[3], reverse=True):
+                    fx, fy, fw, fh = f
+                    cx = fx + fw // 2
+                    cy = fy + fh // 2
+                    if not any(
+                        abs(cx - (df[0] + df[2] // 2)) < df[2] // 2
+                        and abs(cy - (df[1] + df[3] // 2)) < df[3] // 2
+                        for df in deduped_faces
+                    ):
+                        deduped_faces.append(f)
+
+                selected_center: int | None = None
+
+                if len(deduped_faces) == 1:
+                    face = deduped_faces[0]
+                    selected_center = face[0] + face[2] // 2
+                    speaker_face_centers[active_speaker] = selected_center
+                    last_known_center = selected_center
+                elif len(deduped_faces) > 1:
+                    face_motions: list[tuple[float, tuple[int, int, int, int]]] = []
+                    for face in deduped_faces:
+                        fx, fy, fw, fh = face
+                        my = max(0, fy + 2 * fh // 3)
+                        mh = min(height - my, fh // 3)
+                        mx = max(0, fx)
+                        mw = min(width - mx, fw)
+
+                        motion_val = 0.0
+                        if prev_gray is not None and mh > 0 and mw > 0:
+                            curr_mouth = gray[my : my + mh, mx : mx + mw]
+                            prev_mouth = prev_gray[my : my + mh, mx : mx + mw]
+                            if curr_mouth.shape == prev_mouth.shape:
+                                diff = cv2.absdiff(curr_mouth, prev_mouth)
+                                motion_val = float(diff.mean())
+                        face_motions.append((motion_val, face))
+
+                    face_motions.sort(key=lambda item: item[0], reverse=True)
+                    best_motion, best_face = face_motions[0]
+                    second_motion = face_motions[1][0] if len(face_motions) > 1 else 0.0
+
+                    if best_motion >= self.motion_threshold and (
+                        second_motion == 0.0 or best_motion >= second_motion * self.ambiguity_ratio
+                    ):
+                        selected_center = best_face[0] + best_face[2] // 2
+                        speaker_face_centers[active_speaker] = selected_center
+                        last_known_center = selected_center
+                    else:
+                        # Ambiguous: hold active speaker's confirmed position if available
+                        if active_speaker in speaker_face_centers:
+                            known = speaker_face_centers[active_speaker]
+                            closest_face = min(
+                                deduped_faces,
+                                key=lambda f: abs((f[0] + f[2] // 2) - known),
+                            )
+                            selected_center = closest_face[0] + closest_face[2] // 2
+                            last_known_center = selected_center
+                        elif last_known_center is not None:
+                            target_x = last_known_center
+                            closest_face = min(
+                                deduped_faces,
+                                key=lambda f: abs((f[0] + f[2] // 2) - target_x),
+                            )
+                            selected_center = closest_face[0] + closest_face[2] // 2
+                        else:
+                            largest_face = max(deduped_faces, key=lambda f: f[2] * f[3])
+                            selected_center = largest_face[0] + largest_face[2] // 2
+                            speaker_face_centers[active_speaker] = selected_center
+                            last_known_center = selected_center
+                else:
+                    if active_speaker in speaker_face_centers:
+                        selected_center = speaker_face_centers[active_speaker]
+                    elif last_known_center is not None:
+                        selected_center = last_known_center
+
+                if selected_center is not None:
+                    points.append(
+                        SpeakerFocusPoint(
+                            at_ms=at_int,
+                            center_x=selected_center,
+                            speaker=active_speaker,
+                        )
+                    )
+                    previous_at = at_int
+
+                prev_gray = gray
+                at += step_ms
+        finally:
+            capture.release()
+
         return tuple(points)
 
 

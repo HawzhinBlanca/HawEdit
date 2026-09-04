@@ -94,6 +94,9 @@ NTSC30_RENDER_SHA256 = "5864ac268634d8845d5cb383741da6258694c1d032708d70c39ee6a9
 NTSC60_RENDER_SHA256 = "a66829ceb0b199c7bcfe1b431a28b1559015d926cf4c8e2ab6a463e954ffbdca"
 SPEAKER_TRACKED_RENDER_SHA256 = "6ceba45fade2c32e7b546e4f4c94f760fdc2827e315a075061cc6b4d97e50ae1"
 SPEAKER_AMBIGUOUS_RENDER_SHA256 = "6ceba45fade2c32e7b546e4f4c94f760fdc2827e315a075061cc6b4d97e50ae1"
+MOTION_SPEAKER_TRACKED_RENDER_SHA256 = (
+    "df7e5ca01cbc778fa33fe8d28c13d1dc46384711fdd28d71bc7909092c96218e"
+)
 
 
 def _test_qc(
@@ -1616,6 +1619,43 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
     assert run.clip.output.crop_target == "face_tracked"
     assert run.render is not None and not isinstance(run.render, StageSkipped)
     assert run.render.reframe is Reframe.FACE_TRACKED
+
+
+@needs_ffmpeg
+def test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task T2.1: run_pipeline with MotionSpeakerTracker reframes in SPEAKER_TRACKED mode."""
+    import cv2
+
+    from hawedit.reframe import MotionSpeakerTracker
+    from hawedit.render import Reframe
+
+    class _MockClassifier:
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            return [(200, 100, 80, 80)]
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", lambda p: _MockClassifier())
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="motion-speaker-tracked",
+        transcript=a_transcript("motion-speaker-tracked"),
+        diarizer=_MeasuredDiarizer(),
+        select_sentences=(0,),
+        verdict=replace(a_verdict(100, 1_700), candidate_id="motion-speaker-tracked-0"),
+        qc=_test_qc(True, reviewed_sha256=MOTION_SPEAKER_TRACKED_RENDER_SHA256),
+        speaker_tracker=MotionSpeakerTracker(sample_fps=5.0),
+    )
+    assert run.clip is not None and run.clip.output is not None
+    assert run.clip.output.crop_target == "speaker_face"
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    assert run.render.reframe is Reframe.SPEAKER_TRACKED
+    assert run.delivery is not None and not isinstance(run.delivery, StageSkipped)
 
 
 def test_requested_speaker_tracking_refuses_missing_diarization_without_calling_provider(
