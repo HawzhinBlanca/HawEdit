@@ -73,7 +73,9 @@ from hawedit.clip import (
     MAX_CANDIDATE_SPAN_MS,
     MAX_MISLEADING_EDIT_RISK,
     MIN_CANDIDATE_SPAN_MS,
+    MIN_CULTURAL_LANDING,
     MIN_HOOK_SCORE,
+    MIN_MEANING_FIDELITY,
     Clip,
     ClipTranscript,
     DiscoveryPath,
@@ -118,6 +120,7 @@ from hawedit.judge import (
     JudgeVerdict,
     NotRoutable,
     RequestTooLarge,
+    tournament_score,
 )
 from hawedit.keyframes import KeyframeError, extract_judge_frames
 from hawedit.measure import measure_clip
@@ -1224,6 +1227,8 @@ def _verdict_is_shippable(verdict: JudgeVerdict) -> bool:
         verdict.hook_score >= MIN_HOOK_SCORE
         and verdict.misleading_edit_risk <= MAX_MISLEADING_EDIT_RISK
         and verdict.self_contained
+        and verdict.meaning_fidelity >= MIN_MEANING_FIDELITY
+        and verdict.cultural_landing >= MIN_CULTURAL_LANDING
     )
 
 
@@ -2125,7 +2130,7 @@ def run_pipeline(
                     else 0.0
                 )
                 return (
-                    verd.hook_score,
+                    tournament_score(verd),
                     getattr(verd, "payoff_strength", 0.0),
                     getattr(verd, "ends_on_a_beat", False),
                     variety,

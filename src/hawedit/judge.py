@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
@@ -75,9 +76,12 @@ __all__ = [
     "NotRoutable",
     "RequestTooLarge",
     "ShadowVerdict",
+    "compute_repeat_k_agreement",
     "decide_judge",
     "estimate_cost_usd",
     "route",
+    "tournament_rank_verdicts",
+    "tournament_score",
     "video_tokens",
 ]
 
@@ -746,3 +750,78 @@ def decide_judge(
         f"moves with it."
     )
     return JudgeDecision(incumbent, shadow, True, tuple(reasons))
+
+
+def tournament_score(verdict: JudgeVerdict) -> float:
+    """Calculate calibrated composite quality score for a verdict (Task T4.3).
+
+    Evaluates multi-dimensional criteria:
+    - hook_score: 40% (viewer scroll-stopping retention)
+    - payoff_strength: 30% (resolution satisfaction)
+    - meaning_fidelity: 20% (message preservation)
+    - cultural_landing: 10% (Kurdish cultural resonance)
+    - misleading_edit_risk penalty: -0.20 * risk
+    - ends_on_a_beat bonus: +0.05
+    """
+    base = (
+        0.40 * verdict.hook_score
+        + 0.30 * getattr(verdict, "payoff_strength", 0.5)
+        + 0.20 * verdict.meaning_fidelity
+        + 0.10 * verdict.cultural_landing
+    )
+    risk_penalty = verdict.misleading_edit_risk * 0.20
+    beat_bonus = 0.05 if getattr(verdict, "ends_on_a_beat", False) else 0.0
+    return round(base - risk_penalty + beat_bonus, 4)
+
+
+def tournament_rank_verdicts(
+    verdicts: Sequence[JudgeVerdict],
+) -> tuple[tuple[JudgeVerdict, float], ...]:
+    """Rank passing verdicts using calibrated multi-dimensional tournament scoring.
+
+    Returns tuple of (verdict, tournament_score) sorted from highest to lowest score.
+    """
+    hook_priority = {
+        "question": 5,
+        "claim": 4,
+        "contrast": 3,
+        "confession": 2,
+        "story_open": 1,
+    }
+    scored = [(v, tournament_score(v)) for v in verdicts]
+    scored.sort(
+        key=lambda item: (
+            item[1],
+            hook_priority.get(getattr(item[0], "hook_type", ""), 0),
+            item[0].hook_score,
+        ),
+        reverse=True,
+    )
+    return tuple(scored)
+
+
+def compute_repeat_k_agreement(
+    verdicts: Sequence[JudgeVerdict],
+) -> dict[str, float]:
+    """Calculate agreement metrics (mean, std dev, range) across repeat evaluations."""
+    if not verdicts:
+        return {}
+    k = len(verdicts)
+    metrics = (
+        "hook_score",
+        "payoff_strength",
+        "meaning_fidelity",
+        "cultural_landing",
+        "misleading_edit_risk",
+    )
+    result: dict[str, float] = {"k": float(k)}
+    for metric in metrics:
+        values = [float(getattr(v, metric, 0.0)) for v in verdicts]
+        mean_val = sum(values) / k
+        variance = sum((x - mean_val) ** 2 for x in values) / k if k > 1 else 0.0
+        std_val = math.sqrt(variance)
+        span_val = max(values) - min(values)
+        result[f"{metric}_mean"] = round(mean_val, 4)
+        result[f"{metric}_std"] = round(std_val, 4)
+        result[f"{metric}_range"] = round(span_val, 4)
+    return result

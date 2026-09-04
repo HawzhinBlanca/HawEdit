@@ -251,7 +251,14 @@ Validated visual evidence:
 {visual_context}
 
 Judge it on:
-- hook_score: how strongly the opening seconds hold attention (0..1)
+- hook_score: how strongly the opening seconds hold attention (0..1). Calibrated Sorani
+  rubric anchors:
+  * 0.20: دەستپێکی ئاسایی یان سڵاو و دەستپێکی بێ سوود، بێ ڕاکێشانی سەرنج
+    (weak/mundane conversational filler or greeting).
+  * 0.50: قسەیەکی ئاسایی یان هەواڵێکی گشتی کە تا ڕادەیەک سەرنجڕاکێشە بەڵام کتوپڕ نییە
+    (moderate curiosity, standard statement).
+  * 0.80+: پرسیارێکی بوێرانە، بانگەشەیەکی چاوەڕواننەکراو، ململانێ، یان دانپێدانانێکی سەرنجڕاکێش
+    کە دەستبەجێ بینەر رادەگرێت (high-voltage provocation, startling claim, scroll-stopping hook).
 - hook_type: the category of opening hook — one of question, claim, contrast,
   story_open, confession
 - self_contained: whether it makes sense with no surrounding context
@@ -259,10 +266,12 @@ Judge it on:
 - payoff_strength: how strongly and satisfyingly the clip resolves or delivers on its hook (0..1)
 - ends_on_a_beat: true if the ending lands cleanly on an emphatic beat or pause;
   false if it cuts mid-thought
-- meaning_fidelity: how faithfully the cut preserves what the speaker meant (0..1)
+- meaning_fidelity: how faithfully the cut preserves what the speaker meant (0..1).
+  Gated minimum floor: 0.70.
 - misleading_edit_risk: risk the cut changes the meaning (0..1). This is the number a media
-  organisation is judged on. Be pessimistic.
-- cultural_landing: how well this lands with a Kurdish audience specifically (0..1)
+  organisation is judged on. Be pessimistic. Maximum allowable ceiling: 0.10.
+- cultural_landing: how well this lands with a Kurdish audience specifically (0..1).
+  Gated minimum floor: 0.70.
 - narrative_role: one of setup, escalation, payoff, aside
 - reason_ckb: brief justification for your evaluation in Central Kurdish
   (Sorani, Arabic script) ONLY.

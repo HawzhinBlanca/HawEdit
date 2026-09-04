@@ -57,7 +57,9 @@ __all__ = [
     "MAX_CANDIDATE_SPAN_MS",
     "MAX_MISLEADING_EDIT_RISK",
     "MIN_CANDIDATE_SPAN_MS",
+    "MIN_CULTURAL_LANDING",
     "MIN_HOOK_SCORE",
+    "MIN_MEANING_FIDELITY",
     "Clip",
     "ClipTranscript",
     "DiscoveryPath",
@@ -260,6 +262,8 @@ def assert_sv6d_within_window(sv6d: Sv6d, in_ms: int, out_ms: int) -> None:
 # on one hundredth of a point. D-257, amending D-253.
 MIN_HOOK_SCORE: Final = 0.75
 MAX_MISLEADING_EDIT_RISK: Final = 0.10
+MIN_MEANING_FIDELITY: Final = 0.70
+MIN_CULTURAL_LANDING: Final = 0.70
 
 # Set by Hawa on 2026-08-27, and a *decision* rather than a derivation: `BLUEPRINT.md` states no
 # clip duration anywhere. Its only fixed duration is `max_speech_duration_s=38`, which governs
@@ -1214,6 +1218,20 @@ class Clip:
             raise EditorialBelowThreshold(
                 f"clip {self.clip_id!r} was judged not self-contained: it needs the rest of the "
                 f"episode to make sense, which a viewer scrolling past it does not have."
+            )
+        if self.editorial.meaning_fidelity < MIN_MEANING_FIDELITY:
+            raise EditorialBelowThreshold(
+                f"clip {self.clip_id!r} scored meaning fidelity "
+                f"{self.editorial.meaning_fidelity:.2f}, below the "
+                f"{MIN_MEANING_FIDELITY:.2f} floor. §8.2 calls meaning preservation "
+                f"the invariant an edit must not break."
+            )
+        if self.editorial.cultural_landing < MIN_CULTURAL_LANDING:
+            raise EditorialBelowThreshold(
+                f"clip {self.clip_id!r} scored cultural landing "
+                f"{self.editorial.cultural_landing:.2f}, below the "
+                f"{MIN_CULTURAL_LANDING:.2f} floor. §8.2 requires content to resonate "
+                f"with Kurdish cultural sensibilities."
             )
         if self.output is None:
             raise ValueError(
