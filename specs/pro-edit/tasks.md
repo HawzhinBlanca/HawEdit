@@ -32,10 +32,12 @@
                                   (tests: test_an_assembled_reel_is_judged_as_one,
                                           test_the_verdict_is_recorded_against_the_assembly,
                                           test_editorial_thresholds_apply_to_the_assembly)
+  *Correction 2026-09-02 (ADR D-262)*: Cited tests proved text data structures under mock judge only, not media rendering or pipeline concatenation. Re-opened as Task T4.9 in pro-grade master.
 
 - [x] T7  Speaker-tracked reframe, once `BLOCKED.md` diarization clears. Until then the reframe
           stays face-tracked and says so.
                                   (tests: test_an_unavailable_diarizer_never_claims_speaker_tracking)
+  *Correction 2026-09-02 (ADR D-262)*: Cited test proved that unavailable diarizer does not falsely claim speaker tracking in contract, not visual speaker-face tracking. Re-opened as Task T2.1 in pro-grade master.
 
 - [x] T8  **Measure it on real footage.** Render ep29 before and after and record what changed in
           `evidence/`, including whether the judge's misleading-edit score moves on an assembly.

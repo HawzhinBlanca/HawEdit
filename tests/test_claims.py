@@ -1824,3 +1824,26 @@ def test_resolve_live_conformation_evidence_is_recorded() -> None:
     assert "Hook (0-3s)" in content
     assert "Payoff / Core Insight" in content
     assert "EP29_Live_Reel" in content
+
+
+def test_the_reopened_rows_cite_the_correction_adr() -> None:
+    """Task T0.2: Pro-edit ledger rows T6 and T7 must cite ADR D-262 and state
+    their re-opened task mappings (T4.9 and T2.1) per HANDOFF.md §1.6 and
+    evidence/two-rows-flipped-for-features-that-did-not-exist.md.
+    """
+    tasks_file = ROOT / "specs" / "pro-edit" / "tasks.md"
+    assert tasks_file.exists(), "specs/pro-edit/tasks.md must exist"
+    tasks_text = tasks_file.read_text(encoding="utf-8")
+
+    assert "D-262" in tasks_text, "pro-edit tasks.md must cite ADR D-262"
+    assert "T4.9" in tasks_text, "pro-edit tasks.md must document re-opening T6 as T4.9"
+    assert "T2.1" in tasks_text, "pro-edit tasks.md must document re-opening T7 as T2.1"
+
+    evidence = ROOT / "evidence" / "two-rows-flipped-for-features-that-did-not-exist.md"
+    assert evidence.exists(), (
+        "evidence/two-rows-flipped-for-features-that-did-not-exist.md must exist"
+    )
+    evidence_text = evidence.read_text(encoding="utf-8")
+
+    for phrase in ("D-262", "pro-edit", "T6", "T7", "T4.9", "T2.1"):
+        assert phrase in evidence_text, f"evidence file must discuss {phrase}"
