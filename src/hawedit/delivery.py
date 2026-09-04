@@ -525,6 +525,18 @@ def reconcile_delivery(
             measured="unreviewed or missing qc record",
         )
 
+    # Clause 11: Cover Frame Boundary (Task T4.10)
+    if clip.output and clip.output.cover_frame_ms is not None:
+        clip_duration_ms = clip.out_ms - clip.in_ms
+        is_clip_rel = 0 <= clip.output.cover_frame_ms <= clip_duration_ms
+        is_source_abs = clip.in_ms <= clip.output.cover_frame_ms <= clip.out_ms
+        if not (is_clip_rel or is_source_abs):
+            raise DeliveryRefused(
+                "cover_frame_out_of_bounds",
+                expected=f"within [0, {clip_duration_ms}] ms or [{clip.in_ms}, {clip.out_ms}] ms",
+                measured=clip.output.cover_frame_ms,
+            )
+
 
 def publish_delivery_bundle(
     output_dir: Path,
@@ -534,8 +546,9 @@ def publish_delivery_bundle(
     selected_sentences: Sequence[Sentence] = (),
     punch_ins: tuple[int, ...] = (),
     speaker_turns: tuple[tuple[int, int, str], ...] = (),
+    cover_image_path: Path | None = None,
 ) -> dict[str, Path]:
-    """Emit the editorial handoff bundle (EDL, SRT, JSON contract, and Resolve OTIO timeline)."""
+    """Emit the editorial handoff bundle (EDL, SRT, JSON contract, Resolve OTIO, and cover.png)."""
     output_dir.mkdir(parents=True, exist_ok=True)
     results: dict[str, Path] = {}
 
@@ -573,6 +586,11 @@ def publish_delivery_bundle(
     otio_path = output_dir / f"{clip.clip_id}.otio"
     otio_path.write_text(serialize_otio(otio_doc), encoding="utf-8")
     results["otio"] = otio_path
+
+    if cover_image_path is not None and cover_image_path.is_file():
+        cover_path = output_dir / f"{clip.clip_id}.cover.png"
+        cover_path.write_bytes(cover_image_path.read_bytes())
+        results["cover"] = cover_path
 
     return results
 

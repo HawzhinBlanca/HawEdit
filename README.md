@@ -583,6 +583,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `keyframes.py` | §3 Stage 4 | Real source-timestamped JPEG extraction for the multimodal judge, capped at 20 images and 5 MiB per bounded read. |
 | `reframe.py` | §3 Stage 6 | Dominant-face continuity plus strict speaker-labelled focus evidence reconciled to exclusive diarization turns; the production active-speaker associator remains external. |
 | `assembly.py` | §3 Stage 6 extension | Multi-moment story assembly, timeline re-offsetting, and unified editorial scoring across spliced spans. |
+| `cover.py` | §3 Stage 6 extension | Automatic thumbnail cover selection via face share, sharpness, and open-eyes heuristic, plus Kurdish title variants. |
 | `silence.py` | §3 Stage 6 extension | Silence tightening, pause shortening, timeline shifting, and removed silence tracking in output contract. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |

@@ -560,6 +560,8 @@ class Output:
     hashtags_ckb: tuple[str, ...] = ()
     silence_removed_ms: int = 0
     loudness: dict[str, Any] | None = None
+    title_variants_ckb: tuple[str, ...] = ()
+    cover_frame_ms: int | None = None
 
     def __post_init__(self) -> None:
         for name in ("title_ckb", "description_ckb", "crop_target", "caption_style"):
@@ -577,6 +579,12 @@ class Output:
         _strict_json_int(self.silence_removed_ms, "output.silence_removed_ms", minimum=0)
         if self.loudness is not None and not isinstance(self.loudness, dict):
             raise ValueError("output.loudness must be a dictionary or None")
+        if not isinstance(self.title_variants_ckb, tuple) or not all(
+            isinstance(variant, str) for variant in self.title_variants_ckb
+        ):
+            raise ValueError("output.title_variants_ckb must be a tuple of strings")
+        if self.cover_frame_ms is not None:
+            _strict_json_int(self.cover_frame_ms, "output.cover_frame_ms", minimum=0)
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -587,6 +595,8 @@ class Output:
             "durations": list(self.durations),
             "hashtags_ckb": list(self.hashtags_ckb),
             "silence_removed_ms": self.silence_removed_ms,
+            "title_variants_ckb": list(self.title_variants_ckb),
+            "cover_frame_ms": self.cover_frame_ms,
         }
         if self.loudness is not None:
             data["loudness"] = dict(self.loudness)
@@ -600,12 +610,24 @@ class Output:
             required=frozenset(
                 {"title_ckb", "description_ckb", "crop_target", "caption_style", "durations"}
             ),
-            optional=frozenset({"hashtags_ckb", "silence_removed_ms", "loudness"}),
+            optional=frozenset(
+                {
+                    "hashtags_ckb",
+                    "silence_removed_ms",
+                    "loudness",
+                    "title_variants_ckb",
+                    "cover_frame_ms",
+                }
+            ),
         )
         raw_durations = _strict_json_array(fields["durations"], "output.durations")
         raw_hashtags = _strict_json_array(fields.get("hashtags_ckb", []), "output.hashtags_ckb")
         raw_silence = fields.get("silence_removed_ms", 0)
         raw_loudness = fields.get("loudness")
+        raw_variants = _strict_json_array(
+            fields.get("title_variants_ckb", []), "output.title_variants_ckb"
+        )
+        raw_cover = fields.get("cover_frame_ms")
         return Output(
             title_ckb=_strict_json_string(fields["title_ckb"], "output.title_ckb"),
             description_ckb=_strict_json_string(
@@ -623,6 +645,15 @@ class Output:
                 raw_silence, "output.silence_removed_ms", minimum=0
             ),
             loudness=dict(raw_loudness) if isinstance(raw_loudness, dict) else None,
+            title_variants_ckb=tuple(
+                _strict_json_string(variant, "output.title_variants_ckb member")
+                for variant in raw_variants
+            ),
+            cover_frame_ms=(
+                None
+                if raw_cover is None
+                else _strict_json_int(raw_cover, "output.cover_frame_ms", minimum=0)
+            ),
         )
 
 

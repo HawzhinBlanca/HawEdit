@@ -223,6 +223,7 @@ class JudgeVerdict:
     payoff_strength: float = 0.5
     ends_on_a_beat: bool = True
     reason_ckb: str = "پەسەندکراوە لەسەر بنەمای بەهێزی دەربڕین."
+    title_variants_ckb: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.self_contained, bool):
@@ -246,6 +247,10 @@ class JudgeVerdict:
             isinstance(tag, str) for tag in self.hashtags_ckb
         ):
             raise ValueError("hashtags_ckb must be a tuple of strings")
+        if not isinstance(self.title_variants_ckb, tuple) or not all(
+            isinstance(variant, str) for variant in self.title_variants_ckb
+        ):
+            raise ValueError("title_variants_ckb must be a tuple of strings")
         if self.sv6d is not None and not isinstance(self.sv6d, Sv6d):
             raise ValueError("sv6d must be an Sv6d value or None")
 
