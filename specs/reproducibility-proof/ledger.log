@@ -1,1 +1,2 @@
 TS=2026-09-04T18:12:14Z FEATURE=reproducibility-proof TASK=T1 TESTS=test_two_renders_of_one_edit_agree VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T18:25:15Z FEATURE=reproducibility-proof TASK=T2 TESTS=test_new_evidence_names_its_commit_media_and_host VERIFY=pass REPORT=.gate/last-test-run.xml
