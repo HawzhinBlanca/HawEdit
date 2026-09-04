@@ -1,1 +1,2 @@
 TS=2026-09-04T04:58:32Z FEATURE=judge-calibration TASK=T1 TESTS=test_prompt_template_contains_calibrated_sorani_rubric_anchors,test_clip_assert_renderable_gates_meaning_fidelity,test_clip_assert_renderable_gates_cultural_landing VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T05:07:40Z FEATURE=judge-calibration TASK=T2 TESTS=test_tournament_rank_verdicts_ranks_by_multidimensional_quality,test_compute_repeat_k_agreement_calculates_metric_concordance VERIFY=pass REPORT=.gate/last-test-run.xml
