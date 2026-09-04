@@ -585,6 +585,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `assembly.py` | §3 Stage 6 extension | Multi-moment story assembly, timeline re-offsetting, and unified editorial scoring across spliced spans. |
 | `cover.py` | §3 Stage 6 extension | Automatic thumbnail cover selection via face share, sharpness, and open-eyes heuristic, plus Kurdish title variants. |
 | `episode.py` | §3 Stage 3/6 extension | Episode planning, multi-clip diversity selection, and consolidated episode manifest reconciliation. |
+| `variants.py` | §5 extension | Sentence-complete length variants (15s, 30s, 60s) for multi-duration social delivery. |
 | `silence.py` | §3 Stage 6 extension | Silence tightening, pause shortening, timeline shifting, and removed silence tracking in output contract. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
