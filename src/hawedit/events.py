@@ -105,7 +105,7 @@ class RunEvent:
                 raise ValueError(f"billed event {self.sequence} tokens cannot be negative")
             if self.cost_usd_estimate < 0.0:
                 raise ValueError(f"billed event {self.sequence} cost cannot be negative")
-        elif self.state is RunState.SKIPPED and not self.reason.strip():
+        if self.state is RunState.SKIPPED and not self.reason.strip():
             # A skip whose reason is blank is the failure this module exists to prevent: it reads
             # as "this stage did not run" with nothing to act on, which is exactly the report
             # `StageSkipped` was built to stop `PipelineRun` from making.
@@ -113,7 +113,7 @@ class RunEvent:
                 f"stage {self.stage!r} is reported skipped with no reason. A skip nobody can "
                 f"explain is indistinguishable from a stage that was forgotten."
             )
-        elif self.reason:
+        if self.state is not RunState.SKIPPED and self.reason:
             raise ValueError(
                 f"stage {self.stage!r} is {self.state.value} and carries reason "
                 f"{self.reason!r}. Only a skip has a reason; anything else here is a note "
