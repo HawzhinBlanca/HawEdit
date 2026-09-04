@@ -1,0 +1,1 @@
+TS=2026-09-04T03:06:01Z FEATURE=episode-plan TASK=T1 TESTS=test_compute_text_similarity_matches_sorani_jaccard,test_select_episode_plan_enforces_max_clips,test_episode_manifest_roundtrip_and_serialization VERIFY=pass REPORT=.gate/last-test-run.xml
