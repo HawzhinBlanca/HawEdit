@@ -61,16 +61,17 @@ __all__ = [
 
 
 class RunState(Enum):
-    """The three things that can be true of a stage while a run is in flight."""
+    """The states of a stage or event while a run is in flight."""
 
     STARTED = "started"
     COMPLETED = "completed"
     SKIPPED = "skipped"
+    BILLED = "billed"
 
 
 @dataclass(frozen=True, slots=True)
 class RunEvent:
-    """One stage transition, as a value that can be written down and replayed.
+    """One stage transition or billed call, as a value that can be written down and replayed.
 
     Validated at construction for the same reason `JudgeVerdict` is: this is the record a UI
     timeline and a workflow ledger both read, and a malformed one is discovered later and
@@ -83,6 +84,10 @@ class RunEvent:
     stage: str
     state: RunState
     reason: str = ""
+    model: str = ""
+    tokens: int = 0
+    cost_usd_estimate: float = 0.0
+    candidate_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.run_id.strip():
@@ -93,15 +98,22 @@ class RunEvent:
             raise ValueError(f"event sequence starts at 1, not {self.sequence}")
         if self.at_ms < 0:
             raise ValueError(f"event timestamp {self.at_ms} is before the epoch")
-        # A skip whose reason is blank is the failure this module exists to prevent: it reads
-        # as "this stage did not run" with nothing to act on, which is exactly the report
-        # `StageSkipped` was built to stop `PipelineRun` from making.
-        if self.state is RunState.SKIPPED and not self.reason.strip():
+        if self.state is RunState.BILLED:
+            if not self.model.strip():
+                raise ValueError(f"billed event {self.sequence} must specify a model")
+            if self.tokens < 0:
+                raise ValueError(f"billed event {self.sequence} tokens cannot be negative")
+            if self.cost_usd_estimate < 0.0:
+                raise ValueError(f"billed event {self.sequence} cost cannot be negative")
+        elif self.state is RunState.SKIPPED and not self.reason.strip():
+            # A skip whose reason is blank is the failure this module exists to prevent: it reads
+            # as "this stage did not run" with nothing to act on, which is exactly the report
+            # `StageSkipped` was built to stop `PipelineRun` from making.
             raise ValueError(
                 f"stage {self.stage!r} is reported skipped with no reason. A skip nobody can "
                 f"explain is indistinguishable from a stage that was forgotten."
             )
-        if self.state is not RunState.SKIPPED and self.reason:
+        elif self.reason:
             raise ValueError(
                 f"stage {self.stage!r} is {self.state.value} and carries reason "
                 f"{self.reason!r}. Only a skip has a reason; anything else here is a note "
@@ -109,7 +121,7 @@ class RunEvent:
             )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "run_id": self.run_id,
             "sequence": self.sequence,
             "at_ms": self.at_ms,
@@ -117,6 +129,13 @@ class RunEvent:
             "state": self.state.value,
             "reason": self.reason,
         }
+        if self.state is RunState.BILLED:
+            result["model"] = self.model
+            result["tokens"] = self.tokens
+            result["cost_usd_estimate"] = round(self.cost_usd_estimate, 6)
+            if self.candidate_id:
+                result["candidate_id"] = self.candidate_id
+        return result
 
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> RunEvent:
@@ -134,6 +153,10 @@ class RunEvent:
             stage=str(data["stage"]),
             state=RunState(str(data["state"])),
             reason=str(data.get("reason", "")),
+            model=str(data.get("model", "")),
+            tokens=int(data.get("tokens", 0)),
+            cost_usd_estimate=float(data.get("cost_usd_estimate", 0.0)),
+            candidate_id=str(data.get("candidate_id", "")),
         )
 
 
@@ -184,6 +207,30 @@ class RunEventLog:
         if skipped is None:
             return self._emit(stage, RunState.COMPLETED)
         return self._emit(stage, RunState.SKIPPED, skipped)
+
+    def billed(
+        self,
+        stage: str,
+        model: str,
+        tokens: int,
+        cost_usd_estimate: float,
+        candidate_id: str | None = None,
+    ) -> RunEvent:
+        """Report a billed foundation model call."""
+        self._sequence += 1
+        event = RunEvent(
+            run_id=self.run_id,
+            sequence=self._sequence,
+            at_ms=int(self._clock() * 1000),
+            stage=stage,
+            state=RunState.BILLED,
+            model=model,
+            tokens=tokens,
+            cost_usd_estimate=cost_usd_estimate,
+            candidate_id=candidate_id or "",
+        )
+        self._sink(event)
+        return event
 
     def _emit(self, stage: str, state: RunState, reason: str = "") -> RunEvent:
         self._sequence += 1

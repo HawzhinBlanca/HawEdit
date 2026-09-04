@@ -115,11 +115,13 @@ from hawedit.ingest import (
 )
 from hawedit.judge import (
     MAX_PERSISTED_VERDICT_BYTES,
+    BilledCall,
     EditorialJudge,
     JudgeRequest,
     JudgeVerdict,
     NotRoutable,
     RequestTooLarge,
+    estimate_cost_usd,
     tournament_score,
 )
 from hawedit.keyframes import KeyframeError, extract_judge_frames
@@ -191,6 +193,7 @@ if TYPE_CHECKING:
     from hawedit.models import ModelStore
 
 __all__ = [
+    "BilledCall",
     "Delivery",
     "PipelineRun",
     "StageSkipped",
@@ -319,6 +322,7 @@ class PipelineRun:
     # Phase 3, D-A7) can rebuild captions for a shifted span without re-running §4.2 segmentation
     # against VAD pauses this record does not carry either. Empty when no clip was built.
     selected_sentences: tuple[Sentence, ...] = ()
+    billed_calls: tuple[BilledCall, ...] = ()
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
 
@@ -548,6 +552,11 @@ class PipelineRun:
             "visual_query_source": self.visual_query_source,
             "delivery": encode(self.delivery),
             "candidates": [c.to_dict() for c in self.candidates],
+            "billed_calls": [call.to_dict() for call in self.billed_calls],
+            "total_cost_usd_estimate": round(
+                sum(call.cost_usd_estimate for call in self.billed_calls), 6
+            ),
+            "total_tokens_billed": sum(call.tokens for call in self.billed_calls),
             # §5 makes rejection first-class and calls the rejection set "your only measure
             # of recall"; §8.2 measures Recall@20 *per discovery path*, so the split is here
             # rather than left for a reader to compute. Reported even when empty — an
@@ -1696,6 +1705,7 @@ def run_pipeline(
 
     work_dir.mkdir(parents=True, exist_ok=True)
     log = RunEventLog(identifier, on_event)
+    billed_calls: list[BilledCall] = []
 
     # --- §3 Stage 0 ----------------------------------------------------------------------
     log.started("ingest")
@@ -1901,6 +1911,18 @@ def run_pipeline(
         if discover is not None:
             try:
                 verbal = tuple(discover(normalized))
+                call = getattr(discover, "last_billed_call", None) or getattr(
+                    getattr(discover, "__self__", None), "last_billed_call", None
+                )
+                if isinstance(call, BilledCall):
+                    billed_calls.append(call)
+                    log.billed(
+                        stage=call.stage,
+                        model=call.model,
+                        tokens=call.tokens,
+                        cost_usd_estimate=call.cost_usd_estimate,
+                        candidate_id=call.candidate_id,
+                    )
             except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
                 discovery_skipped = _operational_failure(
                     "discovery", "Path A discovery runtime", exc
@@ -1959,6 +1981,7 @@ def run_pipeline(
             candidates=merged,
             visual_index=visual_result or visual_skipped or _STAGE_2_VISUAL,
             visual_query_source=visual_query_source,
+            billed_calls=tuple(billed_calls),
         )
         log.finished("discovery", None if merged else _STAGE_3_NOTHING_FOUND.reason)
     else:
@@ -2088,13 +2111,42 @@ def run_pipeline(
                 keyframes=judge_frames,
             )
             try:
-                judged = judge.judge(request)
+                if hasattr(judge, "judge_with_count"):
+                    counted, judged = judge.judge_with_count(request)
+                    call = BilledCall(
+                        model=judge.model_id,
+                        tokens=counted,
+                        cost_usd_estimate=estimate_cost_usd(counted),
+                        stage="editorial",
+                        candidate_id=request_candidate.candidate_id,
+                    )
+                else:
+                    judged = judge.judge(request)
+                    call = getattr(judge, "last_billed_call", None)
+                    if not isinstance(call, BilledCall):
+                        tokens = request.tokens or 0
+                        call = BilledCall(
+                            model=getattr(judge, "model_id", "gemini-2.5-pro"),
+                            tokens=tokens,
+                            cost_usd_estimate=estimate_cost_usd(tokens) if tokens else 0.0,
+                            stage="editorial",
+                            candidate_id=request_candidate.candidate_id,
+                        )
+                billed_calls.append(call)
+                log.billed(
+                    stage=call.stage,
+                    model=call.model,
+                    tokens=call.tokens,
+                    cost_usd_estimate=call.cost_usd_estimate,
+                    candidate_id=call.candidate_id,
+                )
             except (GeminiUnavailable, JudgeUnusable, NotRoutable, RequestTooLarge) as exc:
                 if judged_candidates:
                     break
                 return replace(
                     run,
                     editorial=_operational_failure("editorial", "Stage 4 judge runtime", exc),
+                    billed_calls=tuple(billed_calls),
                 )
             _assert_verdict_matches_request(judged, request)
             if judged.sv6d is None and candidate.sv6d is not None:
@@ -2118,6 +2170,7 @@ def run_pipeline(
                         reason=_no_shippable_verdict_reason(judged_candidates),
                         blocked_by=("§2 editorial thresholds",),
                     ),
+                    billed_calls=tuple(billed_calls),
                 )
 
             def _shippable_sort_key(
@@ -2153,7 +2206,7 @@ def run_pipeline(
                         merged, winner, sentences, selected_anchors, min_clip_ms
                     ),
                 )
-            run = replace(run, editorial=None)
+            run = replace(run, editorial=None, billed_calls=tuple(billed_calls))
     log.finished("editorial", _skip_reason(run.editorial))
 
     log.started("boundary")
@@ -2819,6 +2872,7 @@ def run_pipeline(
             editing_json_path=str(final_json),
             measured_path=str(final_measured),
         ),
+        billed_calls=tuple(billed_calls),
     )
 
 
@@ -3583,6 +3637,13 @@ def _print_report(run: PipelineRun) -> None:
     for name, skip in run.skipped():
         blockers = f" [{', '.join(skip.blocked_by)}]" if skip.blocked_by else ""
         print(f"SKIPPED {name}{blockers}: {skip.reason}")
+    if run.billed_calls:
+        total_tokens = sum(call.tokens for call in run.billed_calls)
+        total_cost = sum(call.cost_usd_estimate for call in run.billed_calls)
+        print(
+            f"billed  {len(run.billed_calls)} call(s) · {total_tokens:,} tokens · "
+            f"~${total_cost:.4f} USD (estimate)"
+        )
     print(
         "\nrun is COMPLETE"
         if run.complete

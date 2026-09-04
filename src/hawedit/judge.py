@@ -67,6 +67,7 @@ __all__ = [
     "USD_PER_MILLION_TOKENS",
     "VIDEO_TOKENS_PER_SECOND",
     "WITH_VIDEO_TOKENS_PER_HOUR",
+    "BilledCall",
     "EditorialJudge",
     "InputMode",
     "JudgeDecision",
@@ -580,6 +581,48 @@ def estimate_cost_usd(tokens: int, batched: bool = False, cached: bool = False) 
     if batched:
         cost *= 0.5
     return cost
+
+
+@dataclass(frozen=True, slots=True)
+class BilledCall:
+    """Record of a foundation-model call that incurs billing.
+
+    Every billed call carries:
+    - model: the provider model identifier (e.g. "gemini-2.5-pro")
+    - tokens: provider-counted input tokens
+    - cost_usd_estimate: calculated from USD_PER_MILLION_TOKENS
+    - stage: the pipeline stage making the call ("discovery", "editorial", etc.)
+    - candidate_id: the candidate or slice id being evaluated (optional)
+    """
+
+    model: str
+    tokens: int
+    cost_usd_estimate: float
+    stage: str
+    candidate_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.model.strip():
+            raise ValueError("BilledCall.model cannot be empty")
+        if self.tokens < 0:
+            raise ValueError(f"BilledCall.tokens must be non-negative, got {self.tokens}")
+        if self.cost_usd_estimate < 0.0:
+            raise ValueError(
+                f"BilledCall.cost_usd_estimate cannot be negative, got {self.cost_usd_estimate}"
+            )
+        if not self.stage.strip():
+            raise ValueError("BilledCall.stage cannot be empty")
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "model": self.model,
+            "tokens": self.tokens,
+            "cost_usd_estimate": round(self.cost_usd_estimate, 6),
+            "stage": self.stage,
+        }
+        if self.candidate_id is not None:
+            result["candidate_id"] = self.candidate_id
+        return result
 
 
 @dataclass(frozen=True, slots=True)

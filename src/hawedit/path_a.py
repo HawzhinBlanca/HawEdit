@@ -55,7 +55,7 @@ from hawedit.gemini import (
     JudgeUnusable,
     Transport,
 )
-from hawedit.judge import InputMode, JudgeRequest
+from hawedit.judge import BilledCall, InputMode, JudgeRequest, estimate_cost_usd
 from hawedit.transcripts import NormalizedTranscript, assert_model_input
 
 __all__ = [
@@ -160,6 +160,8 @@ class PathADiscovery:
             sleep=sleep,
         )
         self.model_id = self._judge.model_id
+        self.last_billed_call: BilledCall | None = None
+        self.billed_calls: list[BilledCall] = []
 
     @property
     def governance(self) -> Governance:
@@ -219,6 +221,15 @@ class PathADiscovery:
         counted = self._judge.count_parts(parts)
         replace(self.build_request(transcript), tokens=counted).assert_within_tier()
         body = self._judge.generate_json(parts, CANDIDATE_SCHEMA)
+        call = BilledCall(
+            model=self.model_id,
+            tokens=counted,
+            cost_usd_estimate=estimate_cost_usd(counted),
+            stage="discovery",
+            candidate_id=f"{transcript.media_id}-path-a",
+        )
+        self.last_billed_call = call
+        self.billed_calls.append(call)
         return self._to_candidates(body, transcript)
 
     def _to_candidates(self, body: str, transcript: NormalizedTranscript) -> tuple[Candidate, ...]:

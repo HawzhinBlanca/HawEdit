@@ -51,10 +51,12 @@ from hawedit.credentials import GEMINI_API_KEY, read_credential
 from hawedit.http_transport import open_without_redirects
 from hawedit.judge import (
     KURDISH_EDITORIAL_JUDGE,
+    BilledCall,
     InputMode,
     JudgeRequest,
     JudgeVerdict,
     RequestTooLarge,
+    estimate_cost_usd,
     route,
 )
 
@@ -402,6 +404,8 @@ class GeminiJudge:
         # pure so the runner exists before a missing key is reported and can serialize the
         # affected stage as skipped. Routing above remains eager and cannot be bypassed.
         self._key = api_key
+        self.last_billed_call: BilledCall | None = None
+        self.billed_calls: list[BilledCall] = []
 
     def count_request_tokens(self, request: JudgeRequest) -> int:
         """The real token count for what this request would send.
@@ -561,6 +565,15 @@ class GeminiJudge:
         ).encode("utf-8")
 
         body = self._post(self._url("generateContent"), payload)
+        call = BilledCall(
+            model=self.model_id,
+            tokens=counted,
+            cost_usd_estimate=estimate_cost_usd(counted),
+            stage="editorial",
+            candidate_id=request.candidate_id,
+        )
+        self.last_billed_call = call
+        self.billed_calls.append(call)
         return counted, self._to_verdict(body, request)
 
     def _post(self, url: str, payload: bytes) -> str:
