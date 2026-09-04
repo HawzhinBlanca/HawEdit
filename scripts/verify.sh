@@ -117,6 +117,8 @@ fi
 
 TEST_REPORT="$here/.gate/last-test-run.xml"
 TEST_FLOOR="$here/scripts/test-count.floor"
+COVERAGE_FLOOR="$here/scripts/coverage.floor"
+COVERAGE_REPORT="$here/.gate/coverage-report.json"
 
 # Which steps did the caller replace? Recorded BEFORE the defaults are filled in, because
 # filling a default sets the variable and would make every step look overridden.
@@ -182,10 +184,11 @@ run_step "format"    "$FORMAT_CMD"
 # So the exit code stops being the evidence. Delete the report, run, read it back.
 mkdir -p "$here/.gate"
 rm -f "$TEST_REPORT"
+rm -f "$COVERAGE_REPORT"
 started_at="$("$PY" -c 'import time; print(time.time())')"
 
 run_step "tests"     "$TEST_CMD"
 
-run_step "test evidence" "\"$PY\" -m hawedit.gate \"$TEST_REPORT\" \"$TEST_FLOOR\" \"$started_at\""
+run_step "test evidence" "\"$PY\" -m hawedit.gate \"$TEST_REPORT\" \"$TEST_FLOOR\" \"$started_at\" --coverage-floor \"$COVERAGE_FLOOR\" --coverage-report \"$COVERAGE_REPORT\""
 
 echo "VERIFY OK — hawedit gate green"

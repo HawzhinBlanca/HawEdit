@@ -26,19 +26,26 @@ a suite that quietly got smaller between two green runs.
 from __future__ import annotations
 
 import importlib
+import json
 import sys
+import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 from xml.etree import ElementTree
 
 __all__ = [
     "GATE_TOOLS",
+    "TARGET_COVERAGE_MODULES",
+    "CoverageEvidence",
+    "CoverageTracer",
     "ForeignTool",
     "NoTestEvidence",
     "TestEvidence",
     "assert_tools_are_from_this_environment",
+    "check_coverage_evidence",
     "check_test_evidence",
+    "get_executable_lines",
     "read_floor",
     "write_floor",
 ]
@@ -125,6 +132,186 @@ class TestEvidence:
         return self.collected - self.skipped - self.failures - self.errors
 
 
+TARGET_COVERAGE_MODULES: Final[tuple[str, ...]] = (
+    "boundary.py",
+    "captions.py",
+    "clip.py",
+    "delivery.py",
+    "measure.py",
+    "reframe.py",
+    "render.py",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageEvidence:
+    """Statement coverage evidence for the target modules."""
+
+    total_covered: int
+    total_executable: int
+    by_module: dict[str, tuple[int, int]]  # name -> (covered, executable)
+
+    @property
+    def percentage(self) -> float:
+        if not self.total_executable:
+            return 0.0
+        return (self.total_covered / self.total_executable) * 100.0
+
+
+def get_executable_lines(code: types.CodeType) -> set[int]:
+    """Recursively collect line numbers from CPython's bytecode line table (`co_lines`)."""
+    lines: set[int] = set()
+    for _, _, line in code.co_lines():
+        if line is not None:
+            lines.add(line)
+    for const in code.co_consts:
+        if isinstance(const, types.CodeType):
+            lines |= get_executable_lines(const)
+    return lines
+
+
+class CoverageTracer:
+    """Zero-dependency line coverage tracer scoped to target modules."""
+
+    def __init__(self, target_names: tuple[str, ...] = TARGET_COVERAGE_MODULES) -> None:
+        self.target_names: tuple[str, ...] = target_names
+        self.covered_lines: dict[str, set[int]] = {name: set() for name in target_names}
+        self._active: bool = False
+
+    def _line_tracer(self, frame: types.FrameType, event: str, arg: Any) -> Any:
+        if event == "line":
+            fn = frame.f_code.co_filename
+            for name in self.target_names:
+                if fn.endswith(name):
+                    self.covered_lines[name].add(frame.f_lineno)
+                    break
+        return self._line_tracer
+
+    def _call_tracer(self, frame: types.FrameType, event: str, arg: Any) -> Any:
+        if event == "call":
+            fn = frame.f_code.co_filename
+            for name in self.target_names:
+                if fn.endswith(name):
+                    return self._line_tracer
+        return None
+
+    def start(self) -> None:
+        self.covered_lines = {name: set() for name in self.target_names}
+        self._active = True
+        sys.settrace(self._call_tracer)
+
+    def stop(self) -> None:
+        if self._active:
+            sys.settrace(None)
+            self._active = False
+
+    def compute_evidence(self, project_root: Path) -> CoverageEvidence:
+        total_covered = 0
+        total_executable = 0
+        by_module: dict[str, tuple[int, int]] = {}
+
+        src_dir = project_root / "src" / "hawedit"
+        for name in sorted(self.target_names):
+            module_path = src_dir / name
+            if not module_path.is_file():
+                continue
+            code = compile(module_path.read_text(encoding="utf-8"), str(module_path), "exec")
+            executable = get_executable_lines(code)
+            covered = self.covered_lines.get(name, set()) & executable
+            cov_count = len(covered)
+            exec_count = len(executable)
+            total_covered += cov_count
+            total_executable += exec_count
+            by_module[name] = (cov_count, exec_count)
+
+        return CoverageEvidence(
+            total_covered=total_covered,
+            total_executable=total_executable,
+            by_module=by_module,
+        )
+
+    def save_report(self, report_path: Path, project_root: Path) -> CoverageEvidence:
+        evidence = self.compute_evidence(project_root)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "total_covered": evidence.total_covered,
+            "total_executable": evidence.total_executable,
+            "percentage": round(evidence.percentage, 1),
+            "by_module": {
+                name: {
+                    "covered": cov,
+                    "executable": exc,
+                    "pct": round((cov / exc * 100.0) if exc else 0.0, 1),
+                }
+                for name, (cov, exc) in evidence.by_module.items()
+            },
+        }
+        report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return evidence
+
+
+def check_coverage_evidence(
+    report_path: Path,
+    *,
+    floor_path: Path,
+    not_before: float | None = None,
+) -> CoverageEvidence:
+    """Read .gate/coverage-report.json and enforce the committed coverage floor.
+
+    Raises:
+        NoTestEvidence: if report missing, stale, invalid, or coverage drops below floor.
+    """
+    if not report_path.is_file():
+        raise NoTestEvidence(
+            f"no coverage report at {report_path}. The test step exited without writing coverage "
+            f"evidence for core delivery modules."
+        )
+
+    if not_before is not None and report_path.stat().st_mtime < not_before:
+        raise NoTestEvidence(
+            f"{report_path} is older than this run started. It is a leftover from an earlier run, "
+            f"not evidence about this one."
+        )
+
+    try:
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise NoTestEvidence(
+            f"{report_path} is not valid JSON ({exc}). Coverage evidence is corrupt."
+        ) from exc
+
+    try:
+        total_covered = int(data["total_covered"])
+        total_executable = int(data["total_executable"])
+        by_module_raw = data["by_module"]
+        by_module = {
+            name: (int(stats["covered"]), int(stats["executable"]))
+            for name, stats in by_module_raw.items()
+        }
+    except (KeyError, TypeError, ValueError) as exc:
+        raise NoTestEvidence(f"{report_path} does not match the expected schema ({exc}).") from exc
+
+    evidence = CoverageEvidence(
+        total_covered=total_covered,
+        total_executable=total_executable,
+        by_module=by_module,
+    )
+
+    floor = read_floor(floor_path)
+    if evidence.total_covered < floor:
+        raise NoTestEvidence(
+            f"only {evidence.total_covered} statements covered in core modules against a floor "
+            f"of {floor} ({evidence.percentage:.1f}% across {evidence.total_executable} "
+            f"statements). Either tests were deleted, or untested code was added to the "
+            f"7 core modules. If intentional, edit scripts/coverage.floor in the same commit."
+        )
+
+    if evidence.total_covered > floor:
+        write_floor(floor_path, evidence.total_covered)
+
+    return evidence
+
+
 def read_floor(path: Path) -> int:
     """The lowest collected-test count this project accepts. Missing floor reads as 0."""
     if not path.exists():
@@ -167,6 +354,7 @@ def check_test_evidence(
     *,
     floor_path: Path,
     not_before: float | None = None,
+    require_no_skips: bool = False,
 ) -> TestEvidence:
     """Read the report back and refuse anything that is not a healthy, complete run.
 
@@ -177,13 +365,14 @@ def check_test_evidence(
         not_before: if given, the report must be at least this new (a POSIX mtime). The gate
             deletes the report before running, so a leftover should be impossible — this
             catches the case where the delete silently failed.
+        require_no_skips: if True, refuse any report containing skipped tests (> 0).
 
     Returns:
         The counts, once they have been accepted.
 
     Raises:
         NoTestEvidence: no report, a stale report, zero tests collected, any failure or
-            error, or a collected count below the committed floor.
+            error, any skipped test when require_no_skips is True, or a count below floor.
     """
     if not report_path.exists():
         raise NoTestEvidence(
@@ -198,6 +387,12 @@ def check_test_evidence(
         )
 
     evidence = _parse(report_path)
+
+    if require_no_skips and evidence.skipped > 0:
+        raise NoTestEvidence(
+            f"{report_path} says {evidence.skipped} test(s) skipped — skipped tests are "
+            f"refused under the zero-skip policy."
+        )
 
     if evidence.collected == 0:
         raise NoTestEvidence(
@@ -250,7 +445,9 @@ def check_test_evidence(
 
 
 def main(argv: list[str]) -> int:
-    """`python -m hawedit.gate <report.xml> <floor> [<not_before_mtime>]`.
+    """`python -m hawedit.gate <report.xml> <floor> [not_before] [options]`.
+
+    Options: `--require-no-skips`, `--coverage-floor <path>`, `--coverage-report <path>`.
 
     Also `python -m hawedit.gate --check-tools`, which `verify.sh` runs before any step: it
     proves in one call that the interpreter runs this project (it is this module) and that the
@@ -267,21 +464,65 @@ def main(argv: list[str]) -> int:
         print("hawedit-interpreter-ok")
         return 0
 
-    if not 3 <= len(argv) <= 4:
-        print("usage: python -m hawedit.gate <report.xml> <floor> [not_before]", file=sys.stderr)
+    require_no_skips = False
+    coverage_floor: Path | None = None
+    coverage_report: Path | None = None
+    positional: list[str] = []
+
+    idx = 1
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--require-no-skips":
+            require_no_skips = True
+            idx += 1
+        elif arg == "--coverage-floor" and idx + 1 < len(argv):
+            coverage_floor = Path(argv[idx + 1])
+            idx += 2
+        elif arg == "--coverage-report" and idx + 1 < len(argv):
+            coverage_report = Path(argv[idx + 1])
+            idx += 2
+        else:
+            positional.append(arg)
+            idx += 1
+
+    if not 2 <= len(positional) <= 3:
+        print(
+            "usage: python -m hawedit.gate <report.xml> <floor> [not_before] "
+            "[--require-no-skips] [--coverage-floor <path>] [--coverage-report <path>]",
+            file=sys.stderr,
+        )
         return 64
-    not_before = float(argv[3]) if len(argv) == 4 else None
+
+    not_before = float(positional[2]) if len(positional) == 3 else None
     try:
         evidence = check_test_evidence(
-            Path(argv[1]), floor_path=Path(argv[2]), not_before=not_before
+            Path(positional[0]),
+            floor_path=Path(positional[1]),
+            not_before=not_before,
+            require_no_skips=require_no_skips,
         )
     except NoTestEvidence as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 6
+
     print(
         f"test evidence OK — {evidence.collected} collected, {evidence.passed} passed, "
         f"{evidence.skipped} skipped"
     )
+
+    if coverage_floor is not None and coverage_report is not None:
+        try:
+            cov = check_coverage_evidence(
+                coverage_report, floor_path=coverage_floor, not_before=not_before
+            )
+        except NoTestEvidence as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 6
+        print(
+            f"coverage evidence OK — {cov.total_covered} / {cov.total_executable} statements "
+            f"({cov.percentage:.1f}%)"
+        )
+
     return 0
 
 

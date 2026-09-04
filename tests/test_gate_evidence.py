@@ -13,11 +13,19 @@ edit to a committed number, never as a silent drop in coverage.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from hawedit.gate import NoTestEvidence, check_test_evidence, read_floor, write_floor
+from hawedit.gate import (
+    NoTestEvidence,
+    check_coverage_evidence,
+    check_test_evidence,
+    main,
+    read_floor,
+    write_floor,
+)
 
 
 def _report(
@@ -228,3 +236,127 @@ def test_a_healthy_run_is_still_accepted_with_no_floor(tmp_path: Path) -> None:
     )
     assert (evidence.collected, evidence.skipped, evidence.passed) == (700, 1, 699)
     assert read_floor(floor) == 699, "the floor must ratchet on what ran, not on what was collected"
+
+
+# --- Task T1.11: Zero-skip gate & coverage floor ---------------------------------------------
+
+
+def test_the_gate_refuses_any_skipped_test(tmp_path: Path) -> None:
+    """Proof A for Task T1.11 (Threat 6: skipif on awkward media tests).
+
+    When require_no_skips is True, any report with skipped > 0 must be refused.
+    """
+    floor = tmp_path / "floor"
+    write_floor(floor, 100)
+    report = _report(tmp_path / "r.xml", tests=150, skipped=1)
+
+    # Without require_no_skips, a skip is allowed (for backward compatibility on local hosts)
+    evidence = check_test_evidence(report, floor_path=floor, require_no_skips=False)
+    assert evidence.skipped == 1
+
+    # With require_no_skips=True (CI mode / zero-skip gate), any skip is a hard refusal
+    with pytest.raises(
+        NoTestEvidence, match="skipped tests are refused under the zero-skip policy"
+    ):
+        check_test_evidence(report, floor_path=floor, require_no_skips=True)
+
+
+def test_the_projects_own_coverage_floor_is_committed() -> None:
+    """The coverage floor lives in git beside the test-count floor."""
+    floor = Path(__file__).resolve().parents[1] / "scripts" / "coverage.floor"
+    assert floor.exists(), f"no committed coverage floor at {floor}"
+    assert read_floor(floor) >= 3700, f"coverage floor {read_floor(floor)} below baseline"
+
+
+def _sample_coverage_report(path: Path, covered: int, executable: int = 4000) -> Path:
+    payload = {
+        "total_covered": covered,
+        "total_executable": executable,
+        "percentage": round(covered / executable * 100.0, 1),
+        "by_module": {"render.py": {"covered": covered, "executable": executable, "pct": 90.0}},
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_the_gate_refuses_coverage_below_floor(tmp_path: Path) -> None:
+    floor = tmp_path / "coverage.floor"
+    write_floor(floor, 3500)
+    report = _sample_coverage_report(tmp_path / "cov.json", covered=3400)
+
+    with pytest.raises(
+        NoTestEvidence, match="only 3400 statements covered in core modules against a floor"
+    ):
+        check_coverage_evidence(report, floor_path=floor)
+
+
+def test_the_coverage_floor_ratchets_on_growth(tmp_path: Path) -> None:
+    floor = tmp_path / "coverage.floor"
+    write_floor(floor, 3500)
+    report = _sample_coverage_report(tmp_path / "cov.json", covered=3600)
+
+    evidence = check_coverage_evidence(report, floor_path=floor)
+    assert evidence.total_covered == 3600
+    assert read_floor(floor) == 3600, "the coverage floor must ratchet upward on growth"
+
+
+def test_the_coverage_floor_is_never_ratcheted_down_by_a_refused_run(tmp_path: Path) -> None:
+    floor = tmp_path / "coverage.floor"
+    write_floor(floor, 3500)
+    report = _sample_coverage_report(tmp_path / "cov.json", covered=3200)
+
+    with pytest.raises(NoTestEvidence):
+        check_coverage_evidence(report, floor_path=floor)
+    assert read_floor(floor) == 3500
+
+
+def test_a_stale_coverage_report_is_not_evidence(tmp_path: Path) -> None:
+    floor = tmp_path / "coverage.floor"
+    write_floor(floor, 3000)
+    report = _sample_coverage_report(tmp_path / "cov.json", covered=3200)
+
+    with pytest.raises(NoTestEvidence, match="older than this run started"):
+        check_coverage_evidence(report, floor_path=floor, not_before=report.stat().st_mtime + 60)
+
+
+def test_main_cli_refuses_skipped_tests_when_flag_provided(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = _report(tmp_path / "r.xml", tests=100, skipped=2)
+    floor = tmp_path / "floor"
+    write_floor(floor, 50)
+
+    rc = main(["gate.py", str(report), str(floor), "--require-no-skips"])
+    assert rc == 6
+    stderr = capsys.readouterr().err
+    assert "REFUSED:" in stderr
+    assert "skipped tests are refused under the zero-skip policy" in stderr
+
+
+def test_main_cli_checks_coverage_when_options_provided(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = _report(tmp_path / "r.xml", tests=100)
+    floor = tmp_path / "floor"
+    write_floor(floor, 50)
+
+    cov_floor = tmp_path / "cov.floor"
+    write_floor(cov_floor, 3000)
+    cov_report = _sample_coverage_report(tmp_path / "cov.json", covered=3200)
+
+    rc = main(
+        [
+            "gate.py",
+            str(report),
+            str(floor),
+            "--coverage-floor",
+            str(cov_floor),
+            "--coverage-report",
+            str(cov_report),
+        ]
+    )
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "test evidence OK" in stdout
+    assert "coverage evidence OK" in stdout
+    assert read_floor(cov_floor) == 3200
