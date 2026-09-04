@@ -2236,4 +2236,3 @@ def test_two_renders_of_one_edit_agree(tmp_path: Path) -> None:
     if val_str != "inf":
         psnr_val = float(val_str)
         assert psnr_val >= 45.0, f"PSNR {psnr_val} dB is below 45.0 dB reproducibility threshold"
-
