@@ -1,0 +1,1 @@
+TS=2026-09-04T06:45:27Z FEATURE=golden-coverage TASK=T1 TESTS=test_golden_files_match_their_pinned_digests VERIFY=pass REPORT=.gate/last-test-run.xml
