@@ -91,6 +91,7 @@ __all__ = [
     "quality_args",
     "render_clip",
     "shot_spans",
+    "two_person_split_filter",
     "vertical_crop_size",
 ]
 
@@ -451,6 +452,7 @@ class Reframe(Enum):
     FACE_TRACKED = "face_tracked"
     SPEAKER_TRACKED = "speaker_tracked"
     BLURRED_FILL = "blurred_fill"
+    TWO_PERSON_SPLIT = "two_person_split"
 
 
 class Encoder(Enum):
@@ -1010,6 +1012,75 @@ def blurred_fill_filter(
     )
 
 
+def two_person_split_filter(
+    source_width: int,
+    source_height: int,
+    top_crop: tuple[int, int, int, int],
+    bottom_crop: tuple[int, int, int, int],
+    target_width: int = VERTICAL_WIDTH,
+    target_height: int = VERTICAL_HEIGHT,
+    *,
+    lanczos: bool = False,
+    unsharp: bool = False,
+) -> str:
+    """The ffmpeg filter chain placing two tracked speaker crops in a stacked 9:16 vertical split.
+
+    Used when diarization indicates rapid conversational exchanges (Task T2.12).
+    Top crop (9:8) scales to target_width x (target_height // 2) [1080x960].
+    Bottom crop (9:8) scales to target_width x (target_height // 2) [1080x960].
+    Stacked vertically with vstack=inputs=2 to form a 1080x1920 vertical canvas.
+
+    Args:
+        source_width: original source video width.
+        source_height: original source video height.
+        top_crop: (x, y, w, h) crop rectangle for top speaker pane.
+        bottom_crop: (x, y, w, h) crop rectangle for bottom speaker pane.
+        target_width: output vertical width (default 1080).
+        target_height: output vertical height (default 1920).
+        lanczos: use high-quality Lanczos scaling.
+        unsharp: apply light sharpening.
+
+    Raises:
+        ValueError: dimensions non-positive or crop boxes out of bounds.
+    """
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError(f"source dimensions must be positive, got {source_width}x{source_height}")
+    if target_width <= 0 or target_height <= 0:
+        raise ValueError(f"target dimensions must be positive, got {target_width}x{target_height}")
+    if target_height % 2 != 0:
+        raise ValueError(f"target_height must be even, got {target_height}")
+
+    pane_h = target_height // 2
+
+    def _validate_crop(crop: tuple[int, int, int, int], name: str) -> None:
+        x, y, w, h = crop
+        if w <= 0 or h <= 0:
+            raise ValueError(f"{name} crop dimensions must be positive, got {w}x{h}")
+        if x < 0 or y < 0:
+            raise ValueError(f"{name} crop coordinates must be non-negative, got ({x}, {y})")
+        if x + w > source_width or y + h > source_height:
+            raise ValueError(
+                f"{name} crop box ({x}, {y}, {w}, {h}) exceeds source dimensions "
+                f"{source_width}x{source_height}"
+            )
+
+    _validate_crop(top_crop, "top")
+    _validate_crop(bottom_crop, "bottom")
+
+    scale_flags = ":flags=lanczos" if lanczos else ""
+    unsharp_filter = ",unsharp=5:5:0.5:5:5:0.0" if unsharp else ""
+
+    tx, ty, tw, th = top_crop
+    bx, by, bw, bh = bottom_crop
+
+    return (
+        f"split=2[top_src][bot_src];"
+        f"[top_src]crop={tw}:{th}:{tx}:{ty},scale={target_width}:{pane_h}{scale_flags}{unsharp_filter}[top_p];"
+        f"[bot_src]crop={bw}:{bh}:{bx}:{by},scale={target_width}:{pane_h}{scale_flags}{unsharp_filter}[bot_p];"
+        f"[top_p][bot_p]vstack=inputs=2"
+    )
+
+
 def decide_wide_shot_layout(
     face_height_share: float,
     face_sharpness: float,
@@ -1155,6 +1226,7 @@ def render_clip(
     fps: float | None = None,
     deliverable: bool = False,
     silence_plan: SilencePlan | None = None,
+    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1180,7 +1252,17 @@ def render_clip(
         raise ValueError("static reframe mode cannot carry focus points")
     if effective_reframe is Reframe.BLURRED_FILL and focus_points:
         raise ValueError("blurred_fill reframe mode cannot carry focus points")
-    if effective_reframe not in (Reframe.STATIC_CENTRE, Reframe.BLURRED_FILL) and not focus_points:
+    if effective_reframe is Reframe.TWO_PERSON_SPLIT and focus_points:
+        raise ValueError("two_person_split reframe mode cannot carry focus points")
+    if effective_reframe is Reframe.TWO_PERSON_SPLIT and not split_crops:
+        raise ValueError("two_person_split reframe mode requires split_crops")
+    if effective_reframe is not Reframe.TWO_PERSON_SPLIT and split_crops:
+        raise ValueError("split_crops can only be passed when reframe is TWO_PERSON_SPLIT")
+    if (
+        effective_reframe
+        not in (Reframe.STATIC_CENTRE, Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT)
+        and not focus_points
+    ):
         raise ValueError("dynamic reframe mode needs focus points")
 
     # The final name is a write-once publication target, never ffmpeg's working file. Checking
@@ -1246,6 +1328,16 @@ def render_clip(
             lanczos=deliverable,
             unsharp=deliverable,
         )
+    elif effective_reframe is Reframe.TWO_PERSON_SPLIT:
+        assert split_crops is not None
+        video_filter = two_person_split_filter(
+            source_width,
+            source_height,
+            split_crops[0],
+            split_crops[1],
+            lanczos=deliverable,
+            unsharp=deliverable,
+        )
     else:
         video_filter = crop_filter(
             source_width,
@@ -1302,8 +1394,8 @@ def render_clip(
     if silence_plan is not None and silence_plan.total_removed_ms > 0:
         trim_graph = silence_trim_filter(silence_plan.retained_intervals_ms)
         sub_f = subtitle_filter(ass_path, fonts_dir)
-        if effective_reframe is Reframe.BLURRED_FILL:
-            v_chain = f"[v_tightened]{video_filter}[v_bf];[v_bf]{sub_f}[v_out]"
+        if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+            v_chain = f"[v_tightened]{video_filter}[v_split];[v_split]{sub_f}[v_out]"
         else:
             v_chain = f"[v_tightened]{video_filter},{sub_f}[v_out]"
         full_complex = f"{trim_graph};{v_chain};[a_tightened]{af_chain}[a_out]"

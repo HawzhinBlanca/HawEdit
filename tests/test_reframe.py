@@ -701,3 +701,120 @@ def test_motion_speaker_tracker_holds_speaker_position_on_ambiguity(
     centers = {p.center_x for p in points}
     assert len(centers) == 1
     assert centers.pop() == 142
+
+
+def test_detect_rapid_speaker_exchange_identifies_short_alternating_turns() -> None:
+    """Task T2.12: Identifies conversational banter with short alternating speaker turns."""
+    from hawedit.diarization import Segment
+    from hawedit.reframe import detect_rapid_speaker_exchange
+
+    # 4 alternating turns between SPEAKER_00 and SPEAKER_01, each 2s (< 4s)
+    turns = (
+        Segment(0, 2000, "SPEAKER_00"),
+        Segment(2000, 4000, "SPEAKER_01"),
+        Segment(4000, 6000, "SPEAKER_00"),
+        Segment(6000, 8000, "SPEAKER_01"),
+    )
+    assert (
+        detect_rapid_speaker_exchange(turns, 0, 8000, max_turn_duration_ms=4000, min_turns=3)
+        is True
+    )
+    assert (
+        detect_rapid_speaker_exchange(turns, 1000, 7000, max_turn_duration_ms=4000, min_turns=3)
+        is True
+    )
+
+
+def test_detect_rapid_speaker_exchange_rejects_monologues_and_long_turns() -> None:
+    """Task T2.12: Rejects single speaker, long turns, or insufficient alternations."""
+    from hawedit.diarization import Segment
+    from hawedit.reframe import detect_rapid_speaker_exchange
+
+    # Monologue by single speaker
+    single_speaker_turns = (
+        Segment(0, 2000, "SPEAKER_00"),
+        Segment(2000, 4000, "SPEAKER_00"),
+        Segment(4000, 6000, "SPEAKER_00"),
+    )
+    assert detect_rapid_speaker_exchange(single_speaker_turns, 0, 6000) is False
+
+    # Turns longer than max_turn_duration_ms (e.g. 5s > 4s)
+    long_turns = (
+        Segment(0, 5000, "SPEAKER_00"),
+        Segment(5000, 10000, "SPEAKER_01"),
+        Segment(10000, 15000, "SPEAKER_00"),
+    )
+    assert detect_rapid_speaker_exchange(long_turns, 0, 15000, max_turn_duration_ms=4000) is False
+
+    # Fewer turns than min_turns
+    short_span_turns = (
+        Segment(0, 2000, "SPEAKER_00"),
+        Segment(2000, 4000, "SPEAKER_01"),
+    )
+    assert detect_rapid_speaker_exchange(short_span_turns, 0, 4000, min_turns=3) is False
+
+
+def test_detect_rapid_speaker_exchange_validates_inputs() -> None:
+    """Task T2.12: Validates arguments strictly without silent fallbacks."""
+    from hawedit.diarization import Segment
+    from hawedit.reframe import detect_rapid_speaker_exchange
+
+    turns = (Segment(0, 2000, "SPEAKER_00"),)
+    with pytest.raises(TypeError):
+        detect_rapid_speaker_exchange(turns, "0", 2000)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="span has no duration"):
+        detect_rapid_speaker_exchange(turns, 2000, 2000)
+    with pytest.raises(ValueError, match="max_turn_duration_ms must be positive"):
+        detect_rapid_speaker_exchange(turns, 0, 2000, max_turn_duration_ms=0)
+    with pytest.raises(ValueError, match="min_turns must be at least 2"):
+        detect_rapid_speaker_exchange(turns, 0, 2000, min_turns=1)
+
+
+def test_compute_two_person_split_crops_produces_valid_aspect_ratio_boxes() -> None:
+    """Task T2.12: Top and bottom crop windows match 9:8 pane ratio and remain in bounds."""
+    from hawedit.reframe import compute_two_person_split_crops
+
+    # Source 2560x1440 (Zar Podcast 1440p)
+    top_crop, bot_crop = compute_two_person_split_crops(
+        source_width=2560,
+        source_height=1440,
+        top_center_x=1000,
+        bottom_center_x=1500,
+    )
+
+    tx, ty, tw, th = top_crop
+    bx, by, bw, bh = bot_crop
+
+    # Both crops must stay strictly within source bounds
+    assert tx >= 0 and ty >= 0 and tx + tw <= 2560 and ty + th <= 1440
+    assert bx >= 0 and by >= 0 and bx + bw <= 2560 and by + bh <= 1440
+
+    # Each pane has 9:8 aspect ratio (1080 / 960 = 1.125)
+    assert abs(tw / th - 1.125) < 0.01
+    assert abs(bw / bh - 1.125) < 0.01
+
+    # Horizontally centered around speaker faces
+    assert abs((tx + tw // 2) - 1000) < 5
+    assert abs((bx + bw // 2) - 1500) < 5
+
+
+def test_compute_two_person_split_crops_clamps_boundaries_and_validates_dimensions() -> None:
+    """Task T2.12: Clamps out-of-edge faces and raises on invalid dimensions."""
+    from hawedit.reframe import compute_two_person_split_crops
+
+    # Face near the extreme left edge (x=50) and extreme right edge (x=2500)
+    top_crop, bot_crop = compute_two_person_split_crops(
+        source_width=2560,
+        source_height=1440,
+        top_center_x=50,
+        bottom_center_x=2500,
+    )
+    tx, ty, tw, th = top_crop
+    bx, by, bw, bh = bot_crop
+    assert tx == 0  # clamped to left
+    assert bx + bw == 2560  # clamped to right
+
+    with pytest.raises(ValueError, match="source dimensions must be positive"):
+        compute_two_person_split_crops(0, 1440, 500, 1500)
+    with pytest.raises(ValueError, match="target dimensions must be positive"):
+        compute_two_person_split_crops(2560, 1440, 500, 1500, target_width=0)

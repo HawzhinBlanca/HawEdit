@@ -6519,3 +6519,127 @@ def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_pat
     # Fixture span is 4162 ms; tightened is 4162 - 220 = 3942 ms (within 40ms tolerance)
     assert abs(measured["video"]["duration_ms"] - (4162 - 220)) <= 40
     assert abs(measured["audio"]["duration_ms"] - (4162 - 220)) <= 40
+
+
+def test_pipeline_parser_two_person_split_options() -> None:
+    parser = build_parser()
+    args_default = parser.parse_args(["video.mp4"])
+    assert args_default.two_person_split == "auto"
+
+    args_always = parser.parse_args(["video.mp4", "--two-person-split", "always"])
+    assert args_always.two_person_split == "always"
+
+    args_never = parser.parse_args(["video.mp4", "--two-person-split", "never"])
+    assert args_never.two_person_split == "never"
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["video.mp4", "--two-person-split", "invalid"])
+
+
+def test_run_pipeline_two_person_split_validation_errors(tmp_path: Path) -> None:
+    from hawedit.reframe import SpeakerFocusPoint
+
+    # Invalid option string
+    with pytest.raises(ValueError, match="two_person_split must be 'auto', 'always', or 'never'"):
+        run_pipeline(FIXTURE, tmp_path / "work", two_person_split="invalid")
+
+    # --two-person-split=always with only 1 tracked speaker
+    class SingleSpeakerDiarizer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            return (Segment(0, 4_162, "SPEAKER_00"),)
+
+    class SingleSpeakerTracker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            return (SpeakerFocusPoint(500, 320, "SPEAKER_00"),)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "two-person split screen was requested with --two-person-split=always, "
+            "but only 1 distinct speaker"
+        ),
+    ):
+        run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="single-spk",
+            transcript=a_transcript("single-spk"),
+            diarizer=SingleSpeakerDiarizer(),
+            select_sentences=(0,),
+            verdict=a_verdict(100, 1_700),
+            speaker_tracker=SingleSpeakerTracker(),
+            two_person_split="always",
+        )
+
+
+@needs_ffmpeg
+def test_run_pipeline_two_person_split_triggered_on_rapid_exchange(tmp_path: Path) -> None:
+    from hawedit.reframe import SpeakerFocusPoint
+
+    class RapidDiarizer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            return (
+                Segment(0, 1_200, "SPEAKER_00"),
+                Segment(1_200, 2_500, "SPEAKER_01"),
+                Segment(2_500, 4_162, "SPEAKER_00"),
+            )
+
+    class RapidSpeakerTracker:
+        def track_speakers(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            turns: Sequence[Segment],
+        ) -> tuple[SpeakerFocusPoint, ...]:
+            return (
+                SpeakerFocusPoint(500, 150, "SPEAKER_00"),
+                SpeakerFocusPoint(1_800, 450, "SPEAKER_01"),
+                SpeakerFocusPoint(3_000, 150, "SPEAKER_00"),
+            )
+
+    # auto triggers two_person_split
+    auto_sha = "e14aeb5fec53989568a095062bb2ede2228e8ccf65ff8731810b5aadba494427"
+    run_auto = run_pipeline(
+        FIXTURE,
+        tmp_path / "work_auto",
+        media_id="rapid-auto",
+        transcript=a_transcript("rapid-auto"),
+        diarizer=RapidDiarizer(),
+        select_sentences=(0, 1),
+        verdict=a_verdict(100, 4_100),
+        qc=_test_qc(True, reviewed_sha256=auto_sha),
+        speaker_tracker=RapidSpeakerTracker(),
+        two_person_split="auto",
+    )
+    assert run_auto.clip is not None and run_auto.clip.output is not None
+    assert run_auto.clip.output.crop_target == "two_person_split"
+    assert run_auto.render is not None and not isinstance(run_auto.render, StageSkipped)
+    assert run_auto.render.reframe is Reframe.TWO_PERSON_SPLIT
+    assert Path(run_auto.render.path).is_file()
+
+    # never keeps speaker_tracked single pane
+    never_sha = "c027f3c415a9caafb84df1d9efe369ca3e6670b443eb1ed6f6450fd51f914a4a"
+    run_never = run_pipeline(
+        FIXTURE,
+        tmp_path / "work_never",
+        media_id="rapid-never",
+        transcript=a_transcript("rapid-never"),
+        diarizer=RapidDiarizer(),
+        select_sentences=(0, 1),
+        verdict=a_verdict(100, 4_100),
+        qc=_test_qc(True, reviewed_sha256=never_sha),
+        speaker_tracker=RapidSpeakerTracker(),
+        two_person_split="never",
+    )
+    assert run_never.clip is not None and run_never.clip.output is not None
+    assert run_never.clip.output.crop_target == "speaker_face"
+    assert run_never.render is not None and not isinstance(run_never.render, StageSkipped)
+    assert run_never.render.reframe is Reframe.SPEAKER_TRACKED
+    assert Path(run_never.render.path).is_file()

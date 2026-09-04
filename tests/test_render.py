@@ -69,6 +69,7 @@ from hawedit.render import (
     quality_args,
     render_clip,
     shot_spans,
+    two_person_split_filter,
     vertical_crop_size,
     vertical_framing,
 )
@@ -2236,3 +2237,129 @@ def test_two_renders_of_one_edit_agree(tmp_path: Path) -> None:
     if val_str != "inf":
         psnr_val = float(val_str)
         assert psnr_val >= 45.0, f"PSNR {psnr_val} dB is below 45.0 dB reproducibility threshold"
+
+
+def test_two_person_split_filter_syntax() -> None:
+    filt = two_person_split_filter(
+        2560,
+        1440,
+        top_crop=(100, 0, 1620, 1440),
+        bottom_crop=(800, 0, 1620, 1440),
+        target_width=1080,
+        target_height=1920,
+    )
+    assert "split=2[top_src][bot_src]" in filt
+    assert "[top_src]crop=1620:1440:100:0,scale=1080:960[top_p]" in filt
+    assert "[bot_src]crop=1620:1440:800:0,scale=1080:960[bot_p]" in filt
+    assert "[top_p][bot_p]vstack=inputs=2" in filt
+
+
+def test_two_person_split_filter_options() -> None:
+    filt = two_person_split_filter(
+        2560,
+        1440,
+        top_crop=(100, 0, 1620, 1440),
+        bottom_crop=(800, 0, 1620, 1440),
+        lanczos=True,
+        unsharp=True,
+    )
+    assert ":flags=lanczos,unsharp=5:5:0.5:5:5:0.0[top_p]" in filt
+    assert ":flags=lanczos,unsharp=5:5:0.5:5:5:0.0[bot_p]" in filt
+
+
+def test_two_person_split_filter_validations() -> None:
+    # Non-positive source or target
+    with pytest.raises(ValueError, match="source dimensions must be positive"):
+        two_person_split_filter(0, 1440, (0, 0, 100, 100), (0, 0, 100, 100))
+    with pytest.raises(ValueError, match="target dimensions must be positive"):
+        two_person_split_filter(2560, 1440, (0, 0, 100, 100), (0, 0, 100, 100), target_width=0)
+    with pytest.raises(ValueError, match="target_height must be even"):
+        two_person_split_filter(2560, 1440, (0, 0, 100, 100), (0, 0, 100, 100), target_height=1921)
+
+    # Crop exceeds source
+    with pytest.raises(ValueError, match="top crop box .* exceeds source dimensions"):
+        two_person_split_filter(2560, 1440, (2000, 0, 1620, 1440), (0, 0, 1620, 1440))
+    with pytest.raises(ValueError, match="bottom crop box .* exceeds source dimensions"):
+        two_person_split_filter(2560, 1440, (0, 0, 1620, 1440), (0, 100, 1620, 1440))
+
+    # Negative coordinates / dimensions
+    with pytest.raises(ValueError, match="crop coordinates must be non-negative"):
+        two_person_split_filter(2560, 1440, (-10, 0, 1620, 1440), (0, 0, 1620, 1440))
+    with pytest.raises(ValueError, match="crop dimensions must be positive"):
+        two_person_split_filter(2560, 1440, (0, 0, 0, 1440), (0, 0, 1620, 1440))
+
+
+def test_render_clip_two_person_split_contract(tmp_path: Path) -> None:
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    out = tmp_path / "out.mp4"
+    split_crops = ((0, 0, 405, 360), (100, 0, 405, 360))
+
+    # TWO_PERSON_SPLIT with focus_points is refused
+    with pytest.raises(ValueError, match="two_person_split reframe mode cannot carry focus points"):
+        render_clip(
+            clip,
+            FIXTURE,
+            ass_path,
+            FONTS,
+            out,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            reframe=Reframe.TWO_PERSON_SPLIT,
+            focus_points=((clip.in_ms, 320),),
+            split_crops=split_crops,
+        )
+
+    # TWO_PERSON_SPLIT without split_crops is refused
+    with pytest.raises(ValueError, match="two_person_split reframe mode requires split_crops"):
+        render_clip(
+            clip,
+            FIXTURE,
+            ass_path,
+            FONTS,
+            out,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            reframe=Reframe.TWO_PERSON_SPLIT,
+            split_crops=None,
+        )
+
+    # non-TWO_PERSON_SPLIT with split_crops is refused
+    with pytest.raises(
+        ValueError, match="split_crops can only be passed when reframe is TWO_PERSON_SPLIT"
+    ):
+        render_clip(
+            clip,
+            FIXTURE,
+            ass_path,
+            FONTS,
+            out,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            reframe=Reframe.STATIC_CENTRE,
+            split_crops=split_crops,
+        )
+
+
+@needs_ffmpeg
+def test_render_clip_two_person_split_exec(tmp_path: Path) -> None:
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    out = tmp_path / "split_out.mp4"
+    # Source is 640x360. 360 * 1.125 = 405. 0+405 <= 640 and 200+405 = 605 <= 640.
+    split_crops = ((0, 0, 405, 360), (200, 0, 405, 360))
+
+    result = render_clip(
+        clip,
+        FIXTURE,
+        ass_path,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        reframe=Reframe.TWO_PERSON_SPLIT,
+        split_crops=split_crops,
+    )
+    assert Path(result.path).is_file()
+    assert _probe(out, "stream=width") == "1080"
+    assert _probe(out, "stream=height") == "1920"

@@ -23,6 +23,8 @@ __all__ = [
     "SpeakerSubjectTracker",
     "SubjectTracker",
     "choose_face",
+    "compute_two_person_split_crops",
+    "detect_rapid_speaker_exchange",
     "probe_first_frame_face",
     "stabilize",
     "validate_speaker_focus_points",
@@ -736,3 +738,128 @@ def stabilize(
     if last > keyframes[-1].at_ms:
         keyframes.append(FocusPoint(last, held))
     return tuple(keyframes)
+
+
+def detect_rapid_speaker_exchange(
+    turns: Sequence[Segment],
+    in_ms: int,
+    out_ms: int,
+    *,
+    max_turn_duration_ms: int = 4000,
+    min_turns: int = 3,
+) -> bool:
+    """Detect whether an interval contains a rapid conversational exchange between >= 2 speakers.
+
+    Task T2.12: When diarization shows rapid conversational banter (turns < 4.0s),
+    offering a two-person stacked split-screen avoids dizzying whip-pans or rapid alternating cuts.
+
+    Args:
+        turns: Diarization segments (must be exclusive).
+        in_ms: Start timestamp in milliseconds.
+        out_ms: End timestamp in milliseconds.
+        max_turn_duration_ms: Maximum duration of a turn to count as rapid (default 4000ms).
+        min_turns: Minimum number of rapid alternating turns within the interval (default 3).
+
+    Returns:
+        True if at least min_turns alternating turns by >= 2 distinct speakers occur
+        within [in_ms, out_ms] where each turn duration <= max_turn_duration_ms.
+    """
+    _exact_non_negative_int(in_ms, "rapid-exchange in-point")
+    _exact_non_negative_int(out_ms, "rapid-exchange out-point")
+    if out_ms <= in_ms:
+        raise ValueError(f"span has no duration: {in_ms}..{out_ms}ms")
+    if max_turn_duration_ms <= 0:
+        raise ValueError("max_turn_duration_ms must be positive")
+    if min_turns < 2:
+        raise ValueError("min_turns must be at least 2")
+
+    assert_exclusive(turns)
+
+    # Filter turns overlapping the span
+    span_turns = [t for t in turns if t.start_ms < out_ms and t.end_ms > in_ms]
+    if len(span_turns) < min_turns:
+        return False
+
+    speakers = {t.speaker for t in span_turns}
+    if len(speakers) < 2:
+        return False
+
+    rapid_count = 0
+    prev_speaker: str | None = None
+    for turn in span_turns:
+        effective_start = max(turn.start_ms, in_ms)
+        effective_end = min(turn.end_ms, out_ms)
+        dur = effective_end - effective_start
+        if dur <= max_turn_duration_ms:
+            if prev_speaker is not None and turn.speaker != prev_speaker:
+                rapid_count += 1
+            elif prev_speaker is None:
+                rapid_count = 1
+            prev_speaker = turn.speaker
+        else:
+            if rapid_count >= min_turns:
+                return True
+            rapid_count = 0
+            prev_speaker = None
+
+    return rapid_count >= min_turns
+
+
+def compute_two_person_split_crops(
+    source_width: int,
+    source_height: int,
+    top_center_x: int,
+    bottom_center_x: int,
+    *,
+    target_width: int = 1080,
+    target_height: int = 1920,
+    pane_aspect_ratio: float = 1080.0 / 960.0,
+    top_center_y: int | None = None,
+    bottom_center_y: int | None = None,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """Compute crop bounding boxes (x, y, w, h) for top and bottom split-screen panes.
+
+    Task T2.12: Each pane in a 1080x1920 canvas has dimensions 1080x960 (aspect ratio 9:8 = 1.125).
+    Extracts a 9:8 aspect ratio window from source video centered horizontally on each speaker's
+    face and framed naturally.
+
+    Args:
+        source_width: Width of the source video frame.
+        source_height: Height of the source video frame.
+        top_center_x: Horizontal center of top speaker's face in source coordinates.
+        bottom_center_x: Horizontal center of bottom speaker's face in source coordinates.
+        target_width: Final canvas width (default 1080).
+        target_height: Final canvas height (default 1920).
+        pane_aspect_ratio: Aspect ratio of each pane (w/h, default 1080/960 = 1.125).
+        top_center_y: Optional vertical face center for top speaker.
+        bottom_center_y: Optional vertical face center for bottom speaker.
+
+    Returns:
+        ((top_x, top_y, top_w, top_h), (bot_x, bot_y, bot_w, bot_h))
+    """
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError(f"source dimensions must be positive: {source_width}x{source_height}")
+    if target_width <= 0 or target_height <= 0:
+        raise ValueError(f"target dimensions must be positive: {target_width}x{target_height}")
+    if pane_aspect_ratio <= 0:
+        raise ValueError(f"pane_aspect_ratio must be positive: {pane_aspect_ratio}")
+
+    pane_crop_h = min(source_height, int(round(source_width / pane_aspect_ratio)))
+    pane_crop_w = int(round(pane_crop_h * pane_aspect_ratio))
+    if pane_crop_w > source_width:
+        pane_crop_w = source_width
+        pane_crop_h = int(round(pane_crop_w / pane_aspect_ratio))
+
+    def _crop_for_center(cx: int, cy: int | None) -> tuple[int, int, int, int]:
+        left = int(round(cx - pane_crop_w / 2.0))
+        left = max(0, min(left, source_width - pane_crop_w))
+        if cy is None:
+            top = 0
+        else:
+            top = int(round(cy - pane_crop_h * 0.38))
+            top = max(0, min(top, source_height - pane_crop_h))
+        return (left, top, pane_crop_w, pane_crop_h)
+
+    top_crop = _crop_for_center(top_center_x, top_center_y)
+    bot_crop = _crop_for_center(bottom_center_x, bottom_center_y)
+    return top_crop, bot_crop

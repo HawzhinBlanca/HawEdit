@@ -134,6 +134,8 @@ from hawedit.reframe import (
     SpeakerAssociationError,
     SpeakerSubjectTracker,
     SubjectTracker,
+    compute_two_person_split_crops,
+    detect_rapid_speaker_exchange,
     median_face_box,
     probe_first_frame_face,
     stabilize,
@@ -1633,6 +1635,7 @@ def run_pipeline(
     content_type: ContentType | str | None = None,
     silence_threshold_ms: int = 0,
     silence_target_gap_ms: int = 150,
+    two_person_split: str = "auto",
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1690,6 +1693,11 @@ def run_pipeline(
         raise ValueError(
             "unranked read_scenes injection is not a valid Path B producer; use VisualComposer "
             "so Qwen retrieval/reranking bounds the scenes sent to VideoChat3"
+        )
+
+    if two_person_split not in ("auto", "always", "never"):
+        raise ValueError(
+            f"two_person_split must be 'auto', 'always', or 'never', got {two_person_split!r}"
         )
 
     ct_profile = get_content_type_profile(content_type)
@@ -2396,6 +2404,7 @@ def run_pipeline(
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
     focus_points: tuple[FocusPoint, ...] = ()
+    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
     source_dimensions: tuple[int, int] | None = None
     # The clip's single vertical placement, measured before `_steady_camera` replaces the track
     # with keyframes that carry no face box. `None` means unmeasured, and the crop then sits
@@ -2468,14 +2477,45 @@ def run_pipeline(
             )
         if focus_points:
             source_dimensions = proxy_dimensions(source, ffmpeg)
-            focus_points = _steady_camera(
-                focus_points,
-                source,
-                ffmpeg,
-                source_dimensions,
-                shot_cuts_ms=ingested.shot_cuts_ms,
+            speaker_centers: dict[str, list[int]] = {}
+            for pt in speaker_points:
+                speaker_centers.setdefault(pt.speaker, []).append(pt.center_x)
+
+            if two_person_split == "always" and len(speaker_centers) < 2:
+                raise ValueError(
+                    "two-person split screen was requested with --two-person-split=always, "
+                    f"but only {len(speaker_centers)} distinct speaker(s) were tracked"
+                )
+
+            is_rapid = (
+                detect_rapid_speaker_exchange(
+                    overlapping_turns, boundary.final_in_ms, boundary.final_out_ms
+                )
+                if len(speaker_centers) >= 2
+                else False
             )
-            reframe_mode = Reframe.SPEAKER_TRACKED
+            should_split = (
+                two_person_split == "always" or (two_person_split == "auto" and is_rapid)
+            ) and len(speaker_centers) >= 2
+
+            if should_split:
+                spk_keys = sorted(speaker_centers.keys())
+                c1 = sorted(speaker_centers[spk_keys[0]])[len(speaker_centers[spk_keys[0]]) // 2]
+                c2 = sorted(speaker_centers[spk_keys[1]])[len(speaker_centers[spk_keys[1]]) // 2]
+                top_c, bot_c = (c1, c2) if c1 <= c2 else (c2, c1)
+                width, height = source_dimensions
+                split_crops = compute_two_person_split_crops(width, height, top_c, bot_c)
+                reframe_mode = Reframe.TWO_PERSON_SPLIT
+                focus_points = ()
+            else:
+                focus_points = _steady_camera(
+                    focus_points,
+                    source,
+                    ffmpeg,
+                    source_dimensions,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+                reframe_mode = Reframe.SPEAKER_TRACKED
 
     if not focus_points and subject_tracker is not None:
         _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
@@ -2507,6 +2547,7 @@ def run_pipeline(
         Reframe.FACE_TRACKED: "face_tracked",
         Reframe.SPEAKER_TRACKED: "speaker_face",
         Reframe.BLURRED_FILL: "blurred_fill",
+        Reframe.TWO_PERSON_SPLIT: "two_person_split",
     }[reframe_mode]
     clip = Clip(
         clip_id=_clip_id(identifier, select_sentences),
@@ -2734,6 +2775,7 @@ def run_pipeline(
             ffmpeg=ffmpeg,
             deliverable=(profile == "production"),
             silence_plan=silence_plan,
+            split_crops=split_crops,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:
@@ -3158,6 +3200,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="target pause duration in ms to retain when tightening dead air (default: 150)",
     )
     parser.add_argument(
+        "--two-person-split",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help=(
+            "stacked top/bottom split screen layout for rapid conversational exchanges "
+            "(Task T2.12): auto (default: triggers when turns < 4.0s), always, or never"
+        ),
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3514,6 +3565,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         content_type=getattr(args, "content_type", "podcast"),
         silence_threshold_ms=getattr(args, "silence_threshold_ms", 0),
         silence_target_gap_ms=getattr(args, "silence_target_gap_ms", 150),
+        two_person_split=getattr(args, "two_person_split", "auto"),
     )
 
 
