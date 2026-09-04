@@ -573,6 +573,8 @@ class GeminiJudge:
             candidate_id=request.candidate_id,
         )
         self.last_billed_call = call
+        if not hasattr(self, "billed_calls"):
+            self.billed_calls = []
         self.billed_calls.append(call)
         return counted, self._to_verdict(body, request)
 
@@ -696,6 +698,8 @@ class VertexGeminiJudge(GeminiJudge):
         self._max_attempts = max_attempts
         self._sleep = sleep
         self._key = ""
+        self.last_billed_call: BilledCall | None = None
+        self.billed_calls: list[BilledCall] = []
         route(self)
 
     def _assert_governance(self) -> None:
