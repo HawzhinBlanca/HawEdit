@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "filename": "ep29-chunk50min.mp4",
+  "sha256": "47235f4251961518d9bbae1ecbda9c7f5166c5baa57a2be98f5ec0eb64e6f863",
+  "size_bytes": 975583376,
+  "duration_ms": 3000000,
+  "frames_count": 75000,
+  "fps": 25.0,
+  "width": 2560,
+  "height": 1440,
+  "codec": "h264",
+  "pix_fmt": "yuv420p",
+  "color_space": "bt709",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "source": {
+    "youtube_id": "VbX8UWwl1c4",
+    "youtube_url": "https://www.youtube.com/watch?v=VbX8UWwl1c4",
+    "channel": "Zar Podcast (UC7jbpjdftJ61wV5cKGr9axg)",
+    "episode": "29",
+    "title_ckb": "ئەیوب نوری لە زار (بەشی دوو) - باسی پەیوەندی کورد و عێراقی نوێ",
+    "guest": "Ayub Nuri"
+  }
+}
