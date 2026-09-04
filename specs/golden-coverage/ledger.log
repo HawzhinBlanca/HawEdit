@@ -1,1 +1,2 @@
 TS=2026-09-04T06:45:27Z FEATURE=golden-coverage TASK=T1 TESTS=test_golden_files_match_their_pinned_digests VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T06:54:58Z FEATURE=golden-coverage TASK=T2 TESTS=test_the_render_matches_viral_karaoke_golden,test_simple_shaping_fails_viral_karaoke_golden,test_the_render_matches_hook_card_golden,test_simple_shaping_fails_hook_card_golden,test_the_render_matches_caption_over_fixture_video_golden,test_simple_shaping_fails_caption_over_fixture_video_golden VERIFY=pass REPORT=.gate/last-test-run.xml
