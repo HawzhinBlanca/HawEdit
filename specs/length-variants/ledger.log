@@ -1,1 +1,2 @@
 TS=2026-09-04T04:07:11Z FEATURE=length-variants TASK=T1 TESTS=test_plan_length_variants_enforces_sentence_completeness,test_plan_length_variants_anchors_on_hook_sentence,test_length_variant_validates_invariants_and_serializes VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-04T04:16:14Z FEATURE=length-variants TASK=T2 TESTS=test_plan_length_variants_selects_optimal_sub_spans_for_targets,test_plan_length_variants_handles_short_clips_gracefully VERIFY=pass REPORT=.gate/last-test-run.xml
