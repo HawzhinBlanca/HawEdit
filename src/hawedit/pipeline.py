@@ -73,6 +73,7 @@ from hawedit.captions import (
     VIRAL_FONT_SIZE,
     VIRAL_THEME,
     CaptionStyle,
+    HookBannerConfig,
     build_ass,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
@@ -1666,6 +1667,10 @@ def run_pipeline(
     caption_style: CaptionStyle | str | None = None,
     keyword_emphasis: bool = True,
     visual_nonverbal: bool = False,
+    hook_banner: HookBannerConfig | bool | None = None,
+    hook_text: str | None = None,
+    music_bed_path: Path | str | None = None,
+    music_ducking_volume: float = 0.25,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -2729,6 +2734,17 @@ def run_pipeline(
         speaker_meta = brand_kit.speaker_metadata if brand_kit is not None else None
         end_card = brand_kit.end_card if brand_kit is not None else None
 
+        resolved_hook_banner: HookBannerConfig | None = None
+        if isinstance(hook_banner, HookBannerConfig):
+            resolved_hook_banner = hook_banner
+        elif hook_banner is True:
+            banner_text = (
+                hook_text
+                or (effective_clip.output.title_ckb if effective_clip.output else None)
+                or "گرنگترین وتەکان"
+            )
+            resolved_hook_banner = HookBannerConfig(text_ckb=banner_text)
+
         bundle.write_text(
             "ass",
             # The clip's own timeline. Without this every caption is scheduled at its source
@@ -2761,6 +2777,7 @@ def run_pipeline(
                 speaker_turns=speaker_turns,
                 speaker_metadata=speaker_meta,
                 end_card=end_card,
+                hook_banner=resolved_hook_banner,
                 keyword_emphasis=keyword_emphasis,
                 margin_v=(440 if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO else None),
             ),
@@ -2833,6 +2850,8 @@ def run_pipeline(
             silence_plan=silence_plan,
             split_crops=split_crops,
             brand_kit=brand_kit,
+            music_bed_path=(Path(music_bed_path) if music_bed_path else None),
+            music_ducking_volume=music_ducking_volume,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError, BrandKitError) as exc:
@@ -3321,6 +3340,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="highlight key Kurdish emphasis words (names, numbers, alerts) in accent neon colors",
     )
     parser.add_argument(
+        "--hook-banner",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="render a top headline banner badge for the first 3.5s hook (ADR D-273)",
+    )
+    parser.add_argument(
+        "--hook-text",
+        type=str,
+        default=None,
+        help="override text for top headline hook banner",
+    )
+    parser.add_argument(
+        "--music-bed",
+        type=str,
+        default=None,
+        help="path to background audio/music loop with auto-sidechain ducking",
+    )
+    parser.add_argument(
+        "--music-ducking-volume",
+        type=float,
+        default=0.25,
+        help="background music volume level under dialogue during ducking (default: 0.25)",
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3467,11 +3510,27 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
             candidate_spk = args.work_dir / "speaker_metadata.json"
             if candidate_spk.is_file():
                 args.speaker_metadata = str(candidate_spk)
+        if args.hook_banner is None:
+            args.hook_banner = True
+        if not args.music_bed:
+            candidate_music = args.work_dir / "assets" / "music_tension_bed.wav"
+            if candidate_music.is_file():
+                args.music_bed = str(candidate_music)
+            elif (args.work_dir / "music_tension_bed.wav").is_file():
+                args.music_bed = str(args.work_dir / "music_tension_bed.wav")
     elif getattr(args, "preset", None) == "viral":
         if not args.caption_style:
-            args.caption_style = CaptionStyle.VIRAL_POPUP.value
+            args.caption_style = CaptionStyle.KINETIC_POP.value
         if args.silence_threshold_ms == 0:
             args.silence_threshold_ms = 400
+        if args.hook_banner is None:
+            args.hook_banner = True
+        if not args.music_bed:
+            candidate_music = args.work_dir / "assets" / "music_tension_bed.wav"
+            if candidate_music.is_file():
+                args.music_bed = str(candidate_music)
+            elif (args.work_dir / "music_tension_bed.wav").is_file():
+                args.music_bed = str(args.work_dir / "music_tension_bed.wav")
     elif getattr(args, "preset", None) == "split":
         args.two_person_split = "always"
         if not args.caption_style:
@@ -3752,6 +3811,10 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         caption_style=getattr(args, "caption_style", None),
         keyword_emphasis=getattr(args, "keyword_emphasis", True),
         visual_nonverbal=getattr(args, "visual_nonverbal", False),
+        hook_banner=getattr(args, "hook_banner", None),
+        hook_text=getattr(args, "hook_text", None),
+        music_bed_path=getattr(args, "music_bed", None),
+        music_ducking_volume=getattr(args, "music_ducking_volume", 0.25),
     )
 
 

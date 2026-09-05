@@ -1245,6 +1245,8 @@ def render_clip(
     silence_plan: SilencePlan | None = None,
     split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None,
     brand_kit: BrandKit | None = None,
+    music_bed_path: Path | None = None,
+    music_ducking_volume: float = 0.25,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1424,48 +1426,66 @@ def render_clip(
     extra_inputs: list[str] = []
 
     if brand_kit is not None and brand_kit.logo_path is not None:
-        extra_inputs = ["-i", str(brand_kit.logo_path)]
-        logo_x, logo_y = logo_overlay_coordinates(brand_kit.logo_position, brand_kit.logo_margin)
-        logo_prep = (
-            f"[1:v]scale={brand_kit.logo_width}:-2,format=rgba,"
-            f"colorchannelmixer=aa={brand_kit.logo_opacity:.2f}[logo]"
-        )
-        if silence_plan is not None and silence_plan.total_removed_ms > 0:
-            trim_graph = silence_trim_filter(silence_plan.retained_intervals_ms)
-            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
-                v_base = f"[v_tightened]{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
-            else:
-                v_base = f"[v_tightened]{video_filter},{sub_f}[v_sub]"
-            a_chain = f"[a_tightened]{af_chain}[a_out]"
-            trim_prefix = f"{trim_graph};"
+        extra_inputs.extend(["-i", str(brand_kit.logo_path)])
+    if music_bed_path is not None:
+        if not music_bed_path.is_file():
+            raise FileNotFoundError(f"music bed file not found: {music_bed_path}")
+        extra_inputs.extend(["-i", str(music_bed_path)])
+
+    has_logo = brand_kit is not None and brand_kit.logo_path is not None
+    has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
+    has_music = music_bed_path is not None
+
+    if has_logo or has_silence or has_music:
+        if has_silence and silence_plan is not None:
+            trim_prefix = f"{silence_trim_filter(silence_plan.retained_intervals_ms)};"
+            v_in = "[v_tightened]"
+            a_in = "[a_tightened]"
         else:
             trim_prefix = ""
-            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
-                v_base = f"[0:v]{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
-            else:
-                v_base = f"[0:v]{video_filter},{sub_f}[v_sub]"
-            a_chain = f"[0:a]{af_chain}[a_out]"
+            v_in = "[0:v]"
+            a_in = "[0:a]"
 
-        overlay_out = "[v_out]" if pb_f is None else "[v_branded]"
-        v_overlay = f"[v_sub][logo]overlay={logo_x}:{logo_y}:eof_action=repeat{overlay_out}"
-        v_pb = f";{overlay_out}{pb_f}[v_out]" if pb_f is not None else ""
-        full_complex = f"{trim_prefix}{v_base};{logo_prep};{v_overlay}{v_pb};{a_chain}"
-        stream_filter_args = [
-            "-filter_complex",
-            full_complex,
-            "-map",
-            "[v_out]",
-            "-map",
-            "[a_out]",
-        ]
-    elif silence_plan is not None and silence_plan.total_removed_ms > 0:
-        trim_graph = silence_trim_filter(silence_plan.retained_intervals_ms)
-        post_sub = f",{pb_f}" if pb_f else ""
         if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
-            v_chain = f"[v_tightened]{video_filter}[v_split];[v_split]{sub_f}{post_sub}[v_out]"
+            v_base = f"{v_in}{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
         else:
-            v_chain = f"[v_tightened]{video_filter},{sub_f}{post_sub}[v_out]"
-        full_complex = f"{trim_graph};{v_chain};[a_tightened]{af_chain}[a_out]"
+            v_base = f"{v_in}{video_filter},{sub_f}[v_sub]"
+
+        v_current = "[v_sub]"
+        logo_steps = ""
+        if has_logo and brand_kit is not None and brand_kit.logo_path is not None:
+            logo_x, logo_y = logo_overlay_coordinates(
+                brand_kit.logo_position, brand_kit.logo_margin
+            )
+            logo_prep = (
+                f"[1:v]scale={brand_kit.logo_width}:-2,format=rgba,"
+                f"colorchannelmixer=aa={brand_kit.logo_opacity:.2f}[logo];"
+            )
+            logo_overlay = (
+                f"{v_current}[logo]overlay={logo_x}:{logo_y}:eof_action=repeat[v_branded];"
+            )
+            logo_steps = f"{logo_prep}{logo_overlay}"
+            v_current = "[v_branded]"
+
+        v_pb = f"{v_current}{pb_f}[v_out]" if pb_f is not None else f"{v_current}null[v_out]"
+
+        if has_music:
+            music_input_idx = 2 if has_logo else 1
+            dur_s = effective_duration_ms / 1000.0
+            sc_filter = "sidechaincompress=threshold=0.03:ratio=6:attack=80:release=400"
+            mix_filter = "amix=inputs=2:weights=1.0 1.0:dropout_transition=2"
+            a_chain = (
+                f"[{music_input_idx}:a]aloop=loop=-1:size=2e+09,atrim=0:{dur_s:.3f},"
+                f"asetpts=PTS-STARTPTS,volume={music_ducking_volume:.2f}[music_in];"
+                f"{a_in}asplit=2[dia_mix][dia_sc];"
+                f"[music_in][dia_sc]{sc_filter}[ducked_music];"
+                f"[dia_mix][ducked_music]{mix_filter}[a_mixed];"
+                f"[a_mixed]{af_chain}[a_out]"
+            )
+        else:
+            a_chain = f"{a_in}{af_chain}[a_out]"
+
+        full_complex = f"{trim_prefix}{v_base};{logo_steps}{v_pb};{a_chain}"
         stream_filter_args = [
             "-filter_complex",
             full_complex,

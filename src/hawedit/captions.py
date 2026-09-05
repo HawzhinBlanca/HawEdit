@@ -53,6 +53,9 @@ __all__ = [
     "END_CARD_FONT_SIZE",
     "END_CARD_THEME",
     "GOLDEN_CAPTION_TEXT",
+    "HOOK_BANNER_FONT_SIZE",
+    "HOOK_BANNER_MARGIN_V",
+    "HOOK_BANNER_THEME",
     "KURDISH_REQUIRED_GLYPHS",
     "MIN_LEGIBILITY_CONTRAST_RATIO",
     "POPUP_MAX_CHARS",
@@ -72,6 +75,7 @@ __all__ = [
     "EmphasisCategory",
     "FontCoverageError",
     "GoldenReferenceMissing",
+    "HookBannerConfig",
     "MissingRtlStack",
     "RtlStackReport",
     "assert_ass_fonts_cover_kurdish",
@@ -137,6 +141,7 @@ class CaptionStyle(Enum):
     VIRAL_POPUP = "viral_popup"
     RTL_WORD_HIGHLIGHT = "rtl_word_highlight"
     BROADCAST_STUDIO = "broadcast_studio"
+    KINETIC_POP = "kinetic_pop"
 
 
 # One popup holds a breath, not a paragraph. A vertical crop shows ~22 Kurdish characters at
@@ -352,6 +357,32 @@ BROADCAST_THEME: Final = CaptionTheme(
     margin_r=80,
     margin_v=440,
 )
+
+HOOK_BANNER_FONT_SIZE: Final = 54
+HOOK_BANNER_MARGIN_V: Final = 120
+HOOK_BANNER_THEME: Final = CaptionTheme(
+    primary="&H0000FFFF",  # Kurdish Gold
+    secondary="&H0000FFFF",
+    bold=True,
+    outline=14.0,  # plate padding with border_style=3
+    shadow=0.0,
+    back_colour="&HB0121212",  # 70% dark plate
+    margin_l=60,
+    margin_r=60,
+    margin_v=HOOK_BANNER_MARGIN_V,
+    alignment=8,
+    border_style=3,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class HookBannerConfig:
+    """Configures a 0-3.5s high-retention top headline banner badge (Tasks T2 & T4.4)."""
+
+    text_ckb: str
+    duration_s: float = 3.5
+    enabled: bool = True
+
 
 # Task T2.7: Face-aware caption placement band definitions.
 # At 1080x1920 PlayRes, the bottom caption band occupies Y = 1300..1650.
@@ -1387,6 +1418,7 @@ def build_ass(
     speaker_turns: Sequence[tuple[int, int, str]] | None = None,
     speaker_metadata: dict[str, SpeakerBio] | None = None,
     end_card: EndCardConfig | None = None,
+    hook_banner: HookBannerConfig | None = None,
     keyword_emphasis: bool = True,
     margin_v: int | None = None,
 ) -> str:
@@ -1429,7 +1461,7 @@ def build_ass(
                 f"not contain."
             )
 
-    if style is CaptionStyle.BROADCAST_STUDIO and theme is REPORT_THEME:
+    if style in (CaptionStyle.BROADCAST_STUDIO, CaptionStyle.KINETIC_POP) and theme is REPORT_THEME:
         theme = BROADCAST_THEME
     if margin_v is not None:
         theme = replace(theme, margin_v=margin_v)
@@ -1614,6 +1646,19 @@ def build_ass(
                 if (end_card and end_card.enabled)
                 else []
             ),
+            *(
+                [
+                    HOOK_BANNER_THEME.plate_style_row(
+                        "HookBanner",
+                        font_name,
+                        HOOK_BANNER_FONT_SIZE,
+                        alignment=8,
+                        margin_v=HOOK_BANNER_MARGIN_V,
+                    )
+                ]
+                if (hook_banner and hook_banner.enabled and hook_banner.text_ckb)
+                else []
+            ),
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -1710,6 +1755,18 @@ def build_ass(
                 f"Dialogue: 3,{_ass_time(ec_start)},{_ass_time(clip_duration_ms)},"
                 f"EndCard,,0,0,0,,{ec_text}"
             )
+    if hook_banner and hook_banner.enabled and hook_banner.text_ckb:
+        # Layer 3, 0-3.5s high-retention hook headline banner badge
+        banner_dur_ms = min(
+            clip_duration_ms if clip_duration_ms is not None else 3500,
+            int(hook_banner.duration_s * 1000),
+        )
+        if banner_dur_ms > 0:
+            escaped_banner = _escape_ass_text(hook_banner.text_ckb)
+            events.append(
+                f"Dialogue: 3,{_ass_time(0)},{_ass_time(banner_dur_ms)},"
+                f"HookBanner,,0,0,0,,{{\\fad(150,300)\\b1}}{escaped_banner}"
+            )
     for sentence in sentences:
         if style is CaptionStyle.BROADCAST_STUDIO:
             b_words = max_words_per_event if max_words_per_event is not None else 4
@@ -1745,6 +1802,67 @@ def build_ass(
                 else:
                     chunk_text = " ".join(_escape_ass_text(w.w) for w in chunk)
                 events.append(event(chunk[0].start_ms, end_ms, chunk_text, style_name=style_name))
+            continue
+
+        if style is CaptionStyle.KINETIC_POP:
+            k_words = max_words_per_event if max_words_per_event is not None else 3
+            chunks = chunk_caption_events(
+                sentence.words,
+                max_words=k_words,
+                max_chars=max_chars_per_line,
+                max_width_px=max_popup_width_px,
+            )
+            for chunk_idx, chunk in enumerate(chunks):
+                following = (
+                    chunks[chunk_idx + 1][0].start_ms if chunk_idx + 1 < len(chunks) else None
+                )
+                chunk_end_ms = chunk[-1].end_ms
+                if following is not None and following - chunk_end_ms <= _POPUP_HOLD_MS:
+                    chunk_end_ms = following
+
+                is_top = should_use_top_caption_placement(
+                    chunk[0].start_ms, chunk_end_ms, face_intervals
+                )
+                is_plate = event_needs_plate(chunk[0].start_ms, chunk_end_ms, plate_intervals)
+                style_name = (
+                    ("KurdishTopPlate" if is_plate else "KurdishTop")
+                    if is_top
+                    else ("KurdishPlate" if is_plate else "Kurdish")
+                )
+
+                for w_idx, active_word in enumerate(chunk):
+                    w_start = active_word.start_ms
+                    w_end = active_word.end_ms
+                    if w_idx == len(chunk) - 1:
+                        w_end = chunk_end_ms
+                    elif w_idx + 1 < len(chunk) and chunk[w_idx + 1].start_ms > w_end:
+                        w_end = chunk[w_idx + 1].start_ms
+
+                    if w_end <= w_start:
+                        continue
+
+                    parts = []
+                    for j, word_item in enumerate(chunk):
+                        escaped = _escape_ass_text(word_item.w)
+                        if j == w_idx:
+                            cat = (
+                                classify_kurdish_emphasis(word_item.w)
+                                if keyword_emphasis
+                                else EmphasisCategory.DEFAULT
+                            )
+                            color_code = (
+                                CATEGORY_COLORS[cat]
+                                if (cat is not EmphasisCategory.DEFAULT and cat in CATEGORY_COLORS)
+                                else "&H0000FFFF"
+                            )
+                            parts.append(
+                                f"{{\\t(0,60,\\fscx118\\fscy118)\\t(60,130,\\fscx100\\fscy100)\\c{color_code}&}}{escaped}{{\\r}}"
+                            )
+                        else:
+                            parts.append(f"{{\\c&H00FFFFFF&}}{escaped}{{\\r}}")
+
+                    chunk_text = " ".join(parts)
+                    events.append(event(w_start, w_end, chunk_text, style_name=style_name))
             continue
 
         if style is CaptionStyle.VIRAL_POPUP:
