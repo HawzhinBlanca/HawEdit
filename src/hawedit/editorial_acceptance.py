@@ -53,12 +53,16 @@ __all__ = [
     "MAX_STUDY_ITEMS",
     "MIN_STUDY_ITEMS",
     "SIGNATURE_NAMESPACE",
+    "AcceptanceScorecard",
     "EditorialAcceptanceError",
     "PreparedEditorialStudy",
     "VerifiedEditorialStudy",
+    "compute_acceptance_scorecard",
     "evaluate_editorial_study",
     "main",
+    "partition_episode_disjoint",
     "prepare_editorial_study",
+    "validate_acceptance_split",
 ]
 
 MIN_STUDY_ITEMS: Final = 200
@@ -439,25 +443,25 @@ class _CandidateRecord:
     rank: int
     incumbent: JudgeVerdict
     shadow: JudgeVerdict
+    speaker_id: str | None = None
 
     @staticmethod
     def from_dict(value: object) -> _CandidateRecord:
         raw = _strict_object(value, "candidate inventory item")
-        _exact_fields(
-            raw,
-            {
-                "dialect",
-                "discovery_path",
-                "incumbent",
-                "item_id",
-                "media_duration_ms",
-                "media_id",
-                "media_path",
-                "rank",
-                "shadow",
-            },
-            "candidate inventory item",
-        )
+        expected_fields = {
+            "dialect",
+            "discovery_path",
+            "incumbent",
+            "item_id",
+            "media_duration_ms",
+            "media_id",
+            "media_path",
+            "rank",
+            "shadow",
+        }
+        if "speaker_id" in raw:
+            expected_fields = expected_fields | {"speaker_id"}
+        _exact_fields(raw, expected_fields, "candidate inventory item")
         if not isinstance(raw["dialect"], str):
             raise EditorialAcceptanceError("candidate dialect must be a string")
         if not isinstance(raw["discovery_path"], str):
@@ -489,6 +493,9 @@ class _CandidateRecord:
         rank = _exact_int(raw["rank"], "candidate rank", minimum=1)
         if rank > 20:
             raise EditorialAcceptanceError("§8.2 inventory ranks must be within Recall@20")
+        speaker_id = (
+            _one_line(raw["speaker_id"], "candidate speaker_id") if "speaker_id" in raw else None
+        )
         return _CandidateRecord(
             item_id=_one_line(raw["item_id"], "candidate item_id"),
             media_id=_one_line(raw["media_id"], "candidate media_id"),
@@ -499,10 +506,11 @@ class _CandidateRecord:
             rank=rank,
             incumbent=incumbent,
             shadow=shadow,
+            speaker_id=speaker_id,
         )
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "dialect": self.dialect.value,
             "discovery_path": self.discovery_path.value,
             "incumbent": self.incumbent.to_dict(),
@@ -513,6 +521,9 @@ class _CandidateRecord:
             "rank": self.rank,
             "shadow": self.shadow.to_dict(),
         }
+        if self.speaker_id is not None:
+            payload["speaker_id"] = self.speaker_id
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -1462,8 +1473,15 @@ def _slice_report(
             "tie": preferences["tie"],
         },
         "recall_at_20_by_path": {path.value: score for path, score in recall.items()},
+        "accepted_count": sum(
+            label.is_winner for label in (labels[item.review_id] for item in items)
+        ),
+        "refusal_count": sum(
+            not label.is_winner for label in (labels[item.review_id] for item in items)
+        ),
         "sentence_completeness_rate": sentence_completeness_rate(shipped_complete),
         "total_items": len(items),
+        "total_proposed_clips": len(items),
         "winner_count": sum(
             label.is_winner for label in (labels[item.review_id] for item in items)
         ),
@@ -1703,6 +1721,208 @@ def evaluate_editorial_study(
         review_packet_sha256=packet_sha256,
         reviewer_ids=(review_one.reviewer_id, review_two.reviewer_id),
         adjudicator_id=adjudicator_id,
+    )
+
+
+def validate_acceptance_split(
+    training_items: Sequence[Any],
+    holdout_items: Sequence[Any],
+) -> None:
+    """Enforce AC-24: reject episode and speaker leakage between training and holdout."""
+
+    def _extract_ep_spk(item: Any) -> tuple[str, str | None]:
+        if hasattr(item, "source"):
+            return str(item.source.media_id), getattr(item.source, "speaker_id", None)
+        if isinstance(item, Mapping):
+            src = item.get("source", item)
+            return str(src.get("media_id", "")), src.get("speaker_id")
+        if hasattr(item, "media_id"):
+            return str(item.media_id), getattr(item, "speaker_id", None)
+        raise EditorialAcceptanceError(
+            f"unrecognized item format for split validation: {type(item)}"
+        )
+
+    training_episodes: set[str] = set()
+    training_speakers: set[str] = set()
+    for item in training_items:
+        ep, spk = _extract_ep_spk(item)
+        if ep:
+            training_episodes.add(ep)
+        if spk:
+            training_speakers.add(spk)
+
+    holdout_episodes: set[str] = set()
+    holdout_speakers: set[str] = set()
+    for item in holdout_items:
+        ep, spk = _extract_ep_spk(item)
+        if ep:
+            holdout_episodes.add(ep)
+        if spk:
+            holdout_speakers.add(spk)
+
+    episode_leakage = training_episodes & holdout_episodes
+    if episode_leakage:
+        raise EditorialAcceptanceError(
+            f"acceptance split has episode leakage: {sorted(episode_leakage)} "
+            "appear in both training and holdout"
+        )
+
+    speaker_leakage = training_speakers & holdout_speakers
+    if speaker_leakage:
+        raise EditorialAcceptanceError(
+            f"acceptance split has speaker leakage: {sorted(speaker_leakage)} "
+            "appear in both training and holdout"
+        )
+
+
+def partition_episode_disjoint(
+    items: Sequence[Any],
+    *,
+    holdout_ratio: float = 0.2,
+    seed: str = "hawedit-episode-disjoint-v1",
+) -> tuple[list[Any], list[Any]]:
+    """Partition items into training and holdout ensuring zero episode and speaker leakage."""
+    if not items:
+        return [], []
+    if not 0.0 < holdout_ratio < 1.0:
+        raise EditorialAcceptanceError("holdout_ratio must be between 0.0 and 1.0")
+
+    def _extract_ep_spk(item: Any) -> tuple[str, str | None]:
+        if hasattr(item, "source"):
+            return str(item.source.media_id), getattr(item.source, "speaker_id", None)
+        if isinstance(item, Mapping):
+            src = item.get("source", item)
+            return str(src.get("media_id", "")), src.get("speaker_id")
+        if hasattr(item, "media_id"):
+            return str(item.media_id), getattr(item, "speaker_id", None)
+        raise EditorialAcceptanceError(
+            f"unrecognized item format for split partitioning: {type(item)}"
+        )
+
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        if parent.setdefault(x, x) != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x: str, y: str) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[rx] = ry
+
+    for item in items:
+        ep, spk = _extract_ep_spk(item)
+        ep_key = f"ep:{ep}"
+        find(ep_key)
+        if spk:
+            spk_key = f"spk:{spk}"
+            find(spk_key)
+            union(ep_key, spk_key)
+
+    clusters: dict[str, list[Any]] = defaultdict(list)
+    for item in items:
+        ep, _ = _extract_ep_spk(item)
+        cluster_root = find(f"ep:{ep}")
+        clusters[cluster_root].append(item)
+
+    ordered_cluster_roots = sorted(
+        clusters.keys(),
+        key=lambda root: hashlib.sha256(f"{seed}:{root}".encode()).hexdigest(),
+    )
+
+    target_holdout_count = max(1, round(len(items) * holdout_ratio))
+    holdout: list[Any] = []
+    training: list[Any] = []
+    current_holdout_count = 0
+
+    for root in ordered_cluster_roots:
+        cluster_items = clusters[root]
+        if (
+            current_holdout_count < target_holdout_count
+            and (current_holdout_count + len(cluster_items) <= len(items) - 1)
+        ) or not holdout:
+            holdout.extend(cluster_items)
+            current_holdout_count += len(cluster_items)
+        else:
+            training.extend(cluster_items)
+
+    validate_acceptance_split(training, holdout)
+    return training, holdout
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceScorecard:
+    total_proposed_clips: int
+    refusal_count: int
+    accepted_count: int
+    refusal_rate: float
+    first_pass_publishable_rate: float
+    episodes_evaluated: int
+    episodes_with_no_clips: int
+    margin_of_error: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "accepted_count": self.accepted_count,
+            "episodes_evaluated": self.episodes_evaluated,
+            "episodes_with_no_clips": self.episodes_with_no_clips,
+            "first_pass_publishable_rate": self.first_pass_publishable_rate,
+            "margin_of_error": self.margin_of_error,
+            "refusal_count": self.refusal_count,
+            "refusal_rate": self.refusal_rate,
+            "total_proposed_clips": self.total_proposed_clips,
+        }
+
+
+def compute_acceptance_scorecard(
+    *,
+    total_proposed_clips: int,
+    refusal_count: int,
+    accepted_count: int,
+    episodes_evaluated: int,
+    episodes_with_no_clips: int,
+) -> AcceptanceScorecard:
+    """Compute an acceptance scorecard accounting for refusals and all proposed clips (AC-24)."""
+    if type(total_proposed_clips) is not int or total_proposed_clips < 0:
+        raise EditorialAcceptanceError("total_proposed_clips must be a non-negative integer")
+    if type(refusal_count) is not int or refusal_count < 0:
+        raise EditorialAcceptanceError("refusal_count must be a non-negative integer")
+    if type(accepted_count) is not int or accepted_count < 0:
+        raise EditorialAcceptanceError("accepted_count must be a non-negative integer")
+    if total_proposed_clips != refusal_count + accepted_count:
+        raise EditorialAcceptanceError(
+            f"total_proposed_clips ({total_proposed_clips}) must equal "
+            f"refusal_count ({refusal_count}) + accepted_count ({accepted_count}); "
+            "acceptance scorecard must account for all proposed clips and refusals"
+        )
+    if type(episodes_evaluated) is not int or episodes_evaluated < 0:
+        raise EditorialAcceptanceError("episodes_evaluated must be a non-negative integer")
+    if type(episodes_with_no_clips) is not int or episodes_with_no_clips < 0:
+        raise EditorialAcceptanceError("episodes_with_no_clips must be a non-negative integer")
+    if episodes_with_no_clips > episodes_evaluated:
+        raise EditorialAcceptanceError(
+            f"episodes_with_no_clips ({episodes_with_no_clips}) cannot exceed "
+            f"episodes_evaluated ({episodes_evaluated})"
+        )
+
+    refusal_rate = refusal_count / total_proposed_clips if total_proposed_clips > 0 else 0.0
+    first_pass_rate = accepted_count / total_proposed_clips if total_proposed_clips > 0 else 0.0
+    if total_proposed_clips > 0:
+        p = first_pass_rate
+        margin_of_error = 1.96 * math.sqrt(p * (1.0 - p) / total_proposed_clips)
+    else:
+        margin_of_error = 1.0
+
+    return AcceptanceScorecard(
+        total_proposed_clips=total_proposed_clips,
+        refusal_count=refusal_count,
+        accepted_count=accepted_count,
+        refusal_rate=refusal_rate,
+        first_pass_publishable_rate=first_pass_rate,
+        episodes_evaluated=episodes_evaluated,
+        episodes_with_no_clips=episodes_with_no_clips,
+        margin_of_error=round(margin_of_error, 4),
     )
 
 

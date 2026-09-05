@@ -4,6 +4,28 @@ Approved-by: Wareen (via /goal implement in `plan.md`).
 
 Every row is proposed and unchecked. Read the linked specification for full EARS requirements. Named tests are planned tests, not present/green evidence. A row is accepted only after the canonical gate, required media evidence and exact-SHA required CI; only `scripts/update-ledger.sh` may flip rows.
 
+- [ ] T00 Freeze actual baseline, source/runtime manifest, eligible domain and episode-disjoint study protocol
+- [ ] T01 Rejected/unknown QC cannot authorize delivery; revisions invalidate old final-media review
+- [ ] T02 Final render stays private and reviewable; approval promotes the same bytes without rerender
+- [ ] T03 Caption verification rejects textured no-caption footage and damaged text/geometry
+- [ ] T04 Canonical and revision routes use the shared claim-verification boundary for all crop modes
+- [ ] T05 One resolved configuration defines the exact behavior before expensive work
+- [ ] T06 One retained-interval mapping drives every export and media clock
+- [ ] T07 Trimming protects quiet speech, uncertain regions and meaningful pauses/reactions
+- [ ] T08 Candidate context is canonical, contiguous, source-linked and preserved or refused
+- [ ] T09 Independent discovery and shared ranking obey coverage, integrity and budget constraints
+- [ ] T10 Tracker handles off-screen speakers/listener shots and resets at scene cuts
+- [ ] T11 Shot layout stays stable on ambiguity and responds to verified sustained changes
+- [ ] T12 One restrained caption policy reads well on phones and preserves canonical text
+- [ ] T13 Final audio meets the existing contract and conditioning is supported by listening evidence
+- [ ] T14 Episode CLI produces up to N actual distinct deliveries with shared preprocessing and honest item states
+- [ ] T15 Restart/duplicate submission preserve verified work and publish once
+- [ ] T16 Unknown billed outcomes and retries remain persisted, bounded and explicit
+- [ ] T17 Real process/storage/runtime faults preserve primary reasons, cleanup and delivery integrity
+- [ ] T18 Relevant changes invalidate only dependent artifacts; schema/release rollback works
+- [ ] T19 Independent holdout, blind comparisons, current gate/CI and owner review produce a scoped acceptance report
+- [ ] T20 A fresh holdout and representative use window substantiate sustained acceptance
+
 | Task | Dependency | Smallest observable outcome | Criteria / proposed test evidence |
 |---|---|---|---|
 | [ ] T00 | Plan approval | Freeze actual baseline, source/runtime manifest, eligible domain and episode-disjoint study protocol. | AC-24; `test_acceptance_split_has_no_episode_or_speaker_leakage`, `test_scorecard_counts_refusals_and_all_proposed_clips` |

@@ -16,12 +16,16 @@ from hawedit.clip import DiscoveryPath
 from hawedit.corpus import Dialect
 from hawedit.editorial_acceptance import (
     SIGNATURE_NAMESPACE,
+    AcceptanceScorecard,
     EditorialAcceptanceError,
     PreparedEditorialStudy,
     VerifiedEditorialStudy,
+    compute_acceptance_scorecard,
     evaluate_editorial_study,
     main,
+    partition_episode_disjoint,
     prepare_editorial_study,
+    validate_acceptance_split,
 )
 from hawedit.judge import JUDGE_SHADOW, KURDISH_EDITORIAL_JUDGE, JudgeVerdict
 
@@ -742,3 +746,88 @@ def test_review_must_cover_the_exact_sample_and_never_accept_null_templates(
 
     with pytest.raises(EditorialAcceptanceError, match="exact sampled item set"):
         _evaluate(tmp_path, prepared, human)
+
+
+def test_acceptance_split_has_no_episode_or_speaker_leakage() -> None:
+    training_items = [
+        {"source": {"media_id": "ep-01", "speaker_id": "spk-A"}},
+        {"source": {"media_id": "ep-01", "speaker_id": "spk-B"}},
+        {"source": {"media_id": "ep-02", "speaker_id": "spk-C"}},
+    ]
+    holdout_items = [
+        {"source": {"media_id": "ep-03", "speaker_id": "spk-D"}},
+        {"source": {"media_id": "ep-04", "speaker_id": "spk-E"}},
+    ]
+    validate_acceptance_split(training_items, holdout_items)
+
+    leaked_episode_holdout = [
+        {"source": {"media_id": "ep-01", "speaker_id": "spk-D"}},
+    ]
+    with pytest.raises(EditorialAcceptanceError, match="episode leakage"):
+        validate_acceptance_split(training_items, leaked_episode_holdout)
+
+    leaked_speaker_holdout = [
+        {"source": {"media_id": "ep-05", "speaker_id": "spk-A"}},
+    ]
+    with pytest.raises(EditorialAcceptanceError, match="speaker leakage"):
+        validate_acceptance_split(training_items, leaked_speaker_holdout)
+
+    multi_episode_items = [
+        {"source": {"media_id": "ep-01", "speaker_id": "spk-A"}},
+        {"source": {"media_id": "ep-01", "speaker_id": "spk-B"}},
+        {"source": {"media_id": "ep-02", "speaker_id": "spk-C"}},
+        {"source": {"media_id": "ep-03", "speaker_id": "spk-D"}},
+        {"source": {"media_id": "ep-04", "speaker_id": "spk-E"}},
+        {"source": {"media_id": "ep-05", "speaker_id": "spk-F"}},
+    ]
+    train, hold = partition_episode_disjoint(multi_episode_items, holdout_ratio=0.3)
+    assert train and hold
+    assert len(train) + len(hold) == len(multi_episode_items)
+    train_eps = {item["source"]["media_id"] for item in train}
+    hold_eps = {item["source"]["media_id"] for item in hold}
+    assert train_eps.isdisjoint(hold_eps)
+    train_spks = {item["source"]["speaker_id"] for item in train}
+    hold_spks = {item["source"]["speaker_id"] for item in hold}
+    assert train_spks.isdisjoint(hold_spks)
+
+
+def test_scorecard_counts_refusals_and_all_proposed_clips() -> None:
+    scorecard = compute_acceptance_scorecard(
+        total_proposed_clips=100,
+        refusal_count=20,
+        accepted_count=80,
+        episodes_evaluated=10,
+        episodes_with_no_clips=1,
+    )
+    assert isinstance(scorecard, AcceptanceScorecard)
+    assert scorecard.total_proposed_clips == 100
+    assert scorecard.refusal_count == 20
+    assert scorecard.accepted_count == 80
+    assert scorecard.refusal_rate == 0.2
+    assert scorecard.first_pass_publishable_rate == 0.8
+    assert scorecard.episodes_evaluated == 10
+    assert scorecard.episodes_with_no_clips == 1
+    assert 0.0 < scorecard.margin_of_error < 0.1
+
+    payload = scorecard.to_dict()
+    assert payload["total_proposed_clips"] == 100
+    assert payload["refusal_count"] == 20
+    assert payload["accepted_count"] == 80
+
+    with pytest.raises(EditorialAcceptanceError, match="must equal"):
+        compute_acceptance_scorecard(
+            total_proposed_clips=100,
+            refusal_count=0,
+            accepted_count=80,
+            episodes_evaluated=10,
+            episodes_with_no_clips=0,
+        )
+
+    with pytest.raises(EditorialAcceptanceError, match="cannot exceed"):
+        compute_acceptance_scorecard(
+            total_proposed_clips=50,
+            refusal_count=25,
+            accepted_count=25,
+            episodes_evaluated=5,
+            episodes_with_no_clips=6,
+        )
