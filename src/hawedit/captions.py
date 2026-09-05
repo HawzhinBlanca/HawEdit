@@ -31,11 +31,13 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
 from typing import Final
 
 from hawedit.brand import EndCardConfig, SpeakerBio
+from hawedit.normalize import normalize_sorani
 from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.transcripts import Word
 
@@ -66,6 +68,7 @@ __all__ = [
     "CaptionStyle",
     "CaptionTheme",
     "CaptionsOutsideClip",
+    "EmphasisCategory",
     "FontCoverageError",
     "GoldenReferenceMissing",
     "MissingRtlStack",
@@ -77,6 +80,7 @@ __all__ = [
     "assert_rtl_stack",
     "build_ass",
     "chunk_caption_events",
+    "classify_kurdish_emphasis",
     "compare_golden_render",
     "compute_rtl_word_positions",
     "contrast_ratio",
@@ -1103,6 +1107,149 @@ def _escape_ass_text(text: str) -> str:
     return _ASS_OVERRIDE.sub("", text)
 
 
+class EmphasisCategory(Enum):
+    """Semantic category for keyword emphasis in Kurdish captions."""
+
+    DEFAULT = "default"
+    ENTITY = "entity"
+    ACTION_ALERT = "action_alert"
+    NUMERIC = "numeric"
+
+
+_PUNCT_CLEANER: Final = re.compile(r"^[«»\"'“”،,.:!؟?\s]+|[«»\"'“”،,.:!؟?\s]+$")
+_DIGITS_RE: Final = re.compile(r"^\d+$|^[٠-٩]+$")
+
+_NUMERIC_KEYWORDS: Final[frozenset[str]] = frozenset(
+    {
+        "یەک",
+        "دوو",
+        "سێ",
+        "چوار",
+        "پێنج",
+        "شەش",
+        "حەوت",
+        "هەشت",
+        "نۆ",
+        "دە",
+        "یازدە",
+        "دوازدە",
+        "سێزدە",
+        "چواردە",
+        "پازدە",
+        "شازدە",
+        "حەڤدە",
+        "هەژدە",
+        "نۆزدە",
+        "بیست",
+        "سی",
+        "چل",
+        "پەنجا",
+        "شەست",
+        "حەفتا",
+        "هەشتا",
+        "نەوەد",
+        "سەد",
+        "هەزار",
+        "ملیۆن",
+        "ملیار",
+        "هەموو",
+        "هەمووی",
+        "هەموویان",
+        "زۆرترین",
+        "کەمترین",
+        "یەکەم",
+        "دووەم",
+        "سێیەم",
+        "چوارەم",
+        "پێنجەم",
+    }
+)
+
+_ACTION_ALERT_KEYWORDS: Final[frozenset[str]] = frozenset(
+    {
+        "هەرگیز",
+        "نەخێر",
+        "مەحاڵ",
+        "مەحاڵە",
+        "کارەسات",
+        "مەترسی",
+        "مەترسیدار",
+        "خراپترین",
+        "گرنگترین",
+        "گەورەترین",
+        "سەرەکی",
+        "تەواو",
+        "ڕاستەوخۆ",
+        "ئاشکرا",
+        "بەڵێ",
+        "تەنانەت",
+        "بەڵام",
+        "هەڵبوەشێنێتەوە",
+        "شەڕ",
+        "تیرۆر",
+        "شکست",
+        "مردن",
+    }
+)
+
+_ENTITY_KEYWORDS: Final[frozenset[str]] = frozenset(
+    {
+        "کوردستان",
+        "عێراق",
+        "ئەمریکا",
+        "پێشمەرگە",
+        "بەغدا",
+        "هەولێر",
+        "سلێمانی",
+        "دهۆک",
+        "کەرکووک",
+        "پۆڵ",
+        "برێمەر",
+        "بارزانی",
+        "تاڵەبانی",
+        "سەددام",
+        "ئێران",
+        "تورکیا",
+        "حکومەت",
+        "پەرلەمان",
+        "سەرۆک",
+        "وەزیر",
+    }
+)
+
+CATEGORY_COLORS: Final[dict[EmphasisCategory, str]] = {
+    EmphasisCategory.DEFAULT: "&H0000E5FF",  # Electric Gold
+    EmphasisCategory.ENTITY: "&H00FFFF00",  # Electric Cyan
+    EmphasisCategory.ACTION_ALERT: "&H00303BFF",  # Vivid Coral
+    EmphasisCategory.NUMERIC: "&H0066FF00",  # Neon Emerald
+}
+
+CATEGORY_SUFFIXES: Final[dict[EmphasisCategory, str]] = {
+    EmphasisCategory.DEFAULT: "",
+    EmphasisCategory.ENTITY: "Cyan",
+    EmphasisCategory.ACTION_ALERT: "Coral",
+    EmphasisCategory.NUMERIC: "Emerald",
+}
+
+
+@lru_cache(maxsize=10_000)
+def classify_kurdish_emphasis(token: str) -> EmphasisCategory:
+    """Classify a Kurdish word token into an emphasis category for visual styling."""
+    clean = _PUNCT_CLEANER.sub("", token).strip()
+    if not clean:
+        return EmphasisCategory.DEFAULT
+    if _DIGITS_RE.match(clean):
+        return EmphasisCategory.NUMERIC
+    norm = normalize_sorani(clean)
+    if norm in _NUMERIC_KEYWORDS:
+        return EmphasisCategory.NUMERIC
+    if norm in _ACTION_ALERT_KEYWORDS:
+        return EmphasisCategory.ACTION_ALERT
+    if norm in _ENTITY_KEYWORDS:
+        return EmphasisCategory.ENTITY
+    return EmphasisCategory.DEFAULT
+
+
 # How much larger the accented word is drawn. Scale rather than colour, because the colour
 # channels are already spoken for: `\kf` sweeps `secondary` into `primary`, so recolouring a word
 # would fight the highlight that tracks the voice.
@@ -1225,6 +1372,7 @@ def build_ass(
     speaker_turns: Sequence[tuple[int, int, str]] | None = None,
     speaker_metadata: dict[str, SpeakerBio] | None = None,
     end_card: EndCardConfig | None = None,
+    keyword_emphasis: bool = True,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -1284,6 +1432,20 @@ def build_ass(
             *(
                 [
                     theme.style_row(
+                        f"Kurdish{CATEGORY_SUFFIXES[cat]}",
+                        font_name,
+                        font_size,
+                        primary=color,
+                    )
+                    for cat, color in CATEGORY_COLORS.items()
+                    if cat is not EmphasisCategory.DEFAULT
+                ]
+                if keyword_emphasis
+                else []
+            ),
+            *(
+                [
+                    theme.style_row(
                         "KurdishDim",
                         font_name,
                         font_size,
@@ -1302,6 +1464,20 @@ def build_ass(
                     )
                 ]
                 if plate_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.plate_style_row(
+                        f"KurdishPlate{CATEGORY_SUFFIXES[cat]}",
+                        font_name,
+                        font_size,
+                        primary=color,
+                    )
+                    for cat, color in CATEGORY_COLORS.items()
+                    if cat is not EmphasisCategory.DEFAULT
+                ]
+                if (keyword_emphasis and plate_intervals)
                 else []
             ),
             *(
@@ -1332,6 +1508,22 @@ def build_ass(
             *(
                 [
                     theme.style_row(
+                        f"KurdishTop{CATEGORY_SUFFIXES[cat]}",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=color,
+                    )
+                    for cat, color in CATEGORY_COLORS.items()
+                    if cat is not EmphasisCategory.DEFAULT
+                ]
+                if (keyword_emphasis and face_intervals)
+                else []
+            ),
+            *(
+                [
+                    theme.style_row(
                         "KurdishTopDim",
                         font_name,
                         font_size,
@@ -1354,6 +1546,22 @@ def build_ass(
                     )
                 ]
                 if face_intervals and plate_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.plate_style_row(
+                        f"KurdishTopPlate{CATEGORY_SUFFIXES[cat]}",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=color,
+                    )
+                    for cat, color in CATEGORY_COLORS.items()
+                    if cat is not EmphasisCategory.DEFAULT
+                ]
+                if (keyword_emphasis and face_intervals and plate_intervals)
                 else []
             ),
             *(
@@ -1396,16 +1604,21 @@ def build_ass(
             return _karaoke(words, words[0].start_ms)
         return " ".join(_escape_ass_text(word.w) for word in words)
 
-    def choose_style(start_ms: int, end_ms: int) -> str:
+    def choose_style(
+        start_ms: int,
+        end_ms: int,
+        category: EmphasisCategory = EmphasisCategory.DEFAULT,
+    ) -> str:
         is_top = should_use_top_caption_placement(start_ms, end_ms, face_intervals)
         is_plate = event_needs_plate(start_ms, end_ms, plate_intervals)
+        suffix = CATEGORY_SUFFIXES[category] if keyword_emphasis else ""
         if is_top and is_plate:
-            return "KurdishTopPlate"
+            return f"KurdishTopPlate{suffix}"
         if is_top:
-            return "KurdishTop"
+            return f"KurdishTop{suffix}"
         if is_plate:
-            return "KurdishPlate"
-        return "Kurdish"
+            return f"KurdishPlate{suffix}"
+        return f"Kurdish{suffix}"
 
     # The clip's timeline, not the source's. The kf spans are durations and are unaffected
     # — only the two absolute stamps below ever needed the offset, and for as long as they did
@@ -1490,7 +1703,16 @@ def build_ass(
                 end_ms = chunk[-1].end_ms
                 if following is not None and following - end_ms <= _POPUP_HOLD_MS:
                     end_ms = following
-                style_name = choose_style(chunk[0].start_ms, end_ms)
+                cat = EmphasisCategory.DEFAULT
+                if keyword_emphasis:
+                    cats = [classify_kurdish_emphasis(w.w) for w in chunk]
+                    if EmphasisCategory.ACTION_ALERT in cats:
+                        cat = EmphasisCategory.ACTION_ALERT
+                    elif EmphasisCategory.ENTITY in cats:
+                        cat = EmphasisCategory.ENTITY
+                    elif EmphasisCategory.NUMERIC in cats:
+                        cat = EmphasisCategory.NUMERIC
+                style_name = choose_style(chunk[0].start_ms, end_ms, category=cat)
                 popup_text = " ".join(_escape_ass_text(w.w) for w in chunk)
                 bounce_tag = r"{\t(0,80,\fscx112\fscy112)\t(80,160,\fscx100\fscy100)}"
                 events.append(
@@ -1520,11 +1742,6 @@ def build_ass(
                 is_plate = event_needs_plate(chunk[0].start_ms, end_ms, plate_intervals)
                 align_tag = "\\an8" if is_top else "\\an2"
                 y_pos = DEFAULT_TOP_MARGIN_V if is_top else (play_res_y - theme.margin_v)
-                active_st = (
-                    ("KurdishTopPlate" if is_plate else "KurdishTop")
-                    if is_top
-                    else ("KurdishPlate" if is_plate else "Kurdish")
-                )
                 dim_st = (
                     ("KurdishTopPlateDim" if is_plate else "KurdishTopDim")
                     if is_top
@@ -1550,7 +1767,15 @@ def build_ass(
                         None,
                     )
                     for j, (word, x_pos) in enumerate(positions):
-                        st = active_st if j == active_idx else dim_st
+                        if j == active_idx:
+                            cat = (
+                                classify_kurdish_emphasis(word.w)
+                                if keyword_emphasis
+                                else EmphasisCategory.DEFAULT
+                            )
+                            st = choose_style(ta, tb, category=cat)
+                        else:
+                            st = dim_st
                         escaped_word = _escape_ass_text(word.w)
                         word_text = f"{{{align_tag}\\pos({x_pos},{y_pos})}}{escaped_word}"
                         events.append(event(ta, tb, word_text, style_name=st))

@@ -1649,6 +1649,7 @@ def run_pipeline(
     two_person_split: str = "auto",
     brand_kit: BrandKit | None = None,
     caption_style: CaptionStyle | str | None = None,
+    keyword_emphasis: bool = True,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -2739,6 +2740,7 @@ def run_pipeline(
                 speaker_turns=speaker_turns,
                 speaker_metadata=speaker_meta,
                 end_card=end_card,
+                keyword_emphasis=keyword_emphasis,
             ),
         )
         if source_dimensions is None:
@@ -3276,6 +3278,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="caption rendering style (line, word_highlight, viral_popup, rtl_word_highlight)",
     )
     parser.add_argument(
+        "--keyword-emphasis",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="highlight key Kurdish emphasis words (names, numbers, alerts) in accent neon colors",
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3672,6 +3680,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         two_person_split=getattr(args, "two_person_split", "auto"),
         brand_kit=brand_kit,
         caption_style=getattr(args, "caption_style", None),
+        keyword_emphasis=getattr(args, "keyword_emphasis", True),
     )
 
 

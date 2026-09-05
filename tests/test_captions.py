@@ -48,6 +48,7 @@ from hawedit.captions import (
     CaptionsOutsideClip,
     CaptionStyle,
     CaptionTheme,
+    EmphasisCategory,
     FontCoverageError,
     GoldenReferenceMissing,
     MissingRtlStack,
@@ -58,6 +59,7 @@ from hawedit.captions import (
     assert_rtl_stack,
     build_ass,
     chunk_caption_events,
+    classify_kurdish_emphasis,
     compare_golden_render,
     compute_rtl_word_positions,
     contrast_ratio,
@@ -1977,3 +1979,79 @@ def test_rtl_word_highlight_emits_positioned_events_and_switches_styles() -> Non
     ev_w1_active = "Dialogue: 0,0:00:00.50,0:00:01.20,Kurdish,,0,0,0,,"
     assert ev_w0_dim in ass
     assert ev_w1_active in ass
+
+
+def test_classify_kurdish_emphasis_identifies_numbers() -> None:
+    """Numbers in digits, Eastern Arabic numerals, and Kurdish words return NUMERIC."""
+    for token in ("100", "2026", "١٠", "٥۰۰", "دوو", "سێ", "ملیۆن", "هەزار", "هەموو"):
+        assert classify_kurdish_emphasis(token) is EmphasisCategory.NUMERIC, f"Failed for {token}"
+
+
+def test_classify_kurdish_emphasis_identifies_entities() -> None:
+    """Proper names, locations, and high-profile entities return ENTITY."""
+    for token in ("کوردستان", "عێراق", "ئەمریکا", "پێشمەرگە", "بەغدا", "پۆڵ", "برێمەر"):
+        assert classify_kurdish_emphasis(token) is EmphasisCategory.ENTITY, f"Failed for {token}"
+
+
+def test_classify_kurdish_emphasis_identifies_action_alerts() -> None:
+    """Negations, extreme claims, and crisis words return ACTION_ALERT."""
+    for token in ("هەرگیز", "نەخێر", "مەترسی", "مەحاڵە", "کارەسات", "ڕاستەوخۆ"):
+        assert classify_kurdish_emphasis(token) is EmphasisCategory.ACTION_ALERT, (
+            f"Failed for {token}"
+        )
+
+
+def test_classify_kurdish_emphasis_defaults_to_neutral() -> None:
+    """Common verbs, nouns, and function words return DEFAULT."""
+    for token in ("سڵاو", "کتێب", "ڕۆژ", "باشە", "کە", "لە", "بە", ""):
+        assert classify_kurdish_emphasis(token) is EmphasisCategory.DEFAULT, f"Failed for {token}"
+
+
+def test_build_ass_keyword_emphasis_viral_popup() -> None:
+    """Viral popup styles chunks according to keyword emphasis category."""
+    # 1. Entity word chunk -> KurdishCyan
+    ent_sentence = Sentence(words=words(("پێشمەرگە", 100, 500)), complete=True)
+    ass_ent = build_ass((ent_sentence,), style=CaptionStyle.VIRAL_POPUP, theme=VIRAL_THEME)
+    assert "Style: KurdishCyan," in ass_ent
+    assert ",KurdishCyan,,0,0,0,," in ass_ent
+
+    # 2. Number word chunk -> KurdishEmerald
+    num_sentence = Sentence(words=words(("ملیۆن", 100, 500)), complete=True)
+    ass_num = build_ass((num_sentence,), style=CaptionStyle.VIRAL_POPUP, theme=VIRAL_THEME)
+    assert "Style: KurdishEmerald," in ass_num
+    assert ",KurdishEmerald,,0,0,0,," in ass_num
+
+    # 3. Action/Alert word chunk -> KurdishCoral
+    alert_sentence = Sentence(words=words(("هەرگیز", 100, 500)), complete=True)
+    ass_alert = build_ass((alert_sentence,), style=CaptionStyle.VIRAL_POPUP, theme=VIRAL_THEME)
+    assert "Style: KurdishCoral," in ass_alert
+    assert ",KurdishCoral,,0,0,0,," in ass_alert
+
+
+def test_build_ass_keyword_emphasis_rtl_word_highlight() -> None:
+    """RTL word highlight applies category style to active word dynamically."""
+    test_words = words(("پێشمەرگە", 100, 500), ("هاتن", 500, 1000))
+    sentence = Sentence(words=test_words, complete=True)
+
+    ass = build_ass((sentence,), style=CaptionStyle.RTL_WORD_HIGHLIGHT, theme=VIRAL_THEME)
+
+    # Word 0 (پێشمەرگە) is ENTITY -> active event uses KurdishCyan
+    ev_w0_active = "Dialogue: 0,0:00:00.10,0:00:00.50,KurdishCyan,,0,0,0,,"
+    # Word 1 (هاتن) is DEFAULT -> active event uses Kurdish
+    ev_w1_active = "Dialogue: 0,0:00:00.50,0:00:01.00,Kurdish,,0,0,0,,"
+
+    assert ev_w0_active in ass
+    assert ev_w1_active in ass
+
+
+def test_build_ass_disabled_keyword_emphasis_retains_standard_styles() -> None:
+    """When keyword_emphasis=False, all active words use standard Kurdish style."""
+    ent_sentence = Sentence(words=words(("پێشمەرگە", 100, 500)), complete=True)
+    ass = build_ass(
+        (ent_sentence,),
+        style=CaptionStyle.VIRAL_POPUP,
+        theme=VIRAL_THEME,
+        keyword_emphasis=False,
+    )
+    assert "Style: KurdishCyan," not in ass
+    assert ",Kurdish,,0,0,0,," in ass

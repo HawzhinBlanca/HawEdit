@@ -6532,6 +6532,19 @@ def test_pipeline_explicit_caption_style_overrides_content_type_default(tmp_path
     assert run.clip.output.caption_style == "viral_popup"
 
 
+def test_pipeline_keyword_emphasis_argument_is_parsed() -> None:
+    """--keyword-emphasis and --no-keyword-emphasis CLI arguments are parsed correctly."""
+    parser = build_parser()
+    args_default = parser.parse_args([str(FIXTURE)])
+    assert args_default.keyword_emphasis is True
+
+    args_off = parser.parse_args([str(FIXTURE), "--no-keyword-emphasis"])
+    assert args_off.keyword_emphasis is False
+
+    args_on = parser.parse_args([str(FIXTURE), "--keyword-emphasis"])
+    assert args_on.keyword_emphasis is True
+
+
 @needs_ffmpeg
 def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_path: Path) -> None:
     """Task T3.3: run_pipeline excises dead air, resyncs timeline, and reconciles delivery."""
