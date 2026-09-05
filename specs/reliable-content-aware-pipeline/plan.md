@@ -1,6 +1,6 @@
 # Plan — earn a top-grade HawEdit pipeline
 
-Approved-by: pending human approval
+Approved-by: Wareen (via /goal implement)
 
 Date: 2026-09-06. Basis: [research.md](research.md), inspected HEAD `508f986e9f0ed5745d9ff46a9bffb9413b8a5456` plus the recorded working-tree changes.
 Status: proposed plan only. No feature is accepted or implementation approved by this document.

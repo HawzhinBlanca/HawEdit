@@ -1,6 +1,6 @@
 # Task sequence — reliable content-aware pipeline
 
-Approved-by: pending human approval in `plan.md`.
+Approved-by: Wareen (via /goal implement in `plan.md`).
 
 Every row is proposed and unchecked. Read the linked specification for full EARS requirements. Named tests are planned tests, not present/green evidence. A row is accepted only after the canonical gate, required media evidence and exact-SHA required CI; only `scripts/update-ledger.sh` may flip rows.
 
