@@ -5,7 +5,7 @@ Approved-by: Wareen (via /goal implement in `plan.md`).
 Every row is proposed and unchecked. Read the linked specification for full EARS requirements. Named tests are planned tests, not present/green evidence. A row is accepted only after the canonical gate, required media evidence and exact-SHA required CI; only `scripts/update-ledger.sh` may flip rows.
 
 - [x] T00 Freeze actual baseline, source/runtime manifest, eligible domain and episode-disjoint study protocol
-- [ ] T01 Rejected/unknown QC cannot authorize delivery; revisions invalidate old final-media review
+- [x] T01 Rejected/unknown QC cannot authorize delivery; revisions invalidate old final-media review
 - [ ] T02 Final render stays private and reviewable; approval promotes the same bytes without rerender
 - [ ] T03 Caption verification rejects textured no-caption footage and damaged text/geometry
 - [ ] T04 Canonical and revision routes use the shared claim-verification boundary for all crop modes
