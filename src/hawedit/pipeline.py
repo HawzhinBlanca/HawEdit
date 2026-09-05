@@ -201,6 +201,7 @@ if TYPE_CHECKING:
     from hawedit.models import ModelStore
 
 __all__ = [
+    "DEFAULT_NONVERBAL_VISUAL_QUERY",
     "BilledCall",
     "Delivery",
     "PipelineRun",
@@ -1404,23 +1405,36 @@ def _candidate_slice_text(transcript: NormalizedTranscript, in_ms: int, out_ms: 
     return normalize_sorani(" ".join(words))
 
 
+DEFAULT_NONVERBAL_VISUAL_QUERY: Final[str] = "پێکەنین، کاردانەوە، سەرسوڕمان، جووڵە"
+
+
 def _visual_retrieval_query(
     transcript: NormalizedTranscript,
     verbal: Sequence[Candidate],
     explicit: str | None,
+    *,
+    nonverbal: bool = False,
 ) -> tuple[str, str] | None:
     """Return one bounded, provenance-bearing Path B query or refuse to invent one.
 
-    An explicit operator query is authority to use exactly that normalized text. Otherwise the
-    top Path A survivor scopes retrieval to the words aligned inside its own time span. The whole
-    transcript is intentionally not a fallback: on the measured 38-minute episode its 35,185
-    characters made the reranker request 40.89 GiB on a 23.99 GiB GPU before Stage 3 could run.
+    An explicit operator query is authority to use exactly that normalized text. When
+    `nonverbal` is requested, Path B runs as independent visual discovery against
+    `DEFAULT_NONVERBAL_VISUAL_QUERY` to retrieve non-verbal beats without coupling to Path A
+    (T4.2, D-271). Otherwise the top Path A survivor scopes retrieval to the words aligned inside
+    its own time span. The whole transcript is intentionally not a fallback: on the measured
+    38-minute episode its 35,185 characters made the reranker request 40.89 GiB on a 23.99 GiB
+    GPU before Stage 3 could run (D-154).
     """
     if explicit is not None:
         query = normalize_sorani(explicit)
         if not query.strip():
             raise ValueError("visual query must contain non-whitespace Sorani retrieval text")
+        if query == "nonverbal" or query == normalize_sorani("nonverbal"):
+            return DEFAULT_NONVERBAL_VISUAL_QUERY, "default:nonverbal"
         return query, "explicit"
+
+    if nonverbal:
+        return DEFAULT_NONVERBAL_VISUAL_QUERY, "default:nonverbal"
 
     best = min(verbal, key=lambda item: (item.rank, item.candidate_id), default=None)
     if best is None:
@@ -1650,6 +1664,7 @@ def run_pipeline(
     brand_kit: BrandKit | None = None,
     caption_style: CaptionStyle | str | None = None,
     keyword_emphasis: bool = True,
+    visual_nonverbal: bool = False,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1965,7 +1980,9 @@ def run_pipeline(
         # repeating it would suggest two independent stages declined.
         log.started("visual_index")
         if visual_composer is not None:
-            query_with_source = _visual_retrieval_query(normalized, verbal, visual_query)
+            query_with_source = _visual_retrieval_query(
+                normalized, verbal, visual_query, nonverbal=visual_nonverbal
+            )
             if query_with_source is None:
                 visual_skipped = StageSkipped(
                     stage="visual_index",
@@ -3138,6 +3155,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="compose Qwen embedding/reranking and VideoChat3 over only the survivors",
     )
     parser.add_argument("--visual-query", help="Sorani visual retrieval query")
+    parser.add_argument(
+        "--visual-nonverbal",
+        action="store_true",
+        help="run Path B independent discovery using canonical non-verbal beats query (T4.2)",
+    )
     parser.add_argument("--visual-keep", type=int, default=7)
     parser.add_argument("--visual-fps", type=float, default=None)
     parser.add_argument(
@@ -3438,7 +3460,14 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         raise ValueError("--visual-query requires --visual")
     if args.visual_query is not None and not normalize_sorani(args.visual_query).strip():
         raise ValueError("--visual-query must contain non-whitespace Sorani retrieval text")
-    if args.visual and not (args.visual_query or args.gemini or args.vertex_project):
+    if getattr(args, "visual_nonverbal", False):
+        args.visual = True
+    if args.visual and not (
+        args.visual_query
+        or args.gemini
+        or args.vertex_project
+        or getattr(args, "visual_nonverbal", False)
+    ):
         raise ValueError("--visual without Path A requires --visual-query")
     if args.judge_top_n is not None and not args.auto_select:
         # Accepting it here would silently do nothing: the loop exists only on the automatic
@@ -3460,9 +3489,9 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
     # Path B is a producer only when it has something to retrieve against. `--visual`
     # alone plans windows but cannot rank or surface one, so accepting it for auto-selection
     # pays all of Stage 0 for an outcome argv already proves impossible. Path A can either
-    # produce directly or anchor the optional Path B query. D-177.
+    # produce directly or anchor the optional Path B query. D-177, D-271.
     stage_3_can_produce = bool(args.gemini or args.vertex_project) or bool(
-        args.visual and visual_query
+        args.visual and (visual_query or getattr(args, "visual_nonverbal", False))
     )
     if args.auto_select and not stage_3_can_produce:
         raise ValueError(
@@ -3681,6 +3710,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         brand_kit=brand_kit,
         caption_style=getattr(args, "caption_style", None),
         keyword_emphasis=getattr(args, "keyword_emphasis", True),
+        visual_nonverbal=getattr(args, "visual_nonverbal", False),
     )
 
 

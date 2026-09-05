@@ -13907,4 +13907,24 @@ High-retention social videos on TikTok, Instagram Reels, and YouTube Shorts leve
    - Exposed `--keyword-emphasis` (with `--no-keyword-emphasis`) `BooleanOptionalAction` flag in `src/hawedit/pipeline.py` (default: `True`).
    - Passed down to `build_ass(...)`, remaining 100% backward compatible when disabled.
 
+---
+
+## D-271 · Decoupled Path B discovery and nonverbal visual retrieval
+
+**Date:** 2026-09-05 · **Blueprint ref:** §3.3, §3.5, §7.3 · **Type:** extension, not a deviation
+
+**Context.**
+In §3.3 / D-154, HawEdit anchored Stage 3 visual retrieval (Path B) to the rank-1 verbal candidate produced by Path A (Gemini/Vertex) to avoid passing the entire long transcript to the reranker, which had caused a 40.89 GiB OOM on 24 GiB GPUs. However, coupling Path B exclusively to Path A prevents independent visual candidate discovery when Path A fails (cloud outage, rate limits, or quota exhaustion) or when the operator wants to discover non-verbal moments (laughter, surprise, physical reactions, dynamic motion) that have little or no spoken transcript anchor (T4.2).
+
+**Decision.**
+1. **Canonical Non-Verbal Visual Retrieval Query (`DEFAULT_NONVERBAL_VISUAL_QUERY`)**:
+   - Canonical query set defined in `src/hawedit/pipeline.py`: `"پێکەنین، کاردانەوە، سەرسوڕمان، جووڵە"` (laughter, reaction, surprise, motion).
+   - Provenance marked explicitly as `visual_query_source="default:nonverbal"`.
+2. **Opt-in Decoupled Discovery (`--visual-nonverbal` / `visual_nonverbal=True`)**:
+   - When `--visual-nonverbal` is supplied (or when `--visual-query nonverbal` is given), Path B runs against `DEFAULT_NONVERBAL_VISUAL_QUERY` independently of Path A.
+   - Preserves full backward compatibility with D-154: when `--visual-nonverbal` is omitted and no explicit query is provided, Path B continues to anchor to Path A's top survivor and safely refuses the full transcript if Path A fails.
+3. **CLI & Stage 3 Producer Contract**:
+   - Updated `_validate_args` to accept `--visual --visual-nonverbal` as a self-sufficient Stage 3 candidate producer under `--auto-select` without requiring Path A credentials or an explicit `--visual-query`.
+
+
 

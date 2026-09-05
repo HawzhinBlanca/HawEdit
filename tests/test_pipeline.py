@@ -4318,6 +4318,60 @@ def test_path_b_refuses_the_whole_transcript_when_path_a_has_no_candidate(
 
 
 @needs_ffmpeg
+def test_path_b_runs_without_a_path_a_seed(tmp_path: Path) -> None:
+    from hawedit.clip import DiscoveryPath
+    from hawedit.discovery import Candidate
+    from hawedit.gemini import GeminiUnavailable
+    from hawedit.pipeline import DEFAULT_NONVERBAL_VISUAL_QUERY
+    from hawedit.visual_pipeline import VisualDiscoveryResult
+
+    received_query: str | None = None
+
+    class Composer:
+        def discover(
+            self,
+            source: Path,
+            windows: Sequence[Any],
+            query: str,
+            work_dir: Path,
+            *,
+            media_id: str,
+            ffmpeg: Path | None = None,
+        ) -> VisualDiscoveryResult:
+            nonlocal received_query
+            received_query = query
+            candidate = Candidate(
+                "visual_nonverbal_01",
+                media_id,
+                500,
+                2_500,
+                DiscoveryPath.VISUAL,
+                1,
+                0.95,
+            )
+            return VisualDiscoveryResult(media_id, query, len(windows), 1, (), (candidate,))
+
+    def broken_path_a(_transcript: Any) -> Sequence[Candidate]:
+        raise GeminiUnavailable("cloud unavailable")
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work",
+        media_id="independent-path-b",
+        transcript=a_transcript("independent-path-b"),
+        discover=broken_path_a,
+        visual_composer=Composer(),  # type: ignore[arg-type]
+        visual_nonverbal=True,
+    )
+
+    assert received_query == DEFAULT_NONVERBAL_VISUAL_QUERY
+    assert run.visual_query_source == "default:nonverbal"
+    assert tuple(c.candidate_id for c in run.candidates) == ("visual_nonverbal_01",)
+    assert run.candidates[0].discovery_path == DiscoveryPath.VISUAL
+    assert not isinstance(run.visual_index, StageSkipped)
+
+
+@needs_ffmpeg
 def test_canonical_asr_runtime_failure_is_a_json_capable_stage_skip(tmp_path: Path) -> None:
     class BrokenAsr:
         def transcribe(self, *args: Any, **kwargs: Any) -> RawTranscript:
@@ -5201,6 +5255,22 @@ def test_auto_select_refuses_visual_without_a_query_before_stage_zero(tmp_path: 
 def test_auto_select_accepts_path_a_without_an_explicit_visual_query(tmp_path: Path) -> None:
     code, stderr = _query_preflight_exit(
         ["--transcript", "missing.json", "--gemini", "--auto-select"], tmp_path
+    )
+
+    assert code == 2, stderr
+    assert "Stage 3 producer" not in stderr
+
+
+def test_auto_select_accepts_visual_alone_using_default_nonverbal_query(tmp_path: Path) -> None:
+    code, stderr = _query_preflight_exit(
+        [
+            "--transcript",
+            "missing.json",
+            "--visual",
+            "--visual-nonverbal",
+            "--auto-select",
+        ],
+        tmp_path,
     )
 
     assert code == 2, stderr
