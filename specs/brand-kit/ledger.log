@@ -1,0 +1,5 @@
+TS=2026-09-05T02:23:09Z FEATURE=brand-kit TASK=T1 TESTS=test_brand_kit_validation_and_missing_file_fail_stop,test_brand_kit_json_roundtrip VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T02:23:09Z FEATURE=brand-kit TASK=T2 TESTS=test_build_ass_with_speaker_metadata_and_turns VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T02:23:09Z FEATURE=brand-kit TASK=T3 TESTS=test_render_clip_refuses_missing_logo_file,test_render_clip_with_logo_and_progress_bar_exec VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T02:23:09Z FEATURE=brand-kit TASK=T4 TESTS=test_pipeline_parser_brand_kit_flags,test_pipeline_brand_kit_serialization_and_report VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T02:23:09Z FEATURE=brand-kit TASK=T5 TESTS=test_brand_kit_validation_and_missing_file_fail_stop VERIFY=pass REPORT=.gate/last-test-run.xml
