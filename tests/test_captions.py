@@ -59,6 +59,7 @@ from hawedit.captions import (
     build_ass,
     chunk_caption_events,
     compare_golden_render,
+    compute_rtl_word_positions,
     contrast_ratio,
     decode_to_rgb,
     emphasis_index,
@@ -1917,3 +1918,62 @@ def test_build_ass_with_speaker_metadata_and_turns() -> None:
     assert expected_spk0 in ass_text
     assert expected_spk1 in ass_text
     assert "SPEAKER_02" not in ass_text
+
+
+def test_compute_rtl_word_positions_strictly_right_to_left() -> None:
+    """Words in a Kurdish phrase must have X positions strictly decreasing from right to left."""
+    test_words = words(
+        ("ڕۆژنامەوانی", 0, 800),
+        ("کوردی", 800, 1700),
+        ("لە", 1700, 2100),
+        ("هەولێر", 2100, 3000),
+    )
+    positions = compute_rtl_word_positions(
+        test_words,
+        font_size=VIRAL_FONT_SIZE,
+        canvas_width=1080,
+    )
+    assert len(positions) == 4
+    x0, x1, x2, x3 = [pos[1] for pos in positions]
+    assert x0 > x1 > x2 > x3, f"RTL invariant violated: X coords not decreasing: {positions}"
+    assert 0 < x3 < 1080 and 0 < x0 < 1080, "Coordinates must fall inside canvas bounds"
+
+    # Edge cases
+    assert compute_rtl_word_positions([]) == []
+    single = compute_rtl_word_positions([test_words[0]], canvas_width=1080)
+    assert single == [(test_words[0], 540)]
+
+
+def test_viral_popup_style_emits_bounce_tags_and_unbroken_text() -> None:
+    """Viral popup captions emit dynamic scale bounce tags with unbroken Kurdish text."""
+    test_words = words(("سڵاو", 100, 500), ("هاوڕێیان", 600, 1200))
+    sentence = Sentence(words=test_words, complete=True)
+
+    ass = build_ass((sentence,), style=CaptionStyle.VIRAL_POPUP, theme=VIRAL_THEME)
+
+    assert r"{\t(0,80,\fscx112\fscy112)\t(80,160,\fscx100\fscy100)}" in ass
+    assert "\\kf" not in ass, "Popups must not use \\kf tags which split HarfBuzz runs"
+    assert "سڵاو هاوڕێیان" in ass, "Surface words must be joined cleanly without inline splits"
+
+
+def test_rtl_word_highlight_emits_positioned_events_and_switches_styles() -> None:
+    """RTL word highlight creates positioned words with active vs dim style alternation."""
+    test_words = words(("سڵاو", 100, 500), ("هاوڕێیان", 500, 1200))
+    sentence = Sentence(words=test_words, complete=True)
+
+    ass = build_ass((sentence,), style=CaptionStyle.RTL_WORD_HIGHLIGHT, theme=VIRAL_THEME)
+
+    assert "Style: KurdishDim," in ass, "Dim secondary style must be declared"
+    assert "\\pos(" in ass, "Word positions must be explicitly positioned"
+
+    # During first interval: word 0 is active (Kurdish) and word 1 is dim (KurdishDim)
+    ev_w0_active = "Dialogue: 0,0:00:00.10,0:00:00.50,Kurdish,,0,0,0,,"
+    ev_w1_dim = "Dialogue: 0,0:00:00.10,0:00:00.50,KurdishDim,,0,0,0,,"
+    assert ev_w0_active in ass
+    assert ev_w1_dim in ass
+
+    # During second interval: word 1 is active and word 0 is dim
+    ev_w0_dim = "Dialogue: 0,0:00:00.50,0:00:01.20,KurdishDim,,0,0,0,,"
+    ev_w1_active = "Dialogue: 0,0:00:00.50,0:00:01.20,Kurdish,,0,0,0,,"
+    assert ev_w0_dim in ass
+    assert ev_w1_active in ass

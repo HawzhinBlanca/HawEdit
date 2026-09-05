@@ -67,7 +67,8 @@ def build_editor_agent(model: Model | KnownModelName | str, deps: Deps) -> Agent
 
     @editor.tool
     def propose_caption_revision_tool(
-        ctx: RunContext[Deps], caption_style: Literal["line", "word_highlight"]
+        ctx: RunContext[Deps],
+        caption_style: Literal["line", "word_highlight", "viral_popup", "rtl_word_highlight"],
     ) -> CaptionRevisionProposal:
         """Propose a new caption style for this run's clip and check whether it is legal.
         Read-only — this does not apply the change."""

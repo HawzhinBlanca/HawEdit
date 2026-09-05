@@ -71,6 +71,7 @@ from hawedit.captions import (
     POPUP_MAX_WORDS,
     VIRAL_FONT_SIZE,
     VIRAL_THEME,
+    CaptionStyle,
     build_ass,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
@@ -1647,6 +1648,7 @@ def run_pipeline(
     silence_target_gap_ms: int = 150,
     two_person_split: str = "auto",
     brand_kit: BrandKit | None = None,
+    caption_style: CaptionStyle | str | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1715,6 +1717,9 @@ def run_pipeline(
         brand_kit.assert_valid()
 
     ct_profile = get_content_type_profile(content_type)
+    resolved_caption_style: CaptionStyle = (
+        CaptionStyle(caption_style) if caption_style is not None else ct_profile.caption_style
+    )
     if min_clip_ms == MIN_CANDIDATE_SPAN_MS and ct_profile.min_clip_ms != MIN_CANDIDATE_SPAN_MS:
         min_clip_ms = ct_profile.min_clip_ms
 
@@ -2589,7 +2594,7 @@ def run_pipeline(
             verdict.to_output(
                 crop_target=crop_target,
                 durations=(max(1, round((boundary.final_out_ms - boundary.final_in_ms) / 1000)),),
-                caption_style=ct_profile.caption_style.value,
+                caption_style=resolved_caption_style.value,
             )
             if verdict is not None
             else None
@@ -2713,7 +2718,7 @@ def run_pipeline(
             build_ass(
                 render_selected,
                 font_size=VIRAL_FONT_SIZE,
-                style=ct_profile.caption_style,
+                style=resolved_caption_style,
                 clip_in_ms=clip.in_ms,
                 clip_duration_ms=render_duration_ms,
                 # Not a taste setting, and so not a flag. Every clip this runner produces is
@@ -2728,7 +2733,9 @@ def run_pipeline(
                 # words are a better hook than nothing on screen. D-259.
                 title_ckb=effective_clip.output.title_ckb if effective_clip.output else None,
                 max_chars_per_line=POPUP_MAX_CHARS,
-                max_words_per_event=POPUP_MAX_WORDS,
+                max_words_per_event=(
+                    2 if resolved_caption_style is CaptionStyle.VIRAL_POPUP else POPUP_MAX_WORDS
+                ),
                 speaker_turns=speaker_turns,
                 speaker_metadata=speaker_meta,
                 end_card=end_card,
@@ -3263,6 +3270,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="append a 2-second outro card with Kurdish call-to-action (Task T2.13)",
     )
     parser.add_argument(
+        "--caption-style",
+        choices=[member.value for member in CaptionStyle],
+        default=None,
+        help="caption rendering style (line, word_highlight, viral_popup, rtl_word_highlight)",
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3658,6 +3671,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         silence_target_gap_ms=getattr(args, "silence_target_gap_ms", 150),
         two_person_split=getattr(args, "two_person_split", "auto"),
         brand_kit=brand_kit,
+        caption_style=getattr(args, "caption_style", None),
     )
 
 

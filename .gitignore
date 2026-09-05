@@ -45,3 +45,4 @@ models/*
 # The judge promotion ledger (D-A14): installation-level state (which judge version is
 # currently active), not source — the same reasoning as /.dbos/ above.
 /.hawedit/
+/scratch/

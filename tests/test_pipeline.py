@@ -6496,6 +6496,42 @@ def test_pipeline_silence_tightening_arguments_are_parsed() -> None:
     assert args_custom.silence_target_gap_ms == 120
 
 
+def test_pipeline_caption_style_argument_is_parsed() -> None:
+    """--caption-style CLI argument accepts and parses valid CaptionStyle choices."""
+    parser = build_parser()
+    args_default = parser.parse_args([str(FIXTURE)])
+    assert args_default.caption_style is None
+
+    args_viral = parser.parse_args([str(FIXTURE), "--caption-style", "viral_popup"])
+    assert args_viral.caption_style == "viral_popup"
+
+    args_rtl = parser.parse_args([str(FIXTURE), "--caption-style", "rtl_word_highlight"])
+    assert args_rtl.caption_style == "rtl_word_highlight"
+
+
+def test_pipeline_explicit_caption_style_overrides_content_type_default(tmp_path: Path) -> None:
+    """An explicit caption_style parameter overrides the content_type default."""
+    from hawedit.captions import CaptionStyle
+
+    transcript = a_transcript()
+    verdict = a_verdict(100, 4_100)
+    work = tmp_path / "work"
+
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="fixture",
+        transcript=transcript,
+        select_sentences=(0, 1),
+        verdict=verdict,
+        content_type="news",
+        caption_style=CaptionStyle.VIRAL_POPUP,
+    )
+    assert run.clip is not None
+    assert run.clip.output is not None
+    assert run.clip.output.caption_style == "viral_popup"
+
+
 @needs_ffmpeg
 def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_path: Path) -> None:
     """Task T3.3: run_pipeline excises dead air, resyncs timeline, and reconciles delivery."""

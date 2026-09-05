@@ -31,6 +31,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from itertools import pairwise
 from pathlib import Path
 from typing import Final
 
@@ -77,6 +78,7 @@ __all__ = [
     "build_ass",
     "chunk_caption_events",
     "compare_golden_render",
+    "compute_rtl_word_positions",
     "contrast_ratio",
     "decode_to_rgb",
     "event_needs_plate",
@@ -127,6 +129,8 @@ class CaptionStyle(Enum):
 
     LINE = "line"
     WORD_HIGHLIGHT = "word_highlight"
+    VIRAL_POPUP = "viral_popup"
+    RTL_WORD_HIGHLIGHT = "rtl_word_highlight"
 
 
 # One popup holds a breath, not a paragraph. A vertical crop shows ~22 Kurdish characters at
@@ -188,12 +192,16 @@ class CaptionTheme:
         *,
         alignment: int | None = None,
         margin_v: int | None = None,
+        primary: str | None = None,
+        secondary: str | None = None,
     ) -> str:
         """One `Style:` line. `%g` keeps `3.0` as `3` so existing goldens still match."""
         align = self.alignment if alignment is None else alignment
         mv = self.margin_v if margin_v is None else margin_v
+        p = self.primary if primary is None else primary
+        s = self.secondary if secondary is None else secondary
         return (
-            f"Style: {name},{font_name},{font_size},{self.primary},{self.secondary},"
+            f"Style: {name},{font_name},{font_size},{p},{s},"
             f"{self.outline_colour},{self.back_colour},{int(self.bold)},0,0,0,100,100,0,0,"
             f"{self.border_style},"
             f"{self.outline:g},{self.shadow:g},{align},{self.margin_l},"
@@ -211,12 +219,16 @@ class CaptionTheme:
         margin_v: int | None = None,
         plate_padding: float = 16.0,
         plate_colour: str = "&H80000000",
+        primary: str | None = None,
+        secondary: str | None = None,
     ) -> str:
         """One `Style:` line with border_style=3 (bounding plate behind text)."""
         align = self.alignment if alignment is None else alignment
         mv = self.margin_v if margin_v is None else margin_v
+        p = self.primary if primary is None else primary
+        s = self.secondary if secondary is None else secondary
         return (
-            f"Style: {name},{font_name},{font_size},{self.primary},{self.secondary},"
+            f"Style: {name},{font_name},{font_size},{p},{s},"
             f"{self.outline_colour},{plate_colour},{int(self.bold)},0,0,0,100,100,0,0,"
             f"3,{plate_padding:g},0,{align},{self.margin_l},{self.margin_r},{mv},1"
         )
@@ -1136,6 +1148,62 @@ def _karaoke(words: Sequence[Word], start_ms: int) -> str:
     return "".join(parts).strip()
 
 
+def compute_rtl_word_positions(
+    words: Sequence[Word],
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = VIRAL_FONT_SIZE,
+    canvas_width: int = 1080,
+    fonts_dir: Path | None = None,
+    ffmpeg: Path | None = None,
+) -> list[tuple[Word, int]]:
+    """Calculate the horizontal center pixel (X coordinate) for each word in an RTL sentence.
+
+    In Kurdish (Arabic script), text flows Right-to-Left. To render individual words or
+    highlighted runs at exact positions without libass inline-tag run reordering defects,
+    each word is assigned an absolute center X coordinate derived from HarfBuzz font metrics:
+        X_center = round((canvas_width + W_full) / 2 - W_prefix + W_word / 2)
+    This guarantees X(w_0) > X(w_1) > ... > X(w_{n-1}) matching native RTL reading order.
+    """
+    if not words:
+        return []
+    if len(words) == 1:
+        return [(words[0], canvas_width // 2)]
+
+    full_text = " ".join(_escape_ass_text(w.w) for w in words)
+    w_full = measure_rendered_caption_width(
+        full_text,
+        font_name=font_name,
+        font_size=font_size,
+        ffmpeg=ffmpeg,
+        fonts_dir=fonts_dir,
+        canvas_width=canvas_width,
+    )
+
+    positions: list[tuple[Word, int]] = []
+    for i, word in enumerate(words):
+        prefix_text = " ".join(_escape_ass_text(w.w) for w in words[: i + 1])
+        w_prefix = measure_rendered_caption_width(
+            prefix_text,
+            font_name=font_name,
+            font_size=font_size,
+            ffmpeg=ffmpeg,
+            fonts_dir=fonts_dir,
+            canvas_width=canvas_width,
+        )
+        w_word = measure_rendered_caption_width(
+            _escape_ass_text(word.w),
+            font_name=font_name,
+            font_size=font_size,
+            ffmpeg=ffmpeg,
+            fonts_dir=fonts_dir,
+            canvas_width=canvas_width,
+        )
+        x_center = round((canvas_width + w_full) / 2 - w_prefix + (w_word / 2))
+        positions.append((word, x_center))
+
+    return positions
+
+
 def build_ass(
     sentences: Sequence[Sentence],
     font_name: str = "Noto Naskh Arabic",
@@ -1215,6 +1283,18 @@ def build_ass(
             theme.style_row("Kurdish", font_name, font_size),
             *(
                 [
+                    theme.style_row(
+                        "KurdishDim",
+                        font_name,
+                        font_size,
+                        primary=theme.secondary,
+                    )
+                ]
+                if style is CaptionStyle.RTL_WORD_HIGHLIGHT
+                else []
+            ),
+            *(
+                [
                     theme.plate_style_row(
                         "KurdishPlate",
                         font_name,
@@ -1222,6 +1302,18 @@ def build_ass(
                     )
                 ]
                 if plate_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.plate_style_row(
+                        "KurdishPlateDim",
+                        font_name,
+                        font_size,
+                        primary=theme.secondary,
+                    )
+                ]
+                if (style is CaptionStyle.RTL_WORD_HIGHLIGHT and plate_intervals)
                 else []
             ),
             *(
@@ -1239,6 +1331,20 @@ def build_ass(
             ),
             *(
                 [
+                    theme.style_row(
+                        "KurdishTopDim",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=theme.secondary,
+                    )
+                ]
+                if (style is CaptionStyle.RTL_WORD_HIGHLIGHT and face_intervals)
+                else []
+            ),
+            *(
+                [
                     theme.plate_style_row(
                         "KurdishTopPlate",
                         font_name,
@@ -1248,6 +1354,20 @@ def build_ass(
                     )
                 ]
                 if face_intervals and plate_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.plate_style_row(
+                        "KurdishTopPlateDim",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=theme.secondary,
+                    )
+                ]
+                if (style is CaptionStyle.RTL_WORD_HIGHLIGHT and face_intervals and plate_intervals)
                 else []
             ),
             *(
@@ -1357,6 +1477,85 @@ def build_ass(
                 f"EndCard,,0,0,0,,{ec_text}"
             )
     for sentence in sentences:
+        if style is CaptionStyle.VIRAL_POPUP:
+            v_words = max_words_per_event if max_words_per_event is not None else 2
+            chunks = chunk_caption_events(
+                sentence.words,
+                max_words=v_words,
+                max_chars=max_chars_per_line,
+                max_width_px=max_popup_width_px,
+            )
+            for index, chunk in enumerate(chunks):
+                following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
+                end_ms = chunk[-1].end_ms
+                if following is not None and following - end_ms <= _POPUP_HOLD_MS:
+                    end_ms = following
+                style_name = choose_style(chunk[0].start_ms, end_ms)
+                popup_text = " ".join(_escape_ass_text(w.w) for w in chunk)
+                bounce_tag = r"{\t(0,80,\fscx112\fscy112)\t(80,160,\fscx100\fscy100)}"
+                events.append(
+                    event(
+                        chunk[0].start_ms,
+                        end_ms,
+                        f"{bounce_tag}{popup_text}",
+                        style_name=style_name,
+                    )
+                )
+            continue
+
+        if style is CaptionStyle.RTL_WORD_HIGHLIGHT:
+            r_words = max_words_per_event if max_words_per_event is not None else POPUP_MAX_WORDS
+            chunks = chunk_caption_events(
+                sentence.words,
+                max_words=r_words,
+                max_chars=max_chars_per_line,
+                max_width_px=max_popup_width_px,
+            )
+            for index, chunk in enumerate(chunks):
+                following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
+                end_ms = chunk[-1].end_ms
+                if following is not None and following - end_ms <= _POPUP_HOLD_MS:
+                    end_ms = following
+                is_top = should_use_top_caption_placement(chunk[0].start_ms, end_ms, face_intervals)
+                is_plate = event_needs_plate(chunk[0].start_ms, end_ms, plate_intervals)
+                align_tag = "\\an8" if is_top else "\\an2"
+                y_pos = DEFAULT_TOP_MARGIN_V if is_top else (play_res_y - theme.margin_v)
+                active_st = (
+                    ("KurdishTopPlate" if is_plate else "KurdishTop")
+                    if is_top
+                    else ("KurdishPlate" if is_plate else "Kurdish")
+                )
+                dim_st = (
+                    ("KurdishTopPlateDim" if is_plate else "KurdishTopDim")
+                    if is_top
+                    else ("KurdishPlateDim" if is_plate else "KurdishDim")
+                )
+
+                positions = compute_rtl_word_positions(
+                    chunk,
+                    font_name=font_name,
+                    font_size=font_size,
+                    canvas_width=play_res_x,
+                    fonts_dir=fonts_dir,
+                )
+                t_0 = chunk[0].start_ms
+                time_points = sorted(
+                    set([t_0] + [w.start_ms for w in chunk] + [w.end_ms for w in chunk] + [end_ms])
+                )
+                for ta, tb in pairwise(time_points):
+                    if tb <= ta:
+                        continue
+                    active_idx = next(
+                        (i for i, w in enumerate(chunk) if w.start_ms <= ta and tb <= w.end_ms),
+                        None,
+                    )
+                    for j, (word, x_pos) in enumerate(positions):
+                        st = active_st if j == active_idx else dim_st
+                        escaped_word = _escape_ass_text(word.w)
+                        word_text = f"{{{align_tag}\\pos({x_pos},{y_pos})}}{escaped_word}"
+                        events.append(event(ta, tb, word_text, style_name=st))
+            continue
+
         if max_words_per_event is None:
             lines = wrap_caption_lines(
                 sentence.words,

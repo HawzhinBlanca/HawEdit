@@ -13859,6 +13859,30 @@ As noted in `specs/pro-grade-program/tasks.md` Task T0.6, HawEdit invoked founda
 5. **CLI & Pipeline Integration**:
    - Expose `--brand-kit`, `--speaker-metadata`, `--logo`, `--progress-bar`, and `--end-card` in `hawedit.pipeline`.
 
+---
+
+## D-269 · Kurdish RTL subtitle word-by-word highlighting and kinetic popups
+
+**Date:** 2026-09-05 · **Blueprint ref:** §4.3, §5 · **Type:** extension and defect elimination, not a deviation
+
+**Context.**
+`BLUEPRINT.md` §4.3 mandates strict Right-to-Left Kurdish caption rendering through `libass` and `HarfBuzz` with `shaping=complex`. Empirical inspection of generated word-highlight subtitles (`CaptionStyle.WORD_HIGHLIGHT`) revealed a severe layout defect: emitting inline `{\kf...}` tags partitions text into separate override runs. Because `libass`'s internal layout engine places inline override chunks from Left to Right (libass issue #406), Kurdish words were placed in reverse order on the canvas (Word 1 on the far left, Word 3 on the far right) and highlighted Left-to-Right. Furthermore, modern viral short-form video standards (TikTok, Instagram Reels, YouTube Shorts) demand high-retention kinetic caption styles: punchy 1–2 word popups with elastic scale bounce animations and electric highlights.
+
+**Decision.**
+1. **Preserve Legacy Karaoke for Backwards Compatibility**:
+   - Retain `CaptionStyle.WORD_HIGHLIGHT` emitting sequential `{\kf...}` spans to guarantee byte-identical preservation for existing regression tests and test suites.
+2. **Kinetic Viral Popups (`CaptionStyle.VIRAL_POPUP`)**:
+   - Implement `VIRAL_POPUP` delivering high-retention 1-to-2 word popups chunked via `chunk_caption_events`.
+   - Popups trigger a micro-bounce kinetic animation on their initial frame (`{\t(0,80,\fscx112\fscy112)\t(80,160,\fscx100\fscy100)}`) with zero internal inline tag splitting, ensuring 100% pure Kurdish complex shaping via HarfBuzz and zero run reversal.
+3. **True Right-to-Left Word Highlighting (`CaptionStyle.RTL_WORD_HIGHLIGHT`)**:
+   - Implement `compute_rtl_word_positions` using exact cumulative prefix measurements from HarfBuzz:
+     $X_{center} = \text{round}\left(\frac{\text{canvas\_width} + W_{full}}{2} - W_{prefix} + \frac{W_{word}}{2}\right)$.
+   - This mathematically and visually guarantees strictly decreasing coordinates ($X(w_0) > X(w_1) > \dots > X(w_{n-1})$), placing the first spoken word on the right and subsequent words to its left.
+   - Separate Dialogue events are scheduled for each word across time intervals, dynamically assigning active style (`Kurdish` in Electric Gold) to the spoken word and dim style (`KurdishDim` in crisp White) to inactive words.
+4. **Pipeline & CLI Integration**:
+   - Expose `--caption-style {line, word_highlight, viral_popup, rtl_word_highlight}` in `src/hawedit/pipeline.py`.
+   - Content-type profile defaults can be overridden explicitly by the operator.
+
 
 
 
