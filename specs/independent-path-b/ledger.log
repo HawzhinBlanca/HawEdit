@@ -1,0 +1,3 @@
+TS=2026-09-05T11:22:42Z FEATURE=independent-path-b TASK=T1 TESTS=test_path_b_runs_without_a_path_a_seed VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T11:22:42Z FEATURE=independent-path-b TASK=T2 TESTS=test_auto_select_accepts_visual_alone_using_default_nonverbal_query VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T11:22:42Z FEATURE=independent-path-b TASK=T3 TESTS=test_path_b_runs_without_a_path_a_seed,test_auto_select_accepts_visual_alone_using_default_nonverbal_query VERIFY=pass REPORT=.gate/last-test-run.xml
