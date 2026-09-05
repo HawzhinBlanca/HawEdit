@@ -2762,11 +2762,7 @@ def run_pipeline(
                 speaker_metadata=speaker_meta,
                 end_card=end_card,
                 keyword_emphasis=keyword_emphasis,
-                margin_v=(
-                    440
-                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
-                    else None
-                ),
+                margin_v=(440 if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO else None),
             ),
         )
         if source_dimensions is None:
