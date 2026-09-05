@@ -1,1 +1,4 @@
 # Ledger for keyword-emphasis-captions
+TS=2026-09-05T09:53:28Z FEATURE=keyword-emphasis-captions TASK=T1 TESTS=test_classify_kurdish_emphasis_identifies_numbers,test_classify_kurdish_emphasis_identifies_entities,test_classify_kurdish_emphasis_identifies_action_alerts,test_classify_kurdish_emphasis_defaults_to_neutral VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T09:53:28Z FEATURE=keyword-emphasis-captions TASK=T2 TESTS=test_build_ass_keyword_emphasis_viral_popup,test_build_ass_keyword_emphasis_rtl_word_highlight,test_build_ass_disabled_keyword_emphasis_retains_standard_styles VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-05T09:53:28Z FEATURE=keyword-emphasis-captions TASK=T3 TESTS=test_pipeline_keyword_emphasis_argument_is_parsed VERIFY=pass REPORT=.gate/last-test-run.xml

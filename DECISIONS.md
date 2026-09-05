@@ -13882,8 +13882,29 @@ As noted in `specs/pro-grade-program/tasks.md` Task T0.6, HawEdit invoked founda
 4. **Pipeline & CLI Integration**:
    - Expose `--caption-style {line, word_highlight, viral_popup, rtl_word_highlight}` in `src/hawedit/pipeline.py`.
    - Content-type profile defaults can be overridden explicitly by the operator.
+---
 
+## D-270 · Semantic keyword emphasis and multi-color kinetic subtitles
 
+**Date:** 2026-09-05 · **Blueprint ref:** §4.3, §5 · **Type:** extension, not a deviation
 
+**Context.**
+High-retention social videos on TikTok, Instagram Reels, and YouTube Shorts leverage multi-color word emphasis (proper nouns in electric cyan, numbers/statistics in neon emerald, action/crisis terms in vivid coral) to direct viewer eye tracking and maximize watch time. Standard subtitles that use a uniform monochrome highlight fail to emphasize the semantic core of spoken Kurdish sentences. However, per ADR D-269, placing inline style tags (`\c&H...&`) inside multi-word Kurdish strings partitions the text, breaking HarfBuzz complex shaping and triggering `libass` RTL run reversal (libass issue #406).
+
+**Decision.**
+1. **Semantic Kurdish Emphasis Classifier (`hawedit.captions.classify_kurdish_emphasis`)**:
+   - `NUMERIC`: Digits (`\d+`, `[٠-٩]+`), Kurdish numbers and quantity terms (`یەک`, `دوو`, `سێ`, `ملیۆن`, `هەزار`, `هەموو`, `زۆرترین`, etc.) styled in Neon Emerald (`&H0066FF00` / `#00FF66`).
+   - `ACTION_ALERT`: Negations, high assertions, crisis/alarm terms (`هەرگیز`, `نەخێر`, `مەترسی`, `مەحاڵە`, `کارەسات`, `تەواو`, `ڕاستەوخۆ`, `ئاشکرا`, `بەڵێ`, etc.) styled in Vivid Coral (`&H00303BFF` / `#FF3B30`).
+   - `ENTITY`: Proper nouns, places, political figures (`کوردستان`, `عێراق`, `ئەمریکا`, `پێشمەرگە`, `بەغدا`, `هەولێر`, `پۆڵ`, `برێمەر`, `بارزانی`, etc.) styled in Electric Cyan (`&H00FFFF00` / `#00FFFF`).
+   - `DEFAULT`: Standard spoken words styled in Electric Gold (`&H0000E5FF` / `#FFE500`).
+   - Cached via `@lru_cache(maxsize=10_000)` with O(1) substring matching over curated Sorani lexicons.
+2. **Category ASS V4+ Styles**:
+   - Headers emit dedicated styles `KurdishCyan`, `KurdishCoral`, `KurdishEmerald`, plus plate variants (`KurdishPlate...`), top variants (`KurdishTop...`), and top plate variants (`KurdishTopPlate...`).
+3. **Zero Inline Tags Invariant (D-269 Compliance)**:
+   - `VIRAL_POPUP`: Chunk words are classified; the entire 1–2 word event receives category style, maintaining unbroken RTL runs natively shaped by HarfBuzz with zero inline split tags.
+   - `RTL_WORD_HIGHLIGHT`: Time-sliced active word receives its exact category style at its measured `\pos(x, y)` coordinate, while inactive words remain `KurdishDim` (dim white).
+4. **Pipeline & CLI Integration**:
+   - Exposed `--keyword-emphasis` (with `--no-keyword-emphasis`) `BooleanOptionalAction` flag in `src/hawedit/pipeline.py` (default: `True`).
+   - Passed down to `build_ass(...)`, remaining 100% backward compatible when disabled.
 
 
