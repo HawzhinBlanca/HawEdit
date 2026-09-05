@@ -149,21 +149,19 @@ def test_a_legal_revision_renders_a_real_second_mp4(
 
 
 @needs_ffmpeg
-def test_proposals_bind_matching_qc_record_to_rendered_clips(
+def test_boundary_revision_does_not_rebind_previous_review(
     real_run: tuple[Path, PipelineRun],
 ) -> None:
-    """Proposals render path binds the human approver and rendered MP4 SHA-256 to Qc."""
+    """Revising boundaries changes rendered bytes, invalidating previous human QC approval."""
     work, _ = real_run
     _approve(work, "qc-bound", final_in_ms=50, final_out_ms=4140)
     record = render_boundary_revision(work, "qc-bound")
     assert record["status"] == "rendered"
     clip = record["clip"]
-    assert clip["qc"]["human_reviewed"] is True
-    assert clip["qc"]["reviewed_by"] == "hawa"
-    assert len(clip["qc"]["reviewed_sha256"]) == 64
-    rendered_file = Path(record["render_path"])
-    expected_sha = hashlib.sha256(rendered_file.read_bytes()).hexdigest().lower()
-    assert clip["qc"]["reviewed_sha256"] == expected_sha
+    assert clip["qc"]["human_reviewed"] is False
+    assert clip["qc"].get("reviewed_sha256") is None
+    assert record.get("requires_review") is True
+    assert record.get("prior_qc_invalidated") is True
 
 
 @needs_ffmpeg

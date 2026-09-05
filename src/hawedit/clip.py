@@ -53,6 +53,7 @@ _ISO_TIMESTAMP_RE: Final = re.compile(
 )
 
 __all__ = [
+    "APPROVED_VERDICTS",
     "HOOK_TYPES",
     "MAX_CANDIDATE_SPAN_MS",
     "MAX_MISLEADING_EDIT_RISK",
@@ -60,6 +61,7 @@ __all__ = [
     "MIN_CULTURAL_LANDING",
     "MIN_HOOK_SCORE",
     "MIN_MEANING_FIDELITY",
+    "REJECTED_VERDICTS",
     "Clip",
     "ClipTranscript",
     "DiscoveryPath",
@@ -99,6 +101,8 @@ _SCORE_FIELDS: Final = (
 )
 
 HOOK_TYPES: Final = frozenset({"question", "claim", "contrast", "story_open", "confession"})
+APPROVED_VERDICTS: Final = frozenset({"pass", "approved", "accept", "passed"})
+REJECTED_VERDICTS: Final = frozenset({"fail", "rejected", "reject", "failed", "declined"})
 
 
 class DiscoveryPath(Enum):
@@ -692,8 +696,18 @@ class QcRecord:
             )
         if not isinstance(self.verdict, str) or not self.verdict.strip():
             raise ValueError("qc_record.verdict must be a non-empty string")
+        verdict_norm = self.verdict.strip().lower()
+        if verdict_norm not in APPROVED_VERDICTS and verdict_norm not in REJECTED_VERDICTS:
+            raise ValueError(
+                f"unsupported qc_record.verdict: {self.verdict!r}; "
+                f"expected one of {sorted(APPROVED_VERDICTS | REJECTED_VERDICTS)}"
+            )
         if not isinstance(self.notes, str):
             raise ValueError("qc_record.notes must be a string")
+
+    @property
+    def is_approved(self) -> bool:
+        return self.verdict.strip().lower() in APPROVED_VERDICTS
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -828,6 +842,11 @@ class Qc:
         cls, record: QcRecord, auto_pass: bool = False, flags: tuple[str, ...] = ()
     ) -> Qc:
         """Construct a valid human-reviewed Qc block from a verified QcRecord."""
+        if not record.is_approved:
+            raise ValueError(
+                "cannot construct Qc approval from rejected or unapproved record: "
+                f"verdict={record.verdict!r}"
+            )
         return cls(
             auto_pass=auto_pass,
             flags=flags,

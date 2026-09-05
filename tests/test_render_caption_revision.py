@@ -136,6 +136,22 @@ def test_a_legal_style_change_renders_a_real_second_mp4(
 
 
 @needs_ffmpeg
+def test_caption_revision_requires_review_of_new_bytes(
+    real_run: tuple[Path, PipelineRun],
+) -> None:
+    """AC-03: Revising caption styling renders new bytes, invalidating prior QC review."""
+    work, _ = real_run
+    _approve(work, "re-review-style", caption_style="line")
+    record = render_caption_revision(work, "re-review-style")
+    assert record["status"] == "rendered"
+    clip = record["clip"]
+    assert clip["qc"]["human_reviewed"] is False
+    assert clip["qc"].get("reviewed_sha256") is None
+    assert record.get("requires_review") is True
+    assert record.get("prior_qc_invalidated") is True
+
+
+@needs_ffmpeg
 def test_the_revised_ass_actually_changes_style(real_run: tuple[Path, PipelineRun]) -> None:
     """Not just "a file exists" — the revision's own point: `word_highlight`'s karaoke `\\kf`
     tags are present in the original and absent from a revision to `line`, read back from the

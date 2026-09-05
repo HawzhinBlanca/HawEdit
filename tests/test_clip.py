@@ -15,6 +15,7 @@ Three §5 rules the type enforces rather than documents:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -963,6 +964,52 @@ def test_qc_record_validates_and_round_trips() -> None:
     assert qc.human_reviewed is True
     assert qc.reviewed_by == "Hawa"
     assert qc.reviewed_sha256 == "a" * 64
+
+
+def test_qc_record_is_approved_and_rejection_refusal() -> None:
+    """AC-04: is_approved reflects verdict, and Qc.from_record refuses non-approved verdicts."""
+    record_approved = QcRecord(
+        reviewer="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        mp4_sha256="a" * 64,
+        seconds_watched=10.0,
+        verdict="approved",
+    )
+    assert record_approved.is_approved is True
+    qc = Qc.from_record(record_approved)
+    assert qc.human_reviewed is True
+
+    record_rejected = QcRecord(
+        reviewer="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        mp4_sha256="a" * 64,
+        seconds_watched=10.0,
+        verdict="failed",
+    )
+    assert record_rejected.is_approved is False
+    with pytest.raises(ValueError, match="cannot construct Qc approval from rejected"):
+        Qc.from_record(record_rejected)
+
+
+def test_candidate_dependency_change_invalidates_approval() -> None:
+    """AC-03: When candidate dependencies change, prior approval is invalid."""
+    record = QcRecord(
+        reviewer="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        mp4_sha256="a" * 64,
+        seconds_watched=10.0,
+        verdict="pass",
+    )
+    qc = Qc.from_record(record)
+    clip = a_clip(qc=qc)
+    clip.assert_renderable()
+
+    # Invalidate QC human_reviewed on changed dependency
+    unreviewed_clip = dataclasses.replace(
+        clip, qc=Qc(auto_pass=False, flags=(), human_reviewed=False)
+    )
+    with pytest.raises(ValueError, match="has not cleared human QC"):
+        unreviewed_clip.assert_renderable()
 
 
 def test_qc_record_refusals() -> None:

@@ -6332,6 +6332,100 @@ def test_cli_qc_record_validates_and_binds_to_clip(
     )
 
 
+def test_cli_rejected_qc_record_cannot_authorize_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-04: A rejected QC record exits non-zero and refuses delivery authorization."""
+    source = tmp_path / "x.mp4"
+    source.touch()
+    transcript_path = tmp_path / "t.json"
+    transcript_path.write_text(a_transcript().to_json(), encoding="utf-8")
+    verdict_path = tmp_path / "v.json"
+    verdict_path.write_text(
+        json.dumps(a_verdict(0, 4_300).to_dict(), ensure_ascii=False), encoding="utf-8"
+    )
+    record_path = tmp_path / "rejected_qc.json"
+    record = QcRecord(
+        reviewer="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        mp4_sha256="0" * 64,
+        seconds_watched=57.0,
+        verdict="reject",
+        notes="Audio clipped",
+    )
+    record_path.write_text(record.to_json(), encoding="utf-8")
+
+    called = False
+
+    def fake_run(source_arg: Path, work_arg: Path, **kwargs: object) -> PipelineRun:
+        nonlocal called
+        called = True
+        return PipelineRun(media_id="source", source=str(source_arg), work_dir=str(work_arg))
+
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", fake_run)
+    exit_code = main(
+        [
+            str(source),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--transcript",
+            str(transcript_path),
+            "--verdict",
+            str(verdict_path),
+            "--sentences",
+            "0,1",
+            "--qc-record",
+            str(record_path),
+        ]
+    )
+    assert exit_code == 2
+    assert not called
+
+
+def test_unknown_review_verdict_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC-04: Unsupported review verdict is refused by QcRecord and CLI."""
+    with pytest.raises(ValueError, match="unsupported qc_record.verdict"):
+        QcRecord(
+            reviewer="Hawa",
+            reviewed_at="2026-09-02T19:00:00Z",
+            mp4_sha256="0" * 64,
+            seconds_watched=57.0,
+            verdict="unknown_verdict",
+        )
+
+    source = tmp_path / "x.mp4"
+    source.touch()
+    transcript_path = tmp_path / "t.json"
+    transcript_path.write_text(a_transcript().to_json(), encoding="utf-8")
+    record_path = tmp_path / "bad_verdict.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "reviewer": "Hawa",
+                "reviewed_at": "2026-09-02T19:00:00Z",
+                "mp4_sha256": "0" * 64,
+                "seconds_watched": 57.0,
+                "verdict": "unknown_verdict",
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = main(
+        [
+            str(source),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--transcript",
+            str(transcript_path),
+            "--sentences",
+            "0,1",
+            "--qc-record",
+            str(record_path),
+        ]
+    )
+    assert exit_code == 2
+
+
 def test_cli_refuses_removed_qc_pass_flag(tmp_path: Path) -> None:
     """Task T1.3: --qc-pass is retired; passing it exits with an argument error."""
     source = tmp_path / "x.mp4"

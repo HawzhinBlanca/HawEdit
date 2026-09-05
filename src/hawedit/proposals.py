@@ -570,13 +570,17 @@ def render_boundary_revision(
 
     try:
         rendered_sha = hashlib.sha256(render_path.read_bytes()).hexdigest().lower()
-        if revised_clip.qc is not None:
-            revised_clip = replace(
-                revised_clip,
-                qc=replace(revised_clip.qc, reviewed_sha256=rendered_sha),
-            )
+        revision["rendered_sha256"] = rendered_sha
     except OSError:
         pass
+
+    prior_reviewed = revised_clip.qc is not None and revised_clip.qc.human_reviewed
+    revised_clip = replace(
+        revised_clip,
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
+    )
+    revision["requires_review"] = True
+    revision["prior_qc_invalidated"] = prior_reviewed
 
     revision["clip"] = revised_clip.to_dict()
     revision["ass_path"] = str(ass_path)
@@ -919,13 +923,17 @@ def render_caption_revision(
 
     try:
         rendered_sha = hashlib.sha256(render_path.read_bytes()).hexdigest().lower()
-        if revised_clip.qc is not None:
-            revised_clip = replace(
-                revised_clip,
-                qc=replace(revised_clip.qc, reviewed_sha256=rendered_sha),
-            )
+        revision["rendered_sha256"] = rendered_sha
     except OSError:
         pass
+
+    prior_reviewed = revised_clip.qc is not None and revised_clip.qc.human_reviewed
+    revised_clip = replace(
+        revised_clip,
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
+    )
+    revision["requires_review"] = True
+    revision["prior_qc_invalidated"] = prior_reviewed
 
     revision["clip"] = revised_clip.to_dict()
     revision["ass_path"] = str(ass_path)
