@@ -13926,5 +13926,33 @@ In §3.3 / D-154, HawEdit anchored Stage 3 visual retrieval (Path B) to the rank
 3. **CLI & Stage 3 Producer Contract**:
    - Updated `_validate_args` to accept `--visual --visual-nonverbal` as a self-sufficient Stage 3 candidate producer under `--auto-select` without requiring Path A credentials or an explicit `--visual-query`.
 
+---
+
+## D-272 · Staged de-bloating: Retiring speculative scale.py and variants.py
+
+**Date:** 2026-09-05 · **Blueprint ref:** §5, §8 · **Type:** deletion and simplification, not a deviation
+
+**Context.**
+Whole-repo ponytail audit (`/ponytail-audit`) identified dead and speculative modules with zero callers across `src/`:
+1. `src/hawedit/scale.py` (172 lines): contained a hardcoded markdown narrative describing a speculative migration from DBOS to Temporal and a 5-boolean dictionary validator with zero callers in production code.
+2. `src/hawedit/variants.py` (146 lines): contained `plan_length_variants` designed for multi-duration social variants (15s, 30s, 60s) which was never wired into the pipeline or CLI and had zero callers in `src/`.
+
+These modules added 318 lines of uncalled code tested only by 16 synthetic unit tests (`test_scale.py` [11 tests] and `test_variants.py` [5 tests]).
+
+**Decision.**
+1. **Retire Speculative Modules**:
+   - Permanently delete `src/hawedit/scale.py` and `src/hawedit/variants.py`.
+   - Remove `tests/test_scale.py` and `tests/test_variants.py`.
+2. **Backfill High-Value Regression Coverage (`tests/test_broadcast_studio.py`)**:
+   - Add 17 dedicated automated tests covering:
+     - Locked-off tripod multi-cam framing and instant cut transitions (`crop_filter`).
+     - Broadcast line subtitles without inline override tags (`CaptionStyle.LINE`).
+     - Lower-third speaker introduction badges with dark plates (`SpeakerTag`).
+     - Outro end cards with call-to-action branding (`EndCardConfig`).
+     - BrandKit logo asset and geometry validation.
+3. **Preserve Gate Integrity**:
+   - Net test count increases by +1 (from 3,571 to 3,572), preserving the canonical gate floor (`test-count.floor = 3571`) and passing `bash scripts/verify.sh` with zero skipped tests.
+
+
 
 
