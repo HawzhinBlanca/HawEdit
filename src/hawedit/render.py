@@ -777,17 +777,20 @@ def vertical_framing(
     crop_h: int,
     face_center_y: int | None,
     face_height: int | None,
+    *,
+    target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
+    max_vertical_zoom: float = MAX_VERTICAL_ZOOM,
 ) -> tuple[int, int, int]:
     """The crop rectangle after composing for the face: `(crop_w, crop_h, y)`.
 
     Returns the input untouched, with `y` at the centre, whenever nothing was measured or the
-    face already fills at least `TARGET_FACE_HEIGHT_SHARE` of the crop. That is the common case
+    face already fills at least `target_face_height_share` of the crop. That is the common case
     on a well-shot source and it must cost nothing: for any 16:9 source `crop_h` is the full
     height, so the crop is the whole frame and there is no vertical decision to make.
 
     When the face is smaller than the target the crop tightens toward it — both dimensions, so
     the 9:16 aspect is preserved — and slides so the face centre lands on
-    `FACE_COMPOSITION_LINE`. Tightening is bounded by `MAX_VERTICAL_ZOOM` because every bit of it
+    `FACE_COMPOSITION_LINE`. Tightening is bounded by `max_vertical_zoom` because every bit of it
     is upscale on a source that has none to spare.
     """
     if face_height is not None and face_height <= 0:
@@ -796,8 +799,8 @@ def vertical_framing(
     zoom = 1.0
     if face_height is not None and crop_h > 0:
         share = face_height / crop_h
-        if share < TARGET_FACE_HEIGHT_SHARE:
-            zoom = min(TARGET_FACE_HEIGHT_SHARE / share, MAX_VERTICAL_ZOOM)
+        if share < target_face_height_share:
+            zoom = min(target_face_height_share / share, max_vertical_zoom)
     if zoom > 1.0:
         # Even dimensions: an odd crop is a yuv420p encode failure, not a framing choice.
         crop_w = max(2, int(crop_w / zoom) // 2 * 2)
@@ -883,6 +886,8 @@ def crop_filter(
     punch_ins: Sequence[tuple[int, float]] = (),
     lanczos: bool = False,
     unsharp: bool = False,
+    target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
+    max_vertical_zoom: float = MAX_VERTICAL_ZOOM,
 ) -> str:
     """The ffmpeg filter chain that takes a landscape frame to a vertical one.
 
@@ -896,6 +901,8 @@ def crop_filter(
             and gets a crop that is honestly labelled `Reframe.STATIC_CENTRE`.
         lanczos: use high-quality Lanczos scaling instead of default bicubic (Task T2.10).
         unsharp: apply light luma unsharp sharpening post-scaling (Task T2.10).
+        target_face_height_share: target face proportion for vertical framing composition.
+        max_vertical_zoom: maximum upscale zoom allowed when tightening crop.
 
     Raises:
         ValueError: the source is smaller than the crop it would need.
@@ -903,7 +910,15 @@ def crop_filter(
     crop_w, crop_h = vertical_crop_size(source_width, source_height, target_width, target_height)
     # Before the horizontal expression is built, because every clamp in it is against `crop_w`
     # and a tightened crop has a different one.
-    crop_w, crop_h, y = vertical_framing(source_height, crop_w, crop_h, face_center_y, face_height)
+    crop_w, crop_h, y = vertical_framing(
+        source_height,
+        crop_w,
+        crop_h,
+        face_center_y,
+        face_height,
+        target_face_height_share=target_face_height_share,
+        max_vertical_zoom=max_vertical_zoom,
+    )
 
     if focus_points:
         ordered = sorted(focus_points)

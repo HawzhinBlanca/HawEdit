@@ -67,6 +67,7 @@ from hawedit.brand import (
     SpeakerBio,
 )
 from hawedit.captions import (
+    BROADCAST_THEME,
     POPUP_MAX_CHARS,
     POPUP_MAX_WORDS,
     VIRAL_FONT_SIZE,
@@ -2735,29 +2736,37 @@ def run_pipeline(
             # nothing — a playable MP4 with no captions and no error.
             build_ass(
                 render_selected,
-                font_size=VIRAL_FONT_SIZE,
+                font_size=(
+                    72
+                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
+                    else VIRAL_FONT_SIZE
+                ),
                 style=resolved_caption_style,
                 clip_in_ms=clip.in_ms,
                 clip_duration_ms=render_duration_ms,
-                # Not a taste setting, and so not a flag. Every clip this runner produces is
-                # a vertical social cut, and the library defaults are built for a subtitle
-                # track being proofread: 140 px of bottom margin puts Kurdish text under the
-                # platform's own UI, and one event per sentence puts a seven-line paragraph
-                # on screen for fifteen seconds. Both were true of every clip shipped before
-                # this line existed. D-247.
-                theme=VIRAL_THEME,
-                # The judge already wrote a Kurdish title for this clip and the render threw it
-                # away. A social clip is scrolled past in its first second, and Stage 4's own
-                # words are a better hook than nothing on screen. D-259.
+                theme=(
+                    BROADCAST_THEME
+                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
+                    else VIRAL_THEME
+                ),
                 title_ckb=effective_clip.output.title_ckb if effective_clip.output else None,
                 max_chars_per_line=POPUP_MAX_CHARS,
                 max_words_per_event=(
-                    2 if resolved_caption_style is CaptionStyle.VIRAL_POPUP else POPUP_MAX_WORDS
+                    4
+                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
+                    else (
+                        2 if resolved_caption_style is CaptionStyle.VIRAL_POPUP else POPUP_MAX_WORDS
+                    )
                 ),
                 speaker_turns=speaker_turns,
                 speaker_metadata=speaker_meta,
                 end_card=end_card,
                 keyword_emphasis=keyword_emphasis,
+                margin_v=(
+                    440
+                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
+                    else None
+                ),
             ),
         )
         if source_dimensions is None:
@@ -3266,6 +3275,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--preset",
+        choices=("broadcast", "viral", "split"),
+        default=None,
+        help=(
+            "high-level production preset (Task T5.1): broadcast (studio multi-cam safe framing "
+            "and clean editorial subtitles), viral (punchy popup karaoke with silence tightening), "
+            "or split (two-person stacked split-screen)"
+        ),
+    )
+    parser.add_argument(
         "--brand-kit",
         type=str,
         default=None,
@@ -3435,6 +3454,32 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
             "--face-reframe is now the default and the flag is gone; pass --static-crop for "
             "the old centred behaviour"
         )
+
+    if getattr(args, "preset", None) == "broadcast":
+        if not args.caption_style:
+            args.caption_style = CaptionStyle.BROADCAST_STUDIO.value
+        args.silence_threshold_ms = 0
+        if not args.brand_kit:
+            candidate_bk = args.work_dir / "brand_kit.json"
+            if candidate_bk.is_file():
+                args.brand_kit = str(candidate_bk)
+        if not args.logo:
+            candidate_logo = args.work_dir / "zar_logo.png"
+            if candidate_logo.is_file():
+                args.logo = str(candidate_logo)
+        if not args.speaker_metadata:
+            candidate_spk = args.work_dir / "speaker_metadata.json"
+            if candidate_spk.is_file():
+                args.speaker_metadata = str(candidate_spk)
+    elif getattr(args, "preset", None) == "viral":
+        if not args.caption_style:
+            args.caption_style = CaptionStyle.VIRAL_POPUP.value
+        if args.silence_threshold_ms == 0:
+            args.silence_threshold_ms = 400
+    elif getattr(args, "preset", None) == "split":
+        args.two_person_split = "always"
+        if not args.caption_style:
+            args.caption_style = CaptionStyle.BROADCAST_STUDIO.value
 
     if args.transcript and args.omni_asr:
         raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import lru_cache
 from itertools import pairwise
@@ -42,6 +42,7 @@ from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.transcripts import Word
 
 __all__ = [
+    "BROADCAST_THEME",
     "DEFAULT_BOTTOM_CAPTION_BAND",
     "DEFAULT_MAX_CHARS_PER_LINE",
     "DEFAULT_MAX_LINE_WIDTH_PX",
@@ -135,6 +136,7 @@ class CaptionStyle(Enum):
     WORD_HIGHLIGHT = "word_highlight"
     VIRAL_POPUP = "viral_popup"
     RTL_WORD_HIGHLIGHT = "rtl_word_highlight"
+    BROADCAST_STUDIO = "broadcast_studio"
 
 
 # One popup holds a breath, not a paragraph. A vertical crop shows ~22 Kurdish characters at
@@ -336,6 +338,19 @@ VIRAL_THEME: Final = CaptionTheme(
     margin_l=80,
     margin_r=80,
     margin_v=360,
+)
+
+BROADCAST_THEME: Final = CaptionTheme(
+    primary="&H00FFFFFF",
+    secondary="&H0000E5FF",
+    outline_colour="&H00000000",
+    back_colour="&H80000000",
+    bold=True,
+    outline=4.0,
+    shadow=1.5,
+    margin_l=80,
+    margin_r=80,
+    margin_v=440,
 )
 
 # Task T2.7: Face-aware caption placement band definitions.
@@ -1373,6 +1388,7 @@ def build_ass(
     speaker_metadata: dict[str, SpeakerBio] | None = None,
     end_card: EndCardConfig | None = None,
     keyword_emphasis: bool = True,
+    margin_v: int | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -1412,6 +1428,11 @@ def build_ass(
                 f"({clip_in_ms + clip_duration_ms} ms) — a caption for speech this clip does "
                 f"not contain."
             )
+
+    if style is CaptionStyle.BROADCAST_STUDIO and theme is REPORT_THEME:
+        theme = BROADCAST_THEME
+    if margin_v is not None:
+        theme = replace(theme, margin_v=margin_v)
 
     header = "\n".join(
         [
@@ -1690,6 +1711,42 @@ def build_ass(
                 f"EndCard,,0,0,0,,{ec_text}"
             )
     for sentence in sentences:
+        if style is CaptionStyle.BROADCAST_STUDIO:
+            b_words = max_words_per_event if max_words_per_event is not None else 4
+            chunks = chunk_caption_events(
+                sentence.words,
+                max_words=b_words,
+                max_chars=max_chars_per_line,
+                max_width_px=max_popup_width_px,
+            )
+            for index, chunk in enumerate(chunks):
+                following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
+                end_ms = chunk[-1].end_ms
+                if following is not None and following - end_ms <= _POPUP_HOLD_MS:
+                    end_ms = following
+                is_top = should_use_top_caption_placement(chunk[0].start_ms, end_ms, face_intervals)
+                is_plate = event_needs_plate(chunk[0].start_ms, end_ms, plate_intervals)
+                style_name = (
+                    ("KurdishTopPlate" if is_plate else "KurdishTop")
+                    if is_top
+                    else ("KurdishPlate" if is_plate else "Kurdish")
+                )
+                if keyword_emphasis:
+                    parts = []
+                    for w in chunk:
+                        cat = classify_kurdish_emphasis(w.w)
+                        escaped = _escape_ass_text(w.w)
+                        if cat is not EmphasisCategory.DEFAULT and cat in CATEGORY_COLORS:
+                            color = CATEGORY_COLORS[cat]
+                            parts.append(f"{{\\c{color}&}}{escaped}{{\\r}}")
+                        else:
+                            parts.append(escaped)
+                    chunk_text = " ".join(parts)
+                else:
+                    chunk_text = " ".join(_escape_ass_text(w.w) for w in chunk)
+                events.append(event(chunk[0].start_ms, end_ms, chunk_text, style_name=style_name))
+            continue
+
         if style is CaptionStyle.VIRAL_POPUP:
             v_words = max_words_per_event if max_words_per_event is not None else 2
             chunks = chunk_caption_events(
