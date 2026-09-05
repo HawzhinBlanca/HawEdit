@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 from hawedit.boundary import BoundaryInputs, fuse_boundary
+from hawedit.brand import BrandKit, BrandKitError, ProgressBarConfig
 from hawedit.captions import build_ass, ffprobe_for, find_ffmpeg
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Provenance, Qc
 from hawedit.ingest import probe_duration_ms
@@ -2361,5 +2362,77 @@ def test_render_clip_two_person_split_exec(tmp_path: Path) -> None:
         split_crops=split_crops,
     )
     assert Path(result.path).is_file()
+    assert _probe(out, "stream=width") == "1080"
+    assert _probe(out, "stream=height") == "1920"
+
+
+def test_render_clip_refuses_missing_logo_file(tmp_path: Path) -> None:
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    out = tmp_path / "brand_out.mp4"
+    kit = BrandKit(logo_path=tmp_path / "nonexistent_logo.png")
+    with pytest.raises(BrandKitError, match="brand logo file not found"):
+        render_clip(
+            clip,
+            FIXTURE,
+            ass_path,
+            FONTS,
+            out,
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            brand_kit=kit,
+        )
+
+
+@needs_ffmpeg
+def test_render_clip_with_progress_bar_exec(tmp_path: Path) -> None:
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    out = tmp_path / "pb_out.mp4"
+    kit = BrandKit(progress_bar=ProgressBarConfig(enabled=True, color="#00FF00", height_px=8))
+
+    result = render_clip(
+        clip,
+        FIXTURE,
+        ass_path,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        brand_kit=kit,
+    )
+    assert Path(result.path).is_file()
+    assert result.brand_kit == kit
+    assert _probe(out, "stream=width") == "1080"
+    assert _probe(out, "stream=height") == "1920"
+
+
+@needs_ffmpeg
+def test_render_clip_with_logo_and_progress_bar_exec(tmp_path: Path) -> None:
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    out = tmp_path / "logo_pb_out.mp4"
+    logo_path = ROOT / "tests" / "golden" / "kurdish-hook-card.png"
+    assert logo_path.is_file()
+    kit = BrandKit(
+        logo_path=logo_path,
+        logo_position="top_right",
+        logo_width=120,
+        logo_opacity=0.8,
+        progress_bar=ProgressBarConfig(enabled=True, color="#E50914", height_px=6),
+    )
+
+    result = render_clip(
+        clip,
+        FIXTURE,
+        ass_path,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        brand_kit=kit,
+    )
+    assert Path(result.path).is_file()
+    assert result.brand_kit == kit
     assert _probe(out, "stream=width") == "1080"
     assert _probe(out, "stream=height") == "1920"

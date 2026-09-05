@@ -34,6 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
+from hawedit.brand import EndCardConfig, SpeakerBio
 from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.transcripts import Word
 
@@ -45,6 +46,8 @@ __all__ = [
     "DEFAULT_PLATE_PADDING",
     "DEFAULT_TOP_CAPTION_BAND",
     "DEFAULT_TOP_MARGIN_V",
+    "END_CARD_FONT_SIZE",
+    "END_CARD_THEME",
     "GOLDEN_CAPTION_TEXT",
     "KURDISH_REQUIRED_GLYPHS",
     "MIN_LEGIBILITY_CONTRAST_RATIO",
@@ -54,6 +57,9 @@ __all__ = [
     "POPUP_MAX_WIDTH_PX",
     "POPUP_MAX_WORDS",
     "REPORT_THEME",
+    "SPEAKER_TAG_FONT_SIZE",
+    "SPEAKER_TAG_MS",
+    "SPEAKER_TAG_THEME",
     "VIRAL_FONT_SIZE",
     "VIRAL_THEME",
     "CaptionStyle",
@@ -263,6 +269,45 @@ HOOK_CARD_THEME: Final = CaptionTheme(
     # forehead. A hook card belongs above the face, not on it.
     margin_v=120,
     alignment=8,
+    border_style=3,
+)
+
+# Lower-third speaker introduction tag (Task T2.13, ADR D-268).
+# Displayed during speaker turns from episode metadata + diarization mapping.
+SPEAKER_TAG_MS: Final = 3_500
+SPEAKER_TAG_FONT_SIZE: Final = 42
+SPEAKER_TAG_THEME: Final = CaptionTheme(
+    primary="&H00FFFFFF",
+    secondary="&H00FFFFFF",
+    bold=True,
+    outline=12.0,
+    shadow=0.0,
+    # ~75% opaque dark plate for crisp readability on any video background
+    back_colour="&H40000000",
+    margin_l=60,
+    margin_r=60,
+    # Positioned at Y ≈ 1640 (PlayResY=1920, MarginV=280, Alignment=3),
+    # comfortably above bottom subtitle band
+    margin_v=280,
+    alignment=3,
+    border_style=3,
+)
+
+# 2-second outro end card with call-to-action (Task T2.13, ADR D-268).
+END_CARD_FONT_SIZE: Final = 60
+END_CARD_THEME: Final = CaptionTheme(
+    primary="&H00FFFFFF",
+    secondary="&H00FFFFFF",
+    bold=True,
+    outline=24.0,
+    shadow=0.0,
+    # 90% opaque dark backing card
+    back_colour="&H1A000000",
+    margin_l=80,
+    margin_r=80,
+    margin_v=0,
+    # 5 = middle-centre alignment
+    alignment=5,
     border_style=3,
 )
 
@@ -1109,6 +1154,9 @@ def build_ass(
     fonts_dir: Path | None = None,
     face_intervals: Sequence[tuple[int, int, int, int]] | None = None,
     plate_intervals: Sequence[tuple[int, int]] | None = None,
+    speaker_turns: Sequence[tuple[int, int, str]] | None = None,
+    speaker_metadata: dict[str, SpeakerBio] | None = None,
+    end_card: EndCardConfig | None = None,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -1207,6 +1255,16 @@ def build_ass(
                 if title_ckb
                 else []
             ),
+            *(
+                [SPEAKER_TAG_THEME.style_row("SpeakerTag", font_name, SPEAKER_TAG_FONT_SIZE)]
+                if speaker_metadata
+                else []
+            ),
+            *(
+                [END_CARD_THEME.style_row("EndCard", font_name, END_CARD_FONT_SIZE, alignment=5)]
+                if (end_card and end_card.enabled)
+                else []
+            ),
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -1250,6 +1308,54 @@ def build_ass(
                 for line in wrap_title_lines(title_ckb, max_chars=max_chars_per_line)
             )
         )
+    if speaker_metadata and speaker_turns:
+        # Layer 2, above hook card and karaoke: introduce speaker with lower-third badge
+        last_speaker: str | None = None
+        last_tag_end_ms: int = -10_000
+        for turn_start, turn_end, speaker_id in speaker_turns:
+            if speaker_id not in speaker_metadata:
+                continue
+            if speaker_id != last_speaker or (turn_start - last_tag_end_ms > 8_000):
+                bio = speaker_metadata[speaker_id]
+                ev_start = max(0, turn_start - clip_in_ms)
+                ev_end = min(
+                    (clip_duration_ms if clip_duration_ms is not None else (turn_end - clip_in_ms)),
+                    ev_start + SPEAKER_TAG_MS,
+                )
+                if ev_end > ev_start:
+                    escaped_name = _escape_ass_text(bio.name_ckb)
+                    if bio.title_ckb:
+                        escaped_title = _escape_ass_text(bio.title_ckb)
+                        tag_text = (
+                            f"{{\\fad(250,250)}}{escaped_name}\\N"
+                            f"{{\\fs28\\c&HCCCCCC&}}{escaped_title}"
+                        )
+                    else:
+                        tag_text = f"{{\\fad(250,250)}}{escaped_name}"
+                    events.append(
+                        f"Dialogue: 2,{_ass_time(ev_start)},{_ass_time(ev_end)},"
+                        f"SpeakerTag,,0,0,0,,{tag_text}"
+                    )
+                    last_speaker = speaker_id
+                    last_tag_end_ms = turn_start + SPEAKER_TAG_MS
+    if end_card and end_card.enabled and clip_duration_ms is not None:
+        # Layer 3, outro closing call-to-action card in final seconds
+        ec_duration_ms = int(end_card.duration_s * 1000)
+        ec_start = max(0, clip_duration_ms - ec_duration_ms)
+        ec_parts: list[str] = []
+        if end_card.title_ckb:
+            for line in wrap_title_lines(end_card.title_ckb, max_chars=max_chars_per_line):
+                ec_parts.append(_escape_ass_text(line))
+        if end_card.subtitle_ckb:
+            ec_parts.append(f"{{\\fs36\\c&HCCCCCC&}}{_escape_ass_text(end_card.subtitle_ckb)}")
+        if end_card.handle:
+            ec_parts.append(f"{{\\fs32\\c&HFFCC00&}}{_escape_ass_text(end_card.handle)}")
+        if ec_parts:
+            ec_text = "{\\fad(300,0)}" + "\\N".join(ec_parts)
+            events.append(
+                f"Dialogue: 3,{_ass_time(ec_start)},{_ass_time(clip_duration_ms)},"
+                f"EndCard,,0,0,0,,{ec_text}"
+            )
     for sentence in sentences:
         if max_words_per_event is None:
             lines = wrap_caption_lines(

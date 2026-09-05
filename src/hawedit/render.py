@@ -46,6 +46,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, Final
 
+from hawedit.brand import BrandKit, logo_overlay_coordinates, progress_bar_filter
 from hawedit.captions import (
     FontCoverageError,
     assert_ass_fonts_cover_kurdish,
@@ -1138,6 +1139,7 @@ class RenderResult:
     ffmpeg_version: str
     loudness_pass1: LoudnessStats | None = None
     loudness_pass2: LoudnessStats | None = None
+    brand_kit: BrandKit | None = None
 
     @property
     def duration_ms(self) -> int:
@@ -1227,6 +1229,7 @@ def render_clip(
     deliverable: bool = False,
     silence_plan: SilencePlan | None = None,
     split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None,
+    brand_kit: BrandKit | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1240,6 +1243,8 @@ def render_clip(
         RenderError: no ffmpeg, the requested encoder is absent, or the encode failed.
     """
     clip.assert_renderable()
+    if brand_kit is not None:
+        brand_kit.assert_valid()
 
     effective_reframe = (
         (Reframe.FACE_TRACKED if focus_points else Reframe.STATIC_CENTRE)
@@ -1351,7 +1356,6 @@ def render_clip(
             lanczos=deliverable,
             unsharp=deliverable,
         )
-    filters = ",".join([video_filter, subtitle_filter(ass_path, fonts_dir)])
 
     # Keep the container suffix: ffmpeg infers its muxer from the path. NamedTemporaryFile is
     # closed before ffmpeg starts so Windows can replace its empty placeholder with the encode.
@@ -1391,13 +1395,61 @@ def render_clip(
         af_chain = audio_filter()
         loglevel_args = ["-loglevel", "error"]
 
-    if silence_plan is not None and silence_plan.total_removed_ms > 0:
-        trim_graph = silence_trim_filter(silence_plan.retained_intervals_ms)
-        sub_f = subtitle_filter(ass_path, fonts_dir)
-        if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
-            v_chain = f"[v_tightened]{video_filter}[v_split];[v_split]{sub_f}[v_out]"
+    pb_f: str | None = None
+    if brand_kit is not None and brand_kit.progress_bar.enabled:
+        pb_f = progress_bar_filter(
+            duration_s=effective_duration_ms / 1000.0,
+            color=brand_kit.progress_bar.color,
+            height_px=brand_kit.progress_bar.height_px,
+            position=brand_kit.progress_bar.position,
+            canvas_height=VERTICAL_HEIGHT,
+        )
+
+    sub_f = subtitle_filter(ass_path, fonts_dir)
+    extra_inputs: list[str] = []
+
+    if brand_kit is not None and brand_kit.logo_path is not None:
+        extra_inputs = ["-i", str(brand_kit.logo_path)]
+        logo_x, logo_y = logo_overlay_coordinates(brand_kit.logo_position, brand_kit.logo_margin)
+        logo_prep = (
+            f"[1:v]scale={brand_kit.logo_width}:-2,format=rgba,"
+            f"colorchannelmixer=aa={brand_kit.logo_opacity:.2f}[logo]"
+        )
+        if silence_plan is not None and silence_plan.total_removed_ms > 0:
+            trim_graph = silence_trim_filter(silence_plan.retained_intervals_ms)
+            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                v_base = f"[v_tightened]{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+            else:
+                v_base = f"[v_tightened]{video_filter},{sub_f}[v_sub]"
+            a_chain = f"[a_tightened]{af_chain}[a_out]"
+            trim_prefix = f"{trim_graph};"
         else:
-            v_chain = f"[v_tightened]{video_filter},{sub_f}[v_out]"
+            trim_prefix = ""
+            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                v_base = f"[0:v]{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+            else:
+                v_base = f"[0:v]{video_filter},{sub_f}[v_sub]"
+            a_chain = f"[0:a]{af_chain}[a_out]"
+
+        overlay_out = "[v_out]" if pb_f is None else "[v_branded]"
+        v_overlay = f"[v_sub][logo]overlay={logo_x}:{logo_y}:eof_action=repeat{overlay_out}"
+        v_pb = f";{overlay_out}{pb_f}[v_out]" if pb_f is not None else ""
+        full_complex = f"{trim_prefix}{v_base};{logo_prep};{v_overlay}{v_pb};{a_chain}"
+        stream_filter_args = [
+            "-filter_complex",
+            full_complex,
+            "-map",
+            "[v_out]",
+            "-map",
+            "[a_out]",
+        ]
+    elif silence_plan is not None and silence_plan.total_removed_ms > 0:
+        trim_graph = silence_trim_filter(silence_plan.retained_intervals_ms)
+        post_sub = f",{pb_f}" if pb_f else ""
+        if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+            v_chain = f"[v_tightened]{video_filter}[v_split];[v_split]{sub_f}{post_sub}[v_out]"
+        else:
+            v_chain = f"[v_tightened]{video_filter},{sub_f}{post_sub}[v_out]"
         full_complex = f"{trim_graph};{v_chain};[a_tightened]{af_chain}[a_out]"
         stream_filter_args = [
             "-filter_complex",
@@ -1408,9 +1460,12 @@ def render_clip(
             "[a_out]",
         ]
     else:
+        v_filters = [video_filter, sub_f]
+        if pb_f:
+            v_filters.append(pb_f)
         stream_filter_args = [
             "-vf",
-            filters,
+            ",".join(v_filters),
             "-af",
             af_chain,
         ]
@@ -1430,6 +1485,7 @@ def render_clip(
                     f"{duration_ms / 1000:.3f}",
                     "-i",
                     str(source),
+                    *extra_inputs,
                     *stream_filter_args,
                     "-c:v",
                     encoder.value,
@@ -1506,4 +1562,5 @@ def render_clip(
         ffmpeg_version=version,
         loudness_pass1=loudness_p1,
         loudness_pass2=loudness_p2,
+        brand_kit=brand_kit,
     )

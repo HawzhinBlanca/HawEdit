@@ -61,6 +61,11 @@ from hawedit.boundary import (
     IncompleteSentence,
     fuse_boundary,
 )
+from hawedit.brand import (
+    BrandKit,
+    BrandKitError,
+    SpeakerBio,
+)
 from hawedit.captions import (
     POPUP_MAX_CHARS,
     POPUP_MAX_WORDS,
@@ -597,6 +602,11 @@ class PipelineRun:
                         "reframe": self.render.reframe.value,
                         "encoder": self.render.encoder.value,
                         "ffmpeg_version": self.render.ffmpeg_version,
+                        "brand_kit": (
+                            self.render.brand_kit.to_dict()
+                            if self.render.brand_kit is not None
+                            else None
+                        ),
                     }
                     if self.render is not None
                     else None
@@ -1636,6 +1646,7 @@ def run_pipeline(
     silence_threshold_ms: int = 0,
     silence_target_gap_ms: int = 150,
     two_person_split: str = "auto",
+    brand_kit: BrandKit | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1699,6 +1710,9 @@ def run_pipeline(
         raise ValueError(
             f"two_person_split must be 'auto', 'always', or 'never', got {two_person_split!r}"
         )
+
+    if brand_kit is not None:
+        brand_kit.assert_valid()
 
     ct_profile = get_content_type_profile(content_type)
     if min_clip_ms == MIN_CANDIDATE_SPAN_MS and ct_profile.min_clip_ms != MIN_CANDIDATE_SPAN_MS:
@@ -2683,6 +2697,14 @@ def run_pipeline(
                 )
 
     try:
+        speaker_turns = (
+            [(turn.start_ms, turn.end_ms, turn.speaker) for turn in ingested.diarization]
+            if (ingested.diarization is not None and brand_kit is not None)
+            else None
+        )
+        speaker_meta = brand_kit.speaker_metadata if brand_kit is not None else None
+        end_card = brand_kit.end_card if brand_kit is not None else None
+
         bundle.write_text(
             "ass",
             # The clip's own timeline. Without this every caption is scheduled at its source
@@ -2707,6 +2729,9 @@ def run_pipeline(
                 title_ckb=effective_clip.output.title_ckb if effective_clip.output else None,
                 max_chars_per_line=POPUP_MAX_CHARS,
                 max_words_per_event=POPUP_MAX_WORDS,
+                speaker_turns=speaker_turns,
+                speaker_metadata=speaker_meta,
+                end_card=end_card,
             ),
         )
         if source_dimensions is None:
@@ -2776,9 +2801,10 @@ def run_pipeline(
             deliverable=(profile == "production"),
             silence_plan=silence_plan,
             split_crops=split_crops,
+            brand_kit=brand_kit,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
-    except (IngestError, RenderError, BundleError, OSError, ValueError) as exc:
+    except (IngestError, RenderError, BundleError, OSError, ValueError, BrandKitError) as exc:
         try:
             bundle.discard()
         except BundleError as cleanup_error:
@@ -3209,6 +3235,34 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--brand-kit",
+        type=str,
+        default=None,
+        help="path to brand kit JSON configuration file (Task T2.13, ADR D-268)",
+    )
+    parser.add_argument(
+        "--speaker-metadata",
+        type=str,
+        default=None,
+        help="path to speaker metadata JSON file or inline JSON string (Task T2.13)",
+    )
+    parser.add_argument(
+        "--logo",
+        type=str,
+        default=None,
+        help="path to logo watermark image overlay (Task T2.13)",
+    )
+    parser.add_argument(
+        "--progress-bar",
+        action="store_true",
+        help="burn a bottom-edge dynamic viewer retention progress bar into the video (Task T2.13)",
+    )
+    parser.add_argument(
+        "--end-card",
+        action="store_true",
+        help="append a 2-second outro card with Kurdish call-to-action (Task T2.13)",
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -3532,6 +3586,43 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         parsed_record = QcRecord.from_json(rec_text)
         qc = Qc.from_record(parsed_record)
 
+    brand_kit: BrandKit | None = None
+    if args.brand_kit or args.logo or args.progress_bar or args.end_card or args.speaker_metadata:
+        base_kit = BrandKit.from_json(Path(args.brand_kit)) if args.brand_kit else BrandKit()
+        speakers = dict(base_kit.speaker_metadata)
+        if args.speaker_metadata:
+            spk_p = Path(args.speaker_metadata)
+            raw_spk_text = (
+                spk_p.read_text(encoding="utf-8") if spk_p.is_file() else args.speaker_metadata
+            )
+            try:
+                parsed_spk = json.loads(raw_spk_text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"malformed speaker metadata JSON: {exc}") from exc
+            if not isinstance(parsed_spk, dict):
+                raise ValueError("speaker metadata JSON must be an object")
+            for k, v in parsed_spk.items():
+                if isinstance(v, dict):
+                    speakers[k] = SpeakerBio.from_dict(v)
+                elif isinstance(v, str):
+                    speakers[k] = SpeakerBio(name_ckb=v.strip())
+
+        logo_path = Path(args.logo) if args.logo else base_kit.logo_path
+        pb_config = (
+            replace(base_kit.progress_bar, enabled=True)
+            if args.progress_bar
+            else base_kit.progress_bar
+        )
+        ec_config = replace(base_kit.end_card, enabled=True) if args.end_card else base_kit.end_card
+        brand_kit = replace(
+            base_kit,
+            speaker_metadata=speakers,
+            logo_path=logo_path,
+            progress_bar=pb_config,
+            end_card=ec_config,
+        )
+        brand_kit.assert_valid()
+
     return run_pipeline(
         args.source,
         args.work_dir,
@@ -3566,6 +3657,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         silence_threshold_ms=getattr(args, "silence_threshold_ms", 0),
         silence_target_gap_ms=getattr(args, "silence_target_gap_ms", 150),
         two_person_split=getattr(args, "two_person_split", "auto"),
+        brand_kit=brand_kit,
     )
 
 
@@ -3574,6 +3666,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
 # not inside `build_and_run` — a second caller (`durable.py`) needs the exception itself, not
 # stderr and a 2.
 BUILD_ERRORS: Final[tuple[type[Exception], ...]] = (
+    BrandKitError,
     CredentialError,
     FileExistsError,
     FileNotFoundError,
@@ -3695,6 +3788,19 @@ def _print_report(run: PipelineRun) -> None:
             print(f"QC FLAG {flag}")
     if run.render is not None and not isinstance(run.render, StageSkipped):
         print(f"stage 6 {run.render.path} ({run.render.width}x{run.render.height})")
+        if run.render.brand_kit is not None:
+            kit = run.render.brand_kit
+            brand_items: list[str] = []
+            if kit.logo_path is not None:
+                brand_items.append(f"logo ({kit.logo_position})")
+            if kit.progress_bar.enabled:
+                brand_items.append("progress-bar")
+            if kit.end_card.enabled:
+                brand_items.append("end-card")
+            if kit.speaker_metadata:
+                brand_items.append(f"{len(kit.speaker_metadata)} speaker(s)")
+            if brand_items:
+                print(f"brand   {' · '.join(brand_items)}")
     for name, skip in run.skipped():
         blockers = f" [{', '.join(skip.blocked_by)}]" if skip.blocked_by else ""
         print(f"SKIPPED {name}{blockers}: {skip.reason}")

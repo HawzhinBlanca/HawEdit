@@ -13835,6 +13835,30 @@ As noted in `specs/pro-grade-program/tasks.md` Task T0.6, HawEdit invoked founda
    - Stage 3 (`PathADiscovery`) and Stage 4 (`judge_with_count`) capture every billed call and stream events during execution.
    - CLI report prints aggregate billed calls, token count, and USD estimate.
 
+---
+
+## D-268 · Brand kit overlays in Stage 6 render: lower-third, logo, end card, progress bar
+
+**Date:** 2026-09-05 · **Blueprint ref:** §3 Stage 6 · **Type:** extension, not a deviation
+
+**Context.**
+`BLUEPRINT.md` §3 Stage 6 specifies vertical reframing, caption generation with `shaping=complex`, and delivery encoding. In professional social video distribution (TikTok, Instagram Reels, YouTube Shorts), unbranded clips lack essential context: speaking participants are anonymous without lower-third introductions, channels lose attribution without logo watermarks, viewers drop off earlier without progress indicators, and clips lack clear subscription/follow call-to-actions without a closing end card. Adding these branding stages extends Stage 6 render capabilities while adhering to frozen blueprint rules.
+
+**Decision.**
+1. **Domain Models (`hawedit.brand`)**:
+   - `BrandKit` aggregates `speaker_metadata: dict[str, SpeakerBio]`, `logo_path: Path | None`, `logo_position`, `logo_width`, `logo_opacity`, `logo_margin`, `progress_bar: ProgressBarConfig`, and `end_card: EndCardConfig`.
+   - Strict validation: missing logo assets raise `BrandKitError` immediately (zero silent fallback).
+2. **Kurdish Lower-Third Speaker Tags via ASS (`hawedit.captions`)**:
+   - Introduce `SpeakerTag` style in ASS headers formatted with `border_style=3` (semi-transparent dark backing plate) and safe vertical margin (`margin_v=280`), comfortably above bottom subtitle karaoke.
+   - Synchronize speaker tags with diarization speaker turns (`speaker_turns`) using libass and HarfBuzz (`shaping=complex`) with `Noto Naskh Arabic`.
+3. **Logo Watermark & Progress Bar in FFmpeg (`hawedit.render`)**:
+   - Logo watermark is applied via FFmpeg `-i <logo.png>` and `filter_complex` overlay with alpha channel scaling and corner margin positioning, completely avoiding Windows path escaping bugs.
+   - Progress bar is rendered via FFmpeg `drawbox` filter advancing dynamically from 0% to 100% across the clip's duration.
+4. **Outro End Card (`hawedit.render` & `hawedit.pipeline`)**:
+   - 2-second outro card with Sorani Kurdish call-to-action text and channel handle.
+5. **CLI & Pipeline Integration**:
+   - Expose `--brand-kit`, `--speaker-metadata`, `--logo`, `--progress-bar`, and `--end-card` in `hawedit.pipeline`.
+
 
 
 

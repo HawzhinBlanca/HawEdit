@@ -587,6 +587,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `episode.py` | §3 Stage 3/6 extension | Episode planning, multi-clip diversity selection, and consolidated episode manifest reconciliation. |
 | `variants.py` | §5 extension | Sentence-complete length variants (15s, 30s, 60s) for multi-duration social delivery. |
 | `silence.py` | §3 Stage 6 extension | Silence tightening, pause shortening, timeline shifting, and removed silence tracking in output contract. |
+| `brand.py` | §3 Stage 6 extension | Brand kit overlays: lower-third speaker labels from episode metadata, logo watermark, progress bar, and 2s end card (ADR D-268). |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `events.py` | §3 | What a run says about itself *before* it returns: one stage-transition event per start and per end, to a sink that defaults to discarding. A skip carries the same reason the report will carry, so the timeline cannot go green over a stage that refused. Owns the JSONL ledger format both ways — `JsonlEventSink` writes it, `read_events` reads it back — so reading a run's timeline needs no durable-execution engine imported. |

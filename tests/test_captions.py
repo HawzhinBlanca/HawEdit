@@ -1878,3 +1878,42 @@ def test_caption_plate_renders_dark_backing_on_white_background(tmp_path: Path) 
     # With plate, the backing box darkens the canvas to < 200
     darkened = np.sum((caption_region[:, :, 0] < 200) & (caption_region[:, :, 1] < 200))
     assert darkened > 5000, f"Expected darkened plate pixels behind text, got {darkened}"
+
+
+def test_build_ass_with_speaker_metadata_and_turns() -> None:
+    from hawedit.brand import SpeakerBio
+
+    speaker_metadata = {
+        "SPEAKER_00": SpeakerBio(name_ckb="د. ئاراس عومەر", title_ckb="پزیشکی پسپۆڕ"),
+        "SPEAKER_01": SpeakerBio(name_ckb="هاوژین عەزیز"),
+    }
+    speaker_turns = (
+        (0, 4_000, "SPEAKER_00"),
+        (4_500, 7_000, "SPEAKER_01"),
+        (7_500, 10_000, "SPEAKER_02"),  # Not in metadata
+    )
+    test_words = words(("سڵاو", 100, 500), ("هاوڕێیان", 600, 1200))
+    sentence = Sentence(words=test_words, complete=True)
+
+    ass_text = build_ass(
+        sentences=[sentence],
+        clip_in_ms=0,
+        clip_duration_ms=12_000,
+        speaker_turns=speaker_turns,
+        speaker_metadata=speaker_metadata,
+    )
+
+    # Style row exists in header
+    assert "Style: SpeakerTag," in ass_text
+
+    # Events exist for SPEAKER_00 and SPEAKER_01, but NOT SPEAKER_02
+    expected_spk0 = (
+        "Dialogue: 2,0:00:00.00,0:00:03.50,SpeakerTag,,0,0,0,,"
+        "{\\fad(250,250)}د. ئاراس عومەر\\N{\\fs28\\c&HCCCCCC&}پزیشکی پسپۆڕ"
+    )
+    expected_spk1 = (
+        "Dialogue: 2,0:00:04.50,0:00:08.00,SpeakerTag,,0,0,0,,{\\fad(250,250)}هاوژین عەزیز"
+    )
+    assert expected_spk0 in ass_text
+    assert expected_spk1 in ass_text
+    assert "SPEAKER_02" not in ass_text

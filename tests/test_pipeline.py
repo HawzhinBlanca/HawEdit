@@ -37,6 +37,13 @@ from typing import Any
 import pytest
 
 from hawedit.asr import CanonicalTranscriptProducer
+from hawedit.brand import (
+    BrandKit,
+    BrandKitError,
+    EndCardConfig,
+    ProgressBarConfig,
+    SpeakerBio,
+)
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import (
     MAX_CANDIDATE_SPAN_MS,
@@ -72,7 +79,7 @@ from hawedit.pipeline import (
     main,
     run_pipeline,
 )
-from hawedit.render import Reframe
+from hawedit.render import Encoder, Reframe, RenderResult
 from hawedit.sentences import Sentence
 from hawedit.transcripts import (
     AsrProvenance,
@@ -3383,6 +3390,16 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         ["--transcript", "x.json", "--sentences", "0", "--zero-data-retention"],
         "governance flags apply only with a Gemini or Vertex route",
     ),
+    (
+        "malformed speaker metadata JSON",
+        ["--speaker-metadata", "{invalid-json"],
+        "malformed speaker metadata JSON:",
+    ),
+    (
+        "speaker metadata JSON not an object",
+        ["--speaker-metadata", "[1, 2, 3]"],
+        "speaker metadata JSON must be an object",
+    ),
 )
 
 # Refused for a reason that a *different* refusal always reaches first, so no argv can trigger it
@@ -6643,3 +6660,78 @@ def test_run_pipeline_two_person_split_triggered_on_rapid_exchange(tmp_path: Pat
     assert run_never.render is not None and not isinstance(run_never.render, StageSkipped)
     assert run_never.render.reframe is Reframe.SPEAKER_TRACKED
     assert Path(run_never.render.path).is_file()
+
+
+def test_pipeline_parser_brand_kit_flags() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "video.mp4",
+            "--brand-kit",
+            "brand.json",
+            "--speaker-metadata",
+            '{"SPEAKER_00": {"name_ckb": "هاوژین"}}',
+            "--logo",
+            "logo.png",
+            "--progress-bar",
+            "--end-card",
+        ]
+    )
+    assert args.brand_kit == "brand.json"
+    assert args.speaker_metadata == '{"SPEAKER_00": {"name_ckb": "هاوژین"}}'
+    assert args.logo == "logo.png"
+    assert args.progress_bar is True
+    assert args.end_card is True
+
+
+def test_pipeline_brand_kit_cli_missing_logo_refused(tmp_path: Path) -> None:
+    missing_logo = tmp_path / "absent_logo.png"
+    parser = build_parser()
+    args = parser.parse_args([str(FIXTURE), "--logo", str(missing_logo)])
+    with pytest.raises(BrandKitError, match="brand logo file not found"):
+        _build_and_run(args)
+
+
+def test_pipeline_brand_kit_serialization_and_report(tmp_path: Path) -> None:
+    import sys
+    from io import StringIO
+
+    kit = BrandKit(
+        speaker_metadata={"SPEAKER_00": SpeakerBio(name_ckb="هاوژین")},
+        progress_bar=ProgressBarConfig(enabled=True),
+        end_card=EndCardConfig(enabled=True),
+    )
+    run = PipelineRun(
+        media_id="test-brand",
+        source=str(FIXTURE),
+        work_dir=str(tmp_path),
+        render=RenderResult(
+            clip_id="test-brand-s0-1",
+            path=str(tmp_path / "out.mp4"),
+            width=1080,
+            height=1920,
+            requested_duration_ms=4000,
+            measured_duration_ms=4000,
+            reframe=Reframe.STATIC_CENTRE,
+            encoder=Encoder.X264,
+            captions_burned_in=True,
+            ffmpeg_version="ffmpeg test",
+            brand_kit=kit,
+        ),
+    )
+    payload = run.to_dict()
+    assert payload["render"] is not None
+    assert payload["render"]["brand_kit"] is not None
+    assert payload["render"]["brand_kit"]["progress_bar"]["enabled"] is True
+    assert payload["render"]["brand_kit"]["end_card"]["enabled"] is True
+    assert "SPEAKER_00" in payload["render"]["brand_kit"]["speaker_metadata"]
+
+    out = StringIO()
+    orig = sys.stdout
+    try:
+        sys.stdout = out
+        _print_report(run)
+    finally:
+        sys.stdout = orig
+    report_text = out.getvalue()
+    assert "brand   progress-bar · end-card · 1 speaker(s)" in report_text
