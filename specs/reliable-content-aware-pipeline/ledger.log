@@ -1,0 +1,1 @@
+TS=2026-09-05T22:39:38Z FEATURE=reliable-content-aware-pipeline TASK=T00 TESTS=test_acceptance_split_has_no_episode_or_speaker_leakage,test_scorecard_counts_refusals_and_all_proposed_clips VERIFY=pass REPORT=.gate/last-test-run.xml
