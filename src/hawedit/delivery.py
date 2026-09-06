@@ -301,6 +301,8 @@ def build_edl(
     clip_out_ms: int,
     fps: float,
     title: str = "HAWEDIT CLIP",
+    *,
+    retained_intervals: Sequence[tuple[int, int]] | None = None,
 ) -> str:
     """A CMX 3600 EDL for one clip.
 
@@ -309,8 +311,9 @@ def build_edl(
     the source range in clip time yields a file that conforms the top of the episode and looks
     entirely well-formed.
 
-    Two events are emitted, video and audio. A video-only EDL conforms picture and silently
-    drops the Kurdish speech the clip exists for.
+    When `retained_intervals` is provided (e.g. after dead-air silence excision), distinct edit
+    events are emitted for each retained interval, ensuring conforming editors receive exact
+    cuts rather than a false continuous source span.
 
     Raises:
         DeliveryError: the clip has no length, is shorter than a frame, starts before zero,
@@ -324,33 +327,56 @@ def build_edl(
             f"to conform."
         )
     rate, physical_rate, drop_frame = _timecode_rate(fps)
-    source_in_frame = round(clip_in_ms * physical_rate / 1000)
-    source_out_frame = round(clip_out_ms * physical_rate / 1000)
-    duration_frames = source_out_frame - source_in_frame
-    duration_ms = clip_out_ms - clip_in_ms
-    if duration_frames < 1:
-        raise DeliveryError(
-            f"a {duration_ms} ms clip is less than one frame at {fps} fps: the EDL event would "
-            f"be well-formed and cut nothing."
-        )
-    source_in = _frames_to_timecode(source_in_frame, rate, drop_frame=drop_frame)
-    source_out = _frames_to_timecode(source_out_frame, rate, drop_frame=drop_frame)
-    record_in = _frames_to_timecode(0, rate, drop_frame=drop_frame)
-    record_out = _frames_to_timecode(duration_frames, rate, drop_frame=drop_frame)
 
-    # An EDL is a line-oriented format; a newline inside the title truncates the file's meaning
-    # at that point for most parsers.
+    intervals: Sequence[tuple[int, int]]
+    if retained_intervals is not None:
+        if not retained_intervals:
+            raise DeliveryError("retained_intervals cannot be empty")
+        intervals = retained_intervals
+    else:
+        intervals = ((clip_in_ms, clip_out_ms),)
+
     one_line_title = " ".join(title.split())
     lines = [
         f"TITLE: {one_line_title}",
         f"FCM: {'DROP' if drop_frame else 'NON-DROP'} FRAME",
         "",
     ]
-    for number, channel in ((1, "V"), (2, "A")):
-        lines.append(
-            f"{number:03d}  {_REEL}       {channel}     C        "
-            f"{source_in} {source_out} {record_in} {record_out}"
+
+    event_num = 1
+    cumulative_record_frames = 0
+
+    for seg_in_ms, seg_out_ms in intervals:
+        seg_in_ms = _nonnegative_milliseconds(seg_in_ms, "EDL segment in-point")
+        seg_out_ms = _nonnegative_milliseconds(seg_out_ms, "EDL segment out-point")
+        if seg_out_ms <= seg_in_ms:
+            raise DeliveryError(
+                f"EDL segment spans {seg_in_ms}..{seg_out_ms} ms, which has no length"
+            )
+        source_in_frame = round(seg_in_ms * physical_rate / 1000)
+        source_out_frame = round(seg_out_ms * physical_rate / 1000)
+        duration_frames = source_out_frame - source_in_frame
+        if duration_frames < 1:
+            raise DeliveryError(
+                f"a {seg_out_ms - seg_in_ms} ms segment is less than one frame at {fps} fps"
+            )
+
+        source_in = _frames_to_timecode(source_in_frame, rate, drop_frame=drop_frame)
+        source_out = _frames_to_timecode(source_out_frame, rate, drop_frame=drop_frame)
+        record_in = _frames_to_timecode(cumulative_record_frames, rate, drop_frame=drop_frame)
+        record_out = _frames_to_timecode(
+            cumulative_record_frames + duration_frames, rate, drop_frame=drop_frame
         )
+
+        for channel in ("V", "A"):
+            lines.append(
+                f"{event_num:03d}  {_REEL}       {channel}     C        "
+                f"{source_in} {source_out} {record_in} {record_out}"
+            )
+            event_num += 1
+
+        cumulative_record_frames += duration_frames
+
     return "\n".join(lines) + "\n"
 
 
