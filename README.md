@@ -635,6 +635,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `comparison_kit.py` | Phase 5 | Comparison kit for blind pairwise human evaluation: seeded randomisation, blinded staging, Kurdish Sorani rating forms, Wilson score 95% confidence intervals, and QcRecord export (Task T5.1, H7). |
 | `edit_plan.py` | Visual Editor | Unified visual edit contract, editorial brief, effective configuration, and source-to-output time mapping with deterministic multi-cut conforming across EDL, SRT, and OpenTimelineIO artifacts. |
 | `observation.py` | Visual Editor | Visual observation inventory partitioning source media into unknown, scanned, sampled, and model-inspected evidence while protecting static verbal speech from novelty-biased suppression. |
+| `story.py` | Visual Editor | Grounded narrative story relations connecting canonical sentences to visual evidence IDs with required context preservation. |
 
 ## Two conventions worth knowing before reading the code
 
