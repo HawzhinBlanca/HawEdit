@@ -641,6 +641,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `timing_continuity.py` | Visual Editor | Timing tightening, meaningful protected pause preservation, reaction cutaway contemporaneity validation, and word boundary protection. |
 | `caption_layout.py` | Visual Editor | Content-aware caption layout avoiding essential visual regions without text drift, silent shrinking, or unresolvable occlusions. |
 | `render_critic.py` | Visual Editor | Post-render sequence critique inspecting temporal output and source context, reporting grounded defects, and refusing unsupported all-clear claims. |
+| `visual_repair.py` | Visual Editor | Bounded iterative defect repair enforcing stop rules (non-improvement, oscillation, budgets) without changing speech text or self-approving. |
 
 ## Two conventions worth knowing before reading the code
 
