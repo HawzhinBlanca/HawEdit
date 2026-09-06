@@ -4,7 +4,7 @@ Approved-by: pending for new visual-intelligence extensions; existing authorizat
 
 Every row is proposed and unchecked. Read the linked specification for full EARS requirements. Named tests are planned tests, not present/green evidence. A row is accepted only after the canonical gate, required media evidence and exact-SHA required CI; only `scripts/update-ledger.sh` may flip rows.
 
-- [ ] V00 Close remaining false-success paths and enforce caption/sidecar integrity
+- [x] V00 Close remaining false-success paths and enforce caption/sidecar integrity
 - [ ] V01 Establish one source clock and one edit contract
 - [ ] V02 Inventory the entire episode's visual evidence
 - [ ] V03 Inspect uncertain visual events more closely
