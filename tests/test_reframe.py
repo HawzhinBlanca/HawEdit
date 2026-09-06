@@ -46,6 +46,23 @@ def test_speaker_focus_evidence_is_exact_and_carries_a_safe_label() -> None:
         with pytest.raises(ValueError, match="speaker label"):
             SpeakerFocusPoint(100, 320, bad)
 
+    pt = SpeakerFocusPoint(100, 320, "SPEAKER_00")
+    assert pt.state == "speaker"
+    assert pt.is_speaking is True
+    assert pt.confidence == 1.0
+
+    # New state, is_speaking, confidence fields validation
+    focus = SpeakerFocusPoint(100, 320, "SPEAKER_00", state="listener", is_speaking=False)
+    assert focus.state == "listener"
+    with pytest.raises(ValueError, match="invalid speaker state"):
+        SpeakerFocusPoint(100, 320, "SPEAKER_00", state="not_a_state")
+    with pytest.raises(TypeError, match="is_speaking must be an exact boolean"):
+        SpeakerFocusPoint(100, 320, "SPEAKER_00", is_speaking=cast(Any, 1))
+    with pytest.raises(TypeError, match="confidence must be a finite float"):
+        SpeakerFocusPoint(100, 320, "SPEAKER_00", confidence=cast(Any, "high"))
+    with pytest.raises(ValueError, match="confidence must be in 0.0..1.0"):
+        SpeakerFocusPoint(100, 320, "SPEAKER_00", confidence=1.5)
+
 
 def test_speaker_focus_points_must_match_the_exclusive_turn_active_at_that_instant() -> None:
     turns = (
@@ -818,3 +835,112 @@ def test_compute_two_person_split_crops_clamps_boundaries_and_validates_dimensio
         compute_two_person_split_crops(0, 1440, 500, 1500)
     with pytest.raises(ValueError, match="target dimensions must be positive"):
         compute_two_person_split_crops(2560, 1440, 500, 1500, target_width=0)
+
+
+def test_visual_identity_does_not_equate_lone_face_with_active_voice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VE-04: A quiet lone face during active speech is categorized as listener/off-screen
+
+    and is not equated with the active voice as a confirmed speaking identity.
+    """
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "lone_listener_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+
+    # Frame 0..2 (0..600ms): SPEAKER_00 speaks. Left face (x=100..180, center 140) moves mouth.
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (100, 155), (180, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    # Frame 3..5 (600..1200ms): SPEAKER_01 is active off-screen.
+    # Lone face remains visible (Left face at center 140), mouth is static (listening).
+    for _ in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        cv2.rectangle(frame, (100, 155), (180, 180), (50, 50, 50), -1)
+        writer.write(frame)
+
+    # Frame 6..8 (1200..1800ms): Cut occurs. SPEAKER_01 now speaks on-screen at Right face
+    # (center 440) with active mouth motion.
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (400, 100), (480, 180), (128, 128, 128), -1)
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (400, 155), (480, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    writer.release()
+
+    class _MockClassifier:
+        def __init__(self, is_profile: bool = False) -> None:
+            self._is_profile = is_profile
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self._is_profile:
+                return []
+            img = args[0] if args else kwargs.get("image")
+            assert img is not None
+            res = []
+            if bool(np.any(img[100:180, 100:180] > 0)):
+                res.append((100, 100, 80, 80))
+            if bool(np.any(img[100:180, 400:480] > 0)):
+                res.append((400, 100, 80, 80))
+            return res
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", lambda p: _MockClassifier("profile" in str(p)))
+
+    tracker = MotionSpeakerTracker(sample_fps=5.0, motion_threshold=2.0)
+    turns = (
+        Segment(0, 600, "SPEAKER_00"),
+        Segment(600, 1200, "SPEAKER_01"),
+        Segment(1200, 1800, "SPEAKER_01"),
+    )
+    shot_cuts = (1200,)
+
+    points = tracker.track_speakers(video_path, 0, 1800, turns, shot_cuts_ms=shot_cuts)
+    assert len(points) >= 8
+
+    # During 0..600ms (SPEAKER_00): confirmed speaking at center 140
+    spk0_points = [p for p in points if p.at_ms < 600]
+    assert any(
+        p.state == "speaker" and p.is_speaking is True and p.center_x == 140 for p in spk0_points
+    )
+
+    # During 600..1200ms (SPEAKER_01 active voice, lone quiet face at center 140):
+    # System MUST NOT equate lone quiet face with SPEAKER_01!
+    listener_points = [p for p in points if 600 <= p.at_ms < 1200]
+    assert len(listener_points) >= 2
+    for p in listener_points:
+        assert p.speaker == "SPEAKER_01"
+        assert p.center_x == 140  # frames the visible listener
+        assert p.state == "listener"  # explicitly labelled as listener!
+        assert p.is_speaking is False  # NOT claimed as speaking!
+
+    # Crucially, SPEAKER_01 was never confirmed as speaking at center 140,
+    # and confirmed_speaker_centers does not falsely map SPEAKER_01 to 140.
+    assert all(
+        p.is_speaking is False for p in points if p.speaker == "SPEAKER_01" and p.center_x == 140
+    )
+    assert tracker.confirmed_speaker_centers.get("SPEAKER_01") != 140
+
+    # During 1200..1800ms (after cut, SPEAKER_01 moves mouth at center 440):
+    # Confirmed as speaker!
+    cut_points = [p for p in points if p.at_ms >= 1200]
+    assert any(
+        p.state == "speaker" and p.is_speaking is True and p.center_x == 440 for p in cut_points
+    )
+    assert tracker.confirmed_speaker_centers.get("SPEAKER_01") == 440
+
+    # Output validates against canonical speaker validator
+    validated = validate_speaker_focus_points(points, turns, 0, 1800)
+    assert len(validated) == len(points)
