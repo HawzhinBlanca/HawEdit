@@ -6,3 +6,4 @@ TS=2026-09-06T11:15:13Z FEATURE=visual-editor-intelligence TASK=V04 TESTS=test_v
 TS=2026-09-06T11:46:57Z FEATURE=visual-editor-intelligence TASK=V05 TESTS=test_story_relations_require_canonical_and_visual_evidence VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T12:21:12Z FEATURE=visual-editor-intelligence TASK=V06 TESTS=test_visual_candidate_keeps_required_context_and_landing_beat VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T12:57:23Z FEATURE=visual-editor-intelligence TASK=V07 TESTS=test_every_planned_shot_has_source_evidence_and_protected_regions VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-06T14:23:37Z FEATURE=visual-editor-intelligence TASK=V08 TESTS=test_shot_composition_preserves_required_content_without_crop_jitter VERIFY=pass REPORT=.gate/last-test-run.xml
