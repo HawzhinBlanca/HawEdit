@@ -1,2 +1,3 @@
 TS=2026-09-05T22:39:38Z FEATURE=reliable-content-aware-pipeline TASK=T00 TESTS=test_acceptance_split_has_no_episode_or_speaker_leakage,test_scorecard_counts_refusals_and_all_proposed_clips VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-05T23:34:00Z FEATURE=reliable-content-aware-pipeline TASK=T01 TESTS=test_boundary_revision_does_not_rebind_previous_review,test_caption_revision_requires_review_of_new_bytes,test_cli_rejected_qc_record_cannot_authorize_delivery VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-06T00:44:41Z FEATURE=reliable-content-aware-pipeline TASK=T02 TESTS=test_unreviewed_render_is_retained_privately_for_review,test_approved_candidate_promotes_identical_bytes_without_render VERIFY=pass REPORT=.gate/last-test-run.xml
