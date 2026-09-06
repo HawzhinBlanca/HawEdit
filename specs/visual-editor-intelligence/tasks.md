@@ -8,7 +8,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] V01 Establish one source clock and one edit contract
 - [x] V02 Inventory the entire episode's visual evidence
 - [x] V03 Inspect uncertain visual events more closely
-- [ ] V04 Distinguish people, speakers, listeners and off-screen speech
+- [x] V04 Distinguish people, speakers, listeners and off-screen speech
 - [ ] V05 Connect story meaning to visual events
 - [ ] V06 Select complete ideas with setup and payoff
 - [ ] V07 Plan every shot with an editorial purpose
