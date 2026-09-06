@@ -638,6 +638,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `story.py` | Visual Editor | Grounded narrative story relations connecting canonical sentences to visual evidence IDs with required context preservation. |
 | `shot_plan.py` | Visual Editor | Shot-by-shot visual plan requiring editorial purpose, source evidence grounding, layout strategies, and protected content regions before rendering. |
 | `shot_composition.py` | Visual Editor | Whole-shot visual composition and camera path stabilization preserving required content without crop jitter and selecting source-preserving alternatives. |
+| `timing_continuity.py` | Visual Editor | Timing tightening, meaningful protected pause preservation, reaction cutaway contemporaneity validation, and word boundary protection. |
 
 ## Two conventions worth knowing before reading the code
 
