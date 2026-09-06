@@ -642,6 +642,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `caption_layout.py` | Visual Editor | Content-aware caption layout avoiding essential visual regions without text drift, silent shrinking, or unresolvable occlusions. |
 | `render_critic.py` | Visual Editor | Post-render sequence critique inspecting temporal output and source context, reporting grounded defects, and refusing unsupported all-clear claims. |
 | `visual_repair.py` | Visual Editor | Bounded iterative defect repair enforcing stop rules (non-improvement, oscillation, budgets) without changing speech text or self-approving. |
+| `episode_package.py` | Visual Editor | Multi-clip episode packaging sharing preprocessing, filtering semantic duplicates, and reporting truthful per-clip states without forcing filler outputs. |
 
 ## Two conventions worth knowing before reading the code
 
