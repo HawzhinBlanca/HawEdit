@@ -145,7 +145,6 @@ class SpeakerSubjectTracker(Protocol):
         in_ms: int,
         out_ms: int,
         turns: Sequence[Segment],
-        shot_cuts_ms: Sequence[int] = (),
     ) -> tuple[SpeakerFocusPoint, ...]: ...
 
 
