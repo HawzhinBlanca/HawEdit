@@ -189,8 +189,7 @@ class ObservationInventory:
         for s in static_intervals:
             # Check if this static speech moment overlaps at least one candidate span
             covered = any(
-                max(s.in_ms, c_in) < min(s.out_ms, c_out)
-                for c_in, c_out in candidate_spans
+                max(s.in_ms, c_in) < min(s.out_ms, c_out) for c_in, c_out in candidate_spans
             )
             if not covered:
                 # If candidate discovery produced candidates but none covers substantive
@@ -219,9 +218,7 @@ class ObservationInventory:
             "speech_ms": speech_ms,
             "static_speech_ms": static_speech_ms,
             "by_level_ms": totals,
-            "by_level_share": {
-                k: round(v / self.duration_ms, 4) for k, v in totals.items()
-            },
+            "by_level_share": {k: round(v / self.duration_ms, 4) for k, v in totals.items()},
         }
 
     def to_dict(self) -> dict[str, Any]:

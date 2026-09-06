@@ -25,7 +25,7 @@ def test_observation_inventory_exposes_unseen_intervals_and_static_speech() -> N
     # Scanned range only covers 0..50s, so 50s..60s is an unseen tail (UNKNOWN).
     shot_cuts = (15_000, 35_000, 50_000)
     speech_intervals = (
-        (2_000, 10_000),   # Active speech with normal motion in shot 0
+        (2_000, 10_000),  # Active speech with normal motion in shot 0
         (18_000, 32_000),  # Long static talking head in shot 1 (motion = 0.01)
         (37_000, 46_000),  # Active speech in shot 2 (motion = 0.40)
     )
@@ -53,15 +53,12 @@ def test_observation_inventory_exposes_unseen_intervals_and_static_speech() -> N
     static_moments = inventory.static_speech_intervals()
     assert len(static_moments) >= 1
     assert any(
-        s.in_ms <= 18_000 and s.out_ms >= 32_000 and s.motion_score == 0.01
-        for s in static_moments
+        s.in_ms <= 18_000 and s.out_ms >= 32_000 and s.motion_score == 0.01 for s in static_moments
     )
 
     # 3. Verbal discovery protection: static speech must not be suppressed
     # If candidate discovery proposed spans including the static speech, passes:
-    inventory.assert_static_speech_preserved(
-        candidate_spans=((17_000, 33_000), (36_000, 48_000))
-    )
+    inventory.assert_static_speech_preserved(candidate_spans=((17_000, 33_000), (36_000, 48_000)))
 
     # If candidate discovery dropped the static speech moment because of low motion, fails:
     with pytest.raises(ObservationError, match="static speech interval .* was dropped"):
@@ -80,17 +77,11 @@ def test_observation_inventory_exposes_unseen_intervals_and_static_speech() -> N
 
 def test_observation_inventory_rejects_gaps_and_invalid_bounds() -> None:
     """Verifies strict boundary and partition validation."""
-    valid_int1 = ObservationInterval(
-        in_ms=0, out_ms=10_000, level=ObservationLevel.SCANNED
-    )
-    valid_int2 = ObservationInterval(
-        in_ms=10_000, out_ms=20_000, level=ObservationLevel.SAMPLED
-    )
+    valid_int1 = ObservationInterval(in_ms=0, out_ms=10_000, level=ObservationLevel.SCANNED)
+    valid_int2 = ObservationInterval(in_ms=10_000, out_ms=20_000, level=ObservationLevel.SAMPLED)
 
     # 1. Starting past 0
-    late_int = ObservationInterval(
-        in_ms=500, out_ms=20_000, level=ObservationLevel.SCANNED
-    )
+    late_int = ObservationInterval(in_ms=500, out_ms=20_000, level=ObservationLevel.SCANNED)
     with pytest.raises(ObservationError, match="starts at 500 ms, must start at 0 ms"):
         ObservationInventory(
             media_id="ep01-test",
@@ -100,9 +91,7 @@ def test_observation_inventory_rejects_gaps_and_invalid_bounds() -> None:
         )
 
     # 2. Gap between intervals
-    gap_int = ObservationInterval(
-        in_ms=12_000, out_ms=20_000, level=ObservationLevel.SAMPLED
-    )
+    gap_int = ObservationInterval(in_ms=12_000, out_ms=20_000, level=ObservationLevel.SAMPLED)
     with pytest.raises(ObservationError, match="unrepresented gap of 2000 ms"):
         ObservationInventory(
             media_id="ep01-test",
@@ -112,9 +101,7 @@ def test_observation_inventory_rejects_gaps_and_invalid_bounds() -> None:
         )
 
     # 3. Overlap between intervals
-    overlap_int = ObservationInterval(
-        in_ms=8_000, out_ms=20_000, level=ObservationLevel.SAMPLED
-    )
+    overlap_int = ObservationInterval(in_ms=8_000, out_ms=20_000, level=ObservationLevel.SAMPLED)
     with pytest.raises(ObservationError, match="overlapping intervals"):
         ObservationInventory(
             media_id="ep01-test",
