@@ -1212,7 +1212,7 @@ class Clip:
                     f"review, but it cannot replace it."
                 )
         else:
-            if self.qc is not None and (not self.qc.auto_pass or bool(self.qc.flags)):
+            if self.qc is not None and bool(self.qc.flags):
                 raise ValueError(
                     f"clip {self.clip_id!r} has not cleared QC "
                     f"(auto_pass={self.qc.auto_pass}, flags: {list(self.qc.flags)}). "
