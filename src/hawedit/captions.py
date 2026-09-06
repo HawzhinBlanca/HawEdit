@@ -28,13 +28,14 @@ a viewer must see what was said, spelled as the speaker's transcript spells it.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from hawedit.brand import EndCardConfig, SpeakerBio
 from hawedit.normalize import normalize_sorani
@@ -71,6 +72,8 @@ __all__ = [
     "VIRAL_THEME",
     "CaptionStyle",
     "CaptionTheme",
+    "CaptionVerificationError",
+    "CaptionVerificationReport",
     "CaptionsOutsideClip",
     "EmphasisCategory",
     "FontCoverageError",
@@ -100,6 +103,10 @@ __all__ = [
     "render_caption_png",
     "should_use_top_caption_placement",
     "subtitle_filter",
+    "verify_caption_geometry",
+    "verify_caption_glyphs",
+    "verify_caption_integrity",
+    "verify_caption_text",
     "wrap_caption_lines",
 ]
 
@@ -127,6 +134,24 @@ class MissingRtlStack(RuntimeError):
 
 class FontCoverageError(RuntimeError):
     """Raised when a font lacks glyphs Kurdish captions need."""
+
+
+class CaptionVerificationError(ValueError):
+    """Raised when caption verification detects wrong text, broken joining,
+    missing glyphs or unsafe geometry.
+    """
+
+
+@dataclass(frozen=True)
+class CaptionVerificationReport:
+    text_ok: bool
+    joining_ok: bool
+    glyphs_ok: bool
+    geometry_ok: bool
+    details: dict[str, str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 class GoldenReferenceMissing(RuntimeError):
@@ -2179,3 +2204,214 @@ def compare_golden_render(reference: Path, candidate: Path, ffmpeg: Path | None 
             f"stack changed or the caption did. §4.3.6: shaping regressions are invisible in "
             f"code review — investigate before regenerating the reference."
         )
+
+
+_ASS_OVERRIDE_TAGS: Final = re.compile(r"\{[^}]*\}")
+
+
+def verify_caption_text(
+    ass_text_or_path: str | Path,
+    expected_text: Sequence[str] | str | None = None,
+) -> None:
+    """Verify caption dialogue text against expected content and Kurdish cursive joining rules.
+
+    Raises CaptionVerificationError on text mismatch or broken joining.
+    """
+    if isinstance(ass_text_or_path, Path):
+        content = ass_text_or_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        content = str(ass_text_or_path)
+
+    dialogue_lines: list[str] = []
+    for line in content.splitlines():
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                raw_text = parts[9].strip()
+                clean_text = _ASS_OVERRIDE_TAGS.sub("", raw_text).strip()
+                clean_text = re.sub(r"\\[Nn]", " ", clean_text).strip()
+                if clean_text:
+                    dialogue_lines.append(clean_text)
+
+    if not dialogue_lines and expected_text:
+        raise CaptionVerificationError("wrong text: no caption dialogue events found in ASS")
+
+    # 1. Expected text check
+    if expected_text is not None:
+        if isinstance(expected_text, str):
+            expected_tokens = [normalize_sorani(w) for w in expected_text.split() if w.strip()]
+        else:
+            expected_tokens = [normalize_sorani(w) for w in expected_text if w.strip()]
+
+        found_tokens: list[str] = []
+        for d_line in dialogue_lines:
+            for w in d_line.split():
+                clean_w = _PUNCT_CLEANER.sub("", w).strip()
+                if clean_w:
+                    found_tokens.append(normalize_sorani(clean_w))
+
+        if expected_tokens != found_tokens:
+            raise CaptionVerificationError(
+                f"wrong text: expected {expected_tokens!r} but found {found_tokens!r}"
+            )
+
+    # 2. Broken joining check
+    for d_line in dialogue_lines:
+        for ch in d_line:
+            cp = ord(ch)
+            if (0xFB50 <= cp <= 0xFDFF) or (0xFE70 <= cp <= 0xFEFF):
+                raise CaptionVerificationError(
+                    f"broken joining: presentation form character U+{cp:04X} detected in caption"
+                )
+
+        if re.search(r"[\u0600-\u06FF]\s+[\u0600-\u06FF]\s+[\u0600-\u06FF]", d_line):
+            raise CaptionVerificationError(
+                "broken joining: disconnected letters separated by spaces"
+            )
+
+        if re.search(r"(^|\s)ـ|ـ(\s|$)", d_line):
+            raise CaptionVerificationError("broken joining: orphan tatweel at word boundary")
+
+
+def verify_caption_glyphs(
+    ass_text_or_path: str | Path,
+    fonts_dir: Path | None = None,
+    required: frozenset[str] = KURDISH_REQUIRED_GLYPHS,
+) -> None:
+    """Verify that fonts cover all required Kurdish glyphs and characters in the dialogue events."""
+    if isinstance(ass_text_or_path, Path):
+        content = ass_text_or_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        content = str(ass_text_or_path)
+
+    if fonts_dir is not None:
+        try:
+            assert_fonts_dir_covers_kurdish(fonts_dir, required=required)
+        except FontCoverageError as exc:
+            raise CaptionVerificationError(f"missing glyphs: {exc}") from exc
+        try:
+            assert_ass_fonts_cover_kurdish(content, fonts_dir)
+        except FontCoverageError as exc:
+            raise CaptionVerificationError(f"missing glyphs: {exc}") from exc
+
+    used_chars: set[str] = set()
+    for line in content.splitlines():
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                clean = _ASS_OVERRIDE_TAGS.sub("", parts[9])
+                clean = re.sub(r"\\[Nn]", "", clean)
+                for ch in clean:
+                    if not ch.isspace():
+                        used_chars.add(ch)
+
+    for ch in used_chars:
+        cp = ord(ch)
+        if (
+            0x0600 <= cp <= 0x06FF
+            or 0x0750 <= cp <= 0x077F
+            or cp < 128
+            or unicodedata.category(ch).startswith("P")
+        ):
+            continue
+        raise CaptionVerificationError(
+            f"missing glyphs: unsupported character {ch!r} (U+{cp:04X}) in caption text"
+        )
+
+
+def verify_caption_geometry(
+    ass_text_or_path: str | Path,
+    play_res_x: int = 1080,
+    play_res_y: int = 1920,
+) -> None:
+    """Verify that caption geometry conforms to safe placement and mobile legibility rules."""
+    if isinstance(ass_text_or_path, Path):
+        content = ass_text_or_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        content = str(ass_text_or_path)
+
+    styles: dict[str, dict[str, Any]] = {}
+    for line in content.splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith("Style:"):
+            parts = [p.strip() for p in trimmed.split(":", 1)[1].split(",")]
+            if len(parts) >= 23:
+                name = parts[0]
+                try:
+                    font_size = int(float(parts[2]))
+                    margin_v = int(parts[21])
+                    alignment = int(parts[18])
+                    styles[name] = {
+                        "font_size": font_size,
+                        "margin_v": margin_v,
+                        "alignment": alignment,
+                    }
+                except (ValueError, IndexError):
+                    pass
+
+    for line in content.splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith("Dialogue:"):
+            parts = trimmed.split(",", 9)
+            if len(parts) >= 10:
+                style_name = parts[3].strip()
+                style = styles.get(style_name, {})
+                font_size = style.get("font_size", 48)
+                margin_v = (
+                    int(parts[8].strip())
+                    if parts[8].strip().isdigit() and int(parts[8].strip()) > 0
+                    else style.get("margin_v", 150)
+                )
+                text = parts[9].strip()
+
+                pos_match = re.search(r"\\pos\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)", text)
+                if pos_match:
+                    px, py = float(pos_match.group(1)), float(pos_match.group(2))
+                    if px < 0 or px > play_res_x or py < 0 or py > play_res_y:
+                        raise CaptionVerificationError(
+                            f"unsafe placement: position ({px}, {py}) outside frame "
+                            f"{play_res_x}x{play_res_y}"
+                        )
+
+                if margin_v < 40 or margin_v > play_res_y - 80:
+                    raise CaptionVerificationError(
+                        f"unsafe placement: vertical margin {margin_v} is outside "
+                        f"safe margin [40, {play_res_y - 80}]"
+                    )
+
+                if font_size < 24:
+                    raise CaptionVerificationError(
+                        f"illegible configured geometry: font size {font_size} is "
+                        "too small for mobile legibility"
+                    )
+
+                clean_text = _ASS_OVERRIDE_TAGS.sub("", text)
+                lines = re.split(r"\\[Nn]", clean_text)
+                for sub_line in lines:
+                    line_len = len(sub_line.strip())
+                    if line_len > 50:
+                        raise CaptionVerificationError(
+                            "illegible configured geometry: line exceeds maximum "
+                            f"character length ({line_len} > 50)"
+                        )
+
+
+def verify_caption_integrity(
+    ass_text_or_path: str | Path,
+    *,
+    expected_text: Sequence[str] | str | None = None,
+    fonts_dir: Path | None = None,
+    play_res_x: int = 1080,
+    play_res_y: int = 1920,
+) -> CaptionVerificationReport:
+    """Run all caption integrity and geometry checks. Raises CaptionVerificationError on failure."""
+    verify_caption_text(ass_text_or_path, expected_text=expected_text)
+    verify_caption_glyphs(ass_text_or_path, fonts_dir=fonts_dir)
+    verify_caption_geometry(ass_text_or_path, play_res_x=play_res_x, play_res_y=play_res_y)
+    return CaptionVerificationReport(
+        text_ok=True,
+        joining_ok=True,
+        glyphs_ok=True,
+        geometry_ok=True,
+        details={},
+    )

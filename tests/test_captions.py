@@ -48,6 +48,7 @@ from hawedit.captions import (
     CaptionsOutsideClip,
     CaptionStyle,
     CaptionTheme,
+    CaptionVerificationError,
     EmphasisCategory,
     FontCoverageError,
     GoldenReferenceMissing,
@@ -75,6 +76,10 @@ from hawedit.captions import (
     render_caption_png,
     should_use_top_caption_placement,
     subtitle_filter,
+    verify_caption_geometry,
+    verify_caption_glyphs,
+    verify_caption_integrity,
+    verify_caption_text,
     wrap_caption_lines,
     wrap_title_lines,
 )
@@ -2055,3 +2060,104 @@ def test_build_ass_disabled_keyword_emphasis_retains_standard_styles() -> None:
     )
     assert "Style: KurdishCyan," not in ass
     assert ",Kurdish,,0,0,0,," in ass
+
+
+def test_caption_verification_detects_wrong_text_and_broken_joining() -> None:
+    """AC-06: Verification detects wrong text and broken cursive joining in Sorani."""
+    style_fmt = (
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Kurdish,Noto Naskh Arabic,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
+        "0,0,0,0,100,100,0,0,1,3.0,1.0,2,40,40,200,1\n"
+    )
+    valid_ass = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "PlayResX: 1080\n"
+        "PlayResY: 1920\n\n"
+        "[V4+ Styles]\n"
+        f"{style_fmt}\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:01.00,0:00:03.00,Kurdish,,0,0,0,,سڵاو لە هەمووان\n"
+    )
+
+    # 1. Valid Kurdish caption text passes
+    verify_caption_text(valid_ass, expected_text=["سڵاو", "لە", "هەمووان"])
+
+    # 2. Wrong text: expected words do not match dialogue text
+    with pytest.raises(CaptionVerificationError, match="wrong text"):
+        verify_caption_text(valid_ass, expected_text=["دەقی", "هەڵە", "جیاواز"])
+
+    # 3. Broken joining: Arabic presentation form characters
+    broken_presentation = valid_ass.replace("سڵاو", "\ufe8e\ufe8f")
+    with pytest.raises(CaptionVerificationError, match="broken joining.*presentation form"):
+        verify_caption_text(broken_presentation)
+
+    # 4. Broken joining: disconnected letters separated by spaces
+    broken_spaced = valid_ass.replace("سڵاو", "س ڵ ا و")
+    with pytest.raises(CaptionVerificationError, match="broken joining.*disconnected letters"):
+        verify_caption_text(broken_spaced)
+
+    # 5. Broken joining: orphan tatweel at word boundary
+    broken_tatweel = valid_ass.replace("سڵاو", "ـسڵاو")
+    with pytest.raises(CaptionVerificationError, match="broken joining.*orphan tatweel"):
+        verify_caption_text(broken_tatweel)
+
+
+def test_caption_verification_rejects_missing_glyphs_and_unsafe_geometry() -> None:
+    """AC-06: Verification rejects missing glyphs, unsafe placement, and illegible geometry."""
+    style_fmt = (
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Kurdish,Noto Naskh Arabic,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
+        "0,0,0,0,100,100,0,0,1,3.0,1.0,2,40,40,200,1\n"
+    )
+    base_ass = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "PlayResX: 1080\n"
+        "PlayResY: 1920\n\n"
+        "[V4+ Styles]\n"
+        f"{style_fmt}\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:01.00,0:00:03.00,Kurdish,,0,0,0,,دەقی ڕاستەقینە بۆ تاقیکردنەوە\n"
+    )
+
+    # 1. Valid geometry and glyphs pass
+    verify_caption_geometry(base_ass)
+    verify_caption_glyphs(base_ass)
+    report = verify_caption_integrity(base_ass)
+    assert report.text_ok and report.joining_ok and report.glyphs_ok and report.geometry_ok
+
+    # 2. Missing glyphs: text contains unsupported / exotic non-Kurdish character
+    unsupported_char_ass = base_ass.replace("دەقی", "دەقی\u0416")  # Cyrillic Zhe
+    with pytest.raises(CaptionVerificationError, match="missing glyphs"):
+        verify_caption_glyphs(unsupported_char_ass)
+
+    # 3. Unsafe placement: coordinates outside frame (\pos out of screen)
+    offscreen_ass = base_ass.replace("دەقی", r"{\pos(-150,2500)}دەقی")
+    with pytest.raises(CaptionVerificationError, match="unsafe placement"):
+        verify_caption_geometry(offscreen_ass)
+
+    # 4. Unsafe placement: vertical margin too small (dangerously close to screen edge)
+    unsafe_margin_ass = base_ass.replace("2,40,40,200,1", "2,40,40,15,1")
+    with pytest.raises(CaptionVerificationError, match="unsafe placement.*margin"):
+        verify_caption_geometry(unsafe_margin_ass)
+
+    # 5. Illegible geometry: font size too small for mobile reading
+    tiny_font_ass = base_ass.replace("Noto Naskh Arabic,48,", "Noto Naskh Arabic,14,")
+    with pytest.raises(CaptionVerificationError, match="illegible.*geometry.*font size"):
+        verify_caption_geometry(tiny_font_ass)
+
+    # 6. Illegible geometry: line exceeds maximum character length without wrap
+    long_kurdish = (
+        "ئەمە دێڕێکی زۆر زۆر درێژە کە بەهیچ شێوەیەک "
+        "جێگەی نابێتەوە لەسەر شاشەی مۆبایل و دەبێتە هۆی شێواندنی دەق"
+    )
+    long_line_ass = base_ass.replace("دەقی", long_kurdish)
+    with pytest.raises(CaptionVerificationError, match="illegible.*geometry.*line exceeds"):
+        verify_caption_geometry(long_line_ass)

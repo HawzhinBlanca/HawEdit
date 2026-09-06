@@ -10,9 +10,11 @@ from hawedit.captions import find_ffmpeg
 from hawedit.measure import (
     ClipMeasurement,
     MeasureError,
+    detect_caption_ink_in_band,
     main,
     measure_caption_events_contrast,
     measure_clip,
+    probe_caption_ink,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,3 +139,47 @@ Dialogue: 0,0:00:02.00,0:00:03.00,Kurdish,,0,0,0,,دەقی دووەم
         assert isinstance(cr, float)
         assert cr >= 1.0
         assert isinstance(needs_plate, bool)
+
+
+def test_textured_background_cannot_prove_caption_presence(tmp_path: Path) -> None:
+    """AC-05: An uncaptioned textured video must not be accepted as burned-in captions."""
+    import cv2
+    import numpy as np
+
+    # 1. Synthetic video with high Laplacian variance (textured noise) but NO captions
+    h, w = 1920, 1080
+    np.random.seed(42)
+    video_path = tmp_path / "textured_uncaptioned.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    out = cv2.VideoWriter(str(video_path), fourcc, 10.0, (w, h))
+
+    for _ in range(10):
+        frame = np.random.randint(60, 180, (h, w, 3), dtype=np.uint8)
+        for y in range(0, h, 30):
+            frame[y : y + 15, :] = np.clip(frame[y : y + 15, :].astype(int) + 40, 0, 255)
+        out.write(frame)
+    out.release()
+
+    ass_text = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.20,0:00:00.80,Kurdish,,0,0,0,,سڵاو ئەمە تاقیکردنەوەیە
+"""
+    ass_path = tmp_path / "cues.ass"
+    ass_path.write_text(ass_text, encoding="utf-8")
+
+    # Background texture must NOT be accepted as proof of burned-in captions
+    meas = probe_caption_ink(video_path, ass_path)
+    assert meas.events_count == 1
+    assert meas.ink_energy_detected_share == 0.0
+
+    # Test single-frame probe directly
+    sample_frame = np.random.randint(60, 180, (h, w, 3), dtype=np.uint8)
+    for y in range(0, h, 30):
+        sample_frame[y : y + 15, :] = np.clip(sample_frame[y : y + 15, :].astype(int) + 40, 0, 255)
+    has_ink, _ = detect_caption_ink_in_band(sample_frame, int(h * 0.65), int(h * 0.95))
+    assert has_ink is False

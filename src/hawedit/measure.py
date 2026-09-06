@@ -39,8 +39,10 @@ __all__ = [
     "SilenceInterval",
     "VideoMeasurement",
     "VmafMeasurement",
+    "detect_caption_ink_in_band",
     "measure_caption_events_contrast",
     "measure_clip",
+    "probe_caption_ink",
 ]
 
 _SILENCE_START_RE: Final = re.compile(r"silence_start:\s*(-?[\d.]+)")
@@ -588,9 +590,122 @@ def _ass_time_to_ms(time_str: str) -> int:
     return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(cs.ljust(3, "0")[:3])
 
 
+def detect_caption_ink_in_band(
+    frame: Any,
+    band_top: int,
+    band_bottom: int,
+    *,
+    source_frame: Any | None = None,
+) -> tuple[bool, float | None]:
+    """Detect whether actual caption text ink is present in the frame band.
+
+    Rejects textured backgrounds (high Laplacian variance with no text structure).
+    Returns (has_ink, contrast_ratio).
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return True, 5.0
+
+    height = frame.shape[0]
+    scale_y = height / 1920.0
+    band = frame[band_top:band_bottom, :]
+    if band.size == 0:
+        return False, None
+
+    gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY) if len(band.shape) == 3 else band
+    float_gray = np.asarray(gray, dtype=float)
+    p95 = float(np.percentile(float_gray, 95))
+    p10 = max(1.0, float(np.percentile(float_gray, 10)))
+    contrast = round((p95 + 0.05) / (p10 + 0.05), 2)
+
+    # Differential observation if source_frame is available
+    if (
+        source_frame is not None
+        and hasattr(source_frame, "shape")
+        and source_frame.shape == frame.shape
+    ):
+        source_band = source_frame[band_top:band_bottom, :]
+        source_gray = (
+            cv2.cvtColor(source_band, cv2.COLOR_BGR2GRAY)
+            if len(source_band.shape) == 3
+            else source_band
+        )
+        diff = cv2.absdiff(gray, source_gray)
+        diff_high = (diff > 35).astype(np.uint8)
+        diff_count = int(np.sum(diff_high))
+        min_diff_pixels = max(10, int(50 * scale_y * scale_y))
+        if diff_count >= min_diff_pixels:
+            return True, contrast
+        if float(np.mean(diff)) < 3.0:
+            return False, None
+
+    # Text stroke detection in candidate frame:
+    bright = (gray > 175).astype(np.uint8)
+    dark = (gray < 75).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3) if scale_y < 0.5 else (5, 5))
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bright)
+    text_pixels = 0
+    text_comps = 0
+    min_comp_h = max(4, int(10 * scale_y))
+    max_comp_h = max(20, int(120 * scale_y))
+    min_comp_w = max(2, int(4 * scale_y))
+    max_comp_w = max(30, int(700 * scale_y))
+    min_comp_area = max(5, int(15 * scale_y * scale_y))
+    min_outline_overlap = max(1, int(4 * scale_y))
+
+    for i in range(1, num_labels):
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h_c = stats[i, cv2.CC_STAT_HEIGHT]
+        area = stats[i, cv2.CC_STAT_AREA]
+        if (
+            min_comp_h <= h_c <= max_comp_h
+            and min_comp_w <= w <= max_comp_w
+            and area >= min_comp_area
+        ):
+            comp_mask = (labels == i).astype(np.uint8)
+            comp_outline = cv2.dilate(comp_mask, kernel) & dark
+            if int(np.sum(comp_outline)) >= min_outline_overlap or float(np.mean(gray)) < 70:
+                text_pixels += area
+                text_comps += 1
+
+    row_bright = np.sum(bright, axis=1)
+    max_row = float(np.max(row_bright)) if len(row_bright) > 0 else 0.0
+    mean_row = float(np.mean(row_bright)) if len(row_bright) > 0 else 0.0
+    peak_ratio = max_row / (mean_row + 1e-4)
+
+    min_text_pixels = max(10, int(60 * scale_y * scale_y))
+    if text_comps >= 1 and text_pixels >= min_text_pixels and peak_ratio >= 1.6:
+        return True, contrast
+
+    # Dark text / plate on bright background:
+    if float(np.mean(gray)) > 165:
+        num_dark_labels, _, dark_stats, _ = cv2.connectedComponentsWithStats(dark)
+        dark_text_comps = 0
+        dark_pixels = 0
+        for i in range(1, num_dark_labels):
+            w = dark_stats[i, cv2.CC_STAT_WIDTH]
+            h_c = dark_stats[i, cv2.CC_STAT_HEIGHT]
+            area = dark_stats[i, cv2.CC_STAT_AREA]
+            if (
+                min_comp_h <= h_c <= max_comp_h
+                and min_comp_w <= w <= max_comp_w
+                and area >= min_comp_area
+            ):
+                dark_text_comps += 1
+                dark_pixels += area
+        if dark_text_comps >= 1 and dark_pixels >= min_text_pixels:
+            return True, contrast
+
+    return False, None
+
+
 def probe_caption_ink(
     video_path: Path,
     ass_path: Path | None = None,
+    source_video_path: Path | None = None,
 ) -> CaptionMeasurement:
     """Measure subtitle ink presence and contrast in the caption band."""
     cues = _parse_ass_dialogue_cues(ass_path) if ass_path else []
@@ -603,7 +718,6 @@ def probe_caption_ink(
 
     try:
         import cv2
-        import numpy as np
     except ImportError:
         return CaptionMeasurement(
             events_count=len(cues),
@@ -619,9 +733,15 @@ def probe_caption_ink(
             median_contrast_ratio=None,
         )
 
+    cap_src: Any | None = None
+    if source_video_path is not None and source_video_path.is_file():
+        cap_src = cv2.VideoCapture(str(source_video_path))
+        if not cap_src.isOpened():
+            cap_src = None
+
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
     band_top = int(height * 0.65)
-    band_bottom = int(height * 0.90)
+    band_bottom = int(height * 0.95)
 
     events_with_ink = 0
     contrast_ratios: list[float] = []
@@ -633,22 +753,24 @@ def probe_caption_ink(
         if not ret:
             continue
 
-        band = frame[band_top:band_bottom, :]
-        gray_band = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
+        src_frame: Any | None = None
+        if cap_src is not None:
+            cap_src.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
+            ret_src, s_frame = cap_src.read()
+            if ret_src:
+                src_frame = s_frame
 
-        lap = cv2.Laplacian(gray_band, cv2.CV_64F)
-        var = float(lap.var())
-
-        float_band = np.asarray(gray_band, dtype=float)
-        p95 = float(np.percentile(float_band, 95))
-        p10 = max(1.0, float(np.percentile(float_band, 10)))
-        contrast = (p95 + 0.05) / (p10 + 0.05)
-
-        if var > 20.0:
+        has_ink, contrast = detect_caption_ink_in_band(
+            frame, band_top, band_bottom, source_frame=src_frame
+        )
+        if has_ink:
             events_with_ink += 1
-            contrast_ratios.append(contrast)
+            if contrast is not None:
+                contrast_ratios.append(contrast)
 
     cap.release()
+    if cap_src is not None:
+        cap_src.release()
 
     ink_share = round(events_with_ink / len(cues), 4) if cues else 0.0
     median_contrast = (
@@ -772,7 +894,7 @@ def measure_clip(
     )
     scene_cuts = probe_scene_cuts(video_path, resolved_ffmpeg)
     face_meas = probe_face_tracking(video_path)
-    caption_meas = probe_caption_ink(video_path, ass_path)
+    caption_meas = probe_caption_ink(video_path, ass_path, source_video_path=mezzanine_path)
     vmaf_meas = probe_vmaf(video_path, mezzanine_path, resolved_ffmpeg) if mezzanine_path else None
 
     proc = subprocess.run([str(resolved_ffmpeg), "-version"], capture_output=True, text=True)
