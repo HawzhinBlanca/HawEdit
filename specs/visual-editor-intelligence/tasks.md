@@ -6,7 +6,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 
 - [x] V00 Close remaining false-success paths and enforce caption/sidecar integrity
 - [x] V01 Establish one source clock and one edit contract
-- [ ] V02 Inventory the entire episode's visual evidence
+- [x] V02 Inventory the entire episode's visual evidence
 - [ ] V03 Inspect uncertain visual events more closely
 - [ ] V04 Distinguish people, speakers, listeners and off-screen speech
 - [ ] V05 Connect story meaning to visual events
