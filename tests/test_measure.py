@@ -183,3 +183,34 @@ Dialogue: 0,0:00:00.20,0:00:00.80,Kurdish,,0,0,0,,سڵاو ئەمە تاقیکر
         sample_frame[y : y + 15, :] = np.clip(sample_frame[y : y + 15, :].astype(int) + 40, 0, 255)
     has_ink, _ = detect_caption_ink_in_band(sample_frame, int(h * 0.65), int(h * 0.95))
     assert has_ink is False
+
+
+def test_missing_visual_measurement_dependency_never_reports_success(tmp_path: Path) -> None:
+    """VE-00 / F01: Missing measurement dependency must raise MeasureError and never
+    fabricate success.
+    """
+    import sys
+    from unittest.mock import patch
+
+    import numpy as np
+
+    fake_video = tmp_path / "fake.mp4"
+    fake_video.write_bytes(b"dummy video")
+    fake_ass = tmp_path / "fake.ass"
+    fake_ass.write_text(
+        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,تست\n",
+        encoding="utf-8",
+    )
+    frame = np.zeros((1920, 1080, 3), dtype=np.uint8)
+
+    with patch.dict(sys.modules, {"cv2": None}):
+        with pytest.raises(MeasureError, match="OpenCV.*required"):
+            probe_caption_ink(fake_video, fake_ass)
+
+        with pytest.raises(MeasureError, match="OpenCV.*required"):
+            detect_caption_ink_in_band(frame, 1000, 1800)
+
+        with pytest.raises(MeasureError, match="OpenCV.*required"):
+            measure_caption_events_contrast(fake_video, fake_ass)

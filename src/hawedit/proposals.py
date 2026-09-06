@@ -118,9 +118,11 @@ from hawedit.boundary import Boundary, BoundaryInvariantViolated, assert_boundar
 from hawedit.captions import (
     CaptionsOutsideClip,
     CaptionStyle,
+    CaptionVerificationError,
     assert_captions_within_clip,
     build_ass,
     find_ffmpeg,
+    verify_caption_integrity,
 )
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.clip import Clip, Qc
@@ -550,6 +552,11 @@ def render_boundary_revision(
     )
     width, height = proxy_dimensions(source, ffmpeg)
     try:
+        verify_caption_integrity(
+            ass_path,
+            expected_text=" ".join(s.text for s in selected),
+            fonts_dir=FONTS_DIR,
+        )
         render_clip(
             revised_clip,
             source,
@@ -561,7 +568,7 @@ def render_boundary_revision(
             ffmpeg=ffmpeg,
             for_review=True,
         )
-    except (IngestError, RenderError, ValueError) as exc:
+    except (IngestError, RenderError, ValueError, CaptionVerificationError) as exc:
         ass_path.unlink(missing_ok=True)
         render_path.unlink(missing_ok=True)
         revision["status"] = "render_failed"
@@ -904,6 +911,11 @@ def render_caption_revision(
     )
     width, height = proxy_dimensions(source, ffmpeg)
     try:
+        verify_caption_integrity(
+            ass_path,
+            expected_text=" ".join(s.text for s in selected),
+            fonts_dir=FONTS_DIR,
+        )
         render_clip(
             revised_clip,
             source,
@@ -915,7 +927,7 @@ def render_caption_revision(
             ffmpeg=ffmpeg,
             for_review=True,
         )
-    except (IngestError, RenderError, ValueError) as exc:
+    except (IngestError, RenderError, ValueError, CaptionVerificationError) as exc:
         ass_path.unlink(missing_ok=True)
         render_path.unlink(missing_ok=True)
         revision["status"] = "render_failed"

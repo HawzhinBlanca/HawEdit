@@ -1188,3 +1188,135 @@ def test_approved_candidate_promotes_identical_bytes_without_render(tmp_path: Pa
 
     assert CandidateState.APPROVED.value == "approved"
     assert CandidateState.RENDERED_FOR_REVIEW.value == "rendered_for_review"
+
+
+def test_promotion_rejects_changed_sidecar_or_plan_binding(tmp_path: Path) -> None:
+    """VE-00 / F03: Promotion refuses when any sidecar (ASS, SRT, EDL) or plan binding
+    is altered.
+    """
+    clip, measurement = _make_valid_reconciliation_pair()
+    candidate_id = clip.clip_id
+
+    review_dir = tmp_path / "review" / candidate_id
+    review_dir.mkdir(parents=True)
+
+    fake_mp4_bytes = b"PROMOTED_EXACT_MP4_BYTES_12345"
+    mp4_sha = hashlib.sha256(fake_mp4_bytes).hexdigest()
+
+    (review_dir / f"{candidate_id}.mp4").write_bytes(fake_mp4_bytes)
+    (review_dir / f"{candidate_id}.ass").write_text(
+        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,سڵاو لە هەمووان\n",
+        encoding="utf-8",
+    )
+    (review_dir / f"{candidate_id}.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nسڵاو لە هەمووان\n", encoding="utf-8"
+    )
+    (review_dir / f"{candidate_id}.edl").write_text(
+        "TITLE: Test\n001  AX       V     C        "
+        "00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\n",
+        encoding="utf-8",
+    )
+
+    source_file = tmp_path / "source.mp4"
+    source_file.write_bytes(b"SOURCE_MEDIA_BYTES")
+    source_sha = hashlib.sha256(source_file.read_bytes()).hexdigest()
+
+    candidate_clip = replace(
+        clip,
+        media_sha256=source_sha,
+        qc=None,
+        provenance=Provenance.current(),
+    )
+    (review_dir / f"{candidate_id}.json").write_text(
+        json.dumps(candidate_clip.to_dict(), indent=2),
+        encoding="utf-8",
+    )
+
+    meas = replace(
+        measurement,
+        file=replace(measurement.file, sha256=mp4_sha),
+        scenes={"cuts_ms": []},
+    )
+    (review_dir / f"{candidate_id}.measured.json").write_text(
+        meas.to_json(),
+        encoding="utf-8",
+    )
+
+    qc_record = QcRecord(
+        reviewer="Hawa",
+        reviewed_at="2026-09-02T19:00:00Z",
+        mp4_sha256=mp4_sha,
+        seconds_watched=57.0,
+        verdict="approved",
+    )
+
+    # 1. Tampering with ASS sidecar (corrupted glyph / broken joining)
+    broken_ass = review_dir / f"{candidate_id}.ass"
+    broken_ass.write_text(
+        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,\ufe8e\ufe8f\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(DeliveryRefused, match="caption_integrity_failed"):
+        promote_candidate(
+            work_dir=tmp_path,
+            candidate_id=candidate_id,
+            qc_record=qc_record,
+            source=source_file,
+        )
+
+    # Restore valid ASS
+    broken_ass.write_text(
+        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,سڵاو لە هەمووان\n",
+        encoding="utf-8",
+    )
+
+    # 2. Tampering with SRT sidecar (corrupt format)
+    corrupt_srt = review_dir / f"{candidate_id}.srt"
+    corrupt_srt.write_text("not a valid srt file\n", encoding="utf-8")
+    with pytest.raises(DeliveryRefused, match="corrupt_srt_sidecar"):
+        promote_candidate(
+            work_dir=tmp_path,
+            candidate_id=candidate_id,
+            qc_record=qc_record,
+            source=source_file,
+        )
+
+    # Restore valid SRT
+    corrupt_srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nسڵاو لە هەمووان\n", encoding="utf-8")
+
+    # 3. Tampering with EDL sidecar (invalid header)
+    corrupt_edl = review_dir / f"{candidate_id}.edl"
+    corrupt_edl.write_text("CORRUPT EDL NO TITLE\n", encoding="utf-8")
+    with pytest.raises(DeliveryRefused, match="invalid_edl_sidecar"):
+        promote_candidate(
+            work_dir=tmp_path,
+            candidate_id=candidate_id,
+            qc_record=qc_record,
+            source=source_file,
+        )
+
+    # Restore valid EDL
+    corrupt_edl.write_text(
+        "TITLE: Test\n"
+        "001  AX       V     C        00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\n",
+        encoding="utf-8",
+    )
+
+    # 4. Tampering with candidate JSON (boundary invariant violation)
+    corrupt_json = review_dir / f"{candidate_id}.json"
+    tampered_clip_dict = candidate_clip.to_dict()
+    tampered_clip_dict["boundary"]["sentence_complete"] = False
+    corrupt_json.write_text(json.dumps(tampered_clip_dict), encoding="utf-8")
+    with pytest.raises(DeliveryRefused, match="plan_binding_invariant_violation"):
+        promote_candidate(
+            work_dir=tmp_path,
+            candidate_id=candidate_id,
+            qc_record=qc_record,
+            source=source_file,
+        )

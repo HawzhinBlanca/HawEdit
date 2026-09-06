@@ -44,7 +44,13 @@ from pathlib import Path
 from typing import Any, Final
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
-from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, wrap_caption_lines
+from hawedit.boundary import BoundaryInvariantViolated, assert_boundary_invariant
+from hawedit.captions import (
+    DEFAULT_MAX_CHARS_PER_LINE,
+    CaptionVerificationError,
+    verify_caption_integrity,
+    wrap_caption_lines,
+)
 from hawedit.clip import Clip, Qc, QcRecord
 from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, assert_deliverable_order
@@ -736,7 +742,14 @@ def promote_candidate(
 
     qc = Qc.from_record(qc_record)
     approved_clip = replace(clip, qc=qc)
-    approved_clip.assert_renderable()
+    try:
+        approved_clip.assert_renderable()
+    except (BoundaryInvariantViolated, ValueError) as exc:
+        raise DeliveryRefused(
+            "plan_binding_invariant_violation",
+            expected="valid renderable approved clip with boundary invariants",
+            measured=str(exc),
+        ) from exc
 
     try:
         measurement = ClipMeasurement.from_json(candidate_measured.read_text(encoding="utf-8"))
@@ -748,6 +761,55 @@ def promote_candidate(
             "measurement_sha256_mismatch",
             expected=candidate_sha,
             measured=measurement.file.sha256.lower(),
+        )
+
+    try:
+        assert_boundary_invariant(approved_clip.boundary)
+    except Exception as exc:
+        raise DeliveryRefused(
+            "plan_binding_invariant_violation",
+            expected="valid boundary invariant",
+            measured=str(exc),
+        ) from exc
+
+    try:
+        verify_caption_integrity(
+            candidate_ass,
+            expected_text=(
+                approved_clip.transcript.raw_ckb
+                if (approved_clip.transcript and approved_clip.transcript.words)
+                else None
+            ),
+        )
+    except CaptionVerificationError as exc:
+        raise DeliveryRefused(
+            "caption_integrity_failed",
+            expected="valid caption integrity (text, glyphs, geometry)",
+            measured=str(exc),
+        ) from exc
+
+    srt_text = candidate_srt.read_text(encoding="utf-8")
+    if not srt_text.strip():
+        raise DeliveryRefused(
+            "empty_sidecar",
+            expected="non-empty srt sidecar",
+            measured="empty",
+        )
+    try:
+        parse_srt_times(srt_text)
+    except DeliveryError as exc:
+        raise DeliveryRefused(
+            "corrupt_srt_sidecar",
+            expected="valid parseable srt cues",
+            measured=str(exc),
+        ) from exc
+
+    edl_text = candidate_edl.read_text(encoding="utf-8").strip()
+    if not edl_text or not edl_text.startswith("TITLE:"):
+        raise DeliveryRefused(
+            "invalid_edl_sidecar",
+            expected="valid edl starting with TITLE:",
+            measured=edl_text[:40] if edl_text else "empty",
         )
 
     effective_captions_burned = (

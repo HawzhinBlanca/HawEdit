@@ -45,7 +45,7 @@ import json
 import os
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, fields, replace
 from itertools import pairwise
 from pathlib import Path
@@ -73,8 +73,10 @@ from hawedit.captions import (
     VIRAL_FONT_SIZE,
     VIRAL_THEME,
     CaptionStyle,
+    CaptionVerificationError,
     HookBannerConfig,
     build_ass,
+    verify_caption_integrity,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import (
@@ -2900,6 +2902,31 @@ def run_pipeline(
                 margin_v=(440 if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO else None),
             ),
         )
+        expected_caption_text = " ".join(s.text for s in render_selected)
+        try:
+            verify_caption_integrity(
+                ass_path,
+                expected_text=expected_caption_text,
+                fonts_dir=FONTS_DIR,
+            )
+        except CaptionVerificationError as exc:
+            with suppress(BundleError):
+                bundle.discard()
+            log.finished("render", f"caption integrity verification failed: {exc}")
+            return replace(
+                run,
+                render=StageSkipped(
+                    stage="render",
+                    reason=f"caption integrity verification failed: {exc}",
+                    blocked_by=("§4 caption integrity",),
+                ),
+                delivery=StageSkipped(
+                    stage="delivery",
+                    reason=f"caption integrity verification failed: {exc}",
+                    blocked_by=("§4 caption integrity",),
+                ),
+            )
+
         if source_dimensions is None:
             source_dimensions = proxy_dimensions(source, ffmpeg)
         width, height = source_dimensions

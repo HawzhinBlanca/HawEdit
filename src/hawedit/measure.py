@@ -605,8 +605,8 @@ def detect_caption_ink_in_band(
     try:
         import cv2
         import numpy as np
-    except ImportError:
-        return True, 5.0
+    except ImportError as exc:
+        raise MeasureError("OpenCV and numpy are required for caption ink detection") from exc
 
     height = frame.shape[0]
     scale_y = height / 1920.0
@@ -718,12 +718,8 @@ def probe_caption_ink(
 
     try:
         import cv2
-    except ImportError:
-        return CaptionMeasurement(
-            events_count=len(cues),
-            ink_energy_detected_share=1.0,
-            median_contrast_ratio=5.0,
-        )
+    except ImportError as exc:
+        raise MeasureError("OpenCV is required for caption ink measurement") from exc
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -806,8 +802,10 @@ def measure_caption_events_contrast(
     try:
         import cv2
         import numpy as np
-    except ImportError:
-        return [(start_ms, end_ms, 5.0, False) for start_ms, end_ms in cues]
+    except ImportError as exc:
+        raise MeasureError(
+            "OpenCV and numpy are required for caption contrast measurement"
+        ) from exc
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():

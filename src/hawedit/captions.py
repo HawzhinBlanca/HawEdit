@@ -2223,15 +2223,22 @@ def verify_caption_text(
         content = str(ass_text_or_path)
 
     dialogue_lines: list[str] = []
+    all_lines: list[str] = []
     for line in content.splitlines():
         if line.startswith("Dialogue:"):
             parts = line.split(",", 9)
             if len(parts) >= 10:
+                style_name = parts[3].strip()
                 raw_text = parts[9].strip()
                 clean_text = _ASS_OVERRIDE_TAGS.sub("", raw_text).strip()
                 clean_text = re.sub(r"\\[Nn]", " ", clean_text).strip()
                 if clean_text:
-                    dialogue_lines.append(clean_text)
+                    all_lines.append(clean_text)
+                    if style_name not in {"Hook", "SpeakerTag", "EndCard", "HookBanner"}:
+                        dialogue_lines.append(clean_text)
+
+    if not dialogue_lines and all_lines:
+        dialogue_lines = all_lines
 
     if not dialogue_lines and expected_text:
         raise CaptionVerificationError("wrong text: no caption dialogue events found in ASS")
@@ -2239,9 +2246,15 @@ def verify_caption_text(
     # 1. Expected text check
     if expected_text is not None:
         if isinstance(expected_text, str):
-            expected_tokens = [normalize_sorani(w) for w in expected_text.split() if w.strip()]
+            raw_tokens = [w for w in expected_text.split() if w.strip()]
         else:
-            expected_tokens = [normalize_sorani(w) for w in expected_text if w.strip()]
+            raw_tokens = [w for w in expected_text if w.strip()]
+
+        expected_tokens: list[str] = []
+        for w in raw_tokens:
+            clean_w = _PUNCT_CLEANER.sub("", w).strip()
+            if clean_w:
+                expected_tokens.append(normalize_sorani(clean_w))
 
         found_tokens: list[str] = []
         for d_line in dialogue_lines:
@@ -2256,7 +2269,7 @@ def verify_caption_text(
             )
 
     # 2. Broken joining check
-    for d_line in dialogue_lines:
+    for d_line in all_lines:
         for ch in d_line:
             cp = ord(ch)
             if (0xFB50 <= cp <= 0xFDFF) or (0xFE70 <= cp <= 0xFEFF):
