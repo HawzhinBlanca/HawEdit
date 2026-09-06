@@ -16,7 +16,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] V09 Protect continuity, meaningful pauses and reaction timing
 - [x] V10 Make captions support the picture and avoid essential regions
 - [x] V11 Inspect the actual rendered sequence with post-render critique
-- [ ] V12 Repair specific defects within bounded iterations
+- [x] V12 Repair specific defects within bounded iterations
 - [ ] V13 Produce a coherent episode package with shared preprocessing
 - [ ] V14 Prove recovery, idempotency and maintainability
 - [ ] V15 Earn the ranking independently with holdout evaluation

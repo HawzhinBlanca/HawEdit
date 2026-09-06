@@ -10,3 +10,4 @@ TS=2026-09-06T14:23:37Z FEATURE=visual-editor-intelligence TASK=V08 TESTS=test_s
 TS=2026-09-06T14:56:53Z FEATURE=visual-editor-intelligence TASK=V09 TESTS=test_edit_cannot_fabricate_reaction_timing_or_cut_protected_pause VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T15:29:48Z FEATURE=visual-editor-intelligence TASK=V10 TESTS=test_caption_layout_avoids_essential_visual_regions_without_text_changes VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T16:02:27Z FEATURE=visual-editor-intelligence TASK=V11 TESTS=test_render_critic_uses_output_sequence_and_reports_grounded_defects VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-06T16:33:00Z FEATURE=visual-editor-intelligence TASK=V12 TESTS=test_visual_repair_is_bounded_and_cannot_change_meaning_or_approve_itself VERIFY=pass REPORT=.gate/last-test-run.xml
