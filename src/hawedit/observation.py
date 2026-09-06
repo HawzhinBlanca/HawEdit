@@ -18,11 +18,17 @@ from typing import Any, Final
 from hawedit.transcripts import validate_media_id
 
 __all__ = [
+    "ObservationBudget",
     "ObservationError",
     "ObservationInterval",
     "ObservationInventory",
     "ObservationLevel",
+    "TargetedEventCandidate",
+    "TargetedObservationPlan",
+    "VisualEventKind",
+    "apply_targeted_observation",
     "build_observation_inventory",
+    "plan_targeted_observation",
 ]
 
 _SHA256_HEX_CHARS: Final = frozenset("0123456789abcdef")
@@ -383,4 +389,198 @@ def build_observation_inventory(
         source_sha256=source_sha256,
         duration_ms=duration_ms,
         intervals=tuple(merged),
+    )
+
+
+class VisualEventKind(str, Enum):
+    """Types of visual events that can trigger targeted closer observation."""
+
+    SHOT_CUT = "shot_cut"
+    SPEAKER_TRANSITION = "speaker_transition"
+    BRIEF_REACTION = "brief_reaction"
+    OBJECT_DEMONSTRATION = "object_demonstration"
+    SCREEN_CHANGE = "screen_change"
+    UNCERTAIN_COMPOSITION = "uncertain_composition"
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationBudget:
+    """Strict resource envelope for additional targeted visual observation."""
+
+    max_additional_frames: int = 10
+    max_frames_per_event: int = 4
+    min_frame_interval_ms: int = 100
+
+    def __post_init__(self) -> None:
+        if type(self.max_additional_frames) is not int or self.max_additional_frames <= 0:
+            raise ValueError(
+                "max_additional_frames must be a positive integer, got "
+                f"{self.max_additional_frames}"
+            )
+        if type(self.max_frames_per_event) is not int or self.max_frames_per_event <= 0:
+            raise ValueError(
+                f"max_frames_per_event must be a positive integer, got {self.max_frames_per_event}"
+            )
+        if self.max_frames_per_event > self.max_additional_frames:
+            raise ValueError(
+                f"max_frames_per_event ({self.max_frames_per_event}) cannot exceed "
+                f"max_additional_frames ({self.max_additional_frames})"
+            )
+        if type(self.min_frame_interval_ms) is not int or self.min_frame_interval_ms <= 0:
+            raise ValueError(
+                "min_frame_interval_ms must be a positive integer, got "
+                f"{self.min_frame_interval_ms}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TargetedEventCandidate:
+    """Candidate visual event that may require denser targeted observation."""
+
+    event_id: str
+    kind: VisualEventKind
+    in_ms: int
+    out_ms: int
+    priority: float = 0.5
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.event_id or not isinstance(self.event_id, str):
+            raise ValueError("event_id must be a non-empty string")
+        if not isinstance(self.kind, VisualEventKind):
+            raise TypeError(f"kind must be a VisualEventKind, got {type(self.kind)}")
+        if type(self.in_ms) is not int or type(self.out_ms) is not int:
+            raise TypeError("event timestamps must be exact integers")
+        if self.in_ms < 0:
+            raise ValueError(f"event in_ms must be >= 0, got {self.in_ms}")
+        if self.out_ms <= self.in_ms:
+            raise ValueError(f"event out_ms ({self.out_ms}) must be > in_ms ({self.in_ms})")
+        if not 0.0 <= float(self.priority) <= 1.0:
+            raise ValueError(f"priority must be in 0.0..1.0, got {self.priority}")
+
+    @property
+    def duration_ms(self) -> int:
+        return self.out_ms - self.in_ms
+
+
+@dataclass(frozen=True, slots=True)
+class TargetedObservationPlan:
+    """Bounded plan for denser observation of uncertain visual events."""
+
+    targeted_frames: tuple[int, ...]
+    scheduled_events: tuple[TargetedEventCandidate, ...]
+    unobserved_events: tuple[tuple[TargetedEventCandidate, str], ...]
+    total_budget_frames: int
+    allocated_frames: int
+
+    def __post_init__(self) -> None:
+        if self.allocated_frames > self.total_budget_frames:
+            raise ObservationError(
+                f"allocated_frames ({self.allocated_frames}) exceeds "
+                f"total_budget_frames ({self.total_budget_frames})"
+            )
+        if len(self.targeted_frames) != self.allocated_frames:
+            raise ObservationError(
+                f"targeted_frames count ({len(self.targeted_frames)}) does not match "
+                f"allocated_frames ({self.allocated_frames})"
+            )
+
+    def is_covered(self, event: TargetedEventCandidate) -> bool:
+        """Returns True if at least one targeted frame falls within the event span."""
+        return any(event.in_ms <= f <= event.out_ms for f in self.targeted_frames)
+
+
+def plan_targeted_observation(
+    inventory: ObservationInventory,
+    events: Sequence[TargetedEventCandidate],
+    budget: ObservationBudget,
+) -> TargetedObservationPlan:
+    """Plans denser frame extraction around brief or uncertain visual events.
+
+    Events that fall between coarse samples are allocated extra frames within the
+    configured budget. If the budget is exhausted, remaining events are explicitly
+    marked unobserved with reason 'budget_exhausted' rather than quietly dropped
+    or exceeding the budget.
+    """
+    existing_sampled_frames: set[int] = set()
+    for interval in inventory.intervals:
+        existing_sampled_frames.update(interval.source_frame_indices)
+
+    sorted_events = sorted(events, key=lambda e: (-e.priority, e.in_ms, e.out_ms))
+
+    targeted_frames_list: list[int] = []
+    scheduled_events_list: list[TargetedEventCandidate] = []
+    unobserved_events_list: list[tuple[TargetedEventCandidate, str]] = []
+
+    remaining_budget = budget.max_additional_frames
+
+    for event in sorted_events:
+        already_covered = any(event.in_ms <= f <= event.out_ms for f in existing_sampled_frames)
+        if already_covered:
+            scheduled_events_list.append(event)
+            continue
+
+        if remaining_budget <= 0:
+            unobserved_events_list.append((event, "budget_exhausted"))
+            continue
+
+        duration_ms = event.duration_ms
+        desired_frames = min(
+            budget.max_frames_per_event,
+            max(1, duration_ms // budget.min_frame_interval_ms),
+            remaining_budget,
+        )
+
+        if desired_frames <= 0:
+            unobserved_events_list.append((event, "budget_exhausted"))
+            continue
+
+        if desired_frames == 1:
+            frame_times = [event.in_ms + duration_ms // 2]
+        else:
+            step = duration_ms / (desired_frames + 1)
+            frame_times = [round(event.in_ms + (i + 1) * step) for i in range(desired_frames)]
+
+        targeted_frames_list.extend(frame_times)
+        remaining_budget -= len(frame_times)
+        scheduled_events_list.append(event)
+
+    sorted_targeted_frames = tuple(sorted(targeted_frames_list))
+
+    return TargetedObservationPlan(
+        targeted_frames=sorted_targeted_frames,
+        scheduled_events=tuple(scheduled_events_list),
+        unobserved_events=tuple(unobserved_events_list),
+        total_budget_frames=budget.max_additional_frames,
+        allocated_frames=len(sorted_targeted_frames),
+    )
+
+
+def apply_targeted_observation(
+    inventory: ObservationInventory,
+    plan: TargetedObservationPlan,
+) -> ObservationInventory:
+    """Applies a targeted observation plan to an inventory, promoting observed spans to SAMPLED."""
+    if not plan.targeted_frames:
+        return inventory
+
+    all_sampled: set[int] = set()
+    for interval in inventory.intervals:
+        all_sampled.update(interval.source_frame_indices)
+    all_sampled.update(plan.targeted_frames)
+
+    speech_intervals = [(i.in_ms, i.out_ms) for i in inventory.intervals if i.has_speech]
+    model_intervals = [
+        (i.in_ms, i.out_ms)
+        for i in inventory.intervals
+        if i.level == ObservationLevel.MODEL_INSPECTED
+    ]
+
+    return build_observation_inventory(
+        media_id=inventory.media_id,
+        source_sha256=inventory.source_sha256,
+        duration_ms=inventory.duration_ms,
+        speech_intervals=speech_intervals,
+        sampled_frame_times_ms=sorted(all_sampled),
+        model_inspected_intervals=model_intervals,
     )
