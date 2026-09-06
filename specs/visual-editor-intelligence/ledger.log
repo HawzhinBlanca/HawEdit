@@ -12,3 +12,4 @@ TS=2026-09-06T15:29:48Z FEATURE=visual-editor-intelligence TASK=V10 TESTS=test_c
 TS=2026-09-06T16:02:27Z FEATURE=visual-editor-intelligence TASK=V11 TESTS=test_render_critic_uses_output_sequence_and_reports_grounded_defects VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T16:33:00Z FEATURE=visual-editor-intelligence TASK=V12 TESTS=test_visual_repair_is_bounded_and_cannot_change_meaning_or_approve_itself VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T17:03:54Z FEATURE=visual-editor-intelligence TASK=V13 TESTS=test_episode_visual_delivery_shares_preprocessing_and_reports_each_state VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-06T17:38:09Z FEATURE=visual-editor-intelligence TASK=V14 TESTS=test_visual_workflow_recovery_preserves_evidence_and_publication_identity VERIFY=pass REPORT=.gate/last-test-run.xml

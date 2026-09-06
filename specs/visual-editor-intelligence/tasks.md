@@ -18,7 +18,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] V11 Inspect the actual rendered sequence with post-render critique
 - [x] V12 Repair specific defects within bounded iterations
 - [x] V13 Produce a coherent episode package with shared preprocessing
-- [ ] V14 Prove recovery, idempotency and maintainability
+- [x] V14 Prove recovery, idempotency and maintainability
 - [ ] V15 Earn the ranking independently with holdout evaluation
 
 | Task | Dependency | Smallest observable outcome | Criteria / proposed test evidence |
