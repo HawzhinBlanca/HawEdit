@@ -1,1 +1,2 @@
 TS=2026-09-06T08:50:39Z FEATURE=visual-editor-intelligence TASK=V00 TESTS=test_missing_visual_measurement_dependency_never_reports_success,test_promotion_rejects_changed_sidecar_or_plan_binding VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-06T09:27:30Z FEATURE=visual-editor-intelligence TASK=V01 TESTS=test_visual_plan_replay_preserves_all_artifact_timebases VERIFY=pass REPORT=.gate/last-test-run.xml
