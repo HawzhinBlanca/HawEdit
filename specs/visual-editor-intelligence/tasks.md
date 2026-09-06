@@ -11,7 +11,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] V04 Distinguish people, speakers, listeners and off-screen speech
 - [x] V05 Connect story meaning to visual events
 - [x] V06 Select complete ideas with setup and payoff
-- [ ] V07 Plan every shot with an editorial purpose
+- [x] V07 Plan every shot with an editorial purpose
 - [ ] V08 Compose across whole shots without crop jitter
 - [ ] V09 Protect continuity, meaningful pauses and reaction timing
 - [ ] V10 Make captions support the picture and avoid essential regions
