@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from hawedit.story import (
+    StoryCandidateResult,
     StoryGroundingError,
     StoryMap,
     StoryRelation,
@@ -176,3 +177,186 @@ def test_story_relation_bounds_and_serialization() -> None:
             out_ms=2000,
             confidence=1.5,
         )
+
+
+def test_visual_candidate_keeps_required_context_and_landing_beat() -> None:
+    """VE-06: Candidate expansion preserves necessary setup and landing beat or rejects."""
+    qa_rel = StoryRelation(
+        relation_id="rel_qa",
+        kind=StoryRelationKind.QUESTION_ANSWER,
+        canonical_sentence_ids=("s_02",),
+        visual_event_ids=("v_02",),
+        in_ms=3500,
+        out_ms=8000,
+        confidence=0.9,
+        required_context_sentence_ids=("s_01",),
+        summary="Host asks question and guest delivers payoff answer",
+    )
+    payoff_rel = StoryRelation(
+        relation_id="rel_payoff",
+        kind=StoryRelationKind.SETUP_PAYOFF,
+        canonical_sentence_ids=("s_04",),
+        visual_event_ids=("v_04",),
+        in_ms=14500,
+        out_ms=19000,
+        confidence=0.88,
+        required_context_sentence_ids=("s_03",),
+        summary="Contextual setup and decisive concluding claim",
+    )
+    far_rel = StoryRelation(
+        relation_id="rel_far",
+        kind=StoryRelationKind.CLAIM_QUALIFICATION,
+        canonical_sentence_ids=("s_late",),
+        visual_event_ids=("v_late",),
+        in_ms=100000,
+        out_ms=105000,
+        confidence=0.85,
+        required_context_sentence_ids=("s_early",),
+        summary="Early assumption qualified with later evidence",
+    )
+
+    story_map = build_story_map(
+        media_id="interview_clip",
+        relations=[qa_rel, payoff_rel, far_rel],
+        known_sentence_ids=[
+            "s_01",
+            "s_02",
+            "s_03",
+            "s_04",
+            "s_solo",
+            "s_early",
+            "s_late",
+        ],
+        known_visual_event_ids=["v_02", "v_04", "v_late"],
+    )
+
+    sentence_spans = {
+        "s_01": (1000, 3000),
+        "s_02": (3500, 8000),
+        "s_03": (10000, 14000),
+        "s_04": (14500, 19000),
+        "s_solo": (25000, 32000),
+        "s_early": (35000, 40000),
+        "s_late": (100000, 105000),
+    }
+    ordered_ids = ["s_01", "s_02", "s_03", "s_04", "s_solo", "s_early", "s_late"]
+
+    # 1. Candidate proposes only the answer [3500..8000], omitting setup question:
+    #    System SHALL expand to include setup question s_01 [1000..8000].
+    res_setup = story_map.resolve_candidate(
+        candidate_id="cand_omit_setup",
+        in_ms=3500,
+        out_ms=8000,
+        sentence_spans=sentence_spans,
+        ordered_sentence_ids=ordered_ids,
+        max_duration_ms=60000,
+    )
+    assert res_setup.eligible is True
+    assert res_setup.was_expanded is True
+    assert res_setup.in_ms == 1000
+    assert res_setup.out_ms == 8000
+    assert "s_01" in res_setup.covered_sentence_ids
+    assert "s_02" in res_setup.covered_sentence_ids
+    assert res_setup.active_relation_ids == ("rel_qa",)
+
+    # 2. Candidate proposes only setup [10000..15000], cutting off landing beat mid-idea:
+    #    System SHALL expand forward to cover complete landing beat [10000..19000].
+    res_landing = story_map.resolve_candidate(
+        candidate_id="cand_cut_payoff",
+        in_ms=10000,
+        out_ms=15000,
+        sentence_spans=sentence_spans,
+        ordered_sentence_ids=ordered_ids,
+        max_duration_ms=60000,
+    )
+    assert res_landing.eligible is True
+    assert res_landing.was_expanded is True
+    assert res_landing.in_ms == 10000
+    assert res_landing.out_ms == 19000
+    assert "s_03" in res_landing.covered_sentence_ids
+    assert "s_04" in res_landing.covered_sentence_ids
+    assert res_landing.active_relation_ids == ("rel_payoff",)
+
+    # 3. Candidate captures both setup and landing beat:
+    #    Preserved as-is without spurious expansion.
+    res_complete = story_map.resolve_candidate(
+        candidate_id="cand_complete",
+        in_ms=10000,
+        out_ms=19000,
+        sentence_spans=sentence_spans,
+        ordered_sentence_ids=ordered_ids,
+        max_duration_ms=60000,
+    )
+    assert res_complete.eligible is True
+    assert res_complete.was_expanded is False
+    assert res_complete.in_ms == 10000
+    assert res_complete.out_ms == 19000
+
+    # 4. Standalone complete statement:
+    #    Preserved cleanly without unnecessary bloating.
+    res_solo = story_map.resolve_candidate(
+        candidate_id="cand_solo",
+        in_ms=25000,
+        out_ms=32000,
+        sentence_spans=sentence_spans,
+        ordered_sentence_ids=ordered_ids,
+        max_duration_ms=60000,
+    )
+    assert res_solo.eligible is True
+    assert res_solo.was_expanded is False
+    assert res_solo.in_ms == 25000
+    assert res_solo.out_ms == 32000
+    assert res_solo.active_relation_ids == ()
+
+    # 5. Candidate requires context that exceeds maximum duration constraint:
+    #    Expansion from 35000 to 105000 would be 70s (> 60s max).
+    #    System SHALL reject before ranking (eligible=False, explicit rejection reason).
+    res_exceed = story_map.resolve_candidate(
+        candidate_id="cand_too_far",
+        in_ms=100000,
+        out_ms=105000,
+        sentence_spans=sentence_spans,
+        max_duration_ms=60000,
+    )
+    assert res_exceed.eligible is False
+    assert res_exceed.rejection_reason is not None
+    assert "exceeds maximum allowed 60000ms" in res_exceed.rejection_reason
+
+    # 6. Candidate breaking contiguous flow (missing intermediate sentence in narrative order):
+    res_gap = story_map.resolve_candidate(
+        candidate_id="cand_gap",
+        in_ms=1000,
+        out_ms=8000,
+        sentence_spans={
+            "s_01": (1000, 3000),
+            "s_gap": (20000, 25000),
+            "s_02": (3500, 8000),
+        },
+        ordered_sentence_ids=["s_01", "s_gap", "s_02"],
+        max_duration_ms=60000,
+    )
+    assert res_gap.eligible is False
+    assert res_gap.rejection_reason is not None
+    assert "breaks contiguous narrative flow" in res_gap.rejection_reason
+
+    # 7. Batch filtering: only complete and validly expanded candidates advance to ranking
+    proposals = [
+        ("cand_omit_setup", 3500, 8000),
+        ("cand_too_far", 100000, 105000),
+        ("cand_solo", 25000, 32000),
+    ]
+    ranked_eligible = story_map.filter_and_expand_candidates(
+        proposals,
+        sentence_spans=sentence_spans,
+        ordered_sentence_ids=ordered_ids,
+        max_duration_ms=60000,
+    )
+    assert len(ranked_eligible) == 2
+    assert ranked_eligible[0].candidate_id == "cand_omit_setup"
+    assert ranked_eligible[0].in_ms == 1000
+    assert ranked_eligible[1].candidate_id == "cand_solo"
+
+    # 8. StoryCandidateResult serialization round-trip
+    res_dict = res_setup.to_dict()
+    restored_res = StoryCandidateResult.from_dict(res_dict)
+    assert restored_res == res_setup
