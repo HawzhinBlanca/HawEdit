@@ -13,7 +13,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] V06 Select complete ideas with setup and payoff
 - [x] V07 Plan every shot with an editorial purpose
 - [x] V08 Compose across whole shots without crop jitter
-- [ ] V09 Protect continuity, meaningful pauses and reaction timing
+- [x] V09 Protect continuity, meaningful pauses and reaction timing
 - [ ] V10 Make captions support the picture and avoid essential regions
 - [ ] V11 Inspect the actual rendered sequence with post-render critique
 - [ ] V12 Repair specific defects within bounded iterations
