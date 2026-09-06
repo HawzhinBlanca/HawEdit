@@ -633,6 +633,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `resolve.py` | Editorial | DaVinci Resolve Studio live editorial integration bridge conforming 9:16 vertical timelines, EDL cuts, and editorial markers. |
 | `content_type.py` | Editorial | Content-type profiles (podcast, interview, news, social) driving editorial durations, caption styling, and camera pacing (Task T4.5, ADR D-265). |
 | `comparison_kit.py` | Phase 5 | Comparison kit for blind pairwise human evaluation: seeded randomisation, blinded staging, Kurdish Sorani rating forms, Wilson score 95% confidence intervals, and QcRecord export (Task T5.1, H7). |
+| `edit_plan.py` | Visual Editor | Unified visual edit contract, editorial brief, effective configuration, and source-to-output time mapping with deterministic multi-cut conforming across EDL, SRT, and OpenTimelineIO artifacts. |
 
 ## Two conventions worth knowing before reading the code
 
