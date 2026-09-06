@@ -559,6 +559,7 @@ def render_boundary_revision(
             source_width=width,
             source_height=height,
             ffmpeg=ffmpeg,
+            for_review=True,
         )
     except (IngestError, RenderError, ValueError) as exc:
         ass_path.unlink(missing_ok=True)
@@ -912,6 +913,7 @@ def render_caption_revision(
             source_width=width,
             source_height=height,
             ffmpeg=ffmpeg,
+            for_review=True,
         )
     except (IngestError, RenderError, ValueError) as exc:
         ass_path.unlink(missing_ok=True)

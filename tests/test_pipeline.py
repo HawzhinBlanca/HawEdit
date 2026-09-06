@@ -2057,6 +2057,62 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
     )
 
 
+def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> None:
+    """AC-01: When render has no human QC approval, retain review candidate privately.
+
+    Withhold public delivery until approval is provided.
+    """
+    if find_ffmpeg() is None:
+        pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
+    from hawedit.pipeline import Delivery, _clip_id
+
+    work = tmp_path / "work"
+    clip_id = _clip_id("unreviewed", (0,))
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="unreviewed",
+        transcript=a_transcript("unreviewed"),
+        select_sentences=(0,),
+        verdict=a_verdict(100, 1_700),
+    )
+    assert run.render is not None and not isinstance(run.render, StageSkipped), run.render
+    review_dir = work / "review" / clip_id
+    assert review_dir.is_dir(), "review candidate directory must exist"
+    assert Path(run.render.path) == review_dir / f"{clip_id}.mp4"
+    assert (review_dir / f"{clip_id}.mp4").is_file()
+    assert (review_dir / f"{clip_id}.ass").is_file()
+    assert (review_dir / f"{clip_id}.srt").is_file()
+    assert (review_dir / f"{clip_id}.edl").is_file()
+    assert (review_dir / f"{clip_id}.json").is_file()
+    assert (review_dir / f"{clip_id}.measured.json").is_file()
+
+    public_dir = work / clip_id
+    assert not public_dir.exists(), "public delivery directory must not exist"
+    assert isinstance(run.delivery, StageSkipped)
+    assert run.delivery.reason == "awaiting human review"
+    assert "human QC review" in run.delivery.blocked_by
+
+    # Now approve unchanged candidate and verify promotion without re-rendering
+    cand_bytes = (review_dir / f"{clip_id}.mp4").read_bytes()
+    cand_sha = hashlib.sha256(cand_bytes).hexdigest()
+    run_approved = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="unreviewed",
+        transcript=a_transcript("unreviewed"),
+        select_sentences=(0,),
+        verdict=a_verdict(100, 1_700),
+        qc=_test_qc(True, reviewed_sha256=cand_sha),
+    )
+    assert run_approved.render is not None and not isinstance(run_approved.render, StageSkipped)
+    assert public_dir.is_dir(), "public delivery directory must now exist"
+    promoted_mp4 = public_dir / f"{clip_id}.mp4"
+    assert promoted_mp4.is_file()
+    assert promoted_mp4.read_bytes() == cand_bytes
+    assert isinstance(run_approved.delivery, Delivery)
+
+
 # =========================================================================================
 # §2's delivery set is all-or-none
 #

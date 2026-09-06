@@ -32,20 +32,26 @@ alignment (D-151).
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import math
 import re
 from collections.abc import Sequence
+from dataclasses import replace
+from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
+from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, wrap_caption_lines
-from hawedit.clip import Clip
+from hawedit.clip import Clip, Qc, QcRecord
 from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.timeline import build_episode_otio_timeline, build_otio_timeline, serialize_otio
 
 __all__ = [
+    "CandidateState",
     "DeliveryError",
     "DeliveryRefused",
     "build_edl",
@@ -53,6 +59,7 @@ __all__ = [
     "ms_to_srt_time",
     "ms_to_timecode",
     "parse_srt_times",
+    "promote_candidate",
     "publish_delivery_bundle",
     "publish_episode_timeline",
     "reconcile_delivery",
@@ -76,6 +83,17 @@ class DeliveryRefused(DeliveryError):
         self.reason = reason
         self.expected = expected
         self.measured = measured
+
+
+class CandidateState(str, Enum):
+    """Lifecycle states of a clip candidate (Phase 1 / ADR D-264)."""
+
+    DRAFT = "draft"
+    RENDERED_FOR_REVIEW = "rendered_for_review"
+    REJECTED = "rejected"
+    APPROVED = "approved"
+    PUBLISHED = "published"
+    FAILED = "failed"
 
 
 def _nonnegative_milliseconds(value: object, label: str) -> int:
@@ -343,6 +361,7 @@ def reconcile_delivery(
     shot_cut_guard_ms: int = 1500,
     lufs_tolerance: float | None = None,
     min_face_share: float | None = None,
+    for_review: bool = False,
 ) -> None:
     """Reconcile contract claims against independently measured ground truth.
 
@@ -486,7 +505,8 @@ def reconcile_delivery(
 
     # Clause 8: Human Review Binding (Task T1.3 / Register Row 4)
     if (
-        clip.qc
+        not for_review
+        and clip.qc
         and clip.qc.human_reviewed
         and clip.qc.reviewed_sha256 is not None
         and clip.qc.reviewed_sha256.lower() != measurement.file.sha256.lower()
@@ -515,7 +535,8 @@ def reconcile_delivery(
 
     # Clause 10: Production Profile Requirements (Task T1.9)
     if (
-        clip.provenance
+        not for_review
+        and clip.provenance
         and clip.provenance.profile == "production"
         and not (clip.qc and clip.qc.human_reviewed and clip.qc.reviewed_sha256)
     ):
@@ -613,3 +634,156 @@ def publish_episode_timeline(
     otio_path = output_dir / "timeline.otio"
     otio_path.write_text(serialize_otio(otio_doc), encoding="utf-8")
     return otio_path
+
+
+def promote_candidate(
+    work_dir: Path,
+    candidate_id: str,
+    qc_record: QcRecord,
+    *,
+    source: Path | None = None,
+    ffmpeg: Path | None = None,
+    captions_burned_in: bool | None = None,
+    planned_punch_ins: Sequence[tuple[int, float]] = (),
+    source_shot_cuts_ms: Sequence[int] = (),
+    fps: float = 25.0,
+    delivery_lufs: float = -14.0,
+    target_true_peak_db: float = -0.9,
+    shot_cut_guard_ms: int = 1500,
+    lufs_tolerance: float | None = None,
+    min_face_share: float | None = None,
+) -> tuple[Path, ...]:
+    """Verify and promote an unchanged review candidate to public delivery (AC-02).
+
+    Validates:
+    - qc_record is approved.
+    - review candidate directory exists under work_dir / "review" / candidate_id.
+    - candidate MP4 exists and SHA-256 matches qc_record.mp4_sha256.
+    - candidate sidecars exist (ass, srt, edl, json, measured.json).
+    - candidate editing JSON loads, clip_id matches candidate_id, and assert_renderable()
+      holds when bound to approved QC.
+    - candidate measured.json loads and matches the MP4 SHA-256.
+    - if source is provided, verifies source file exists and matches clip.media_sha256.
+    - reconciles delivery against measured truth.
+    - atomically publishes the exact candidate files into public work_dir / candidate_id
+      using ArtifactBundle without re-rendering.
+
+    Returns:
+        tuple[Path, ...]: published artifact paths in work_dir / candidate_id.
+    """
+    if not qc_record.is_approved:
+        raise DeliveryRefused(
+            "unapproved_qc_record",
+            expected="approved verdict (one of pass, approved, accept, passed)",
+            measured=qc_record.verdict,
+        )
+
+    review_dir = work_dir / "review" / candidate_id
+    if not review_dir.is_dir():
+        raise DeliveryError(f"review candidate directory not found: {review_dir}")
+
+    candidate_mp4 = review_dir / f"{candidate_id}.mp4"
+    candidate_ass = review_dir / f"{candidate_id}.ass"
+    candidate_srt = review_dir / f"{candidate_id}.srt"
+    candidate_edl = review_dir / f"{candidate_id}.edl"
+    candidate_json = review_dir / f"{candidate_id}.json"
+    candidate_measured = review_dir / f"{candidate_id}.measured.json"
+
+    for path in (
+        candidate_mp4,
+        candidate_ass,
+        candidate_srt,
+        candidate_edl,
+        candidate_json,
+        candidate_measured,
+    ):
+        if not path.is_file():
+            raise DeliveryError(f"review candidate is missing required artifact: {path.name}")
+
+    mp4_bytes = candidate_mp4.read_bytes()
+    candidate_sha = hashlib.sha256(mp4_bytes).hexdigest().lower()
+    if candidate_sha != qc_record.mp4_sha256.lower():
+        raise DeliveryRefused(
+            "qc_sha256_mismatch",
+            expected=qc_record.mp4_sha256.lower(),
+            measured=candidate_sha,
+        )
+
+    try:
+        clip_data = json.loads(candidate_json.read_text(encoding="utf-8"))
+        clip = Clip.from_dict(clip_data)
+    except Exception as exc:
+        raise DeliveryError(f"invalid candidate editing JSON: {exc}") from exc
+
+    if clip.clip_id != candidate_id:
+        raise DeliveryRefused(
+            "candidate_id_mismatch",
+            expected=candidate_id,
+            measured=clip.clip_id,
+        )
+
+    if source is not None:
+        if not source.is_file():
+            raise DeliveryError(f"source media file not found: {source}")
+        if clip.media_sha256 is not None:
+            source_sha = hashlib.sha256(source.read_bytes()).hexdigest().lower()
+            if source_sha != clip.media_sha256.lower():
+                raise DeliveryRefused(
+                    "source_identity_mismatch",
+                    expected=clip.media_sha256.lower(),
+                    measured=source_sha,
+                )
+
+    qc = Qc.from_record(qc_record)
+    approved_clip = replace(clip, qc=qc)
+    approved_clip.assert_renderable()
+
+    try:
+        measurement = ClipMeasurement.from_json(candidate_measured.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise DeliveryError(f"invalid candidate measurement JSON: {exc}") from exc
+
+    if measurement.file.sha256.lower() != candidate_sha:
+        raise DeliveryRefused(
+            "measurement_sha256_mismatch",
+            expected=candidate_sha,
+            measured=measurement.file.sha256.lower(),
+        )
+
+    effective_captions_burned = (
+        captions_burned_in
+        if captions_burned_in is not None
+        else bool(approved_clip.output and approved_clip.output.caption_style != "none")
+    )
+
+    reconcile_delivery(
+        clip=approved_clip,
+        measurement=measurement,
+        captions_burned_in=effective_captions_burned,
+        planned_punch_ins=planned_punch_ins,
+        source_shot_cuts_ms=source_shot_cuts_ms,
+        fps=fps,
+        delivery_lufs=delivery_lufs,
+        target_true_peak_db=target_true_peak_db,
+        shot_cut_guard_ms=shot_cut_guard_ms,
+        lufs_tolerance=lufs_tolerance,
+        min_face_share=min_face_share,
+        for_review=False,
+    )
+
+    bundle = ArtifactBundle.create(work_dir, candidate_id)
+    try:
+        bundle.staged_path("mp4").write_bytes(mp4_bytes)
+        bundle.staged_path("ass").write_bytes(candidate_ass.read_bytes())
+        bundle.staged_path("srt").write_bytes(candidate_srt.read_bytes())
+        bundle.staged_path("edl").write_bytes(candidate_edl.read_bytes())
+        bundle.staged_path("measured.json").write_bytes(candidate_measured.read_bytes())
+        bundle.write_text(
+            "json",
+            json.dumps(approved_clip.to_dict(), ensure_ascii=False, indent=2),
+        )
+        return bundle.publish()
+    except Exception:
+        with contextlib.suppress(BundleError):
+            bundle.discard()
+        raise

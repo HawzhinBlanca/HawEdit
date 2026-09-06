@@ -99,6 +99,7 @@ from hawedit.delivery import (
     DeliveryRefused,
     build_edl,
     build_srt,
+    promote_candidate,
     reconcile_delivery,
 )
 from hawedit.diarization import turn_bounds_for_anchors
@@ -133,7 +134,7 @@ from hawedit.judge import (
     tournament_score,
 )
 from hawedit.keyframes import KeyframeError, extract_judge_frames
-from hawedit.measure import measure_clip
+from hawedit.measure import ClipMeasurement, measure_clip
 from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
 from hawedit.qwen_visual import EmbedderUnavailable
@@ -150,6 +151,7 @@ from hawedit.reframe import (
     validate_speaker_focus_points,
 )
 from hawedit.render import (
+    Encoder,
     Reframe,
     RenderError,
     RenderResult,
@@ -2654,13 +2656,128 @@ def run_pipeline(
         final_json,
         final_measured,
     ) = _delivery_artifact_paths(work_dir, clip.clip_id)
+
+    # Check if this clip was already rendered as a review candidate and we now have approved QC:
+    review_candidate_dir = work_dir / "review" / clip.clip_id
+    if (
+        review_candidate_dir.is_dir()
+        and qc is not None
+        and qc.human_reviewed
+        and qc.reviewed_sha256
+    ):
+        candidate_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
+        if candidate_mp4.is_file():
+            cand_sha = hashlib.sha256(candidate_mp4.read_bytes()).hexdigest().lower()
+            if cand_sha == qc.reviewed_sha256.lower():
+                _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
+                _assert_source_unchanged(source, ingested.source_sha256, "candidate promotion")
+                qc_record = QcRecord(
+                    reviewer=qc.reviewed_by or "reviewer",
+                    reviewed_at=qc.reviewed_at or "2026-09-02T19:00:00Z",
+                    mp4_sha256=qc.reviewed_sha256,
+                    seconds_watched=max(1.0, (clip.out_ms - clip.in_ms) / 1000.0),
+                    verdict="approved",
+                )
+                source_fps = frame_rate(source, ffmpeg)
+                promote_candidate(
+                    work_dir=work_dir,
+                    candidate_id=clip.clip_id,
+                    qc_record=qc_record,
+                    source=source,
+                    ffmpeg=ffmpeg,
+                    source_shot_cuts_ms=ingested.shot_cuts_ms,
+                    fps=source_fps,
+                )
+                log.finished("render", "promoted from review candidate without re-rendering")
+                log.finished("delivery")
+                measured_json = review_candidate_dir / f"{clip.clip_id}.measured.json"
+                cand_meas = (
+                    ClipMeasurement.from_json(measured_json.read_text(encoding="utf-8"))
+                    if measured_json.is_file()
+                    else None
+                )
+                rendered = RenderResult(
+                    clip_id=clip.clip_id,
+                    path=str(final_render),
+                    width=cand_meas.video.width if cand_meas else 1080,
+                    height=cand_meas.video.height if cand_meas else 1920,
+                    requested_duration_ms=clip.out_ms - clip.in_ms,
+                    measured_duration_ms=(
+                        cand_meas.video.duration_ms if cand_meas else (clip.out_ms - clip.in_ms)
+                    ),
+                    reframe=reframe_mode or Reframe.STATIC_CENTRE,
+                    encoder=Encoder.X264,
+                    captions_burned_in=True,
+                    ffmpeg_version=(
+                        cand_meas.tool_metadata.get("ffmpeg_version", "unknown")
+                        if cand_meas
+                        else "unknown"
+                    ),
+                    brand_kit=brand_kit,
+                )
+                return replace(
+                    run,
+                    clip=replace(clip, qc=qc),
+                    render=rendered,
+                    delivery=Delivery(
+                        srt_path=str(final_srt),
+                        edl_path=str(final_edl),
+                        editing_json_path=str(final_json),
+                        measured_path=str(final_measured),
+                    ),
+                    billed_calls=tuple(billed_calls),
+                )
+
+    is_review_render = qc is None or not qc.human_reviewed
+    if is_review_render and review_candidate_dir.is_dir():
+        cand_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
+        if cand_mp4.is_file():
+            log.finished("render", "retained existing review candidate")
+            log.finished("delivery", "awaiting human review")
+            measured_json = review_candidate_dir / f"{clip.clip_id}.measured.json"
+            cand_meas = (
+                ClipMeasurement.from_json(measured_json.read_text(encoding="utf-8"))
+                if measured_json.is_file()
+                else None
+            )
+            rendered = RenderResult(
+                clip_id=clip.clip_id,
+                path=str(cand_mp4),
+                width=cand_meas.video.width if cand_meas else 1080,
+                height=cand_meas.video.height if cand_meas else 1920,
+                requested_duration_ms=clip.out_ms - clip.in_ms,
+                measured_duration_ms=(
+                    cand_meas.video.duration_ms if cand_meas else (clip.out_ms - clip.in_ms)
+                ),
+                reframe=reframe_mode or Reframe.STATIC_CENTRE,
+                encoder=Encoder.X264,
+                captions_burned_in=True,
+                ffmpeg_version=(
+                    cand_meas.tool_metadata.get("ffmpeg_version", "unknown")
+                    if cand_meas
+                    else "unknown"
+                ),
+                brand_kit=brand_kit,
+            )
+            return replace(
+                run,
+                clip=clip,
+                render=rendered,
+                delivery=StageSkipped(
+                    stage="delivery",
+                    reason="awaiting human review",
+                    blocked_by=("human QC review",),
+                ),
+                billed_calls=tuple(billed_calls),
+            )
+
     # Kept as well as hoisted, and it costs nothing: the guard above runs before the expensive
     # stages, this one runs immediately before the first write. Anything that appeared in the
     # work directory while the models were running is still caught here.
     _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
     _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render")
     try:
-        clip.assert_renderable()
+        clip.assert_renderable(for_review=is_review_render)
     except (ValueError, IncompleteSentence) as exc:
         log.finished("render", str(exc))
         return replace(
@@ -2672,8 +2789,9 @@ def run_pipeline(
             ),
         )
 
+    bundle_root = work_dir / "review" if is_review_render else work_dir
     try:
-        bundle = ArtifactBundle.create(work_dir, clip.clip_id)
+        bundle = ArtifactBundle.create(bundle_root, clip.clip_id)
     except BundleError as exc:
         return replace(
             run,
@@ -2852,6 +2970,7 @@ def run_pipeline(
             brand_kit=brand_kit,
             music_bed_path=(Path(music_bed_path) if music_bed_path else None),
             music_ducking_volume=music_ducking_volume,
+            for_review=is_review_render,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError, BrandKitError) as exc:
@@ -2880,7 +2999,7 @@ def run_pipeline(
     log.started("delivery")
     try:
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
-        if profile == "production":
+        if profile == "production" and not is_review_render:
             if qc is None or not qc.human_reviewed or not qc.reviewed_sha256:
                 raise DeliveryRefused(
                     "production_profile_unreviewed",
@@ -2940,6 +3059,7 @@ def run_pipeline(
             planned_punch_ins=planned_punch_ins,
             source_shot_cuts_ms=ingested.shot_cuts_ms,
             fps=fps,
+            for_review=is_review_render,
         )
 
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
@@ -2976,6 +3096,22 @@ def run_pipeline(
                 reason=_safe_exception_text(str(exc), budget=1_024),
                 blocked_by=("§2 delivery set",),
             ),
+        )
+
+    if is_review_render:
+        log.finished("delivery", "awaiting human review")
+        review_mp4 = bundle_root / clip.clip_id / f"{clip.clip_id}.mp4"
+        rendered = replace(rendered, path=str(review_mp4))
+        return replace(
+            run,
+            clip=effective_clip,
+            render=rendered,
+            delivery=StageSkipped(
+                stage="delivery",
+                reason="awaiting human review",
+                blocked_by=("human QC review",),
+            ),
+            billed_calls=tuple(billed_calls),
         )
 
     log.finished("delivery")

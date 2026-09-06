@@ -1181,7 +1181,7 @@ class Clip:
                 f"({self.boundary.final_out_ms})."
             )
 
-    def assert_renderable(self) -> None:
+    def assert_renderable(self, *, for_review: bool = False) -> None:
         """The gate before Stage 6. §8.3 requires this on every shipped clip.
 
         Raises:
@@ -1198,18 +1198,26 @@ class Clip:
         # the gate before output "(always)", so absence is refusal, not permission. The
         # same for the judge: an unjudged clip has no meaning-fidelity or misleading-edit
         # score, which are the numbers §8.2 says matter most. Audit finding #3.
-        if self.qc is None:
-            raise ValueError(
-                f"clip {self.clip_id!r} carries no QC record. §2 puts a human QC gate before "
-                f"output, always — a missing record is not a pass."
-            )
-        if not self.qc.human_reviewed:
-            raise ValueError(
-                f"clip {self.clip_id!r} has not cleared human QC "
-                f"(auto_pass={self.qc.auto_pass}, flags: {list(self.qc.flags)}). "
-                f"§2 puts a human QC gate before output, always — automation may inform "
-                f"review, but it cannot replace it."
-            )
+        if not for_review:
+            if self.qc is None:
+                raise ValueError(
+                    f"clip {self.clip_id!r} carries no QC record. §2 puts a human QC gate before "
+                    f"output, always — a missing record is not a pass."
+                )
+            if not self.qc.human_reviewed:
+                raise ValueError(
+                    f"clip {self.clip_id!r} has not cleared human QC "
+                    f"(auto_pass={self.qc.auto_pass}, flags: {list(self.qc.flags)}). "
+                    f"§2 puts a human QC gate before output, always — automation may inform "
+                    f"review, but it cannot replace it."
+                )
+        else:
+            if self.qc is not None and (not self.qc.auto_pass or bool(self.qc.flags)):
+                raise ValueError(
+                    f"clip {self.clip_id!r} has not cleared QC "
+                    f"(auto_pass={self.qc.auto_pass}, flags: {list(self.qc.flags)}). "
+                    f"§2 puts a QC gate before output, always — flags must be resolved."
+                )
         if self.editorial is None:
             raise ValueError(
                 f"clip {self.clip_id!r} has no editorial block: it was never judged, so its "

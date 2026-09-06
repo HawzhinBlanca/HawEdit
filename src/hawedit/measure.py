@@ -188,6 +188,80 @@ class ClipMeasurement:
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ClipMeasurement:
+        vmaf_data = data.get("vmaf")
+        audio_data = data["audio"]
+        silences = [
+            SilenceInterval(
+                start_ms=s["start_ms"],
+                end_ms=s["end_ms"],
+                duration_ms=s["duration_ms"],
+            )
+            for s in audio_data.get("silences", [])
+        ]
+        audio = AudioMeasurement(
+            codec=audio_data["codec"],
+            sample_rate=audio_data["sample_rate"],
+            channels=audio_data["channels"],
+            duration_ms=audio_data["duration_ms"],
+            integrated_lufs=audio_data["integrated_lufs"],
+            true_peak_db=audio_data["true_peak_db"],
+            lra_lu=audio_data["lra_lu"],
+            silences=silences,
+            total_silence_ms=audio_data["total_silence_ms"],
+            silence_share=audio_data["silence_share"],
+        )
+        return cls(
+            schema=data["schema"],
+            file=FileSummary(
+                path=data["file"]["path"],
+                sha256=data["file"]["sha256"],
+                size_bytes=data["file"]["size_bytes"],
+            ),
+            video=VideoMeasurement(
+                width=data["video"]["width"],
+                height=data["video"]["height"],
+                fps=data["video"]["fps"],
+                fps_ratio=data["video"]["fps_ratio"],
+                duration_ms=data["video"]["duration_ms"],
+                frames_count=data["video"]["frames_count"],
+                bitrate_kbps=data["video"]["bitrate_kbps"],
+                codec=data["video"]["codec"],
+                pix_fmt=data["video"]["pix_fmt"],
+                color_space=data["video"].get("color_space"),
+                color_transfer=data["video"].get("color_transfer"),
+                color_primaries=data["video"].get("color_primaries"),
+            ),
+            audio=audio,
+            scenes=data.get("scenes", {}),
+            faces=FaceTrackMeasurement(
+                sample_interval_ms=data["faces"]["sample_interval_ms"],
+                samples_count=data["faces"]["samples_count"],
+                face_detected_frames_count=data["faces"]["face_detected_frames_count"],
+                face_detected_share=data["faces"]["face_detected_share"],
+                median_face_height_share=data["faces"].get("median_face_height_share"),
+                median_y_center_share=data["faces"].get("median_y_center_share"),
+                first_frame_face_share=data["faces"].get("first_frame_face_share"),
+            ),
+            captions=CaptionMeasurement(
+                events_count=data["captions"]["events_count"],
+                ink_energy_detected_share=data["captions"]["ink_energy_detected_share"],
+                median_contrast_ratio=data["captions"].get("median_contrast_ratio"),
+            ),
+            vmaf=VmafMeasurement(
+                vmaf_score=vmaf_data["vmaf_score"],
+                psnr_db=vmaf_data.get("psnr_db"),
+            )
+            if vmaf_data
+            else None,
+            tool_metadata=data.get("tool_metadata", {}),
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> ClipMeasurement:
+        return cls.from_dict(json.loads(raw))
+
 
 def _file_sha256(path: Path) -> str:
     hasher = hashlib.sha256()

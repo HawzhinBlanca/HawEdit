@@ -1247,6 +1247,7 @@ def render_clip(
     brand_kit: BrandKit | None = None,
     music_bed_path: Path | None = None,
     music_ducking_volume: float = 0.25,
+    for_review: bool = False,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1259,7 +1260,7 @@ def render_clip(
         MissingRtlStack: this ffmpeg cannot shape Arabic script (§4.3.2).
         RenderError: no ffmpeg, the requested encoder is absent, or the encode failed.
     """
-    clip.assert_renderable()
+    clip.assert_renderable(for_review=for_review)
     if brand_kit is not None:
         brand_kit.assert_valid()
 
