@@ -13,3 +13,4 @@ TS=2026-09-06T16:02:27Z FEATURE=visual-editor-intelligence TASK=V11 TESTS=test_r
 TS=2026-09-06T16:33:00Z FEATURE=visual-editor-intelligence TASK=V12 TESTS=test_visual_repair_is_bounded_and_cannot_change_meaning_or_approve_itself VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T17:03:54Z FEATURE=visual-editor-intelligence TASK=V13 TESTS=test_episode_visual_delivery_shares_preprocessing_and_reports_each_state VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T17:38:09Z FEATURE=visual-editor-intelligence TASK=V14 TESTS=test_visual_workflow_recovery_preserves_evidence_and_publication_identity VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-06T18:11:43Z FEATURE=visual-editor-intelligence TASK=V15 TESTS=test_visual_scorecard_requires_unseen_current_evidence_and_full_accounting VERIFY=pass REPORT=.gate/last-test-run.xml
