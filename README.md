@@ -640,6 +640,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `shot_composition.py` | Visual Editor | Whole-shot visual composition and camera path stabilization preserving required content without crop jitter and selecting source-preserving alternatives. |
 | `timing_continuity.py` | Visual Editor | Timing tightening, meaningful protected pause preservation, reaction cutaway contemporaneity validation, and word boundary protection. |
 | `caption_layout.py` | Visual Editor | Content-aware caption layout avoiding essential visual regions without text drift, silent shrinking, or unresolvable occlusions. |
+| `render_critic.py` | Visual Editor | Post-render sequence critique inspecting temporal output and source context, reporting grounded defects, and refusing unsupported all-clear claims. |
 
 ## Two conventions worth knowing before reading the code
 
