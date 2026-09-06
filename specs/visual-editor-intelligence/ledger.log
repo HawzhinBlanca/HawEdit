@@ -8,3 +8,4 @@ TS=2026-09-06T12:21:12Z FEATURE=visual-editor-intelligence TASK=V06 TESTS=test_v
 TS=2026-09-06T12:57:23Z FEATURE=visual-editor-intelligence TASK=V07 TESTS=test_every_planned_shot_has_source_evidence_and_protected_regions VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T14:23:37Z FEATURE=visual-editor-intelligence TASK=V08 TESTS=test_shot_composition_preserves_required_content_without_crop_jitter VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-06T14:56:53Z FEATURE=visual-editor-intelligence TASK=V09 TESTS=test_edit_cannot_fabricate_reaction_timing_or_cut_protected_pause VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-06T15:29:48Z FEATURE=visual-editor-intelligence TASK=V10 TESTS=test_caption_layout_avoids_essential_visual_regions_without_text_changes VERIFY=pass REPORT=.gate/last-test-run.xml
