@@ -283,13 +283,20 @@ class OpenCvFaceTracker:
         if self.detector_kind in ("auto", "yunet"):
             model_file = self.yunet_model_path
             if model_file is None:
-                repo_model = Path(__file__).resolve().parents[2] / "models" / "face_detection_yunet.onnx"
+                repo_model = (
+                    Path(__file__).resolve().parents[2] / "models" / "face_detection_yunet.onnx"
+                )
                 if repo_model.is_file():
                     model_file = repo_model
             if model_file is not None and model_file.is_file() and hasattr(cv2, "FaceDetectorYN"):
                 try:
                     yunet_detector = cv2.FaceDetectorYN.create(
-                        str(model_file), "", (320, 320), score_threshold=0.6, nms_threshold=0.3, top_k=10
+                        str(model_file),
+                        "",
+                        (320, 320),
+                        score_threshold=0.6,
+                        nms_threshold=0.3,
+                        top_k=10,
                     )
                 except Exception:
                     yunet_detector = None
@@ -331,9 +338,8 @@ class OpenCvFaceTracker:
                 if not faces:
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     faces = boxes(frontal, gray) + boxes(profile, gray)
-                    faces += [
-                        (width - (x + w), y, w, h) for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
-                    ]
+                    flipped_profile = boxes(profile, cv2.flip(gray, 1))
+                    faces += [(width - (x + w), y, w, h) for x, y, w, h in flipped_profile]
                 chosen = choose_face(tuple(faces), previous)
                 if chosen is not None:
                     center = chosen[0] + chosen[2] // 2

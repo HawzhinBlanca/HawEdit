@@ -26,7 +26,7 @@ class MockSocket:
 def _handle_request(raw_request: bytes) -> tuple[int, dict[str, str], bytes]:
     sock = MockSocket(raw_request)
     # Instantiate handler with mock client address and mock server
-    handler = HawEditWebHandler(
+    _ = HawEditWebHandler(
         sock,  # type: ignore[arg-type]
         ("127.0.0.1", 8080),
         MagicMock(),

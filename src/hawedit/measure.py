@@ -895,7 +895,12 @@ def measure_clip(
     caption_meas = probe_caption_ink(video_path, ass_path, source_video_path=mezzanine_path)
     vmaf_meas = probe_vmaf(video_path, mezzanine_path, resolved_ffmpeg) if mezzanine_path else None
 
-    proc = subprocess.run([str(resolved_ffmpeg), "-version"], capture_output=True, text=True, timeout=30.0)
+    proc = subprocess.run(
+        [str(resolved_ffmpeg), "-version"],
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+    )
     first_line = proc.stdout.splitlines()[0] if proc.stdout else "unknown"
 
     return ClipMeasurement(

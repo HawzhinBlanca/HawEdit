@@ -49,7 +49,9 @@ def test_measure_subprocesses_have_timeouts() -> None:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in ("run", "Popen")
     ]
-    assert len(calls) >= 4, f"expected at least 4 subprocess calls in measure.py, found {len(calls)}"
+    assert len(calls) >= 4, (
+        f"expected at least 4 subprocess calls in measure.py, found {len(calls)}"
+    )
     for call in calls:
         has_timeout = any(kw.arg == "timeout" for kw in call.keywords)
         assert has_timeout, f"subprocess call at line {call.lineno} in measure.py missing timeout"
@@ -70,4 +72,6 @@ def test_sanity_gate_subprocesses_have_timeouts() -> None:
     assert len(calls) >= 1
     for call in calls:
         has_timeout = any(kw.arg == "timeout" for kw in call.keywords)
-        assert has_timeout, f"subprocess call at line {call.lineno} in sanity_gate.py missing timeout"
+        assert has_timeout, (
+            f"subprocess call at line {call.lineno} in sanity_gate.py missing timeout"
+        )

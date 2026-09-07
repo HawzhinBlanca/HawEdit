@@ -6,10 +6,10 @@ interrupted pipeline executions can resume seamlessly without recomputing comple
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,9 +34,7 @@ def hash_bytes(data: bytes) -> str:
 class StageCheckpoint:
     schema: int = 1
     stage_name: str = ""
-    completed_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    completed_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     input_hashes: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 

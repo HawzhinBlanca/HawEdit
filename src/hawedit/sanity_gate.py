@@ -190,7 +190,12 @@ def check_audio_compliance(
     ]
     try:
         proc = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False, timeout=120.0
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+            timeout=120.0,
         )
         return parse_ebur128_stats(proc.stdout)
     except Exception as exc:

@@ -10,20 +10,30 @@ from __future__ import annotations
 import http.server
 import json
 import mimetypes
-from pathlib import Path
 import socketserver
 import sys
-import threading
+from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
-from hawedit.cli import program_name, use_utf8_streams
+from hawedit.cli import use_utf8_streams
 
 ROOT = Path(__file__).resolve().parents[2]
 
+FONTS_URL = (
+    "https://fonts.googleapis.com/css2?"
+    "family=Vazirmatn:wght@400;600;700;900"
+    "&family=Inter:wght@400;600;700&display=swap"
+)
+
+SUMMARY_TEXT = (
+    "نوسەر ئەیوب نوری باسی ساتەکانی گەیشتنی هەڕەشەی مەرگ بۆ سەر ماڵەکەی "
+    "لە بەغدا دەکات دوای ٤٠ ساڵ لە ژیان. فیشەکێکی کڵاشینکۆف بە نامەیەکەوە "
+    "دەخرێتە ماڵەکەیان کە دەبێت لە ٢٤ کاتژمێردا شارەکە چۆڵ بکەن."
+)
 
 # Embedded Modern Web UI HTML
-DASHBOARD_HTML = """<!DOCTYPE html>
+DASHBOARD_HTML = f"""<!DOCTYPE html>
 <html lang="ckb" dir="rtl">
 <head>
   <meta charset="UTF-8">
@@ -31,9 +41,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <title>HawEdit — Pro Kurdish Social Reel Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="{FONTS_URL}" rel="stylesheet">
   <style>
-    :root {
+    :root {{
       --bg: #0b0f19;
       --card-bg: rgba(23, 32, 54, 0.7);
       --card-border: rgba(255, 255, 255, 0.08);
@@ -43,9 +53,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       --text-muted: #9ca3af;
       --success: #10b981;
       --radius: 16px;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
       font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, sans-serif;
       background: var(--bg);
       color: var(--text);
@@ -53,10 +63,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       overflow-x: hidden;
-      background-image: radial-gradient(circle at 10% 20%, rgba(0, 229, 255, 0.05) 0%, transparent 40%),
-                        radial-gradient(circle at 90% 80%, rgba(255, 179, 0, 0.05) 0%, transparent 40%);
-    }
-    header {
+      background-image:
+        radial-gradient(circle at 10% 20%, rgba(0, 229, 255, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(255, 179, 0, 0.05) 0%, transparent 40%);
+    }}
+    header {{
       padding: 24px 40px;
       display: flex;
       justify-content: space-between;
@@ -67,27 +78,64 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       position: sticky;
       top: 0;
       z-index: 100;
-    }
-    .brand { display: flex; align-items: center; gap: 14px; }
-    .brand h1 { font-size: 24px; font-weight: 900; letter-spacing: -0.5px; color: #fff; }
-    .brand span { font-size: 13px; color: var(--accent); background: rgba(0, 229, 255, 0.1); padding: 4px 10px; border-radius: 20px; font-family: 'Inter', sans-serif; font-weight: 600; }
-    .status-badge { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--success); }
-    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px var(--success); }
+    }}
+    .brand {{ display: flex; align-items: center; gap: 14px; }}
+    .brand h1 {{ font-size: 24px; font-weight: 900; letter-spacing: -0.5px; color: #fff; }}
+    .brand span {{
+      font-size: 13px;
+      color: var(--accent);
+      background: rgba(0, 229, 255, 0.1);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+    }}
+    .status-badge {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--success);
+    }}
+    .status-dot {{
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }}
     
-    main { max-width: 1280px; margin: 40px auto; padding: 0 24px; width: 100%; display: grid; grid-template-columns: 1fr 1.2fr; gap: 32px; }
-    @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+    main {{
+      max-width: 1280px;
+      margin: 40px auto;
+      padding: 0 24px;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 32px;
+    }}
+    @media (max-width: 960px) {{ main {{ grid-template-columns: 1fr; }} }}
     
-    .card {
+    .card {{
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: var(--radius);
       padding: 32px;
       backdrop-filter: blur(16px);
       box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-    }
-    .card-title { font-size: 19px; font-weight: 700; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; color: #fff; }
+    }}
+    .card-title {{
+      font-size: 19px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #fff;
+    }}
     
-    .dropzone {
+    .dropzone {{
       border: 2px dashed rgba(0, 229, 255, 0.3);
       border-radius: 12px;
       padding: 48px 24px;
@@ -95,13 +143,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       cursor: pointer;
       transition: all 0.2s ease;
       background: rgba(0, 229, 255, 0.02);
-    }
-    .dropzone:hover { border-color: var(--accent); background: rgba(0, 229, 255, 0.05); transform: translateY(-2px); }
-    .dropzone-icon { font-size: 40px; margin-bottom: 12px; }
-    .dropzone-text { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-    .dropzone-hint { font-size: 13px; color: var(--text-muted); }
+    }}
+    .dropzone:hover {{
+      border-color: var(--accent);
+      background: rgba(0, 229, 255, 0.05);
+      transform: translateY(-2px);
+    }}
+    .dropzone-icon {{ font-size: 40px; margin-bottom: 12px; }}
+    .dropzone-text {{ font-size: 16px; font-weight: 600; margin-bottom: 6px; }}
+    .dropzone-hint {{ font-size: 13px; color: var(--text-muted); }}
     
-    .btn {
+    .btn {{
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -118,21 +170,44 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       transition: all 0.2s ease;
       margin-top: 24px;
       box-shadow: 0 8px 24px rgba(0, 229, 255, 0.3);
-    }
-    .btn:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(0, 229, 255, 0.4); }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+    }}
+    .btn:hover {{
+      transform: translateY(-2px);
+      box-shadow: 0 12px 32px rgba(0, 229, 255, 0.4);
+    }}
+    .btn:disabled {{ opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }}
     
-    .stepper { display: flex; flex-direction: column; gap: 16px; margin-top: 24px; }
-    .step { display: flex; align-items: center; gap: 16px; padding: 14px 18px; border-radius: 10px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); }
-    .step.active { border-color: var(--accent); background: rgba(0, 229, 255, 0.08); }
-    .step.completed { border-color: var(--success); background: rgba(16, 185, 129, 0.08); }
-    .step-num { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; background: rgba(255, 255, 255, 0.1); color: var(--text-muted); font-family: 'Inter', sans-serif; }
-    .step.active .step-num { background: var(--accent); color: #000; }
-    .step.completed .step-num { background: var(--success); color: #000; }
-    .step-label { font-size: 14px; font-weight: 600; flex: 1; }
+    .stepper {{ display: flex; flex-direction: column; gap: 16px; margin-top: 24px; }}
+    .step {{
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 18px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }}
+    .step.active {{ border-color: var(--accent); background: rgba(0, 229, 255, 0.08); }}
+    .step.completed {{ border-color: var(--success); background: rgba(16, 185, 129, 0.08); }}
+    .step-num {{
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      font-family: 'Inter', sans-serif;
+    }}
+    .step.active .step-num {{ background: var(--accent); color: #000; }}
+    .step.completed .step-num {{ background: var(--success); color: #000; }}
+    .step-label {{ font-size: 14px; font-weight: 600; flex: 1; }}
     
-    .preview-container { display: flex; flex-direction: column; gap: 20px; }
-    .video-wrapper {
+    .preview-container {{ display: flex; flex-direction: column; gap: 20px; }}
+    .video-wrapper {{
       position: relative;
       width: 100%;
       aspect-ratio: 9 / 16;
@@ -143,15 +218,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       border: 1px solid var(--card-border);
       box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
       margin: 0 auto;
-    }
-    video { width: 100%; height: 100%; object-fit: contain; }
+    }}
+    video {{ width: 100%; height: 100%; object-fit: contain; }}
     
-    .story-meta { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 12px; padding: 20px; }
-    .headline { font-size: 17px; font-weight: 800; color: var(--gold); margin-bottom: 8px; line-height: 1.5; }
-    .summary { font-size: 14px; line-height: 1.8; color: var(--text-muted); }
+    .story-meta {{
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      padding: 20px;
+    }}
+    .headline {{
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--gold);
+      margin-bottom: 8px;
+      line-height: 1.5;
+    }}
+    .summary {{ font-size: 14px; line-height: 1.8; color: var(--text-muted); }}
     
-    .audit-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
-    .audit-pill { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 8px 12px; border-radius: 8px; background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); }
+    .audit-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }}
+    .audit-pill {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }}
   </style>
 </head>
 <body>
@@ -169,24 +271,50 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <main>
     <div class="card">
       <div class="card-title">ڤیدیۆ هەڵبژێرە (Select Video)</div>
-      <div class="dropzone" id="dropzone" onclick="document.getElementById('videoFile').click()">
+      <div class="dropzone" id="dropzone"
+           onclick="document.getElementById('videoFile').click()">
         <div class="dropzone-icon">🎬</div>
         <div class="dropzone-text">ڤیدیۆ لێرە دابنێ یان کلیك بکە</div>
         <div class="dropzone-hint">پشتیوانی لە هەموو فۆرماتێکی MP4 / MOV / MKV</div>
-        <input type="file" id="videoFile" accept="video/*" style="display:none" onchange="fileSelected(this)">
+        <input type="file" id="videoFile" accept="video/*" style="display:none"
+               onchange="fileSelected(this)">
       </div>
-      <div id="fileInfo" style="margin-top: 14px; font-size: 13px; color: var(--accent); font-weight: 600; display: none;"></div>
+      <div id="fileInfo"
+           style="margin-top:14px;font-size:13px;color:var(--accent);font-weight:600;display:none;">
+      </div>
       
-      <button class="btn" id="startBtn" onclick="startRepurposing()">دروستکردنی شۆرتی ڤایرۆڵ (Generate Reel)</button>
+      <button class="btn" id="startBtn" onclick="startRepurposing()">
+        دروستکردنی شۆرتی ڤایرۆڵ (Generate Reel)
+      </button>
       
-      <div class="card-title" style="margin-top: 36px;">قۆناغەکانی پڕۆسێس (Processing Stages)</div>
+      <div class="card-title" style="margin-top: 36px;">
+        قۆناغەکانی پڕۆسێس (Processing Stages)
+      </div>
       <div class="stepper">
-        <div class="step completed" id="s0"><div class="step-num">0</div><div class="step-label">وەرگرتن و جیاکردنەوەی دیمەنەکان (Ingest & Scene Cuts)</div></div>
-        <div class="step completed" id="s1"><div class="step-num">1</div><div class="step-label">تێکستی کوردی دەنگ و کاتەکان (OmniASR & Alignment)</div></div>
-        <div class="step completed" id="s2"><div class="step-num">2</div><div class="step-label">دیاریکردنی قسەکەر و شوێنپێهەڵگرتن (YuNet Tracking)</div></div>
-        <div class="step completed" id="s3"><div class="step-num">3</div><div class="step-label">هەڵبژاردنی بەسەرهاتی کاریگەر (Story Condensation)</div></div>
-        <div class="step completed" id="s4"><div class="step-num">4</div><div class="step-label">پشکنینی وردی کوالیتی (Sanity Gate Audit)</div></div>
-        <div class="step completed" id="s5"><div class="step-num">5</div><div class="step-label">ڕێندەری کۆتایی بە 115pt و NVENC (Master Render)</div></div>
+        <div class="step completed" id="s0">
+          <div class="step-num">0</div>
+          <div class="step-label">وەرگرتن و جیاکردنەوەی دیمەنەکان (Ingest & Scene Cuts)</div>
+        </div>
+        <div class="step completed" id="s1">
+          <div class="step-num">1</div>
+          <div class="step-label">تێکستی کوردی دەنگ و کاتەکان (OmniASR & Alignment)</div>
+        </div>
+        <div class="step completed" id="s2">
+          <div class="step-num">2</div>
+          <div class="step-label">دیاریکردنی قسەکەر و شوێنپێهەڵگرتن (YuNet Tracking)</div>
+        </div>
+        <div class="step completed" id="s3">
+          <div class="step-num">3</div>
+          <div class="step-label">هەڵبژاردنی بەسەرهاتی کاریگەر (Story Condensation)</div>
+        </div>
+        <div class="step completed" id="s4">
+          <div class="step-num">4</div>
+          <div class="step-label">پشکنینی وردی کوالیتی (Sanity Gate Audit)</div>
+        </div>
+        <div class="step completed" id="s5">
+          <div class="step-num">5</div>
+          <div class="step-label">ڕێندەری کۆتایی بە 115pt و NVENC (Master Render)</div>
+        </div>
       </div>
     </div>
 
@@ -200,7 +328,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
       <div class="story-meta">
         <div class="headline">«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»</div>
-        <div class="summary">نوسەر ئەیوب نوری باسی ساتەکانی گەیشتنی هەڕەشەی مەرگ بۆ سەر ماڵەکەی لە بەغدا دەکات دوای ٤٠ ساڵ لە ژیان. فیشەکێکی کڵاشینکۆف بە نامەیەکەوە دەخرێتە ماڵەکەیان کە دەبێت لە ٢٤ کاتژمێردا شارەکە چۆڵ بکەن.</div>
+        <div class="summary">{SUMMARY_TEXT}</div>
         
         <div class="audit-grid">
           <div class="audit-pill">✓ ڕوخسار لە هەموو دیمەنێکدا (0 Dead Frames)</div>
@@ -213,24 +341,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </main>
 
   <script>
-    function fileSelected(input) {
-      if (input.files && input.files[0]) {
+    function fileSelected(input) {{
+      if (input.files && input.files[0]) {{
         const file = input.files[0];
-        document.getElementById('fileInfo').style.display = 'block';
-        document.getElementById('fileInfo').textContent = 'فایلی هەڵبژێردراو: ' + file.name + ' (' + (file.size / 1024 / 1024).toFixed(1) + ' MB)';
-      }
-    }
-    function startRepurposing() {
+        const info = document.getElementById('fileInfo');
+        info.style.display = 'block';
+        const sizeMb = (file.size / 1024 / 1024).toFixed(1);
+        info.textContent = 'فایلی هەڵبژێردراو: ' + file.name + ' (' + sizeMb + ' MB)';
+      }}
+    }}
+    function startRepurposing() {{
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
       btn.textContent = 'خەریکی دروستکردنی شۆرتە...';
       document.getElementById('engineStatus').textContent = 'پڕۆسێس دەکرێت...';
-      setTimeout(() => {
+      setTimeout(() => {{
         btn.disabled = false;
         btn.textContent = 'دروستکردنی شۆرتی تر';
         document.getElementById('engineStatus').textContent = 'تەواوبوو (Ready)';
-      }, 2500);
-    }
+      }}, 2500);
+    }}
   </script>
 </body>
 </html>
@@ -255,7 +385,7 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            status_payload = {
+            status_payload: dict[str, Any] = {
                 "status": "ready",
                 "latest_reel": {
                     "duration_s": 48.14,
