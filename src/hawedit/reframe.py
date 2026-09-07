@@ -245,11 +245,20 @@ class OpenCvFaceTracker:
     rug on screen for the first eight seconds of the clip.
     """
 
-    def __init__(self, sample_fps: float = 5.0, *, enable_tracker: bool = True) -> None:
+    def __init__(
+        self,
+        sample_fps: float = 5.0,
+        *,
+        enable_tracker: bool = True,
+        detector_kind: str = "auto",
+        yunet_model_path: Path | None = None,
+    ) -> None:
         if sample_fps <= 0 or not math.isfinite(sample_fps):
             raise ValueError("face-tracking fps must be finite and positive")
         self.sample_fps = sample_fps
         self.enable_tracker = enable_tracker
+        self.detector_kind = detector_kind
+        self.yunet_model_path = yunet_model_path
 
     def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
         if out_ms <= in_ms:
@@ -269,6 +278,21 @@ class OpenCvFaceTracker:
             detectors[name] = classifier
         frontal = detectors["haarcascade_frontalface_default.xml"]
         profile = detectors["haarcascade_profileface.xml"]
+
+        yunet_detector: Any = None
+        if self.detector_kind in ("auto", "yunet"):
+            model_file = self.yunet_model_path
+            if model_file is None:
+                repo_model = Path(__file__).resolve().parents[2] / "models" / "face_detection_yunet.onnx"
+                if repo_model.is_file():
+                    model_file = repo_model
+            if model_file is not None and model_file.is_file() and hasattr(cv2, "FaceDetectorYN"):
+                try:
+                    yunet_detector = cv2.FaceDetectorYN.create(
+                        str(model_file), "", (320, 320), score_threshold=0.6, nms_threshold=0.3, top_k=10
+                    )
+                except Exception:
+                    yunet_detector = None
 
         capture = cv2.VideoCapture(str(source))
         if not capture.isOpened():
@@ -293,15 +317,23 @@ class OpenCvFaceTracker:
                 ok, frame = capture.read()
                 if not ok:
                     break
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                width = gray.shape[1]
-                height = gray.shape[0]
-                faces = boxes(frontal, gray) + boxes(profile, gray)
-                # The profile cascade is trained on one facing only. The other is the same
-                # detector over the mirrored frame, with each box reflected back.
-                faces += [
-                    (width - (x + w), y, w, h) for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
-                ]
+                height, width = frame.shape[:2]
+                faces: list[tuple[int, int, int, int]] = []
+                if yunet_detector is not None:
+                    try:
+                        yunet_detector.setInputSize((width, height))
+                        _, y_faces = yunet_detector.detect(frame)
+                        if y_faces is not None:
+                            for f in y_faces:
+                                faces.append((int(f[0]), int(f[1]), int(f[2]), int(f[3])))
+                    except Exception:
+                        faces = []
+                if not faces:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    faces = boxes(frontal, gray) + boxes(profile, gray)
+                    faces += [
+                        (width - (x + w), y, w, h) for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
+                    ]
                 chosen = choose_face(tuple(faces), previous)
                 if chosen is not None:
                     center = chosen[0] + chosen[2] // 2

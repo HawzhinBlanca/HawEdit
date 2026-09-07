@@ -123,8 +123,11 @@ class SpeechSegment:
         return (self.end_ms - self.start_ms) / 1000.0
 
 
-def _run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
-    result = subprocess.run(command, capture_output=True)
+def _run(command: list[str], *, timeout: float = 300.0) -> subprocess.CompletedProcess[bytes]:
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise IngestError(f"{Path(command[0]).name} timed out after {timeout}s") from exc
     if result.returncode != 0:
         raise IngestError(
             f"{Path(command[0]).name} failed ({result.returncode}): "

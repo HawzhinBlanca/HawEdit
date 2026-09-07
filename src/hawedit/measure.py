@@ -297,7 +297,7 @@ def probe_container(
         str(video_path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60.0)
         data = json.loads(proc.stdout)
     except Exception as exc:
         raise MeasureError(f"ffprobe failed on {video_path}: {exc}") from exc
@@ -392,7 +392,7 @@ def probe_audio_dynamics(
         "-",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180.0)
         stderr = proc.stderr
     except Exception as exc:
         raise MeasureError(f"ffmpeg audio analysis failed on {video_path}: {exc}") from exc
@@ -453,7 +453,7 @@ def probe_scene_cuts(video_path: Path, ffmpeg: Path) -> list[int]:
         "-",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180.0)
         stderr = proc.stderr
     except Exception as exc:
         raise MeasureError(f"ffmpeg scene cut detection failed on {video_path}: {exc}") from exc
@@ -864,7 +864,7 @@ def probe_vmaf(
         "-",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=240.0)
         vmaf_m = re.search(r'"VMAF score":\s*([\d.]+)', proc.stderr)
         psnr_m = re.search(r"average:([\d.]+)", proc.stderr)
         vmaf_score = float(vmaf_m.group(1)) if vmaf_m else 95.0
@@ -895,7 +895,7 @@ def measure_clip(
     caption_meas = probe_caption_ink(video_path, ass_path, source_video_path=mezzanine_path)
     vmaf_meas = probe_vmaf(video_path, mezzanine_path, resolved_ffmpeg) if mezzanine_path else None
 
-    proc = subprocess.run([str(resolved_ffmpeg), "-version"], capture_output=True, text=True)
+    proc = subprocess.run([str(resolved_ffmpeg), "-version"], capture_output=True, text=True, timeout=30.0)
     first_line = proc.stdout.splitlines()[0] if proc.stdout else "unknown"
 
     return ClipMeasurement(
