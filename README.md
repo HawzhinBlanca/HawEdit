@@ -591,6 +591,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `sanity_gate.py` | §3 Stage 6 extension | Automated pre-delivery quality audit: face presence, subtitle contrast/legibility, EBU R128 audio compliance, and story integrity. |
 | `checkpoint.py` | Phase 1 | Stage checkpointing and resumption engine: atomic `.done` markers with input SHA hashes. |
 | `web.py` | Phase 4 | Zero-dependency local web dashboard: file upload, live stage progress, Kurdish story preview and export. |
+| `log.py` | Phase 1 | Structured JSONL logging and EventSink bridge: namespaced loggers, rotating file handlers, and per-module log configuration. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
 | `events.py` | §3 | What a run says about itself *before* it returns: one stage-transition event per start and per end, to a sink that defaults to discarding. A skip carries the same reason the report will carry, so the timeline cannot go green over a stage that refused. Owns the JSONL ledger format both ways — `JsonlEventSink` writes it, `read_events` reads it back — so reading a run's timeline needs no durable-execution engine imported. |
