@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from hawedit.corpus import Condition, Dialect
 from hawedit.corpus_import import (
     CorpusImportError,
     MissingDurations,
@@ -427,6 +428,88 @@ def test_a_file_that_is_not_an_array_of_records_is_refused(tmp_path: Path) -> No
     path.write_text(json.dumps({"segments": [CONFIRMED]}), encoding="utf-8")
     with pytest.raises(CorpusImportError, match="not the JSON array"):
         import_cortex_speech(path, licence=A_LICENCE)
+
+
+def test_cortex_directory_export_with_manifest_jsonl(tmp_path: Path) -> None:
+    """Modern Cortex exports are directories containing `manifest.jsonl` and `wavs/`."""
+    export_dir = tmp_path / "cortex_export"
+    export_dir.mkdir()
+    manifest = export_dir / "manifest.jsonl"
+    record = {
+        "segment_id": "seg-1001",
+        "duration_ms": 6500,
+        "exported": True,
+        "chosen_text": "ئەمە کورتە وتەیەکی نموونەییە",
+        "raw_transcript": "ئەمە وتەیەکی پێشووە",
+        "wav": {"file": "wavs/clip_001.wav", "sample_rate": 24000},
+        "verdicts": [{"reviewer": "Hawzhin", "action": "edit"}],
+    }
+    unexported = {
+        "segment_id": "seg-1002",
+        "duration_ms": 5000,
+        "exported": False,
+        "chosen_text": "لادراوە",
+        "wav": {"file": "wavs/clip_002.wav"},
+    }
+    lines = [
+        json.dumps(record, ensure_ascii=False),
+        json.dumps(unexported, ensure_ascii=False),
+        "",
+    ]
+    manifest.write_text("\n".join(lines), encoding="utf-8")
+    corpus = import_cortex_speech(export_dir, licence=A_LICENCE)
+    assert len(corpus.items) == 1
+    item = corpus.items[0]
+    assert item.item_id == "seg-1001"
+    assert item.reference_ckb == "ئەمە کورتە وتەیەکی نموونەییە"
+    assert item.audio_path == "wavs/clip_001.wav"
+    assert item.duration_s == 6.5
+    assert "1 unconfirmed" in corpus.provenance.note
+
+
+def test_cortex_import_with_dialect_and_conditions(tmp_path: Path) -> None:
+    """When dialect and conditions are passed, items are labelled and the corpus is non-interim."""
+    export = write_export(tmp_path / "e.json", [CONFIRMED])
+    corpus = import_cortex_speech(
+        export,
+        licence=A_LICENCE,
+        dialect=Dialect.SLEMANI,
+        conditions=[Condition.CASUAL_PODCAST],
+    )
+    assert len(corpus.items) == 1
+    item = corpus.items[0]
+    assert item.dialect == Dialect.SLEMANI
+    assert item.conditions == frozenset({Condition.CASUAL_PODCAST})
+    assert item.is_labelled
+    assert not corpus.provenance.interim
+
+
+def test_cortex_directory_without_manifest_is_refused(tmp_path: Path) -> None:
+    """An export directory without manifest.jsonl or manifest.json is refused."""
+    empty_dir = tmp_path / "empty_export"
+    empty_dir.mkdir()
+    with pytest.raises(
+        CorpusImportError, match="contains neither manifest.jsonl nor manifest.json"
+    ):
+        import_cortex_speech(empty_dir, licence=A_LICENCE)
+
+
+def test_cortex_jsonl_file_export(tmp_path: Path) -> None:
+    """A direct path to a manifest.jsonl file is supported."""
+    manifest = tmp_path / "custom.jsonl"
+    record = {
+        "segment_id": "seg-2001",
+        "duration_ms": 3000,
+        "isGold": True,
+        "chosen_text": "دەقی زێڕین",
+        "source_audio": "audio/clip.wav",
+    }
+    manifest.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    corpus = import_cortex_speech(manifest, licence=A_LICENCE)
+    assert len(corpus.items) == 1
+    assert corpus.items[0].item_id == "seg-2001"
+    assert corpus.items[0].reference_ckb == "دەقی زێڕین"
+    assert corpus.items[0].duration_s == 3.0
 
 
 # --- D-188: the Common Voice import shrank the corpus without saying so ---------------------

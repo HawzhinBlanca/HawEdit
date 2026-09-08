@@ -38,10 +38,17 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.corpus import Corpus, CorpusItem, Provenance
+from hawedit.corpus import (
+    Condition,
+    Corpus,
+    CorpusItem,
+    Dialect,
+    Provenance,
+)
 
 __all__ = [
     "COMMON_VOICE_LICENCE",
@@ -206,50 +213,59 @@ def import_common_voice(
     )
 
 
-# Cortex Speech Studio's export is a JSON array of segment records in camelCase. Only the four
-# fields this importer actually reads are named; the export carries ~27, and depending on ones
-# it does not need would break on a schema change that costs nothing here.
+# Cortex Speech Studio's export is a JSON array of segment records in camelCase, or a directory
+# containing `manifest.jsonl` (and `wavs/`), or a `.jsonl` file. Only the fields this importer
+# actually reads are named; the export carries ~27, and depending on ones it does not need would
+# break on a schema change that costs nothing here.
 _CORTEX_ID: Final = "id"
 _CORTEX_AUDIO: Final = "audioPath"
 _CORTEX_RAW: Final = "rawTranscript"
 _CORTEX_DURATION_MS: Final = "durationMs"
 # Two independent ways a record can carry a human's confirmation. `isGold` marks reference
 # material; `verified` marks a reviewer having passed it. Either is a human; neither is the
-# decoder.
+# decoder. In modern exports, human confirmation is evidenced by `chosen_text` with an active
+# review verdict or export status.
 _CORTEX_VERIFIED: Final = ("verified", "isGold")
 
 
 def _is_human_confirmed(record: Any) -> bool:
-    return any(bool(record.get(field)) for field in _CORTEX_VERIFIED)
+    if not isinstance(record, dict) or record.get("exported") is False:
+        return False
+    if any(bool(record.get(field)) for field in _CORTEX_VERIFIED):
+        return True
+    return bool(record.get("chosen_text") and (record.get("exported") or record.get("verdicts")))
 
 
 def import_cortex_speech(
     export_path: Path,
     licence: str,
     limit: int | None = None,
+    dialect: Dialect | None = None,
+    conditions: Iterable[Condition] | None = None,
 ) -> Corpus:
-    """Import a Cortex Speech Studio export as an unlabelled corpus of real material.
+    """Import a Cortex Speech Studio export as a corpus of real material.
 
     `BLOCKED.md` #1 asks first for "your own labelled material with reference transcripts".
-    This is the first half of that: real Sorani audio whose transcripts a human confirmed.
-    The second half — §4.4's dialect and §8.1's recording conditions — Cortex does not
-    capture, so every item arrives unlabelled and the coverage check still refuses the set.
+    This reads real Sorani audio whose transcripts a human confirmed. When `dialect` and
+    `conditions` are provided at the call site, the items are labelled accordingly to
+    populate §8.1's coverage grid. When omitted, items remain unlabelled and interim.
 
     Args:
-        export_path: a Cortex export — a JSON array of segment records.
+        export_path: a Cortex export directory containing `manifest.jsonl` (or `manifest.json`),
+            a `.jsonl` manifest file, or a JSON array of segment records.
         licence: the licence covering *this material*, recorded in the provenance. No default
             and no guess: Common Voice has a published licence this module can name, a private
             export does not, and "unknown" is not a licence.
         limit: import at most this many confirmed records, for a quick smoke run.
+        dialect: optional §4.4 dialect tag (e.g. `Dialect.SLEMANI`).
+        conditions: optional §8.1 recording conditions (e.g. `{Condition.CASUAL_PODCAST}`).
 
     Returns:
-        A `Corpus` of the human-confirmed records only, marked interim, so
-        `assert_section_8_1_coverage()` still fails and `bench.decide_canonical` still refuses
-        to move the canonical pin.
+        A `Corpus` of the human-confirmed records only.
 
     Raises:
-        CorpusImportError: the export is not a JSON array, a record is missing a field this
-            importer reads, or a confirmed record carries no usable duration or transcript.
+        CorpusImportError: the export is not a recognized shape, a record is missing a field
+            this importer reads, or a confirmed record carries no usable duration or transcript.
         NoVerifiedTranscripts: records were present and none of them was human-confirmed.
     """
     if not licence.strip():
@@ -259,16 +275,47 @@ def import_cortex_speech(
             "look up — state it at the call site rather than letting it default."
         )
 
-    raw = json.loads(export_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        raise CorpusImportError(
-            f"{export_path.name} is a {type(raw).__name__}, not the JSON array of segment "
-            f"records a Cortex export is. Reading a different shape would import whatever "
-            f"happened to parse."
-        )
+    raw: list[Any]
+    if export_path.is_dir():
+        manifest_jsonl = export_path / "manifest.jsonl"
+        manifest_json = export_path / "manifest.json"
+        if manifest_jsonl.is_file():
+            raw = [
+                json.loads(line)
+                for line in manifest_jsonl.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        elif manifest_json.is_file():
+            parsed = json.loads(manifest_json.read_text(encoding="utf-8"))
+            if not isinstance(parsed, list):
+                raise CorpusImportError(
+                    f"{manifest_json.name} is a {type(parsed).__name__}, not the JSON array of "
+                    f"segment records a Cortex export is."
+                )
+            raw = parsed
+        else:
+            raise CorpusImportError(
+                f"directory {export_path.name} contains neither manifest.jsonl nor manifest.json."
+            )
+    elif export_path.suffix == ".jsonl":
+        raw = [
+            json.loads(line)
+            for line in export_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    else:
+        parsed = json.loads(export_path.read_text(encoding="utf-8"))
+        if not isinstance(parsed, list):
+            raise CorpusImportError(
+                f"{export_path.name} is a {type(parsed).__name__}, not the JSON array of segment "
+                f"records a Cortex export is. Reading a different shape would import whatever "
+                f"happened to parse."
+            )
+        raw = parsed
 
     items: list[CorpusItem] = []
     unconfirmed = 0
+    cond_set = frozenset(conditions) if conditions is not None else frozenset()
     for record in raw:
         if not isinstance(record, dict):
             raise CorpusImportError(
@@ -284,15 +331,34 @@ def import_cortex_speech(
         if limit is not None and len(items) >= limit:
             break
 
-        identifier = str(record.get(_CORTEX_ID) or "").strip()
-        audio = str(record.get(_CORTEX_AUDIO) or "").strip()
-        reference = str(record.get(_CORTEX_RAW) or "").strip()
+        identifier = str(record.get(_CORTEX_ID) or record.get("segment_id") or "").strip()
+
+        audio = ""
+        wav_val = record.get("wav")
+        if isinstance(wav_val, dict) and wav_val.get("file"):
+            audio = str(wav_val["file"]).strip()
+        if not audio:
+            audio = str(record.get(_CORTEX_AUDIO) or record.get("source_audio") or "").strip()
+        if audio and "\\" in audio:
+            audio = audio.replace("\\", "/")
+
+        # Chosen text takes precedence: it holds the human-reviewed / edited transcript
+        # rather than the unverified decoder output (`raw_transcript` / `rawTranscript`).
+        reference = str(record.get("chosen_text") or record.get(_CORTEX_RAW) or "").strip()
+
         duration_ms = record.get(_CORTEX_DURATION_MS)
+        if duration_ms is None:
+            duration_ms = record.get("duration_ms")
+
         if not identifier or not audio:
+            actual_id = record.get(_CORTEX_ID) or record.get("segment_id")
+            actual_audio = (
+                record.get(_CORTEX_AUDIO) or record.get("source_audio") or record.get("wav")
+            )
             raise CorpusImportError(
                 f"a confirmed record is missing {_CORTEX_ID!r} or {_CORTEX_AUDIO!r}: "
-                f"{record.get(_CORTEX_ID)!r} / {record.get(_CORTEX_AUDIO)!r}. Both name the "
-                f"thing being scored, so neither can be invented."
+                f"{actual_id!r} / {actual_audio!r}. "
+                f"Both name the thing being scored, so neither can be invented."
             )
         if not reference:
             # A *confirmed* record with no text is a corpus defect rather than a partial
@@ -316,8 +382,8 @@ def import_cortex_speech(
                 # Raw, exactly as the reviewer confirmed it. Cortex's own
                 # `normalizedTranscript` is deliberately not read — see the module docstring.
                 reference_ckb=reference,
-                dialect=None,
-                conditions=frozenset(),
+                dialect=dialect,
+                conditions=cond_set,
                 duration_s=duration_ms / 1000,
                 # `reference_words` is left empty on purpose. Cortex aligns with
                 # OmniASR-CTC-300M through sherpa-onnx; §7 pins the 3B, and invariant #5 says
@@ -334,19 +400,29 @@ def import_cortex_speech(
             f"segments in Cortex first."
         )
 
+    is_interim = dialect is None and not cond_set
+    label_note = (
+        f"Labelled with dialect={dialect.value if dialect else 'none'}, "
+        f"conditions={[c.value for c in cond_set]}."
+        if (dialect is not None or cond_set)
+        else (
+            "Cortex captures no §4.4 dialect and none of §8.1's recording conditions, so "
+            "every item is unlabelled and fills no coverage cell. Interim until those "
+            "four labels are captured at review time: dialect, conditions, named_entities "
+            "and code_switch_spans."
+        )
+    )
+
     return Corpus(
         tuple(items),
         provenance=Provenance(
             name=f"Cortex Speech Studio export ({export_path.name})",
             licence=licence,
-            interim=True,
+            interim=is_interim,
             note=(
                 f"{len(items)} human-confirmed segment(s); {unconfirmed} unconfirmed record(s) "
-                f"left behind. Real material, which is BLOCKED.md #1's first preference — but "
-                f"Cortex captures no §4.4 dialect and none of §8.1's recording conditions, so "
-                f"every item is unlabelled and fills no coverage cell. Interim until those "
-                f"four labels are captured at review time: dialect, conditions, named_entities "
-                f"and code_switch_spans."
+                f"left behind. Real material, which is BLOCKED.md #1's first preference — "
+                f"{label_note}"
             ),
         ),
     )

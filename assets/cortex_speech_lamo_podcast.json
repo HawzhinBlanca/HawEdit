@@ -1,0 +1,2348 @@
+{
+  "items": [
+    {
+      "audio_path": "wavs/lamo_002040.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.436,
+      "item_id": "e4912e04-2a94-4644-8355-1722935cecf9",
+      "named_entities": [],
+      "reference_ckb": "ڕێک ئەوە بیە دەست ئێدیتەر ئەبێ ئێدیتەر یەکسەر بزانێ چی لەو ئێدیتە ئەکا دوایی پێویست ناکا تۆ ئەسڵەن لەوانەیە لە تەنیشتیشیا دانیشی وەکو دەرهێنەر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_002677.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.756,
+      "item_id": "42be277a-1b31-4477-b02e-ed43c4dc6adf",
+      "named_entities": [],
+      "reference_ckb": "بیر لە خۆت ئەکەیتەوە وەکو کەسێک کە کارسازە و خاوەن بزنسی خۆتیت لەوەی کە پەرە بە سامان و پارە پەیاکردن بێنی لە ڕێی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003697.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.748,
+      "item_id": "1c349f31-3629-44df-ad98-225341fc3c0e",
+      "named_entities": [],
+      "reference_ckb": "باشە بۆیەی بیرم نەچێ و ئێستا لەوانەیە کەسێک کە سەیری ئەم پۆدکاستەکات زۆر بە بابڵێین فکرەی کۆمیدیای ستاندەپ ئاشنا نەبووبێ چونکە لای خۆمان ئەها زۆر زۆر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003698.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "328abd25-0e68-46dc-abb9-78d56a46c014",
+      "named_entities": [],
+      "reference_ckb": "نەبووە بە فۆرماتێک کە چاومان پێی ڕاهاتبێت و بیناسین و خەڵک لێرە زۆری بکات بۆیە ئەگەر پێکەوە بۆ ئەو کەسەی ڕوونکرد",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003700.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "9fcf3601-81ed-41a6-9a40-8a6b3cfeff98",
+      "named_entities": [],
+      "reference_ckb": "با بڵێین لە ماڵەوە پرۆڤەی ئەکەیت و کاری لە سەر ئەکەیت و لەبەری ئەکەیت و لەو شوێنە ئەڵێی وا ئەڵێم بەس لە سەیا چلی تری بە تەمای لەویا شتێکت بۆ بێ لەویا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003701.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.628,
+      "item_id": "9a1868ec-a8b8-4e79-86bb-24e2b326c036",
+      "named_entities": [],
+      "reference_ckb": "ئینتەراکشنێکی زیاترە کارلێکێکی زیاترە لەگەڵ ئامادەبووانا و",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003711.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.788,
+      "item_id": "ea89da09-ac7d-45a6-bce1-ffd0bb1541d4",
+      "named_entities": [],
+      "reference_ckb": "ژیانێکی مورتاح بڕۆی و ڕێگاکانی پارەپەیاکردن لە ئیشێکی ئاواوە چۆنە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003725.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.428,
+      "item_id": "ded488ec-df47-4073-a2a1-196b5b0c21f7",
+      "named_entities": [],
+      "reference_ckb": "ئەمەیان خاڵێکی بچووکتر بەس خاڵە گەورەکە ئەوەیە کە خۆشت باست کرد ئەوەیە ئێمە هێشتا ئەو حەز و گڕ و تینەمان تیا نیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003731.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.492,
+      "item_id": "09192b0c-c52e-41e1-b156-bda8d9c38c4a",
+      "named_entities": [],
+      "reference_ckb": "زۆر سەیرە ئەم هینە بەلامەوە ئەم تێگەیشتنە بەڕاستی ناشزانم هۆکارەکەی چیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003737.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "85a0e4c6-cf02-4808-ab31-5e7b9f503603",
+      "named_entities": [],
+      "reference_ckb": "یانی ئەگەر ئەگەر کابرا وێنە دروستکات ئەویش هەر هەمان شت ئەکات خۆ نایەت پێو بڵێ وەڵا بۆیاخەکە ئەوەنەم پێیا فڵچەکە ئەوەنەم پێیا گرانەکەوێ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_003739.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.612,
+      "item_id": "39a3cda6-1054-4024-8573-e5f2e5147771",
+      "named_entities": [],
+      "reference_ckb": "بینەرانی کورد چیبوو لە ناو شۆوەکانتا شتەکە تازە بوو بۆیان یان یەکسەر زانیان چۆن هەڵسوکەوت بکەن یان ئەها تۆزێ بە لایانەوە ساردوسڕ بوون نەوعێک بوون",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004024.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.996,
+      "item_id": "c2bbc92c-c563-4269-b7df-109cfe2286ec",
+      "named_entities": [],
+      "reference_ckb": "حیزبی بەشارەلئەسەد و باوکی کە کوردەکان و عەرەب لە سووریا چۆن بوون",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004206.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "65158166-4aed-4eec-9013-baf6427b5874",
+      "named_entities": [],
+      "reference_ckb": "بە ساقەوبم مامۆستا گیان زۆر زۆر سوپاس وەکو وتم بە جددی بە چەند سەعاتی تریش ئەتوانم لەگەڵتا دانیشم و حەز ناکەم قسەش بکەم بۆ ئەوەی کات لە تۆ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004439.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.292,
+      "item_id": "53258f15-a5e2-4b7a-b05b-ba608ac809f4",
+      "named_entities": [],
+      "reference_ckb": "وەڵا تۆش؟ دایکم ئەمەنەی ڕق لێ بوو ئەیووت بۆ ئەیکەیت و تۆ پێویست نییە و نازانم چی بەس ڕێک لە بەر ئەو قسەیە ئەمکرد چونکە حەزم ئەکرد شتێک تاقیبکەمەوە وام ئەزانی ئەبێ وابێ و واش بوو",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004445.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.18,
+      "item_id": "a03bd6c2-ad7e-42b4-80ae-ab8933b3ddf9",
+      "named_entities": [],
+      "reference_ckb": "کە تێنەگەیشتووم بەس لەوەیا کە خەڵک لە بەردەمما وەستاوە و ئەبێ شتەکەیان بۆ شەرح کەم و",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004456.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "f02dfc82-ede0-4da7-a470-4c5b4e80ea4a",
+      "named_entities": [],
+      "reference_ckb": "بزنسی خۆماڵی بەڕای ئەو و بەڕای منیش تەبعەن ئەرکێکیان لە سەر شان بوو ئەرکێکی مرۆیی کە چەنە پارە بۆ خۆیان پێ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004459.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.524,
+      "item_id": "fc7b5ace-6fe7-4858-8b79-d65558deb161",
+      "named_entities": [],
+      "reference_ckb": "هەر مرۆڤ وە مرۆڤی کوردیش بە تایبەتی بگرە چونکە کۆمەڵگەیەکی تێکەڵین بمانەوێ و نەمانەوێ ئەمەنە حەزمان لە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004471.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.62,
+      "item_id": "83e638e5-2e79-4cd8-b70b-fcb89fa58f92",
+      "named_entities": [],
+      "reference_ckb": "تۆ ئێستا خۆت لە هەولێریت یاخود ئەم گەشتانە لە هەر جارەو لە شارێک ئەکرێن یان چی?",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004506.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.212,
+      "item_id": "21dc6f01-64e4-441a-acf0-3e7f6628ac62",
+      "named_entities": [],
+      "reference_ckb": "کەسی تایبەت دایمەن چاومان لەسەریەتی و حەز ئەکەین بێت و ئەزموونی خۆیان لە گەڵمان بەش بکەن و تۆزێک قسەمان بۆ بکەن و قسە بکەین و",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004507.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.116,
+      "item_id": "23831843-93ff-46ab-8de7-ed0e6e0c63c7",
+      "named_entities": [],
+      "reference_ckb": "حەزمان کرد تۆ بێیت بۆ ئەوەی باسی ئەم شتە جوان و تازەیەمان بۆ بکەیت کە تۆ ئێستا خەریکیت بۆیە پێش هەموو شتێک",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004692.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.388,
+      "item_id": "69959683-77bb-4a71-8de3-d7e7380cde13",
+      "named_entities": [],
+      "reference_ckb": "ئاگات لەم پێشهاتانەی ئەم دواییانە هەیە کە وەریگریت و لێی تێبگەیت و بۆ خەڵکی بگێڕیتەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004700.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.204,
+      "item_id": "e6551d5f-ef62-4fb6-a9af-1c875d2d7d78",
+      "named_entities": [],
+      "reference_ckb": "هەڵە نەبم حەوتە هەشتە نۆیە یەکێک لەو سێ ژمارەیە ئەوەنە وڵاتە لە جیهانا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004718.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.196,
+      "item_id": "77d62e21-0511-4306-8beb-0ab67cd244ed",
+      "named_entities": [],
+      "reference_ckb": "شتەکانم زۆر زۆر بە ئەو وردەکاریە بیرنەماوە بەس کورتەی مەوزوعەکە چی بوو دوو جۆر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004737.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.268,
+      "item_id": "41a580b6-589f-46db-8d3f-f7893b7fa2ef",
+      "named_entities": [],
+      "reference_ckb": "بۆ یەکەم دانە ئەگەر خۆت مەبەستت بێ یان مەبەستت نەبێ من حەز دەکەم ئەمە ببێ بە نموونەیەک کە خەڵک هان بدات لەوەی نوێگەری بکەن لە کارەکە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004748.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "ee8191e3-3a3e-4c49-8b64-566ddcabde69",
+      "named_entities": [],
+      "reference_ckb": "هاتوون کە توانیویانە بە هەمان شێوازی دوێنێ فڵانە شت بکەن بەس خەلەلێکیان تیا بینیووە هاتوون و خەلەلەیان چاککردۆتەوە و بە شێوازیەکی خۆیان کردوویان و تاوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004752.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.948,
+      "item_id": "8293b7d2-3013-4aac-999d-ac23793af069",
+      "named_entities": [],
+      "reference_ckb": "وە هیوادارم تاقەتت نەچێ لە هیچ کام لەو کارانەیا چونکە دڵنیام ئەوە زۆر زۆر بۆ تۆ گرنگە حەز و خولیا و تاقەت و زەوق و سەلیقە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004767.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.556,
+      "item_id": "45f24f1e-0f4e-43c5-a08e-40ba45d430aa",
+      "named_entities": [],
+      "reference_ckb": "جیاوازە من هەستەکەم من ئاگاشم لە جیهانی کامێرا نیە بەس هەستەکەم هەندێک کامێرا هەیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004791.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.78,
+      "item_id": "918a1eb1-a074-4b52-ad7c-d7d544809d4c",
+      "named_entities": [],
+      "reference_ckb": "پرسیارێکی زۆر زۆر سەریحم ئەکرێ ئەگەر ئاسایی بێ ئەوە بێت تا چەندێک خەڵک",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004837.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.484,
+      "item_id": "a7865e7b-fc5b-467c-ae93-c2321977275c",
+      "named_entities": [],
+      "reference_ckb": "نازانم ئەگەر ئەو شتە کوردی هەبێ سەبجەکتیڤ ئەبن یانی بۆ من سەبجەکتیڤ بەو مانایەی کە بۆ من جوانە بۆ تۆ ناشرینە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004838.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "ab695a45-7bb7-4dc7-b799-85dee32f84d9",
+      "named_entities": [],
+      "reference_ckb": "تۆ ڕەسمێک ئەگری وتت ئێستا حەز ناکەم کاپشنیش دانم کاپشنێک کە ئەتوانێ ڕوونیکاتەوە ئەم ڕەسمە لەکوێیە لە چ کاتێکا بووە مەبەست",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004903.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.9,
+      "item_id": "88ffc76d-fbd2-46c4-aee6-2d7d69a7b9f4",
+      "named_entities": [],
+      "reference_ckb": "کە سەیریان ئەکەی لێت ئەیات و بیرتەکەوێتەوە کە ئەم شتە ئەونە کۆن نەبووە لە سەردەمی کامێرایە ڕوویاوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004915.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.332,
+      "item_id": "5c2ee5ff-e6a0-4892-9faf-dfd8629abc28",
+      "named_entities": [],
+      "reference_ckb": "وەکو کۆتا شتێکیش هەر پێشتریش باسمان کرد زۆر خۆش گەڕاوی تۆ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004950.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.948,
+      "item_id": "fddb363e-584d-4b25-9715-5bda14df2a9f",
+      "named_entities": [],
+      "reference_ckb": "کاک عومەر گیان زۆر زۆر بەخێربێی وە لەشت ساغ بێ زۆر زۆر پڕ ئەزموونیت و پڕ دیدگایەکی جوان و جیاوازی کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004980.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.396,
+      "item_id": "3d80a73e-19b5-46d8-bce8-3572d20c59ac",
+      "named_entities": [],
+      "reference_ckb": "ئەوەی کە ئێوە لەم تەمەنەیا باسی کۆمەڵێک شتەکەن کە هاوتەمەنەکانی ئێوە نە خەمی لێئەخۆن نە بیری لێئەکەنەوە نە خۆیانی پێوە هیلاک ئەکەن",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004983.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.0,
+      "item_id": "63f80a40-a54f-42fe-ad06-f9ea12354ade",
+      "named_entities": [],
+      "reference_ckb": "هەنێ جاریش هەست لەوانەیە هەست بە شەرم بکەی بە جددی کە کەسانێک ئەبینی لە تەمەنێکی ئاوایا باسی کۆمەڵێک شت ئەکەن کە تۆ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_004988.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.94,
+      "item_id": "eab0dc30-9f03-4fc6-9861-7553f272d02a",
+      "named_entities": [],
+      "reference_ckb": "زۆر زۆر جوانە جا ئەم پۆدکاستیش تەقریبەن لە چیەوە هاتە دەرەوە لە لە فیلمەوە نەهاو لە زنجیرەوە نەهاو",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005013.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 3.86,
+      "item_id": "916bbdac-509f-4302-807b-540933f0722b",
+      "named_entities": [],
+      "reference_ckb": "یەک شت کە بەلامەوە موهیمە ئێستا تێبگەم ئەوەیە کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005019.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.404,
+      "item_id": "aac89dbe-dbeb-45da-8137-0a906b141e05",
+      "named_entities": [],
+      "reference_ckb": "نە هەر یەعنی وەکو مەوزوع هەستەکەی شتێک هەیە کە زیاتر گرنگە بۆ گەنجی هەڵەبجە وەک لە گەنجی تر یەعنی ئەو جیا ئەکرێنەوە یان گەنج گەنجە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005020.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.596,
+      "item_id": "9ca548d1-05d5-41f2-ad5f-f5dee1994feb",
+      "named_entities": [],
+      "reference_ckb": "چوانە جا من ئێستا شتێکم بیرکەوتەوە ئێمە پێشەوەی کە قسە بکەین باسی ئەوەت کرد کە لەم ماوەیە لە دیبەیتێکدا بەشداریت کردووە لە سەر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005024.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.756,
+      "item_id": "069bd862-0dbc-4494-96aa-1109e1b2c917",
+      "named_entities": [],
+      "reference_ckb": "کە شەرت نیە هەر لە مناڵیا بمێنێتەوە بەس هەست ناکەی ئەم شتە کە تۆ وابزانم دواتر پێت وتم پێشتر کە تۆ لەگەڵ پەروەردەی داخراوایت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005054.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.244,
+      "item_id": "61f1501f-1ac2-41e6-b70b-dd2e18e113ce",
+      "named_entities": [],
+      "reference_ckb": "بەڵام مادەم ئێوە کەسانێکی ئەونە زیرەکن لێتان ڕائەبینم کە ئەم مەوزوعەتان لەگەڵا بکەمەوە هەست ناکەن گرنگیشە لە هەمان کاتا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005059.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.276,
+      "item_id": "5131bbd5-8456-48db-a8b0-44bf6b54bd7d",
+      "named_entities": [],
+      "reference_ckb": "من هیچ ناڵێم تۆ لەو بڕوایەی کە ئەمە شتێکی ڕاستە کە بیر لەوە نەکەینەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005064.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.316,
+      "item_id": "8d038efe-6d74-40c5-9b07-a6cd239c3df4",
+      "named_entities": [],
+      "reference_ckb": "ڕێک ڕێک هەست بە زەختتێک بکەی کە ئەبێ ئێستا ئەو شتە حەلکەی چونکە من لێرە کە ئەم شتانە ئەڵێم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005065.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.764,
+      "item_id": "0bc4c342-c13e-46d2-a751-e6d706ef164a",
+      "named_entities": [],
+      "reference_ckb": "پێش پۆدکاستەکەش پێم وتن من تا دوای پۆلی دوانزەش نەمەزانی چی بە ژیانی خۆم ئەکەم وە خوێندنی داهاتووشم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005069.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.34,
+      "item_id": "a202f566-d0e7-4fab-b133-e3aa7969c17a",
+      "named_entities": [],
+      "reference_ckb": "کەمە ئا ئا بەجددی لە لە چاو خۆیا لە چاو ئەوەی کە لە چاو زۆر شتا با بڵێین بەجددی کوردیەکەتان زۆر جوانە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005101.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.092,
+      "item_id": "d078bd9e-b4c3-4568-bfd5-823b2eb05433",
+      "named_entities": [],
+      "reference_ckb": "ڤیدیۆی کەسانێک کە بڵاو ئەبێتەوە زۆر زۆر ئاسایی کۆمەڵێک وشەی بیانی بە کار هێنن ئێتر خەڵک لە کۆمێنتا زۆر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005127.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.22,
+      "item_id": "9cc959bb-1ab8-4019-af28-9b74061fe36b",
+      "named_entities": [],
+      "reference_ckb": "ئەو مەنهەجانەی مەکتەب زۆر زۆر ئاسانتر ئەکرێ مامەڵەیان لەگەڵا بکرێ ئەگەر دەرەجە و شتی لە سەر نەبوایە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005131.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.38,
+      "item_id": "d4258893-49e5-44e6-96fe-a4307ad59e0f",
+      "named_entities": [],
+      "reference_ckb": "بۆیە لەو بڕوایان ئەگەر ئەو دەرسانە لابەین ئینگلیزی و عەرەبی ئەتوانین کوردیەکی ئاسانتر فێربین",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005148.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.044,
+      "item_id": "023eb351-f7a1-44ec-bcbd-41c3074ed60f",
+      "named_entities": [],
+      "reference_ckb": "ئاخر ژمهێنان بەڕای من هیوادارم بۆ ئێوەش وابێ شتێک نییە پلانی بۆ دابنێی بڵێی تا لە بیست و پێنج ساڵیا ئەبێ ژنم هێنابێت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005150.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.868,
+      "item_id": "cc071068-e020-4e98-9ab9-2b92a56d0c1e",
+      "named_entities": [],
+      "reference_ckb": "لەوانەیە کەسەکە گونجاو نەبێ بارودۆخی دارایی خۆت گونجاو نەبێ کاری فریلانسی کەم بێ ئەو ماوەیە وانیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005354.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.732,
+      "item_id": "9aea83e0-7dcd-4ad6-bd14-148f90395c67",
+      "named_entities": [],
+      "reference_ckb": "زیرەکی دەستکرد و ئەم بابەتە ئایتیانەشی تێکەڵکەی بەس دڵنیام خۆشت هەر ئەیکەی چونکە تۆ وەڵامدانەوەت بۆ ئەوە هەیە کە لە کۆمەڵگایا ڕووئەیات",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005502.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.324,
+      "item_id": "b10e4f79-11f4-4407-b9a8-ad195b25755f",
+      "named_entities": [],
+      "reference_ckb": "کێشەیەکی زۆری نەبووە بە تایبەتی هەرێمی کوردستان لەو ماوەیە چۆن بووە وەزعەکەی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005516.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.812,
+      "item_id": "978d368b-7696-499c-baf3-d60e28366dea",
+      "named_entities": [],
+      "reference_ckb": "یەکێکی تر لەو خاڵانەی کە دایمەن زۆرترین قسەی لە سەر کراوە لە لایەن با بڵێین هەرێمی کوردستان و",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005518.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.092,
+      "item_id": "3105f780-692c-4b69-87a0-b51ff387cb14",
+      "named_entities": [],
+      "reference_ckb": "دەستکەوتایە ئەگەر بەس پاشگەز ببوینایەتەوە لەو داواکاریەی کە ناوچە جێناکۆکەکان بەجددی مەوزوعێکی گرنگە بەلای ئێمەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005523.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.172,
+      "item_id": "b809437f-7487-49c1-807c-750b1db5f547",
+      "named_entities": [],
+      "reference_ckb": "جوان تێبگەین ئەمڕۆ بە هەمان قورسایی کۆمەڵێک شتی تر لێی تێبگەین",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005537.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.54,
+      "item_id": "d7b8c6bc-8719-4e7b-a32c-4df2d9bcdd01",
+      "named_entities": [],
+      "reference_ckb": "300 و نازانم چەند کورسییە لە پەرلەمانی عێراقا هەیە بەشێکی هی تۆیە وەکو کورد ئەگەر بایکۆتی شتێکی وا بکەی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005545.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.62,
+      "item_id": "43b026b6-5394-4c34-a8c9-21b699607138",
+      "named_entities": [],
+      "reference_ckb": "بەس ئەو حیزبەی زۆرترین کورسی هەیە تەبعەن من ئەمانە ئەڵێم ئەگەر لە شوێنێکا غەڵەت بووم توخوا یەکسەر بموەستێنە بەس ئەو حیزبەی زۆرترین کورسی هەیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005554.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.932,
+      "item_id": "be2534ad-9663-443d-8d6d-a3987efb11bc",
+      "named_entities": [],
+      "reference_ckb": "خێرێکیم تیا نەدیوە لە لوبنانیش هەر ڕێک هەمان بەزمیان هەیە سەرۆکی وڵاتەکە ئیلا ئەبێ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005567.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.436,
+      "item_id": "ad778643-ae54-4318-a3ce-d9a39db9eb53",
+      "named_entities": [],
+      "reference_ckb": "عێراق بە دەست کوردێک بوایە وای لە کورد برا کوردەکانی خۆی نائەکرد هەمیش سوننە ئەیوت شیعە ئەیوت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005581.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.092,
+      "item_id": "61ad96e6-e3e8-451a-ba75-c12e58888e8f",
+      "named_entities": [],
+      "reference_ckb": "ئێتر نازانم لە کاتی ئەوە بووە کە خۆت پەیامنێری جەنگ بووی یاخود",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005587.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.356,
+      "item_id": "83aef5e4-2d1a-4f77-a809-e7a9318f7db2",
+      "named_entities": [],
+      "reference_ckb": "وە تا بێ مەجالی ئەوە نامێنێ ڕۆژ بە ڕۆژ کە بڵێی لەوانەیە حەفتەی داهاتوو دانیشتن و دەستکەنە ملی یەک و ئاشبنەوە ئەو شتە هەزاران ساڵ لەمەو پێش تەواو مەجالی تیا نەما",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005607.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.708,
+      "item_id": "f2f20c5e-3c37-469a-b267-ccb6cecf7cd8",
+      "named_entities": [],
+      "reference_ckb": "کابرایە نەئەکرد ئەچووم کڵاشینکۆفێک ئەهێنم کە کڵاشینکۆفەکە ئەبینی تۆ ئەچی قازیفەیەک ئەهێنی تۆ ئەوە ئەهێنی من ئەچم تانکێکت بۆ ئەهێنم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005612.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.98,
+      "item_id": "e632b2a6-8af5-4cef-b21d-62565eff9a75",
+      "named_entities": [],
+      "reference_ckb": "یەکێتی سۆڤیەت و ئەمریکا کە هەردووکیان چەکی ئەتۆمی زۆر زۆریان هەبوو وە ساڵ بە ساڵ زیاتریان ئەکرد لە ترسی یەک ئەگە بیانیایە لە یەک",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005623.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.532,
+      "item_id": "c9cac119-997e-486f-862a-a875ccc1e6e1",
+      "named_entities": [],
+      "reference_ckb": "وەڵایی زۆر زۆر سوپاس کاک ئەیووب بەجددی حەزئەکەم زۆر زیاتریش بەردەوام بین بەس با بەشی ئەوەنە هیلاکت نەکەین جارێکی تر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005821.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.204,
+      "item_id": "1b48e51f-aac7-4243-9069-07922385ad2e",
+      "named_entities": [],
+      "reference_ckb": "ئەو شتە بۆ هەموو کەسێ نەکراوە جا منیش بۆیە ئەو مەوزوعی ئیش و شتانەم هەر زۆر زۆر بەلاوە بەجددیە و زۆر بە حەماسێکەوە باسی ئەکەم چونکە من",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_005972.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.396,
+      "item_id": "a856875a-fd31-40e1-9068-816ad7056b56",
+      "named_entities": [],
+      "reference_ckb": "ئەوە هەر لە ئێستاوە قۆڵم بۆ هەڵەکا بۆیە ئەمجارە ناڵێم بەخێربێنەوە بۆ یەکەم پۆدکاستی هەرێمی کوردستان میوانەکەی ئەمڕۆشمان کاک",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006081.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.708,
+      "item_id": "8317fd14-78b6-4fb9-9a37-65f70a339ca8",
+      "named_entities": [],
+      "reference_ckb": "ئافەرم ئەو جوانیش بووە ئەو سوتفەیە ئاوا کەوتویتەتە ناو ئیشێکەوە بە بێ ئەوەی پێش وەختە بە هەموو حەیاتت پێنج دەقەش بیرت لێ کردبێتەوە کە ڕۆژێک لە ڕۆژان شتێکی وا بکەین",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006093.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.756,
+      "item_id": "a4d789cc-fd95-4412-b352-308eb04acddd",
+      "named_entities": [],
+      "reference_ckb": "چۆپی خان تۆ هەقە لەو شتەیا ئەبینی ئەهاتووە زۆر حەستەکم جەختەکەیتەوە سەر ئەوەی کە لە داهاتووشا ئەبێ وابی تۆ ئێستای تۆ و",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006094.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.524,
+      "item_id": "361900fc-5e4a-47c7-b437-95be07e884f8",
+      "named_entities": [],
+      "reference_ckb": "یان خەریکی شتێکی تر بم بەس ئێستا تۆ لەم تەمەنە زۆر زۆرم پێ خۆشە کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006836.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.076,
+      "item_id": "a91bf378-7716-4f34-ad79-7aef1ff8311c",
+      "named_entities": [],
+      "reference_ckb": "ئامڕازە لە ئێستایا کە بتوانی خۆو بە خەڵک بگەیەنی نا بەکاری ناهێنن نازانم تۆ بەڕای تۆ هەستەکەی ئەمە شتێکە کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_007191.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.924,
+      "item_id": "e599c3d5-3205-4f48-8da0-4e40c60211eb",
+      "named_entities": [],
+      "reference_ckb": "بەس خەڵک ئەها بەداخەوە بەڕای من هەستەکەم کۆمەڵێ بەش هەیە کۆمەڵێ کۆلێژهەیە کە جیاکراونەتەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_007477.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.988,
+      "item_id": "315d0e34-5faf-4042-97fe-cc30c4ef5851",
+      "named_entities": [],
+      "reference_ckb": "وتم کۆفی پڵیس بە ئینگلیزی وتم ئەویش دوای سەیرەکەم بەجددی کوردیەکەی من هیچ نیە لە چاو کوردی ئەم کچەیا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_008316.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.46,
+      "item_id": "aa83ccfa-22ad-4709-bda0-ce308014787e",
+      "named_entities": [],
+      "reference_ckb": "سڵاو چۆنن من ناوم لامۆیە وە بەخێربێنەوە بۆ پۆدکاستێکی تری زار",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_008570.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.548,
+      "item_id": "61a7bdd2-5cd1-47f4-90fe-db7c6cc15926",
+      "named_entities": [],
+      "reference_ckb": "ئەمڕۆ برادەرێکمان بانگ کردووە کە بەشداری لە پرۆژەی گەشانەوەیا کردووە و بوو بە یەکێ لەو بزنسە سەرکەوتووانەی کە توانی ئەو بڕە قەرزەی داوای کردبوو وەریبگرێت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_008763.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.18,
+      "item_id": "9edec7c0-af7f-4e3c-92fd-1ba09bd10390",
+      "named_entities": [],
+      "reference_ckb": "وە ئەو کۆنتێنتانەی کە دروست ئەکەی ئەو ناوەڕۆکانەی کە باسی دەکەی بە کوردی پێی ئەڵێین ناوەڕۆک ئاسان نیە حەزەکەم بزانم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_008858.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.372,
+      "item_id": "df0c0b06-8c64-48fa-9119-c10e17edeed1",
+      "named_entities": [],
+      "reference_ckb": "هەموو جارێ وا ئەپرسم وەڵڵایی بەشکم یەکێ بڵێ وەڵڵا کێشەم نەبوو من",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_009174.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.908,
+      "item_id": "7b7c53ed-351f-445b-abc8-0682aabd84ce",
+      "named_entities": [],
+      "reference_ckb": "بەقەی من یان هیچ نەبێ تۆزێکیشی بێ چێژتان لێ وەرگرتبێت و سودەکەش زۆر زۆر زەروورە هەیبووبێ وە تا جارێکی تر و ئەڵقەیەکی تری زار ماڵاوا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_009301.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.556,
+      "item_id": "b84e8099-af6c-4826-aa2a-538142d91634",
+      "named_entities": [],
+      "reference_ckb": "مێژووی نەتەوەی کورد چەنێ کۆنە و چەنێ ئەگەڕێتەوە پێش زانین بەس تا ئێوارە ئەو ڕەقەمەوە لە خەیاڵا بێ ئەڵێی نەوخستۆتە ناو کۆنتێکستێکی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_009486.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.828,
+      "item_id": "c90f5b47-fe84-43e3-9c91-d4edf3ecdadc",
+      "named_entities": [],
+      "reference_ckb": "وتم ئەمە داخی ئەم مەوزوعە لە دڵی منایە هەلی کارێکە کابرا ئەڵێ ئەبێ ئەوە بکەی ئەبێ وێبسایت بە ڕێوەبەری کۆنتێنتەکە بنووسی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_009494.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.244,
+      "item_id": "91de6bb7-6c8f-4d6d-ac01-4be4e7c36762",
+      "named_entities": [],
+      "reference_ckb": "یەک شت کە ئەوەنە حەزم کرد بزانم کە نووسیم لێرەیا بۆی بەجددی نابێ ئەوەم بیرچێتەوە نابێ بە سەر ئەوەیا تێپەڕم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_009766.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.108,
+      "item_id": "f375fdac-7ebd-4269-ba9c-908e955f08e7",
+      "named_entities": [],
+      "reference_ckb": "وەکو ئامانجێک لە دڵیا هەبێت یەعنی تێئەگەی لە مەبەستم یەعنی مەبەستم ئەوەیە هەست ئەکەم ئەمە شتێکی زۆر زۆر سەبجێکتیڤانەیە کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_009790.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.9,
+      "item_id": "6050a524-dc9c-458e-90d5-fac253b91771",
+      "named_entities": [],
+      "reference_ckb": "بە نەوعێ پێمان خۆش بوو وە بە داخیشەوە کە ئەمە ئەڵێم هەست هەست دەکرد خەلەلێک هەیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_010230.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.716,
+      "item_id": "a52ff5bd-298f-4433-b022-7733f8b1277b",
+      "named_entities": [],
+      "reference_ckb": "هەموو ژیانی خۆتی لە سەردانێی ئەها بە جۆرێک وەکو لەوانەیە بە داخەوە هەنێ کەس بیکەن پێشوەختە لە سەریت خوێندووە ئینجا وردە وردە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_010524.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.828,
+      "item_id": "faa07724-5b76-4a68-8926-842aa00fd096",
+      "named_entities": [],
+      "reference_ckb": "شێوازێکی زۆر ئەرێنیانە باسی کۆمەڵگا و باسی بەرەو پێشچوون و باسی دۆخی هەم هەم بابڵێین",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_010614.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.86,
+      "item_id": "9e9a27ea-65cb-47f3-8c17-4b0a4b5b5d6d",
+      "named_entities": [],
+      "reference_ckb": "مامۆستا من نازانم ئەگەر خۆم دیقەتم یاوە وایە یاخوود نا بەڵام هەست ئەکەم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_010653.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.292,
+      "item_id": "d96d7cc1-591a-4c11-8d15-6bb09cc3f8ae",
+      "named_entities": [],
+      "reference_ckb": "یەخوا بەخێربێی یەخوا نموونەت زۆر بێت هەم بۆ نیشتمانەکەو و هەم بۆ دینی ئیسلامیش وە هیوادارم هەر سەرکەوتووبێت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_010852.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.492,
+      "item_id": "529cb85b-1e4d-43f2-8ac8-8f8f689c208b",
+      "named_entities": [],
+      "reference_ckb": "ئەمڕۆش میوانێکی زۆر زۆر ئازیز و ڕۆح و سووکمان لەگەڵە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_011033.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.14,
+      "item_id": "72a01ffd-4168-4788-95b1-2c9e35651a1a",
+      "named_entities": [],
+      "reference_ckb": "بەس ئەگەر یەک کۆمێنتم هەبێ لە سەر ئەو قسانە لە شوێنێکا من ئەتوانم بڵێم بەڕای من هەموو ترسێکیش خراپ نیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_011110.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.604,
+      "item_id": "6800a844-599e-4883-be6f-259fd3eba60e",
+      "named_entities": [],
+      "reference_ckb": "نە وەکو یەکێ بوو بینە لەویا بەجۆرێک یان یان بە شێوازێک بیت کە خەڵک چاوەڕێ ئەکا وابیت تۆ ئەوەی کە لێت چاوەڕێ ئەکەن",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_011291.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.068,
+      "item_id": "bfcd905d-5d7f-49f7-86a3-ee657e053005",
+      "named_entities": [],
+      "reference_ckb": "ئەگەر بڵێم لەشت ساخ بێ بە مەعنای کەلیمە ئەیڵێم بە نەوعێ ئەها کە بە خەڵکی تری ناڵێم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_011579.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.572,
+      "item_id": "0d8a536d-3474-493e-a9f7-2bd0dbcdaeeb",
+      "named_entities": [],
+      "reference_ckb": "پارەت ئەیەمێ تۆ موچەخۆری منی تۆ ئیش بۆ من ئەکەی بەس لە هەمان کاتیشا من سوپاسی تۆ ئەکەم کە هەیت ئیتر ئەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_011614.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.78,
+      "item_id": "f6298b7c-6712-4317-a858-e40176073f96",
+      "named_entities": [],
+      "reference_ckb": "ڕێنیشاندان بێت تەمرین بێت کۆرسکردنەوە بێت ئەم جۆرە شتانە بەس هەنێکی تریشان",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_011659.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.18,
+      "item_id": "f38922b5-2546-41c5-a3f0-80cabf8fdab7",
+      "named_entities": [],
+      "reference_ckb": "بەس من ئێستا با یەکسەر بە شتێکی تۆزێ جددی دەست پێ بکەین لە زۆر وڵات من ئەزانم کەسێک کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_012182.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.388,
+      "item_id": "feae9ecd-e150-4411-a1ac-114ae05b5a27",
+      "named_entities": [],
+      "reference_ckb": "ڕێک سەعات نۆ بۆ دەی شەوە ئۆنڵاینە ڤیدیۆ کۆڵ ئەکا قسە لەگەڵ یەکا ئەکەن و شتێ فێر ئەبن",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_012284.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.012,
+      "item_id": "43065d17-24b1-4d50-84bc-33a5b6bd8df6",
+      "named_entities": [],
+      "reference_ckb": "هەستم بە ئەوە ئەکرد ئەو وت لەگەڵ منا قسە ئەگرت چونکە بەزمی ماڵبارکردنم من بینیوەوە بەس بەو جۆرەی کە لە تۆوە ئەمبینی زۆر زۆر شتەکەو خۆش و ئاسان کردبوو",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_012985.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.684,
+      "item_id": "b9d0af30-f9cb-4349-8606-2694ce8896d2",
+      "named_entities": [],
+      "reference_ckb": "لە من و تۆش زیاتر حەزی لەو بەشە توبیانە بێ بەس هەشتا ئەهێنێت هەشتا و پێنج نەوەت ئەهێنێت وە بابڵێن لێرەشا زانکۆیەکی ئەهلی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_013365.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.82,
+      "item_id": "47f7d054-4a16-4eff-bcd5-6a37ba2e888e",
+      "named_entities": [],
+      "reference_ckb": "من تەنها ترافیک لایتەکە خۆی ئەبینم بۆیە تۆ چۆن وەکو فۆتۆگرافەرێک کارێک ئەکەیت کە بە بێ ئەوەی هیچ بڵێیت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_013540.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.06,
+      "item_id": "b890bad1-a43f-446a-9110-3848a818e772",
+      "named_entities": [],
+      "reference_ckb": "بۆ نمونە کارەساتی کیمیابارانی هەڵەبجە کۆمەڵێک وێنە و تەسویرمان هەیە ئێستاش",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_017176.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.812,
+      "item_id": "f6285fe6-a842-4b88-aad0-5f051c1e9a8b",
+      "named_entities": [],
+      "reference_ckb": "یەک شتیش کە ئیتر نازانم خۆو چۆن پێو خۆشە پرسیارە یان نا بەس خۆم بەلامەوە شتێکە کە حەز ئەکەم یەعنی بزانم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_017255.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.908,
+      "item_id": "d4253db3-1296-4457-bd09-562b326898f6",
+      "named_entities": [],
+      "reference_ckb": "هان بدات لەوەی نوێگەری بکەن لە کارەکە یەعنی زۆر شت هەیە کە ئەمەنە لە کۆنەوە بە یەک شێواز هاتووە کە سەیری ئەکەی لە خۆتەوە هەر ناوێری دەستیشی بۆ بەری",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_017306.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.468,
+      "item_id": "021954bd-6d19-4d60-93c4-988b052a29ea",
+      "named_entities": [],
+      "reference_ckb": "ئەگەر خەڵک هەر بەردەوام بێ ئەمە بکا هەنێ خەڵک ئەگەر بەردەوام بن ئەمە بکەن مانای ئەوەیە کە بۆ ئەوان سەرئەگرێت سەرئەگرێت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_017562.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.524,
+      "item_id": "9458427b-ccae-4895-ba12-2fca5cb59b5b",
+      "named_entities": [],
+      "reference_ckb": "ئینشاڵا هەروا ئەبێ، بەس لە گەڕانەوە شتەکانتە کام کەم شەعب و کەم وڵات و کەم گەل و نەتەوایەتی و",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_019395.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.236,
+      "item_id": "6df0959b-9292-4cfd-9ccb-5ed6a991c4dd",
+      "named_entities": [],
+      "reference_ckb": "باش تەلەفونت بۆ ئەکەین ئەو کاتە بە دکتۆر دکتۆر مێشکت ئەبەین جا لە هەمووی خۆشتر قەت بڕوام نەکرد پۆدکاستی وامان توشبێ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_019435.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.78,
+      "item_id": "1b9ede02-6440-4053-bbdd-e821873013f9",
+      "named_entities": [],
+      "reference_ckb": "دەستکەوتی زۆر بێت و نازانم چی و چی هەر قسەیەکت کردبوو جارێکیان لە سەر ئاو و هەوای کوردستان و بەتایبەتی هەولێر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_019689.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.948,
+      "item_id": "a9130b9c-8a8d-4cdb-8766-82e1f38f2f40",
+      "named_entities": [],
+      "reference_ckb": "ئەیهێڵنەوە یان باسی ناکەین یان بێزارن تاقەتیان نیە شتێکی وا بەس تۆ قەت نەمبینیوە ڕۆژێک لە ڕۆژان زانیاریەک چیرۆکێک",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_020519.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.34,
+      "item_id": "563305dd-9482-4611-8d13-dacffbe9c7e9",
+      "named_entities": [],
+      "reference_ckb": "و یەک شتیش نا ئیزعاجە لە بابەتی بابڵێین خواردن و مەتبەخەکان و ئەم جۆرە شتە ئەوەیە چونکە ئەبێ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_021597.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.14,
+      "item_id": "6c456124-3c2d-42de-bfd4-96ed508be338",
+      "named_entities": [],
+      "reference_ckb": "ئەمە وشەیەکە ئەمە کێشەیەکە لە ئەمریکایا زۆر زۆر بەربڵاوە پێی ئەوترێ جێنتریفکەیشن جێنتریفکەیشن چیە گەڕەکێکی زۆر زۆر جوان و کۆنت هەیە وەکو بۆ نمونە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_021667.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.828,
+      "item_id": "b75eb322-c0b1-4f59-878a-1c0572817bbf",
+      "named_entities": [],
+      "reference_ckb": "ئەوەی کە خەڵک بخەنە سەر کار ئەبێ شت بگەڕێننەوە بۆ کۆمەڵگاکەیان ئەبێ هاوکاری کۆمەڵگاکانیان بکەن یەعنی کۆمەڵێ فکرەی زۆر زۆر جوانە کە ئەبێ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_023967.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.324,
+      "item_id": "cc8dd869-f66d-49a2-be7b-f0856d07e109",
+      "named_entities": [],
+      "reference_ckb": "سکرین ڕیکۆردی هینەکەمان کرد ئەها کۆماند و پێنجەکە پێویست بەوەناکا بە ئۆبیئێسەکە عەیبی نیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_024288.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.756,
+      "item_id": "d85cd734-8aab-4351-a398-9bdee6541a61",
+      "named_entities": [],
+      "reference_ckb": "گرنگە لە مێژووی کوردی باشوورەوە بەتایبەتی و لە کۆتایشا نەورۆزمان هەیە کە ئەکاتە 21ی 3",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_024707.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.556,
+      "item_id": "21907cf6-0ce1-4eb6-aefe-28dd931526e4",
+      "named_entities": [],
+      "reference_ckb": "یەک پرسیارم هەیە یەکسەر بە جددی حەزەکەم زۆر بە جوانی بزانم نازناوەکەت لاهووتی زۆر سەرنجی ڕاکێشام",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_024765.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.748,
+      "item_id": "cf6a8102-d7f9-4e93-9706-3f46bf531355",
+      "named_entities": [],
+      "reference_ckb": "پێم ناخۆشە بە هەموو جۆرێک پێم ناخۆشە کە با بڵێین بەرەکەوێت و هێرشەکرێتە سەری و نازانم چی و چی لە هەردوو لاشەوە بەخوا ئەونە نەگبەتین",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_024770.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.916,
+      "item_id": "1e7042e2-54c7-4851-b92e-067f08610852",
+      "named_entities": [],
+      "reference_ckb": "ئەزانی چی من چۆن ئەیبینم دکتۆر پەیوەندی نێوان کورد و فارس بۆ نموونە و شارە کوردیەکان و بابڵێین شارە ئێرانیەکان",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026160.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.644,
+      "item_id": "940db99e-993e-4e44-991b-52965e0e8fd8",
+      "named_entities": [],
+      "reference_ckb": "خەریک بوو ببێ بە بەدخۆراکیەک کە لێم دا ئیتر دایکم زۆر خەمی بوو تەبعەن",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026281.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.612,
+      "item_id": "0b49ab24-2aff-44d1-8abb-f75ff89a2d15",
+      "named_entities": [],
+      "reference_ckb": "مامۆستا پێویست ئەکات لە بارودۆخی تەلەبە تێبگا ئەگەر بە تایبەت تەلەبەیەک هەبێ کاسب بێ بژێوی ژیانی ماڵەوەی خۆیان دابین کات یان لەو بڕوایەیایت خوێندن خوێندنەوە و پێویست بم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026770.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.772,
+      "item_id": "edadeebf-03bb-46e4-8d81-f087dad1bf22",
+      "named_entities": [],
+      "reference_ckb": "ئەگەر ئەیکەیت و وایە حەزەکەم باس بکرێت حەزەکەم ئەو کەسە بچێت باسی کات ئیتر ئەمە ئەگەر بە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026939.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.884,
+      "item_id": "1f919741-be46-4121-9cf8-a06fb4c802a0",
+      "named_entities": [],
+      "reference_ckb": "ئێستا یەعنی هەموومان پێ ڕاهاتووین و کەناڵ نیە بچیتە سەری ئەو ڕیکلامانە نەبینی ئەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_027466.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.524,
+      "item_id": "52b58c53-2d1e-4e8b-a4ea-19dab1f3c118",
+      "named_entities": [],
+      "reference_ckb": "ئێوەش زۆر سوپاس تاقەتتان هەبوو دانیشتن و گوێتان گرت تا هەڵقەیەکی تر و پۆدکاستێکی تری زار جارێ ماڵئاوا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_028157.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.308,
+      "item_id": "046329cc-d0d9-4cb5-9db3-f422d4569c29",
+      "named_entities": [],
+      "reference_ckb": "منێک کە بمەوێ ڕۆژێک لە ڕۆژان دەستکەم بە ئیشی ئاوا بتوانم کۆمەڵێک سەرچاوەی وەکوو تۆ و کەسانی وەکو تۆم لە بەردەستابێ کە ئەوان",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_029604.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.772,
+      "item_id": "8b7b001f-3f9d-4dfa-a79e-ede07cd20c3a",
+      "named_entities": [],
+      "reference_ckb": "ئەو ئەو بیرۆکەیەم ئەوەنە بە لاوە جوانە یەعنی ناتوانم بوەستم لەوەی کە بیری لێ ئەکەمەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_029834.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.9,
+      "item_id": "47056e8e-fa24-4144-88e5-1011d4bd0458",
+      "named_entities": [],
+      "reference_ckb": "ئەی چۆن چارەسەری کێشەیەکی وا ئەکەی چۆن چارەسەری کێشەیەکی وا ئەکەی ئەچی قسە لەگەڵ ماڵەوەیانا ئەکەی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_029931.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.308,
+      "item_id": "426f8dbd-303a-4369-af22-0b8f762c4695",
+      "named_entities": [],
+      "reference_ckb": "بڵێی سەعات بۆ ئەوەنە، ئەوەنە بۆ ئەوەنە ئەچی بۆ فڵانە شوێن ئینجا دوای ئەچی لەوێ نان ئەخۆی ئینجا ئەچی ئەوە ئەبینیت وبئەوە بینی چۆن کاتەکەم بۆ ڕێک ئەخەی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_030333.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.908,
+      "item_id": "6e7d6a78-2aed-436f-9403-3e79c30f835f",
+      "named_entities": [],
+      "reference_ckb": "وەکو وەکو شکڵێک بێت هەبێت و بەس کاک حسێن لە پشتەوە هەموو شتێک بکات لە بابەتی کلتوری میوزیک و ئەمانەیا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_030345.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.628,
+      "item_id": "a3fb0061-286c-4859-9c1c-209045885203",
+      "named_entities": [],
+      "reference_ckb": "کوردی خۆشمان بن یان بە تایبەت کوردی باشوور ئەوە هەر زۆر باشتر چونکە ئێمە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_030376.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.812,
+      "item_id": "6d536c27-885e-4b6a-b3fe-d9226e60b262",
+      "named_entities": [],
+      "reference_ckb": "مووچەیە کە چاوەڕوانی بیت و ئەمە بیرۆکەیەکی زۆر جوانە و زۆر گرنگە و شتێکە کە بەڕاستی ببێ بە باو وەکو ئەها ئەڵێی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_030774.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.964,
+      "item_id": "203e3164-c24a-432f-9de8-2ad3db6e1726",
+      "named_entities": [],
+      "reference_ckb": "هەرچی تەخت و سەوزە ڕاهاتوون بۆیە دایمەن ئەو کێوی بوونەم ئاوا کە دیقەت یاوە خۆم پێکەنینێکم بۆ خۆم کردوە و یەعنی زانیومە کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_030909.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.172,
+      "item_id": "ceb339d9-e399-4c0b-9731-69614afe261b",
+      "named_entities": [],
+      "reference_ckb": "کۆمپانیایەکی خۆت هەیە گەڕۆک توریزم و بە وەکوو ڕوێن نوێن و ڕێنیشاندەر و",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_031302.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.724,
+      "item_id": "b251e754-dc3f-4333-a77c-48a1325bbcb2",
+      "named_entities": [],
+      "reference_ckb": "حەمۆ گیان نا وەڵڵا نا بەساقەوبم من زۆر تۆم هێشتووەتەوە لێرە نازانم چەنێک  ئەبێ پۆدکاستەکە بەس نەبووە بە دوو سەعات",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_031376.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.868,
+      "item_id": "12345400-9254-47e9-a973-2e715ae2e97e",
+      "named_entities": [],
+      "reference_ckb": "نمونەکەی خۆم و خۆت بهێنەوە پێش چاوی خۆت لە جیاتی من و تۆ بیکە بە دوو وڵات هەر لە خۆتەوە . دوو وڵاتی جیاواز",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_031654.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.148,
+      "item_id": "2bf299ca-2521-440f-bd5d-ad8ca603e955",
+      "named_entities": [],
+      "reference_ckb": "لە هەموو چەکەکانی پێشڕۆ هێشتا ئەگەرێک هەبووە کە من و تۆ لە نزیکی یەکتر چەکی خۆمان دژ بەویتر بەکاربهێنین و یەکێکمان هەر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032115.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.948,
+      "item_id": "b43a7f67-dc6b-41d8-9446-3487514f3d8f",
+      "named_entities": [],
+      "reference_ckb": "واتە بۆ نموونە لەو 950 هەزار دینارە با بڵێین 100 هەزاریان بڕیوە خۆیان خۆی مووچەکە ملیۆنێک و 50 هەزارە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032754.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.556,
+      "item_id": "e4e3227c-979f-4659-bb29-25ed787a1622",
+      "named_entities": [],
+      "reference_ckb": "یەکی سێ ڕستەمان ئەوت لە سەر خۆمان دوانی ڕاست بوو دانەیەکیان هەڵەبوو ئەمە کاک هاوژین خۆشی لێنیە تومەس یەکێ لە ڕستەکانی ئەوە بوو کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032762.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.668,
+      "item_id": "0505694e-f75a-4fb5-9849-b702a432a4c1",
+      "named_entities": [],
+      "reference_ckb": "بیرم لە شتێک ئەکردەوە بەم قسەیا وتم پێش هەموو شتێ حەز ئەکەم بزانم چەنێک خەڵک چەنێک قەرزی پێش پرۆژەکەی لابووە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_002785.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.004,
+      "item_id": "a5144ec4-bf45-45ff-a9cf-4fe632d32a4e",
+      "named_entities": [],
+      "reference_ckb": "کارە سەربەخۆیە بکەیت بۆ خۆت و لە هەمان کاتیشا لەگەڵ دکتۆریەکەیا بەردەوام بیت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006090.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.524,
+      "item_id": "4009d10d-9aa5-4148-bc40-7b9a5f223cf0",
+      "named_entities": [],
+      "reference_ckb": "ئەڵقەکەمان لە لایەن پرۆژەی گەشانەوە سپۆنسەرکراوە کە تیایە قەرزی بانکی درا بە 25 بزنسی خۆماڵی کە توانیان",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006231.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.972,
+      "item_id": "c97edadf-3563-4501-a027-36a7d48ecceb",
+      "named_entities": [],
+      "reference_ckb": "گەشە بە کارەکانیان بدەن لە لە بازاڕی ئیش و کارا لەمڕۆیا لە کۆمەڵگای کوردیا و لە هەر کۆمەڵگایەکی ترابێ کەرتی تایبەت و کەرتی گشتیمان هەیە خەڵک",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006528.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.924,
+      "item_id": "f4d067f9-6a88-4d30-a66f-2947c298e65a",
+      "named_entities": [],
+      "reference_ckb": "سەری ئەو مەکە ئەو ناتوانێ خۆی ڕابگرێ ئێ کاتێک کە ویستت بگری کاتێک کە بۆت هات پێویستە بگریت چونکە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_006702.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.62,
+      "item_id": "1420cc29-b4a8-4c41-95fd-94c4c5d9a83a",
+      "named_entities": [],
+      "reference_ckb": "بە پارەی زیاتر ئەتوانی دڵخۆشی زیاتر بۆ خۆی فراهەم کات و نازانم چی لە دنیایەکا ئەژین کە زۆر شت ئەتوانی بە پارە حەلی کەی بە جددی تۆ بێتاقەت بیت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_009392.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.836,
+      "item_id": "5c73565a-68d3-4992-94e8-a235f3bec30a",
+      "named_entities": [],
+      "reference_ckb": "بە جددی سەرمان ئێشانی عەزێتمان نای نازانم چی و چی هەموو ئەم قسانە ئەها موجامەلەش نین بە خوا بەس بە جددی یەعنی زۆر زۆر چێژبەخش بوو وە لەوە زیاتریش بە سوود بوو",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_010780.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.492,
+      "item_id": "a22384c6-d654-45e2-9f04-2b16d7a8f616",
+      "named_entities": [],
+      "reference_ckb": "چەند جارێک خۆشە جار جارە شتێکی زۆر زۆر جوانە هەستەکەم بۆ ئەو کەسانە ئەکرێ وا بیرکەنەوە بەڵام لە شوێنێکیشا کە ئیتر زۆر بوو هەستەکەی کەیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_010781.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.492,
+      "item_id": "fc60cae2-b6bf-4d6f-b773-e50ba64ab05d",
+      "named_entities": [],
+      "reference_ckb": "خۆت بی بە شێوازێک یان مورتاح بی یان هەستکەی کەس ناوبینێت و دیار نیت و ئەها دابین ئەبێ ئەبێ جۆرە کەسێک بیت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_012684.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.412,
+      "item_id": "078cc5ce-61e0-400e-9886-6ed2252ce857",
+      "named_entities": [],
+      "reference_ckb": "ئەوا پزیشکانی ددان ئەیڵێن من دوو ساڵەکەشم تەواو کردووە ئێستا توانم بچم کلینیکێ دانێم دانانی کلینیک شتێکی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_012858.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.388,
+      "item_id": "5e9913e8-b71d-42fc-828c-54852b713711",
+      "named_entities": [],
+      "reference_ckb": "بێتاقەتمان نەکا بەس تۆ باسی ئەو دووساڵەت کرد کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_013496.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.532,
+      "item_id": "b571ec29-fd03-4184-8b29-eee1eb722397",
+      "named_entities": [],
+      "reference_ckb": "زۆرم پێخۆشە ئەو شتە خەڵک داواکاری زۆرە بۆ ئەوەی کە ببم بە فۆتۆگرافەری باش و بێنە ناو ئەم مەجالەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_014850.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 5.524,
+      "item_id": "775f2c14-39f1-4c16-a82f-f4a369250060",
+      "named_entities": [],
+      "reference_ckb": "وە لە هەستی خۆمان تێگەیشتوون و بەو ڕێگایە ئینگلیزی کۆمەڵێک وشەی تیا بووە هەنێن جار",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_017151.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.412,
+      "item_id": "0bb61768-5051-42be-899e-c4aa22fd690c",
+      "named_entities": [],
+      "reference_ckb": "چووە بە گژیا و بە ناهەقانە هێرشی کردووەتە سەر یاخود کەسێکی تر ئەتوانێ واو تێبگەیەنێ کە ئیسرائیل و قەومەکەش",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_017664.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.116,
+      "item_id": "e8a5f95d-7424-49d5-bfa4-62cfac06ad5a",
+      "named_entities": [],
+      "reference_ckb": "با بڵێین ئەندازیاریی زۆر لە شاری عێراقی وێران کرد بەغای هەر وێران وێران کرد ئێستاش ئەها تۆزێک ئەڵێی شتێکی تیا ماوە کە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_018314.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.724,
+      "item_id": "7dad5846-f12f-484b-a3c9-6b54290777d1",
+      "named_entities": [],
+      "reference_ckb": "ڕێگایەک هەبێ کە ئەم قوتابیە بزانێت کە حەزەکات چی بخوێنێت لە زانکۆیا. من زۆر زۆر بڕوام وایە کە لەم کۆمەڵگایەی ئێمەیا",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_020164.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.34,
+      "item_id": "f72b6964-6b94-42db-8b90-0b767f22f69e",
+      "named_entities": [],
+      "reference_ckb": "وە ئەها ئیتر هەمووی لێ تێکەڵ ئەبێ ئەڵێ کامەی کامەیە وا بزانم شتێکی تریشمان هەیە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_020171.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.524,
+      "item_id": "5106b9f1-fd0a-4328-a9d6-b5cbe347eefa",
+      "named_entities": [],
+      "reference_ckb": "با بڵێین بە دڵی خەڵکەکە ئەکات بە جۆرێ لە جۆرەکان ئەگەر بیکات تەبعەن ئەبێ بیکات بەڵام ئیتر ئەوە مەوزوعێکی ترە و لە ناو پەرلەمانا حیزبە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_020599.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.58,
+      "item_id": "6bf0e841-e277-4d91-bca4-5331460abcc1",
+      "named_entities": [],
+      "reference_ckb": "با بڵێین فەشەلهێنان کەمێک زیاتر بوایە چونکە یەکسەر تۆ یەک کۆڵ پارە ئەدەیت بە ناو ڕێستورانت و مێز و کورسی و کرێ و نازانم چی و چی بەڵام کۆشکەکە ئاسانتر و سادەترە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_022894.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 11.156,
+      "item_id": "3368eddf-9c38-4cdc-b7c4-018d43c6bb2d",
+      "named_entities": [],
+      "reference_ckb": "کاتی کارکردن دیاری نەکراوە دیاری نەکراوە ئۆفەکان چەنەن ئەمانەن بە جدی شتانێکی زۆر گرنگن کەسێک کە بە دوای ئیشا ئەگەڕێ هەموو ئەم زانیاریانەی لە بەر دەستابێ ئەتوانێ بڕیارێکی باشتر و خێراتر بات هەست ئەکەم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_023573.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 3.444,
+      "item_id": "911b4b1d-0538-4eb9-b3e6-00498e3ca1aa",
+      "named_entities": [],
+      "reference_ckb": "پارە ئەیا ئەو کەناڵە ئەخاتە سەر پێ ئەو کەناڵەش",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_024633.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.82,
+      "item_id": "541666f2-3e5f-4e96-9441-7ca638aff42f",
+      "named_entities": [],
+      "reference_ckb": "بەد زۆر جار کە شتی ئاوا ئەبیستم من وەکو تاکێک من دامەزراوە نیم من خەڵکی تر نیم من دوو کەس نیم سێ کەس نیم یەک کەسم کە ئەی بیستم لە خۆوە یەکسەر ئەڵێم",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_025135.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.428,
+      "item_id": "5a5d7968-c369-401f-8ed2-2dc38de8aec6",
+      "named_entities": [],
+      "reference_ckb": "ئەوە هەموومان خەیاڵمان لای ئێوە ئاڵتوون چی لێیەت و نازانم چی عەلاقەی بەو بە کیلۆیە تەماتە چیە لە ناو بازاڕا کەمن بچم ئێوارە بچم بیرکڕم و ئەها ئەوە هیچ با واز لە مەوزەعی ژن هێنانەکەش بێنین",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_025993.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.292,
+      "item_id": "05ea5e7d-e060-43ef-99c6-7ae9c9a64d16",
+      "named_entities": [],
+      "reference_ckb": "ئەمتوانی سەیری تۆ کەم و لاسایی تۆ بکەمەوە بزانم کە کۆمەڵێ شت هەیە ئەبێ ڕەچاوی کەم وەکو چۆن تۆ ئەیکەی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026023.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 7.028,
+      "item_id": "978a4bad-4dcb-4bd1-a385-3897466af437",
+      "named_entities": [],
+      "reference_ckb": "هۆکاری تایبەتیان چی بووە بەڵام بەعام ئەوەشم پێ ناخۆشە کە کوردستان",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026183.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 4.148,
+      "item_id": "35fd3e08-8b9b-46cb-867b-a87d6ec18862",
+      "named_entities": [],
+      "reference_ckb": "ئەم بزنسانە هەموویان چی بوون هەموویان کەسانێ بوون کە وازیان لەو ئیشە سابتەی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026186.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.076,
+      "item_id": "923bfd61-f9bd-4c8b-92d0-ce54d9f9e50c",
+      "named_entities": [],
+      "reference_ckb": "شتێکی تازە نیە بەڵام بە هەڵە لێی تێئەگەن خەڵک و یەک شت کە دایمەن زۆر زۆر بەلامەوە جوان بووە بە هۆی گەشانەوەوە تەبعەن هەر میوانێک هاتبێ بۆ لامان",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_026425.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 10.132,
+      "item_id": "14d9b3f6-b320-4725-9dd1-7c5deefec376",
+      "named_entities": [],
+      "reference_ckb": "ئیتر ئەمە ئەگەر بە لەخۆبایی بوون لە قەڵەم ئەدرێ دوای بە پۆزلێیان لە قەڵەم ئەدرێ بە باسکردنی موهیمی خۆت",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_027122.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.588,
+      "item_id": "239a5c81-1931-42ef-abe3-84f871811320",
+      "named_entities": [],
+      "reference_ckb": "ڕێکلامی تەلەڤیزۆنی جوان و بەسەلیقە و بە ئامانج و لە ناوچەیەکاین ئێمە ئەگەر هەموو ڕۆژهەڵاتی ناوەڕاست و باکووری فیرقە حساب بکەی",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_029561.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 6.58,
+      "item_id": "9abf17ce-e714-491b-9caa-4565ca3920fc",
+      "named_entities": [],
+      "reference_ckb": "ئەو ئەو بیرۆکەیەم ئەونە بە لاوە جوانە یەعنی ناتوانم بوەستم لەوەی کە بیری لێکەمەوە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032070.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 3.636,
+      "item_id": "e082ead4-e938-4543-93fc-1ff1037bdd87",
+      "named_entities": [],
+      "reference_ckb": "بۆ ئەمەیان تۆزێک لێی نادڵنیام چونکە",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032075.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.692,
+      "item_id": "194c4ff4-2029-4ff0-9b60-063382c305d1",
+      "named_entities": [],
+      "reference_ckb": "چەن ئەکات سی و حەوت هەزار و پێنج سەد وابزانم شتێکی وایە دە کەڕەتی سێ هەزار و حەوت سەد و پەنجا ئەکات",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032135.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 8.18,
+      "item_id": "758fa2b0-e42b-4dad-bef1-d867b922a7db",
+      "named_entities": [],
+      "reference_ckb": "خاوەنکارەکە تووشی کێشەی یاسای نابێ بەمە چونکە ئەمە کەمترین بڕی موچەیە کە تۆ بتوانیت لە ڕێی یاساییەوە بیدەیت بەڵام مانگانە یەک ئۆفەکە زۆر",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032339.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.908,
+      "item_id": "b0586cfd-922c-4f36-8251-90b67aaa879f",
+      "named_entities": [],
+      "reference_ckb": "یەک شتم زۆر پێناخۆشە زۆر دەمێکیشە دیقەتم یاوە هەست دەکەم کێشەی کواڵێتی بەنزینم لە هیچ وڵاتێکی ترا نەبیستووە، قەیرن هەبێ یان نەبێ",
+      "reference_words": [],
+      "speaker_count": 1
+    },
+    {
+      "audio_path": "wavs/lamo_032952.wav",
+      "code_switch_spans": [],
+      "conditions": [
+        "casual_podcast"
+      ],
+      "dialect": "slemani",
+      "duration_s": 9.396,
+      "item_id": "2e84db27-a168-4d0a-9dc7-e1f94b4a70e1",
+      "named_entities": [],
+      "reference_ckb": "دایمەن لە خۆمم پرسیوە بۆچی لە ماوەی 25 بۆ 30 ساڵا لە هەرێمی کوردستان کارەبای 24 کاتژمێری شتێ نەبووە کە بتوانین بیکەین بەڵام",
+      "reference_words": [],
+      "speaker_count": 1
+    }
+  ],
+  "provenance": {
+    "interim": false,
+    "licence": "Proprietary - Hawa / Hawzhin / Sewa / Lamo verified TTS",
+    "name": "Cortex Speech Studio export (tts-test-lamo-hawzhin-sewa-lamo-20260908-2331)",
+    "note": "167 human-confirmed segment(s); 63 unconfirmed record(s) left behind. Real material, which is BLOCKED.md #1's first preference — Labelled with dialect=slemani, conditions=['casual_podcast']."
+  }
+}
