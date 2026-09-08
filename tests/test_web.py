@@ -70,5 +70,40 @@ def test_web_handler_serves_status_json() -> None:
     assert status_code == 200
     assert "application/json" in headers.get("content-type", "")
     data = json.loads(body.decode("utf-8"))
-    assert data["status"] == "ready"
+    assert data["status"] in ("ready", "busy")
     assert data["latest_reel"]["duration_s"] == 48.14
+
+
+def test_web_handler_post_repurpose_creates_job() -> None:
+    body_bytes = b'{"source": "test_video.mp4"}'
+    req = (
+        b"POST /api/repurpose HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(body_bytes)).encode("ascii") + b"\r\n\r\n" + body_bytes
+    )
+    status_code, headers, body = _handle_request(req)
+    assert status_code == 201
+    assert "application/json" in headers.get("content-type", "")
+    data = json.loads(body.decode("utf-8"))
+    assert "job_id" in data
+    assert data["source"] == "test_video.mp4"
+    assert data["status"] in ("queued", "running", "completed")
+
+
+def test_web_handler_get_jobs_and_details() -> None:
+    # First query all jobs
+    req = b"GET /api/jobs HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    status_code, headers, body = _handle_request(req)
+    assert status_code == 200
+    jobs = json.loads(body.decode("utf-8"))
+    assert isinstance(jobs, list)
+
+    # If a job exists, query its specific endpoint
+    if jobs:
+        target_id = jobs[0]["job_id"]
+        detail_req = f"GET /api/jobs/{target_id} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode()
+        d_status, _, d_body = _handle_request(detail_req)
+        assert d_status == 200
+        single_job = json.loads(d_body.decode("utf-8"))
+        assert single_job["job_id"] == target_id

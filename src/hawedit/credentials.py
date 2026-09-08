@@ -126,6 +126,7 @@ def restrict_to_owner(path: Path) -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=15.0,
     )
     if result.returncode != 0:
         raise CredentialError(
@@ -188,6 +189,7 @@ def assert_ignored_by_git(path: Path) -> None:
             cwd=path.parent if path.parent.exists() else REPO_ROOT,
             capture_output=True,
             check=False,
+            timeout=15.0,
         )
     except OSError as exc:  # pragma: no cover - git missing is not a normal state here
         raise CredentialError(f"cannot ask git whether {path} is ignored: {exc}") from exc

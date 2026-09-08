@@ -902,6 +902,7 @@ def _cut_speech_regions(
             ],
             capture_output=True,
             check=False,
+            timeout=max(30.0, 10.0 + 2.0 * duration_s),
         )
         if result.returncode != 0 or not segment_path.exists():
             raise RuntimeError(
@@ -1291,6 +1292,7 @@ class WslOmniAsrProducer:
                 ],
                 capture_output=True,
                 check=False,
+                timeout=max(300.0, 60.0 + 4.0 * len(prepared) * 30.0),
             )
             if result.returncode != 0 or not output_path.is_file():
                 stderr = result.stderr.decode("utf-8", "replace")[-1_200:]

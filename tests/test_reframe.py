@@ -944,3 +944,32 @@ def test_visual_identity_does_not_equate_lone_face_with_active_voice(
     # Output validates against canonical speaker validator
     validated = validate_speaker_focus_points(points, turns, 0, 1800)
     assert len(validated) == len(points)
+
+
+def test_motion_speaker_tracker_with_yunet_and_speaker_cuts(tmp_path: Path) -> None:
+    """Phase 2.2: MotionSpeakerTracker accepts YuNet and cuts instantaneously on speaker turns."""
+    tracker = MotionSpeakerTracker(
+        sample_fps=5.0,
+        detector_kind="auto",
+        yunet_model_path=tmp_path / "non_existent_yunet.onnx",
+    )
+    assert tracker.detector_kind == "auto"
+    assert tracker.yunet_model_path == tmp_path / "non_existent_yunet.onnx"
+
+    # Test camera routing cut behavior with stabilize:
+    # Speaker 0 at x=150 (0..2000ms), Speaker 1 at x=550 (2000..4000ms)
+    points = (
+        FocusPoint(0, 150),
+        FocusPoint(500, 150),
+        FocusPoint(1000, 150),
+        FocusPoint(1500, 150),
+        FocusPoint(2000, 550),
+        FocusPoint(2500, 550),
+        FocusPoint(3000, 550),
+    )
+    speaker_cuts = (2000,)
+    steady = stabilize(points, dead_zone_px=20, shot_cuts_ms=speaker_cuts)
+
+    # Keyframes must step at the speaker cut without slow wandering
+    assert any(kf.at_ms == 2000 and kf.center_x == 150 for kf in steady)
+    assert any(kf.at_ms == 2001 and kf.center_x == 550 for kf in steady)

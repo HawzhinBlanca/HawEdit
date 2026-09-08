@@ -25,6 +25,7 @@ __all__ = [
     "StoryBeat",
     "StoryCondensationError",
     "StorySummary",
+    "condense_multiple_arcs",
     "condense_story",
     "remap_words_to_condensed_timeline",
 ]
@@ -437,3 +438,84 @@ def remap_words_to_condensed_timeline(
         output_offset_ms += span_dur
 
     return tuple(remapped_words)
+
+
+def condense_multiple_arcs(
+    sentences: Sequence[Sentence],
+    *,
+    max_clips: int = 3,
+    target_duration_ms: int = 50_000,
+    min_duration_ms: int = 25_000,
+    max_duration_ms: int = 60_000,
+) -> list[CondensedStoryPlan]:
+    """Extract multiple distinct, non-overlapping story arcs from a long transcript.
+
+    Partitions long-form dialogue into candidate narrative windows and applies
+    semantic story condensation to produce a ranked set of viral short candidates.
+
+    Args:
+        sentences: Sequence of aligned Sentence objects covering the long episode.
+        max_clips: Maximum number of ranked story clips to return.
+        target_duration_ms: Target duration per condensed reel.
+        min_duration_ms: Minimum duration floor per condensed reel.
+        max_duration_ms: Maximum duration ceiling per condensed reel.
+
+    Returns:
+        List of CondensedStoryPlan objects sorted by importance/virality.
+    """
+    if not sentences:
+        return []
+
+    total_duration_ms = sentences[-1].end_ms - sentences[0].start_ms
+    # If the entire input fits within max_duration_ms, return a single story arc
+    if total_duration_ms <= max_duration_ms:
+        return [
+            condense_story(
+                sentences,
+                target_duration_ms=target_duration_ms,
+                min_duration_ms=min_duration_ms,
+                max_duration_ms=max_duration_ms,
+                story_id="clip-01",
+            )
+        ]
+
+    # Partition sentences into thematic/temporal story windows (~80s of source material)
+    window_duration_ms = 80_000
+    plans: list[CondensedStoryPlan] = []
+    window_start_idx = 0
+
+    clip_count = 1
+    while window_start_idx < len(sentences) and len(plans) < max_clips:
+        window_sentences: list[Sentence] = []
+        curr_win_dur = 0
+        idx = window_start_idx
+
+        while idx < len(sentences):
+            s = sentences[idx]
+            s_dur = s.end_ms - s.start_ms
+            window_sentences.append(s)
+            curr_win_dur += s_dur
+            idx += 1
+            if curr_win_dur >= window_duration_ms:
+                break
+
+        if curr_win_dur >= min_duration_ms:
+            try:
+                plan = condense_story(
+                    window_sentences,
+                    target_duration_ms=target_duration_ms,
+                    min_duration_ms=min_duration_ms,
+                    max_duration_ms=max_duration_ms,
+                    story_id=f"clip-{clip_count:02d}",
+                    headline_kurdish=f"بەسەرهاتی کاریگەر #{clip_count}",
+                    summary_kurdish="کورتەی بەسەرهاتی هەڵبژێردراو لە ئەڵقەکە.",
+                )
+                plans.append(plan)
+                clip_count += 1
+            except StoryCondensationError:
+                pass
+
+        # Advance window past the current segment
+        window_start_idx = idx
+
+    return plans

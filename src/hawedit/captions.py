@@ -957,7 +957,7 @@ def measure_rendered_caption_width(
             "-",
         ]
         try:
-            res = subprocess.run(cmd, check=True, capture_output=True)
+            res = subprocess.run(cmd, check=True, capture_output=True, timeout=30.0)
             raw = res.stdout
             min_x = canvas_width
             max_x = -1
@@ -2134,6 +2134,7 @@ def render_caption_png(
         ],
         check=True,
         capture_output=True,
+        timeout=60.0,
     )
     return output
 
@@ -2163,6 +2164,7 @@ def decode_to_rgb(ffmpeg: Path, image: Path) -> bytes:
         ],
         check=True,
         capture_output=True,
+        timeout=30.0,
     )
     return result.stdout
 

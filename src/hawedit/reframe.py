@@ -404,6 +404,8 @@ class MotionSpeakerTracker:
         min_face_area: int = MIN_FACE_AREA,
         motion_threshold: float = 1.0,
         ambiguity_ratio: float = 1.25,
+        detector_kind: str = "auto",
+        yunet_model_path: Path | None = None,
     ) -> None:
         if sample_fps <= 0 or not math.isfinite(sample_fps):
             raise ValueError("speaker-tracking fps must be finite and positive")
@@ -415,6 +417,8 @@ class MotionSpeakerTracker:
         self.min_face_area = min_face_area
         self.motion_threshold = motion_threshold
         self.ambiguity_ratio = ambiguity_ratio
+        self.detector_kind = detector_kind
+        self.yunet_model_path = yunet_model_path
         self.confirmed_speaker_centers: dict[str, int] = {}
 
     def track_speakers(
@@ -452,6 +456,28 @@ class MotionSpeakerTracker:
             detectors[name] = classifier
         frontal = detectors["haarcascade_frontalface_default.xml"]
         profile = detectors["haarcascade_profileface.xml"]
+
+        yunet_detector: Any = None
+        if self.detector_kind in ("auto", "yunet"):
+            model_file = self.yunet_model_path
+            if model_file is None:
+                repo_model = (
+                    Path(__file__).resolve().parents[2] / "models" / "face_detection_yunet.onnx"
+                )
+                if repo_model.is_file():
+                    model_file = repo_model
+            if model_file is not None and model_file.is_file() and hasattr(cv2, "FaceDetectorYN"):
+                try:
+                    yunet_detector = cv2.FaceDetectorYN.create(
+                        str(model_file),
+                        "",
+                        (320, 320),
+                        score_threshold=0.6,
+                        nms_threshold=0.3,
+                        top_k=10,
+                    )
+                except Exception:
+                    yunet_detector = None
 
         capture = cv2.VideoCapture(str(source))
         if not capture.isOpened():
@@ -512,10 +538,22 @@ class MotionSpeakerTracker:
 
                 active_speaker = active[0].speaker
 
-                faces = boxes(frontal, gray) + boxes(profile, gray)
-                faces += [
-                    (width - (x + w), y, w, h) for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
-                ]
+                faces: list[tuple[int, int, int, int]] = []
+                if yunet_detector is not None:
+                    try:
+                        yunet_detector.setInputSize((width, height))
+                        _, y_faces = yunet_detector.detect(frame)
+                        if y_faces is not None:
+                            for f in y_faces:
+                                faces.append((int(f[0]), int(f[1]), int(f[2]), int(f[3])))
+                    except Exception:
+                        faces = []
+                if not faces:
+                    faces = boxes(frontal, gray) + boxes(profile, gray)
+                    faces += [
+                        (width - (x + w), y, w, h)
+                        for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
+                    ]
                 valid_faces = [f for f in faces if f[2] * f[3] >= self.min_face_area]
 
                 # Deduplicate overlapping face boxes
@@ -571,9 +609,8 @@ class MotionSpeakerTracker:
                         if motion_val >= self.motion_threshold:
                             point_state = "speaker"
                             point_is_speaking = True
-                            point_confidence = 1.0
-                            speaker_face_centers[active_speaker] = selected_center
-                            last_known_center = selected_center
+                            speaker_face_centers[active_speaker] = cx
+                            last_known_center = cx
                         else:
                             # Mouth is quiet: do NOT equate lone face with active speaker.
                             point_state = "listener"

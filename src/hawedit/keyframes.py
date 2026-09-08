@@ -101,6 +101,7 @@ def extract_judge_frames(
                 ],
                 capture_output=True,
                 check=False,
+                timeout=max(30.0, 10.0 + 2.0 * duration_s),
             )
         except OSError as exc:
             raise KeyframeError(f"cannot launch ffmpeg for Stage 4 keyframes: {exc}") from exc

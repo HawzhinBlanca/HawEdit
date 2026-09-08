@@ -273,6 +273,7 @@ def extract_window_frames(
                 ],
                 capture_output=True,
                 check=False,
+                timeout=max(60.0, 10.0 + 4.0 * (window.duration_ms / 1000)),
             )
         except OSError as exc:
             raise VideoInputError(f"cannot launch ffmpeg for {window.window_id}: {exc}") from exc

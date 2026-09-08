@@ -246,7 +246,13 @@ class _GateIdentity:
         }
 
 
-def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
+def _run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    timeout: float = 300.0,
+) -> str:
     try:
         result = subprocess.run(
             command,
@@ -255,6 +261,7 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) ->
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout,
         )
     except OSError as exc:
         raise ReleaseError(f"could not run {command[0]!r}: {exc}") from exc

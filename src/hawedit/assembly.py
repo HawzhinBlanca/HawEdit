@@ -362,7 +362,13 @@ def render_assembled_reel(
         str(output_path),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=max(120.0, 60.0 + 4.0 * duration_s),
+    )
     if result.returncode != 0:
         raise RuntimeError(
             f"FFmpeg assembly render failed (exit {result.returncode}):\n{result.stderr}"

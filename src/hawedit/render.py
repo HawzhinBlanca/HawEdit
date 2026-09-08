@@ -511,6 +511,7 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
             ],
             capture_output=True,
             check=False,
+            timeout=30.0,
         )
         # ffmpeg can exit 0 having written nothing when the encoder fails to initialise, so
         # the exit code alone is not the answer either.
@@ -1301,10 +1302,18 @@ def render_clip(
         raise RenderError("no ffmpeg available — run hawedit-ffmpeg-setup or set HAWEDIT_FFMPEG")
 
     version = subprocess.run(
-        [str(binary), "-hide_banner", "-version"], capture_output=True, text=True, check=False
+        [str(binary), "-hide_banner", "-version"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30.0,
     ).stdout.splitlines()[0]
     buildconf = subprocess.run(
-        [str(binary), "-hide_banner", "-buildconf"], capture_output=True, text=True, check=False
+        [str(binary), "-hide_banner", "-buildconf"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30.0,
     ).stdout
     # §4.3.2: a build that accepts shaping=complex may still lack HarfBuzz, and the failure is
     # invisible until a client sees the captions. Checked here, not only in the golden test.

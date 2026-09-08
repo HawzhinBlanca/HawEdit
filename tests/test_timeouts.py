@@ -75,3 +75,22 @@ def test_sanity_gate_subprocesses_have_timeouts() -> None:
         assert has_timeout, (
             f"subprocess call at line {call.lineno} in sanity_gate.py missing timeout"
         )
+
+
+def test_all_subprocess_runs_in_hawedit_have_timeouts() -> None:
+    """Every subprocess.run across src/hawedit must specify an explicit timeout (Claim R2)."""
+    src_dir = ROOT / "src" / "hawedit"
+    for py_file in src_dir.glob("*.py"):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "subprocess"
+            ):
+                has_timeout = any(kw.arg == "timeout" for kw in node.keywords)
+                assert has_timeout, (
+                    f"subprocess.run at line {node.lineno} in {py_file.name} is missing a timeout"
+                )

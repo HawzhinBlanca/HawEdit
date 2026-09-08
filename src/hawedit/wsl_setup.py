@@ -515,6 +515,7 @@ def wsl_path(path: Path, distro: str | None = None, executable: str = "wsl.exe")
         [*wsl_prefix(distro, executable), "wslpath", "-a", "-u", path.resolve().as_posix()],
         capture_output=True,
         check=False,
+        timeout=30.0,
     )
     value = result.stdout.decode("utf-8", "replace").strip()
     if result.returncode != 0 or not value:
@@ -622,6 +623,7 @@ def _remove_incomplete_generation(
             [*wsl_prefix(distro, executable), "rm", "-rf", "--", translated],
             capture_output=True,
             check=False,
+            timeout=60.0,
         )
         if result.returncode != 0:
             detail = result.stderr.decode("utf-8", "replace")[-512:].strip()
@@ -1251,6 +1253,7 @@ def load_wsl_runtime_receipt(
             ],
             capture_output=True,
             check=False,
+            timeout=60.0,
         )
     except (OSError, RuntimeError) as exc:
         raise WslRuntimeError(
@@ -1385,6 +1388,7 @@ def probe_wsl_runtime(
         ],
         capture_output=True,
         check=False,
+        timeout=120.0,
     )
     if result.returncode != 0:
         error = result.stderr.decode("utf-8", "replace")[-1_200:]
@@ -1469,6 +1473,7 @@ def provision_wsl_runtime(
                 input=_SETUP_SCRIPT.encode("utf-8"),
                 capture_output=False,
                 check=False,
+                timeout=3600.0,
             )
             if result.returncode != 0:
                 if not complete and generation_root.exists():

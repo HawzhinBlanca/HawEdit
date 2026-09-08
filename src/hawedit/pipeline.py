@@ -78,6 +78,9 @@ from hawedit.captions import (
     build_ass,
     verify_caption_integrity,
 )
+from hawedit.checkpoint import (
+    save_stage_checkpoint,
+)
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.clip import (
     MAX_CANDIDATE_SPAN_MS,
@@ -1767,6 +1770,12 @@ def run_pipeline(
     except (IngestError, OSError) as exc:
         return _ingest_failure_run(identifier, source, work_dir, exc)
     log.finished("ingest")
+    save_stage_checkpoint(
+        work_dir,
+        "stage0_ingest",
+        {"source_sha256": ingested.source_sha256},
+        metadata={"audio_path": str(ingested.audio_path)},
+    )
 
     if transcript is not None:
         if transcript.media_sha256 is None:
@@ -1927,6 +1936,12 @@ def run_pipeline(
     normalized = normalize_transcript(transcript, source_sha256=store.raw_digest(identifier))
     store.write_norm(normalized)
     log.finished("transcript")
+    save_stage_checkpoint(
+        work_dir,
+        "stage1_transcript",
+        {"media_id": identifier, "source_sha256": ingested.source_sha256},
+        metadata={"words": len(transcript.words)},
+    )
 
     # --- §4.2 sentence segmentation, against this run's own VAD ---------------------------
     log.started("sentences")
@@ -1941,6 +1956,12 @@ def run_pipeline(
     # bounded windows and term rarity across 186 documents (D-164).
     index = Bm25Index.from_sentences(sentences, normalized)
     log.finished("index")
+    save_stage_checkpoint(
+        work_dir,
+        "stage2_index",
+        {"sentences": str(len(sentences))},
+        metadata={"media_id": identifier},
+    )
 
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 
@@ -2039,6 +2060,13 @@ def run_pipeline(
             billed_calls=tuple(billed_calls),
         )
         log.finished("discovery", None if merged else _STAGE_3_NOTHING_FOUND.reason)
+        if merged:
+            save_stage_checkpoint(
+                work_dir,
+                "stage3_discovery",
+                {"candidates": str(len(merged))},
+                metadata={"top_candidate": merged[0].candidate_id},
+            )
     else:
         log.finished("discovery", _STAGE_3_DISCOVERY.reason)
 
@@ -2263,6 +2291,13 @@ def run_pipeline(
                 )
             run = replace(run, editorial=None, billed_calls=tuple(billed_calls))
     log.finished("editorial", _skip_reason(run.editorial))
+    if run.editorial is None:
+        save_stage_checkpoint(
+            work_dir,
+            "stage4_editorial",
+            {"candidate_id": str(verdict.candidate_id if verdict else "direct")},
+            metadata={"judge": str(verdict.judge if verdict else "direct")},
+        )
 
     log.started("boundary")
     if not select_sentences:
@@ -2555,12 +2590,18 @@ def run_pipeline(
                 reframe_mode = Reframe.TWO_PERSON_SPLIT
                 focus_points = ()
             else:
+                speaker_cuts = [
+                    turn.start_ms
+                    for turn in overlapping_turns
+                    if boundary.final_in_ms < turn.start_ms < boundary.final_out_ms
+                ]
+                all_cuts = sorted(set(ingested.shot_cuts_ms) | set(speaker_cuts))
                 focus_points = _steady_camera(
                     focus_points,
                     source,
                     ffmpeg,
                     source_dimensions,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
+                    shot_cuts_ms=all_cuts,
                 )
                 reframe_mode = Reframe.SPEAKER_TRACKED
 
@@ -2632,6 +2673,15 @@ def run_pipeline(
     )
     run = replace(run, boundary=boundary, clip=clip, selected_sentences=tuple(selected))
     log.finished("boundary")
+    save_stage_checkpoint(
+        work_dir,
+        "stage5_boundary",
+        {
+            "in_ms": str(boundary.final_in_ms),
+            "out_ms": str(boundary.final_out_ms),
+        },
+        metadata={"clip_id": clip.clip_id},
+    )
 
     # --- §3 Stage 6 render ----------------------------------------------------------------
     log.started("render")
@@ -3020,6 +3070,12 @@ def run_pipeline(
         )
 
     log.finished("render")
+    save_stage_checkpoint(
+        work_dir,
+        "stage6_render",
+        {"output": str(final_render.name)},
+        metadata={"output_path": str(final_render)},
+    )
 
     # --- §2's delivery set: MP4 · SRT/ASS · editing JSON · EDL · measured.json ------------
     # Nothing is public yet: the render and all sidecars live in one private sibling directory.

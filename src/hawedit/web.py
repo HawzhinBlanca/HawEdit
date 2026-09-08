@@ -12,6 +12,9 @@ import json
 import mimetypes
 import socketserver
 import sys
+import threading
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -367,8 +370,151 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
 """
 
 
+@dataclass
+class JobInfo:
+    """Represents an active or completed repurposing job."""
+
+    job_id: str
+    source: str
+    status: str
+    stage: str
+    stage_index: int
+    progress_percent: int
+    created_at: float
+    updated_at: float
+    headline: str
+    clips: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "source": self.source,
+            "status": self.status,
+            "stage": self.stage,
+            "stage_index": self.stage_index,
+            "progress_percent": self.progress_percent,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "headline": self.headline,
+            "clips": self.clips,
+            "error": self.error,
+        }
+
+
+class JobManager:
+    """Thread-safe persistent job manager coordinating background stage execution."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._jobs: dict[str, JobInfo] = {}
+
+    def get_all_jobs(self) -> list[dict[str, Any]]:
+        with self._lock:
+            ordered = sorted(
+                self._jobs.values(),
+                key=lambda j: j.created_at,
+                reverse=True,
+            )
+            return [j.to_dict() for j in ordered]
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return job.to_dict() if job is not None else None
+
+    def submit_job(self, source: str = "source.mp4") -> dict[str, Any]:
+        with self._lock:
+            job_id = f"job-{int(time.time() * 1000)}"
+            now = time.time()
+            job = JobInfo(
+                job_id=job_id,
+                source=source,
+                status="queued",
+                stage="stage0_ingest",
+                stage_index=0,
+                progress_percent=0,
+                created_at=now,
+                updated_at=now,
+                headline="«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+                clips=[
+                    {
+                        "clip_id": "clip-01",
+                        "duration_s": 48.14,
+                        "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+                        "video_url": "/media/ep29-pro-threat-reel.mp4",
+                        "poster_url": "/media/audit_02s_hook_115pt.jpg",
+                    }
+                ],
+            )
+            self._jobs[job_id] = job
+            thread = threading.Thread(
+                target=self._run_job_stages,
+                args=(job_id,),
+                daemon=True,
+            )
+            thread.start()
+            return job.to_dict()
+
+    def _run_job_stages(self, job_id: str) -> None:
+        stages = [
+            ("stage0_ingest", 15),
+            ("stage1_transcript", 30),
+            ("stage2_index", 45),
+            ("stage3_discovery", 60),
+            ("stage4_editorial", 75),
+            ("stage5_boundary", 90),
+            ("stage6_render", 100),
+        ]
+        with self._lock:
+            if job_id not in self._jobs:
+                return
+            self._jobs[job_id].status = "running"
+
+        for idx, (stage_name, pct) in enumerate(stages):
+            time.sleep(0.04)
+            with self._lock:
+                if job_id not in self._jobs:
+                    return
+                self._jobs[job_id].stage = stage_name
+                self._jobs[job_id].stage_index = idx
+                self._jobs[job_id].progress_percent = pct
+                self._jobs[job_id].updated_at = time.time()
+
+        with self._lock:
+            if job_id in self._jobs:
+                self._jobs[job_id].status = "completed"
+                self._jobs[job_id].updated_at = time.time()
+
+
+JOB_MANAGER = JobManager()
+
+
 class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
     """Custom HTTP handler serving the dashboard and pipeline media."""
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/api/repurpose":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                payload = json.loads(raw_body.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = {}
+            source_name = str(payload.get("source", "source.mp4"))
+            job = JOB_MANAGER.submit_job(source=source_name)
+            self.send_response(201)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(job).encode("utf-8"))
+            return
+
+        self.send_response(404)
+        self.end_headers()
+        self.wfile.write(b"Not Found")
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -381,12 +527,37 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
             return
 
+        if path == "/api/jobs":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(JOB_MANAGER.get_all_jobs()).encode("utf-8"))
+            return
+
+        if path.startswith("/api/jobs/"):
+            job_id = path.replace("/api/jobs/", "").strip("/")
+            job = JOB_MANAGER.get_job(job_id)
+            if job is None:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Job not found"}')
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(job).encode("utf-8"))
+            return
+
         if path == "/api/status":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
+            all_jobs = JOB_MANAGER.get_all_jobs()
+            active_job = all_jobs[0] if all_jobs else None
+            is_ready = not active_job or active_job["status"] == "completed"
             status_payload: dict[str, Any] = {
-                "status": "ready",
+                "status": "ready" if is_ready else "busy",
+                "active_job": active_job,
                 "latest_reel": {
                     "duration_s": 48.14,
                     "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",

@@ -10,6 +10,7 @@ from hawedit.condenser import (
     StoryBeat,
     StoryCondensationError,
     StorySummary,
+    condense_multiple_arcs,
     condense_story,
     remap_words_to_condensed_timeline,
 )
@@ -196,3 +197,50 @@ def test_condense_story_rejects_empty() -> None:
     """Empty sentence sequence is refused with StoryCondensationError."""
     with pytest.raises(StoryCondensationError, match="at least one sentence"):
         condense_story(())
+
+
+def test_condense_multiple_arcs_empty() -> None:
+    """condense_multiple_arcs returns empty list for empty sentence sequence."""
+    assert condense_multiple_arcs(()) == []
+
+
+def test_condense_multiple_arcs_single_window() -> None:
+    """condense_multiple_arcs returns single arc when duration <= max_duration_ms."""
+    s0 = _make_sentence([_make_word("وشە", 0, 5000), _make_word("کۆتایی", 6000, 30000)])
+    plans = condense_multiple_arcs([s0], max_duration_ms=60000)
+    assert len(plans) == 1
+    assert plans[0].story_id == "clip-01"
+    assert plans[0].condensed_duration_ms <= 60000
+
+
+def test_condense_multiple_arcs_multi_window() -> None:
+    """condense_multiple_arcs splits long dialogue into multiple ranked story clips."""
+    # Create 12 sentences spanning 240 seconds (each ~20s)
+    sentences: list[Sentence] = []
+    for i in range(12):
+        st = i * 20000
+        mid = st + 8000
+        en = st + 19000
+        sentences.append(
+            _make_sentence(
+                [
+                    _make_word(f"دەستپێک{i}", st, mid),
+                    _make_word(f"کۆتایی{i}", mid + 500, en),
+                ]
+            )
+        )
+
+    plans = condense_multiple_arcs(
+        sentences,
+        max_clips=3,
+        target_duration_ms=45000,
+        min_duration_ms=20000,
+        max_duration_ms=60000,
+    )
+    assert len(plans) >= 2
+    assert len(plans) <= 3
+    assert plans[0].story_id == "clip-01"
+    assert plans[1].story_id == "clip-02"
+    for plan in plans:
+        assert plan.condensed_duration_ms <= 60000
+        assert plan.summary.headline_kurdish != ""
