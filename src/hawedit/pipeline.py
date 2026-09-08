@@ -79,6 +79,7 @@ from hawedit.captions import (
     verify_caption_integrity,
 )
 from hawedit.checkpoint import (
+    is_stage_complete,
     save_stage_checkpoint,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
@@ -1765,17 +1766,35 @@ def run_pipeline(
 
     # --- §3 Stage 0 ----------------------------------------------------------------------
     log.started("ingest")
-    try:
-        ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
-    except (IngestError, OSError) as exc:
-        return _ingest_failure_run(identifier, source, work_dir, exc)
-    log.finished("ingest")
-    save_stage_checkpoint(
-        work_dir,
-        "stage0_ingest",
-        {"source_sha256": ingested.source_sha256},
-        metadata={"audio_path": str(ingested.audio_path)},
-    )
+    source_sha = _file_digest(source)
+    stage0_json = work_dir / "stage0" / "ingest.json"
+    ingested: IngestResult | None = None
+    if (
+        is_stage_complete(work_dir, "stage0_ingest", {"source_sha256": source_sha})
+        and stage0_json.is_file()
+    ):
+        try:
+            saved_data = json.loads(stage0_json.read_text(encoding="utf-8"))
+            saved_ingest = IngestResult.from_dict(saved_data)
+            if Path(saved_ingest.audio_path).is_file() and Path(saved_ingest.proxy_path).is_file():
+                ingested = saved_ingest
+                log.finished("ingest", "resumed from checkpoint")
+        except Exception:
+            ingested = None
+
+    if ingested is None:
+        try:
+            ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
+        except (IngestError, OSError) as exc:
+            return _ingest_failure_run(identifier, source, work_dir, exc)
+        log.finished("ingest")
+        stage0_json.write_text(ingested.to_json(), encoding="utf-8")
+        save_stage_checkpoint(
+            work_dir,
+            "stage0_ingest",
+            {"source_sha256": ingested.source_sha256},
+            metadata={"audio_path": str(ingested.audio_path)},
+        )
 
     if transcript is not None:
         if transcript.media_sha256 is None:
@@ -1792,14 +1811,18 @@ def run_pipeline(
 
     diarization_stage: StageSkipped | None = _STAGE_0_DIARIZATION
     if diarizer is not None:
-        try:
-            ingested = attach_diarization(ingested, diarizer)
-        except DiarizationUnavailable as exc:
-            diarization_stage = _operational_failure(
-                "diarization", "Stage 0 diarization runtime", exc
-            )
-        else:
+        if ingested.diarization is not None:
             diarization_stage = None
+        else:
+            try:
+                ingested = attach_diarization(ingested, diarizer)
+            except DiarizationUnavailable as exc:
+                diarization_stage = _operational_failure(
+                    "diarization", "Stage 0 diarization runtime", exc
+                )
+            else:
+                diarization_stage = None
+                stage0_json.write_text(ingested.to_json(), encoding="utf-8")
 
     asr_failure: StageSkipped | None = None
     audio_digest: str | None = None

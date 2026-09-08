@@ -11,6 +11,7 @@ from hawedit.checkpoint import (
     load_stage_checkpoint,
     save_stage_checkpoint,
 )
+from hawedit.ingest import IngestResult
 
 
 def test_checkpoint_lifecycle(tmp_path: Path) -> None:
@@ -76,3 +77,48 @@ def test_pipeline_generates_stage_checkpoints(tmp_path: Path) -> None:
     assert checkpoint is not None
     assert checkpoint.stage_name == "stage0_ingest"
     assert "source_sha256" in checkpoint.input_hashes
+    assert (work / "stage0" / "ingest.json").is_file()
+
+
+def test_pipeline_resumes_stage0_from_checkpoint(tmp_path: Path) -> None:
+    """run_pipeline reuses stage0 artifacts when valid checkpoint marker exists."""
+    from hawedit.pipeline import run_pipeline
+
+    fixture = (
+        Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+    )
+    work = tmp_path / "work"
+    run1 = run_pipeline(fixture, work)
+    assert isinstance(run1.ingest, IngestResult)
+
+    # Re-running into the same work directory resumes Stage 0 from checkpoint
+    run2 = run_pipeline(fixture, work)
+    assert isinstance(run2.ingest, IngestResult)
+    assert run2.ingest.source_sha256 == run1.ingest.source_sha256
+    assert run2.ingest.duration_ms == run1.ingest.duration_ms
+    assert run2.ingest.shot_cuts_ms == run1.ingest.shot_cuts_ms
+
+
+def test_pipeline_stage0_corrupted_json_falls_back_safely(tmp_path: Path) -> None:
+    """If ingest.json is corrupted, pipeline falls back safely to fresh ingest."""
+    from hawedit.pipeline import run_pipeline
+
+    fixture = (
+        Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+    )
+    work = tmp_path / "work"
+    run1 = run_pipeline(fixture, work)
+    assert isinstance(run1.ingest, IngestResult)
+
+    # Corrupt the ingest.json file
+    ingest_json = work / "stage0" / "ingest.json"
+    assert ingest_json.is_file()
+    ingest_json.write_text("{invalid json truncated", encoding="utf-8")
+
+    # Pipeline must not crash; it detects corrupted data and re-ingests safely
+    run2 = run_pipeline(fixture, work)
+    assert isinstance(run2.ingest, IngestResult)
+    assert run2.ingest.source_sha256 == run1.ingest.source_sha256
+    # And valid json is restored
+    assert ingest_json.read_text(encoding="utf-8").startswith("{")
+
