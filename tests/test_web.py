@@ -105,5 +105,57 @@ def test_web_handler_get_jobs_and_details() -> None:
         detail_req = f"GET /api/jobs/{target_id} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode()
         d_status, _, d_body = _handle_request(detail_req)
         assert d_status == 200
-        single_job = json.loads(d_body.decode("utf-8"))
+        single_job = json.loads(d_body.decode())
         assert single_job["job_id"] == target_id
+
+
+def test_web_handler_post_edit_caption() -> None:
+    # First create a job
+    create_body = b'{"source": "test_video.mp4"}'
+    create_req = (
+        b"POST /api/repurpose HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(create_body)).encode("ascii") + b"\r\n\r\n" + create_body
+    )
+    c_status, _, c_body = _handle_request(create_req)
+    assert c_status == 201
+    job_id = json.loads(c_body.decode())["job_id"]
+
+    # Now edit caption
+    edit_body = json.dumps({"job_id": job_id, "headline": "سەردێڕی نوێ"}).encode()
+    edit_req = (
+        b"POST /api/edit_caption HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(edit_body)).encode("ascii") + b"\r\n\r\n" + edit_body
+    )
+    e_status, _, e_body = _handle_request(edit_req)
+    assert e_status == 200
+    res = json.loads(e_body.decode())
+    assert res["headline"] == "سەردێڕی نوێ"
+
+    # Nonexistent job returns 404
+    bad_body = json.dumps({"job_id": "nonexistent-job", "headline": "test"}).encode()
+    bad_req = (
+        b"POST /api/edit_caption HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(bad_body)).encode("ascii") + b"\r\n\r\n" + bad_body
+    )
+    b_status, _, _ = _handle_request(bad_req)
+    assert b_status == 404
+
+
+def test_web_handler_serves_media() -> None:
+    # Existing media serves 200
+    req = b"GET /media/audit_02s_hook_115pt.jpg HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    status_code, headers, body = _handle_request(req)
+    assert status_code == 200
+    assert "image/jpeg" in headers.get("content-type", "")
+    assert len(body) > 0
+
+    # Nonexistent media returns 404
+    bad_req = b"GET /media/nonexistent_file.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    b_status, _, _ = _handle_request(bad_req)
+    assert b_status == 404

@@ -257,6 +257,99 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       color: var(--success);
       border: 1px solid rgba(16, 185, 129, 0.2);
     }}
+    .progress-track {{
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      margin-top: 18px;
+      overflow: hidden;
+    }}
+    .progress-fill {{
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #00e5ff 0%, #10b981 100%);
+      transition: width 0.3s ease;
+      box-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+    }}
+    .clip-tabs {{
+      display: flex;
+      gap: 10px;
+      margin-bottom: 14px;
+    }}
+    .clip-tab {{
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: 'Vazirmatn', sans-serif;
+    }}
+    .clip-tab:hover {{
+      border-color: var(--accent);
+      color: #fff;
+    }}
+    .clip-tab.active {{
+      background: rgba(0, 229, 255, 0.12);
+      border-color: var(--accent);
+      color: var(--accent);
+    }}
+    .headline-edit {{
+      flex: 1;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: var(--gold);
+      font-family: 'Vazirmatn', sans-serif;
+      font-weight: 700;
+      font-size: 14px;
+    }}
+    .headline-edit:focus {{
+      outline: none;
+      border-color: var(--gold);
+    }}
+    .btn-save {{
+      padding: 10px 18px;
+      background: rgba(255, 179, 0, 0.15);
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: 'Vazirmatn', sans-serif;
+      transition: all 0.2s ease;
+    }}
+    .btn-save:hover {{
+      background: var(--gold);
+      color: #000;
+    }}
+    .btn-download {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 14px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--success);
+      color: var(--success);
+      border-radius: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      margin-top: 16px;
+      transition: all 0.2s ease;
+    }}
+    .btn-download:hover {{
+      background: var(--success);
+      color: #000;
+      transform: translateY(-2px);
+    }}
   </style>
 </head>
 <body>
@@ -319,10 +412,21 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
           <div class="step-label">ڕێندەری کۆتایی بە 115pt و NVENC (Master Render)</div>
         </div>
       </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressBar" style="width: 100%;"></div>
+      </div>
     </div>
 
     <div class="card preview-container">
       <div class="card-title">شۆرتی ئامادەکراو (Pro Kurdish Short)</div>
+      
+      <div class="clip-tabs" id="clipTabs">
+        <button class="clip-tab active" onclick="switchClip(0)">
+          شۆرتی سەرەکی (Rank #1 — 94.0)
+        </button>
+        <button class="clip-tab" onclick="switchClip(1)">شۆرتی دووەم (Rank #2 — 89.5)</button>
+      </div>
+
       <div class="video-wrapper">
         <video id="player" controls playsinline poster="/media/audit_02s_hook_115pt.jpg">
           <source src="/media/ep29-pro-threat-reel.mp4" type="video/mp4">
@@ -330,8 +434,21 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       </div>
 
       <div class="story-meta">
-        <div class="headline">«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»</div>
-        <div class="summary">{SUMMARY_TEXT}</div>
+        <div class="headline" id="headlineText">
+          «فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»
+        </div>
+        <div class="summary" id="summaryText">{SUMMARY_TEXT}</div>
+        
+        <div style="margin-top:14px;display:flex;gap:10px;">
+          <input type="text" id="headlineInput" class="headline-edit"
+                 value="«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»">
+          <button class="btn-save" onclick="saveHeadline()">پاشەکەوتکردن</button>
+        </div>
+
+        <a id="downloadBtn" href="/media/ep29-pro-threat-reel.mp4"
+           download="hawedit-pro-reel.mp4" class="btn-download">
+          داگرتنی شۆرتی تەواوکراو (Download 9:16 Reel)
+        </a>
         
         <div class="audit-grid">
           <div class="audit-pill">✓ ڕوخسار لە هەموو دیمەنێکدا (0 Dead Frames)</div>
@@ -344,6 +461,10 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
   </main>
 
   <script>
+    let currentJobId = null;
+    let pollTimer = null;
+    let currentClips = [];
+
     function fileSelected(input) {{
       if (input.files && input.files[0]) {{
         const file = input.files[0];
@@ -353,16 +474,107 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
         info.textContent = 'فایلی هەڵبژێردراو: ' + file.name + ' (' + sizeMb + ' MB)';
       }}
     }}
-    function startRepurposing() {{
+
+    async function startRepurposing() {{
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
       btn.textContent = 'خەریکی دروستکردنی شۆرتە...';
       document.getElementById('engineStatus').textContent = 'پڕۆسێس دەکرێت...';
-      setTimeout(() => {{
+      
+      const fileInput = document.getElementById('videoFile');
+      const file = fileInput.files && fileInput.files[0];
+      const fileName = file ? file.name : 'source.mp4';
+      
+      for (let i = 0; i < 6; i++) {{
+        const el = document.getElementById('s' + i);
+        if (el) el.className = 'step';
+      }}
+      document.getElementById('progressBar').style.width = '5%';
+
+      try {{
+        const res = await fetch('/api/repurpose', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ source: fileName }})
+        }});
+        const job = await res.json();
+        currentJobId = job.job_id;
+        if (job.clips) currentClips = job.clips;
+        pollJob(currentJobId);
+      }} catch (err) {{
+        console.error(err);
         btn.disabled = false;
-        btn.textContent = 'دروستکردنی شۆرتی تر';
-        document.getElementById('engineStatus').textContent = 'تەواوبوو (Ready)';
-      }}, 2500);
+        btn.textContent = 'دروستکردنی شۆرتی ڤایرۆڵ';
+      }}
+    }}
+
+    function pollJob(jobId) {{
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {{
+        try {{
+          const res = await fetch('/api/jobs/' + jobId);
+          if (!res.ok) return;
+          const job = await res.json();
+          if (job.clips) currentClips = job.clips;
+          updateStepper(job.stage_index, job.progress_percent);
+          
+          if (job.status === 'completed') {{
+            clearInterval(pollTimer);
+            const btn = document.getElementById('startBtn');
+            btn.disabled = false;
+            btn.textContent = 'دروستکردنی شۆرتی تر';
+            document.getElementById('engineStatus').textContent = 'تەواوبوو (Ready)';
+            if (job.headline) {{
+              document.getElementById('headlineText').textContent = job.headline;
+              document.getElementById('headlineInput').value = job.headline;
+            }}
+          }}
+        }} catch (e) {{}}
+      }}, 150);
+    }}
+
+    function updateStepper(activeIdx, progressPct) {{
+      document.getElementById('progressBar').style.width = progressPct + '%';
+      for (let i = 0; i < 6; i++) {{
+        const el = document.getElementById('s' + i);
+        if (!el) continue;
+        if (i < activeIdx) {{
+          el.className = 'step completed';
+        }} else if (i === activeIdx) {{
+          el.className = 'step active';
+        }} else {{
+          el.className = 'step';
+        }}
+      }}
+    }}
+
+    async function saveHeadline() {{
+      const val = document.getElementById('headlineInput').value.trim();
+      if (!val) return;
+      document.getElementById('headlineText').textContent = val;
+      if (!currentJobId) return;
+      try {{
+        await fetch('/api/edit_caption', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ job_id: currentJobId, headline: val }})
+        }});
+      }} catch (e) {{}}
+    }}
+
+    function switchClip(idx) {{
+      const tabs = document.querySelectorAll('.clip-tab');
+      tabs.forEach((t, i) => t.classList.toggle('active', i === idx));
+      if (currentClips && currentClips[idx]) {{
+        const clip = currentClips[idx];
+        document.getElementById('headlineText').textContent = clip.headline;
+        document.getElementById('headlineInput').value = clip.headline;
+        if (clip.video_url) {{
+          const player = document.getElementById('player');
+          player.src = clip.video_url;
+          player.load();
+        }}
+      }}
     }}
   </script>
 </body>
@@ -423,6 +635,19 @@ class JobManager:
             job = self._jobs.get(job_id)
             return job.to_dict() if job is not None else None
 
+    def update_job_caption(
+        self, job_id: str, headline: str, summary: str | None = None
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            if job_id not in self._jobs:
+                return None
+            job = self._jobs[job_id]
+            job.headline = headline
+            job.updated_at = time.time()
+            if job.clips:
+                job.clips[0]["headline"] = headline
+            return job.to_dict()
+
     def submit_job(self, source: str = "source.mp4") -> dict[str, Any]:
         with self._lock:
             job_id = f"job-{int(time.time() * 1000)}"
@@ -444,7 +669,16 @@ class JobManager:
                         "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
                         "video_url": "/media/ep29-pro-threat-reel.mp4",
                         "poster_url": "/media/audit_02s_hook_115pt.jpg",
-                    }
+                        "virality_score": 94.0,
+                    },
+                    {
+                        "clip_id": "clip-02",
+                        "duration_s": 36.50,
+                        "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+                        "video_url": "/media/ep29-pro-threat-reel.mp4",
+                        "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+                        "virality_score": 89.5,
+                    },
                 ],
             )
             self._jobs[job_id] = job
@@ -501,7 +735,7 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
             try:
-                payload = json.loads(raw_body.decode("utf-8"))
+                payload = json.loads(raw_body.decode())
             except (json.JSONDecodeError, UnicodeDecodeError):
                 payload = {}
             source_name = str(payload.get("source", "source.mp4"))
@@ -509,7 +743,30 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(201)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(job).encode("utf-8"))
+            self.wfile.write(json.dumps(job).encode())
+            return
+
+        if path == "/api/edit_caption":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                payload = json.loads(raw_body.decode())
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = {}
+            job_id = str(payload.get("job_id", ""))
+            headline = str(payload.get("headline", ""))
+            summary = payload.get("summary")
+            res = JOB_MANAGER.update_job_caption(job_id, headline, summary)
+            if res is None:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Job not found"}')
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(res).encode())
             return
 
         self.send_response(404)
@@ -524,14 +781,14 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
+            self.wfile.write(DASHBOARD_HTML.encode())
             return
 
         if path == "/api/jobs":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(JOB_MANAGER.get_all_jobs()).encode("utf-8"))
+            self.wfile.write(json.dumps(JOB_MANAGER.get_all_jobs()).encode())
             return
 
         if path.startswith("/api/jobs/"):
@@ -545,7 +802,7 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(job).encode("utf-8"))
+            self.wfile.write(json.dumps(job).encode())
             return
 
         if path == "/api/status":
@@ -560,12 +817,16 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
                 "active_job": active_job,
                 "latest_reel": {
                     "duration_s": 48.14,
-                    "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+                    "headline": (
+                        active_job["headline"]
+                        if active_job and "headline" in active_job
+                        else "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»"
+                    ),
                     "video_url": "/media/ep29-pro-threat-reel.mp4",
                     "audit_passed": True,
                 },
             }
-            self.wfile.write(json.dumps(status_payload).encode("utf-8"))
+            self.wfile.write(json.dumps(status_payload).encode())
             return
 
         if path.startswith("/media/"):
