@@ -85,17 +85,21 @@ def check_subtitles(
     content = path.read_text(encoding="utf-8")
     defects: list[str] = []
 
-    # 1. Parse font size and margin from Style definitions
+    # 1. Parse font size, margin, border style, and outline from Style definitions
     font_size = 0
     margin_v = 0
+    border_style = 1
+    outline = 0.0
     for line in content.splitlines():
         if line.startswith("Style:"):
             parts = [p.strip() for p in line[6:].split(",")]
             if len(parts) >= 22:
                 try:
                     font_size = int(parts[2])
+                    border_style = int(parts[15])
+                    outline = float(parts[16])
                     margin_v = int(parts[21])
-                except ValueError:
+                except (ValueError, IndexError):
                     pass
             break
 
@@ -103,6 +107,11 @@ def check_subtitles(
         defects.append(f"Font size {font_size}pt is below minimum 100pt legibility standard.")
     if margin_v < 240:
         defects.append(f"MarginV {margin_v}px is below safe margin 240px (at risk of UI overlap).")
+    if border_style != 3 and outline < 3.0:
+        defects.append(
+            f"Subtitle outline {outline:g}px with border_style {border_style} is below the "
+            "3.0px / 4.5:1 contrast floor."
+        )
 
     # 2. Parse Dialogue events for line length
     max_chars = 0
