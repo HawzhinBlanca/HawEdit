@@ -245,49 +245,51 @@ def check_face_presence(
     faces_per_shot: dict[str, int] = {}
     defects: list[str] = []
 
-    for idx, (s_in, s_out) in enumerate(shot_timestamps_s):
-        shot_key = f"shot_{idx}_{s_in:.1f}s_{s_out:.1f}s"
-        dur = s_out - s_in
-        # Sample at 20%, 50%, and 80% through the shot
-        sample_times = [s_in + dur * 0.2, s_in + dur * 0.5, s_in + dur * 0.8]
-        # Filter out timestamps falling inside intentional B-roll cutaways
-        valid_sample_times = [
-            t
-            for t in sample_times
-            if not any(b_in <= t <= b_out for b_in, b_out in broll_intervals_s)
-        ]
-        if not valid_sample_times:
-            valid_sample_times = sample_times  # Fallback if entirely covered
+    try:
+        for idx, (s_in, s_out) in enumerate(shot_timestamps_s):
+            shot_key = f"shot_{idx}_{s_in:.1f}s_{s_out:.1f}s"
+            dur = s_out - s_in
+            # Sample at 20%, 50%, and 80% through the shot
+            sample_times = [s_in + dur * 0.2, s_in + dur * 0.5, s_in + dur * 0.8]
+            # Filter out timestamps falling inside intentional B-roll cutaways
+            valid_sample_times = [
+                t
+                for t in sample_times
+                if not any(b_in <= t <= b_out for b_in, b_out in broll_intervals_s)
+            ]
+            if not valid_sample_times:
+                valid_sample_times = sample_times  # Fallback if entirely covered
 
-        max_faces_in_shot = 0
-        for sample_t in valid_sample_times:
-            frame_num = int(sample_t * fps)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                continue
+            max_faces_in_shot = 0
+            for sample_t in valid_sample_times:
+                frame_num = int(sample_t * fps)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    continue
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = detector.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
-            )
-            count = len(faces)
-            if count == 0 and profile_detector is not None:
-                p_faces = profile_detector.detectMultiScale(
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                faces = detector.detectMultiScale(
                     gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
                 )
-                count = len(p_faces)
+                count = len(faces)
+                if count == 0 and profile_detector is not None:
+                    p_faces = profile_detector.detectMultiScale(
+                        gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
+                    )
+                    count = len(p_faces)
 
-            if count > max_faces_in_shot:
-                max_faces_in_shot = count
+                if count > max_faces_in_shot:
+                    max_faces_in_shot = count
 
-        faces_per_shot[shot_key] = max_faces_in_shot
-        if max_faces_in_shot == 0:
-            defects.append(
-                f"Dead Frame Detected: Shot {shot_key} contains 0 detected faces in crop."
-            )
+            faces_per_shot[shot_key] = max_faces_in_shot
+            if max_faces_in_shot == 0:
+                defects.append(
+                    f"Dead Frame Detected: Shot {shot_key} contains 0 detected faces in crop."
+                )
+    finally:
+        cap.release()
 
-    cap.release()
     passed = len(defects) == 0
     return passed, faces_per_shot, tuple(defects)
 

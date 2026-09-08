@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hawedit.condenser import BeatKind, CondensedStoryPlan, StoryBeat, StorySummary
 from hawedit.sanity_gate import (
     QualityAuditReport,
+    SanityGate,
+    SanityGateFailureError,
+    check_face_presence,
     check_narrative_integrity,
     check_subtitles,
     parse_ebur128_stats,
@@ -176,3 +181,66 @@ def test_check_narrative_integrity() -> None:
     passed, defects = check_narrative_integrity(short_plan)
     assert passed is False
     assert any("duration 10.0s is below 25s" in d for d in defects)
+
+
+def test_check_face_presence_missing_and_corrupt_file(tmp_path: Path) -> None:
+    """Missing or unopenable video file fails immediately reporting explicit failure."""
+    missing = tmp_path / "does_not_exist.mp4"
+    passed, faces, defects = check_face_presence(missing, [(0.0, 1.0)])
+    assert passed is False
+    assert len(faces) == 0
+    assert any("Video file does not exist" in d for d in defects)
+
+    # Corrupt/unopenable file
+    corrupt = tmp_path / "corrupt.mp4"
+    corrupt.write_bytes(b"NOT_A_VIDEO")
+    passed_c, faces_c, defects_c = check_face_presence(corrupt, [(0.0, 1.0)])
+    assert passed_c is False
+    assert len(faces_c) == 0
+    assert any("Could not open video file" in d for d in defects_c)
+
+
+def test_check_face_presence_on_fixture() -> None:
+    """Run check_face_presence on fixture video to verify frame sampling and cleanup."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.mp4"
+    if not fixture.is_file():
+        pytest.skip("Fixture video missing")
+    passed, faces, defects = check_face_presence(fixture, [(0.0, 0.5), (0.5, 1.0)])
+    # The fixture is low-res without face detection in tight crop, should fail framing safely
+    assert isinstance(faces, dict)
+    assert len(faces) == 2
+    assert passed is False
+    assert len(defects) >= 1
+
+
+def test_sanity_gate_run_full_audit_strict_fail_stop(tmp_path: Path) -> None:
+    """SanityGate.run_full_audit aggregates defects.
+
+    In strict mode it raises SanityGateFailureError.
+    """
+    invalid_ass = tmp_path / "subs.ass"
+    invalid_ass.write_text("[V4+ Styles]\n[Events]\n", encoding="utf-8")
+    short_plan = _make_dummy_story_plan(duration_ms=10_000)
+    fake_video = tmp_path / "video.mp4"
+    fake_video.write_bytes(b"dummy")
+
+    # Non-strict mode returns report with passed=False
+    report = SanityGate.run_full_audit(
+        fake_video,
+        invalid_ass,
+        short_plan,
+        [(0.0, 1.0)],
+        strict_fail_stop=False,
+    )
+    assert report.passed is False
+    assert len(report.defect_messages) > 0
+
+    # Strict mode raises SanityGateFailureError
+    with pytest.raises(SanityGateFailureError, match="Sanity Gate FAILED"):
+        SanityGate.run_full_audit(
+            fake_video,
+            invalid_ass,
+            short_plan,
+            [(0.0, 1.0)],
+            strict_fail_stop=True,
+        )

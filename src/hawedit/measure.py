@@ -507,37 +507,40 @@ def probe_face_tracking(
     y_center_shares: list[float] = []
     first_frame_face_share: float | None = None
 
-    current_t_s = 0.0
-    while current_t_s <= duration_s:
-        cap.set(cv2.CAP_PROP_POS_MSEC, current_t_s * 1000.0)
-        ret, frame = cap.read()
-        if not ret:
-            break
+    try:
+        current_t_s = 0.0
+        while current_t_s <= duration_s:
+            cap.set(cv2.CAP_PROP_POS_MSEC, current_t_s * 1000.0)
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        samples_count += 1
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        boxes = frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-        if len(boxes) == 0 and not profile.empty():
-            boxes = profile.detectMultiScale(
+            samples_count += 1
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            boxes = frontal.detectMultiScale(
                 gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
             )
+            if len(boxes) == 0 and not profile.empty():
+                boxes = profile.detectMultiScale(
+                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+                )
 
-        if len(boxes) > 0:
-            face_detected_count += 1
-            largest = max(boxes, key=lambda b: int(b[2]) * int(b[3]))
-            _, y, _, h = largest
-            h_share = float(h) / float(height)
-            y_center = (float(y) + float(h) / 2.0) / float(height)
-            height_shares.append(h_share)
-            y_center_shares.append(y_center)
-            if samples_count == 1:
-                first_frame_face_share = round(h_share, 4)
-        elif samples_count == 1:
-            first_frame_face_share = 0.0
+            if len(boxes) > 0:
+                face_detected_count += 1
+                largest = max(boxes, key=lambda b: int(b[2]) * int(b[3]))
+                _, y, _, h = largest
+                h_share = float(h) / float(height)
+                y_center = (float(y) + float(h) / 2.0) / float(height)
+                height_shares.append(h_share)
+                y_center_shares.append(y_center)
+                if samples_count == 1:
+                    first_frame_face_share = round(h_share, 4)
+            elif samples_count == 1:
+                first_frame_face_share = 0.0
 
-        current_t_s += step_s
-
-    cap.release()
+            current_t_s += step_s
+    finally:
+        cap.release()
 
     face_detected_share = (
         round(face_detected_count / samples_count, 4) if samples_count > 0 else 0.0
@@ -735,38 +738,39 @@ def probe_caption_ink(
         if not cap_src.isOpened():
             cap_src = None
 
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
-    band_top = int(height * 0.65)
-    band_bottom = int(height * 0.95)
+    try:
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
+        band_top = int(height * 0.65)
+        band_bottom = int(height * 0.95)
 
-    events_with_ink = 0
-    contrast_ratios: list[float] = []
+        events_with_ink = 0
+        contrast_ratios: list[float] = []
 
-    for start_ms, end_ms in cues:
-        mid_ms = (start_ms + end_ms) / 2.0
-        cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
-        ret, frame = cap.read()
-        if not ret:
-            continue
+        for start_ms, end_ms in cues:
+            mid_ms = (start_ms + end_ms) / 2.0
+            cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
+            ret, frame = cap.read()
+            if not ret:
+                continue
 
-        src_frame: Any | None = None
+            src_frame: Any | None = None
+            if cap_src is not None:
+                cap_src.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
+                ret_src, s_frame = cap_src.read()
+                if ret_src:
+                    src_frame = s_frame
+
+            has_ink, contrast = detect_caption_ink_in_band(
+                frame, band_top, band_bottom, source_frame=src_frame
+            )
+            if has_ink:
+                events_with_ink += 1
+                if contrast is not None:
+                    contrast_ratios.append(contrast)
+    finally:
+        cap.release()
         if cap_src is not None:
-            cap_src.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
-            ret_src, s_frame = cap_src.read()
-            if ret_src:
-                src_frame = s_frame
-
-        has_ink, contrast = detect_caption_ink_in_band(
-            frame, band_top, band_bottom, source_frame=src_frame
-        )
-        if has_ink:
-            events_with_ink += 1
-            if contrast is not None:
-                contrast_ratios.append(contrast)
-
-    cap.release()
-    if cap_src is not None:
-        cap_src.release()
+            cap_src.release()
 
     ink_share = round(events_with_ink / len(cues), 4) if cues else 0.0
     median_contrast = (
@@ -811,33 +815,34 @@ def measure_caption_events_contrast(
     if not cap.isOpened():
         return []
 
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
-    scale_y = height / 1920.0
-    band_top = max(0, int(band[0] * scale_y))
-    band_bottom = min(height, int(band[1] * scale_y))
+    try:
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
+        scale_y = height / 1920.0
+        band_top = max(0, int(band[0] * scale_y))
+        band_bottom = min(height, int(band[1] * scale_y))
 
-    r_t, g_t, b_t = parse_ass_colour(text_colour)
-    lum_text = relative_luminance(r_t, g_t, b_t)
+        r_t, g_t, b_t = parse_ass_colour(text_colour)
+        lum_text = relative_luminance(r_t, g_t, b_t)
 
-    records: list[tuple[int, int, float, bool]] = []
-    for start_ms, end_ms in cues:
-        mid_ms = (start_ms + end_ms) / 2.0
-        cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
-        ret, frame = cap.read()
-        if not ret:
-            continue
+        records: list[tuple[int, int, float, bool]] = []
+        for start_ms, end_ms in cues:
+            mid_ms = (start_ms + end_ms) / 2.0
+            cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
+            ret, frame = cap.read()
+            if not ret:
+                continue
 
-        band_slice = frame[band_top:band_bottom, :]
-        gray = cv2.cvtColor(band_slice, cv2.COLOR_BGR2GRAY)
-        float_gray = np.asarray(gray, dtype=float)
-        med_val = int(np.median(float_gray))
-        lum_bg = relative_luminance(med_val, med_val, med_val)
+            band_slice = frame[band_top:band_bottom, :]
+            gray = cv2.cvtColor(band_slice, cv2.COLOR_BGR2GRAY)
+            float_gray = np.asarray(gray, dtype=float)
+            med_val = int(np.median(float_gray))
+            lum_bg = relative_luminance(med_val, med_val, med_val)
 
-        cr = round(contrast_ratio(lum_text, lum_bg), 2)
-        needs_plate = bool(cr < min_contrast)
-        records.append((start_ms, end_ms, cr, needs_plate))
-
-    cap.release()
+            cr = round(contrast_ratio(lum_text, lum_bg), 2)
+            needs_plate = bool(cr < min_contrast)
+            records.append((start_ms, end_ms, cr, needs_plate))
+    finally:
+        cap.release()
     return records
 
 
