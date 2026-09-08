@@ -5,7 +5,7 @@
   "expires": "2026-09-08",
   "applicability": {
     "python": "3.12",
-    "source_sha256": "9a7b5116888b24a5e07f4b9abf407384e51827cb1c1665e8d495c0303f401379",
+    "source_sha256": "c2270f2e68524b7982834a8fe628efe2c7447d1aacac27f4b7b7421a5d703152",
     "packages": {
       "omnilingual-asr": "0.2.0",
       "torch": "2.8.0",

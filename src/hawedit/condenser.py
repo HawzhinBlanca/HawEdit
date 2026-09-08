@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Final
 
@@ -241,6 +241,7 @@ def condense_story(
     summary_kurdish: str = "پوختەی گێڕانەوەی میوان لەسەر ڕووداوە گرنگەکان.",
     core_topic: str = "بەسەرهاتی سەرەکی",
     key_entities: Sequence[str] = (),
+    virality_score: float | None = None,
 ) -> CondensedStoryPlan:
     """Condense long-form speech into a concise, high-retention multi-part story reel.
 
@@ -278,10 +279,23 @@ def condense_story(
         condensed_duration = total_source_duration_ms
         prune_ratio = 0.0
 
+        if virality_score is None:
+            scored = [
+                _calculate_sentence_importance(s, i, total_sentences)
+                for i, s in enumerate(sentences)
+            ]
+            s0_imp = scored[0]
+            send_imp = scored[-1]
+            mean_imp = sum(scored) / total_sentences
+            calc_score = (0.40 * s0_imp + 0.30 * send_imp + 0.30 * mean_imp) * 100.0
+            v_score = round(max(0.0, min(100.0, calc_score)), 1)
+        else:
+            v_score = float(virality_score)
+
         summary = StorySummary(
             headline_kurdish=headline_kurdish,
             summary_kurdish=summary_kurdish,
-            virality_score=85.0,
+            virality_score=v_score,
             core_topic=core_topic,
             key_entities=tuple(key_entities),
         )
@@ -377,10 +391,20 @@ def condense_story(
             )
         )
 
+    if virality_score is None:
+        s0_imp = scored_sentences[0][1]
+        send_imp = scored_sentences[-1][1]
+        retained_imps = [item[1] for item in scored_sentences if item[0] in selected_set]
+        avg_retained_imp = sum(retained_imps) / len(retained_imps)
+        calc_score = (0.40 * s0_imp + 0.30 * send_imp + 0.30 * avg_retained_imp) * 100.0
+        v_score = round(max(0.0, min(100.0, calc_score)), 1)
+    else:
+        v_score = float(virality_score)
+
     summary = StorySummary(
         headline_kurdish=headline_kurdish,
         summary_kurdish=summary_kurdish,
-        virality_score=94.0,
+        virality_score=v_score,
         core_topic=core_topic,
         key_entities=tuple(key_entities),
     )
@@ -518,4 +542,19 @@ def condense_multiple_arcs(
         # Advance window past the current segment
         window_start_idx = idx
 
-    return plans
+    # Rank candidate plans by measured virality score descending
+    plans.sort(
+        key=lambda p: (
+            p.summary.virality_score,
+            p.beats[0].importance_score if p.beats else 0.0,
+        ),
+        reverse=True,
+    )
+
+    ranked_plans: list[CondensedStoryPlan] = []
+    for rank, p in enumerate(plans[:max_clips], start=1):
+        target_id = f"clip-{rank:02d}"
+        if p.story_id != target_id:
+            p = replace(p, story_id=target_id)
+        ranked_plans.append(p)
+    return ranked_plans

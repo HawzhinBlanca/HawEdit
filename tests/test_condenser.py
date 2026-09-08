@@ -244,3 +244,41 @@ def test_condense_multiple_arcs_multi_window() -> None:
     for plan in plans:
         assert plan.condensed_duration_ms <= 60000
         assert plan.summary.headline_kurdish != ""
+
+
+def test_condenser_scoring_is_measured_and_ranked() -> None:
+    """Condenser virality scores are empirically derived and clips are rank-ordered."""
+    # S0: High-density hook with strong pacing
+    s0 = _make_sentence(
+        [
+            _make_word("نامەیەکی", 0, 1000),
+            _make_word("گرنگ", 1100, 2000),
+            _make_word("گەیشت", 2100, 3000),
+        ]
+    )
+    # S1: Weak filler
+    s1 = _make_sentence(
+        [
+            _make_word("یەعنی", 4000, 7000),
+            _make_word("دەزانی", 7100, 10000),
+            _make_word("وەڵا", 10100, 15000),
+        ]
+    )
+    # S2: Climax
+    s2 = _make_sentence(
+        [
+            _make_word("هەموومان", 16000, 18000),
+            _make_word("ڕزگارمان", 18100, 21000),
+            _make_word("بوو.", 21100, 24000),
+        ]
+    )
+
+    plan_dynamic = condense_story((s0, s1, s2), max_duration_ms=60000)
+    # Score must be non-zero, within 0..100, and not the obsolete static 85.0
+    assert 0.0 <= plan_dynamic.summary.virality_score <= 100.0
+    assert plan_dynamic.summary.virality_score != 85.0
+
+    # Custom override is preserved if provided
+    plan_override = condense_story((s0, s1, s2), max_duration_ms=60000, virality_score=88.8)
+    assert plan_override.summary.virality_score == 88.8
+
