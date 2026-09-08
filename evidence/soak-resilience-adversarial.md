@@ -1,5 +1,5 @@
 ```yaml
-commit: a79012b4e94b2f3dc25a07c11f4967ee359d9c24
+commit: a79012b80b2c9fe6943f1ab36661861808a8c02f
 media_sha256: 6ceba45fade2c32e7b546e4f4c94f760fdc2827e315a075061cc6b4d97e50ae1
 host: HAWAPC01 / Windows 11 CPython 3.12
 command: python -m pytest tests/test_soak.py tests/test_timeouts.py tests/test_checkpoint.py tests/test_reframe.py tests/test_condenser.py tests/test_web.py
