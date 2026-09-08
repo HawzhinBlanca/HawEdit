@@ -121,4 +121,3 @@ def test_pipeline_stage0_corrupted_json_falls_back_safely(tmp_path: Path) -> Non
     assert run2.ingest.source_sha256 == run1.ingest.source_sha256
     # And valid json is restored
     assert ingest_json.read_text(encoding="utf-8").startswith("{")
-
