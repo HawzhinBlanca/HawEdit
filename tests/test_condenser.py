@@ -281,4 +281,3 @@ def test_condenser_scoring_is_measured_and_ranked() -> None:
     # Custom override is preserved if provided
     plan_override = condense_story((s0, s1, s2), max_duration_ms=60000, virality_score=88.8)
     assert plan_override.summary.virality_score == 88.8
-
