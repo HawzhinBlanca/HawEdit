@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
+from hawedit.assembly import assemble_spans
 from hawedit.atomic_fs import write_text_atomic
 from hawedit.boundary import (
     Boundary,
@@ -110,6 +111,13 @@ from hawedit.delivery import (
 )
 from hawedit.diarization import turn_bounds_for_anchors
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
+from hawedit.edit_plan import (
+    CURRENT_PLAN_VERSION,
+    EditorialBrief,
+    EffectiveConfiguration,
+    SourceTimeMapping,
+    VisualEditPlan,
+)
 from hawedit.escalation import (
     DEFAULT_DISAGREEMENT_CER,
     EscalationDecision,
@@ -275,6 +283,7 @@ class Delivery:
     edl_path: str
     editing_json_path: str
     measured_path: str = ""
+    edit_plan_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -284,6 +293,8 @@ class Delivery:
         }
         if self.measured_path:
             result["measured_path"] = self.measured_path
+        if self.edit_plan_path:
+            result["edit_plan_path"] = self.edit_plan_path
         return result
 
 
@@ -1357,10 +1368,27 @@ def _automatic_sentence_selection(
     return ()
 
 
+def _partition_into_contiguous_spans(
+    selection: Sequence[int],
+) -> tuple[tuple[int, ...], ...]:
+    """Group an ordered sequence of sentence indices into contiguous index runs."""
+    if not selection:
+        return ()
+    sorted_sel = sorted(selection)
+    spans: list[list[int]] = [[sorted_sel[0]]]
+    for idx in sorted_sel[1:]:
+        if idx == spans[-1][-1] + 1:
+            spans[-1].append(idx)
+        else:
+            spans.append([idx])
+    return tuple(tuple(s) for s in spans)
+
+
 def _prepare_selection(
     transcript: RawTranscript,
     sentences: Sequence[Sentence],
     selection: tuple[int, ...],
+    allow_assembly: bool = False,
 ) -> tuple[tuple[int, ...], tuple[Sentence, ...], tuple[int, int] | None]:
     if not selection:
         return (), (), None
@@ -1371,12 +1399,22 @@ def _prepare_selection(
             f"sentence index {out_of_range} is outside 0..{len(sentences) - 1}. The "
             f"transcript segmented into {len(sentences)} sentence(s)."
         )
-    assert_contiguous(selection, total=len(sentences))
-    assert_time_contiguous(sentences, selection)
+    runs = _partition_into_contiguous_spans(selection)
+    if not allow_assembly or len(runs) <= 1:
+        assert_contiguous(selection, total=len(sentences))
+        assert_time_contiguous(sentences, selection)
+        ordered = tuple(sorted(selection))
+        selected = tuple(sentences[i] for i in ordered)
+        anchors = anchors_for(selected) if all(sentence.complete for sentence in selected) else None
+        return ordered, selected, anchors
+
+    for run in runs:
+        assert_time_contiguous(sentences, run)
     ordered = tuple(sorted(selection))
-    selected = tuple(sentences[i] for i in ordered)
-    anchors = anchors_for(selected) if all(sentence.complete for sentence in selected) else None
-    return ordered, selected, anchors
+    span_groups = [[sentences[i] for i in run] for run in runs]
+    assembled = assemble_spans(span_groups)
+    anchors = (0, assembled.total_duration_ms)
+    return ordered, assembled.assembled_sentences, anchors
 
 
 def _assert_render_alignment_complete(transcript: RawTranscript) -> None:
@@ -1679,6 +1717,7 @@ def run_pipeline(
     hook_text: str | None = None,
     music_bed_path: Path | str | None = None,
     music_ducking_volume: float = 0.25,
+    assemble: bool = False,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1989,7 +2028,7 @@ def run_pipeline(
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 
     select_sentences, selected, selected_anchors = _prepare_selection(
-        transcript, sentences, select_sentences
+        transcript, sentences, select_sentences, allow_assembly=assemble
     )
     # Before Stage 2/3 touch the GPU and before Stage 4 is billed. Deliberately after
     # `_prepare_selection`, so a selection naming a sentence that does not exist is still
@@ -2116,7 +2155,7 @@ def run_pipeline(
             # declared 2.0 fps yields a 4 s retrieval unit against §3's 32 s. D-185.
             run = replace(run, boundary=_nothing_fits_a_candidate(merged, sentences, min_clip_ms))
         select_sentences, selected, selected_anchors = _prepare_selection(
-            transcript, sentences, automatic
+            transcript, sentences, automatic, allow_assembly=assemble
         )
         if not select_sentences:
             # The survivor exists, but none of it can become a sentence-complete clip. Stop
@@ -2300,7 +2339,7 @@ def run_pipeline(
                 # A later candidate won, so everything downstream — captions, boundary, clip id
                 # and artifact names — has to follow it rather than rank #1's selection.
                 select_sentences, selected, selected_anchors = _prepare_selection(
-                    transcript, sentences, winning_run
+                    transcript, sentences, winning_run, allow_assembly=assemble
                 )
                 # The winner's artifact names were never checked; rank #1's were. Checked before
                 # any pixels are extracted, as the original ordering guarantees.
@@ -2754,12 +2793,39 @@ def run_pipeline(
                     verdict="approved",
                 )
                 source_fps = frame_rate(source, ffmpeg)
+                cand_cut_pts = cut_points_ms(
+                    tuple(word for sentence in selected for word in sentence.words),
+                    clip.in_ms,
+                )
+                cand_source_cuts = [
+                    cut_ms - clip.in_ms
+                    for cut_ms in ingested.shot_cuts_ms
+                    if clip.in_ms <= cut_ms <= clip.out_ms
+                ]
+                if ct_profile.punch_in_cadence_ms == 0:
+                    cand_planned_punch_ins: tuple[tuple[int, float], ...] = ()
+                elif eased_push or profile == "deliverable" or ct_profile.eased_push:
+                    spans = shot_spans(
+                        cand_cut_pts,
+                        clip.out_ms - clip.in_ms,
+                        source_cuts_ms=cand_source_cuts,
+                        min_shot_ms=ct_profile.punch_in_cadence_ms,
+                    )
+                    cand_planned_punch_ins = eased_push_schedule(spans)
+                else:
+                    cand_planned_punch_ins = punch_in_schedule(
+                        cand_cut_pts,
+                        clip.out_ms - clip.in_ms,
+                        avoid_ms=cand_source_cuts,
+                        min_shot_ms=ct_profile.punch_in_cadence_ms,
+                    )
                 promote_candidate(
                     work_dir=work_dir,
                     candidate_id=clip.clip_id,
                     qc_record=qc_record,
                     source=source,
                     ffmpeg=ffmpeg,
+                    planned_punch_ins=cand_planned_punch_ins,
                     source_shot_cuts_ms=ingested.shot_cuts_ms,
                     fps=source_fps,
                 )
@@ -2799,6 +2865,9 @@ def run_pipeline(
                         edl_path=str(final_edl),
                         editing_json_path=str(final_json),
                         measured_path=str(final_measured),
+                        edit_plan_path=str(
+                            work_dir / clip.clip_id / f"{clip.clip_id}.edit_plan.json"
+                        ),
                     ),
                     billed_calls=tuple(billed_calls),
                 )
@@ -3170,6 +3239,66 @@ def run_pipeline(
 
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         bundle.publish()
+
+        brief = EditorialBrief(
+            viewer_takeaway=(
+                effective_clip.output.title_ckb
+                if effective_clip.output
+                else "Kurdish highlight clip"
+            ),
+            content_type=ct_profile.content_type,
+            target_duration_ms=(
+                ct_profile.min_clip_ms,
+                max(ct_profile.min_clip_ms, clip.out_ms - clip.in_ms),
+            ),
+            protected_regions=("lower_third_captions", "speaker_face"),
+        )
+        reframe_str = reframe_mode.value if hasattr(reframe_mode, "value") else str(reframe_mode)
+        config = EffectiveConfiguration.resolve(
+            content_type=ct_profile.content_type,
+            caption_style=resolved_caption_style,
+            reframe_mode=reframe_str,
+            silence_threshold_ms=silence_threshold_ms,
+            silence_target_gap_ms=silence_target_gap_ms,
+            punch_in_cadence_ms=ct_profile.punch_in_cadence_ms,
+            eased_push=eased_push or ct_profile.eased_push,
+            two_person_split="auto",
+            keyword_emphasis=keyword_emphasis,
+            fps=fps,
+        )
+        if silence_plan is not None and silence_plan.total_removed_ms > 0:
+            retained_intervals = tuple(
+                (start + clip.in_ms, end + clip.in_ms)
+                for start, end in silence_plan.retained_intervals_ms
+            )
+            time_mapping = SourceTimeMapping(
+                clip_in_ms=clip.in_ms,
+                clip_out_ms=clip.out_ms,
+                retained_intervals_ms=retained_intervals,
+            )
+        else:
+            time_mapping = SourceTimeMapping.continuous(clip.in_ms, clip.out_ms)
+
+        spk_turns = (
+            tuple((turn.start_ms, turn.end_ms, turn.speaker) for turn in ingested.diarization)
+            if ingested.diarization is not None
+            else ()
+        )
+        visual_edit_plan = VisualEditPlan(
+            version=CURRENT_PLAN_VERSION,
+            clip_id=clip.clip_id,
+            media_id=clip.media_id,
+            media_sha256=clip.media_sha256 or (ingested.source_sha256 or ""),
+            brief=brief,
+            config=config,
+            time_mapping=time_mapping,
+            shot_cuts_ms=tuple(source_cuts),
+            punch_in_ms=tuple(p[0] for p in planned_punch_ins),
+            speaker_turns=spk_turns,
+            sentences=tuple(selected),
+        )
+        plan_json_path = work_dir / f"{clip.clip_id}.edit_plan.json"
+        plan_json_path.write_text(visual_edit_plan.to_json(), encoding="utf-8")
     except (
         DeliveryError,
         UndeliverableOrder,
@@ -3231,6 +3360,7 @@ def run_pipeline(
             edl_path=str(final_edl),
             editing_json_path=str(final_json),
             measured_path=str(final_measured),
+            edit_plan_path=str(plan_json_path),
         ),
         billed_calls=tuple(billed_calls),
     )
@@ -3452,6 +3582,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--auto-select",
         action="store_true",
         help="choose complete contiguous sentences contained by the best Stage 3 survivor",
+    )
+    parser.add_argument(
+        "--assemble",
+        action="store_true",
+        help=(
+            "assemble non-contiguous sentence highlights across an episode into a single "
+            "coherent story reel (pro-edit T6, ADR D-262)"
+        ),
     )
     parser.add_argument(
         "--diarize",
@@ -3754,12 +3892,6 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
                 args.speaker_metadata = str(candidate_spk)
         if args.hook_banner is None:
             args.hook_banner = True
-        if not args.music_bed:
-            candidate_music = args.work_dir / "assets" / "music_tension_bed.wav"
-            if candidate_music.is_file():
-                args.music_bed = str(candidate_music)
-            elif (args.work_dir / "music_tension_bed.wav").is_file():
-                args.music_bed = str(args.work_dir / "music_tension_bed.wav")
     elif getattr(args, "preset", None) == "viral":
         if not args.caption_style:
             args.caption_style = CaptionStyle.KINETIC_POP.value
@@ -3767,12 +3899,6 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
             args.silence_threshold_ms = 400
         if args.hook_banner is None:
             args.hook_banner = True
-        if not args.music_bed:
-            candidate_music = args.work_dir / "assets" / "music_tension_bed.wav"
-            if candidate_music.is_file():
-                args.music_bed = str(candidate_music)
-            elif (args.work_dir / "music_tension_bed.wav").is_file():
-                args.music_bed = str(args.work_dir / "music_tension_bed.wav")
     elif getattr(args, "preset", None) == "split":
         args.two_person_split = "always"
         if not args.caption_style:
@@ -4057,6 +4183,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         hook_text=getattr(args, "hook_text", None),
         music_bed_path=getattr(args, "music_bed", None),
         music_ducking_volume=getattr(args, "music_ducking_volume", 0.25),
+        assemble=getattr(args, "assemble", False),
     )
 
 

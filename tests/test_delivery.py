@@ -910,7 +910,7 @@ def test_delivery_refuses_loudness_or_peak_violation() -> None:
         reconcile_delivery(clip, broken_meas)
     assert exc_info.value.reason == "loudness_violation"
 
-    # True peak exceeds target (+0.5 dBFS > -0.9 dBFS)
+    # True peak exceeds target (+0.5 dBFS > -0.7 dBFS)
     broken_audio_tp = replace(measurement.audio, true_peak_db=0.5)
     broken_meas_tp = replace(measurement, audio=broken_audio_tp)
     with pytest.raises(DeliveryRefused, match="true_peak_violation") as exc_info_tp:

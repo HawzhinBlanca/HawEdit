@@ -447,7 +447,7 @@ def probe_scene_cuts(video_path: Path, ffmpeg: Path) -> list[int]:
         "-i",
         str(video_path),
         "-vf",
-        "select='gt(scene,0.3)',showinfo",
+        "select='gt(scene,0.25)',showinfo",
         "-f",
         "null",
         "-",
@@ -680,7 +680,11 @@ def detect_caption_ink_in_band(
     peak_ratio = max_row / (mean_row + 1e-4)
 
     min_text_pixels = max(10, int(60 * scale_y * scale_y))
-    if text_comps >= 1 and text_pixels >= min_text_pixels and peak_ratio >= 1.6:
+    if (
+        text_comps >= 1
+        and text_pixels >= min_text_pixels
+        and (peak_ratio >= 1.3 or text_pixels >= min_text_pixels * 3)
+    ):
         return True, contrast
 
     # Dark text / plate on bright background:

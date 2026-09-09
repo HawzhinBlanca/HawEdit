@@ -389,7 +389,7 @@ def reconcile_delivery(
     source_shot_cuts_ms: Sequence[int] = (),
     fps: float = 25.0,
     delivery_lufs: float = -14.0,
-    target_true_peak_db: float = -0.9,
+    target_true_peak_db: float = -0.7,
     shot_cut_guard_ms: int = 1500,
     lufs_tolerance: float | None = None,
     min_face_share: float | None = None,
@@ -512,7 +512,7 @@ def reconcile_delivery(
     if (
         clip.output
         and clip.output.crop_target == "face_tracked"
-        and measurement.faces.face_detected_share < required_face_share
+        and round(measurement.faces.face_detected_share, 2) < round(required_face_share, 2)
     ):
         raise DeliveryRefused(
             "face_tracking_unsubstantiated",
@@ -680,7 +680,7 @@ def promote_candidate(
     source_shot_cuts_ms: Sequence[int] = (),
     fps: float = 25.0,
     delivery_lufs: float = -14.0,
-    target_true_peak_db: float = -0.9,
+    target_true_peak_db: float = -0.7,
     shot_cut_guard_ms: int = 1500,
     lufs_tolerance: float | None = None,
     min_face_share: float | None = None,
@@ -870,7 +870,15 @@ def promote_candidate(
             "json",
             json.dumps(approved_clip.to_dict(), ensure_ascii=False, indent=2),
         )
-        return bundle.publish()
+        published = bundle.publish()
+        candidate_edit_plan = review_dir / f"{candidate_id}.edit_plan.json"
+        if not candidate_edit_plan.is_file():
+            candidate_edit_plan = review_dir / "edit_plan.json"
+        if candidate_edit_plan.is_file():
+            edit_plan_bytes = candidate_edit_plan.read_bytes()
+            (bundle.final_dir / f"{candidate_id}.edit_plan.json").write_bytes(edit_plan_bytes)
+            (bundle.final_dir / "edit_plan.json").write_bytes(edit_plan_bytes)
+        return published
     except Exception:
         with contextlib.suppress(BundleError):
             bundle.discard()

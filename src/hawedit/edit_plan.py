@@ -46,6 +46,8 @@ class EditorialBrief:
     protected_regions: tuple[str, ...] = ("lower_third_captions", "speaker_face")
 
     def __post_init__(self) -> None:
+        if isinstance(self.content_type, str):
+            object.__setattr__(self, "content_type", ContentType(self.content_type))
         if not self.viewer_takeaway.strip():
             raise ValueError("viewer_takeaway cannot be empty")
         min_dur, max_dur = self.target_duration_ms

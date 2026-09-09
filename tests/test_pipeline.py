@@ -7004,3 +7004,78 @@ def test_pipeline_brand_kit_serialization_and_report(tmp_path: Path) -> None:
         sys.stdout = orig
     report_text = out.getvalue()
     assert "brand   progress-bar · end-card · 1 speaker(s)" in report_text
+
+
+def test_partition_into_contiguous_spans() -> None:
+    from hawedit.pipeline import _partition_into_contiguous_spans
+
+    assert _partition_into_contiguous_spans(()) == ()
+    assert _partition_into_contiguous_spans((0, 1, 2)) == ((0, 1, 2),)
+    assert _partition_into_contiguous_spans((1, 2, 5, 6)) == ((1, 2), (5, 6))
+    assert _partition_into_contiguous_spans((6, 1, 5, 2)) == ((1, 2), (5, 6))
+    assert _partition_into_contiguous_spans((1, 3, 5)) == ((1,), (3,), (5,))
+
+
+def test_prepare_selection_with_assembly() -> None:
+    from hawedit.pipeline import _prepare_selection
+    from hawedit.sentences import Sentence
+    from hawedit.transcripts import RawTranscript, Word
+
+    w1 = Word(w="یەکەم", start_ms=1000, end_ms=2000, conf=0.99)
+    w2 = Word(w="دووەم", start_ms=5000, end_ms=6000, conf=0.99)
+    w3 = Word(w="سێیەم", start_ms=10000, end_ms=11000, conf=0.99)
+
+    s0 = Sentence(words=(w1,), complete=True)
+    s1 = Sentence(words=(w2,), complete=True)
+    s2 = Sentence(words=(w3,), complete=True)
+    sentences = (s0, s1, s2)
+
+    raw_text = "یەکەم دووەم سێیەم"
+    raw_transcript = RawTranscript(
+        media_id="test-assembly",
+        text_ckb=raw_text,
+        words=(w1, w2, w3),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+    )
+
+    # Without allow_assembly, non-contiguous selection (0, 2) raises ValueError
+    with pytest.raises(ValueError, match="not contiguous"):
+        _prepare_selection(raw_transcript, sentences, (0, 2), allow_assembly=False)
+
+    # With allow_assembly=True, non-contiguous selection succeeds and re-offsets timestamps
+    ordered, assembled_sentences, anchors = _prepare_selection(
+        raw_transcript, sentences, (0, 2), allow_assembly=True
+    )
+    assert ordered == (0, 2)
+    assert len(assembled_sentences) == 2
+    assert anchors == (0, 2000)  # 1000ms + 1000ms
+    # First span starts at 0
+    assert assembled_sentences[0].words[0].start_ms == 0
+    assert assembled_sentences[0].words[0].end_ms == 1000
+    # Second span follows immediately at 1000ms
+    assert assembled_sentences[1].words[0].start_ms == 1000
+    assert assembled_sentences[1].words[0].end_ms == 2000
+
+
+def test_delivery_carries_edit_plan_path() -> None:
+    from hawedit.pipeline import Delivery
+
+    delivery = Delivery(
+        srt_path="/path/to/clip.srt",
+        edl_path="/path/to/clip.edl",
+        editing_json_path="/path/to/clip.json",
+        measured_path="/path/to/clip.measured.json",
+        edit_plan_path="/path/to/clip.edit_plan.json",
+    )
+    d = delivery.to_dict()
+    assert d["srt_path"] == "/path/to/clip.srt"
+    assert d["edl_path"] == "/path/to/clip.edl"
+    assert d["editing_json_path"] == "/path/to/clip.json"
+    assert d["measured_path"] == "/path/to/clip.measured.json"
+    assert d["edit_plan_path"] == "/path/to/clip.edit_plan.json"
+
+
+def test_cli_assemble_flag_registered() -> None:
+    parser = build_parser()
+    args = parser.parse_args([str(FIXTURE), "--assemble"])
+    assert args.assemble is True
