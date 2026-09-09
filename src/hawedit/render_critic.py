@@ -7,6 +7,7 @@ strictly refuses unsupported all-clear claims.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -46,7 +47,7 @@ class UnsupportedAllClearError(RenderCriticError):
 
 
 class DefectSeverity(str, Enum):
-    """Severity of a detected editorial/visual defect in rendered sequence."""
+    """Severity tier for a detected editorial or composition defect."""
 
     CRITICAL = "critical"
     WARNING = "warning"
@@ -63,6 +64,9 @@ class DefectKind(str, Enum):
     REACTION_MEANING_ALTERED = "reaction_meaning_altered"
     UNSUPPORTED_CLAIM = "unsupported_claim"
     UNFOLLOWABLE_CONTEXT = "unfollowable_context"
+    MISSING_MEDIA = "missing_media"
+    CHANGED_MEDIA = "changed_media"
+    UNREADABLE_MEDIA = "unreadable_media"
 
 
 class PermittedRepair(str, Enum):
@@ -137,6 +141,7 @@ class TemporalCritiqueWindow:
     has_temporal_motion: bool
     frame_count: int
     defects: tuple[RenderDefect, ...] = ()
+    is_observed: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.window_id, str) or not self.window_id.strip():
@@ -177,6 +182,7 @@ class RenderedSequenceContext:
     timing_timeline: TightenedTimeline | None = None
     landing_beat_ms: int | None = None
     setup_boundary_ms: int | None = None
+    expected_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.duration_ms) is not int or self.duration_ms <= 0:
@@ -200,6 +206,7 @@ class CritiqueInspectionResult:
     is_all_clear: bool
     all_clear_refused: bool
     refusal_reason: str | None = None
+    observed_media: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.inspection_id, str) or not self.inspection_id.strip():
@@ -224,11 +231,16 @@ class CritiqueInspectionResult:
 
         Raises:
             UnsupportedAllClearError: If an all-clear claim was made without complete coverage,
-                or despite detected defects, or without aligned source context.
+                or despite detected defects, or without aligned source context,
+                or without observed media.
         """
         if self.all_clear_refused:
             raise UnsupportedAllClearError(
                 f"All-clear claim refused: {self.refusal_reason or 'grounded defects detected'}"
+            )
+        if not self.observed_media:
+            raise UnsupportedAllClearError(
+                "Unsupported all-clear claim: media missing, empty, changed, or unreadable"
             )
         if self.is_all_clear:
             if len(self.defects) > 0:
@@ -346,20 +358,164 @@ def inspect_rendered_sequence(
     if not critique_windows:
         raise RenderCriticError("Critique requires at least one temporal critique window")
 
-    # Compute temporal coverage across sequence duration
+    # 0. Check physical media existence, non-emptiness, digest, and decodability
+    render_file = Path(sequence.render_path)
+    observed_media = True
+    media_defects: list[RenderDefect] = []
+
+    if not render_file.is_file():
+        observed_media = False
+        media_defects.append(
+            RenderDefect(
+                defect_id="def_missing_media",
+                timestamp_ms=0,
+                end_timestamp_ms=sequence.duration_ms,
+                severity=DefectSeverity.CRITICAL,
+                defect_kind=DefectKind.MISSING_MEDIA,
+                observation=f"Render file does not exist on disk: {render_file}",
+                source_reference="file_system",
+                permitted_repair=PermittedRepair.NONE,
+                confidence=1.0,
+            )
+        )
+    elif render_file.stat().st_size == 0:
+        observed_media = False
+        media_defects.append(
+            RenderDefect(
+                defect_id="def_empty_media",
+                timestamp_ms=0,
+                end_timestamp_ms=sequence.duration_ms,
+                severity=DefectSeverity.CRITICAL,
+                defect_kind=DefectKind.UNREADABLE_MEDIA,
+                observation=f"Render file is empty (0 bytes): {render_file}",
+                source_reference="file_system",
+                permitted_repair=PermittedRepair.NONE,
+                confidence=1.0,
+            )
+        )
+    else:
+        if sequence.expected_sha256 is not None:
+            hasher = hashlib.sha256()
+            with open(render_file, "rb") as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            actual_sha = hasher.hexdigest()
+            if actual_sha.lower() != sequence.expected_sha256.lower():
+                observed_media = False
+                media_defects.append(
+                    RenderDefect(
+                        defect_id="def_changed_media",
+                        timestamp_ms=0,
+                        end_timestamp_ms=sequence.duration_ms,
+                        severity=DefectSeverity.CRITICAL,
+                        defect_kind=DefectKind.CHANGED_MEDIA,
+                        observation=(
+                            f"Render file SHA-256 digest mismatch: "
+                            f"expected {sequence.expected_sha256}, got {actual_sha}"
+                        ),
+                        source_reference="sha256_verification",
+                        permitted_repair=PermittedRepair.NONE,
+                        confidence=1.0,
+                    )
+                )
+        if observed_media:
+            try:
+                import cv2
+
+                cap = cv2.VideoCapture(str(render_file))
+                if not cap.isOpened():
+                    observed_media = False
+                    media_defects.append(
+                        RenderDefect(
+                            defect_id="def_unreadable_media",
+                            timestamp_ms=0,
+                            end_timestamp_ms=sequence.duration_ms,
+                            severity=DefectSeverity.CRITICAL,
+                            defect_kind=DefectKind.UNREADABLE_MEDIA,
+                            observation=(
+                                f"Render file could not be opened by decoder: {render_file}"
+                            ),
+                            source_reference="cv2_decoder",
+                            permitted_repair=PermittedRepair.NONE,
+                            confidence=1.0,
+                        )
+                    )
+                else:
+                    ret, frame = cap.read()
+                    cap.release()
+                    if not ret or frame is None:
+                        observed_media = False
+                        media_defects.append(
+                            RenderDefect(
+                                defect_id="def_undecodable_media",
+                                timestamp_ms=0,
+                                end_timestamp_ms=sequence.duration_ms,
+                                severity=DefectSeverity.CRITICAL,
+                                defect_kind=DefectKind.UNREADABLE_MEDIA,
+                                observation=(
+                                    f"Render file contains no decodable video frames: {render_file}"
+                                ),
+                                source_reference="cv2_decoder",
+                                permitted_repair=PermittedRepair.NONE,
+                                confidence=1.0,
+                            )
+                        )
+            except Exception as exc:
+                observed_media = False
+                media_defects.append(
+                    RenderDefect(
+                        defect_id="def_decoder_exception",
+                        timestamp_ms=0,
+                        end_timestamp_ms=sequence.duration_ms,
+                        severity=DefectSeverity.CRITICAL,
+                        defect_kind=DefectKind.UNREADABLE_MEDIA,
+                        observation=f"Decoder raised exception reading render file: {exc}",
+                        source_reference="cv2_decoder",
+                        permitted_repair=PermittedRepair.NONE,
+                        confidence=1.0,
+                    )
+                )
+
+    # If media was not observed on disk, windows cannot be observed
+    updated_windows: list[TemporalCritiqueWindow] = []
+    for w in critique_windows:
+        if not observed_media and w.is_observed:
+            updated_windows.append(
+                TemporalCritiqueWindow(
+                    window_id=w.window_id,
+                    start_ms=w.start_ms,
+                    end_ms=w.end_ms,
+                    window_kind=w.window_kind,
+                    has_temporal_motion=w.has_temporal_motion,
+                    frame_count=w.frame_count,
+                    defects=w.defects,
+                    is_observed=False,
+                )
+            )
+        else:
+            updated_windows.append(w)
+    critique_windows = tuple(updated_windows)
+
+    # Compute temporal coverage across sequence duration only from OBSERVED windows
     covered_ms = 0
     timeline_cursor = 0
-    for w in sorted(critique_windows, key=lambda w: w.start_ms):
-        if w.start_ms <= timeline_cursor:
-            if w.end_ms > timeline_cursor:
-                covered_ms += w.end_ms - timeline_cursor
+    if observed_media:
+        observed_wins = sorted(
+            [w for w in critique_windows if w.is_observed], key=lambda w: w.start_ms
+        )
+        for w in observed_wins:
+            if w.start_ms <= timeline_cursor:
+                if w.end_ms > timeline_cursor:
+                    covered_ms += w.end_ms - timeline_cursor
+                    timeline_cursor = w.end_ms
+            else:
+                covered_ms += w.end_ms - w.start_ms
                 timeline_cursor = w.end_ms
-        else:
-            covered_ms += w.end_ms - w.start_ms
-            timeline_cursor = w.end_ms
-    coverage_ratio = min(1.0, covered_ms / max(1, sequence.duration_ms))
+        coverage_ratio = min(1.0, covered_ms / max(1, sequence.duration_ms))
+    else:
+        coverage_ratio = 0.0
 
-    defects: list[RenderDefect] = []
+    defects: list[RenderDefect] = list(media_defects)
 
     # 1. Inspect temporal windows for motion grounding and window-attached defects
     for w in critique_windows:
@@ -573,10 +729,18 @@ def inspect_rendered_sequence(
     full_coverage = coverage_ratio >= 0.95
 
     if claim_all_clear:
-        if has_critical or has_any or not full_coverage or not sequence.has_source_context:
+        if (
+            has_critical
+            or has_any
+            or not full_coverage
+            or not sequence.has_source_context
+            or not observed_media
+        ):
             all_clear_refused = True
             is_all_clear = False
             reasons: list[str] = []
+            if not observed_media:
+                reasons.append("rendered media is missing, empty, changed, or undecodable")
             if has_critical:
                 crit_count = len(
                     [d for d in final_defects if d.severity == DefectSeverity.CRITICAL]
@@ -592,7 +756,9 @@ def inspect_rendered_sequence(
         else:
             is_all_clear = True
     else:
-        is_all_clear = (not has_any) and full_coverage and sequence.has_source_context
+        is_all_clear = (
+            (not has_any) and full_coverage and sequence.has_source_context and observed_media
+        )
 
     inspection_id = f"critique_{Path(sequence.render_path).stem}_{sequence.duration_ms}"
     return CritiqueInspectionResult(
@@ -605,4 +771,5 @@ def inspect_rendered_sequence(
         is_all_clear=is_all_clear,
         all_clear_refused=all_clear_refused,
         refusal_reason=refusal_reason,
+        observed_media=observed_media,
     )

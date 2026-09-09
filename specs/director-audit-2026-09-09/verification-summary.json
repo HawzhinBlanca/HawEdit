@@ -1,0 +1,37 @@
+{
+  "junit_path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\.gate\\last-test-run.xml",
+  "suites": [
+    {
+      "name": "pytest",
+      "errors": "3",
+      "failures": "1",
+      "skipped": "0",
+      "tests": "3674",
+      "time": "883.587",
+      "timestamp": "2026-09-09T12:06:47.548206+03:00",
+      "hostname": "HawaPC01"
+    }
+  ],
+  "issues": [
+    {
+      "test": "tests.test_build::test_two_builds_of_one_commit_are_byte_identical",
+      "kind": "error",
+      "dirty_checkout_refusal": true
+    },
+    {
+      "test": "tests.test_build::test_every_entry_carries_the_commits_timestamp_not_the_clock",
+      "kind": "error",
+      "dirty_checkout_refusal": true
+    },
+    {
+      "test": "tests.test_build::test_build_script_reports_the_hash_locked_private_builder",
+      "kind": "error",
+      "dirty_checkout_refusal": true
+    },
+    {
+      "test": "tests.test_build::test_the_wheel_contains_every_file_the_audit_report_says_it_does",
+      "kind": "failure",
+      "dirty_checkout_refusal": true
+    }
+  ]
+}

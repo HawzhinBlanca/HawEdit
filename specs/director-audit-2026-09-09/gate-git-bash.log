@@ -1,0 +1,244 @@
+==> lint
+All checks passed!
+==> typecheck
+Success: no issues found in 247 source files
+==> format
+247 files already formatted
+==> tests
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+.......................................................................E [  7%]
+EEF..................................................................... [  9%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 17%]
+........................................................................ [ 19%]
+........................................................................ [ 21%]
+........................................................................ [ 23%]
+........................................................................ [ 25%]
+........................................................................ [ 27%]
+........................................................................ [ 29%]
+........................................................................ [ 31%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 41%]
+........................................................................ [ 43%]
+........................................................................ [ 45%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
+........................................................................ [ 54%]
+........................................................................ [ 56%]
+........................................................................ [ 58%]
+........................................................................ [ 60%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+..                                                                       [100%]
+=================================== ERRORS ====================================
+_____ ERROR at setup of test_two_builds_of_one_commit_are_byte_identical ______
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x000001F692654290>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def committed_builds(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]]:
+        if BASH is None or shutil.which("git") is None:
+            pytest.skip("needs bash and git")
+        root = tmp_path_factory.mktemp("locked-wheel-builds")
+>       return build(root / "a"), build(root / "b")
+               ^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360/locked-wheel-builds0/a')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (specs/director-audit-2026-09-09/behavior-probes.json, specs/director-audit-2026-09-09/captures/01-start.png, specs/director-audit-2026-09-09/captures/02-generate-without-source.png, specs/director-audit-2026-09-09/captures/03-completed-without-source.png, specs/director-audit-2026-09-09/captures/04-result-preview.png, specs/director-audit-2026-09-09/captures/05-second-clip-and-export.png, specs/director-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...r-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+_ ERROR at setup of test_every_entry_carries_the_commits_timestamp_not_the_clock _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x000001F692654290>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def committed_builds(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]]:
+        if BASH is None or shutil.which("git") is None:
+            pytest.skip("needs bash and git")
+        root = tmp_path_factory.mktemp("locked-wheel-builds")
+>       return build(root / "a"), build(root / "b")
+               ^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360/locked-wheel-builds0/a')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (specs/director-audit-2026-09-09/behavior-probes.json, specs/director-audit-2026-09-09/captures/01-start.png, specs/director-audit-2026-09-09/captures/02-generate-without-source.png, specs/director-audit-2026-09-09/captures/03-completed-without-source.png, specs/director-audit-2026-09-09/captures/04-result-preview.png, specs/director-audit-2026-09-09/captures/05-second-clip-and-export.png, specs/director-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...r-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+_ ERROR at setup of test_build_script_reports_the_hash_locked_private_builder _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x000001F692654290>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def committed_builds(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]]:
+        if BASH is None or shutil.which("git") is None:
+            pytest.skip("needs bash and git")
+        root = tmp_path_factory.mktemp("locked-wheel-builds")
+>       return build(root / "a"), build(root / "b")
+               ^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360/locked-wheel-builds0/a')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (specs/director-audit-2026-09-09/behavior-probes.json, specs/director-audit-2026-09-09/captures/01-start.png, specs/director-audit-2026-09-09/captures/02-generate-without-source.png, specs/director-audit-2026-09-09/captures/03-completed-without-source.png, specs/director-audit-2026-09-09/captures/04-result-preview.png, specs/director-audit-2026-09-09/captures/05-second-clip-and-export.png, specs/director-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...r-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+================================== FAILURES ===================================
+______ test_the_wheel_contains_every_file_the_audit_report_says_it_does _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360/test_the_wheel_contains_every_0')
+
+    def test_the_wheel_contains_every_file_the_audit_report_says_it_does(tmp_path: Path) -> None:
+        """ "Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup
+        module � verified by listing the archive."
+    
+        `test_claims.py` checks those paths exist **in the tree**, which its own docstring says: a
+        claim about a wheel nobody can build from here. The tree is not the wheel. `assets/` and
+        `models/` are not packages - they reach the wheel only through
+        `[tool.setuptools.data-files]`, so deleting four lines of pyproject leaves every existing
+        test green and ships a wheel with no font, no OFL licence and no pinned revisions.
+    
+        Measured on the real artifact: 55 entries, and the four data files land under
+        `hawedit-0.1.0.data/data/share/hawedit/�`, so the match is on the path's tail - the claim is
+        that the file ships, not where a wheel chooses to put it.
+    
+        Kept across the readiness merge, which has no counterpart for it. `build` there returns the
+        wheel and its measured metadata rather than a bare path, so only the unpacking changed.
+        """
+        claimed = _paths_the_report_claims()
+        # Non-vacuity from a different file than the one being parsed: OFL-1.1 requires the licence
+        # to accompany the font, `registry.SHIPPED_ASSETS` records that obligation with the path,
+        # and the thing that actually ships is this archive. A reworded bullet that stopped naming
+        # it would fail here rather than quietly checking nothing.
+        from hawedit.registry import SHIPPED_ASSETS
+    
+        obliged = {asset.licence_file for asset in SHIPPED_ASSETS if asset.licence_file}
+        assert obliged and obliged <= claimed, (
+            f"the wheel-contents claim no longer names the licence files this project is obliged "
+            f"to ship: {sorted(obliged - claimed)}"
+        )
+    
+>       wheel, _metadata = build(tmp_path / "contents")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6360/test_the_wheel_contains_every_0/contents')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (specs/director-audit-2026-09-09/behavior-probes.json, specs/director-audit-2026-09-09/captures/01-start.png, specs/director-audit-2026-09-09/captures/02-generate-without-source.png, specs/director-audit-2026-09-09/captures/03-completed-without-source.png, specs/director-audit-2026-09-09/captures/04-result-preview.png, specs/director-audit-2026-09-09/captures/05-second-clip-and-export.png, specs/director-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...r-audit-2026-09-09/gate-git-bash.log, specs/director-audit-2026-09-09/gate.log); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+============================== warnings summary ===============================
+tests/test_agent.py::test_the_manifest_actually_reaches_the_model
+  C:\Users\Wareen\Desktop\HawEdit\.venv\Lib\site-packages\pydantic_graph\_utils.py:67: DeprecationWarning: There is no current event loop
+    event_loop = asyncio.get_event_loop()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_build.py::test_the_wheel_contains_every_file_the_audit_report_says_it_does
+ERROR tests/test_build.py::test_two_builds_of_one_commit_are_byte_identical
+ERROR tests/test_build.py::test_every_entry_carries_the_commits_timestamp_not_the_clock
+ERROR tests/test_build.py::test_build_script_reports_the_hash_locked_private_builder
+1 failed, 3670 passed, 1 warning, 3 errors in 884.31s (0:14:44)

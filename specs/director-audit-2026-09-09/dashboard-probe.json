@@ -1,0 +1,73 @@
+{
+  "jobs": [
+    {
+      "job_id": "job-1788944719579",
+      "source": "source.mp4",
+      "status": "completed",
+      "stage": "stage6_render",
+      "stage_index": 6,
+      "progress_percent": 100,
+      "created_at": 1788944719.5791876,
+      "updated_at": 1788944719.863246,
+      "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+      "clips": [
+        {
+          "clip_id": "clip-01",
+          "duration_s": 48.14,
+          "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+          "video_url": "/media/ep29-pro-threat-reel.mp4",
+          "poster_url": "/media/audit_02s_hook_115pt.jpg",
+          "virality_score": 94.0
+        },
+        {
+          "clip_id": "clip-02",
+          "duration_s": 36.5,
+          "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+          "video_url": "/media/ep29-pro-threat-reel.mp4",
+          "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+          "virality_score": 89.5
+        }
+      ],
+      "error": null
+    }
+  ],
+  "status": {
+    "status": "ready",
+    "active_job": {
+      "job_id": "job-1788944719579",
+      "source": "source.mp4",
+      "status": "completed",
+      "stage": "stage6_render",
+      "stage_index": 6,
+      "progress_percent": 100,
+      "created_at": 1788944719.5791876,
+      "updated_at": 1788944719.863246,
+      "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+      "clips": [
+        {
+          "clip_id": "clip-01",
+          "duration_s": 48.14,
+          "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+          "video_url": "/media/ep29-pro-threat-reel.mp4",
+          "poster_url": "/media/audit_02s_hook_115pt.jpg",
+          "virality_score": 94.0
+        },
+        {
+          "clip_id": "clip-02",
+          "duration_s": 36.5,
+          "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+          "video_url": "/media/ep29-pro-threat-reel.mp4",
+          "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+          "virality_score": 89.5
+        }
+      ],
+      "error": null
+    },
+    "latest_reel": {
+      "duration_s": 48.14,
+      "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+      "video_url": "/media/ep29-pro-threat-reel.mp4",
+      "audit_passed": true
+    }
+  }
+}

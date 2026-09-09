@@ -1,0 +1,125 @@
+[
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\work\\ep29-highlights-master\\ep29-highlights-reel.mp4",
+    "sha256": "50896befea9cedc7c7ac6dcc7b79d07c1a5c0377a99a14e925582a8c671948de",
+    "metadata": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1080,
+          "height": 1920,
+          "r_frame_rate": "25/1",
+          "duration": "46.080000"
+        },
+        {
+          "index": 1,
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "r_frame_rate": "0/0",
+          "duration": "46.068000"
+        }
+      ],
+      "format": {
+        "duration": "46.080000",
+        "size": "46175931"
+      }
+    },
+    "sample_times_s": [
+      2,
+      12,
+      22,
+      24,
+      34,
+      40,
+      44
+    ],
+    "contact_sheet": "C:\\Users\\Wareen\\Desktop\\HawEdit\\specs\\director-audit-2026-09-09\\captures\\video-1-contact-sheet.jpg"
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\work\\ep29-un-sergio-master\\ep29-sergio-un-reel.mp4",
+    "sha256": "fbd150845307047f673785b064e3e1e3f3eb771244b630930a53eee0d8c2b225",
+    "metadata": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1080,
+          "height": 1920,
+          "r_frame_rate": "25/1",
+          "duration": "44.920000"
+        },
+        {
+          "index": 1,
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "r_frame_rate": "0/0",
+          "duration": "44.934000"
+        }
+      ],
+      "format": {
+        "duration": "44.934000",
+        "size": "33469445"
+      }
+    },
+    "sample_times_s": [
+      2,
+      12,
+      22,
+      24,
+      34,
+      40,
+      44
+    ],
+    "contact_sheet": "C:\\Users\\Wareen\\Desktop\\HawEdit\\specs\\director-audit-2026-09-09\\captures\\video-2-contact-sheet.jpg"
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\work\\ep29-pro-reel-master\\ep29-pro-threat-reel.mp4",
+    "sha256": "62c66e713d09ad3ab25eb7e9072eae9328d58acc8ba938961434b60500d4cfc8",
+    "metadata": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1080,
+          "height": 1920,
+          "r_frame_rate": "25/1",
+          "duration": "48.120000"
+        },
+        {
+          "index": 1,
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "r_frame_rate": "0/0",
+          "duration": "48.100000"
+        }
+      ],
+      "format": {
+        "duration": "48.120000",
+        "size": "46868163"
+      }
+    },
+    "sample_times_s": [
+      2,
+      12,
+      22,
+      24,
+      34,
+      40,
+      44
+    ],
+    "contact_sheet": "C:\\Users\\Wareen\\Desktop\\HawEdit\\specs\\director-audit-2026-09-09\\captures\\video-3-contact-sheet.jpg"
+  }
+]

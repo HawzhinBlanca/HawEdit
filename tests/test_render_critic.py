@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hawedit.caption_layout import (
@@ -195,14 +197,15 @@ def test_render_critic_uses_output_sequence_and_reports_grounded_defects() -> No
 
 def test_render_critic_approves_grounded_clean_render() -> None:
     """VE-11: Critic approves clean rendered sequence with complete coverage and zero defects."""
-    duration_ms = 30000
+    fixture_path = "tests/fixtures/kurdish-speech-3cuts.mp4"
+    duration_ms = 4120
 
     shot_clean = PlannedShot(
         shot_id="shot_clean_01",
-        source_in_ms=5000,
-        source_out_ms=35000,
+        source_in_ms=0,
+        source_out_ms=4120,
         output_in_ms=0,
-        output_out_ms=30000,
+        output_out_ms=4120,
         editorial_purpose=ShotEditorialPurpose(
             reason="Clean explanation by active speaker",
             focal_subject="speaker",
@@ -213,9 +216,9 @@ def test_render_critic_approves_grounded_clean_render() -> None:
 
     cue_clean = CaptionLayoutCue(
         cue_id="cue_clean_01",
-        start_ms=1000,
-        end_ms=4000,
-        words=(Word("سڵاو", 1000, 2000, 0.99), Word("هاوڕێیان", 2000, 4000, 0.99)),
+        start_ms=500,
+        end_ms=3500,
+        words=(Word("سڵاو", 500, 1500, 0.99), Word("هاوڕێیان", 1500, 3500, 0.99)),
         text="سڵاو هاوڕێیان",
         placement=CaptionPlacement.BOTTOM,
         box=(0.05, 0.72, 0.95, 0.92),
@@ -230,14 +233,14 @@ def test_render_critic_approves_grounded_clean_render() -> None:
     )
 
     sequence_clean = RenderedSequenceContext(
-        render_path="work/renders/clip_clean.mp4",
+        render_path=fixture_path,
         duration_ms=duration_ms,
-        fps=30.0,
-        width=1080,
-        height=1920,
+        fps=25.0,
+        width=1280,
+        height=720,
         planned_shots=(shot_clean,),
         caption_plan=caption_plan_clean,
-        landing_beat_ms=28000,  # Landing beat lands at 28s within 30s duration
+        landing_beat_ms=3800,
     )
 
     result = inspect_rendered_sequence(sequence_clean, claim_all_clear=True)
@@ -246,6 +249,7 @@ def test_render_critic_approves_grounded_clean_render() -> None:
     assert result.all_clear_refused is False
     assert len(result.defects) == 0
     assert result.coverage_ratio >= 0.95
+    assert result.observed_media is True
     # Does not raise!
     result.assert_verdict_grounded()
 
@@ -253,8 +257,8 @@ def test_render_critic_approves_grounded_clean_render() -> None:
 def test_render_critic_refuses_when_source_context_missing() -> None:
     """VE-11: Critic refuses all-clear when aligned source context is missing."""
     sequence_no_context = RenderedSequenceContext(
-        render_path="work/renders/clip_isolated.mp4",
-        duration_ms=20000,
+        render_path="tests/fixtures/kurdish-speech-3cuts.mp4",
+        duration_ms=4120,
         has_source_context=False,  # Isolated private render without source context
     )
 
@@ -265,3 +269,104 @@ def test_render_critic_refuses_when_source_context_missing() -> None:
 
     with pytest.raises(UnsupportedAllClearError):
         result.assert_verdict_grounded()
+
+
+def test_render_critic_refuses_nonexistent_video() -> None:
+    """CD-02: Missing media path is rejected with DefectKind.MISSING_MEDIA and 0 coverage."""
+    sequence_missing = RenderedSequenceContext(
+        render_path="work/renders/nonexistent_file_xyz.mp4",
+        duration_ms=30000,
+    )
+
+    result = inspect_rendered_sequence(sequence_missing, claim_all_clear=True)
+
+    assert result.is_all_clear is False
+    assert result.all_clear_refused is True
+    assert result.observed_media is False
+    assert result.coverage_ratio == 0.0
+    assert any(d.defect_kind == DefectKind.MISSING_MEDIA for d in result.defects)
+    assert all(not w.is_observed for w in result.windows)
+
+    with pytest.raises(UnsupportedAllClearError, match="rendered media is missing"):
+        result.assert_verdict_grounded()
+
+
+def test_render_critic_refuses_empty_video(tmp_path: Path) -> None:
+    """CD-02: 0-byte video is rejected with UNREADABLE_MEDIA and observed_media=False."""
+    empty_file = tmp_path / "empty_video.mp4"
+    empty_file.touch()
+
+    sequence_empty = RenderedSequenceContext(
+        render_path=str(empty_file),
+        duration_ms=10000,
+    )
+
+    result = inspect_rendered_sequence(sequence_empty, claim_all_clear=True)
+
+    assert result.is_all_clear is False
+    assert result.all_clear_refused is True
+    assert result.observed_media is False
+    assert result.coverage_ratio == 0.0
+    assert any(d.defect_kind == DefectKind.UNREADABLE_MEDIA for d in result.defects)
+
+    with pytest.raises(UnsupportedAllClearError):
+        result.assert_verdict_grounded()
+
+
+def test_render_critic_refuses_mismatched_sha256() -> None:
+    """CD-02: Changed digest is rejected with DefectKind.CHANGED_MEDIA."""
+    sequence_tampered = RenderedSequenceContext(
+        render_path="tests/fixtures/kurdish-speech-3cuts.mp4",
+        duration_ms=4120,
+        expected_sha256="0000000000000000000000000000000000000000000000000000000000000000",
+    )
+
+    result = inspect_rendered_sequence(sequence_tampered, claim_all_clear=True)
+
+    assert result.is_all_clear is False
+    assert result.all_clear_refused is True
+    assert result.observed_media is False
+    assert any(d.defect_kind == DefectKind.CHANGED_MEDIA for d in result.defects)
+
+
+def test_render_critic_excludes_unobserved_windows_from_coverage() -> None:
+    """CD-03: Unobserved windows are excluded from coverage_ratio calculation."""
+    fixture_path = "tests/fixtures/kurdish-speech-3cuts.mp4"
+    duration_ms = 4120
+
+    # Custom critique windows where the second half was NOT observed
+    w1 = TemporalCritiqueWindow(
+        window_id="win_observed",
+        start_ms=0,
+        end_ms=2000,
+        window_kind="hook",
+        has_temporal_motion=True,
+        frame_count=50,
+        is_observed=True,
+    )
+    w2 = TemporalCritiqueWindow(
+        window_id="win_unobserved",
+        start_ms=2000,
+        end_ms=4120,
+        window_kind="landing",
+        has_temporal_motion=True,
+        frame_count=50,
+        is_observed=False,  # Unobserved window
+    )
+
+    sequence = RenderedSequenceContext(
+        render_path=fixture_path,
+        duration_ms=duration_ms,
+        fps=25.0,
+    )
+
+    result = inspect_rendered_sequence(
+        sequence,
+        critique_windows=(w1, w2),
+        claim_all_clear=True,
+    )
+
+    # Coverage should only be ~2000 / 4120 = ~0.485 (unobserved w2 excluded)
+    assert result.coverage_ratio < 0.60
+    assert result.all_clear_refused is True
+    assert "incomplete temporal coverage" in (result.refusal_reason or "")

@@ -281,3 +281,102 @@ def test_condenser_scoring_is_measured_and_ranked() -> None:
     # Custom override is preserved if provided
     plan_override = condense_story((s0, s1, s2), max_duration_ms=60000, virality_score=88.8)
     assert plan_override.summary.virality_score == 88.8
+
+
+def test_condenser_prunes_filler_even_when_under_max_duration() -> None:
+    """CD-08: When input is under max_duration_ms, condenser prunes filler clauses."""
+    # S0: Hook (0s..10s, 10s duration)
+    s0 = _make_sentence(
+        [
+            _make_word("نامەیەکی", 0, 2000),
+            _make_word("هەڕەشەم", 2100, 5000),
+            _make_word("پێگەیشت.", 5100, 10000),
+        ]
+    )
+    # S1: Conversational filler (>30% filler tokens) (11s..25s, 14s duration)
+    s1 = _make_sentence(
+        [
+            _make_word("یەعنی", 11000, 13000),
+            _make_word("دەزانی", 13100, 16000),
+            _make_word("وەڵا", 16100, 19000),
+            _make_word("ئاوا", 19100, 22000),
+            _make_word("بوو.", 22100, 25000),
+        ]
+    )
+    # S2: Core content (26s..42s, 16s duration)
+    s2 = _make_sentence(
+        [
+            _make_word("پۆڵ", 26000, 29000),
+            _make_word("برێمەر", 29100, 33000),
+            _make_word("هاتە", 33100, 37000),
+            _make_word("کوردستان.", 37100, 42000),
+        ]
+    )
+    # S3: Climax (43s..55s, 12s duration)
+    s3 = _make_sentence(
+        [
+            _make_word("هەولێر", 43000, 46000),
+            _make_word("بوو", 46100, 49000),
+            _make_word("بە", 49100, 51000),
+            _make_word("پەناگەمان.", 51100, 55000),
+        ]
+    )
+
+    # Total duration = 55s (<= 60s max_duration_ms).
+    # S0 + S2 + S3 = 10s + 16s + 12s = 38s (>= 25s min_duration_ms).
+    # S1 has high filler ratio, so CD-08 specifies it must be pruned.
+    plan = condense_story(
+        (s0, s1, s2, s3),
+        min_duration_ms=25000,
+        max_duration_ms=60000,
+    )
+
+    assert 1 in plan.pruned_sentence_indices
+    assert 0 in plan.retained_sentence_indices
+    assert 2 in plan.retained_sentence_indices
+    assert 3 in plan.retained_sentence_indices
+    assert plan.condensed_duration_ms < plan.total_source_duration_ms
+    assert plan.prune_ratio > 0.15
+
+
+def test_condenser_evaluates_late_episode_windows_before_selection() -> None:
+    """CD-04: Candidate windows across the entire timeline are evaluated before selection."""
+    # 20 sentences spanning 400 seconds
+    sentences: list[Sentence] = []
+    for i in range(20):
+        st = i * 20000
+        mid = st + 9000
+        en = st + 19000
+        if i == 18:
+            # S18 is high-density climax near the end of the episode
+            w_list = [
+                _make_word("ڕزگارکردنی", st, st + 2000),
+                _make_word("کوردستان", st + 2100, st + 4500),
+                _make_word("لە", st + 4600, st + 6000),
+                _make_word("تیرۆر", st + 6100, st + 8000),
+                _make_word("سەرکەوتنی", st + 8100, st + 11000),
+                _make_word("گەورە", st + 11100, st + 14000),
+                _make_word("بوو.", st + 14100, en),
+            ]
+        else:
+            # Low density speech
+            w_list = [
+                _make_word(f"دەستپێک{i}", st, mid),
+                _make_word(f"کۆتایی{i}", mid + 500, en),
+            ]
+        sentences.append(_make_sentence(w_list))
+
+    plans = condense_multiple_arcs(
+        sentences,
+        max_clips=2,
+        min_duration_ms=20000,
+        max_duration_ms=60000,
+    )
+
+    # The returned clips must not be restricted only to the first 80s of the episode
+    assert len(plans) == 2
+    # At least one clip must contain sentences from the late episode (>200s)
+    late_sentence_included = any(
+        any(s_idx >= 10 for s_idx in p.retained_sentence_indices) for p in plans
+    )
+    assert late_sentence_included is True

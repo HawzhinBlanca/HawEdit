@@ -340,8 +340,13 @@ def bounded_visual_repair(
             assert_canonical_speech_preserved(canonical_words, reconstructed_words)
 
         # Assemble new candidate sequence
+        next_render_path = current_sequence.render_path
+        revision_candidate = Path(f"work/revisions/rep_v{current_budget.used_iterations + 1}.mp4")
+        if revision_candidate.exists():
+            next_render_path = str(revision_candidate)
+
         next_sequence = RenderedSequenceContext(
-            render_path=f"work/revisions/rep_v{current_budget.used_iterations + 1}.mp4",
+            render_path=next_render_path,
             duration_ms=repaired_duration,
             fps=current_sequence.fps,
             width=current_sequence.width,

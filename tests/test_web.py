@@ -75,7 +75,7 @@ def test_web_handler_serves_status_json() -> None:
 
 
 def test_web_handler_post_repurpose_creates_job() -> None:
-    body_bytes = b'{"source": "test_video.mp4"}'
+    body_bytes = b'{"source": "kurdish-speech-3cuts.mp4"}'
     req = (
         b"POST /api/repurpose HTTP/1.1\r\n"
         b"Host: localhost:8080\r\n"
@@ -87,8 +87,58 @@ def test_web_handler_post_repurpose_creates_job() -> None:
     assert "application/json" in headers.get("content-type", "")
     data = json.loads(body.decode("utf-8"))
     assert "job_id" in data
-    assert data["source"] == "test_video.mp4"
+    assert "kurdish-speech-3cuts.mp4" in data["source"]
     assert data["status"] in ("queued", "running", "completed")
+
+
+def test_web_handler_post_repurpose_rejects_missing_and_empty_source() -> None:
+    """CD-01: Reject request with HTTP 400 when source video is missing, empty, or nonexistent."""
+    # 1. Missing / empty source field
+    payload_empty = b'{"source": "  "}'
+    bad_req_empty = (
+        b"POST /api/repurpose HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(payload_empty)).encode("ascii") + b"\r\n\r\n" + payload_empty
+    )
+    status_code, _, body = _handle_request(bad_req_empty)
+    assert status_code == 400
+    assert "Validation failed" in json.loads(body.decode())["error"]
+
+    # 2. Non-existent file path
+    payload_nonexistent = b'{"source": "fake_nonexistent.mp4"}'
+    bad_req_nonexistent = (
+        b"POST /api/repurpose HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: "
+        + str(len(payload_nonexistent)).encode("ascii")
+        + b"\r\n\r\n"
+        + payload_nonexistent
+    )
+    status_code, _, body = _handle_request(bad_req_nonexistent)
+    assert status_code == 400
+    assert "does not exist on disk" in json.loads(body.decode())["error"]
+
+
+def test_web_handler_candidate_clips_have_distinct_video_urls() -> None:
+    """CD-14: Multiple ranked candidates must link to distinct, independent media paths."""
+    body_bytes = b'{"source": "kurdish-speech-3cuts.mp4"}'
+    req = (
+        b"POST /api/repurpose HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(body_bytes)).encode("ascii") + b"\r\n\r\n" + body_bytes
+    )
+    status_code, _, body = _handle_request(req)
+    assert status_code == 201
+    data = json.loads(body.decode("utf-8"))
+    clips = data.get("clips", [])
+    assert len(clips) >= 2
+    video_urls = [c["video_url"] for c in clips]
+    # Invariant: No duplicate identical media paths across candidates
+    assert len(video_urls) == len(set(video_urls))
+    assert clips[0]["video_url"] != clips[1]["video_url"]
 
 
 def test_web_handler_get_jobs_and_details() -> None:
@@ -110,8 +160,8 @@ def test_web_handler_get_jobs_and_details() -> None:
 
 
 def test_web_handler_post_edit_caption() -> None:
-    # First create a job
-    create_body = b'{"source": "test_video.mp4"}'
+    # First create a job with valid source
+    create_body = b'{"source": "kurdish-speech-3cuts.mp4"}'
     create_req = (
         b"POST /api/repurpose HTTP/1.1\r\n"
         b"Host: localhost:8080\r\n"

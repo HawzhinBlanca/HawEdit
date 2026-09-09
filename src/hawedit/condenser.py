@@ -271,22 +271,62 @@ def condense_story(
     total_sentences = len(sentences)
     total_source_duration_ms = sentences[-1].end_ms - sentences[0].start_ms
 
-    # If already shorter than max_duration_ms, retain all without cuts
+    # Check if pruning is beneficial even when total_source_duration_ms <= max_duration_ms (CD-08)
+    # If conversational waste / filler sentences exist, evaluate whether pruning them
+    # improves pacing while preserving duration >= min_duration_ms.
     if total_source_duration_ms <= max_duration_ms:
-        retained_indices = tuple(range(total_sentences))
-        pruned_indices: tuple[int, ...] = ()
-        retained_spans = ((sentences[0].start_ms, sentences[-1].end_ms),)
-        condensed_duration = total_source_duration_ms
-        prune_ratio = 0.0
+        scored = [
+            _calculate_sentence_importance(s, i, total_sentences) for i, s in enumerate(sentences)
+        ]
+        prune_candidates = [i for i in range(1, total_sentences - 1) if scored[i] < 0.35]
+
+        retained = list(range(total_sentences))
+        current_dur = total_source_duration_ms
+        pruned: list[int] = []
+
+        for p_idx in prune_candidates:
+            s_dur = sentences[p_idx].end_ms - sentences[p_idx].start_ms
+            if current_dur - s_dur >= min_duration_ms:
+                retained.remove(p_idx)
+                pruned.append(p_idx)
+                current_dur -= s_dur
+
+        retained_indices: tuple[int, ...]
+        pruned_indices: tuple[int, ...]
+        retained_spans: tuple[tuple[int, int], ...]
+
+        if not pruned:
+            retained_indices = tuple(range(total_sentences))
+            pruned_indices = ()
+            retained_spans = ((sentences[0].start_ms, sentences[-1].end_ms),)
+            condensed_duration = total_source_duration_ms
+            prune_ratio = 0.0
+        else:
+            retained_indices = tuple(sorted(retained))
+            pruned_indices = tuple(sorted(pruned))
+            short_spans: list[tuple[int, int]] = []
+            span_start = sentences[retained_indices[0]].start_ms
+            span_end = sentences[retained_indices[0]].end_ms
+            for idx in retained_indices[1:]:
+                prev_idx = retained_indices[retained_indices.index(idx) - 1]
+                if idx == prev_idx + 1:
+                    span_end = sentences[idx].end_ms
+                else:
+                    short_spans.append((span_start, span_end))
+                    span_start = sentences[idx].start_ms
+                    span_end = sentences[idx].end_ms
+            short_spans.append((span_start, span_end))
+            retained_spans = tuple(short_spans)
+            condensed_duration = sum(end - start for start, end in retained_spans)
+            prune_ratio = round(
+                (total_source_duration_ms - condensed_duration) / max(1, total_source_duration_ms),
+                3,
+            )
 
         if virality_score is None:
-            scored = [
-                _calculate_sentence_importance(s, i, total_sentences)
-                for i, s in enumerate(sentences)
-            ]
             s0_imp = scored[0]
             send_imp = scored[-1]
-            mean_imp = sum(scored) / total_sentences
+            mean_imp = sum(scored[i] for i in retained_indices) / max(1, len(retained_indices))
             calc_score = (0.40 * s0_imp + 0.30 * send_imp + 0.30 * mean_imp) * 100.0
             v_score = round(max(0.0, min(100.0, calc_score)), 1)
         else:
@@ -299,19 +339,33 @@ def condense_story(
             core_topic=core_topic,
             key_entities=tuple(key_entities),
         )
-        beat = StoryBeat(
-            beat_id=f"{story_id}-b0",
-            beat_kind=BeatKind.HOOK,
-            sentence_indices=retained_indices,
-            in_ms=sentences[0].start_ms,
-            out_ms=sentences[-1].end_ms,
-            importance_score=0.9,
-            summary_kurdish=summary_kurdish,
-        )
+        short_beats: list[StoryBeat] = []
+        for b_idx, (s_start, s_end) in enumerate(retained_spans):
+            b_kind = (
+                BeatKind.HOOK
+                if b_idx == 0
+                else (BeatKind.CLIMAX if b_idx == len(retained_spans) - 1 else BeatKind.CONFLICT)
+            )
+            b_sentences = tuple(
+                idx
+                for idx in retained_indices
+                if sentences[idx].start_ms >= s_start and sentences[idx].end_ms <= s_end
+            )
+            short_beats.append(
+                StoryBeat(
+                    beat_id=f"{story_id}-b{b_idx}",
+                    beat_kind=b_kind,
+                    sentence_indices=b_sentences,
+                    in_ms=s_start,
+                    out_ms=s_end,
+                    importance_score=0.9 if b_idx == 0 else 0.8,
+                    summary_kurdish=summary_kurdish,
+                )
+            )
         return CondensedStoryPlan(
             story_id=story_id,
             summary=summary,
-            beats=(beat,),
+            beats=tuple(short_beats),
             retained_sentence_indices=retained_indices,
             pruned_sentence_indices=pruned_indices,
             retained_spans=retained_spans,
@@ -507,9 +561,9 @@ def condense_multiple_arcs(
     window_duration_ms = 80_000
     plans: list[CondensedStoryPlan] = []
     window_start_idx = 0
-
     clip_count = 1
-    while window_start_idx < len(sentences) and len(plans) < max_clips:
+
+    while window_start_idx < len(sentences):
         window_sentences: list[Sentence] = []
         curr_win_dur = 0
         idx = window_start_idx
@@ -534,13 +588,35 @@ def condense_multiple_arcs(
                     headline_kurdish=f"بەسەرهاتی کاریگەر #{clip_count}",
                     summary_kurdish="کورتەی بەسەرهاتی هەڵبژێردراو لە ئەڵقەکە.",
                 )
+                global_retained = tuple(
+                    idx + window_start_idx for idx in plan.retained_sentence_indices
+                )
+                global_pruned = tuple(
+                    idx + window_start_idx for idx in plan.pruned_sentence_indices
+                )
+                global_beats = tuple(
+                    replace(
+                        b,
+                        sentence_indices=tuple(
+                            idx + window_start_idx for idx in b.sentence_indices
+                        ),
+                    )
+                    for b in plan.beats
+                )
+                plan = replace(
+                    plan,
+                    retained_sentence_indices=global_retained,
+                    pruned_sentence_indices=global_pruned,
+                    beats=global_beats,
+                )
                 plans.append(plan)
                 clip_count += 1
             except StoryCondensationError:
                 pass
 
-        # Advance window past the current segment
-        window_start_idx = idx
+        # Advance window forward with overlap across the entire episode (CD-04)
+        step = max(1, len(window_sentences) // 2) if window_sentences else 1
+        window_start_idx += step
 
     # Rank candidate plans by measured virality score descending
     plans.sort(

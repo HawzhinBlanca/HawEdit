@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hawedit.caption_layout import (
@@ -84,8 +86,9 @@ def test_visual_repair_is_bounded_and_cannot_change_meaning_or_approve_itself() 
         status="needs_review",
     )
 
+    fixture_video = str(Path(__file__).parent / "fixtures" / "kurdish-speech-3cuts.mp4")
     sequence_damaged = RenderedSequenceContext(
-        render_path="work/renders/candidate_01.mp4",
+        render_path=fixture_video,
         duration_ms=duration_ms,
         planned_shots=(shot_damaged,),
         caption_plan=caption_plan_colliding,

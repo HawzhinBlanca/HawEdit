@@ -244,3 +244,16 @@ def test_sanity_gate_run_full_audit_strict_fail_stop(tmp_path: Path) -> None:
             [(0.0, 1.0)],
             strict_fail_stop=True,
         )
+
+
+def test_check_face_presence_detects_consecutive_dead_frames() -> None:
+    """CD-10: Dialogue shots dropping to 0 detected faces are flagged with Dead Frame Detected."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.mp4"
+    if not fixture.is_file():
+        pytest.skip("Fixture video missing")
+
+    # Inspect shot spanning 0.0s..2.0s
+    passed, faces, defects = check_face_presence(fixture, [(0.0, 2.0)])
+    assert passed is False
+    assert any("Dead Frame Detected" in d for d in defects)
+    assert any("0 detected faces" in d for d in defects)

@@ -477,13 +477,18 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
 
     async function startRepurposing() {{
       const btn = document.getElementById('startBtn');
+      const fileInput = document.getElementById('videoFile');
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {{
+        alert('تکایە سەرەتا فایلی ڤیدیۆ هەڵبژێرە (Please select a video file first)');
+        document.getElementById('engineStatus').textContent = 'هەڵە: هیچ فایلێک هەڵنەبژێردراوە';
+        return;
+      }}
+      const fileName = file.name;
+
       btn.disabled = true;
       btn.textContent = 'خەریکی دروستکردنی شۆرتە...';
       document.getElementById('engineStatus').textContent = 'پڕۆسێس دەکرێت...';
-      
-      const fileInput = document.getElementById('videoFile');
-      const file = fileInput.files && fileInput.files[0];
-      const fileName = file ? file.name : 'source.mp4';
       
       for (let i = 0; i < 6; i++) {{
         const el = document.getElementById('s' + i);
@@ -497,12 +502,18 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
           headers: {{ 'Content-Type': 'application/json' }},
           body: JSON.stringify({{ source: fileName }})
         }});
+        if (!res.ok) {{
+          const errData = await res.json().catch(() => ({{}}));
+          throw new Error(errData.error || ('Server returned HTTP ' + res.status));
+        }}
         const job = await res.json();
         currentJobId = job.job_id;
         if (job.clips) currentClips = job.clips;
         pollJob(currentJobId);
       }} catch (err) {{
         console.error(err);
+        alert('هەڵەی پڕۆسێس: ' + err.message);
+        document.getElementById('engineStatus').textContent = 'هەڵە ڕوویدا: ' + err.message;
         btn.disabled = false;
         btn.textContent = 'دروستکردنی شۆرتی ڤایرۆڵ';
       }}
@@ -648,7 +659,7 @@ class JobManager:
                 job.clips[0]["headline"] = headline
             return job.to_dict()
 
-    def submit_job(self, source: str = "source.mp4") -> dict[str, Any]:
+    def submit_job(self, source: str) -> dict[str, Any]:
         with self._lock:
             job_id = f"job-{int(time.time() * 1000)}"
             now = time.time()
@@ -675,7 +686,7 @@ class JobManager:
                         "clip_id": "clip-02",
                         "duration_s": 36.50,
                         "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
-                        "video_url": "/media/ep29-pro-threat-reel.mp4",
+                        "video_url": "/media/ep29-pro-threat-story.mp4",
                         "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
                         "virality_score": 89.5,
                     },
@@ -691,6 +702,17 @@ class JobManager:
             return job.to_dict()
 
     def _run_job_stages(self, job_id: str) -> None:
+        with self._lock:
+            if job_id not in self._jobs:
+                return
+            source_file = Path(self._jobs[job_id].source)
+            if not source_file.is_file() or source_file.stat().st_size == 0:
+                self._jobs[job_id].status = "failed"
+                self._jobs[job_id].error = f"Source media file is missing or empty: {source_file}"
+                self._jobs[job_id].updated_at = time.time()
+                return
+            self._jobs[job_id].status = "running"
+
         stages = [
             ("stage0_ingest", 15),
             ("stage1_transcript", 30),
@@ -700,10 +722,6 @@ class JobManager:
             ("stage5_boundary", 90),
             ("stage6_render", 100),
         ]
-        with self._lock:
-            if job_id not in self._jobs:
-                return
-            self._jobs[job_id].status = "running"
 
         for idx, (stage_name, pct) in enumerate(stages):
             time.sleep(0.04)
@@ -738,8 +756,63 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
                 payload = json.loads(raw_body.decode())
             except (json.JSONDecodeError, UnicodeDecodeError):
                 payload = {}
-            source_name = str(payload.get("source", "source.mp4"))
-            job = JOB_MANAGER.submit_job(source=source_name)
+            source_name = str(payload.get("source", "")).strip()
+
+            if not source_name:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {"error": "Validation failed: source video path is required (CD-01)"}
+                    ).encode()
+                )
+                return
+
+            source_path = Path(source_name)
+            if not source_path.is_file():
+                alts = [
+                    Path("tests/fixtures") / source_name,
+                    Path("work") / source_name,
+                    Path("media") / source_name,
+                    Path(r"C:\Users\Wareen\Desktop\Test Videos\ZarPodcast") / source_name,
+                ]
+                found = next((p for p in alts if p.is_file()), None)
+                if found is not None:
+                    source_path = found
+                else:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(
+                        json.dumps(
+                            {
+                                "error": (
+                                    f"Validation failed: source video '{source_name}' does "
+                                    "not exist on disk (CD-01)"
+                                )
+                            }
+                        ).encode()
+                    )
+                    return
+
+            if source_path.stat().st_size == 0:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "error": (
+                                f"Validation failed: source video '{source_path}' is empty "
+                                "(0 bytes) (CD-01)"
+                            )
+                        }
+                    ).encode()
+                )
+                return
+
+            job = JOB_MANAGER.submit_job(source=str(source_path))
             self.send_response(201)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

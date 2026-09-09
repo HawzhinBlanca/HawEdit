@@ -1,0 +1,210 @@
+[
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\web.py",
+    "sha256": "5119e7853433f4dd2ecdeb4271b34a5e2fdc210aeef34822824250bf84fbbff8",
+    "functions": {
+      "run_web_server": 859,
+      "to_dict": 601,
+      "__init__": 620,
+      "get_all_jobs": 624,
+      "get_job": 633,
+      "update_job_caption": 638,
+      "submit_job": 651,
+      "_run_job_stages": 693,
+      "do_POST": 730,
+      "do_GET": 776
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\condenser.py",
+    "sha256": "cedab7846bf5ffb57afca27eac511f5d42aedb183a23595ab7f480f048630ea9",
+    "functions": {
+      "_calculate_sentence_importance": 203,
+      "condense_story": 234,
+      "remap_words_to_condensed_timeline": 425,
+      "condense_multiple_arcs": 467,
+      "__post_init__": 179,
+      "duration_ms": 112,
+      "to_dict": 189
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\render_critic.py",
+    "sha256": "5cd4a59faa603771ddc65f61849f54779ec35ee8a991a28cd942c4e58ad482c4",
+    "functions": {
+      "generate_critique_windows": 246,
+      "inspect_rendered_sequence": 317,
+      "__post_init__": 204,
+      "to_dict": 115,
+      "duration_ms": 160,
+      "critical_defects": 211,
+      "warning_defects": 215,
+      "has_critical_defects": 219,
+      "assert_verdict_grounded": 222,
+      "_add_window": 263
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\sanity_gate.py",
+    "sha256": "1ba715e35a5616bc6c80cfb8864655ad7813f3145aad000c431e732afa866727",
+    "functions": {
+      "check_subtitles": 73,
+      "parse_ebur128_stats": 143,
+      "check_audio_compliance": 181,
+      "check_face_presence": 214,
+      "check_narrative_integrity": 297,
+      "to_dict": 56,
+      "run_full_audit": 325
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\pipeline.py",
+    "sha256": "8b46df2c7bbe7426b2e374f217b9c3a65bb12e346dfa8360d94a7d3bf202642a",
+    "functions": {
+      "_runtime_fonts_dir": 226,
+      "_skip_reason": 688,
+      "_not_reached": 699,
+      "_nothing_fits_a_candidate": 707,
+      "_file_digest": 768,
+      "_assert_source_unchanged": 781,
+      "_operational_failure": 794,
+      "_ingest_failure_run": 808,
+      "_safe_exception_text": 837,
+      "_safe_exception_notes": 860,
+      "_release_grounder_after_use": 885,
+      "dead_air_flags": 917,
+      "_qc_with_measured_flags": 943,
+      "assert_time_contiguous": 955,
+      "assert_contiguous": 987,
+      "_candidate_priority": 1013,
+      "_candidate_for_judging": 1023,
+      "_complete_sentences_within": 1053,
+      "_rejected_candidates": 1072,
+      "_sentence_run_for_candidate": 1128,
+      "_longest_run": 1145,
+      "_complete_sentences_overlapping": 1169,
+      "_run_span_ms": 1192,
+      "_grown_sentence_run": 1197,
+      "_verdict_is_shippable": 1251,
+      "_no_shippable_verdict_reason": 1268,
+      "_judgeable_plans": 1291,
+      "_persist_verdict": 1332,
+      "_automatic_sentence_selection": 1349,
+      "_prepare_selection": 1360,
+      "_assert_render_alignment_complete": 1382,
+      "_raw_text_for_words": 1394,
+      "_candidate_slice_text": 1412,
+      "_visual_retrieval_query": 1421,
+      "_candidate_work_component": 1458,
+      "_assert_verdict_matches_request": 1477,
+      "_vad_onset_for_anchor": 1494,
+      "_steady_camera": 1511,
+      "_clip_id": 1537,
+      "_delivery_artifact_paths": 1546,
+      "_legacy_delivery_artifact_paths": 1551,
+      "_assert_no_existing_artifacts": 1558,
+      "_natural_silence_for_anchor": 1589,
+      "calculate_visual_variety": 1612,
+      "run_pipeline": 1636,
+      "_pauses_between": 3239,
+      "proxy_dimensions": 3253,
+      "visible_cuda_devices": 3266,
+      "assert_devices_available": 3276,
+      "_embedding_revision": 3306,
+      "build_visual_composer": 3328,
+      "build_parser": 3359,
+      "_load_persisted_verdict": 3663,
+      "main": 3682,
+      "_build_and_run": 3701,
+      "_run_from_args": 4084,
+      "_print_report": 4099,
+      "ground_all": 238,
+      "to_dict": 475,
+      "_rejected_by_path": 348,
+      "_discovery_ran": 361,
+      "_span_compliance": 383,
+      "_editorial_ran": 408,
+      "_diarization_ran": 414,
+      "skipped": 428,
+      "complete": 450,
+      "encode": 476,
+      "_validate_first_frame": 2403,
+      "_shippable_sort_key": 2282
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\story.py",
+    "sha256": "5f80e87e5770c4ecfa98a2eccfa8fc9b3fbe2c456fcc19548d50c7eaaa359efe",
+    "functions": {
+      "build_story_map": 500,
+      "__post_init__": 205,
+      "duration_ms": 160,
+      "to_dict": 480,
+      "from_dict": 489,
+      "relations_for_interval": 227,
+      "required_sentence_ids_for": 231,
+      "assert_candidate_preserves_required_context": 245,
+      "resolve_candidate": 277,
+      "filter_and_expand_candidates": 455
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\shot_plan.py",
+    "sha256": "cc413150f7e34f1cb9d37cead7f1414b724c0ce35c13378829ee08695526d5e8",
+    "functions": {
+      "build_shot_plan": 320,
+      "__post_init__": 256,
+      "width": 87,
+      "height": 91,
+      "to_dict": 302,
+      "from_dict": 312,
+      "duration_ms": 200,
+      "has_protected_kind": 203,
+      "total_duration_ms": 274,
+      "shot_count": 278,
+      "shot_at_output_ms": 281,
+      "assert_valid": 288
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\episode_package.py",
+    "sha256": "c7679ca2dbe18d429047686331f9783e5af7310c36f9b9de616147232d268685",
+    "functions": {
+      "compute_semantic_similarity": 172,
+      "_extract_candidate_text": 190,
+      "build_episode_package": 196,
+      "__post_init__": 133,
+      "to_dict": 158
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\assembly.py",
+    "sha256": "b25d701e5bfffd7bc7a7fb81ce798e88b570946f5c93d8803747d7d2cc4d052c",
+    "functions": {
+      "assemble_spans": 86,
+      "judge_assembly": 168,
+      "assemble_cold_open": 219,
+      "assembled_splice_filter": 253,
+      "render_assembled_reel": 278,
+      "judge_assembled_reel_multimodal": 383,
+      "__post_init__": 77
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\work\\render_complete_highlights_master.py",
+    "sha256": "12334f1f6b66bbcef112a6fa67cc67edfec969831f7940a32d9ce9a939f564a2",
+    "functions": {
+      "main": 41,
+      "fmt_time": 118
+    }
+  },
+  {
+    "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\work\\render_sergio_un_master.py",
+    "sha256": "896b7057ac11317ee48be80177909acf0d7ae5fc1ec93d58a45ebdacc455546b",
+    "functions": {
+      "format_ass_time": 34,
+      "build_sergio_ass": 45,
+      "main": 106
+    }
+  }
+]

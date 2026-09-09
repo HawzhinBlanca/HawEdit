@@ -1,0 +1,31 @@
+{
+  "environment": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0"
+  },
+  "missing_video_critic": {
+    "path_exists": false,
+    "is_all_clear": true,
+    "coverage_ratio": 1.0,
+    "defects": 0,
+    "assert_verdict_grounded": "passed"
+  },
+  "short_input_condensation": {
+    "requested_target_ms": 20000,
+    "input_duration_ms": 40000,
+    "output_duration_ms": 40000,
+    "pruned_sentences": [],
+    "beats": [
+      "hook"
+    ],
+    "narrative_check": [
+      true,
+      []
+    ]
+  },
+  "episode_search": {
+    "source_duration_ms": 1000000,
+    "max_selected_source_ms": 240000,
+    "clip_count": 3
+  }
+}

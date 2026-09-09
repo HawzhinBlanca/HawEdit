@@ -15,6 +15,7 @@ import re
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -260,12 +261,13 @@ def check_face_presence(
             if not valid_sample_times:
                 valid_sample_times = sample_times  # Fallback if entirely covered
 
-            max_faces_in_shot = 0
+            sample_counts: list[int] = []
             for sample_t in valid_sample_times:
                 frame_num = int(sample_t * fps)
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
                 ret, frame = cap.read()
                 if not ret or frame is None:
+                    sample_counts.append(0)
                     continue
 
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -278,14 +280,20 @@ def check_face_presence(
                         gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
                     )
                     count = len(p_faces)
+                sample_counts.append(count)
 
-                if count > max_faces_in_shot:
-                    max_faces_in_shot = count
-
-            faces_per_shot[shot_key] = max_faces_in_shot
-            if max_faces_in_shot == 0:
+            # CD-10: Reject if all samples in shot have 0 faces, or consecutive have 0 faces
+            faces_per_shot[shot_key] = max(sample_counts) if sample_counts else 0
+            zero_indices = [i for i, c in enumerate(sample_counts) if c == 0]
+            has_consecutive_zeros = any(i2 == i1 + 1 for i1, i2 in pairwise(zero_indices))
+            if all(c == 0 for c in sample_counts) or (
+                has_consecutive_zeros and len(sample_counts) >= 2
+            ):
+                zero_times = [f"{valid_sample_times[i]:.1f}s" for i in zero_indices]
+                zt_str = ", ".join(zero_times)
                 defects.append(
-                    f"Dead Frame Detected: Shot {shot_key} contains 0 detected faces in crop."
+                    f"Dead Frame Detected: Shot {shot_key} contains 0 detected faces in "
+                    f"dialogue crop at {zt_str}."
                 )
     finally:
         cap.release()

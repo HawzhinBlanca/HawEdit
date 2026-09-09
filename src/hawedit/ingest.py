@@ -30,6 +30,7 @@ model ran and found no turns, while `None` still means it did not run.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import importlib
 import json
@@ -506,12 +507,45 @@ def detect_shots(source: Path, threshold: float = CONTENT_DETECTOR_THRESHOLD) ->
     Runs on **the source**, never the 1 fps proxy. §3 Stage 5 matches a cut against a 400 ms
     window; a proxy quantises every cut to a whole second, so proxy-derived cuts would be
     coarser than the tolerance they are compared against (D-023).
+    Long media files (>300s) are processed in bounded windows with explicit cleanup to prevent
+    OpenCV / numpy memory fragmentation and exhaustion across 100k+ frames.
     """
-    from scenedetect import ContentDetector, detect
+    from scenedetect import ContentDetector, detect, open_video
 
-    scenes = detect(str(source), ContentDetector(threshold=threshold))
-    # Each scene's start is a cut, except the first — that is the file beginning, not a cut.
-    return tuple(round(start.get_seconds() * 1000) for start, _ in scenes[1:])
+    video = open_video(str(source))
+    duration_s = video.duration.get_seconds() if video.duration is not None else 0.0
+    del video
+    gc.collect()
+
+    chunk_duration_s = 300.0
+    overlap_s = 2.0
+
+    if duration_s <= chunk_duration_s:
+        scenes = detect(str(source), ContentDetector(threshold=threshold))
+        return tuple(round(start.get_seconds() * 1000) for start, _ in scenes[1:])
+
+    all_cuts: list[int] = []
+    current_start = 0.0
+    while current_start < duration_s:
+        current_end = min(duration_s, current_start + chunk_duration_s)
+        scenes = detect(
+            str(source),
+            ContentDetector(threshold=threshold),
+            start_time=current_start,
+            end_time=current_end,
+        )
+        for start, _ in scenes[1:]:
+            cut_ms = round(start.get_seconds() * 1000)
+            if not all_cuts or cut_ms > all_cuts[-1] + 400:
+                all_cuts.append(cut_ms)
+        del scenes
+        gc.collect()
+
+        if current_end >= duration_s:
+            break
+        current_start = current_end - overlap_s
+
+    return tuple(all_cuts)
 
 
 def detect_speech(

@@ -29,6 +29,7 @@ from typing import Final
 from hawedit.transcripts import Word
 
 __all__ = [
+    "DANGLING_CONJUNCTIONS_CKB",
     "DEFAULT_PAUSE_MS",
     "KURDISH_SENTENCE_FINAL",
     "Sentence",
@@ -43,10 +44,45 @@ __all__ = [
 # only knows `?` and `.` will silently miss every question in a real transcript.
 KURDISH_SENTENCE_FINAL: Final[frozenset[str]] = frozenset({".", "!", "?", "؟", "۔", "…"})
 
+# Dangling Kurdish conjunctions and open dependent clause markers (CD-06).
+# A sentence ending with any of these is an open thought fragment (complete=False),
+# preventing clipping or cut boundaries from terminating mid-thought.
+DANGLING_CONJUNCTIONS_CKB: Final[frozenset[str]] = frozenset(
+    {
+        "چونکە",
+        "چونكە",
+        "وە",
+        "یان",
+        "بەڵام",
+        "کە",
+        "كە",
+        "هەرچەندە",
+        "لەبەرئەوەی",
+        "لەبەر",
+        "چونکێ",
+        "ئەگەر",
+        "بۆیە",
+    }
+)
+
 # How much silence ends a sentence when punctuation does not. §4.2 mandates using pauses but
 # names no threshold; 500 ms is a conversational sentence break rather than a breath. It is a
 # tunable awaiting real audio — see DECISIONS.md D-014 — not a constant to trust.
 DEFAULT_PAUSE_MS: Final = 500
+
+
+def _is_dangling_fragment(words: Sequence[Word]) -> bool:
+    """True if words end with a dangling conjunction or open dependent clause marker."""
+    if not words:
+        return False
+    last_raw = words[-1].w.strip().rstrip(".,،!؟?؛;:")
+    if last_raw in DANGLING_CONJUNCTIONS_CKB:
+        return True
+    if len(words) >= 2:
+        two_word = f"{words[-2].w.strip()} {words[-1].w.strip()}".rstrip(".,،!؟?؛;:")
+        if two_word in ("لەبەر ئەوەی", "لەبەر ئەوە", "هەر بۆیە"):
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,16 +192,18 @@ def segment_sentences(
     current: list[Word] = [words[0]]
     for earlier, later in pairwise(words):
         if _ends_with_sentence_punctuation(earlier) or pause_follows(earlier, later):
-            sentences.append(Sentence(words=tuple(current), complete=True))
+            is_complete = not _is_dangling_fragment(current)
+            sentences.append(Sentence(words=tuple(current), complete=is_complete))
             current = [later]
         else:
             current.append(later)
 
-    # The tail closed properly only if its last word carries sentence-final punctuation;
-    # otherwise the segment ran out mid-thought and this is a fragment.
-    sentences.append(
-        Sentence(words=tuple(current), complete=_ends_with_sentence_punctuation(current[-1]))
+    # The tail closed properly only if its last word carries sentence-final punctuation
+    # and does not end with a dangling conjunction; otherwise the segment ran out mid-thought.
+    tail_complete = _ends_with_sentence_punctuation(current[-1]) and not _is_dangling_fragment(
+        current
     )
+    sentences.append(Sentence(words=tuple(current), complete=tail_complete))
     return tuple(sentences)
 
 

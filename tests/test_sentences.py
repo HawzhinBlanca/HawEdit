@@ -258,3 +258,44 @@ def test_the_recorded_pause_threshold_is_where_the_split_actually_happens() -> N
     assert len(segment_sentences(just_under)) == 1, (
         "a 499 ms gap must not split, or the recorded threshold is not the one in force"
     )
+
+
+def test_dangling_conjunction_sentences_are_marked_incomplete() -> None:
+    """CD-06: Dangling conjunctions or open dependent clause markers mark complete=False.
+
+    A pause boundary cannot establish that the speaker finished the thought when the
+    phrase ends on 'چونکە' (because), 'وە' (and), 'بەڵام' (but), or 'لەبەر ئەوەی' (because of).
+    """
+    # 1. Sentence ending with "چونکە" followed by 600 ms pause
+    dangling_chunk = words(
+        ("ئێمە", 0, 300),
+        ("ڕۆیشتین", 300, 700),
+        ("چونکە", 700, 1000),
+        ("بەیانی", 1600, 2000),
+        ("هاتینەوە.", 2000, 2500),
+    )
+    s = segment_sentences(dangling_chunk)
+    assert len(s) == 2
+    assert s[0].text == "ئێمە ڕۆیشتین چونکە"
+    assert s[0].complete is False  # Invariant: open dependent clause cannot be complete
+    assert s[1].text == "بەیانی هاتینەوە."
+    assert s[1].complete is True
+
+    # 2. Multi-word dangling marker "لەبەر ئەوەی"
+    dangling_multi = words(
+        ("کاریگەری", 0, 400),
+        ("هەبوو", 400, 800),
+        ("لەبەر", 800, 1100),
+        ("ئەوەی", 1100, 1400),
+        ("دۆخەکە", 2000, 2400),
+        ("ئاڵۆزبوو.", 2400, 2800),
+    )
+    s_multi = segment_sentences(dangling_multi)
+    assert len(s_multi) == 2
+    assert s_multi[0].complete is False
+    assert s_multi[1].complete is True
+
+    # 3. anchors_for MUST refuse to set boundary on incomplete sentence
+    assert anchors_for((s[0],)) is None
+    # With s[0] and s[1], anchor starts on s[1] (first complete sentence), not s[0]
+    assert anchors_for((s[0], s[1])) == (1600, 2500)

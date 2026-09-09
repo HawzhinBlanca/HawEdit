@@ -369,14 +369,28 @@ class OpenCvFaceTracker:
                         tracker = None
                     if tracked_ok and bbox is not None:
                         bx, by, bw, bh = (int(v) for v in bbox)
-                        if bw > 0 and bh > 0 and bx + bw <= width and by + bh <= height:
-                            center = bx + bw // 2
+                        center = bx + bw // 2
+                        # Drift check (CD-11): ensure tracker does not wander into dead zone
+                        if (
+                            bw > 0
+                            and bh > 0
+                            and bx + bw <= width
+                            and by + bh <= height
+                            and (previous is None or abs(center - previous) <= width * 0.25)
+                        ):
                             points.append(FocusPoint(round(at), center, by + bh // 2, bh))
                             previous = center
                         else:
                             tracker = None
+                            if previous is not None:
+                                points.append(FocusPoint(round(at), previous))
                     else:
                         tracker = None
+                        if previous is not None:
+                            points.append(FocusPoint(round(at), previous))
+                elif previous is not None:
+                    # CD-11: Hold last stable confirmed face position rather than dead zone
+                    points.append(FocusPoint(round(at), previous))
                 at += step_ms
         finally:
             capture.release()
