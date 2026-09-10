@@ -1,0 +1,588 @@
+{
+  "assembly_run": {
+    "media_id": "assemblyprobe",
+    "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-source-32s.mp4",
+    "work_dir": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run",
+    "complete": false,
+    "skipped": [
+      "diarization",
+      "transcript",
+      "index",
+      "visual_index",
+      "discovery",
+      "editorial",
+      "boundary",
+      "render",
+      "delivery"
+    ],
+    "ingest": {
+      "media_id": "assemblyprobe",
+      "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-source-32s.mp4",
+      "source_sha256": "17fa61dac1787c39bd3dfc6722e3ba375f66fbaf104d74022e26af3d8928f676",
+      "audio_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run\\stage0\\audio.wav",
+      "proxy_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run\\stage0\\proxy.mp4",
+      "duration_ms": 32000,
+      "shot_cuts_ms": [],
+      "speech": [],
+      "diarization": null
+    },
+    "diarization": {
+      "skipped": true,
+      "stage": "diarization",
+      "reason": "no Stage 0 diarization producer was enabled. Community-1 remains gated; enable only an authenticated, integrity-verified producer rather than treating no result as zero speakers.",
+      "blocked_by": [
+        "Stage 0 diarization producer not enabled"
+      ]
+    },
+    "transcript_gaps": [],
+    "speech_without_transcription_ms": 0,
+    "rejected_validator_corrections": [],
+    "escalation": {
+      "scored_segments": 0,
+      "escalated": 0,
+      "disagreement_threshold_cer": 0.15,
+      "by_trigger": {
+        "quartile_only": 0,
+        "disagreement_only": 0,
+        "both": 0
+      },
+      "segments": []
+    },
+    "transcript": {
+      "skipped": true,
+      "stage": "transcript",
+      "reason": "transcript 'assemblyprobe' is 0.0% Kurdish script, below the 70% this pipeline requires — it is not Sorani Kurdish. §4.1, the BM25 index, §4.2 segmentation and §4.3 captions all treat `text_ckb` as ckb, so a clip built from this would render finished-looking subtitles in the wrong language. Check the source media's language, or the ASR route's.",
+      "blocked_by": [
+        "Sorani Kurdish source audio"
+      ]
+    },
+    "index": {
+      "skipped": true,
+      "stage": "index",
+      "reason": "index did not run because a transcript was not available.",
+      "blocked_by": [
+        "a transcript"
+      ]
+    },
+    "sentence_count": 0,
+    "visual_windows": [
+      {
+        "window_id": "assemblyprobe:s0:w0",
+        "media_id": "assemblyprobe",
+        "scene_index": 0,
+        "window_index": 0,
+        "in_ms": 0,
+        "out_ms": 32000,
+        "fps": 1.0,
+        "frame_count": 32
+      }
+    ],
+    "visual_query_source": null,
+    "delivery": {
+      "skipped": true,
+      "stage": "delivery",
+      "reason": "delivery did not run because a successful render was not available.",
+      "blocked_by": [
+        "a successful render"
+      ]
+    },
+    "candidates": [],
+    "billed_calls": [],
+    "total_cost_usd_estimate": 0,
+    "total_tokens_billed": 0,
+    "rejected": [],
+    "rejected_by_path": {},
+    "visual_index": {
+      "skipped": true,
+      "stage": "visual_index",
+      "reason": "local visual retrieval was not enabled. Use --visual to compose frame extraction, Qwen indexing, top-50 retrieval, reranking, a 5–10 survivor set and VideoChat3.",
+      "blocked_by": [
+        "visual discovery not enabled"
+      ]
+    },
+    "discovery": {
+      "skipped": true,
+      "stage": "discovery",
+      "reason": "no Stage 3 producer was enabled. Select --gemini or --vertex-project for Path A, --visual with --visual-query for composed Path B — Stage 2 must retrieve against a query, and the whole transcript is the corpus rather than a fallback query — or both for the two-sided union.",
+      "blocked_by": [
+        "discovery producer not enabled"
+      ]
+    },
+    "editorial": {
+      "skipped": true,
+      "stage": "editorial",
+      "reason": "no Stage 4 judge or persisted verdict was supplied. Use --gemini for non-confidential work, --vertex-project with governance confirmation for confidential work, or --verdict for an already-reviewed exact span. Note that §4 pins gemini-2.5-pro and it has a free-tier limit of exactly zero, so --gemini needs billing on the key's project — BLOCKED.md #3.",
+      "blocked_by": [
+        "Stage 4 judgment not enabled"
+      ]
+    },
+    "boundary": {
+      "skipped": true,
+      "stage": "boundary",
+      "reason": "boundary did not run because complete selected sentences was not available.",
+      "blocked_by": [
+        "complete selected sentences"
+      ]
+    },
+    "clip": null,
+    "selected_sentences": [],
+    "render": {
+      "skipped": true,
+      "stage": "render",
+      "reason": "render did not run because a judged boundary and QC pass was not available.",
+      "blocked_by": [
+        "a judged boundary and QC pass"
+      ]
+    }
+  }
+}
+{
+  "assembly_run": {
+    "media_id": "assemblyprobe",
+    "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-source-32s.mp4",
+    "work_dir": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run",
+    "complete": false,
+    "skipped": [
+      "diarization",
+      "transcript",
+      "index",
+      "visual_index",
+      "discovery",
+      "editorial",
+      "boundary",
+      "render",
+      "delivery"
+    ],
+    "ingest": {
+      "media_id": "assemblyprobe",
+      "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-source-32s.mp4",
+      "source_sha256": "17fa61dac1787c39bd3dfc6722e3ba375f66fbaf104d74022e26af3d8928f676",
+      "audio_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run\\stage0\\audio.wav",
+      "proxy_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run\\stage0\\proxy.mp4",
+      "duration_ms": 32000,
+      "shot_cuts_ms": [],
+      "speech": [],
+      "diarization": null
+    },
+    "diarization": {
+      "skipped": true,
+      "stage": "diarization",
+      "reason": "no Stage 0 diarization producer was enabled. Community-1 remains gated; enable only an authenticated, integrity-verified producer rather than treating no result as zero speakers.",
+      "blocked_by": [
+        "Stage 0 diarization producer not enabled"
+      ]
+    },
+    "transcript_gaps": [],
+    "speech_without_transcription_ms": 0,
+    "rejected_validator_corrections": [],
+    "escalation": {
+      "scored_segments": 0,
+      "escalated": 0,
+      "disagreement_threshold_cer": 0.15,
+      "by_trigger": {
+        "quartile_only": 0,
+        "disagreement_only": 0,
+        "both": 0
+      },
+      "segments": []
+    },
+    "transcript": {
+      "skipped": true,
+      "stage": "transcript",
+      "reason": "transcript 'assemblyprobe' is 0.0% Kurdish script, below the 70% this pipeline requires — it is not Sorani Kurdish. §4.1, the BM25 index, §4.2 segmentation and §4.3 captions all treat `text_ckb` as ckb, so a clip built from this would render finished-looking subtitles in the wrong language. Check the source media's language, or the ASR route's.",
+      "blocked_by": [
+        "Sorani Kurdish source audio"
+      ]
+    },
+    "index": {
+      "skipped": true,
+      "stage": "index",
+      "reason": "index did not run because a transcript was not available.",
+      "blocked_by": [
+        "a transcript"
+      ]
+    },
+    "sentence_count": 0,
+    "visual_windows": [
+      {
+        "window_id": "assemblyprobe:s0:w0",
+        "media_id": "assemblyprobe",
+        "scene_index": 0,
+        "window_index": 0,
+        "in_ms": 0,
+        "out_ms": 32000,
+        "fps": 1.0,
+        "frame_count": 32
+      }
+    ],
+    "visual_query_source": null,
+    "delivery": {
+      "skipped": true,
+      "stage": "delivery",
+      "reason": "delivery did not run because a successful render was not available.",
+      "blocked_by": [
+        "a successful render"
+      ]
+    },
+    "candidates": [],
+    "billed_calls": [],
+    "total_cost_usd_estimate": 0,
+    "total_tokens_billed": 0,
+    "rejected": [],
+    "rejected_by_path": {},
+    "visual_index": {
+      "skipped": true,
+      "stage": "visual_index",
+      "reason": "local visual retrieval was not enabled. Use --visual to compose frame extraction, Qwen indexing, top-50 retrieval, reranking, a 5–10 survivor set and VideoChat3.",
+      "blocked_by": [
+        "visual discovery not enabled"
+      ]
+    },
+    "discovery": {
+      "skipped": true,
+      "stage": "discovery",
+      "reason": "no Stage 3 producer was enabled. Select --gemini or --vertex-project for Path A, --visual with --visual-query for composed Path B — Stage 2 must retrieve against a query, and the whole transcript is the corpus rather than a fallback query — or both for the two-sided union.",
+      "blocked_by": [
+        "discovery producer not enabled"
+      ]
+    },
+    "editorial": {
+      "skipped": true,
+      "stage": "editorial",
+      "reason": "no Stage 4 judge or persisted verdict was supplied. Use --gemini for non-confidential work, --vertex-project with governance confirmation for confidential work, or --verdict for an already-reviewed exact span. Note that §4 pins gemini-2.5-pro and it has a free-tier limit of exactly zero, so --gemini needs billing on the key's project — BLOCKED.md #3.",
+      "blocked_by": [
+        "Stage 4 judgment not enabled"
+      ]
+    },
+    "boundary": {
+      "skipped": true,
+      "stage": "boundary",
+      "reason": "boundary did not run because complete selected sentences was not available.",
+      "blocked_by": [
+        "complete selected sentences"
+      ]
+    },
+    "clip": null,
+    "selected_sentences": [],
+    "render": {
+      "skipped": true,
+      "stage": "render",
+      "reason": "render did not run because a judged boundary and QC pass was not available.",
+      "blocked_by": [
+        "a judged boundary and QC pass"
+      ]
+    }
+  },
+  "publication_run": {
+    "media_id": "pubprobe",
+    "source": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4",
+    "work_dir": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\publication-run",
+    "complete": false,
+    "skipped": [
+      "diarization",
+      "visual_index",
+      "discovery",
+      "render",
+      "delivery"
+    ],
+    "ingest": {
+      "media_id": "pubprobe",
+      "source": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4",
+      "source_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+      "audio_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\publication-run\\stage0\\audio.wav",
+      "proxy_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\publication-run\\stage0\\proxy.mp4",
+      "duration_ms": 4162,
+      "shot_cuts_ms": [
+        1400,
+        2800
+      ],
+      "speech": [
+        {
+          "start_ms": 0,
+          "end_ms": 1790
+        },
+        {
+          "start_ms": 1954,
+          "end_ms": 4162
+        }
+      ],
+      "diarization": null
+    },
+    "diarization": {
+      "skipped": true,
+      "stage": "diarization",
+      "reason": "no Stage 0 diarization producer was enabled. Community-1 remains gated; enable only an authenticated, integrity-verified producer rather than treating no result as zero speakers.",
+      "blocked_by": [
+        "Stage 0 diarization producer not enabled"
+      ]
+    },
+    "transcript_gaps": [],
+    "speech_without_transcription_ms": 0,
+    "rejected_validator_corrections": [],
+    "escalation": {
+      "scored_segments": 0,
+      "escalated": 0,
+      "disagreement_threshold_cer": 0.15,
+      "by_trigger": {
+        "quartile_only": 0,
+        "disagreement_only": 0,
+        "both": 0
+      },
+      "segments": []
+    },
+    "transcript": {
+      "media_id": "pubprobe",
+      "source_sha256": "e69b700233a91778f11aef017f4486bf229be9b0f23b804f892cb2737eacfbab",
+      "text_ckb": "ڕۆژنامەوانی کوردی. لە هەولێر.",
+      "words": [
+        {
+          "conf": 0.95,
+          "end_ms": 800,
+          "start_ms": 100,
+          "w": "ڕۆژنامەوانی"
+        },
+        {
+          "conf": 0.94,
+          "end_ms": 1700,
+          "start_ms": 800,
+          "w": "کوردی."
+        },
+        {
+          "conf": 0.93,
+          "end_ms": 2400,
+          "start_ms": 2000,
+          "w": "لە"
+        },
+        {
+          "conf": 0.92,
+          "end_ms": 4100,
+          "start_ms": 2400,
+          "w": "هەولێر."
+        }
+      ]
+    },
+    "index": {
+      "document_count": 2,
+      "ngram_size": 3,
+      "ngram_weight": 0.5
+    },
+    "sentence_count": 2,
+    "visual_windows": [
+      {
+        "window_id": "pubprobe:s0:w0",
+        "media_id": "pubprobe",
+        "scene_index": 0,
+        "window_index": 0,
+        "in_ms": 0,
+        "out_ms": 1400,
+        "fps": 1.0,
+        "frame_count": 2
+      },
+      {
+        "window_id": "pubprobe:s1:w0",
+        "media_id": "pubprobe",
+        "scene_index": 1,
+        "window_index": 0,
+        "in_ms": 1400,
+        "out_ms": 2800,
+        "fps": 1.0,
+        "frame_count": 2
+      },
+      {
+        "window_id": "pubprobe:s2:w0",
+        "media_id": "pubprobe",
+        "scene_index": 2,
+        "window_index": 0,
+        "in_ms": 2800,
+        "out_ms": 4162,
+        "fps": 1.0,
+        "frame_count": 2
+      }
+    ],
+    "visual_query_source": null,
+    "delivery": {
+      "skipped": true,
+      "stage": "delivery",
+      "reason": "[Errno 13] Permission denied: 'C:\\\\Users\\\\Wareen\\\\.codex\\\\tmp\\\\hawedit-audit-532e6ef\\\\publication-run\\\\pubprobe-s0-0.edit_plan.json'",
+      "blocked_by": [
+        "§2 delivery set"
+      ]
+    },
+    "candidates": [],
+    "billed_calls": [],
+    "total_cost_usd_estimate": 0,
+    "total_tokens_billed": 0,
+    "rejected": [],
+    "rejected_by_path": {},
+    "visual_index": {
+      "skipped": true,
+      "stage": "visual_index",
+      "reason": "local visual retrieval was not enabled. Use --visual to compose frame extraction, Qwen indexing, top-50 retrieval, reranking, a 5–10 survivor set and VideoChat3.",
+      "blocked_by": [
+        "visual discovery not enabled"
+      ]
+    },
+    "discovery": {
+      "skipped": true,
+      "stage": "discovery",
+      "reason": "no Stage 3 producer was enabled. Select --gemini or --vertex-project for Path A, --visual with --visual-query for composed Path B — Stage 2 must retrieve against a query, and the whole transcript is the corpus rather than a fallback query — or both for the two-sided union.",
+      "blocked_by": [
+        "discovery producer not enabled"
+      ]
+    },
+    "editorial": {
+      "skipped": false,
+      "stage": "editorial",
+      "judge": "gemini-2.5-pro"
+    },
+    "boundary": {
+      "anchor_in_ms": 100,
+      "anchor_out_ms": 1700,
+      "final_in_ms": 0,
+      "final_out_ms": 1900,
+      "in_extended_by": "vad_onset",
+      "out_extended_by": "tail",
+      "sentence_complete": true,
+      "confidence": null
+    },
+    "clip": {
+      "clip_id": "pubprobe-s0-0",
+      "media_id": "pubprobe",
+      "media_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+      "in_ms": 0,
+      "out_ms": 1900,
+      "discovery_path": "verbal",
+      "boundary": {
+        "anchor_in_ms": 100,
+        "anchor_out_ms": 1700,
+        "final_in_ms": 0,
+        "final_out_ms": 1900,
+        "in_extended_by": "vad_onset",
+        "out_extended_by": "tail",
+        "sentence_complete": true,
+        "confidence": null
+      },
+      "transcript": {
+        "raw_ckb": "ڕۆژنامەوانی کوردی.",
+        "norm_ckb": "ڕۆژنامەوانی کوردی.",
+        "en_aux": null,
+        "words": [
+          {
+            "w": "ڕۆژنامەوانی",
+            "start_ms": 100,
+            "end_ms": 800,
+            "conf": 0.95
+          },
+          {
+            "w": "کوردی.",
+            "start_ms": 800,
+            "end_ms": 1700,
+            "conf": 0.94
+          }
+        ],
+        "asr": {
+          "canonical": "omniASR_LLM_7B_v2",
+          "adapter": null,
+          "aligner": "ctc_viterbi",
+          "validated_by": null,
+          "mean_logprob": null
+        }
+      },
+      "speaker": null,
+      "editorial": {
+        "hook_score": 0.8,
+        "self_contained": true,
+        "meaning_fidelity": 0.9,
+        "misleading_edit_risk": 0.05,
+        "cultural_landing": 0.8,
+        "narrative_role": "payoff",
+        "judge": "gemini-2.5-pro",
+        "sv6d": null,
+        "payoff_at_ms": 900,
+        "hook_type": "claim",
+        "payoff_strength": 0.5,
+        "ends_on_a_beat": true,
+        "reason_ckb": "پەسەندکراوە لەسەر بنەمای بەهێزی دەربڕین."
+      },
+      "output": {
+        "title_ckb": "ڕۆژنامەوانی کوردی لە هەولێر",
+        "description_ckb": "بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
+        "crop_target": "static_centre",
+        "caption_style": "word_highlight",
+        "durations": [
+          2
+        ],
+        "hashtags_ckb": [
+          "#کوردی"
+        ],
+        "silence_removed_ms": 0,
+        "title_variants_ckb": [],
+        "cover_frame_ms": null
+      },
+      "qc": null,
+      "provenance": {
+        "git_commit": "532e6efb1708e8dc2c3d14dde4fb7927f5115006",
+        "revisions_digest": "f4cdcd1e1422cb32bd53a22b2edbcdb3f70cbdc88ee3bf56c472afedee4a9b3c",
+        "judge_prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "judge_response_id": "resp-default",
+        "thresholds": {
+          "min_hook_score": 0.75,
+          "max_misleading_edit_risk": 0.1,
+          "min_meaning_fidelity": 0.7,
+          "min_cultural_landing": 0.7
+        },
+        "vad_scene": {
+          "scene_threshold": 0.3,
+          "vad_onset_ms": 300,
+          "shot_cut_guard_ms": 400
+        },
+        "crop_constants": {
+          "target_width": 1080,
+          "target_height": 1920,
+          "face_composition_line": 0.38,
+          "max_vertical_zoom": 1.2
+        },
+        "ffmpeg": {
+          "version": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+          "buildconf_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "profile": "default"
+      }
+    },
+    "selected_sentences": [
+      {
+        "words": [
+          {
+            "w": "ڕۆژنامەوانی",
+            "start_ms": 100,
+            "end_ms": 800,
+            "conf": 0.95
+          },
+          {
+            "w": "کوردی.",
+            "start_ms": 800,
+            "end_ms": 1700,
+            "conf": 0.94
+          }
+        ],
+        "complete": true
+      }
+    ],
+    "render": {
+      "skipped": true,
+      "stage": "render",
+      "reason": "render completed privately but was not published: [Errno 13] Permission denied: 'C:\\\\Users\\\\Wareen\\\\.codex\\\\tmp\\\\hawedit-audit-532e6ef\\\\publication-run\\\\pubprobe-s0-0.edit_plan.json'",
+      "blocked_by": [
+        "§2 atomic delivery bundle"
+      ]
+    }
+  },
+  "publication_files": [
+    "review\\pubprobe-s0-0\\pubprobe-s0-0.ass",
+    "review\\pubprobe-s0-0\\pubprobe-s0-0.edl",
+    "review\\pubprobe-s0-0\\pubprobe-s0-0.json",
+    "review\\pubprobe-s0-0\\pubprobe-s0-0.measured.json",
+    "review\\pubprobe-s0-0\\pubprobe-s0-0.mp4",
+    "review\\pubprobe-s0-0\\pubprobe-s0-0.srt"
+  ]
+}

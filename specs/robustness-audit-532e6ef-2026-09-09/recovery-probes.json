@@ -1,0 +1,93 @@
+{
+  "checkpoint_corruption": {
+    "original_proxy_sha256": "2b6a6c0ff3b45966f33331fbd0e6c294981e8bfd94d3adbf05a1dd9cb9ca3f20",
+    "current_size": 21,
+    "events": [
+      "RunEvent(run_id='assemblyprobe', sequence=1, at_ms=1788981619086, stage='ingest', state=<RunState.STARTED: 'started'>, reason='', model='', tokens=0, cost_usd_estimate=0.0, candidate_id='')",
+      "RunEvent(run_id='assemblyprobe', sequence=2, at_ms=1788981619100, stage='ingest', state=<RunState.SKIPPED: 'skipped'>, reason='resumed from checkpoint', model='', tokens=0, cost_usd_estimate=0.0, candidate_id='')",
+      "RunEvent(run_id='assemblyprobe', sequence=3, at_ms=1788981619100, stage='visual_windows', state=<RunState.STARTED: 'started'>, reason='', model='', tokens=0, cost_usd_estimate=0.0, candidate_id='')",
+      "RunEvent(run_id='assemblyprobe', sequence=4, at_ms=1788981619100, stage='visual_windows', state=<RunState.COMPLETED: 'completed'>, reason='', model='', tokens=0, cost_usd_estimate=0.0, candidate_id='')",
+      "RunEvent(run_id='assemblyprobe', sequence=5, at_ms=1788981619100, stage='transcript', state=<RunState.STARTED: 'started'>, reason='', model='', tokens=0, cost_usd_estimate=0.0, candidate_id='')",
+      "RunEvent(run_id='assemblyprobe', sequence=6, at_ms=1788981619100, stage='transcript', state=<RunState.SKIPPED: 'skipped'>, reason='no Stage 1 producer was enabled. Supply --transcript or run the canonical omniASR_LLM_7B_v2 + omniASR_CTC_3B_v2 path with --omni-asr.', model='', tokens=0, cost_usd_estimate=0.0, candidate_id='')"
+    ],
+    "ingest": {
+      "media_id": "assemblyprobe",
+      "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-source-32s.mp4",
+      "source_sha256": "17fa61dac1787c39bd3dfc6722e3ba375f66fbaf104d74022e26af3d8928f676",
+      "audio_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run-ckb\\stage0\\audio.wav",
+      "proxy_path": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-run-ckb\\stage0\\proxy.mp4",
+      "duration_ms": 32000,
+      "shot_cuts_ms": [],
+      "speech": [],
+      "diarization": null
+    }
+  },
+  "face_empty_shot_schedule": [
+    true,
+    {},
+    []
+  ],
+  "face_black_video_control": [
+    false,
+    {
+      "shot_0_0.0s_2.0s": 0
+    },
+    [
+      "Dead Frame Detected: Shot shot_0_0.0s_2.0s contains 0 detected faces in dialogue crop at 0.4s, 1.0s, 1.6s."
+    ]
+  ],
+  "face_missing_cascade": [
+    true,
+    {},
+    []
+  ],
+  "candidate_redundancy": {
+    "selected_indices": [
+      [
+        27,
+        28,
+        29
+      ],
+      [
+        0,
+        1,
+        2,
+        3,
+        7
+      ],
+      [
+        4,
+        5,
+        6,
+        7,
+        11
+      ]
+    ],
+    "shared_indices": [],
+    "all_pair_overlaps": [
+      {
+        "ranks": [
+          1,
+          2
+        ],
+        "sentence_indices": []
+      },
+      {
+        "ranks": [
+          1,
+          3
+        ],
+        "sentence_indices": []
+      },
+      {
+        "ranks": [
+          2,
+          3
+        ],
+        "sentence_indices": [
+          7
+        ]
+      }
+    ]
+  }
+}

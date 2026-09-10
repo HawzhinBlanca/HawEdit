@@ -44,7 +44,10 @@ from enum import Enum
 from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+    from hawedit.assembly import AssemblySpan
 
 from hawedit.brand import BrandKit, logo_overlay_coordinates, progress_bar_filter
 from hawedit.captions import (
@@ -1249,6 +1252,7 @@ def render_clip(
     music_bed_path: Path | None = None,
     music_ducking_volume: float = 0.25,
     for_review: bool = False,
+    assembly_spans: Sequence[AssemblySpan] | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1345,7 +1349,16 @@ def render_clip(
     # exit 0 and write 4180 ms. Nothing in the numbers is wrong — the clip is internally
     # consistent — so the only place to catch it is against the media itself, before encoding.
     source_ms = probe_duration_ms(source, binary)
-    if clip.out_ms > source_ms:
+    has_assembly = assembly_spans is not None and len(assembly_spans) > 0
+    if has_assembly:
+        assert assembly_spans is not None
+        for span in assembly_spans:
+            if span.source_out_ms > source_ms:
+                raise RenderError(
+                    f"assembled span ends at {span.source_out_ms} ms but {source.name} "
+                    f"is {source_ms} ms. ffmpeg would encode this successfully and truncate it."
+                )
+    elif clip.out_ms > source_ms:
         raise RenderError(
             f"clip {clip.clip_id} ends at {clip.out_ms} ms but {source.name} is {source_ms} ms. "
             f"ffmpeg would encode this successfully and truncate it, and the shipped clip would "
@@ -1446,8 +1459,14 @@ def render_clip(
     has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
     has_music = music_bed_path is not None
 
-    if has_logo or has_silence or has_music:
-        if has_silence and silence_plan is not None:
+    if has_logo or has_silence or has_music or has_assembly:
+        if has_assembly and assembly_spans is not None:
+            from hawedit.assembly import assembled_splice_filter
+
+            trim_prefix = f"{assembled_splice_filter(assembly_spans)};"
+            v_in = "[v_concat]"
+            a_in = "[a_concat]"
+        elif has_silence and silence_plan is not None:
             trim_prefix = f"{silence_trim_filter(silence_plan.retained_intervals_ms)};"
             v_in = "[v_tightened]"
             a_in = "[a_tightened]"
@@ -1518,16 +1537,18 @@ def render_clip(
     timeout_s = max(60.0, (duration_ms / 1000.0) * 10.0)
     try:
         try:
+            input_cut_args = (
+                []
+                if has_assembly
+                else ["-ss", f"{clip.in_ms / 1000:.3f}", "-t", f"{duration_ms / 1000:.3f}"]
+            )
             result = subprocess.run(
                 [
                     str(binary),
                     "-hide_banner",
                     *loglevel_args,
                     *decode_threads,
-                    "-ss",
-                    f"{clip.in_ms / 1000:.3f}",
-                    "-t",
-                    f"{duration_ms / 1000:.3f}",
+                    *input_cut_args,
                     "-i",
                     str(source),
                     *extra_inputs,

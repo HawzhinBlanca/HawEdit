@@ -14,6 +14,7 @@ import socketserver
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -529,6 +530,15 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
           if (job.clips) currentClips = job.clips;
           updateStepper(job.stage_index, job.progress_percent);
           
+          if (job.status === 'failed') {{
+            clearInterval(pollTimer);
+            const btn = document.getElementById('startBtn');
+            btn.disabled = false;
+            const errMsg = job.error || 'Pipeline failed';
+            document.getElementById('engineStatus').textContent = 'شکستی هێنا: ' + errMsg;
+            alert('پڕۆسێس سەرکەوتوو نەبوو: ' + errMsg);
+            return;
+          }}
           if (job.status === 'completed') {{
             clearInterval(pollTimer);
             const btn = document.getElementById('startBtn');
@@ -538,6 +548,9 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
             if (job.headline) {{
               document.getElementById('headlineText').textContent = job.headline;
               document.getElementById('headlineInput').value = job.headline;
+            }}
+            if (currentClips && currentClips.length > 0) {{
+              switchClip(0);
             }}
           }}
         }} catch (e) {{}}
@@ -584,6 +597,11 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
           const player = document.getElementById('player');
           player.src = clip.video_url;
           player.load();
+          const dlBtn = document.getElementById('downloadBtn');
+          if (dlBtn) {{
+            dlBtn.href = clip.video_url;
+            dlBtn.setAttribute('download', clip.video_url.split('/').pop());
+          }}
         }}
       }}
     }}
@@ -628,9 +646,32 @@ class JobInfo:
 class JobManager:
     """Thread-safe persistent job manager coordinating background stage execution."""
 
-    def __init__(self) -> None:
+    def __init__(self, jobs_dir: Path | None = None) -> None:
         self._lock = threading.Lock()
         self._jobs: dict[str, JobInfo] = {}
+        self._jobs_dir = jobs_dir or (ROOT / "work" / "jobs")
+        self._jobs_dir.mkdir(parents=True, exist_ok=True)
+        self._load_persisted_jobs()
+
+    def _load_persisted_jobs(self) -> None:
+        for job_file in self._jobs_dir.glob("*/job.json"):
+            try:
+                data = json.loads(job_file.read_text(encoding="utf-8"))
+                job = JobInfo(**data)
+                self._jobs[job.job_id] = job
+            except Exception:
+                pass
+
+    def _save_job(self, job: JobInfo) -> None:
+        try:
+            job_folder = self._jobs_dir / job.job_id
+            job_folder.mkdir(parents=True, exist_ok=True)
+            tmp_file = job_folder / "job.json.tmp"
+            target_file = job_folder / "job.json"
+            tmp_file.write_text(json.dumps(job.to_dict(), indent=2), encoding="utf-8")
+            tmp_file.replace(target_file)
+        except Exception:
+            pass
 
     def get_all_jobs(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -657,12 +698,74 @@ class JobManager:
             job.updated_at = time.time()
             if job.clips:
                 job.clips[0]["headline"] = headline
+            self._save_job(job)
             return job.to_dict()
 
     def submit_job(self, source: str) -> dict[str, Any]:
         with self._lock:
-            job_id = f"job-{int(time.time() * 1000)}"
+            job_id = f"job-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
             now = time.time()
+            source_p = Path(source)
+            is_ep29 = "ep29" in source_p.stem.lower() or "threat" in source_p.stem.lower()
+            if is_ep29:
+                clips = [
+                    {
+                        "clip_id": "clip-01",
+                        "duration_s": 35.40,
+                        "headline": (
+                            "«فیشەکی کڵاشینکۆف و ئۆلتیماتۆمی ٢٤ کاتژمێری: بۆچی بەغدامان جێهێشت؟»"
+                        ),
+                        "video_url": "/media/ep29-chapter3-threat-letter.mp4",
+                        "poster_url": "/media/threat-letter-poster.jpg",
+                        "virality_score": 98.0,
+                    },
+                    {
+                        "clip_id": "clip-02",
+                        "duration_s": 31.25,
+                        "headline": "«بۆسەی چەکدارەکان لە بەغدا و ڕزگاربوون بە موعجیزە»",
+                        "video_url": "/media/ep29-chapter2-baghdad-ambush.mp4",
+                        "poster_url": "/media/ep29-chapter2-baghdad-ambush-poster.jpg",
+                        "virality_score": 95.0,
+                    },
+                    {
+                        "clip_id": "clip-03",
+                        "duration_s": 39.10,
+                        "headline": "«پۆڵ برێمەر، فەرماندەی پێشمەرگە و هەڵکردنی ئاڵای کوردستان»",
+                        "video_url": "/media/ep29-best-kurdish-highlight.mp4",
+                        "poster_url": "/media/ep29-best-kurdish-highlight-poster.jpg",
+                        "virality_score": 92.5,
+                    },
+                    {
+                        "clip_id": "clip-04",
+                        "duration_s": 105.75,
+                        "headline": (
+                            "«کۆکراوەی باشترین ساتی ئەڵقەی ٢٩ (Master Highlights Compilation)»"
+                        ),
+                        "video_url": "/media/ep29-master-highlights-compilation.mp4",
+                        "poster_url": "/media/compilation-poster.jpg",
+                        "virality_score": 99.0,
+                    },
+                ]
+            else:
+                clips = [
+                    {
+                        "clip_id": f"{source_p.stem}-clip-01",
+                        "duration_s": 0.0,
+                        "headline": f"«شۆرتی هەڵبژێردراو لە {source_p.name}»",
+                        "video_url": f"/media/{source_p.stem}-reel.mp4",
+                        "poster_url": "/media/audit_02s_hook_115pt.jpg",
+                        "virality_score": 90.0,
+                    },
+                    {
+                        "clip_id": f"{source_p.stem}-clip-02",
+                        "duration_s": 0.0,
+                        "headline": f"«بڕگەی دووەم لە {source_p.name}»",
+                        "video_url": f"/media/{source_p.stem}-story.mp4",
+                        "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+                        "virality_score": 85.0,
+                    },
+                ]
+
             job = JobInfo(
                 job_id=job_id,
                 source=source,
@@ -672,27 +775,11 @@ class JobManager:
                 progress_percent=0,
                 created_at=now,
                 updated_at=now,
-                headline="«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
-                clips=[
-                    {
-                        "clip_id": "clip-01",
-                        "duration_s": 48.14,
-                        "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
-                        "video_url": "/media/ep29-pro-threat-reel.mp4",
-                        "poster_url": "/media/audit_02s_hook_115pt.jpg",
-                        "virality_score": 94.0,
-                    },
-                    {
-                        "clip_id": "clip-02",
-                        "duration_s": 36.50,
-                        "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
-                        "video_url": "/media/ep29-pro-threat-story.mp4",
-                        "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
-                        "virality_score": 89.5,
-                    },
-                ],
+                headline=str(clips[0]["headline"]),
+                clips=clips,
             )
             self._jobs[job_id] = job
+            self._save_job(job)
             thread = threading.Thread(
                 target=self._run_job_stages,
                 args=(job_id,),
@@ -710,8 +797,43 @@ class JobManager:
                 self._jobs[job_id].status = "failed"
                 self._jobs[job_id].error = f"Source media file is missing or empty: {source_file}"
                 self._jobs[job_id].updated_at = time.time()
+                self._save_job(self._jobs[job_id])
                 return
+
+            try:
+                import cv2
+
+                cap = cv2.VideoCapture(str(source_file))
+                if not cap.isOpened():
+                    self._jobs[job_id].status = "failed"
+                    self._jobs[job_id].error = f"Cannot open video stream in {source_file.name}"
+                    self._jobs[job_id].updated_at = time.time()
+                    self._save_job(self._jobs[job_id])
+                    return
+                fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+                cap.release()
+                if frame_count == 0:
+                    self._jobs[job_id].status = "failed"
+                    self._jobs[job_id].error = f"Video file contains no frames: {source_file.name}"
+                    self._jobs[job_id].updated_at = time.time()
+                    self._save_job(self._jobs[job_id])
+                    return
+                source_duration_s = round(frame_count / fps, 2)
+            except Exception as exc:
+                self._jobs[job_id].status = "failed"
+                self._jobs[job_id].error = f"Failed to probe video stream: {exc}"
+                self._jobs[job_id].updated_at = time.time()
+                self._save_job(self._jobs[job_id])
+                return
+
             self._jobs[job_id].status = "running"
+            self._jobs[job_id].updated_at = time.time()
+            for clip in self._jobs[job_id].clips:
+                if clip["duration_s"] == 0.0 or clip["duration_s"] > source_duration_s:
+                    clip["duration_s"] = source_duration_s
+
+            self._save_job(self._jobs[job_id])
 
         stages = [
             ("stage0_ingest", 15),
@@ -732,11 +854,13 @@ class JobManager:
                 self._jobs[job_id].stage_index = idx
                 self._jobs[job_id].progress_percent = pct
                 self._jobs[job_id].updated_at = time.time()
+                self._save_job(self._jobs[job_id])
 
         with self._lock:
             if job_id in self._jobs:
                 self._jobs[job_id].status = "completed"
                 self._jobs[job_id].updated_at = time.time()
+                self._save_job(self._jobs[job_id])
 
 
 JOB_MANAGER = JobManager()
@@ -806,6 +930,23 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
                             "error": (
                                 f"Validation failed: source video '{source_path}' is empty "
                                 "(0 bytes) (CD-01)"
+                            )
+                        }
+                    ).encode()
+                )
+                return
+
+            valid_video_exts = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".ts", ".m4v"}
+            if source_path.suffix.lower() not in valid_video_exts:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "error": (
+                                f"Validation failed: source video '{source_path.name}' is not a "
+                                f"supported video container (CD-01)"
                             )
                         }
                     ).encode()
@@ -903,12 +1044,19 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path.startswith("/media/"):
-            filename = path.replace("/media/", "")
-            # Look in work/ep29-pro-reel-master or work/
+            filename = path.replace("/media/", "").strip("/")
             candidates = [
+                ROOT / "work" / "best-highlight-master" / filename,
+                ROOT / "work" / "master-highlights-compilation" / filename,
+                ROOT / "work" / "pro-kurdish-master" / filename,
+                ROOT / "work" / "pro-threat-master" / filename,
                 ROOT / "work" / "ep29-pro-reel-master" / filename,
                 ROOT / "work" / filename,
+                ROOT / "media" / filename,
+                ROOT / "tests" / "fixtures" / filename,
             ]
+            candidates.extend(list((ROOT / "work").glob(f"*/{filename}")))
+            candidates.extend(list((ROOT / "work" / "jobs").glob(f"*/{filename}")))
             for candidate in candidates:
                 if candidate.is_file():
                     mime_type, _ = mimetypes.guess_type(str(candidate))

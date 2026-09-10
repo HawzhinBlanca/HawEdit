@@ -7043,11 +7043,12 @@ def test_prepare_selection_with_assembly() -> None:
         _prepare_selection(raw_transcript, sentences, (0, 2), allow_assembly=False)
 
     # With allow_assembly=True, non-contiguous selection succeeds and re-offsets timestamps
-    ordered, assembled_sentences, anchors = _prepare_selection(
+    ordered, assembled_sentences, anchors, spans = _prepare_selection(
         raw_transcript, sentences, (0, 2), allow_assembly=True
     )
     assert ordered == (0, 2)
     assert len(assembled_sentences) == 2
+    assert spans is not None and len(spans) == 2
     assert anchors == (0, 2000)  # 1000ms + 1000ms
     # First span starts at 0
     assert assembled_sentences[0].words[0].start_ms == 0

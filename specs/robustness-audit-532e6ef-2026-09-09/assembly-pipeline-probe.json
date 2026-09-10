@@ -1,0 +1,6 @@
+{
+  "assembly_run": {
+    "exception": "StopIteration",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\assembly-pipeline-probe.py\", line 16, in <module>\n    run=run_pipeline(video,root/'assembly-run-ckb',media_id='assemblyprobe',transcript=raw,select_sentences=(0,2),assemble=True,min_clip_ms=1000)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\pipeline.py\", line 2549, in run_pipeline\n    raw_clip_text = _raw_text_for_words(transcript, clip_words)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\pipeline.py\", line 1445, in _raw_text_for_words\n    first = next(i for i, word in enumerate(transcript.words) if word is words[0])\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nStopIteration\n"
+  }
+}

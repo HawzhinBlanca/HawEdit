@@ -524,6 +524,16 @@ def probe_face_tracking(
                 boxes = profile.detectMultiScale(
                     gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
                 )
+                if len(boxes) == 0:
+                    flipped = cv2.flip(gray, 1)
+                    flipped_boxes = profile.detectMultiScale(
+                        flipped, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+                    )
+                    if len(flipped_boxes) > 0:
+                        frame_w = gray.shape[1]
+                        boxes = [
+                            (frame_w - (fx + fw), fy, fw, fh) for (fx, fy, fw, fh) in flipped_boxes
+                        ]
 
             if len(boxes) > 0:
                 face_detected_count += 1

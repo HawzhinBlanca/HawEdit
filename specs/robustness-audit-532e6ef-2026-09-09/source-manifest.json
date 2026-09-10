@@ -1,0 +1,18 @@
+{
+  "sha": "532e6efb1708e8dc2c3d14dde4fb7927f5115006",
+  "files": {
+    "src/hawedit/web.py": "19f4f4289eb75c82d01b83144ba73c79dabd1d1057f4b584af17b8b924924171",
+    "src/hawedit/render_critic.py": "efeefa59ce6c8902c93115b8d7c860e373d24625b416299e68536ab821db2834",
+    "src/hawedit/pipeline.py": "784b910d1dfa28fc5a47daa38394d8caaa8c1a28bb670970f400ce7e3803edc1",
+    "src/hawedit/assembly.py": "b25d701e5bfffd7bc7a7fb81ce798e88b570946f5c93d8803747d7d2cc4d052c",
+    "src/hawedit/artifact_bundle.py": "0dbca99f41b55523c02c1998a610c9fe0aee10c86483c15bf07d673893f4adcf",
+    "src/hawedit/delivery.py": "02ae85a5a3f311f1bd6e18dbb75bac8e545c6ca8a199bff61113ca8000b2125c",
+    "src/hawedit/checkpoint.py": "2515f239cd6b6a4f3ee633799688cc9bc74f48abb7c22e146d501c9fc5156c26",
+    "src/hawedit/sanity_gate.py": "1dcb581f4f7929667d97714e370e7a09b7d5a214793197aebf98c409b6dd63c7",
+    "src/hawedit/condenser.py": "2811211a648ce100d196560393f8409c6f8abaf088c6e9639002ae1fb5557f90",
+    "src/hawedit/sentences.py": "48446d5ea1eae521068380bf0f73f00f1aeac61a484eb5bbfff68c9fae5a7186",
+    "src/hawedit/edit_plan.py": "09e59668603fe6e708069fba0cb74bec5d0cede410144044698c1103e379cb6d",
+    "tests/test_pipeline.py": "c971d9828b0ef60395624e2812d6f91678a1dc4115fcbbb0dfeb14b4d7cf7bae",
+    "tests/conftest.py": "3e18c17a8f262375859348fe10df6adce1a26b6a5790153f8272e63861c5b303"
+  }
+}

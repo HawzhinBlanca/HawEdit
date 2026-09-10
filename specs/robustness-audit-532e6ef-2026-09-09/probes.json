@@ -1,0 +1,344 @@
+{
+  "sha": "532e6efb1708e8dc2c3d14dde4fb7927f5115006",
+  "environment": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "opencv": "4.12.0",
+    "ffmpeg": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+  },
+  "critic": [
+    {
+      "case": "missing",
+      "all_clear": false,
+      "observed_media": false,
+      "coverage": 0.0,
+      "windows": 44,
+      "last_window_end": 60000,
+      "claimed_frame_counts_sum": 2664,
+      "grounding_assertion": "All-clear claim refused: Refused all-clear claim: rendered media is missing, empty, changed, or undecodable, 1 critical defect(s), incomplete temporal coverage (0.0%)",
+      "defects": [
+        {
+          "defect_id": "def_missing_media",
+          "timestamp_ms": 0,
+          "end_timestamp_ms": 60000,
+          "severity": "critical",
+          "defect_kind": "missing_media",
+          "observation": "Render file does not exist on disk: C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\absent.mp4",
+          "source_reference": "file_system",
+          "permitted_repair": "none",
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "case": "real_black_2s",
+      "all_clear": true,
+      "observed_media": true,
+      "coverage": 1.0,
+      "windows": 3,
+      "last_window_end": 2000,
+      "claimed_frame_counts_sum": 129,
+      "grounding_assertion": true,
+      "defects": []
+    },
+    {
+      "case": "real_2s_declared_60s",
+      "all_clear": true,
+      "observed_media": true,
+      "coverage": 1.0,
+      "windows": 44,
+      "last_window_end": 60000,
+      "claimed_frame_counts_sum": 2664,
+      "grounding_assertion": true,
+      "defects": []
+    },
+    {
+      "case": "wrong_digest",
+      "all_clear": false,
+      "observed_media": false,
+      "coverage": 0.0,
+      "windows": 3,
+      "last_window_end": 2000,
+      "claimed_frame_counts_sum": 129,
+      "grounding_assertion": "All-clear claim refused: Refused all-clear claim: rendered media is missing, empty, changed, or undecodable, 1 critical defect(s), incomplete temporal coverage (0.0%)",
+      "defects": [
+        {
+          "defect_id": "def_changed_media",
+          "timestamp_ms": 0,
+          "end_timestamp_ms": 2000,
+          "severity": "critical",
+          "defect_kind": "changed_media",
+          "observation": "Render file SHA-256 digest mismatch: expected 0000000000000000000000000000000000000000000000000000000000000000, got ce330986ec2778f5f3e86c8475345c2cf26bf84283374cae2b28c8660429eec3",
+          "source_reference": "sha256_verification",
+          "permitted_repair": "none",
+          "confidence": 1.0
+        }
+      ]
+    }
+  ],
+  "assembly_selection": {
+    "source_intervals": [
+      [
+        10000,
+        11000
+      ],
+      [
+        30000,
+        31000
+      ]
+    ],
+    "returned_anchors": [
+      0,
+      2000
+    ],
+    "returned_sentence_times": [
+      [
+        0,
+        1000
+      ],
+      [
+        1000,
+        2000
+      ]
+    ],
+    "original_span_map_returned": false
+  },
+  "assembly_raw_text": {
+    "exception": "StopIteration",
+    "detail": ""
+  },
+  "web": [
+    {
+      "source": "",
+      "submitted": {
+        "status": 400,
+        "body": "{\"error\": \"Validation failed: source video path is required (CD-01)\"}"
+      },
+      "after": null
+    },
+    {
+      "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\absent.mp4",
+      "submitted": {
+        "status": 400,
+        "body": "{\"error\": \"Validation failed: source video 'C:\\\\Users\\\\Wareen\\\\.codex\\\\tmp\\\\hawedit-audit-532e6ef\\\\absent.mp4' does not exist on disk (CD-01)\"}"
+      },
+      "after": null
+    },
+    {
+      "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\not-video.txt",
+      "submitted": {
+        "status": 201,
+        "body": {
+          "job_id": "job-1788981406317",
+          "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\not-video.txt",
+          "status": "queued",
+          "stage": "stage0_ingest",
+          "stage_index": 0,
+          "progress_percent": 0,
+          "created_at": 1788981406.3178442,
+          "updated_at": 1788981406.3178442,
+          "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+          "clips": [
+            {
+              "clip_id": "clip-01",
+              "duration_s": 48.14,
+              "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+              "video_url": "/media/ep29-pro-threat-reel.mp4",
+              "poster_url": "/media/audit_02s_hook_115pt.jpg",
+              "virality_score": 94.0
+            },
+            {
+              "clip_id": "clip-02",
+              "duration_s": 36.5,
+              "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+              "video_url": "/media/ep29-pro-threat-story.mp4",
+              "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+              "virality_score": 89.5
+            }
+          ],
+          "error": null
+        }
+      },
+      "after": {
+        "status": 200,
+        "body": {
+          "job_id": "job-1788981406317",
+          "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\not-video.txt",
+          "status": "completed",
+          "stage": "stage6_render",
+          "stage_index": 6,
+          "progress_percent": 100,
+          "created_at": 1788981406.3178442,
+          "updated_at": 1788981406.601793,
+          "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+          "clips": [
+            {
+              "clip_id": "clip-01",
+              "duration_s": 48.14,
+              "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+              "video_url": "/media/ep29-pro-threat-reel.mp4",
+              "poster_url": "/media/audit_02s_hook_115pt.jpg",
+              "virality_score": 94.0
+            },
+            {
+              "clip_id": "clip-02",
+              "duration_s": 36.5,
+              "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+              "video_url": "/media/ep29-pro-threat-story.mp4",
+              "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+              "virality_score": 89.5
+            }
+          ],
+          "error": null
+        }
+      }
+    },
+    {
+      "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\black-2s-no-audio.mp4",
+      "submitted": {
+        "status": 201,
+        "body": {
+          "job_id": "job-1788981406754",
+          "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\black-2s-no-audio.mp4",
+          "status": "queued",
+          "stage": "stage0_ingest",
+          "stage_index": 0,
+          "progress_percent": 0,
+          "created_at": 1788981406.754401,
+          "updated_at": 1788981406.754401,
+          "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+          "clips": [
+            {
+              "clip_id": "clip-01",
+              "duration_s": 48.14,
+              "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+              "video_url": "/media/ep29-pro-threat-reel.mp4",
+              "poster_url": "/media/audit_02s_hook_115pt.jpg",
+              "virality_score": 94.0
+            },
+            {
+              "clip_id": "clip-02",
+              "duration_s": 36.5,
+              "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+              "video_url": "/media/ep29-pro-threat-story.mp4",
+              "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+              "virality_score": 89.5
+            }
+          ],
+          "error": null
+        }
+      },
+      "after": {
+        "status": 200,
+        "body": {
+          "job_id": "job-1788981406754",
+          "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\black-2s-no-audio.mp4",
+          "status": "completed",
+          "stage": "stage6_render",
+          "stage_index": 6,
+          "progress_percent": 100,
+          "created_at": 1788981406.754401,
+          "updated_at": 1788981407.0377781,
+          "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+          "clips": [
+            {
+              "clip_id": "clip-01",
+              "duration_s": 48.14,
+              "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+              "video_url": "/media/ep29-pro-threat-reel.mp4",
+              "poster_url": "/media/audit_02s_hook_115pt.jpg",
+              "virality_score": 94.0
+            },
+            {
+              "clip_id": "clip-02",
+              "duration_s": 36.5,
+              "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+              "video_url": "/media/ep29-pro-threat-story.mp4",
+              "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+              "virality_score": 89.5
+            }
+          ],
+          "error": null
+        }
+      }
+    }
+  ],
+  "web_malformed_array": {
+    "exception": "RemoteDisconnected",
+    "detail": "Remote end closed connection without response"
+  },
+  "web_rank2_media": {
+    "status": 404,
+    "body": "Media file not found"
+  },
+  "web_status": {
+    "status": 200,
+    "body": {
+      "status": "ready",
+      "active_job": {
+        "job_id": "job-1788981406754",
+        "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\black-2s-no-audio.mp4",
+        "status": "completed",
+        "stage": "stage6_render",
+        "stage_index": 6,
+        "progress_percent": 100,
+        "created_at": 1788981406.754401,
+        "updated_at": 1788981407.0377781,
+        "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+        "clips": [
+          {
+            "clip_id": "clip-01",
+            "duration_s": 48.14,
+            "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+            "video_url": "/media/ep29-pro-threat-reel.mp4",
+            "poster_url": "/media/audit_02s_hook_115pt.jpg",
+            "virality_score": 94.0
+          },
+          {
+            "clip_id": "clip-02",
+            "duration_s": 36.5,
+            "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+            "video_url": "/media/ep29-pro-threat-story.mp4",
+            "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+            "virality_score": 89.5
+          }
+        ],
+        "error": null
+      },
+      "latest_reel": {
+        "duration_s": 48.14,
+        "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+        "video_url": "/media/ep29-pro-threat-reel.mp4",
+        "audit_passed": true
+      }
+    }
+  },
+  "job_burst": {
+    "submitted": 20,
+    "unique_ids": 6,
+    "retained_jobs": 6,
+    "ids": [
+      "job-1788981407200",
+      "job-1788981407201",
+      "job-1788981407201",
+      "job-1788981407202",
+      "job-1788981407202",
+      "job-1788981407202",
+      "job-1788981407202",
+      "job-1788981407202",
+      "job-1788981407203",
+      "job-1788981407203",
+      "job-1788981407203",
+      "job-1788981407203",
+      "job-1788981407203",
+      "job-1788981407203",
+      "job-1788981407204",
+      "job-1788981407204",
+      "job-1788981407204",
+      "job-1788981407204",
+      "job-1788981407204",
+      "job-1788981407206"
+    ],
+    "fresh_manager_jobs": []
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "sha": "532e6efb1708e8dc2c3d14dde4fb7927f5115006",
+  "tests_passed": 3688,
+  "tests_collected": 3688,
+  "tests_skipped": 0,
+  "pytest_seconds": 1098.86,
+  "coverage_statements_hit": 5281,
+  "coverage_statements_total": 5545,
+  "initial_and_post_gate_checkout": "clean",
+  "media_suite_enabled": false
+}

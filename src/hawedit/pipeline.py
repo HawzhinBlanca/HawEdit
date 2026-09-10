@@ -53,7 +53,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
-from hawedit.assembly import assemble_spans
+from hawedit.assembly import AssemblySpan, assemble_spans
 from hawedit.atomic_fs import write_text_atomic
 from hawedit.boundary import (
     Boundary,
@@ -1389,9 +1389,14 @@ def _prepare_selection(
     sentences: Sequence[Sentence],
     selection: tuple[int, ...],
     allow_assembly: bool = False,
-) -> tuple[tuple[int, ...], tuple[Sentence, ...], tuple[int, int] | None]:
+) -> tuple[
+    tuple[int, ...],
+    tuple[Sentence, ...],
+    tuple[int, int] | None,
+    tuple[AssemblySpan, ...] | None,
+]:
     if not selection:
-        return (), (), None
+        return (), (), None, None
     _assert_render_alignment_complete(transcript)
     out_of_range = [i for i in selection if not 0 <= i < len(sentences)]
     if out_of_range:
@@ -1406,7 +1411,7 @@ def _prepare_selection(
         ordered = tuple(sorted(selection))
         selected = tuple(sentences[i] for i in ordered)
         anchors = anchors_for(selected) if all(sentence.complete for sentence in selected) else None
-        return ordered, selected, anchors
+        return ordered, selected, anchors, None
 
     for run in runs:
         assert_time_contiguous(sentences, run)
@@ -1414,7 +1419,7 @@ def _prepare_selection(
     span_groups = [[sentences[i] for i in run] for run in runs]
     assembled = assemble_spans(span_groups)
     anchors = (0, assembled.total_duration_ms)
-    return ordered, assembled.assembled_sentences, anchors
+    return ordered, assembled.assembled_sentences, anchors, assembled.spans
 
 
 def _assert_render_alignment_complete(transcript: RawTranscript) -> None:
@@ -1442,9 +1447,41 @@ def _raw_text_for_words(transcript: RawTranscript, words: Sequence[Word]) -> str
         end = start + len(word.w)
         offsets.append((start, end))
         cursor = end
-    first = next(i for i, word in enumerate(transcript.words) if word is words[0])
-    last = next(i for i, word in reversed(tuple(enumerate(transcript.words))) if word is words[-1])
-    return transcript.text_ckb[offsets[first][0] : offsets[last][1]]
+
+    matched_indices: list[int] = []
+    trans_words = transcript.words
+    search_idx = 0
+    for w in words:
+        found_idx = None
+        for i in range(search_idx, len(trans_words)):
+            tw = trans_words[i]
+            if tw is w or (tw.w == w.w and tw.start_ms == w.start_ms and tw.end_ms == w.end_ms):
+                found_idx = i
+                break
+        if found_idx is None:
+            for i in range(search_idx, len(trans_words)):
+                if trans_words[i].w == w.w:
+                    found_idx = i
+                    break
+        if found_idx is None:
+            for i in range(len(trans_words)):
+                if trans_words[i].w == w.w:
+                    found_idx = i
+                    break
+        if found_idx is None:
+            raise ValueError(f"word {w.w!r} cannot be matched to canonical transcript")
+        matched_indices.append(found_idx)
+        search_idx = found_idx + 1
+
+    runs: list[list[int]] = [[matched_indices[0]]]
+    for idx in matched_indices[1:]:
+        if idx == runs[-1][-1] + 1:
+            runs[-1].append(idx)
+        else:
+            runs.append([idx])
+
+    run_texts = [transcript.text_ckb[offsets[run[0]][0] : offsets[run[-1]][1]] for run in runs]
+    return " ".join(run_texts)
 
 
 def _candidate_slice_text(transcript: NormalizedTranscript, in_ms: int, out_ms: int) -> str:
@@ -1815,7 +1852,16 @@ def run_pipeline(
         try:
             saved_data = json.loads(stage0_json.read_text(encoding="utf-8"))
             saved_ingest = IngestResult.from_dict(saved_data)
-            if Path(saved_ingest.audio_path).is_file() and Path(saved_ingest.proxy_path).is_file():
+            audio_p = Path(saved_ingest.audio_path)
+            proxy_p = Path(saved_ingest.proxy_path)
+            if (
+                audio_p.is_file()
+                and proxy_p.is_file()
+                and audio_p.stat().st_size > 0
+                and proxy_p.stat().st_size > 0
+            ):
+                probe_stream(proxy_p, "v", ffmpeg=ffmpeg)
+                probe_stream(audio_p, "a", ffmpeg=ffmpeg)
                 ingested = saved_ingest
                 log.finished("ingest", "resumed from checkpoint")
         except Exception:
@@ -2027,7 +2073,7 @@ def run_pipeline(
 
     run = replace(run, transcript=normalized, index=index, sentences=sentences)
 
-    select_sentences, selected, selected_anchors = _prepare_selection(
+    select_sentences, selected, selected_anchors, assembly_spans = _prepare_selection(
         transcript, sentences, select_sentences, allow_assembly=assemble
     )
     # Before Stage 2/3 touch the GPU and before Stage 4 is billed. Deliberately after
@@ -2154,7 +2200,7 @@ def run_pipeline(
             # `max_frames / fps`, so this machine's 8-frame limit (`BLOCKED.md` #17) at the
             # declared 2.0 fps yields a 4 s retrieval unit against §3's 32 s. D-185.
             run = replace(run, boundary=_nothing_fits_a_candidate(merged, sentences, min_clip_ms))
-        select_sentences, selected, selected_anchors = _prepare_selection(
+        select_sentences, selected, selected_anchors, assembly_spans = _prepare_selection(
             transcript, sentences, automatic, allow_assembly=assemble
         )
         if not select_sentences:
@@ -2338,7 +2384,7 @@ def run_pipeline(
             if judge_plans and tuple(winning_run) != tuple(select_sentences):
                 # A later candidate won, so everything downstream — captions, boundary, clip id
                 # and artifact names — has to follow it rather than rank #1's selection.
-                select_sentences, selected, selected_anchors = _prepare_selection(
+                select_sentences, selected, selected_anchors, assembly_spans = _prepare_selection(
                     transcript, sentences, winning_run, allow_assembly=assemble
                 )
                 # The winner's artifact names were never checked; rank #1's were. Checked before
@@ -2491,14 +2537,26 @@ def run_pipeline(
         return replace(run, boundary=skipped)
 
     selected_words = {word for sentence in selected for word in sentence.words}
-    uncaptioned = [
-        word
-        for sentence in sentences
-        for word in sentence.words
-        if word not in selected_words
-        and word.start_ms < boundary.final_out_ms
-        and word.end_ms > boundary.final_in_ms
-    ]
+    if assembly_spans is not None:
+        uncaptioned = [
+            word
+            for sentence in sentences
+            for word in sentence.words
+            if word not in selected_words
+            and any(
+                span.source_in_ms < word.end_ms and word.start_ms < span.source_out_ms
+                for span in assembly_spans
+            )
+        ]
+    else:
+        uncaptioned = [
+            word
+            for sentence in sentences
+            for word in sentence.words
+            if word not in selected_words
+            and word.start_ms < boundary.final_out_ms
+            and word.end_ms > boundary.final_in_ms
+        ]
     if uncaptioned:
         # Task T4.8: Boundary extension that completes a sentence.
         # If the unselected speech belongs to complete sentences fully enclosed within
@@ -3140,6 +3198,7 @@ def run_pipeline(
             music_bed_path=(Path(music_bed_path) if music_bed_path else None),
             music_ducking_volume=music_ducking_volume,
             for_review=is_review_render,
+            assembly_spans=assembly_spans,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError, BrandKitError) as exc:
@@ -3237,9 +3296,6 @@ def run_pipeline(
             for_review=is_review_render,
         )
 
-        _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
-        bundle.publish()
-
         brief = EditorialBrief(
             viewer_takeaway=(
                 effective_clip.output.title_ckb
@@ -3297,8 +3353,12 @@ def run_pipeline(
             speaker_turns=spk_turns,
             sentences=tuple(selected),
         )
+        _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
+        bundle.publish()
         plan_json_path = work_dir / f"{clip.clip_id}.edit_plan.json"
-        plan_json_path.write_text(visual_edit_plan.to_json(), encoding="utf-8")
+        plan_json_str = visual_edit_plan.to_json()
+        with suppress(Exception):
+            plan_json_path.write_text(plan_json_str, encoding="utf-8")
     except (
         DeliveryError,
         UndeliverableOrder,

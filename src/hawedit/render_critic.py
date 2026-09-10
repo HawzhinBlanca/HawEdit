@@ -67,6 +67,8 @@ class DefectKind(str, Enum):
     MISSING_MEDIA = "missing_media"
     CHANGED_MEDIA = "changed_media"
     UNREADABLE_MEDIA = "unreadable_media"
+    DURATION_MISMATCH = "duration_mismatch"
+    ALL_BLACK_OR_SILENT = "all_black_or_silent"
 
 
 class PermittedRepair(str, Enum):
@@ -418,6 +420,7 @@ def inspect_rendered_sequence(
                         confidence=1.0,
                     )
                 )
+        observed_window_ids: set[str] = set()
         if observed_media:
             try:
                 import cv2
@@ -441,9 +444,51 @@ def inspect_rendered_sequence(
                         )
                     )
                 else:
-                    ret, frame = cap.read()
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+                    actual_duration_ms = int((frame_count / fps) * 1000) if fps > 0 else 0
+
+                    if (
+                        actual_duration_ms > 0
+                        and abs(actual_duration_ms - sequence.duration_ms) > 1000
+                    ):
+                        media_defects.append(
+                            RenderDefect(
+                                defect_id="def_duration_mismatch",
+                                timestamp_ms=min(actual_duration_ms, sequence.duration_ms),
+                                end_timestamp_ms=max(actual_duration_ms, sequence.duration_ms),
+                                severity=DefectSeverity.CRITICAL,
+                                defect_kind=DefectKind.DURATION_MISMATCH,
+                                observation=(
+                                    f"Declared duration {sequence.duration_ms} ms differs "
+                                    f"materially from decoded physical duration "
+                                    f"{actual_duration_ms} ms"
+                                ),
+                                source_reference="duration_probe",
+                                permitted_repair=PermittedRepair.EXPAND_BOUNDARY,
+                                confidence=1.0,
+                            )
+                        )
+
+                    decoded_frames = 0
+                    total_luminance = 0.0
+
+                    for w in critique_windows:
+                        if actual_duration_ms > 0 and w.start_ms >= actual_duration_ms:
+                            continue
+                        win_bound = actual_duration_ms if actual_duration_ms > 0 else w.end_ms
+                        mid_ms = (w.start_ms + min(w.end_ms, win_bound)) / 2.0
+                        cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            decoded_frames += 1
+                            mean_lum = float(frame.mean())
+                            total_luminance += mean_lum
+                            observed_window_ids.add(w.window_id)
+
                     cap.release()
-                    if not ret or frame is None:
+
+                    if decoded_frames == 0:
                         observed_media = False
                         media_defects.append(
                             RenderDefect(
@@ -456,6 +501,23 @@ def inspect_rendered_sequence(
                                     f"Render file contains no decodable video frames: {render_file}"
                                 ),
                                 source_reference="cv2_decoder",
+                                permitted_repair=PermittedRepair.NONE,
+                                confidence=1.0,
+                            )
+                        )
+                    elif decoded_frames > 0 and (total_luminance / decoded_frames) < 1.0:
+                        media_defects.append(
+                            RenderDefect(
+                                defect_id="def_all_black_media",
+                                timestamp_ms=0,
+                                end_timestamp_ms=sequence.duration_ms,
+                                severity=DefectSeverity.CRITICAL,
+                                defect_kind=DefectKind.ALL_BLACK_OR_SILENT,
+                                observation=(
+                                    f"Rendered media decoded {decoded_frames} frames but average "
+                                    f"pixel luminance is < 1.0 (blank black media)"
+                                ),
+                                source_reference="luminance_check",
                                 permitted_repair=PermittedRepair.NONE,
                                 confidence=1.0,
                             )
@@ -476,24 +538,22 @@ def inspect_rendered_sequence(
                     )
                 )
 
-    # If media was not observed on disk, windows cannot be observed
     updated_windows: list[TemporalCritiqueWindow] = []
     for w in critique_windows:
-        if not observed_media and w.is_observed:
-            updated_windows.append(
-                TemporalCritiqueWindow(
-                    window_id=w.window_id,
-                    start_ms=w.start_ms,
-                    end_ms=w.end_ms,
-                    window_kind=w.window_kind,
-                    has_temporal_motion=w.has_temporal_motion,
-                    frame_count=w.frame_count,
-                    defects=w.defects,
-                    is_observed=False,
-                )
+        decoded_in_win = w.window_id in observed_window_ids if observed_window_ids else True
+        is_obs = observed_media and w.is_observed and decoded_in_win
+        updated_windows.append(
+            TemporalCritiqueWindow(
+                window_id=w.window_id,
+                start_ms=w.start_ms,
+                end_ms=w.end_ms,
+                window_kind=w.window_kind,
+                has_temporal_motion=w.has_temporal_motion,
+                frame_count=w.frame_count,
+                defects=w.defects,
+                is_observed=is_obs,
             )
-        else:
-            updated_windows.append(w)
+        )
     critique_windows = tuple(updated_windows)
 
     # Compute temporal coverage across sequence duration only from OBSERVED windows

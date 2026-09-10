@@ -1,0 +1,92 @@
+[
+  {
+    "job_id": "job-1788981826173",
+    "source": "tests\\fixtures\\kurdish-speech-3cuts.mp4",
+    "status": "completed",
+    "stage": "stage6_render",
+    "stage_index": 6,
+    "progress_percent": 100,
+    "created_at": 1788981826.173559,
+    "updated_at": 1788981826.4574482,
+    "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+    "clips": [
+      {
+        "clip_id": "clip-01",
+        "duration_s": 48.14,
+        "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+        "video_url": "/media/ep29-pro-threat-reel.mp4",
+        "poster_url": "/media/audit_02s_hook_115pt.jpg",
+        "virality_score": 94.0
+      },
+      {
+        "clip_id": "clip-02",
+        "duration_s": 36.5,
+        "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+        "video_url": "/media/ep29-pro-threat-story.mp4",
+        "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+        "virality_score": 89.5
+      }
+    ],
+    "error": null
+  },
+  {
+    "job_id": "job-1788981406754",
+    "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\black-2s-no-audio.mp4",
+    "status": "completed",
+    "stage": "stage6_render",
+    "stage_index": 6,
+    "progress_percent": 100,
+    "created_at": 1788981406.754401,
+    "updated_at": 1788981407.0377781,
+    "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+    "clips": [
+      {
+        "clip_id": "clip-01",
+        "duration_s": 48.14,
+        "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+        "video_url": "/media/ep29-pro-threat-reel.mp4",
+        "poster_url": "/media/audit_02s_hook_115pt.jpg",
+        "virality_score": 94.0
+      },
+      {
+        "clip_id": "clip-02",
+        "duration_s": 36.5,
+        "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+        "video_url": "/media/ep29-pro-threat-story.mp4",
+        "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+        "virality_score": 89.5
+      }
+    ],
+    "error": null
+  },
+  {
+    "job_id": "job-1788981406317",
+    "source": "C:\\Users\\Wareen\\.codex\\tmp\\hawedit-audit-532e6ef\\not-video.txt",
+    "status": "completed",
+    "stage": "stage6_render",
+    "stage_index": 6,
+    "progress_percent": 100,
+    "created_at": 1788981406.3178442,
+    "updated_at": 1788981406.601793,
+    "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+    "clips": [
+      {
+        "clip_id": "clip-01",
+        "duration_s": 48.14,
+        "headline": "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»",
+        "video_url": "/media/ep29-pro-threat-reel.mp4",
+        "poster_url": "/media/audit_02s_hook_115pt.jpg",
+        "virality_score": 94.0
+      },
+      {
+        "clip_id": "clip-02",
+        "duration_s": 36.5,
+        "headline": "«ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»",
+        "video_url": "/media/ep29-pro-threat-story.mp4",
+        "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
+        "virality_score": 89.5
+      }
+    ],
+    "error": null
+  }
+]

@@ -228,12 +228,15 @@ def check_face_presence(
     if not path.exists():
         return False, {}, (f"Video file does not exist: {path}",)
 
+    if not shot_timestamps_s:
+        return False, {}, ("No shot timestamps provided for face presence verification",)
+
     cv2_data = getattr(cv2, "data", None)
     haarcascades_dir = getattr(cv2_data, "haarcascades", "") if cv2_data else ""
     cascade_path = os.path.join(haarcascades_dir, "haarcascade_frontalface_default.xml")
     profile_path = os.path.join(haarcascades_dir, "haarcascade_profileface.xml")
     if not os.path.exists(cascade_path):
-        return True, {}, ()  # Skip if cascade data is unavailable
+        return False, {}, (f"Face detector cascade resources unavailable at {cascade_path}",)
 
     detector = cv2.CascadeClassifier(cascade_path)
     profile_detector = cv2.CascadeClassifier(profile_path) if os.path.exists(profile_path) else None
@@ -280,6 +283,12 @@ def check_face_presence(
                         gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
                     )
                     count = len(p_faces)
+                    if count == 0:
+                        flipped = cv2.flip(gray, 1)
+                        p_faces_flipped = profile_detector.detectMultiScale(
+                            flipped, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
+                        )
+                        count = len(p_faces_flipped)
                 sample_counts.append(count)
 
             # CD-10: Reject if all samples in shot have 0 faces, or consecutive have 0 faces

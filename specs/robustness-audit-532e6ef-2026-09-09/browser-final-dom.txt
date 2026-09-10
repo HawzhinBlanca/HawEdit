@@ -1,0 +1,37 @@
+- banner:
+  - heading "HawEdit" [level=1]
+  - generic: PRO V3
+  - generic: تەواوبوو (Ready)
+- main:
+  - generic: ڤیدیۆ هەڵبژێرە (Select Video)
+  - generic: 🎬
+  - generic: ڤیدیۆ لێرە دابنێ یان کلیك بکە
+  - generic: پشتیوانی لە هەموو فۆرماتێکی MP4 / MOV / MKV
+  - generic: "فایلی هەڵبژێردراو: kurdish-speech-3cuts.mp4 (0.0 MB)"
+  - button "دروستکردنی شۆرتی تر"
+  - generic: قۆناغەکانی پڕۆسێس (Processing Stages)
+  - generic: "0"
+  - generic: وەرگرتن و جیاکردنەوەی دیمەنەکان (Ingest & Scene Cuts)
+  - generic: "1"
+  - generic: تێکستی کوردی دەنگ و کاتەکان (OmniASR & Alignment)
+  - generic: "2"
+  - generic: دیاریکردنی قسەکەر و شوێنپێهەڵگرتن (YuNet Tracking)
+  - generic: "3"
+  - generic: هەڵبژاردنی بەسەرهاتی کاریگەر (Story Condensation)
+  - generic: "4"
+  - generic: پشکنینی وردی کوالیتی (Sanity Gate Audit)
+  - generic: "5"
+  - generic: ڕێندەری کۆتایی بە 115pt و NVENC (Master Render)
+  - generic: شۆرتی ئامادەکراو (Pro Kurdish Short)
+  - 'button "شۆرتی سەرەکی (Rank #1 — 94.0)"'
+  - 'button "شۆرتی دووەم (Rank #2 — 89.5)" [active]'
+  - generic: «ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»
+  - generic: نوسەر ئەیوب نوری باسی ساتەکانی گەیشتنی هەڕەشەی مەرگ بۆ سەر ماڵەکەی لە بەغدا دەکات دوای ٤٠ ساڵ لە ژیان. فیشەکێکی کڵاشینکۆف بە نامەیەکەوە دەخرێتە ماڵەکەیان کە دەبێت لە ٢٤ کاتژمێردا شارەکە چۆڵ بکەن.
+  - textbox: «ئۆلتیماتۆمی ٢٤ کاتژمێر بۆ چۆڵکردن و ڕاکردن بەرەو هەولێر»
+  - button "پاشەکەوتکردن"
+  - link "داگرتنی شۆرتی تەواوکراو (Download 9:16 Reel)":
+    - /url: /media/ep29-pro-threat-reel.mp4
+  - generic: ✓ ڕوخسار لە هەموو دیمەنێکدا (0 Dead Frames)
+  - generic: ✓ ژێرنووسی 115pt Vazirmatn Bold
+  - generic: ✓ دەنگی ستاندارد (-20.5 LUFS)
+  - generic: "✓ ماوە: 48.14 چرکە (Viral Pacing)"

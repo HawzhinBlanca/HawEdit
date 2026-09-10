@@ -82,8 +82,9 @@ def is_stage_complete(
     work_dir: Path,
     stage_name: str,
     input_hashes: dict[str, str],
+    expected_metadata: dict[str, Any] | None = None,
 ) -> bool:
-    """Check whether a stage was completed with matching input hashes."""
+    """Check whether a stage was completed with matching input hashes and metadata."""
     target = checkpoint_path_for(work_dir, stage_name)
     if not target.is_file():
         return False
@@ -103,6 +104,12 @@ def is_stage_complete(
             continue
         if saved.input_hashes.get(key) != expected_hash:
             return False
+
+    # Check that expected metadata (e.g. producer revision or config) matches
+    if expected_metadata:
+        for key, expected_val in expected_metadata.items():
+            if saved.metadata.get(key) != expected_val:
+                return False
 
     return True
 
