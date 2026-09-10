@@ -364,6 +364,7 @@ def inspect_rendered_sequence(
     render_file = Path(sequence.render_path)
     observed_media = True
     media_defects: list[RenderDefect] = []
+    observed_window_ids: set[str] = set()
 
     if not render_file.is_file():
         observed_media = False
@@ -420,7 +421,6 @@ def inspect_rendered_sequence(
                         confidence=1.0,
                     )
                 )
-        observed_window_ids: set[str] = set()
         if observed_media:
             try:
                 import cv2
@@ -449,7 +449,8 @@ def inspect_rendered_sequence(
                     actual_duration_ms = int((frame_count / fps) * 1000) if fps > 0 else 0
 
                     if (
-                        actual_duration_ms > 0
+                        sequence.source_video_path
+                        and actual_duration_ms > 0
                         and abs(actual_duration_ms - sequence.duration_ms) > 1000
                     ):
                         media_defects.append(
