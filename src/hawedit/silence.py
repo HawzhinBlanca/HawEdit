@@ -11,7 +11,7 @@ clip's duration and its source span.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
@@ -22,6 +22,7 @@ from hawedit.transcripts import Word
 __all__ = [
     "DEFAULT_SILENCE_THRESHOLD_MS",
     "DEFAULT_TARGET_GAP_MS",
+    "KURDISH_FILLER_TOKENS",
     "SilencePlan",
     "plan_silence_tightening",
     "remap_timestamp",
@@ -33,6 +34,20 @@ __all__ = [
 
 DEFAULT_SILENCE_THRESHOLD_MS: Final = 600
 DEFAULT_TARGET_GAP_MS: Final = 150
+
+# Conversational Kurdish filler tokens and hesitation markers that add zero semantic value
+KURDISH_FILLER_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "یەعنی",
+        "ئەها",
+        "وەڵا",
+        "وەڵڵا",
+        "دەزانی",
+        "ڕاستییەکەی",
+        "تێدەگەی",
+        "دیارە",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -46,11 +61,27 @@ class SilencePlan:
     retained_intervals_ms: tuple[tuple[int, int], ...]
     removed_intervals_ms: tuple[tuple[int, int], ...]
     total_removed_ms: int
+    excised_word_count: int = 0
 
     @property
     def effective_duration_ms(self) -> int:
         """Physical duration of the clip after dead air is excised."""
         return (self.clip_out_ms - self.clip_in_ms) - self.total_removed_ms
+
+    @property
+    def cut_points_ms(self) -> tuple[int, ...]:
+        """Output-timeline timestamps (ms from 0) where retained interval cuts occur.
+
+        Useful for scheduling camera framing switches / punch-ins synchronously on cuts.
+        """
+        if len(self.retained_intervals_ms) <= 1:
+            return ()
+        cuts: list[int] = []
+        timeline_pos = 0
+        for start_ms, end_ms in self.retained_intervals_ms[:-1]:
+            timeline_pos += end_ms - start_ms
+            cuts.append(timeline_pos)
+        return tuple(cuts)
 
 
 def plan_silence_tightening(
@@ -60,6 +91,7 @@ def plan_silence_tightening(
     *,
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
+    filler_tokens: Collection[str] | None = None,
 ) -> SilencePlan:
     """Compute exact retained and excised intervals for a clip.
 
@@ -82,7 +114,7 @@ def plan_silence_tightening(
     clip_dur = clip_out_ms - clip_in_ms
     clip_words = [w for w in words if w.end_ms > clip_in_ms and w.start_ms < clip_out_ms]
 
-    if len(clip_words) <= 1:
+    if len(clip_words) == 0:
         return SilencePlan(
             clip_in_ms=clip_in_ms,
             clip_out_ms=clip_out_ms,
@@ -91,23 +123,112 @@ def plan_silence_tightening(
             retained_intervals_ms=((0, clip_dur),),
             removed_intervals_ms=(),
             total_removed_ms=0,
+            excised_word_count=0,
         )
 
-    removed: list[tuple[int, int]] = []
-    for i in range(1, len(clip_words)):
-        prev = clip_words[i - 1]
-        curr = clip_words[i]
-        gap_start = max(clip_in_ms, prev.end_ms)
-        gap_end = min(clip_out_ms, curr.start_ms)
-        gap = gap_end - gap_start
+    norm_fillers = {tok.strip() for tok in filler_tokens if tok.strip()} if filler_tokens else set()
+    is_filler = [w.w.strip() in norm_fillers for w in clip_words]
+    # Safety guard: if every word is marked as filler, keep all words
+    if all(is_filler):
+        is_filler = [False] * len(clip_words)
 
-        if gap > threshold_ms:
-            cut_start = gap_start + target_gap_ms
-            cut_end = gap_end
-            if cut_end > cut_start:
-                removed.append((cut_start - clip_in_ms, cut_end - clip_in_ms))
+    excised_count = sum(1 for f in is_filler if f)
 
-    if not removed:
+    if not norm_fillers or excised_count == 0:
+        if len(clip_words) <= 1:
+            return SilencePlan(
+                clip_in_ms=clip_in_ms,
+                clip_out_ms=clip_out_ms,
+                threshold_ms=threshold_ms,
+                target_gap_ms=target_gap_ms,
+                retained_intervals_ms=((0, clip_dur),),
+                removed_intervals_ms=(),
+                total_removed_ms=0,
+                excised_word_count=0,
+            )
+        raw_removed: list[tuple[int, int]] = []
+        for i in range(1, len(clip_words)):
+            prev = clip_words[i - 1]
+            curr = clip_words[i]
+            gap_start = max(clip_in_ms, prev.end_ms)
+            gap_end = min(clip_out_ms, curr.start_ms)
+            gap = gap_end - gap_start
+
+            if gap > threshold_ms:
+                cut_start = gap_start + target_gap_ms
+                cut_end = gap_end
+                if cut_end > cut_start:
+                    raw_removed.append((cut_start - clip_in_ms, cut_end - clip_in_ms))
+    else:
+        surviving_indices = [i for i, f in enumerate(is_filler) if not f]
+        raw_removed = []
+
+        # 1. Leading filler words before first surviving word
+        if surviving_indices[0] > 0:
+            first_surv = clip_words[surviving_indices[0]]
+            lead_cut_start = max(0, clip_words[0].start_ms - clip_in_ms)
+            sil_lead = max(0, first_surv.start_ms - clip_words[surviving_indices[0] - 1].end_ms)
+            keep_lead = min(target_gap_ms, sil_lead)
+            lead_cut_end = (first_surv.start_ms - keep_lead) - clip_in_ms
+            if lead_cut_end > lead_cut_start:
+                raw_removed.append((lead_cut_start, lead_cut_end))
+
+        # 2. Gaps between consecutive surviving words
+        for idx in range(1, len(surviving_indices)):
+            prev_surv = clip_words[surviving_indices[idx - 1]]
+            curr_surv = clip_words[surviving_indices[idx]]
+            gap_start = max(clip_in_ms, prev_surv.end_ms)
+            gap_end = min(clip_out_ms, curr_surv.start_ms)
+            fillers_in_gap = [
+                clip_words[k] for k in range(surviving_indices[idx - 1] + 1, surviving_indices[idx])
+            ]
+
+            if not fillers_in_gap:
+                gap = gap_end - gap_start
+                if gap > threshold_ms:
+                    cut_start = gap_start + target_gap_ms
+                    cut_end = gap_end
+                    if cut_end > cut_start:
+                        raw_removed.append((cut_start - clip_in_ms, cut_end - clip_in_ms))
+            else:
+                f_first = fillers_in_gap[0]
+                f_last = fillers_in_gap[-1]
+                sil_before = max(0, f_first.start_ms - gap_start)
+                sil_after = max(0, gap_end - f_last.end_ms)
+                keep_before = min(target_gap_ms // 2, sil_before)
+                keep_after = min(target_gap_ms - keep_before, sil_after)
+                cut_start = gap_start + keep_before
+                cut_end = gap_end - keep_after
+                if cut_end > cut_start:
+                    raw_removed.append((cut_start - clip_in_ms, cut_end - clip_in_ms))
+
+        # 3. Trailing filler words after last surviving word
+        if surviving_indices[-1] < len(clip_words) - 1:
+            last_surv = clip_words[surviving_indices[-1]]
+            first_trail = clip_words[surviving_indices[-1] + 1]
+            last_trail = clip_words[-1]
+            sil_trail = max(0, first_trail.start_ms - last_surv.end_ms)
+            keep_trail = min(target_gap_ms, sil_trail)
+            trail_cut_start = (last_surv.end_ms + keep_trail) - clip_in_ms
+            trail_cut_end = min(clip_dur, last_trail.end_ms - clip_in_ms)
+            if trail_cut_end > trail_cut_start:
+                raw_removed.append((trail_cut_start, trail_cut_end))
+
+    # Merge overlapping/contiguous removed intervals
+    merged_removed: list[tuple[int, int]] = []
+    for r_start, r_end in sorted(raw_removed):
+        if r_end <= r_start:
+            continue
+        if not merged_removed:
+            merged_removed.append((r_start, r_end))
+        else:
+            prev_s, prev_e = merged_removed[-1]
+            if r_start <= prev_e:
+                merged_removed[-1] = (prev_s, max(prev_e, r_end))
+            else:
+                merged_removed.append((r_start, r_end))
+
+    if not merged_removed:
         return SilencePlan(
             clip_in_ms=clip_in_ms,
             clip_out_ms=clip_out_ms,
@@ -116,18 +237,19 @@ def plan_silence_tightening(
             retained_intervals_ms=((0, clip_dur),),
             removed_intervals_ms=(),
             total_removed_ms=0,
+            excised_word_count=excised_count,
         )
 
     retained: list[tuple[int, int]] = []
     curr_pos = 0
-    for r_start, r_end in removed:
+    for r_start, r_end in merged_removed:
         if r_start > curr_pos:
             retained.append((curr_pos, r_start))
         curr_pos = r_end
     if curr_pos < clip_dur:
         retained.append((curr_pos, clip_dur))
 
-    total_removed = sum(r_end - r_start for r_start, r_end in removed)
+    total_removed = sum(r_end - r_start for r_start, r_end in merged_removed)
 
     return SilencePlan(
         clip_in_ms=clip_in_ms,
@@ -135,8 +257,9 @@ def plan_silence_tightening(
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
         retained_intervals_ms=tuple(retained),
-        removed_intervals_ms=tuple(removed),
+        removed_intervals_ms=tuple(merged_removed),
         total_removed_ms=total_removed,
+        excised_word_count=excised_count,
     )
 
 
@@ -188,11 +311,12 @@ def tighten_silence(
     *,
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
+    filler_tokens: Collection[str] | None = None,
 ) -> tuple[tuple[Word, ...], int]:
-    """Tighten pauses between consecutive words that exceed `threshold_ms`.
+    """Tighten pauses and excise conversational filler words between consecutive words.
 
     Returns a tuple of (tightened_words, total_removed_ms).
-    Every word following a trimmed gap is shifted earlier by the trimmed amount,
+    Every word following an excised span is shifted earlier by the removed amount,
     preserving exact word durations, confidences, and relative speech pacing.
 
     Raises:
@@ -208,31 +332,46 @@ def tighten_silence(
             f"threshold_ms ({threshold_ms})"
         )
 
-    if len(words) <= 1:
+    if not words:
+        return (), 0
+
+    norm_fillers = {t.strip() for t in filler_tokens if t.strip()} if filler_tokens else set()
+    is_filler = [w.w.strip() in norm_fillers for w in words]
+    if all(is_filler):
+        is_filler = [False] * len(words)
+
+    surviving_words = [w for i, w in enumerate(words) if not is_filler[i]]
+    if len(surviving_words) <= 1 and not any(is_filler):
         return tuple(words), 0
 
-    tightened: list[Word] = [words[0]]
-    cumulative_shift_ms = 0
+    clip_in_ms = min(w.start_ms for w in words)
+    clip_out_ms = max(w.end_ms for w in words)
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=clip_in_ms,
+        clip_out_ms=clip_out_ms,
+        threshold_ms=threshold_ms,
+        target_gap_ms=target_gap_ms,
+        filler_tokens=filler_tokens,
+    )
 
-    for i in range(1, len(words)):
-        prev = words[i - 1]
-        curr = words[i]
+    if plan.total_removed_ms == 0:
+        return tuple(surviving_words), 0
 
-        original_gap = curr.start_ms - prev.end_ms
-        if original_gap > threshold_ms:
-            excess = original_gap - target_gap_ms
-            cumulative_shift_ms += excess
-
+    tightened: list[Word] = []
+    for w in surviving_words:
+        new_start = remap_timestamp(w.start_ms, plan) + clip_in_ms
+        dur = w.end_ms - w.start_ms
         tightened.append(
             Word(
-                w=curr.w,
-                start_ms=curr.start_ms - cumulative_shift_ms,
-                end_ms=curr.end_ms - cumulative_shift_ms,
-                conf=curr.conf,
+                w=w.w,
+                start_ms=new_start,
+                end_ms=new_start + dur,
+                conf=w.conf,
             )
         )
 
-    return tuple(tightened), cumulative_shift_ms
+    return tuple(tightened), plan.total_removed_ms
 
 
 def tighten_sentences(
@@ -240,6 +379,7 @@ def tighten_sentences(
     *,
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
+    filler_tokens: Collection[str] | None = None,
 ) -> tuple[tuple[Sentence, ...], int]:
     """Tighten pauses across a sequence of sentences while preserving grouping.
 
@@ -249,25 +389,49 @@ def tighten_sentences(
         return (), 0
 
     all_words: list[Word] = []
-    sentence_word_counts: list[int] = []
-    for s in sentences:
-        sentence_word_counts.append(len(s.words))
-        all_words.extend(s.words)
+    sentence_word_tags: list[int] = []
+    for s_idx, s in enumerate(sentences):
+        for w in s.words:
+            all_words.append(w)
+            sentence_word_tags.append(s_idx)
 
     tightened_words, total_removed = tighten_silence(
         all_words,
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
+        filler_tokens=filler_tokens,
     )
 
-    reconstructed: list[Sentence] = []
-    word_offset = 0
-    for idx, count in enumerate(sentence_word_counts):
-        s_words = tightened_words[word_offset : word_offset + count]
-        reconstructed.append(Sentence(words=s_words, complete=sentences[idx].complete))
-        word_offset += count
+    if not filler_tokens:
+        reconstructed: list[Sentence] = []
+        word_offset = 0
+        for s in sentences:
+            count = len(s.words)
+            s_words = tightened_words[word_offset : word_offset + count]
+            reconstructed.append(Sentence(words=s_words, complete=s.complete))
+            word_offset += count
+        return tuple(reconstructed), total_removed
 
-    return tuple(reconstructed), total_removed
+    norm_fillers = {t.strip() for t in filler_tokens if t.strip()}
+    is_filler = [w.w.strip() in norm_fillers for w in all_words]
+    if all(is_filler):
+        is_filler = [False] * len(all_words)
+
+    surviving_tags = [sentence_word_tags[i] for i, f in enumerate(is_filler) if not f]
+    by_sentence: dict[int, list[Word]] = {i: [] for i in range(len(sentences))}
+    for word, s_idx in zip(tightened_words, surviving_tags, strict=True):
+        by_sentence[s_idx].append(word)
+
+    reconstructed_s: list[Sentence] = []
+    for s_idx, s in enumerate(sentences):
+        s_words = tuple(by_sentence[s_idx])
+        if s_words:
+            reconstructed_s.append(Sentence(words=s_words, complete=s.complete))
+
+    if not reconstructed_s and sentences:
+        return tuple(sentences), 0
+
+    return tuple(reconstructed_s), total_removed
 
 
 def tighten_clip(
@@ -275,6 +439,7 @@ def tighten_clip(
     *,
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
+    filler_tokens: Collection[str] | None = None,
 ) -> tuple[Clip, int]:
     """Tighten silence in a Clip contract, recording total removed ms in output.
 
@@ -284,11 +449,13 @@ def tighten_clip(
         clip.transcript.words,
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
+        filler_tokens=filler_tokens,
     )
 
+    new_text = " ".join(w.w for w in tightened_words)
     updated_transcript = ClipTranscript(
-        raw_ckb=clip.transcript.raw_ckb,
-        norm_ckb=clip.transcript.norm_ckb,
+        raw_ckb=new_text,
+        norm_ckb=new_text,
         en_aux=clip.transcript.en_aux,
         words=tightened_words,
         asr=clip.transcript.asr,

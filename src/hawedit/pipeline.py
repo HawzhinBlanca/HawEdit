@@ -44,7 +44,7 @@ import hashlib
 import json
 import os
 import sys
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, fields, replace
 from itertools import pairwise
@@ -184,6 +184,8 @@ from hawedit.sentences import (
     segment_sentences,
 )
 from hawedit.silence import (
+    DEFAULT_SILENCE_THRESHOLD_MS,
+    KURDISH_FILLER_TOKENS,
     SilencePlan,
     plan_silence_tightening,
     remap_timestamp,
@@ -1745,6 +1747,8 @@ def run_pipeline(
     content_type: ContentType | str | None = None,
     silence_threshold_ms: int = 0,
     silence_target_gap_ms: int = 150,
+    excise_fillers: bool = False,
+    filler_tokens: Collection[str] | None = None,
     two_person_split: str = "auto",
     brand_kit: BrandKit | None = None,
     caption_style: CaptionStyle | str | None = None,
@@ -3016,25 +3020,37 @@ def run_pipeline(
     render_duration_ms = clip.out_ms - clip.in_ms
     effective_clip = clip
 
-    if silence_threshold_ms > 0:
+    resolved_fillers = (
+        KURDISH_FILLER_TOKENS if (excise_fillers or filler_tokens is not None) else None
+    )
+    if filler_tokens is not None:
+        resolved_fillers = frozenset(filler_tokens)
+
+    if silence_threshold_ms > 0 or excise_fillers or filler_tokens is not None:
+        effective_threshold = (
+            silence_threshold_ms if silence_threshold_ms > 0 else DEFAULT_SILENCE_THRESHOLD_MS
+        )
         silence_plan = plan_silence_tightening(
             clip_words,
             clip_in_ms=clip.in_ms,
             clip_out_ms=clip.out_ms,
-            threshold_ms=silence_threshold_ms,
+            threshold_ms=effective_threshold,
             target_gap_ms=silence_target_gap_ms,
+            filler_tokens=resolved_fillers,
         )
         if silence_plan.total_removed_ms > 0:
             render_selected, _ = tighten_sentences(
                 selected,
-                threshold_ms=silence_threshold_ms,
+                threshold_ms=effective_threshold,
                 target_gap_ms=silence_target_gap_ms,
+                filler_tokens=resolved_fillers,
             )
             render_duration_ms = silence_plan.effective_duration_ms
             effective_clip, _ = tighten_clip(
                 clip,
-                threshold_ms=silence_threshold_ms,
+                threshold_ms=effective_threshold,
                 target_gap_ms=silence_target_gap_ms,
+                filler_tokens=resolved_fillers,
             )
             if effective_clip.output is not None:
                 effective_clip = replace(
@@ -3144,6 +3160,8 @@ def run_pipeline(
                 (remap_timestamp(point.at_ms, silence_plan) + clip.in_ms, point.center_x)
                 for point in focus_points
             )
+            if silence_plan.cut_points_ms:
+                cut_pts = tuple(sorted(set(cut_pts + silence_plan.cut_points_ms)))
         else:
             source_cuts = [
                 cut_ms - clip.in_ms
@@ -3273,11 +3291,18 @@ def run_pipeline(
         # from — so it takes the source's own frame rate. NTSC 30000/1001 selects SMPTE
         # drop-frame numbering; unsupported rates land here instead of silently drifting.
         fps = frame_rate(source, ffmpeg)
+        retained_intervals: tuple[tuple[int, int], ...] | None = None
+        if silence_plan is not None and silence_plan.total_removed_ms > 0:
+            retained_intervals = tuple(
+                (start + clip.in_ms, end + clip.in_ms)
+                for start, end in silence_plan.retained_intervals_ms
+            )
         edl = build_edl(
             clip_in_ms=clip.in_ms,
             clip_out_ms=clip.out_ms,
             fps=fps,
             title=f"{identifier} {clip.clip_id}",
+            retained_intervals=retained_intervals,
         )
         bundle.write_text("json", editing_json)
         bundle.write_text("srt", srt)
@@ -3323,10 +3348,7 @@ def run_pipeline(
             fps=fps,
         )
         if silence_plan is not None and silence_plan.total_removed_ms > 0:
-            retained_intervals = tuple(
-                (start + clip.in_ms, end + clip.in_ms)
-                for start, end in silence_plan.retained_intervals_ms
-            )
+            assert retained_intervals is not None
             time_mapping = SourceTimeMapping(
                 clip_in_ms=clip.in_ms,
                 clip_out_ms=clip.out_ms,
@@ -3721,6 +3743,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="target pause duration in ms to retain when tightening dead air (default: 150)",
     )
     parser.add_argument(
+        "--excise-fillers",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "excise conversational Kurdish filler words ('یەعنی', 'وەڵا', etc.) "
+            "and tighten dead air"
+        ),
+    )
+    parser.add_argument(
         "--two-person-split",
         choices=("auto", "always", "never"),
         default="auto",
@@ -3957,6 +3988,8 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
             args.caption_style = CaptionStyle.KINETIC_POP.value
         if args.silence_threshold_ms == 0:
             args.silence_threshold_ms = 400
+        if not args.excise_fillers:
+            args.excise_fillers = True
         if args.hook_banner is None:
             args.hook_banner = True
     elif getattr(args, "preset", None) == "split":
@@ -4234,6 +4267,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         content_type=getattr(args, "content_type", "podcast"),
         silence_threshold_ms=getattr(args, "silence_threshold_ms", 0),
         silence_target_gap_ms=getattr(args, "silence_target_gap_ms", 150),
+        excise_fillers=getattr(args, "excise_fillers", False),
         two_person_split=getattr(args, "two_person_split", "auto"),
         brand_kit=brand_kit,
         caption_style=getattr(args, "caption_style", None),

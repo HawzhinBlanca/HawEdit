@@ -6716,6 +6716,19 @@ def test_pipeline_silence_tightening_arguments_are_parsed() -> None:
     assert args_custom.silence_target_gap_ms == 120
 
 
+def test_pipeline_excise_fillers_argument_is_parsed() -> None:
+    """--excise-fillers CLI argument accepts boolean optional flags."""
+    parser = build_parser()
+    args_default = parser.parse_args([str(FIXTURE)])
+    assert args_default.excise_fillers is False
+
+    args_enabled = parser.parse_args([str(FIXTURE), "--excise-fillers"])
+    assert args_enabled.excise_fillers is True
+
+    args_disabled = parser.parse_args([str(FIXTURE), "--no-excise-fillers"])
+    assert args_disabled.excise_fillers is False
+
+
 def test_pipeline_caption_style_argument_is_parsed() -> None:
     """--caption-style CLI argument accepts and parses valid CaptionStyle choices."""
     parser = build_parser()
@@ -6805,6 +6818,49 @@ def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_pat
     # Fixture span is 4162 ms; tightened is 4162 - 220 = 3942 ms (within 40ms tolerance)
     assert abs(measured["video"]["duration_ms"] - (4162 - 220)) <= 40
     assert abs(measured["audio"]["duration_ms"] - (4162 - 220)) <= 40
+
+
+@needs_ffmpeg
+def test_run_pipeline_with_filler_excision(tmp_path: Path) -> None:
+    """Task: run_pipeline excises Kurdish filler tokens when excise_fillers=True."""
+    work = tmp_path / "filler_pipeline_work"
+    words = (
+        Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=800, conf=0.95),
+        Word(w="کوردی.", start_ms=800, end_ms=1_700, conf=0.94),
+        Word(w="یەعنی", start_ms=1_740, end_ms=1_960, conf=0.94),  # Kurdish filler
+        Word(w="لە", start_ms=2_000, end_ms=2_400, conf=0.93),
+        Word(w="هەولێر.", start_ms=2_400, end_ms=4_100, conf=0.92),
+    )
+    transcript = RawTranscript(
+        media_id="filler_test",
+        text_ckb="ڕۆژنامەوانی کوردی. یەعنی لە هەولێر.",
+        words=words,
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
+    )
+    verdict = a_verdict(100, 4_100)
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="filler_test",
+        transcript=transcript,
+        select_sentences=(0, 1),
+        verdict=verdict,
+        qc=_test_qc(
+            reviewed_sha256="920513041aad05408b539b4ebc1cc40fd8cec3396bf58f76b41da7e8461a4f81"
+        ),
+        silence_threshold_ms=200,
+        silence_target_gap_ms=80,
+        excise_fillers=True,
+    )
+    assert run.clip is not None
+    assert run.clip.output is not None
+    assert run.clip.output.silence_removed_ms > 0
+    # "یەعنی" must not be present in surviving transcript words
+    assert "یەعنی" not in [w.w for w in run.clip.transcript.words]
+    assert "یەعنی" not in run.clip.transcript.raw_ckb
+    assert not isinstance(run.render, StageSkipped)
+    assert not isinstance(run.delivery, StageSkipped)
 
 
 def test_pipeline_parser_two_person_split_options() -> None:

@@ -8,6 +8,8 @@ from hawedit.boundary import Boundary
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
 from hawedit.sentences import Sentence
 from hawedit.silence import (
+    KURDISH_FILLER_TOKENS,
+    SilencePlan,
     plan_silence_tightening,
     remap_timestamp,
     silence_trim_filter,
@@ -304,3 +306,146 @@ def test_silence_trim_filter_generates_valid_ffmpeg_filtergraph() -> None:
     assert "[0:v]trim=start=3.000:end=5.000,setpts=PTS-STARTPTS[v1]" in filt
     assert "[0:a]atrim=start=3.000:end=5.000,asetpts=PTS-STARTPTS[a1]" in filt
     assert "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_tightened][a_tightened]" in filt
+
+
+def test_plan_silence_tightening_excises_kurdish_filler_tokens() -> None:
+    """AC-4+: Conversational Kurdish filler tokens are excised with excess pause tightened."""
+    words = (
+        _make_word("ئێمە", 1000, 1500),
+        _make_word("یەعنی", 1600, 2000),  # Kurdish filler token
+        _make_word("دانیشتووین", 2100, 2600),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=500,
+        clip_out_ms=3000,
+        threshold_ms=400,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+
+    assert plan.excised_word_count == 1
+    assert len(plan.removed_intervals_ms) == 1
+    # Speech of "یەعنی" [1600, 2000] is completely inside excised span
+    rem_start, rem_end = plan.removed_intervals_ms[0]
+    # In clip time (source - 500):
+    # 1600 in source -> 1100 in clip time
+    # 2000 in source -> 1500 in clip time
+    assert rem_start <= 1600 - 500
+    assert rem_end >= 2000 - 500
+    # Surviving words "ئێمە" [1000, 1500] (clip: [500, 1000]) and
+    # "دانیشتووین" [2100, 2600] (clip: [1600, 2100]) are strictly preserved in retained intervals
+    assert plan.retained_intervals_ms[0][0] <= 500
+    assert plan.retained_intervals_ms[0][1] >= 1000
+    assert plan.retained_intervals_ms[1][0] <= 1600
+    assert plan.retained_intervals_ms[1][1] >= 2100
+
+
+def test_tighten_silence_excises_filler_and_shifts_monotonically() -> None:
+    """AC-4+: Filler words are omitted from tightened output and subsequent words shifted."""
+    words = (
+        _make_word("ماڵێک", 0, 500),
+        _make_word("وەڵا", 600, 1000),  # Kurdish filler
+        _make_word("هاتن", 1100, 1600),
+    )
+    tightened, removed_ms = tighten_silence(
+        words,
+        threshold_ms=400,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+
+    assert len(tightened) == 2
+    assert tightened[0].w == "ماڵێک"
+    assert tightened[1].w == "هاتن"
+    # Word durations preserved
+    assert tightened[0].end_ms - tightened[0].start_ms == 500
+    assert tightened[1].end_ms - tightened[1].start_ms == 500
+    # Shifted earlier
+    assert removed_ms > 0
+    assert tightened[1].start_ms < 1100
+    assert tightened[1].start_ms >= tightened[0].end_ms
+
+
+def test_tighten_sentences_with_fillers_reconstructs_clean_sentences() -> None:
+    """AC-4+: Sentence boundaries and grouping are preserved when filler words are excised."""
+    s1 = Sentence(
+        words=(
+            _make_word("ئەها", 0, 300),  # Leading filler
+            _make_word("ئەمڕۆ", 400, 900),
+        ),
+        complete=True,
+    )
+    s2 = Sentence(
+        words=(
+            _make_word("پڕۆژەکە", 1500, 2000),
+            _make_word("دەزانی", 2100, 2400),  # Trailing filler
+        ),
+        complete=True,
+    )
+    tightened_s, removed_ms = tighten_sentences(
+        [s1, s2],
+        threshold_ms=400,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+
+    assert len(tightened_s) == 2
+    assert len(tightened_s[0].words) == 1
+    assert tightened_s[0].words[0].w == "ئەمڕۆ"
+    assert len(tightened_s[1].words) == 1
+    assert tightened_s[1].words[0].w == "پڕۆژەکە"
+    assert removed_ms > 0
+
+
+def test_silence_plan_cut_points_ms_property() -> None:
+    """SilencePlan.cut_points_ms returns exact output timeline interior cuts."""
+    # Retained: [0, 1000], [2000, 3500] (duration 1000, then duration 1500)
+    plan = SilencePlan(
+        clip_in_ms=0,
+        clip_out_ms=5000,
+        threshold_ms=400,
+        target_gap_ms=100,
+        retained_intervals_ms=((0, 1000), (2000, 3500)),
+        removed_intervals_ms=((1000, 2000),),
+        total_removed_ms=1000,
+        excised_word_count=0,
+    )
+    assert plan.cut_points_ms == (1000,)
+
+    # Single retained interval -> no interior cuts
+    single_plan = SilencePlan(
+        clip_in_ms=0,
+        clip_out_ms=5000,
+        threshold_ms=400,
+        target_gap_ms=100,
+        retained_intervals_ms=((0, 5000),),
+        removed_intervals_ms=(),
+        total_removed_ms=0,
+    )
+    assert single_plan.cut_points_ms == ()
+
+
+def test_all_words_filler_safety_guard() -> None:
+    """If all words in a span are fillers, safety guard preserves all words."""
+    words = (
+        _make_word("وەڵا", 0, 400),
+        _make_word("یەعنی", 500, 900),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=0,
+        clip_out_ms=1000,
+        threshold_ms=400,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    # Safety guard triggered: not all excised
+    assert plan.excised_word_count == 0
+    tightened, removed = tighten_silence(
+        words,
+        threshold_ms=400,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    assert len(tightened) == 2
