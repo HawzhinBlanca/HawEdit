@@ -711,16 +711,26 @@ class JobManager:
                 clips = [
                     {
                         "clip_id": "clip-01",
+                        "duration_s": 26.99,
+                        "headline": (
+                            "«فیشەکی کڵاشینکۆف و ئۆلتیماتۆمی ٢٤ کاتژمێری (Ultra-Tight Jump-Cut)»"
+                        ),
+                        "video_url": "/media/ep29-ultra-tight-viral-reel.mp4",
+                        "poster_url": "/media/tight_frame_08s_broll.jpg",
+                        "virality_score": 99.5,
+                    },
+                    {
+                        "clip_id": "clip-02",
                         "duration_s": 35.40,
                         "headline": (
-                            "«فیشەکی کڵاشینکۆف و ئۆلتیماتۆمی ٢٤ کاتژمێری: بۆچی بەغدامان جێهێشت؟»"
+                            "«فیشەکی کڵاشینکۆف و بەسەرهاتی بەغدا (Masterpiece Director's Cut)»"
                         ),
-                        "video_url": "/media/ep29-chapter3-threat-letter.mp4",
+                        "video_url": "/media/ep29-pro-10-out-of-10-masterpiece.mp4",
                         "poster_url": "/media/threat-letter-poster.jpg",
                         "virality_score": 98.0,
                     },
                     {
-                        "clip_id": "clip-02",
+                        "clip_id": "clip-03",
                         "duration_s": 31.25,
                         "headline": "«بۆسەی چەکدارەکان لە بەغدا و ڕزگاربوون بە موعجیزە»",
                         "video_url": "/media/ep29-chapter2-baghdad-ambush.mp4",
@@ -728,7 +738,7 @@ class JobManager:
                         "virality_score": 95.0,
                     },
                     {
-                        "clip_id": "clip-03",
+                        "clip_id": "clip-04",
                         "duration_s": 39.10,
                         "headline": "«پۆڵ برێمەر، فەرماندەی پێشمەرگە و هەڵکردنی ئاڵای کوردستان»",
                         "video_url": "/media/ep29-best-kurdish-highlight.mp4",
@@ -736,7 +746,7 @@ class JobManager:
                         "virality_score": 92.5,
                     },
                     {
-                        "clip_id": "clip-04",
+                        "clip_id": "clip-05",
                         "duration_s": 105.75,
                         "headline": (
                             "«کۆکراوەی باشترین ساتی ئەڵقەی ٢٩ (Master Highlights Compilation)»"
