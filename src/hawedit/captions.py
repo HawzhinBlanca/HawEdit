@@ -1881,10 +1881,10 @@ def build_ass(
                                 else "&H0000FFFF"
                             )
                             parts.append(
-                                f"{{\\t(0,60,\\fscx118\\fscy118)\\t(60,130,\\fscx100\\fscy100)\\c{color_code}&}}{escaped}{{\\r}}"
+                                f"{{\\t(0,60,\\fscx118\\fscy118)\\t(60,130,\\fscx100\\fscy100)\\c{color_code}&}}{escaped}{{\\c&H00FFFFFF&\\fscx100\\fscy100}}"
                             )
                         else:
-                            parts.append(f"{{\\c&H00FFFFFF&}}{escaped}{{\\r}}")
+                            parts.append(f"{{\\c&H00FFFFFF&}}{escaped}")
 
                     chunk_text = " ".join(parts)
                     events.append(event(w_start, w_end, chunk_text, style_name=style_name))
@@ -1974,10 +1974,12 @@ def build_ass(
                                 else EmphasisCategory.DEFAULT
                             )
                             st = choose_style(ta, tb, category=cat)
+                            anim_tag = r"\t(0,50,\fscx115\fscy115)\t(50,110,\fscx100\fscy100)"
                         else:
                             st = dim_st
+                            anim_tag = ""
                         escaped_word = _escape_ass_text(word.w)
-                        word_text = f"{{{align_tag}\\pos({x_pos},{y_pos})}}{escaped_word}"
+                        word_text = f"{{{align_tag}\\pos({x_pos},{y_pos}){anim_tag}}}{escaped_word}"
                         events.append(event(ta, tb, word_text, style_name=st))
             continue
 

@@ -39,15 +39,68 @@ DEFAULT_TARGET_GAP_MS: Final = 150
 KURDISH_FILLER_TOKENS: Final[frozenset[str]] = frozenset(
     {
         "یەعنی",
+        "یەعنى",
         "ئەها",
         "وەڵا",
         "وەڵڵا",
+        "بەوەڵا",
+        "بەوەڵڵا",
         "دەزانی",
+        "دەزانى",
+        "ئەزانی",
+        "ئەزانى",
         "ڕاستییەکەی",
         "تێدەگەی",
+        "تێدەگەیت",
         "دیارە",
+        "ئیتر",
+        "ئەوەبوو",
+        "ئەوە بوو",
+        "وابوو",
+        "ئەوجا",
+        "مەبەستم",
+        "دەنا",
+        "ئەرێ",
+        "بۆ نموونە",
+        "وەک وتم",
+        "وەکو وتم",
     }
 )
+
+_PUNCT_CHARS: Final[str] = " \t\n\r.,!?:؛،؟"
+
+
+def _identify_filler_words(
+    words: Sequence[Word],
+    filler_tokens: Collection[str] | None,
+) -> tuple[list[bool], int]:
+    """Identify filler words in a sequence, handling punctuation and multi-word phrases."""
+    if not words or not filler_tokens:
+        return [False] * len(words), 0
+
+    norm_fillers = {tok.strip().strip(_PUNCT_CHARS) for tok in filler_tokens if tok.strip()}
+    norm_fillers = {t for t in norm_fillers if t}
+    if not norm_fillers:
+        return [False] * len(words), 0
+
+    single_fillers = {t for t in norm_fillers if " " not in t}
+    phrase_fillers = [tuple(t.split()) for t in norm_fillers if " " in t]
+
+    cleaned_words = [w.w.strip(_PUNCT_CHARS) for w in words]
+    is_filler = [w in single_fillers for w in cleaned_words]
+
+    for phrase in phrase_fillers:
+        p_len = len(phrase)
+        for i in range(len(words) - p_len + 1):
+            if tuple(cleaned_words[i + k] for k in range(p_len)) == phrase:
+                for k in range(p_len):
+                    is_filler[i + k] = True
+
+    if all(is_filler):
+        is_filler = [False] * len(words)
+
+    excised_count = sum(1 for f in is_filler if f)
+    return is_filler, excised_count
 
 
 @dataclass(frozen=True)
@@ -126,15 +179,9 @@ def plan_silence_tightening(
             excised_word_count=0,
         )
 
-    norm_fillers = {tok.strip() for tok in filler_tokens if tok.strip()} if filler_tokens else set()
-    is_filler = [w.w.strip() in norm_fillers for w in clip_words]
-    # Safety guard: if every word is marked as filler, keep all words
-    if all(is_filler):
-        is_filler = [False] * len(clip_words)
+    is_filler, excised_count = _identify_filler_words(clip_words, filler_tokens)
 
-    excised_count = sum(1 for f in is_filler if f)
-
-    if not norm_fillers or excised_count == 0:
+    if excised_count == 0:
         if len(clip_words) <= 1:
             return SilencePlan(
                 clip_in_ms=clip_in_ms,
@@ -335,13 +382,9 @@ def tighten_silence(
     if not words:
         return (), 0
 
-    norm_fillers = {t.strip() for t in filler_tokens if t.strip()} if filler_tokens else set()
-    is_filler = [w.w.strip() in norm_fillers for w in words]
-    if all(is_filler):
-        is_filler = [False] * len(words)
-
+    is_filler, excised_count = _identify_filler_words(words, filler_tokens)
     surviving_words = [w for i, w in enumerate(words) if not is_filler[i]]
-    if len(surviving_words) <= 1 and not any(is_filler):
+    if len(surviving_words) <= 1 and excised_count == 0:
         return tuple(words), 0
 
     clip_in_ms = min(w.start_ms for w in words)

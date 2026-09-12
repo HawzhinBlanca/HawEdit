@@ -449,3 +449,57 @@ def test_all_words_filler_safety_guard() -> None:
         filler_tokens=KURDISH_FILLER_TOKENS,
     )
     assert len(tightened) == 2
+
+
+def test_filler_with_punctuation_is_excised() -> None:
+    """Kurdish filler words with punctuation attached (e.g., 'ئیتر،') are correctly excised."""
+    words = (
+        _make_word("کاک", 0, 500),
+        _make_word("مەسعود", 600, 1100),
+        _make_word("ئیتر،", 1200, 1600),
+        _make_word("قبوڵیان", 1800, 2400),
+        _make_word("نەکرد", 2500, 3000),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=0,
+        clip_out_ms=3200,
+        threshold_ms=300,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    assert plan.excised_word_count == 1
+    tightened, _ = tighten_silence(
+        words,
+        threshold_ms=300,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    assert len(tightened) == 4
+    assert [w.w for w in tightened] == ["کاک", "مەسعود", "قبوڵیان", "نەکرد"]
+
+
+def test_multi_word_filler_phrase_is_excised() -> None:
+    """Multi-word filler phrases like 'ئەوە بوو' are excised across consecutive words."""
+    words = (
+        _make_word("ئەوە", 0, 400),
+        _make_word("بوو", 450, 800),
+        _make_word("ڕایانکرد", 1000, 1600),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=0,
+        clip_out_ms=1800,
+        threshold_ms=300,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    assert plan.excised_word_count == 2
+    tightened, _ = tighten_silence(
+        words,
+        threshold_ms=300,
+        target_gap_ms=100,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    assert len(tightened) == 1
+    assert tightened[0].w == "ڕایانکرد"

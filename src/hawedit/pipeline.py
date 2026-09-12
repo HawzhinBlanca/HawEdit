@@ -3985,9 +3985,11 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
             args.hook_banner = True
     elif getattr(args, "preset", None) == "viral":
         if not args.caption_style:
-            args.caption_style = CaptionStyle.KINETIC_POP.value
+            args.caption_style = CaptionStyle.RTL_WORD_HIGHLIGHT.value
         if args.silence_threshold_ms == 0:
-            args.silence_threshold_ms = 400
+            args.silence_threshold_ms = 250
+        if getattr(args, "silence_target_gap_ms", 150) == 150:
+            args.silence_target_gap_ms = 100
         if not args.excise_fillers:
             args.excise_fillers = True
         if args.hook_banner is None:
