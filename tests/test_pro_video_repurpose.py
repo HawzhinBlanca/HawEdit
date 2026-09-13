@@ -9,6 +9,8 @@ Validates the 5 key finishing techniques that bridge the quality gap to the indu
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -121,6 +123,10 @@ def test_render_clip_builds_sidechain_ducking_filter(
     out = tmp_path / "out.mp4"
     music = tmp_path / "music.wav"
     music.write_bytes(b"dummy_music")
+    prov = tmp_path / "music.wav.provenance.json"
+    prov.write_text(
+        json.dumps({"origin": "test", "sha256": hashlib.sha256(b"dummy_music").hexdigest()})
+    )
 
     recorded_cmd: list[str] = []
 

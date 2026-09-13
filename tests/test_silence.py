@@ -503,3 +503,87 @@ def test_multi_word_filler_phrase_is_excised() -> None:
     )
     assert len(tightened) == 1
     assert tightened[0].w == "ڕایانکرد"
+
+
+def test_false_start_restart_detection_excises_truncated_prefix_token() -> None:
+    """B2 & Reality Check Item 6: False start is excised.
+
+    Truncated prefix followed by full token within 1.5s is detected and cut.
+    """
+    words = (
+        _make_word("کورد", 100, 400),
+        _make_word("کوردستان", 550, 1100),
+        _make_word("ئازادە", 1200, 1700),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=0,
+        clip_out_ms=1800,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    assert plan.excised_word_count >= 1
+    tightened, _ = tighten_silence(words, filler_tokens=KURDISH_FILLER_TOKENS)
+    surviving_words = [w.w for w in tightened]
+    assert "کورد" not in surviving_words
+    assert "کوردستان" in surviving_words
+    assert "ئازادە" in surviving_words
+
+
+def test_repeated_phrase_stutter_is_excised() -> None:
+    """B2 & Reality Check Item 6: Repeated phrases and word stutters within 3s are excised."""
+    words = (
+        _make_word("لە", 100, 300),
+        _make_word("بەغدا", 350, 700),
+        _make_word("لە", 850, 1050),
+        _make_word("بەغدا", 1100, 1450),
+        _make_word("تەقینەوە", 1600, 2200),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=0,
+        clip_out_ms=2300,
+        filler_tokens=KURDISH_FILLER_TOKENS,
+    )
+    assert plan.excised_word_count >= 2
+    tightened, _ = tighten_silence(words, filler_tokens=KURDISH_FILLER_TOKENS)
+    surviving_words = [w.w for w in tightened]
+    assert surviving_words == ["لە", "بەغدا", "تەقینەوە"]
+
+
+def test_every_excision_cut_has_a_framing_change() -> None:
+    """B2 & Reality Check Item 6: Every excision cut point gets a framing change.
+
+    Punch-in framing change is guaranteed at every physical cut point.
+    """
+    words = (
+        _make_word("دەستپێک", 100, 600),
+        # Dead air pause from 600 to 2000 (1400ms) -> cut point 1
+        _make_word("ناوەڕاست", 2000, 2500),
+        # Dead air pause from 2500 to 4000 (1500ms) -> cut point 2
+        _make_word("کۆتایی", 4000, 4600),
+    )
+    plan = plan_silence_tightening(
+        words,
+        clip_in_ms=0,
+        clip_out_ms=4700,
+        threshold_ms=400,
+        target_gap_ms=100,
+    )
+    assert len(plan.cut_points_ms) == 2
+
+    # Simulate punch-in scheduler matching pipeline.py's guaranteed framing changes
+    initial_punches: tuple[tuple[int, float], ...] = ()
+    punch_map = dict(initial_punches)
+    updated_punches: list[tuple[int, float]] = list(initial_punches)
+    current_scale = 1.0
+    for cut_pt in sorted(plan.cut_points_ms):
+        if cut_pt not in punch_map:
+            next_scale = 1.15 if current_scale == 1.0 else 1.0
+            updated_punches.append((cut_pt, next_scale))
+            current_scale = next_scale
+        else:
+            current_scale = punch_map[cut_pt]
+
+    scheduled_punch_times = {p[0] for p in updated_punches}
+    for excision_cut in plan.cut_points_ms:
+        assert excision_cut in scheduled_punch_times

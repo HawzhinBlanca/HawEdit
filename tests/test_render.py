@@ -21,6 +21,7 @@ producing something plausible.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import tempfile
@@ -2412,8 +2413,14 @@ def test_render_clip_with_logo_and_progress_bar_exec(tmp_path: Path) -> None:
     clip = _clip()
     ass_path = _write_ass(tmp_path)
     out = tmp_path / "logo_pb_out.mp4"
-    logo_path = ROOT / "tests" / "golden" / "kurdish-hook-card.png"
-    assert logo_path.is_file()
+    source_logo = ROOT / "tests" / "golden" / "kurdish-hook-card.png"
+    assert source_logo.is_file()
+    logo_path = tmp_path / "kurdish-hook-card.png"
+    logo_path.write_bytes(source_logo.read_bytes())
+    logo_sha = hashlib.sha256(logo_path.read_bytes()).hexdigest()
+    (tmp_path / "kurdish-hook-card.png.provenance.json").write_text(
+        json.dumps({"origin": "golden-card", "sha256": logo_sha})
+    )
     kit = BrandKit(
         logo_path=logo_path,
         logo_position="top_right",
@@ -2436,3 +2443,140 @@ def test_render_clip_with_logo_and_progress_bar_exec(tmp_path: Path) -> None:
     assert result.brand_kit == kit
     assert _probe(out, "stream=width") == "1080"
     assert _probe(out, "stream=height") == "1920"
+
+
+@needs_ffmpeg
+def test_render_is_a_pure_function_of_the_plan(tmp_path: Path) -> None:
+    from hawedit.edit_plan import (
+        CURRENT_PLAN_VERSION,
+        EditorialBrief,
+        EffectiveConfiguration,
+        SourceTimeMapping,
+        VisualEditPlan,
+    )
+
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    out1 = tmp_path / "pure_plan1.mp4"
+    out2 = tmp_path / "pure_plan2.mp4"
+
+    from hawedit.content_type import ContentType
+
+    brief = EditorialBrief(
+        viewer_takeaway="Test Kurdish Clip",
+        content_type=ContentType.INTERVIEW,
+        target_duration_ms=(clip.out_ms - clip.in_ms, clip.out_ms - clip.in_ms),
+        protected_regions=("lower_third_captions", "speaker_face"),
+    )
+    config = EffectiveConfiguration.resolve(
+        content_type="interview",
+        caption_style="word_highlight",
+        reframe_mode="face_tracked",
+        silence_threshold_ms=400,
+        silence_target_gap_ms=120,
+        punch_in_cadence_ms=0,
+        eased_push=False,
+        two_person_split="auto",
+        keyword_emphasis=False,
+        fps=25.0,
+    )
+    time_mapping = SourceTimeMapping.continuous(clip.in_ms, clip.out_ms)
+    focus_pts = ((clip.in_ms, SOURCE_WIDTH // 2), (clip.out_ms, SOURCE_WIDTH // 2))
+
+    plan = VisualEditPlan(
+        version=CURRENT_PLAN_VERSION,
+        clip_id=clip.clip_id,
+        media_id=clip.media_id,
+        media_sha256=FIXTURE_SHA256,
+        brief=brief,
+        config=config,
+        time_mapping=time_mapping,
+        shot_cuts_ms=(),
+        punch_in_ms=(),
+        speaker_turns=(),
+        sentences=(_sentence(),),
+    )
+
+    res1 = render_clip(
+        clip,
+        FIXTURE,
+        ass_path,
+        FONTS,
+        out1,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        focus_points=focus_pts,
+        reframe=Reframe.FACE_TRACKED,
+        fps=25.0,
+        plan=plan,
+    )
+    res2 = render_clip(
+        clip,
+        FIXTURE,
+        ass_path,
+        FONTS,
+        out2,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        focus_points=focus_pts,
+        reframe=Reframe.FACE_TRACKED,
+        fps=25.0,
+        plan=plan,
+    )
+    assert out1.is_file() and out2.is_file()
+    assert res1.measured_duration_ms == res2.measured_duration_ms
+    assert (
+        hashlib.sha256(out1.read_bytes()).hexdigest()
+        == hashlib.sha256(out2.read_bytes()).hexdigest()
+    )
+
+
+@needs_ffmpeg
+def test_render_refuses_orphan_asset(tmp_path: Path) -> None:
+    from hawedit.render import ProvenanceViolation
+
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    orphan_logo = tmp_path / "orphan_logo.png"
+    orphan_logo.write_bytes(b"orphan_logo_bytes")
+    kit = BrandKit(logo_path=orphan_logo)
+    with pytest.raises(ProvenanceViolation, match="lacks provenance sidecar"):
+        render_clip(
+            clip,
+            FIXTURE,
+            ass_path,
+            FONTS,
+            tmp_path / "unreached.mp4",
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            brand_kit=kit,
+        )
+
+
+@needs_ffmpeg
+def test_production_profile_rejects_music_bed(tmp_path: Path) -> None:
+    from hawedit.render import ProvenanceViolation
+
+    clip = _clip()
+    ass_path = _write_ass(tmp_path)
+    music = tmp_path / "music.wav"
+    music.write_bytes(b"dummy_music_bytes")
+    prov = tmp_path / "music.wav.provenance.json"
+    prov.write_text(
+        json.dumps({"origin": "test", "sha256": hashlib.sha256(b"dummy_music_bytes").hexdigest()})
+    )
+
+    with pytest.raises(
+        ProvenanceViolation, match="production profile forbids unvetted background music bed"
+    ):
+        render_clip(
+            clip,
+            FIXTURE,
+            ass_path,
+            FONTS,
+            tmp_path / "unreached.mp4",
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            deliverable=True,
+            music_bed_path=music,
+        )

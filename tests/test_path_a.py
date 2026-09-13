@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -357,3 +358,33 @@ def test_the_convenience_function_matches_the_class() -> None:
     api = Api()
     found = discover_verbal(a_transcript(), api_key=KEY, transport=api, sleep=lambda _s: None)
     assert len(found) == 1
+
+
+def test_path_a_k5_voting_records_all_billed_calls() -> None:
+    """B6 & Reality Check Item 8: Billing line count equals K calls, nothing hidden."""
+    api = Api(payload=candidates((0, 1800, 0.9)))
+    path_a = a_path_a(api, k=5)
+    candidates_found = path_a.discover(a_transcript())
+    assert len(candidates_found) == 1
+    # Exactly 5 billed calls were recorded (one for each of the K passes)
+    assert len(path_a.billed_calls) == 5
+    assert all(c.stage == "discovery" for c in path_a.billed_calls)
+
+
+def test_path_a_caches_by_transcript_hash(tmp_path: Path) -> None:
+    """B6 & Reality Check Item 8: Candidates are cached by transcript sha256."""
+    api = Api(payload=candidates((0, 1800, 0.9)))
+    path_a = a_path_a(api, k=3, cache_dir=tmp_path)
+    t = a_transcript()
+    found1 = path_a.discover(t)
+    assert len(found1) == 1
+    assert len(path_a.billed_calls) == 3
+
+    # Second call with new client instance pointing to same cache directory
+    api2 = Api(payload=candidates((0, 1800, 0.9)))
+    path_a2 = a_path_a(api2, k=3, cache_dir=tmp_path)
+    found2 = path_a2.discover(t)
+    assert len(found2) == 1
+    # Zero API calls made because cache hit
+    assert len(path_a2.billed_calls) == 0
+    assert found1[0].span == found2[0].span

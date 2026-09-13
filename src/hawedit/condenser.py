@@ -16,7 +16,8 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Final
 
-from hawedit.sentences import Sentence
+from hawedit.sentences import DANGLING_CONJUNCTIONS_CKB, Sentence
+from hawedit.silence import KURDISH_FILLER_TOKENS
 from hawedit.transcripts import Word
 
 __all__ = [
@@ -31,30 +32,10 @@ __all__ = [
 ]
 
 # Conversational Kurdish filler tokens and hesitation markers that add zero semantic value
-KURDISH_FILLER_TOKENS: Final[frozenset[str]] = frozenset(
-    {
-        "یەعنی",
-        "ئەها",
-        "وەڵا",
-        "وەڵڵا",
-        "دەزانی",
-        "ڕاستییەکەی",
-        "تێدەگەی",
-        "دیارە",
-    }
-)
+KURDISH_FILLER_WORDS: Final[frozenset[str]] = KURDISH_FILLER_TOKENS
 
 # Dangling forward-looking conjunctions that cannot safely terminate a condensed cut
-DANGLING_CONJUNCTIONS: Final[frozenset[str]] = frozenset(
-    {
-        "وە",
-        "چونکە",
-        "بەڵام",
-        "کەچی",
-        "بۆیە",
-        "لەبەر",
-    }
-)
+DANGLING_CONJUNCTIONS: Final[frozenset[str]] = DANGLING_CONJUNCTIONS_CKB
 
 
 class StoryCondensationError(ValueError):

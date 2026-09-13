@@ -73,15 +73,19 @@ _PUNCT_CHARS: Final[str] = " \t\n\r.,!?:؛،؟"
 def _identify_filler_words(
     words: Sequence[Word],
     filler_tokens: Collection[str] | None,
+    *,
+    detect_restarts: bool = True,
 ) -> tuple[list[bool], int]:
-    """Identify filler words in a sequence, handling punctuation and multi-word phrases."""
-    if not words or not filler_tokens:
-        return [False] * len(words), 0
+    """Identify filler words in a sequence, handling punctuation and multi-word phrases.
 
-    norm_fillers = {tok.strip().strip(_PUNCT_CHARS) for tok in filler_tokens if tok.strip()}
+    Also detects false starts (truncated tokens followed by full tokens within 1.5s)
+    and repeated n-grams (repeated phrases within 3s).
+    """
+    if not words:
+        return [], 0
+
+    norm_fillers = {tok.strip().strip(_PUNCT_CHARS) for tok in filler_tokens or () if tok.strip()}
     norm_fillers = {t for t in norm_fillers if t}
-    if not norm_fillers:
-        return [False] * len(words), 0
 
     single_fillers = {t for t in norm_fillers if " " not in t}
     phrase_fillers = [tuple(t.split()) for t in norm_fillers if " " in t]
@@ -95,6 +99,26 @@ def _identify_filler_words(
             if tuple(cleaned_words[i + k] for k in range(p_len)) == phrase:
                 for k in range(p_len):
                     is_filler[i + k] = True
+
+    if detect_restarts and len(words) >= 2:
+        # 1. False-start detection: truncated word prefixed to following word within 1.5s
+        for i in range(len(words) - 1):
+            w1 = cleaned_words[i]
+            w2 = cleaned_words[i + 1]
+            gap_ms = words[i + 1].start_ms - words[i].end_ms
+            if 0 <= gap_ms <= 1500 and len(w1) >= 2 and len(w2) > len(w1) and w2.startswith(w1):
+                is_filler[i] = True
+
+        # 2. Repeated n-gram detection (n=3, 2, 1 within 3s)
+        for n in (3, 2, 1):
+            for i in range(len(words) - 2 * n + 1):
+                chunk1 = tuple(cleaned_words[i : i + n])
+                chunk2 = tuple(cleaned_words[i + n : i + 2 * n])
+                if chunk1 and chunk1 == chunk2 and not any(is_filler[i + k] for k in range(n)):
+                    gap_ms = words[i + n].start_ms - words[i + n - 1].end_ms
+                    if 0 <= gap_ms <= 3000:
+                        for k in range(n):
+                            is_filler[i + k] = True
 
     if all(is_filler):
         is_filler = [False] * len(words)

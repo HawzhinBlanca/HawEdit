@@ -851,6 +851,9 @@ def _make_valid_reconciliation_pair() -> tuple[Clip, ClipMeasurement]:
             median_face_height_share=0.25,
             median_y_center_share=0.38,
             first_frame_face_share=0.25,
+            speaking_samples_count=10,
+            speaking_face_frames_count=10,
+            speaking_face_share=1.0,
         ),
         captions=CaptionMeasurement(
             events_count=2,
@@ -1025,6 +1028,30 @@ def test_delivery_refuses_when_first_frame_lacks_subject() -> None:
     assert exc_info.value.reason == "first_frame_lacks_subject"
 
 
+def test_delivery_refuses_when_speaking_face_share_below_threshold() -> None:
+    from dataclasses import replace
+
+    clip, measurement = _make_valid_reconciliation_pair()
+
+    broken_faces = replace(
+        measurement.faces,
+        speaking_samples_count=100,
+        speaking_face_frames_count=95,
+        speaking_face_share=0.95,
+    )
+    broken_meas = replace(measurement, faces=broken_faces)
+    with pytest.raises(DeliveryRefused, match="speaking_face_share_unsubstantiated") as exc_info:
+        reconcile_delivery(
+            clip,
+            broken_meas,
+            captions_burned_in=True,
+            planned_punch_ins=[(500, 1.25)],
+            source_shot_cuts_ms=[clip.in_ms + 500],
+            for_review=False,
+        )
+    assert exc_info.value.reason == "speaking_face_share_unsubstantiated"
+
+
 def test_delivery_refuses_qc_sha256_mismatch() -> None:
     clip, measurement = _make_valid_reconciliation_pair()
 
@@ -1130,6 +1157,10 @@ def test_approved_candidate_promotes_identical_bytes_without_render(tmp_path: Pa
         meas.to_json(),
         encoding="utf-8",
     )
+    (review_dir / f"{candidate_id}.edit_plan.json").write_text(
+        '{"version": 1}',
+        encoding="utf-8",
+    )
 
     qc_record = QcRecord(
         reviewer="Hawa",
@@ -1145,7 +1176,7 @@ def test_approved_candidate_promotes_identical_bytes_without_render(tmp_path: Pa
         qc_record=qc_record,
         source=source_file,
     )
-    assert len(published) == 6
+    assert len(published) == 7
 
     # Verify public delivery directory exists with identical bytes
     public_dir = tmp_path / candidate_id
@@ -1157,6 +1188,7 @@ def test_approved_candidate_promotes_identical_bytes_without_render(tmp_path: Pa
     assert (public_dir / f"{candidate_id}.srt").is_file()
     assert (public_dir / f"{candidate_id}.edl").is_file()
     assert (public_dir / f"{candidate_id}.measured.json").is_file()
+    assert (public_dir / f"{candidate_id}.edit_plan.json").is_file()
 
     # Verify JSON has approved QC record bound
     published_clip = Clip.from_dict(

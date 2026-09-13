@@ -1325,17 +1325,16 @@ def _judgeable_plans(
     if limit < 1:
         raise ValueError(f"judge_top_n must be at least 1, got {limit}")
     plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
+    seen_spans: set[tuple[int, int]] = set()
     for candidate in sorted(candidates, key=_candidate_priority):
         run = _grown_sentence_run(candidate, sentences, minimum)
         if run and _run_span_ms(run, sentences) >= minimum:
-            # The candidate carries the span it grew into, not the seed it came from. A grown
-            # span is deliberately larger than its seed, so every containment check downstream
-            # — `_candidate_for_judging`, `_rejected_candidates` — would otherwise refuse the
-            # thing this stage just chose. §5 wants one span per candidate; this makes the
-            # grown one that span, and the verdict is then recorded against the footage that
-            # was actually judged rather than against the seed.
             grown = anchors_for(tuple(sentences[index] for index in run))
             assert grown is not None, "every index in a grown run is a complete sentence"
+            span = (grown[0], grown[1])
+            if span in seen_spans:
+                continue
+            seen_spans.add(span)
             plans.append((replace(candidate, in_ms=grown[0], out_ms=grown[1]), run))
         if len(plans) == limit:
             break
@@ -1747,7 +1746,7 @@ def run_pipeline(
     content_type: ContentType | str | None = None,
     silence_threshold_ms: int = 0,
     silence_target_gap_ms: int = 150,
-    excise_fillers: bool = False,
+    excise_fillers: bool = True,
     filler_tokens: Collection[str] | None = None,
     two_person_split: str = "auto",
     brand_kit: BrandKit | None = None,
@@ -2831,6 +2830,7 @@ def run_pipeline(
         final_edl,
         final_json,
         final_measured,
+        final_plan,
     ) = _delivery_artifact_paths(work_dir, clip.clip_id)
 
     # Check if this clip was already rendered as a review candidate and we now have approved QC:
@@ -3188,6 +3188,82 @@ def run_pipeline(
                 avoid_ms=source_cuts,
                 min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
+
+        # B2 & Reality Check Item 6: Every excision cut must coincide with a punch-in framing change
+        if silence_plan is not None and silence_plan.cut_points_ms:
+            punch_map = dict(planned_punch_ins)
+            updated_punches: list[tuple[int, float]] = list(planned_punch_ins)
+            current_scale = 1.0
+            for cut_pt in sorted(silence_plan.cut_points_ms):
+                if cut_pt not in punch_map:
+                    next_scale = 1.15 if current_scale == 1.0 else 1.0
+                    updated_punches.append((cut_pt, next_scale))
+                    current_scale = next_scale
+                else:
+                    current_scale = punch_map[cut_pt]
+            planned_punch_ins = tuple(sorted(updated_punches, key=lambda p: p[0]))
+        fps = frame_rate(source, ffmpeg)
+        retained_intervals: tuple[tuple[int, int], ...] | None = None
+        if silence_plan is not None and silence_plan.total_removed_ms > 0:
+            retained_intervals = tuple(
+                (start + clip.in_ms, end + clip.in_ms)
+                for start, end in silence_plan.retained_intervals_ms
+            )
+
+        brief = EditorialBrief(
+            viewer_takeaway=(
+                effective_clip.output.title_ckb
+                if effective_clip.output
+                else "Kurdish highlight clip"
+            ),
+            content_type=ct_profile.content_type,
+            target_duration_ms=(
+                ct_profile.min_clip_ms,
+                max(ct_profile.min_clip_ms, clip.out_ms - clip.in_ms),
+            ),
+            protected_regions=("lower_third_captions", "speaker_face"),
+        )
+        reframe_str = reframe_mode.value if hasattr(reframe_mode, "value") else str(reframe_mode)
+        config = EffectiveConfiguration.resolve(
+            content_type=ct_profile.content_type,
+            caption_style=resolved_caption_style,
+            reframe_mode=reframe_str,
+            silence_threshold_ms=silence_threshold_ms,
+            silence_target_gap_ms=silence_target_gap_ms,
+            punch_in_cadence_ms=ct_profile.punch_in_cadence_ms,
+            eased_push=eased_push or ct_profile.eased_push,
+            two_person_split="auto",
+            keyword_emphasis=keyword_emphasis,
+            fps=fps,
+        )
+        if silence_plan is not None and silence_plan.total_removed_ms > 0:
+            assert retained_intervals is not None
+            time_mapping = SourceTimeMapping(
+                clip_in_ms=clip.in_ms,
+                clip_out_ms=clip.out_ms,
+                retained_intervals_ms=retained_intervals,
+            )
+        else:
+            time_mapping = SourceTimeMapping.continuous(clip.in_ms, clip.out_ms)
+
+        spk_turns = (
+            tuple((turn.start_ms, turn.end_ms, turn.speaker) for turn in ingested.diarization)
+            if ingested.diarization is not None
+            else ()
+        )
+        visual_edit_plan = VisualEditPlan(
+            version=CURRENT_PLAN_VERSION,
+            clip_id=clip.clip_id,
+            media_id=clip.media_id,
+            media_sha256=clip.media_sha256 or (ingested.source_sha256 or ""),
+            brief=brief,
+            config=config,
+            time_mapping=time_mapping,
+            shot_cuts_ms=tuple(source_cuts),
+            punch_in_ms=tuple(p[0] for p in planned_punch_ins),
+            speaker_turns=spk_turns,
+            sentences=tuple(selected),
+        )
         rendered = render_clip(
             effective_clip,
             source,
@@ -3209,6 +3285,7 @@ def run_pipeline(
             punch_ins=planned_punch_ins,
             reframe=reframe_mode,
             ffmpeg=ffmpeg,
+            fps=fps,
             deliverable=(profile == "production"),
             silence_plan=silence_plan,
             split_crops=split_crops,
@@ -3217,6 +3294,7 @@ def run_pipeline(
             music_ducking_volume=music_ducking_volume,
             for_review=is_review_render,
             assembly_spans=assembly_spans,
+            plan=visual_edit_plan,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
     except (IngestError, RenderError, BundleError, OSError, ValueError, BrandKitError) as exc:
@@ -3290,13 +3368,6 @@ def run_pipeline(
         # The EDL's source timecodes are the *source's* timeline — where this clip was cut
         # from — so it takes the source's own frame rate. NTSC 30000/1001 selects SMPTE
         # drop-frame numbering; unsupported rates land here instead of silently drifting.
-        fps = frame_rate(source, ffmpeg)
-        retained_intervals: tuple[tuple[int, int], ...] | None = None
-        if silence_plan is not None and silence_plan.total_removed_ms > 0:
-            retained_intervals = tuple(
-                (start + clip.in_ms, end + clip.in_ms)
-                for start, end in silence_plan.retained_intervals_ms
-            )
         edl = build_edl(
             clip_in_ms=clip.in_ms,
             clip_out_ms=clip.out_ms,
@@ -3307,6 +3378,7 @@ def run_pipeline(
         bundle.write_text("json", editing_json)
         bundle.write_text("srt", srt)
         bundle.write_text("edl", edl)
+        bundle.write_text("edit_plan.json", visual_edit_plan.to_json())
 
         # Independent Level C reconciliation gate before publication (T1.2 / ADR D-263)
         measurement = measure_clip(render_path, ass_path=ass_path, ffmpeg=ffmpeg)
@@ -3321,66 +3393,31 @@ def run_pipeline(
             for_review=is_review_render,
         )
 
-        brief = EditorialBrief(
-            viewer_takeaway=(
-                effective_clip.output.title_ckb
-                if effective_clip.output
-                else "Kurdish highlight clip"
-            ),
-            content_type=ct_profile.content_type,
-            target_duration_ms=(
-                ct_profile.min_clip_ms,
-                max(ct_profile.min_clip_ms, clip.out_ms - clip.in_ms),
-            ),
-            protected_regions=("lower_third_captions", "speaker_face"),
+        # Stage 6.5 Post-render sequence critique & join verification (B1 / VE-11)
+        from hawedit.render_critic import (
+            RenderedSequenceContext,
+            inspect_rendered_sequence,
         )
-        reframe_str = reframe_mode.value if hasattr(reframe_mode, "value") else str(reframe_mode)
-        config = EffectiveConfiguration.resolve(
-            content_type=ct_profile.content_type,
-            caption_style=resolved_caption_style,
-            reframe_mode=reframe_str,
-            silence_threshold_ms=silence_threshold_ms,
-            silence_target_gap_ms=silence_target_gap_ms,
-            punch_in_cadence_ms=ct_profile.punch_in_cadence_ms,
-            eased_push=eased_push or ct_profile.eased_push,
-            two_person_split="auto",
-            keyword_emphasis=keyword_emphasis,
-            fps=fps,
-        )
-        if silence_plan is not None and silence_plan.total_removed_ms > 0:
-            assert retained_intervals is not None
-            time_mapping = SourceTimeMapping(
-                clip_in_ms=clip.in_ms,
-                clip_out_ms=clip.out_ms,
-                retained_intervals_ms=retained_intervals,
-            )
-        else:
-            time_mapping = SourceTimeMapping.continuous(clip.in_ms, clip.out_ms)
 
-        spk_turns = (
-            tuple((turn.start_ms, turn.end_ms, turn.speaker) for turn in ingested.diarization)
-            if ingested.diarization is not None
-            else ()
-        )
-        visual_edit_plan = VisualEditPlan(
-            version=CURRENT_PLAN_VERSION,
-            clip_id=clip.clip_id,
-            media_id=clip.media_id,
-            media_sha256=clip.media_sha256 or (ingested.source_sha256 or ""),
-            brief=brief,
-            config=config,
-            time_mapping=time_mapping,
-            shot_cuts_ms=tuple(source_cuts),
-            punch_in_ms=tuple(p[0] for p in planned_punch_ins),
-            speaker_turns=spk_turns,
+        critic_context = RenderedSequenceContext(
+            render_path=render_path,
+            duration_ms=int(measurement.video.duration_ms),
+            fps=fps,
+            source_video_path=source,
+            expected_sha256=measurement.file.sha256,
             sentences=tuple(selected),
+            assembly_spans=assembly_spans,
         )
+        critique_result = inspect_rendered_sequence(critic_context, claim_all_clear=True)
+        if critique_result.has_critical_defects:
+            obs = "; ".join(d.observation for d in critique_result.critical_defects)
+            n_defects = len(critique_result.critical_defects)
+            raise DeliveryError(
+                f"Render critic rejected output sequence with {n_defects} critical defect(s): {obs}"
+            )
+
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
         bundle.publish()
-        plan_json_path = work_dir / f"{clip.clip_id}.edit_plan.json"
-        plan_json_str = visual_edit_plan.to_json()
-        with suppress(Exception):
-            plan_json_path.write_text(plan_json_str, encoding="utf-8")
     except (
         DeliveryError,
         UndeliverableOrder,
@@ -3442,7 +3479,7 @@ def run_pipeline(
             edl_path=str(final_edl),
             editing_json_path=str(final_json),
             measured_path=str(final_measured),
-            edit_plan_path=str(plan_json_path),
+            edit_plan_path=str(final_plan),
         ),
         billed_calls=tuple(billed_calls),
     )
@@ -3745,10 +3782,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--excise-fillers",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help=(
             "excise conversational Kurdish filler words ('یەعنی', 'وەڵا', etc.) "
-            "and tighten dead air"
+            "and tighten dead air (default: True)"
         ),
     )
     parser.add_argument(
@@ -4269,7 +4306,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         content_type=getattr(args, "content_type", "podcast"),
         silence_threshold_ms=getattr(args, "silence_threshold_ms", 0),
         silence_target_gap_ms=getattr(args, "silence_target_gap_ms", 150),
-        excise_fillers=getattr(args, "excise_fillers", False),
+        excise_fillers=getattr(args, "excise_fillers", True),
         two_person_split=getattr(args, "two_person_split", "auto"),
         brand_kit=brand_kit,
         caption_style=getattr(args, "caption_style", None),

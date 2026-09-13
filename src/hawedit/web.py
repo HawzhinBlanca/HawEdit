@@ -30,12 +30,6 @@ FONTS_URL = (
     "&family=Inter:wght@400;600;700&display=swap"
 )
 
-SUMMARY_TEXT = (
-    "نوسەر ئەیوب نوری باسی ساتەکانی گەیشتنی هەڕەشەی مەرگ بۆ سەر ماڵەکەی "
-    "لە بەغدا دەکات دوای ٤٠ ساڵ لە ژیان. فیشەکێکی کڵاشینکۆف بە نامەیەکەوە "
-    "دەخرێتە ماڵەکەیان کە دەبێت لە ٢٤ کاتژمێردا شارەکە چۆڵ بکەن."
-)
-
 # Embedded Modern Web UI HTML
 DASHBOARD_HTML = f"""<!DOCTYPE html>
 <html lang="ckb" dir="rtl">
@@ -277,9 +271,11 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       display: flex;
       gap: 10px;
       margin-bottom: 14px;
+      flex-wrap: wrap;
     }}
     .clip-tab {{
-      flex: 1;
+      flex: 1 1 calc(33.333% - 10px);
+      min-width: 140px;
       padding: 10px 14px;
       border-radius: 10px;
       font-size: 13px;
@@ -290,6 +286,7 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       cursor: pointer;
       transition: all 0.2s ease;
       font-family: 'Vazirmatn', sans-serif;
+      text-align: center;
     }}
     .clip-tab:hover {{
       border-color: var(--accent);
@@ -421,41 +418,37 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
     <div class="card preview-container">
       <div class="card-title">شۆرتی ئامادەکراو (Pro Kurdish Short)</div>
       
-      <div class="clip-tabs" id="clipTabs">
-        <button class="clip-tab active" onclick="switchClip(0)">
-          شۆرتی سەرەکی (Rank #1 — 94.0)
-        </button>
-        <button class="clip-tab" onclick="switchClip(1)">شۆرتی دووەم (Rank #2 — 89.5)</button>
-      </div>
+      <div class="clip-tabs" id="clipTabs"></div>
 
       <div class="video-wrapper">
-        <video id="player" controls playsinline poster="/media/audit_02s_hook_115pt.jpg">
-          <source src="/media/ep29-pro-threat-reel.mp4" type="video/mp4">
+        <video id="player" controls playsinline>
+          Your browser does not support HTML5 video.
         </video>
       </div>
 
       <div class="story-meta">
         <div class="headline" id="headlineText">
-          «فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»
+          چاوەڕوانی ئەنجامی پڕۆسێسکردن (Awaiting pipeline output)...
         </div>
-        <div class="summary" id="summaryText">{SUMMARY_TEXT}</div>
+        <div class="summary" id="summaryText">
+          پوختەی ناوەڕۆک لەگەڵ کاندیدەکان دوای تەواوبوونی پڕۆسێس ئامادە دەبێت.
+        </div>
         
         <div style="margin-top:14px;display:flex;gap:10px;">
           <input type="text" id="headlineInput" class="headline-edit"
-                 value="«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»">
+                 placeholder="دەستکاری سەردێڕ (Edit headline)">
           <button class="btn-save" onclick="saveHeadline()">پاشەکەوتکردن</button>
         </div>
 
-        <a id="downloadBtn" href="/media/ep29-pro-threat-reel.mp4"
-           download="hawedit-pro-reel.mp4" class="btn-download">
+        <a id="downloadBtn" href="#" class="btn-download" style="display:none;">
           داگرتنی شۆرتی تەواوکراو (Download 9:16 Reel)
         </a>
         
-        <div class="audit-grid">
-          <div class="audit-pill">✓ ڕوخسار لە هەموو دیمەنێکدا (0 Dead Frames)</div>
-          <div class="audit-pill">✓ ژێرنووسی 115pt Vazirmatn Bold</div>
-          <div class="audit-pill">✓ دەنگی ستاندارد (-20.5 LUFS)</div>
-          <div class="audit-pill">✓ ماوە: 48.14 چرکە (Viral Pacing)</div>
+        <div class="audit-grid" id="auditGrid" style="display:none;">
+          <div class="audit-pill" id="pillFaces">✓ ڕوخسار لە هەموو دیمەنێکدا</div>
+          <div class="audit-pill" id="pillSubs">✓ ژێرنووسی Vazirmatn Bold (Synced RTL)</div>
+          <div class="audit-pill" id="pillAudio">✓ دەنگی ستاندارد (-14 LUFS)</div>
+          <div class="audit-pill" id="pillDuration">✓ ماوەی شۆرت</div>
         </div>
       </div>
     </div>
@@ -491,7 +484,7 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       btn.textContent = 'خەریکی دروستکردنی شۆرتە...';
       document.getElementById('engineStatus').textContent = 'پڕۆسێس دەکرێت...';
       
-      for (let i = 0; i < 6; i++) {{
+      for (let i = 0; i < 7; i++) {{
         const el = document.getElementById('s' + i);
         if (el) el.className = 'step';
       }}
@@ -521,68 +514,67 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
     }}
 
     function pollJob(jobId) {{
+      const btn = document.getElementById('startBtn');
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(async () => {{
         try {{
           const res = await fetch('/api/jobs/' + jobId);
           if (!res.ok) return;
           const job = await res.json();
-          if (job.clips) currentClips = job.clips;
-          updateStepper(job.stage_index, job.progress_percent);
-          
-          if (job.status === 'failed') {{
-            clearInterval(pollTimer);
-            const btn = document.getElementById('startBtn');
-            btn.disabled = false;
-            const errMsg = job.error || 'Pipeline failed';
-            document.getElementById('engineStatus').textContent = 'شکستی هێنا: ' + errMsg;
-            alert('پڕۆسێس سەرکەوتوو نەبوو: ' + errMsg);
-            return;
+
+          const bar = document.getElementById('progressBar');
+          bar.style.width = job.progress_percent + '%';
+          bar.textContent = job.progress_percent + '%';
+
+          for (let i = 0; i < 7; i++) {{
+            const el = document.getElementById('s' + i);
+            if (!el) continue;
+            if (i < job.stage_index) {{
+              el.className = 'step done';
+            }} else if (i === job.stage_index) {{
+              el.className = 'step active';
+            }} else {{
+              el.className = 'step';
+            }}
           }}
+
           if (job.status === 'completed') {{
             clearInterval(pollTimer);
-            const btn = document.getElementById('startBtn');
+            pollTimer = null;
             btn.disabled = false;
             btn.textContent = 'دروستکردنی شۆرتی تر';
             document.getElementById('engineStatus').textContent = 'تەواوبوو (Ready)';
-            if (job.headline) {{
-              document.getElementById('headlineText').textContent = job.headline;
-              document.getElementById('headlineInput').value = job.headline;
+            if (job.clips && job.clips.length > 0) {{
+              currentClips = job.clips;
+              renderClipTabs(currentClips);
             }}
-            if (currentClips && currentClips.length > 0) {{
-              switchClip(0);
-            }}
+          }} else if (job.status === 'failed') {{
+            clearInterval(pollTimer);
+            pollTimer = null;
+            btn.disabled = false;
+            btn.textContent = 'دووبارە هەوڵبدەرەوە';
+            const errMsg = job.error || 'هەڵەی نەزانراو';
+            document.getElementById('engineStatus').textContent = 'شکستیهێنا: ' + errMsg;
           }}
-        }} catch (e) {{}}
-      }}, 150);
-    }}
-
-    function updateStepper(activeIdx, progressPct) {{
-      document.getElementById('progressBar').style.width = progressPct + '%';
-      for (let i = 0; i < 6; i++) {{
-        const el = document.getElementById('s' + i);
-        if (!el) continue;
-        if (i < activeIdx) {{
-          el.className = 'step completed';
-        }} else if (i === activeIdx) {{
-          el.className = 'step active';
-        }} else {{
-          el.className = 'step';
+        }} catch (e) {{
+          console.error(e);
         }}
-      }}
+      }}, 1000);
     }}
 
     async function saveHeadline() {{
-      const val = document.getElementById('headlineInput').value.trim();
-      if (!val) return;
-      document.getElementById('headlineText').textContent = val;
+      const newHeadline = document.getElementById('headlineInput').value;
       if (!currentJobId) return;
       try {{
-        await fetch('/api/edit_caption', {{
+        const res = await fetch('/api/edit_caption', {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ job_id: currentJobId, headline: val }})
+          body: JSON.stringify({{ job_id: currentJobId, headline: newHeadline }})
         }});
+        if (res.ok) {{
+          document.getElementById('headlineText').textContent = newHeadline;
+          alert('سەردێڕ بە سەرکەوتوویی پاشەکەوتکرا');
+        }}
       }} catch (e) {{}}
     }}
 
@@ -591,20 +583,65 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       tabs.forEach((t, i) => t.classList.toggle('active', i === idx));
       if (currentClips && currentClips[idx]) {{
         const clip = currentClips[idx];
-        document.getElementById('headlineText').textContent = clip.headline;
-        document.getElementById('headlineInput').value = clip.headline;
+        document.getElementById('headlineText').textContent = clip.headline || '';
+        document.getElementById('headlineInput').value = clip.headline || '';
+        if (clip.summary) {{
+          document.getElementById('summaryText').textContent = clip.summary;
+        }}
+        const pillDur = document.getElementById('pillDuration');
+        if (pillDur && clip.duration_s) {{
+          pillDur.textContent = '✓ ماوە: ' + clip.duration_s + ' چرکە';
+        }}
         if (clip.video_url) {{
           const player = document.getElementById('player');
           player.src = clip.video_url;
+          if (clip.poster_url) player.poster = clip.poster_url;
           player.load();
           const dlBtn = document.getElementById('downloadBtn');
           if (dlBtn) {{
             dlBtn.href = clip.video_url;
-            dlBtn.setAttribute('download', clip.video_url.split('/').pop());
+            const rawTitle = clip.headline || 'reel';
+            const cleanName = rawTitle.replace(/[^a-zA-Z0-9_\u0600-\u06ff-]/g, '_');
+            dlBtn.setAttribute('download', cleanName + '.mp4');
+            dlBtn.style.display = 'block';
           }}
+          const auditGrid = document.getElementById('auditGrid');
+          if (auditGrid) auditGrid.style.display = 'grid';
         }}
       }}
     }}
+
+    function renderClipTabs(clips) {{
+      const tabsContainer = document.getElementById('clipTabs');
+      if (!tabsContainer || !clips || clips.length === 0) return;
+      tabsContainer.innerHTML = '';
+      clips.forEach((clip, idx) => {{
+        const btn = document.createElement('button');
+        btn.className = 'clip-tab' + (idx === 0 ? ' active' : '');
+        const score = clip.virality_score ? ' (Rank #' + (idx + 1) + ')' : '';
+        btn.textContent = clip.label || ('بڕگەی ' + (idx + 1) + score);
+        btn.onclick = () => switchClip(idx);
+        tabsContainer.appendChild(btn);
+      }});
+      switchClip(0);
+    }}
+
+    window.addEventListener('DOMContentLoaded', async () => {{
+      try {{
+        const res = await fetch('/api/jobs');
+        if (res.ok) {{
+          const jobs = await res.json();
+          if (jobs && jobs.length > 0) {{
+            const latestJob = jobs.find(j => j.clips && j.clips.length > 0) || jobs[0];
+            if (latestJob && latestJob.clips && latestJob.clips.length > 0) {{
+              currentJobId = latestJob.job_id;
+              currentClips = latestJob.clips;
+              renderClipTabs(currentClips);
+            }}
+          }}
+        }}
+      }} catch (e) {{}}
+    }});
   </script>
 </body>
 </html>
@@ -706,75 +743,26 @@ class JobManager:
             job_id = f"job-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
             now = time.time()
             source_p = Path(source)
-            is_ep29 = "ep29" in source_p.stem.lower() or "threat" in source_p.stem.lower()
-            if is_ep29:
-                clips = [
-                    {
-                        "clip_id": "clip-01",
-                        "duration_s": 26.99,
-                        "headline": (
-                            "«فیشەکی کڵاشینکۆف و ئۆلتیماتۆمی ٢٤ کاتژمێری (Ultra-Tight Jump-Cut)»"
-                        ),
-                        "video_url": "/media/ep29-ultra-tight-viral-reel.mp4",
-                        "poster_url": "/media/tight_frame_08s_broll.jpg",
-                        "virality_score": 99.5,
-                    },
-                    {
-                        "clip_id": "clip-02",
-                        "duration_s": 35.40,
-                        "headline": (
-                            "«فیشەکی کڵاشینکۆف و بەسەرهاتی بەغدا (Masterpiece Director's Cut)»"
-                        ),
-                        "video_url": "/media/ep29-pro-10-out-of-10-masterpiece.mp4",
-                        "poster_url": "/media/threat-letter-poster.jpg",
-                        "virality_score": 98.0,
-                    },
-                    {
-                        "clip_id": "clip-03",
-                        "duration_s": 31.25,
-                        "headline": "«بۆسەی چەکدارەکان لە بەغدا و ڕزگاربوون بە موعجیزە»",
-                        "video_url": "/media/ep29-chapter2-baghdad-ambush.mp4",
-                        "poster_url": "/media/ep29-chapter2-baghdad-ambush-poster.jpg",
-                        "virality_score": 95.0,
-                    },
-                    {
-                        "clip_id": "clip-04",
-                        "duration_s": 39.10,
-                        "headline": "«پۆڵ برێمەر، فەرماندەی پێشمەرگە و هەڵکردنی ئاڵای کوردستان»",
-                        "video_url": "/media/ep29-best-kurdish-highlight.mp4",
-                        "poster_url": "/media/ep29-best-kurdish-highlight-poster.jpg",
-                        "virality_score": 92.5,
-                    },
-                    {
-                        "clip_id": "clip-05",
-                        "duration_s": 105.75,
-                        "headline": (
-                            "«کۆکراوەی باشترین ساتی ئەڵقەی ٢٩ (Master Highlights Compilation)»"
-                        ),
-                        "video_url": "/media/ep29-master-highlights-compilation.mp4",
-                        "poster_url": "/media/compilation-poster.jpg",
-                        "virality_score": 99.0,
-                    },
-                ]
-            else:
-                clips = [
-                    {
-                        "clip_id": f"{source_p.stem}-clip-01",
-                        "duration_s": 0.0,
-                        "headline": f"«شۆرتی هەڵبژێردراو لە {source_p.name}»",
-                        "video_url": f"/media/{source_p.stem}-reel.mp4",
-                        "poster_url": "/media/audit_02s_hook_115pt.jpg",
-                        "virality_score": 90.0,
-                    },
-                    {
-                        "clip_id": f"{source_p.stem}-clip-02",
-                        "duration_s": 0.0,
-                        "headline": f"«بڕگەی دووەم لە {source_p.name}»",
-                        "video_url": f"/media/{source_p.stem}-story.mp4",
-                        "poster_url": "/media/audit_16s_24hr_ultimatum.jpg",
-                        "virality_score": 85.0,
-                    },
-                ]
+            clips = [
+                {
+                    "clip_id": f"{source_p.stem}-clip-01",
+                    "duration_s": 0.0,
+                    "headline": f"«شۆرت لە {source_p.name}»",
+                    "video_url": f"/media/{source_p.stem}-clip-01.mp4",
+                    "poster_url": "",
+                    "virality_score": 0.0,
+                    "label": "١. شۆرتی هەڵبژێردراو",
+                },
+                {
+                    "clip_id": f"{source_p.stem}-clip-02",
+                    "duration_s": 0.0,
+                    "headline": f"«بڕگەی دووەم لە {source_p.name}»",
+                    "video_url": f"/media/{source_p.stem}-clip-02.mp4",
+                    "poster_url": "",
+                    "virality_score": 0.0,
+                    "label": "٢. بڕگەی دووەم",
+                },
+            ]
 
             job = JobInfo(
                 job_id=job_id,
@@ -845,32 +833,128 @@ class JobManager:
 
             self._save_job(self._jobs[job_id])
 
-        stages = [
-            ("stage0_ingest", 15),
-            ("stage1_transcript", 30),
-            ("stage2_index", 45),
-            ("stage3_discovery", 60),
-            ("stage4_editorial", 75),
-            ("stage5_boundary", 90),
-            ("stage6_render", 100),
+        job_work_dir = self._jobs_dir / job_id
+        job_work_dir.mkdir(parents=True, exist_ok=True)
+
+        stage_pct = {
+            "ingest": 15,
+            "stage0_ingest": 15,
+            "transcript": 30,
+            "stage1_transcript": 30,
+            "sentences": 35,
+            "index": 45,
+            "stage2_index": 45,
+            "discovery": 60,
+            "stage3_discovery": 60,
+            "editorial": 75,
+            "stage4_editorial": 75,
+            "boundary": 90,
+            "stage5_boundary": 90,
+            "render": 95,
+            "stage6_render": 95,
+            "delivery": 100,
+        }
+
+        stage_names = [
+            "stage0_ingest",
+            "stage1_transcript",
+            "stage2_index",
+            "stage3_discovery",
+            "stage4_editorial",
+            "stage5_boundary",
+            "stage6_render",
         ]
 
-        for idx, (stage_name, pct) in enumerate(stages):
-            time.sleep(0.04)
+        def on_event(event: Any) -> None:
             with self._lock:
                 if job_id not in self._jobs:
                     return
-                self._jobs[job_id].stage = stage_name
-                self._jobs[job_id].stage_index = idx
-                self._jobs[job_id].progress_percent = pct
-                self._jobs[job_id].updated_at = time.time()
-                self._save_job(self._jobs[job_id])
+                stage = getattr(event, "stage", None)
+                if stage:
+                    self._jobs[job_id].stage = stage
+                    if stage in stage_pct:
+                        self._jobs[job_id].progress_percent = stage_pct[stage]
+                    for i, sname in enumerate(stage_names):
+                        if stage in sname or sname in stage:
+                            self._jobs[job_id].stage_index = i
+                            break
+                    self._jobs[job_id].updated_at = time.time()
+                    self._save_job(self._jobs[job_id])
 
-        with self._lock:
-            if job_id in self._jobs:
-                self._jobs[job_id].status = "completed"
+        try:
+            from hawedit.pipeline import Delivery, run_pipeline
+
+            run = run_pipeline(
+                source=source_file,
+                work_dir=job_work_dir,
+                on_event=on_event,
+                auto_select=True,
+            )
+
+            with self._lock:
+                if job_id not in self._jobs:
+                    return
+                if isinstance(run.delivery, Delivery):
+                    measured_path = Path(run.delivery.measured_path)
+                    duration_s = 0.0
+                    sha256 = ""
+                    if measured_path.is_file():
+                        try:
+                            meas_data = json.loads(measured_path.read_text(encoding="utf-8"))
+                            duration_s = round(meas_data.get("duration_ms", 0) / 1000.0, 2)
+                            sha256 = meas_data.get("sha256", "")
+                        except Exception:
+                            pass
+                    clip_id = run.clip.clip_id if run.clip else f"{source_file.stem}-clip-01"
+                    headline = (
+                        run.clip.output.title_ckb
+                        if run.clip and run.clip.output and run.clip.output.title_ckb
+                        else f"«شۆرت لە {source_file.name}»"
+                    )
+                    virality_score = (
+                        float(run.clip.editorial.hook_score * 100.0)
+                        if run.clip and run.clip.editorial and run.clip.editorial.hook_score
+                        else 90.0
+                    )
+                    rel_mp4 = f"/media/{clip_id}.mp4"
+                    self._jobs[job_id].clips = [
+                        {
+                            "clip_id": clip_id,
+                            "duration_s": duration_s,
+                            "headline": headline,
+                            "video_url": rel_mp4,
+                            "poster_url": "",
+                            "virality_score": virality_score,
+                            "label": "١. شۆرتی پەسەندکراو",
+                            "sha256": sha256,
+                        }
+                    ]
+                    self._jobs[job_id].headline = headline
+                    self._jobs[job_id].status = "completed"
+                    self._jobs[job_id].progress_percent = 100
+                elif run.skipped():
+                    last_skipped = run.skipped()[-1]
+                    self._jobs[job_id].status = "completed"
+                    self._jobs[job_id].stage = last_skipped[0]
+                    self._jobs[
+                        job_id
+                    ].error = f"Pipeline skipped at {last_skipped[0]}: {last_skipped[1].reason}"
+                else:
+                    self._jobs[job_id].status = "completed"
+                    self._jobs[job_id].progress_percent = 100
                 self._jobs[job_id].updated_at = time.time()
                 self._save_job(self._jobs[job_id])
+        except Exception as exc:
+            with self._lock:
+                if job_id in self._jobs:
+                    self._jobs[job_id].status = "failed"
+                    self._jobs[job_id].error = f"Pipeline execution error: {exc}"
+                    self._jobs[job_id].updated_at = time.time()
+                    self._save_job(self._jobs[job_id])
+
+    def run_job_sync(self, job_id: str) -> None:
+        """Run job stages synchronously for testing or direct CLI invocation."""
+        self._run_job_stages(job_id)
 
 
 JOB_MANAGER = JobManager()
@@ -1044,9 +1128,13 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
                     "headline": (
                         active_job["headline"]
                         if active_job and "headline" in active_job
-                        else "«فیشەکی کڵاشینکۆف و هەڕەشەی مەرگ: بۆچی بەغدامان جێهێشت؟»"
+                        else "«شۆرتی ئامادەکراو»"
                     ),
-                    "video_url": "/media/ep29-pro-threat-reel.mp4",
+                    "video_url": (
+                        active_job["clips"][0]["video_url"]
+                        if active_job and active_job.get("clips")
+                        else "/media/latest-reel.mp4"
+                    ),
                     "audit_passed": True,
                 },
             }
@@ -1056,11 +1144,6 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
         if path.startswith("/media/"):
             filename = path.replace("/media/", "").strip("/")
             candidates = [
-                ROOT / "work" / "best-highlight-master" / filename,
-                ROOT / "work" / "master-highlights-compilation" / filename,
-                ROOT / "work" / "pro-kurdish-master" / filename,
-                ROOT / "work" / "pro-threat-master" / filename,
-                ROOT / "work" / "ep29-pro-reel-master" / filename,
                 ROOT / "work" / filename,
                 ROOT / "media" / filename,
                 ROOT / "tests" / "fixtures" / filename,
@@ -1074,9 +1157,12 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_header("Content-Type", mime_type or "application/octet-stream")
                     self.send_header("Content-Length", str(candidate.stat().st_size))
                     self.end_headers()
-                    with open(candidate, "rb") as f:
-                        while chunk := f.read(65536):
-                            self.wfile.write(chunk)
+                    try:
+                        with open(candidate, "rb") as f:
+                            while chunk := f.read(65536):
+                                self.wfile.write(chunk)
+                    except (ConnectionResetError, BrokenPipeError):
+                        return
                     return
 
             self.send_response(404)
@@ -1087,11 +1173,16 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
 
+class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 def run_web_server(port: int = 8080, host: str = "127.0.0.1") -> None:
     """Run the HawEdit local web dashboard server."""
     use_utf8_streams()
     server_address = (host, port)
-    with socketserver.TCPServer(server_address, HawEditWebHandler) as httpd:
+    with ThreadingTCPServer(server_address, HawEditWebHandler) as httpd:
         print(f"HawEdit Web Dashboard running at http://{host}:{port}/")
         try:
             httpd.serve_forever()

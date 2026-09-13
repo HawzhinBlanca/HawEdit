@@ -61,6 +61,7 @@ __all__ = [
     "MergedCandidate",
     "merge_candidates",
     "to_retrieved",
+    "vote_candidate_spans",
 ]
 
 
@@ -295,4 +296,104 @@ def to_retrieved(merged: Sequence[MergedCandidate]) -> tuple[RetrievedCandidate,
             rank=min(r for r in (candidate.verbal_rank, candidate.visual_rank) if r is not None),
         )
         for candidate in merged
+    )
+
+
+def vote_candidate_spans(
+    runs: Sequence[Sequence[Candidate]],
+    *,
+    iou_match: float = 0.60,
+    min_votes: int = 2,
+    media_id: str = "",
+) -> tuple[Candidate, ...]:
+    """Span voting across K independent discovery passes (Item 8 / Claim D6).
+
+    Clusters candidate spans across K passes using temporal IoU >= iou_match.
+    Retains clusters that receive >= min_votes.
+    Dedupes by span, returning surviving candidates ranked by (vote_count desc, score desc).
+    """
+    iou_match = _validate_iou_match(iou_match)
+    if not runs:
+        return ()
+
+    if len(runs) == 1 and min_votes <= 1:
+        return tuple(runs[0])
+
+    tagged: list[tuple[int, Candidate]] = []
+    for run_idx, run in enumerate(runs):
+        for c in run:
+            tagged.append((run_idx, c))
+
+    if not tagged:
+        return ()
+
+    resolved_media_id = media_id or tagged[0][1].media_id
+
+    # Sort tagged candidates by score descending, then start time
+    tagged.sort(
+        key=lambda item: (
+            -(item[1].score if item[1].score is not None else 0.0),
+            item[1].in_ms,
+        )
+    )
+
+    # Cluster by span IoU >= iou_match
+    clusters: list[dict[str, Any]] = []
+    for run_idx, cand in tagged:
+        matched_cluster: dict[str, Any] | None = None
+        for cluster in clusters:
+            if cand.media_id == cluster["media_id"] and (
+                temporal_iou(cand.span, cluster["anchor_span"]) >= iou_match
+            ):
+                matched_cluster = cluster
+                break
+
+        if matched_cluster is not None:
+            matched_cluster["candidates"].append(cand)
+            matched_cluster["run_indices"].add(run_idx)
+        else:
+            clusters.append(
+                {
+                    "anchor_span": cand.span,
+                    "anchor_candidate": cand,
+                    "media_id": cand.media_id,
+                    "candidates": [cand],
+                    "run_indices": {run_idx},
+                }
+            )
+
+    # Filter clusters by min_votes and dedupe by span
+    surviving_clusters: list[dict[str, Any]] = []
+    for cluster in clusters:
+        votes = len(cluster["run_indices"])
+        if votes >= min_votes:
+            duplicate = any(
+                temporal_iou(cluster["anchor_span"], sc["anchor_span"]) >= iou_match
+                for sc in surviving_clusters
+            )
+            if not duplicate:
+                scores = [c.score for c in cluster["candidates"] if c.score is not None]
+                avg = (
+                    sum(scores) / len(scores)
+                    if scores
+                    else (cluster["anchor_candidate"].score or 0.0)
+                )
+                cluster["avg_score"] = avg
+                cluster["votes"] = votes
+                surviving_clusters.append(cluster)
+
+    # Sort surviving clusters by votes descending, then avg_score descending, then start time
+    surviving_clusters.sort(key=lambda c: (-c["votes"], -c["avg_score"], c["anchor_span"][0]))
+
+    return tuple(
+        Candidate(
+            candidate_id=f"{resolved_media_id}-verbal-{pos}",
+            media_id=resolved_media_id,
+            in_ms=cl["anchor_span"][0],
+            out_ms=cl["anchor_span"][1],
+            path=DiscoveryPath.VERBAL,
+            rank=pos,
+            score=round(float(cl["avg_score"]), 4),
+        )
+        for pos, cl in enumerate(surviving_clusters, start=1)
     )

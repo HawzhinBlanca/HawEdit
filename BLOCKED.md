@@ -1214,3 +1214,23 @@ rebound digest only after the branch lands.
 **What this blocks:** nothing mechanically — the gate is green on `harden` (run 32222939171,
 41 commits, clean runner). It blocks the *claim* that the WSL ASR security posture is reviewed.
 `expires` is 2026-09-08, so the question is forced within twenty days regardless.
+
+---
+
+## #25 · Editorial gold set, H7 blind evaluation panel, and GPU runner registration — needs Hawa
+
+Tracked under Items 9, 10, and 11 of Reality Check (2026-09-13):
+
+1. **Editorial Gold Set (Item 9):** Commissioning 20 Kurdish broadcast/podcast episodes cut
+   by a professional Kurdish editor with timestamps and rationale, plus 200 clip pairs rated
+   by 20 native viewers. This is required to fit the tournament ranker weights and report
+   held-out AUC rather than hardcoded heuristics. Only Hawa can commission this human set.
+2. **H7 Blind Evaluation Panel (Item 10):** A randomized, double-blind human rating panel
+   comparing HawEdit output against professional human cuts. Until the lower bound of the
+   measured win-rate confidence interval passes 50%, no claims of "better" or "superior"
+   may appear in docs, commits, or dashboard copy.
+3. **GPU Runner Registration & Live Cloud Secrets (Item 11):** Registration of hawapc01 as a
+   self-hosted GitHub Actions runner with GPU pass-through, plus provision of `GEMINI_API_KEY`
+   (Blocker #3) and `HF_TOKEN` for PyAnnote diarization (Blocker #4), allowing real-media
+   end-to-end runs without mock fallbacks in CI.
+

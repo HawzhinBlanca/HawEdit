@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from hawedit.caption_layout import CaptionLayoutPlan
+from hawedit.sentences import Sentence
 from hawedit.shot_plan import (
     PlannedShot,
     ProtectedRegionKind,
@@ -69,6 +70,9 @@ class DefectKind(str, Enum):
     UNREADABLE_MEDIA = "unreadable_media"
     DURATION_MISMATCH = "duration_mismatch"
     ALL_BLACK_OR_SILENT = "all_black_or_silent"
+    DANGLING_CONJUNCTION = "dangling_conjunction"
+    MID_CLAUSE_ENTRY = "mid_clause_entry"
+    MISLEADING_JOIN = "misleading_join"
 
 
 class PermittedRepair(str, Enum):
@@ -185,6 +189,9 @@ class RenderedSequenceContext:
     landing_beat_ms: int | None = None
     setup_boundary_ms: int | None = None
     expected_sha256: str | None = None
+    sentences: tuple[Sentence, ...] = ()
+    assembly_spans: tuple[Any, ...] | None = None
+    llm_critique_verdict: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if type(self.duration_ms) is not int or self.duration_ms <= 0:
@@ -772,6 +779,165 @@ def inspect_rendered_sequence(
                 confidence=0.97,
             )
         )
+
+    # 8. Check sentence / span boundaries for dangling conjunctions and mid-clause entry
+    from hawedit.sentences import _is_dangling_fragment
+
+    mid_clause_starters = frozenset(
+        {
+            "چونکە",
+            "چونكە",
+            "وە",
+            "یان",
+            "بەڵام",
+            "کە",
+            "كە",
+            "هەرچەندە",
+            "لەبەرئەوەی",
+            "لەبەر",
+            "هەروەها",
+            "بۆیە",
+            "کەچی",
+            "كەچی",
+            "ئەگەر",
+        }
+    )
+
+    if sequence.assembly_spans:
+        for span in sequence.assembly_spans:
+            sents = getattr(span, "sentences", ())
+            if sents:
+                first_sent = sents[0]
+                last_sent = sents[-1]
+                s_idx = getattr(span, "span_index", 0)
+                t_in = getattr(span, "source_in_ms", 0)
+                t_out = getattr(span, "source_out_ms", sequence.duration_ms)
+                if not first_sent.complete:
+                    defects.append(
+                        RenderDefect(
+                            defect_id=f"def_mid_clause_span_{s_idx}",
+                            timestamp_ms=t_in,
+                            end_timestamp_ms=t_out,
+                            severity=DefectSeverity.CRITICAL,
+                            defect_kind=DefectKind.MID_CLAUSE_ENTRY,
+                            observation=(
+                                f"Span {s_idx} enters mid-clause: "
+                                f"first sentence {first_sent.text!r} is incomplete"
+                            ),
+                            source_reference="span_entry",
+                            permitted_repair=PermittedRepair.EXPAND_BOUNDARY,
+                            confidence=0.99,
+                        )
+                    )
+                elif first_sent.words:
+                    first_tok = first_sent.words[0].w.strip().rstrip(".,،!؟?؛;:")
+                    if first_tok in mid_clause_starters:
+                        defects.append(
+                            RenderDefect(
+                                defect_id=f"def_mid_clause_starter_{s_idx}",
+                                timestamp_ms=t_in,
+                                end_timestamp_ms=t_out,
+                                severity=DefectSeverity.CRITICAL,
+                                defect_kind=DefectKind.MID_CLAUSE_ENTRY,
+                                observation=(
+                                    f"Span {s_idx} begins with dependent starter {first_tok!r}"
+                                ),
+                                source_reference="span_entry",
+                                permitted_repair=PermittedRepair.EXPAND_BOUNDARY,
+                                confidence=0.99,
+                            )
+                        )
+                if not last_sent.complete or _is_dangling_fragment(last_sent.words):
+                    last_tok = last_sent.words[-1].w if last_sent.words else ""
+                    defects.append(
+                        RenderDefect(
+                            defect_id=f"def_dangling_conjunction_span_{s_idx}",
+                            timestamp_ms=t_in,
+                            end_timestamp_ms=t_out,
+                            severity=DefectSeverity.CRITICAL,
+                            defect_kind=DefectKind.DANGLING_CONJUNCTION,
+                            observation=(
+                                f"Span {s_idx} ends with dangling conjunction: {last_tok!r}"
+                            ),
+                            source_reference="span_exit",
+                            permitted_repair=PermittedRepair.NONE,
+                            confidence=1.0,
+                        )
+                    )
+    elif sequence.sentences:
+        first_sent = sequence.sentences[0]
+        last_sent = sequence.sentences[-1]
+        if not first_sent.complete:
+            defects.append(
+                RenderDefect(
+                    defect_id="def_mid_clause_entry_first_sentence",
+                    timestamp_ms=0,
+                    end_timestamp_ms=min(3000, sequence.duration_ms),
+                    severity=DefectSeverity.CRITICAL,
+                    defect_kind=DefectKind.MID_CLAUSE_ENTRY,
+                    observation=(
+                        f"Sequence enters mid-clause: "
+                        f"first sentence {first_sent.text!r} is incomplete"
+                    ),
+                    source_reference="sentence_entry",
+                    permitted_repair=PermittedRepair.EXPAND_BOUNDARY,
+                    confidence=0.99,
+                )
+            )
+        elif first_sent.words:
+            first_tok = first_sent.words[0].w.strip().rstrip(".,،!؟?؛;:")
+            if first_tok in mid_clause_starters:
+                defects.append(
+                    RenderDefect(
+                        defect_id="def_mid_clause_starter_first_sentence",
+                        timestamp_ms=0,
+                        end_timestamp_ms=min(3000, sequence.duration_ms),
+                        severity=DefectSeverity.CRITICAL,
+                        defect_kind=DefectKind.MID_CLAUSE_ENTRY,
+                        observation=f"Sequence begins with dependent clause starter {first_tok!r}",
+                        source_reference="sentence_entry",
+                        permitted_repair=PermittedRepair.EXPAND_BOUNDARY,
+                        confidence=0.99,
+                    )
+                )
+        if not last_sent.complete or _is_dangling_fragment(last_sent.words):
+            last_tok = last_sent.words[-1].w if last_sent.words else ""
+            defects.append(
+                RenderDefect(
+                    defect_id="def_dangling_conjunction_last_sentence",
+                    timestamp_ms=max(0, sequence.duration_ms - 1500),
+                    end_timestamp_ms=sequence.duration_ms,
+                    severity=DefectSeverity.CRITICAL,
+                    defect_kind=DefectKind.DANGLING_CONJUNCTION,
+                    observation=f"Sequence terminates on dangling conjunction: {last_tok!r}",
+                    source_reference="sentence_exit",
+                    permitted_repair=PermittedRepair.NONE,
+                    confidence=1.0,
+                )
+            )
+
+    # 9. Check LLM critique verdict
+    if sequence.llm_critique_verdict:
+        verdict = sequence.llm_critique_verdict
+        stands_alone = verdict.get("stands_alone", True)
+        misleading = verdict.get("is_misleading", False) or verdict.get("misleading_join", False)
+        reason = str(
+            verdict.get("reason", "LLM critique flagged misleading or incomplete narrative join")
+        )
+        if not stands_alone or misleading:
+            defects.append(
+                RenderDefect(
+                    defect_id="def_llm_critic_misleading_join",
+                    timestamp_ms=0,
+                    end_timestamp_ms=sequence.duration_ms,
+                    severity=DefectSeverity.CRITICAL,
+                    defect_kind=DefectKind.MISLEADING_JOIN,
+                    observation=f"Editorial critic rejected narrative join: {reason}",
+                    source_reference="llm_script_critic",
+                    permitted_repair=PermittedRepair.NONE,
+                    confidence=0.95,
+                )
+            )
 
     # Remove duplicates by defect_id
     unique_defects: dict[str, RenderDefect] = {}

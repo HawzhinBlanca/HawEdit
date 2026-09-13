@@ -12,7 +12,7 @@ import pytest
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleAlreadyExists, BundleError
 
-SUFFIXES = ("ass", "mp4", "srt", "edl", "json", "measured.json")
+SUFFIXES = ("ass", "mp4", "srt", "edl", "json", "measured.json", "edit_plan.json")
 
 
 def stage_complete(bundle: ArtifactBundle, marker: str = "one") -> None:
@@ -255,3 +255,25 @@ def test_cleanup_refuses_to_recurse_into_unexpected_content(tmp_path: Path) -> N
 def test_bundle_ids_are_cross_platform_path_safe(tmp_path: Path, unsafe: str) -> None:
     with pytest.raises(ValueError, match="media_id"):
         ArtifactBundle.create(tmp_path, unsafe)
+
+
+def test_publish_refuses_bundle_without_edit_plan(tmp_path: Path) -> None:
+    """Proof for A3: Deleting edit_plan.json in staging causes publish to fail.
+
+    No mp4 is published when edit_plan.json is missing.
+    """
+    bundle = ArtifactBundle.create(tmp_path, "no-plan-clip")
+    stage_complete(bundle)
+
+    # Delete edit_plan.json from staging
+    plan_staged = bundle.staged_path("edit_plan.json")
+    assert plan_staged.is_file()
+    plan_staged.unlink()
+
+    # Publication must fail with BundleError
+    with pytest.raises(BundleError, match="missing.*edit_plan.json"):
+        bundle.publish()
+
+    # Final directory must not exist and no mp4 published
+    assert not bundle.final_dir.exists()
+    assert not (tmp_path / "no-plan-clip" / "no-plan-clip.mp4").exists()

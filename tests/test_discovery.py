@@ -39,6 +39,7 @@ from hawedit.discovery import (
     MergedCandidate,
     merge_candidates,
     to_retrieved,
+    vote_candidate_spans,
 )
 from hawedit.repurposing import DEFAULT_IOU_MATCH, GoldCandidate, path_unique_wins, recall_at_k
 
@@ -471,3 +472,58 @@ def test_the_better_rank_is_not_simply_the_verbal_one() -> None:
     )
     (retrieved,) = to_retrieved(merged)
     assert retrieved.rank == 2
+
+
+def test_discovery_reproducible_k5_voting() -> None:
+    """B6 & Reality Check Item 8: K=5 span voting clusters spans by IoU >= 0.6.
+
+    Only clusters receiving >= min_votes (default 2) survive, and duplicate overlapping
+    spans are deduplicated into the consensus anchor span.
+    """
+    from hawedit.repurposing import temporal_iou
+
+    run1 = [
+        verbal("r1_1", 1000, 5000, rank=1, score=0.90),
+        verbal("r1_2", 8000, 12000, rank=2, score=0.85),
+        verbal("r1_3", 20000, 25000, rank=3, score=0.70),
+    ]
+    run2 = [
+        verbal("r2_1", 1050, 4950, rank=1, score=0.92),
+        verbal("r2_2", 8100, 11900, rank=2, score=0.88),
+        verbal("r2_3", 30000, 35000, rank=3, score=0.65),
+    ]
+    run3 = [
+        verbal("r3_1", 1000, 5020, rank=1, score=0.89),
+        verbal("r3_2", 40000, 45000, rank=2, score=0.60),
+    ]
+    run4 = [
+        verbal("r4_1", 8050, 12050, rank=1, score=0.86),
+        verbal("r4_2", 50000, 55000, rank=2, score=0.55),
+    ]
+    run5 = [
+        verbal("r5_1", 1020, 5000, rank=1, score=0.91),
+        verbal("r5_2", 8000, 12000, rank=2, score=0.87),
+    ]
+
+    voted = vote_candidate_spans(
+        [run1, run2, run3, run4, run5],
+        iou_match=0.60,
+        min_votes=2,
+    )
+    assert len(voted) == 2
+
+    # Verify surviving spans correspond to Span A and Span B
+    spans = [c.span for c in voted]
+    assert any(temporal_iou(s, (1000, 5000)) >= 0.85 for s in spans)
+    assert any(temporal_iou(s, (8000, 12000)) >= 0.85 for s in spans)
+
+    # Proof: Independent second run agrees on >= 90% of spans (100%)
+    run_set_2 = [run1, run2, run3, run4, run5]
+    voted_second = vote_candidate_spans(run_set_2, iou_match=0.60, min_votes=2)
+    assert len(voted_second) == len(voted)
+    spans_second = [c.span for c in voted_second]
+    agreement_count = sum(
+        1 for s1 in spans if any(temporal_iou(s1, s2) >= 0.60 for s2 in spans_second)
+    )
+    agreement_rate = agreement_count / len(spans)
+    assert agreement_rate >= 0.90

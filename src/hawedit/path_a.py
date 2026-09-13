@@ -40,11 +40,13 @@ D-254.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Final
 
 from hawedit.clip import MAX_CANDIDATE_SPAN_MS, MIN_CANDIDATE_SPAN_MS, DiscoveryPath
@@ -142,6 +144,11 @@ class PathADiscovery:
         max_attempts: int = 3,
         sleep: Callable[[float], None] = time.sleep,
         client: GeminiJudge | None = None,
+        *,
+        k: int = 5,
+        min_votes: int = 2,
+        iou_threshold: float = 0.6,
+        cache_dir: Path | None = None,
     ) -> None:
         # Composition rather than inheritance: Path A is not a `judge()` implementation — it
         # returns candidates, not a verdict — but it shares §7 routing, credentials, retry and
@@ -162,6 +169,10 @@ class PathADiscovery:
         self.model_id = self._judge.model_id
         self.last_billed_call: BilledCall | None = None
         self.billed_calls: list[BilledCall] = []
+        self.k = k
+        self.min_votes = min_votes
+        self.iou_threshold = iou_threshold
+        self.cache_dir = cache_dir
 
     @property
     def governance(self) -> Governance:
@@ -205,16 +216,82 @@ class PathADiscovery:
             text_ckb=transcript.text_ckb,
         )
 
-    def discover(self, transcript: NormalizedTranscript) -> tuple[Candidate, ...]:
-        """Read the whole transcript and return every candidate the judge found.
+    def discover(
+        self,
+        transcript: NormalizedTranscript,
+        *,
+        k: int | None = None,
+    ) -> tuple[Candidate, ...]:
+        """Read the whole transcript and return candidate moments from K-run span voting.
 
-        Raises:
-            TypeError: a raw transcript was passed (Kurdish invariant #3).
-            GeminiUnavailable: governance forbids the upload, or the API refused.
-            RequestTooLarge: the transcript is too long for one pass — see the module docstring
-                on why this refuses rather than splits.
-            JudgeUnusable: a returned candidate is not one this system can use.
+        When k > 1 (default 5), runs K independent discovery passes, clusters candidates
+        by temporal IoU >= iou_threshold, retains candidates with >= min_votes, and caches
+        by transcript sha256 (Item 8 / Claim D6).
         """
+        effective_k = k if k is not None else self.k
+        if effective_k <= 1:
+            return self._discover_single(transcript)
+
+        import hashlib
+
+        transcript_hash = hashlib.sha256(transcript.text_ckb.encode("utf-8")).hexdigest()
+        if self.cache_dir is not None and self.cache_dir.is_dir():
+            cache_file = self.cache_dir / f"path_a_{transcript_hash}_k{effective_k}.json"
+            if cache_file.is_file():
+                with contextlib.suppress(Exception):
+                    cached_data = json.loads(cache_file.read_text(encoding="utf-8"))
+                    return tuple(
+                        Candidate(
+                            candidate_id=c["candidate_id"],
+                            media_id=c["media_id"],
+                            in_ms=c["in_ms"],
+                            out_ms=c["out_ms"],
+                            path=DiscoveryPath(c["path"]),
+                            rank=c["rank"],
+                            score=c.get("score"),
+                        )
+                        for c in cached_data
+                    )
+
+        runs: list[tuple[Candidate, ...]] = []
+        for _ in range(effective_k):
+            runs.append(self._discover_single(transcript))
+
+        from hawedit.discovery import vote_candidate_spans
+
+        voted = vote_candidate_spans(
+            runs,
+            iou_match=self.iou_threshold,
+            min_votes=self.min_votes,
+            media_id=transcript.media_id,
+        )
+
+        if self.cache_dir is not None and self.cache_dir.is_dir():
+            cache_file = self.cache_dir / f"path_a_{transcript_hash}_k{effective_k}.json"
+            with contextlib.suppress(Exception):
+                cache_file.write_text(
+                    json.dumps(
+                        [
+                            {
+                                "candidate_id": c.candidate_id,
+                                "media_id": c.media_id,
+                                "in_ms": c.in_ms,
+                                "out_ms": c.out_ms,
+                                "path": c.path.value,
+                                "rank": c.rank,
+                                "score": c.score,
+                            }
+                            for c in voted
+                        ],
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+
+        return voted
+
+    def _discover_single(self, transcript: NormalizedTranscript) -> tuple[Candidate, ...]:
+        """Single discovery pass against Gemini API."""
         prompt = self._prompt(transcript)
 
         parts = [{"text": prompt}]

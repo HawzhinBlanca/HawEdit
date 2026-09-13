@@ -2159,6 +2159,7 @@ def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) 
     )
     assert not isinstance(run.delivery, StageSkipped), run.delivery
     assert _sidecars_on_disk(work, "safe-s0-0") == [
+        "safe-s0-0.edit_plan.json",
         "safe-s0-0.edl",
         "safe-s0-0.json",
         "safe-s0-0.measured.json",
@@ -5003,6 +5004,7 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
     )
     assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
     assert _sidecars_on_disk(work, f"{media_id}-s0-0") == [
+        f"{media_id}-s0-0.edit_plan.json",
         f"{media_id}-s0-0.edl",
         f"{media_id}-s0-0.json",
         f"{media_id}-s0-0.measured.json",

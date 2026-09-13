@@ -214,3 +214,76 @@ def test_missing_visual_measurement_dependency_never_reports_success(tmp_path: P
 
         with pytest.raises(MeasureError, match="OpenCV.*required"):
             measure_caption_events_contrast(fake_video, fake_ass)
+
+
+def test_measured_carries_speaking_face_share(tmp_path: Path) -> None:
+    from hawedit.measure import (
+        AudioMeasurement,
+        CaptionMeasurement,
+        ClipMeasurement,
+        FaceTrackMeasurement,
+        FileSummary,
+        VideoMeasurement,
+    )
+
+    faces = FaceTrackMeasurement(
+        sample_interval_ms=200,
+        samples_count=10,
+        face_detected_frames_count=10,
+        face_detected_share=1.0,
+        median_face_height_share=0.25,
+        median_y_center_share=0.38,
+        first_frame_face_share=0.25,
+        speaking_samples_count=8,
+        speaking_face_frames_count=8,
+        speaking_face_share=1.0,
+    )
+    meas = ClipMeasurement(
+        schema=1,
+        file=FileSummary(path=str(tmp_path / "clip.mp4"), sha256="a" * 64, size_bytes=1234),
+        video=VideoMeasurement(
+            width=1080,
+            height=1920,
+            fps=25.0,
+            fps_ratio="25/1",
+            duration_ms=2000,
+            frames_count=50,
+            bitrate_kbps=4000,
+            codec="h264",
+            pix_fmt="yuv420p",
+            color_space=None,
+            color_transfer=None,
+            color_primaries=None,
+        ),
+        audio=AudioMeasurement(
+            codec="aac",
+            sample_rate=48000,
+            channels=2,
+            duration_ms=2000,
+            integrated_lufs=-14.0,
+            true_peak_db=-1.0,
+            lra_lu=2.0,
+            silences=[],
+            total_silence_ms=0,
+            silence_share=0.0,
+        ),
+        scenes={"cuts_ms": []},
+        faces=faces,
+        captions=CaptionMeasurement(
+            events_count=1,
+            ink_energy_detected_share=1.0,
+            median_contrast_ratio=4.5,
+        ),
+        vmaf=None,
+        tool_metadata={},
+    )
+    payload = meas.to_dict()
+    assert "speaking_face_share" in payload["faces"]
+    assert payload["faces"]["speaking_face_share"] == 1.0
+    assert payload["faces"]["speaking_samples_count"] == 8
+    assert payload["faces"]["speaking_face_frames_count"] == 8
+
+    # Test roundtrip
+    restored = ClipMeasurement.from_dict(payload)
+    assert restored.faces.speaking_face_share == 1.0
+    assert restored.faces.speaking_samples_count == 8

@@ -230,8 +230,14 @@ def test_plan_write_failure_cannot_follow_publication(tmp_path: Path) -> None:
         bundle_id="test_clip",
     )
     bundle.write_text("ass", "dummy ass")
-    bundle.write_text("mp4", "dummy mp4")
-    # Discarding before publish deletes staging directory
+    bundle.staged_path("mp4").write_bytes(b"dummy mp4")
+    bundle.write_text("srt", "dummy srt")
+    bundle.write_text("edl", "dummy edl")
+    bundle.write_text("json", "{}")
+    bundle.write_text("measured.json", "{}")
+    # Omission of edit_plan.json must cause publication to fail
+    with pytest.raises(Exception, match="missing.*edit_plan.json"):
+        bundle.publish()
     bundle.discard()
     assert not bundle.staging_dir.exists()
     assert not bundle.final_dir.exists()
@@ -239,7 +245,15 @@ def test_plan_write_failure_cannot_follow_publication(tmp_path: Path) -> None:
 
 def test_promote_preserves_review_plan_identity_atomically(tmp_path: Path) -> None:
     """RB-10: ArtifactBundle publishes canonical delivery set atomically."""
-    assert ArtifactBundle.suffixes() == ("ass", "mp4", "srt", "edl", "json", "measured.json")
+    assert ArtifactBundle.suffixes() == (
+        "ass",
+        "mp4",
+        "srt",
+        "edl",
+        "json",
+        "measured.json",
+        "edit_plan.json",
+    )
 
     bundle = ArtifactBundle.create(root=tmp_path, bundle_id="test_promo")
     bundle.write_text("ass", "[Script Info]\nTitle: test")
@@ -248,9 +262,11 @@ def test_promote_preserves_review_plan_identity_atomically(tmp_path: Path) -> No
     bundle.write_text("edl", "TITLE: test\n")
     bundle.write_text("json", '{"clip_id": "test_promo"}')
     bundle.write_text("measured.json", '{"duration_ms": 1000}')
+    bundle.write_text("edit_plan.json", '{"version": 1}')
     bundle.publish()
     assert (bundle.final_dir / "test_promo.mp4").is_file()
     assert (bundle.final_dir / "test_promo.json").is_file()
+    assert (bundle.final_dir / "test_promo.edit_plan.json").is_file()
 
 
 def test_critic_rejects_declared_duration_beyond_media() -> None:

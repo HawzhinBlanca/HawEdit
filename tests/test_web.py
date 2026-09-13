@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 from hawedit.web import DASHBOARD_HTML, HawEditWebHandler
 
@@ -199,13 +202,98 @@ def test_web_handler_post_edit_caption() -> None:
 
 def test_web_handler_serves_media() -> None:
     # Existing media serves 200
-    req = b"GET /media/audit_02s_hook_115pt.jpg HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    req = b"GET /media/kurdish-speech-3cuts.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
     status_code, headers, body = _handle_request(req)
     assert status_code == 200
-    assert "image/jpeg" in headers.get("content-type", "")
+    assert "video/mp4" in headers.get("content-type", "")
     assert len(body) > 0
 
     # Nonexistent media returns 404
     bad_req = b"GET /media/nonexistent_file.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
     b_status, _, _ = _handle_request(bad_req)
     assert b_status == 404
+
+
+def test_studio_job_runs_pipeline_and_lists_only_delivered_bundles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task 5 & Reality Check Item 2: Studio job runs pipeline.
+
+    Lists only delivered bundles with measured.json.
+    """
+    import hashlib
+
+    from hawedit.pipeline import Delivery, PipelineRun
+    from hawedit.web import JOB_MANAGER, JobManager
+
+    # 1. Assert empty clip list before any job runs
+    fresh_jm = JobManager(jobs_dir=tmp_path / "fresh_jobs")
+    assert fresh_jm.get_all_jobs() == []
+
+    # 2. Setup job on valid fixture video
+    fixture_video = Path("tests/fixtures/kurdish-speech-3cuts.mp4")
+    assert fixture_video.is_file()
+
+    job_dict = JOB_MANAGER.submit_job(str(fixture_video))
+    job_id = str(job_dict["job_id"])
+
+    # Pre-run: job is queued/running
+    job_pre = JOB_MANAGER.get_job(job_id)
+    assert job_pre is not None
+    assert job_pre["status"] in ("queued", "running")
+
+    # Mock run_pipeline to deliver a real bundle with measured.json in job's work dir
+    job_work_dir = JOB_MANAGER._jobs_dir / job_id
+    job_work_dir.mkdir(parents=True, exist_ok=True)
+    clip_id = f"{fixture_video.stem}-clip-01"
+    delivered_mp4 = job_work_dir / f"{clip_id}.mp4"
+    delivered_mp4.write_bytes(fixture_video.read_bytes())
+    mp4_sha256 = hashlib.sha256(delivered_mp4.read_bytes()).hexdigest()
+
+    measured_json_path = job_work_dir / f"{clip_id}.measured.json"
+    meas_content = {
+        "duration_ms": 4160,
+        "sha256": mp4_sha256,
+        "loudness_lufs": -14.0,
+        "silence_share": 0.04,
+        "speaking_face_share": 0.99,
+    }
+    measured_json_path.write_text(json.dumps(meas_content), encoding="utf-8")
+
+    mock_delivery = Delivery(
+        srt_path=str(job_work_dir / f"{clip_id}.srt"),
+        edl_path=str(job_work_dir / f"{clip_id}.edl"),
+        editing_json_path=str(job_work_dir / f"{clip_id}.json"),
+        measured_path=str(measured_json_path),
+        edit_plan_path=str(job_work_dir / f"{clip_id}.edit_plan.json"),
+    )
+    mock_run = PipelineRun(
+        media_id="test-media",
+        source=str(fixture_video),
+        work_dir=str(job_work_dir),
+        delivery=mock_delivery,
+    )
+
+    def mock_run_pipeline(*args: object, **kwargs: object) -> PipelineRun:
+        return mock_run
+
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", mock_run_pipeline)
+
+    # Run the job synchronously
+    JOB_MANAGER.run_job_sync(job_id)
+
+    # Post-run assertions:
+    job_post = JOB_MANAGER.get_job(job_id)
+    assert job_post is not None
+    assert job_post["status"] == "completed"
+    clips = job_post["clips"]
+    assert len(clips) >= 1
+    for clip in clips:
+        assert Path(mock_delivery.measured_path).is_file()
+        assert clip["sha256"] == mp4_sha256
+        assert clip["duration_s"] == 4.16
+        # Verify served media matches measured sha256
+        req = f"GET {clip['video_url']} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode()
+        s_code, _, body = _handle_request(req)
+        assert s_code == 200
+        assert hashlib.sha256(body).hexdigest() == clip["sha256"]

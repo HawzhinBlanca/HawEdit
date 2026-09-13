@@ -33,6 +33,7 @@ difference is real on this build rather than theoretical.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -48,6 +49,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from hawedit.assembly import AssemblySpan
+    from hawedit.edit_plan import VisualEditPlan
 
 from hawedit.brand import BrandKit, logo_overlay_coordinates, progress_bar_filter
 from hawedit.captions import (
@@ -77,9 +79,11 @@ __all__ = [
     "VERTICAL_WIDTH",
     "Encoder",
     "LoudnessStats",
+    "ProvenanceViolation",
     "Reframe",
     "RenderError",
     "RenderResult",
+    "assert_asset_provenance",
     "assert_encoded_span",
     "audio_filter",
     "blurred_fill_filter",
@@ -1226,6 +1230,38 @@ def assert_encoded_span(measured_ms: int, requested_ms: int, frame_ms: int) -> N
         )
 
 
+class ProvenanceViolation(RenderError):
+    """Raised when an asset lacks a valid cryptographic provenance sidecar."""
+
+
+def assert_asset_provenance(asset_path: Path) -> None:
+    """Verify that an external asset has a matching .provenance.json sidecar."""
+    provenance_path = asset_path.with_name(f"{asset_path.name}.provenance.json")
+    if not provenance_path.is_file():
+        raise ProvenanceViolation(
+            f"asset {asset_path.name} lacks provenance sidecar: expected {provenance_path.name}"
+        )
+    try:
+        data = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ProvenanceViolation(
+            f"invalid provenance sidecar for {asset_path.name}: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise ProvenanceViolation(f"provenance sidecar for {asset_path.name} must be a JSON object")
+    expected_sha256 = data.get("sha256")
+    if not expected_sha256 or not isinstance(expected_sha256, str):
+        raise ProvenanceViolation(
+            f"provenance sidecar for {asset_path.name} is missing a valid 'sha256' field"
+        )
+    actual_sha256 = hashlib.sha256(asset_path.read_bytes()).hexdigest()
+    if actual_sha256.lower() != expected_sha256.lower():
+        raise ProvenanceViolation(
+            f"provenance sha256 mismatch for {asset_path.name}: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+
+
 def render_clip(
     clip: Clip,
     source: Path,
@@ -1253,6 +1289,7 @@ def render_clip(
     music_ducking_volume: float = 0.25,
     for_review: bool = False,
     assembly_spans: Sequence[AssemblySpan] | None = None,
+    plan: VisualEditPlan | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1268,6 +1305,22 @@ def render_clip(
     clip.assert_renderable(for_review=for_review)
     if brand_kit is not None:
         brand_kit.assert_valid()
+        if brand_kit.logo_path is not None:
+            assert_asset_provenance(brand_kit.logo_path)
+
+    if music_bed_path is not None:
+        if deliverable:
+            raise ProvenanceViolation("production profile forbids unvetted background music bed")
+        assert_asset_provenance(music_bed_path)
+
+    if plan is not None:
+        if plan.clip_id != clip.clip_id:
+            raise ValueError(f"plan clip_id {plan.clip_id!r} does not match clip {clip.clip_id!r}")
+        if (
+            plan.time_mapping.clip_in_ms != clip.in_ms
+            or plan.time_mapping.clip_out_ms != clip.out_ms
+        ):
+            raise ValueError("plan time_mapping interval does not match clip interval")
 
     effective_reframe = (
         (Reframe.FACE_TRACKED if focus_points else Reframe.STATIC_CENTRE)
@@ -1345,6 +1398,10 @@ def render_clip(
         assert_ass_fonts_cover_kurdish(ass_text, fonts_dir)
     except FontCoverageError as exc:
         raise RenderError(str(exc)) from exc
+    for font_file in sorted(fonts_dir.glob("*.ttf")):
+        assert_asset_provenance(font_file)
+    for font_file in sorted(fonts_dir.glob("*.otf")):
+        assert_asset_provenance(font_file)
     # Measured on the real fixture: asking for 0..8000 ms of a 4162 ms source makes ffmpeg
     # exit 0 and write 4180 ms. Nothing in the numbers is wrong — the clip is internally
     # consistent — so the only place to catch it is against the media itself, before encoding.

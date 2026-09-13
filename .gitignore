@@ -46,3 +46,5 @@ models/*
 # currently active), not source — the same reasoning as /.dbos/ above.
 /.hawedit/
 /scratch/
+/demos/**
+!/demos/hand-cut/README.md

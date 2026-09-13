@@ -1986,6 +1986,39 @@ def test_rtl_word_highlight_emits_positioned_events_and_switches_styles() -> Non
     assert ev_w1_active in ass
 
 
+def test_kurdish_two_word_chunk_preserves_source_rtl_order() -> None:
+    """AC-9 / Item 12: Kurdish two-word phrases preserve source RTL order and position.
+
+    Ensures that for a two-word Kurdish chunk ("کاک مەسعود", "برێمەر پۆڵ", "دەکەین دروست"):
+    1. In RTL_WORD_HIGHLIGHT, the first word ("کاک") has a larger X coordinate than the
+       second word ("مەسعود"), placing the first word on the screen's right side.
+    2. In build_ass with RTL_WORD_HIGHLIGHT and VIRAL_POPUP, verify_caption_text passes
+       with the exact expected reading order ["کاک", "مەسعود"].
+    3. An inverted text ("مەسعود کاک") is strictly rejected by verify_caption_text.
+    """
+    phrase_words = words(("کاک", 100, 400), ("مەسعود", 400, 900))
+    sentence = Sentence(words=phrase_words, complete=True)
+
+    # 1. RTL positions: word 0 ("کاک") must be further right (higher X) than word 1 ("مەسعود")
+    positions = compute_rtl_word_positions(phrase_words, canvas_width=1080)
+    assert len(positions) == 2
+    (w0, x0), (w1, x1) = positions
+    assert w0.w == "کاک" and w1.w == "مەسعود"
+    assert x0 > x1, f"Expected X(کاک) > X(مەسعود) for RTL reading, got {x0} <= {x1}"
+
+    # 2. build_ass with VIRAL_POPUP emits exact reading order
+    ass_popup = build_ass((sentence,), style=CaptionStyle.VIRAL_POPUP, theme=VIRAL_THEME)
+    verify_caption_text(ass_popup, expected_text=["کاک", "مەسعود"])
+
+    # 3. build_ass with RTL_WORD_HIGHLIGHT emits slices where both words appear in reading order
+    ass_rtl = build_ass((sentence,), style=CaptionStyle.RTL_WORD_HIGHLIGHT, theme=VIRAL_THEME)
+    verify_caption_text(ass_rtl, expected_text=["کاک", "مەسعود", "کاک", "مەسعود"])
+
+    # 4. Inverted text is rejected
+    with pytest.raises(CaptionVerificationError, match="wrong text"):
+        verify_caption_text(ass_popup, expected_text=["مەسعود", "کاک"])
+
+
 def test_classify_kurdish_emphasis_identifies_numbers() -> None:
     """Numbers in digits, Eastern Arabic numerals, and Kurdish words return NUMERIC."""
     for token in ("100", "2026", "١٠", "٥۰۰", "دوو", "سێ", "ملیۆن", "هەزار", "هەموو"):

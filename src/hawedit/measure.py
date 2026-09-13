@@ -138,6 +138,9 @@ class FaceTrackMeasurement:
     median_face_height_share: float | None
     median_y_center_share: float | None
     first_frame_face_share: float | None = None
+    speaking_samples_count: int = 0
+    speaking_face_frames_count: int = 0
+    speaking_face_share: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -245,6 +248,9 @@ class ClipMeasurement:
                 median_face_height_share=data["faces"].get("median_face_height_share"),
                 median_y_center_share=data["faces"].get("median_y_center_share"),
                 first_frame_face_share=data["faces"].get("first_frame_face_share"),
+                speaking_samples_count=data["faces"].get("speaking_samples_count", 0),
+                speaking_face_frames_count=data["faces"].get("speaking_face_frames_count", 0),
+                speaking_face_share=data["faces"].get("speaking_face_share", 1.0),
             ),
             captions=CaptionMeasurement(
                 events_count=data["captions"]["events_count"],
@@ -468,15 +474,49 @@ def probe_scene_cuts(video_path: Path, ffmpeg: Path) -> list[int]:
     return sorted(cuts_ms)
 
 
+def _ass_time_to_ms(time_str: str) -> int:
+    h, m, s_cs = time_str.split(":", 2)
+    s, cs = s_cs.split(".", 1)
+    return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(cs.ljust(3, "0")[:3])
+
+
+def _parse_ass_dialogue_cues(ass_path: Path) -> list[tuple[int, int]]:
+    """Parse dialogue cue start and end times in milliseconds from ASS file."""
+    cues: list[tuple[int, int]] = []
+    if not ass_path.is_file():
+        return cues
+
+    content = ass_path.read_text(encoding="utf-8", errors="replace")
+    for line in content.splitlines():
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                start_str, end_str = parts[1].strip(), parts[2].strip()
+                try:
+                    start_ms = _ass_time_to_ms(start_str)
+                    end_ms = _ass_time_to_ms(end_str)
+                    if end_ms > start_ms:
+                        cues.append((start_ms, end_ms))
+                except Exception:
+                    continue
+    return cues
+
+
 def probe_face_tracking(
     video_path: Path,
     sample_fps: float = 5.0,
+    *,
+    speech_intervals: list[tuple[int, int]] | None = None,
+    ass_path: Path | None = None,
 ) -> FaceTrackMeasurement:
     """Sample video frames and extract face detection and framing metrics via OpenCV."""
     try:
         import cv2
     except ImportError as exc:
         raise MeasureError("OpenCV is required for face tracking measurement") from exc
+
+    if speech_intervals is None and ass_path is not None and ass_path.is_file():
+        speech_intervals = _parse_ass_dialogue_cues(ass_path)
 
     data_attr = getattr(cv2, "data", None)
     cascades_dir = Path(getattr(data_attr, "haarcascades", "")) if data_attr else Path()
@@ -503,6 +543,8 @@ def probe_face_tracking(
 
     samples_count = 0
     face_detected_count = 0
+    speaking_samples_count = 0
+    speaking_face_count = 0
     height_shares: list[float] = []
     y_center_shares: list[float] = []
     first_frame_face_share: float | None = None
@@ -516,6 +558,15 @@ def probe_face_tracking(
                 break
 
             samples_count += 1
+            current_t_ms = int(round(current_t_s * 1000.0))
+            is_speaking = False
+            if speech_intervals is not None:
+                is_speaking = any(
+                    s_start <= current_t_ms <= s_end for s_start, s_end in speech_intervals
+                )
+                if is_speaking:
+                    speaking_samples_count += 1
+
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             boxes = frontal.detectMultiScale(
                 gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
@@ -537,6 +588,8 @@ def probe_face_tracking(
 
             if len(boxes) > 0:
                 face_detected_count += 1
+                if is_speaking:
+                    speaking_face_count += 1
                 largest = max(boxes, key=lambda b: int(b[2]) * int(b[3]))
                 _, y, _, h = largest
                 h_share = float(h) / float(height)
@@ -555,6 +608,11 @@ def probe_face_tracking(
     face_detected_share = (
         round(face_detected_count / samples_count, 4) if samples_count > 0 else 0.0
     )
+    speaking_face_share = (
+        round(speaking_face_count / speaking_samples_count, 4)
+        if speaking_samples_count > 0
+        else 1.0
+    )
     median_h_share = (
         round(float(sorted(height_shares)[len(height_shares) // 2]), 4) if height_shares else None
     )
@@ -572,35 +630,10 @@ def probe_face_tracking(
         median_face_height_share=median_h_share,
         median_y_center_share=median_y_center,
         first_frame_face_share=first_frame_face_share,
+        speaking_samples_count=speaking_samples_count,
+        speaking_face_frames_count=speaking_face_count,
+        speaking_face_share=speaking_face_share,
     )
-
-
-def _parse_ass_dialogue_cues(ass_path: Path) -> list[tuple[int, int]]:
-    """Parse dialogue cue start and end times in milliseconds from ASS file."""
-    cues: list[tuple[int, int]] = []
-    if not ass_path.is_file():
-        return cues
-
-    content = ass_path.read_text(encoding="utf-8", errors="replace")
-    for line in content.splitlines():
-        if line.startswith("Dialogue:"):
-            parts = line.split(",", 9)
-            if len(parts) >= 10:
-                start_str, end_str = parts[1].strip(), parts[2].strip()
-                try:
-                    start_ms = _ass_time_to_ms(start_str)
-                    end_ms = _ass_time_to_ms(end_str)
-                    if end_ms > start_ms:
-                        cues.append((start_ms, end_ms))
-                except Exception:
-                    continue
-    return cues
-
-
-def _ass_time_to_ms(time_str: str) -> int:
-    h, m, s_cs = time_str.split(":", 2)
-    s, cs = s_cs.split(".", 1)
-    return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(cs.ljust(3, "0")[:3])
 
 
 def detect_caption_ink_in_band(
@@ -898,6 +931,8 @@ def measure_clip(
     ass_path: Path | None = None,
     mezzanine_path: Path | None = None,
     ffmpeg: Path | None = None,
+    *,
+    speech_intervals: list[tuple[int, int]] | None = None,
 ) -> ClipMeasurement:
     """Measure a delivered media file independently, returning full ClipMeasurement."""
     resolved_ffmpeg = ffmpeg or find_ffmpeg()
@@ -910,7 +945,11 @@ def measure_clip(
         video_path, resolved_ffmpeg, audio_info, video_meas.duration_ms
     )
     scene_cuts = probe_scene_cuts(video_path, resolved_ffmpeg)
-    face_meas = probe_face_tracking(video_path)
+    face_meas = probe_face_tracking(
+        video_path,
+        speech_intervals=speech_intervals,
+        ass_path=ass_path,
+    )
     caption_meas = probe_caption_ink(video_path, ass_path, source_video_path=mezzanine_path)
     vmaf_meas = probe_vmaf(video_path, mezzanine_path, resolved_ffmpeg) if mezzanine_path else None
 

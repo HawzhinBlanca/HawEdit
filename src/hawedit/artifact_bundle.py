@@ -20,7 +20,7 @@ from hawedit.transcripts import validate_media_id
 
 __all__ = ["ArtifactBundle", "BundleAlreadyExists", "BundleError"]
 
-_SUFFIXES: Final = ("ass", "mp4", "srt", "edl", "json", "measured.json")
+_SUFFIXES: Final = ("ass", "mp4", "srt", "edl", "json", "measured.json", "edit_plan.json")
 _REPARSE_FLAG: Final = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _DirectoryIdentity = tuple[int, int]
 _FileIdentity = tuple[int, int, int, int, int]

@@ -520,6 +520,21 @@ def reconcile_delivery(
             measured=measurement.faces.face_detected_share,
         )
 
+    # Clause 7a: Speaking-Frame Face Share (Item 7 / B5)
+    if (
+        not for_review
+        and clip.output
+        and clip.output.crop_target == "face_tracked"
+        and min_face_share != 0.0
+        and measurement.faces.speaking_samples_count > 0
+        and round(measurement.faces.speaking_face_share, 2) < 0.98
+    ):
+        raise DeliveryRefused(
+            "speaking_face_share_unsubstantiated",
+            expected=">= 0.98 speaking face share",
+            measured=measurement.faces.speaking_face_share,
+        )
+
     # Clause 7b: First-Frame Subject Face Gate (Task T2.3)
     if (
         clip.output
@@ -861,6 +876,16 @@ def promote_candidate(
 
     bundle = ArtifactBundle.create(work_dir, candidate_id)
     try:
+        candidate_edit_plan = review_dir / f"{candidate_id}.edit_plan.json"
+        if not candidate_edit_plan.is_file():
+            candidate_edit_plan = review_dir / "edit_plan.json"
+        if not candidate_edit_plan.is_file() or candidate_edit_plan.stat().st_size == 0:
+            raise DeliveryRefused(
+                "missing_edit_plan",
+                expected="non-empty edit_plan.json in candidate review bundle",
+                measured=f"absent or empty at {candidate_edit_plan}",
+            )
+        bundle.staged_path("edit_plan.json").write_bytes(candidate_edit_plan.read_bytes())
         bundle.staged_path("mp4").write_bytes(mp4_bytes)
         bundle.staged_path("ass").write_bytes(candidate_ass.read_bytes())
         bundle.staged_path("srt").write_bytes(candidate_srt.read_bytes())
@@ -870,15 +895,7 @@ def promote_candidate(
             "json",
             json.dumps(approved_clip.to_dict(), ensure_ascii=False, indent=2),
         )
-        published = bundle.publish()
-        candidate_edit_plan = review_dir / f"{candidate_id}.edit_plan.json"
-        if not candidate_edit_plan.is_file():
-            candidate_edit_plan = review_dir / "edit_plan.json"
-        if candidate_edit_plan.is_file():
-            edit_plan_bytes = candidate_edit_plan.read_bytes()
-            (bundle.final_dir / f"{candidate_id}.edit_plan.json").write_bytes(edit_plan_bytes)
-            (bundle.final_dir / "edit_plan.json").write_bytes(edit_plan_bytes)
-        return published
+        return bundle.publish()
     except Exception:
         with contextlib.suppress(BundleError):
             bundle.discard()

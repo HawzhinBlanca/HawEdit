@@ -370,3 +370,111 @@ def test_render_critic_excludes_unobserved_windows_from_coverage() -> None:
     assert result.coverage_ratio < 0.60
     assert result.all_clear_refused is True
     assert "incomplete temporal coverage" in (result.refusal_reason or "")
+
+
+def test_critic_rejects_the_09_09_because_join() -> None:
+    """Proof for B1 & Reality Check Item 5:
+
+    The 09-09 'because' join (F3 in director audit):
+    Ep29 transcript sentence 31 around 493.4 s ends with 'چونکە' (because), and cuts to
+    sentence 70 ('those in Kurdistan will not go back...').
+    The critic must reject this sequence with DefectKind.DANGLING_CONJUNCTION.
+    """
+    from hawedit.assembly import AssemblySpan
+    from hawedit.sentences import Sentence
+    from hawedit.transcripts import Word
+
+    # Sentence 31 ending in چونکە at 493.4s
+    raw_s31 = (
+        "سەعاتێک دوو سەعات دوای ئەوەی کە تەقینەوەکە ڕوویا یەکێک بوو لە تەقینەوە گەورەکانی بەغا "
+        "ئەو کاتە هەموو لایەک لە بینایەکەی یوئێنی وێران کرد ئەو سێرژە دیمی لەوێ کە چەن ڕۆژێ "
+        "پێشەوە باسی هیوا و باسی ئومێد و بنیادنانەوەی عێراقێ کرد زۆر کەس پێیان ناخۆش بوو چونکە"
+    )
+    tokens_s31 = raw_s31.split()
+    words_s31 = tuple(
+        Word(w=tok, start_ms=477410 + i * 400, end_ms=477410 + (i + 1) * 400, conf=0.95)
+        for i, tok in enumerate(tokens_s31)
+    )
+    sent_31 = Sentence(words=words_s31, complete=False)
+
+    # Sentence 70 jumping to Kurdistan camp returns
+    raw_s70 = (
+        "شتێکی وات دیوە سەت جاری تر لە تەلەڤزیۆن بیبینی و سەرکردەکانی عێراق بانگەشەی بۆ بکەن "
+        "کە ئەمن و ئەمانە و کەس بە کەسەوە نیە تۆ ئەو دیمەنانەی ئەو سەردەمەت بیر ئەکەوێتەوە "
+        "بۆیە زۆربەیان نارۆنەوە هێستا زۆر کەسەڵێ ئەو عەرەبانەی ئێرە ناو کامپەکان بۆ نارۆنەوە"
+    )
+    tokens_s70 = raw_s70.split()
+    words_s70 = tuple(
+        Word(w=tok, start_ms=1268930 + i * 400, end_ms=1268930 + (i + 1) * 400, conf=0.95)
+        for i, tok in enumerate(tokens_s70)
+    )
+    sent_70 = Sentence(words=words_s70, complete=True)
+
+    span1 = AssemblySpan(
+        span_index=0,
+        source_in_ms=477410,
+        source_out_ms=493982,
+        duration_ms=493982 - 477410,
+        sentences=(sent_31,),
+    )
+    span2 = AssemblySpan(
+        span_index=1,
+        source_in_ms=1268930,
+        source_out_ms=1284766,
+        duration_ms=1284766 - 1268930,
+        sentences=(sent_70,),
+    )
+
+    fixture_path = "tests/fixtures/kurdish-speech-3cuts.mp4"
+    sequence = RenderedSequenceContext(
+        render_path=fixture_path,
+        duration_ms=4120,
+        fps=25.0,
+        sentences=(sent_31, sent_70),
+        assembly_spans=(span1, span2),
+    )
+
+    result = inspect_rendered_sequence(sequence, claim_all_clear=True)
+
+    assert result.is_all_clear is False
+    assert result.all_clear_refused is True
+    assert any(d.defect_kind == DefectKind.DANGLING_CONJUNCTION for d in result.defects)
+    with pytest.raises(UnsupportedAllClearError):
+        result.assert_verdict_grounded()
+
+
+def test_critic_rejects_mid_clause_entry() -> None:
+    """Proof for B1 & Reality Check Item 5:
+
+    A span starting mid-clause (e.g. entry at 478.4s entering on dependent clause
+    or marked incomplete) must be rejected by the critic with DefectKind.MID_CLAUSE_ENTRY.
+    """
+    from hawedit.sentences import Sentence
+    from hawedit.transcripts import Word
+
+    raw_mid_clause = (
+        "دوای ئەوەی کە تەقینەوەکە ڕوویا یەکێک بوو لە تەقینەوە گەورەکانی بەغا "
+        "ئەو کاتە هەموو لایەک لە بینایەکەی یوئێنی وێران کرد"
+    )
+    tokens = raw_mid_clause.split()
+    words = tuple(
+        Word(w=tok, start_ms=478400 + i * 400, end_ms=478400 + (i + 1) * 400, conf=0.95)
+        for i, tok in enumerate(tokens)
+    )
+    incomplete_sent = Sentence(words=words, complete=False)
+
+    fixture_path = "tests/fixtures/kurdish-speech-3cuts.mp4"
+    sequence = RenderedSequenceContext(
+        render_path=fixture_path,
+        duration_ms=4120,
+        fps=25.0,
+        sentences=(incomplete_sent,),
+    )
+
+    result = inspect_rendered_sequence(sequence, claim_all_clear=True)
+
+    assert result.is_all_clear is False
+    assert result.all_clear_refused is True
+    assert any(d.defect_kind == DefectKind.MID_CLAUSE_ENTRY for d in result.defects)
+    with pytest.raises(UnsupportedAllClearError):
+        result.assert_verdict_grounded()
