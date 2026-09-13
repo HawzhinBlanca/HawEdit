@@ -1048,6 +1048,7 @@ def test_delivery_refuses_when_speaking_face_share_below_threshold() -> None:
             planned_punch_ins=[(500, 1.25)],
             source_shot_cuts_ms=[clip.in_ms + 500],
             for_review=False,
+            min_face_share=0.98,
         )
     assert exc_info.value.reason == "speaking_face_share_unsubstantiated"
 
