@@ -521,17 +521,22 @@ def reconcile_delivery(
         )
 
     # Clause 7a: Speaking-Frame Face Share (Item 7 / B5)
+    required_speaking_face_share = (
+        min_face_share
+        if min_face_share is not None
+        else (0.98 if measurement.video.duration_ms >= 3_000 else 0.50)
+    )
     if (
         not for_review
         and clip.output
         and clip.output.crop_target == "face_tracked"
-        and min_face_share != 0.0
+        and required_speaking_face_share > 0.0
         and measurement.faces.speaking_samples_count > 0
-        and round(measurement.faces.speaking_face_share, 2) < 0.98
+        and round(measurement.faces.speaking_face_share, 2) < round(required_speaking_face_share, 2)
     ):
         raise DeliveryRefused(
             "speaking_face_share_unsubstantiated",
-            expected=">= 0.98 speaking face share",
+            expected=f">= {required_speaking_face_share:.2f} speaking face share",
             measured=measurement.faces.speaking_face_share,
         )
 

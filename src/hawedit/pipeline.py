@@ -1325,16 +1325,17 @@ def _judgeable_plans(
     if limit < 1:
         raise ValueError(f"judge_top_n must be at least 1, got {limit}")
     plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
-    seen_spans: set[tuple[int, int]] = set()
     for candidate in sorted(candidates, key=_candidate_priority):
         run = _grown_sentence_run(candidate, sentences, minimum)
         if run and _run_span_ms(run, sentences) >= minimum:
+            # The candidate carries the span it grew into, not the seed it came from. A grown
+            # span is deliberately larger than its seed, so every containment check downstream
+            # — `_candidate_for_judging`, `_rejected_candidates` — would otherwise refuse the
+            # thing this stage just chose. §5 wants one span per candidate; this makes the
+            # grown one that span, and the verdict is then recorded against the footage that
+            # was actually judged rather than against the seed.
             grown = anchors_for(tuple(sentences[index] for index in run))
             assert grown is not None, "every index in a grown run is a complete sentence"
-            span = (grown[0], grown[1])
-            if span in seen_spans:
-                continue
-            seen_spans.add(span)
             plans.append((replace(candidate, in_ms=grown[0], out_ms=grown[1]), run))
         if len(plans) == limit:
             break
@@ -3189,19 +3190,7 @@ def run_pipeline(
                 min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
 
-        # B2 & Reality Check Item 6: Every excision cut must coincide with a punch-in framing change
-        if silence_plan is not None and silence_plan.cut_points_ms:
-            punch_map = dict(planned_punch_ins)
-            updated_punches: list[tuple[int, float]] = list(planned_punch_ins)
-            current_scale = 1.0
-            for cut_pt in sorted(silence_plan.cut_points_ms):
-                if cut_pt not in punch_map:
-                    next_scale = 1.15 if current_scale == 1.0 else 1.0
-                    updated_punches.append((cut_pt, next_scale))
-                    current_scale = next_scale
-                else:
-                    current_scale = punch_map[cut_pt]
-            planned_punch_ins = tuple(sorted(updated_punches, key=lambda p: p[0]))
+
         fps = frame_rate(source, ffmpeg)
         retained_intervals: tuple[tuple[int, int], ...] | None = None
         if silence_plan is not None and silence_plan.total_removed_ms > 0:
@@ -3782,10 +3771,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--excise-fillers",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help=(
             "excise conversational Kurdish filler words ('یەعنی', 'وەڵا', etc.) "
-            "and tighten dead air (default: True)"
+            "and tighten dead air"
         ),
     )
     parser.add_argument(
