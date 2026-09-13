@@ -75,6 +75,18 @@ for cite in "${cites[@]}"; do
   fi
 done
 
+all_done=1
+for t in "${task_list[@]}"; do
+  if ! grep -qE "^- \[[xX]\] ${t}([[:space:]]|$)" "$ledger"; then
+    all_done=0
+    break
+  fi
+done
+if [[ $all_done -eq 1 ]]; then
+  echo "Nothing to do: ${feature}/${task} is already marked done in ${ledger}."
+  exit 0
+fi
+
 echo "==> gate"
 if ! bash scripts/verify.sh; then
   echo "REFUSED: the gate is not green; ${feature}/${task} stays open." >&2
