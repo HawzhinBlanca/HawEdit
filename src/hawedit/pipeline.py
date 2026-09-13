@@ -192,6 +192,10 @@ from hawedit.silence import (
     tighten_clip,
     tighten_sentences,
 )
+from hawedit.story import (
+    order_moments_by_story_map,
+    produce_story_relations,
+)
 from hawedit.timelens import VisualEvidenceInterval, interval_for_fusion
 from hawedit.transcripts import (
     NormalizedTranscript,
@@ -718,7 +722,11 @@ def _not_reached(stage: str, dependency: str) -> StageSkipped:
 
 
 def _nothing_fits_a_candidate(
-    candidates: Sequence[MergedCandidate], sentences: Sequence[Sentence], minimum: int
+    candidates: Sequence[MergedCandidate],
+    sentences: Sequence[Sentence],
+    minimum: int,
+    *,
+    allow_padding: bool = True,
 ) -> StageSkipped:
     """Why `--auto-select` chose nothing, in the numbers the run already has.
 
@@ -744,7 +752,10 @@ def _nothing_fits_a_candidate(
     # window landed where no complete sentence is. Reporting the first as the second sends
     # someone to widen a retrieval window that was never the problem.
     grown = sorted(
-        _run_span_ms(_grown_sentence_run(candidate, sentences, minimum), sentences)
+        _run_span_ms(
+            _grown_sentence_run(candidate, sentences, minimum, allow_padding=allow_padding),
+            sentences,
+        )
         for candidate in candidates
     )
     if grown and grown[-1] > 0:
@@ -1088,6 +1099,8 @@ def _rejected_candidates(
     sentences: Sequence[Sentence],
     selected_span: tuple[int, int] | None,
     minimum: int,
+    *,
+    allow_padding: bool = True,
 ) -> tuple[RejectedCandidate, ...]:
     """§5: "Every rejected candidate keeps a `reject_reason` and its `discovery_path`."
 
@@ -1102,19 +1115,24 @@ def _rejected_candidates(
     decision ever ruled out.
     """
     rejected: list[RejectedCandidate] = []
+    effective_min = minimum if allow_padding else 0
     for candidate in candidates:
         if candidate.candidate_id == chosen.candidate_id:
             continue
-        grown = _grown_sentence_run(candidate, sentences, minimum) if sentences else ()
+        grown = (
+            _grown_sentence_run(candidate, sentences, minimum, allow_padding=allow_padding)
+            if sentences
+            else ()
+        )
         if sentences and not grown:
             reason = (
                 "no complete sentence overlaps this candidate, so there is nothing to grow a "
                 "clip around (Kurdish invariant #2)"
             )
-        elif sentences and _run_span_ms(grown, sentences) < minimum:
+        elif sentences and _run_span_ms(grown, sentences) < effective_min:
             reason = (
                 f"grew to {_run_span_ms(grown, sentences) / 1000:.2f}s on complete sentence "
-                f"boundaries, short of the {minimum / 1000:.2f}s minimum (D-254)"
+                f"boundaries, short of the {effective_min / 1000:.2f}s minimum (D-254)"
             )
         elif selected_span is not None and not (
             candidate.in_ms <= selected_span[0] and candidate.out_ms >= selected_span[1]
@@ -1208,9 +1226,17 @@ def _run_span_ms(run: Sequence[int], sentences: Sequence[Sentence]) -> int:
 
 
 def _grown_sentence_run(
-    candidate: MergedCandidate, sentences: Sequence[Sentence], minimum: int
+    candidate: MergedCandidate,
+    sentences: Sequence[Sentence],
+    minimum: int,
+    *,
+    allow_padding: bool = True,
 ) -> tuple[int, ...]:
     """The sentence run to judge: the seed inside or around `candidate`, grown to D-254's range.
+
+    When `allow_padding` is False (the default in production profile and assembly mode per B3),
+    no outward padding sentences are added. A moment is as long as its setup and payoff.
+    Length targets are met by assembling discrete moments via `assemble_spans`, never padding.
 
     Stage 3 candidates are seeds rather than final spans. Path A was asked for "a short social
     clip" and told nothing about how long a clip is, so it answered with 1.1-second spans and
@@ -1236,7 +1262,7 @@ def _grown_sentence_run(
     seed = _sentence_run_for_candidate(candidate, sentences) or _longest_run(
         _complete_sentences_overlapping(candidate, sentences), sentences
     )
-    if not seed or candidate.out_ms - candidate.in_ms >= minimum:
+    if not seed or not allow_padding or candidate.out_ms - candidate.in_ms >= minimum:
         return seed
     first, last = seed[0], seed[-1]
     behind = True
@@ -1306,6 +1332,8 @@ def _judgeable_plans(
     sentences: Sequence[Sentence],
     limit: int,
     minimum: int,
+    *,
+    allow_padding: bool = True,
 ) -> tuple[tuple[MergedCandidate, tuple[int, ...]], ...]:
     """The first `limit` candidates that could actually become a clip, in priority order.
 
@@ -1325,9 +1353,10 @@ def _judgeable_plans(
     if limit < 1:
         raise ValueError(f"judge_top_n must be at least 1, got {limit}")
     plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
+    effective_min = minimum if allow_padding else 0
     for candidate in sorted(candidates, key=_candidate_priority):
-        run = _grown_sentence_run(candidate, sentences, minimum)
-        if run and _run_span_ms(run, sentences) >= minimum:
+        run = _grown_sentence_run(candidate, sentences, minimum, allow_padding=allow_padding)
+        if run and _run_span_ms(run, sentences) >= effective_min:
             # The candidate carries the span it grew into, not the seed it came from. A grown
             # span is deliberately larger than its seed, so every containment check downstream
             # — `_candidate_for_judging`, `_rejected_candidates` — would otherwise refuse the
@@ -1419,7 +1448,11 @@ def _prepare_selection(
         assert_time_contiguous(sentences, run)
     ordered = tuple(sorted(selection))
     span_groups = [[sentences[i] for i in run] for run in runs]
-    assembled = assemble_spans(span_groups)
+    story_rels = produce_story_relations(transcript, sentences)
+    ordered_span_groups, _ = order_moments_by_story_map(
+        span_groups, story_rels, all_sentences=sentences
+    )
+    assembled = assemble_spans(ordered_span_groups)
     anchors = (0, assembled.total_duration_ms)
     return ordered, assembled.assembled_sentences, anchors, assembled.spans
 
@@ -1832,6 +1865,8 @@ def run_pipeline(
     )
     if min_clip_ms == MIN_CANDIDATE_SPAN_MS and ct_profile.min_clip_ms != MIN_CANDIDATE_SPAN_MS:
         min_clip_ms = ct_profile.min_clip_ms
+    if profile == "production" and not assemble:
+        assemble = True
 
     identifier = validate_media_id(media_id or source.stem)
     if transcript is not None and transcript.media_id != identifier:
@@ -2183,13 +2218,16 @@ def run_pipeline(
         log.finished("discovery", _STAGE_3_DISCOVERY.reason)
 
     judge_plans: tuple[tuple[MergedCandidate, tuple[int, ...]], ...] = ()
+    allow_padding = not assemble and profile != "production"
     if auto_select and not select_sentences and merged:
         # Up to `judge_top_n` of them, not one. Stage 4 judged the best-ranked survivor and the
         # run lived or died on that single sample: measured twice on real episodes, 26
         # candidates and 18 candidates, one judged each time, hook 0.20 both times.
         # `_candidate_priority` orders by discovery rank and knows nothing about editorial
         # quality, so nothing established rank #1 was the *best* candidate.
-        judge_plans = _judgeable_plans(merged, sentences, judge_top_n, min_clip_ms)
+        judge_plans = _judgeable_plans(
+            merged, sentences, judge_top_n, min_clip_ms, allow_padding=allow_padding
+        )
         automatic = judge_plans[0][1] if judge_plans else ()
         if not automatic:
             # `--auto-select` ran, examined every candidate and chose nothing. Reported as a
@@ -2203,7 +2241,12 @@ def run_pipeline(
             # of 6.72 s, and **0** wholly inside any candidate. The window ceiling is
             # `max_frames / fps`, so this machine's 8-frame limit (`BLOCKED.md` #17) at the
             # declared 2.0 fps yields a 4 s retrieval unit against §3's 32 s. D-185.
-            run = replace(run, boundary=_nothing_fits_a_candidate(merged, sentences, min_clip_ms))
+            run = replace(
+                run,
+                boundary=_nothing_fits_a_candidate(
+                    merged, sentences, min_clip_ms, allow_padding=allow_padding
+                ),
+            )
         select_sentences, selected, selected_anchors, assembly_spans = _prepare_selection(
             transcript, sentences, automatic, allow_assembly=assemble
         )
@@ -2246,7 +2289,12 @@ def run_pipeline(
         run = replace(
             run,
             rejected=_rejected_candidates(
-                merged, selected_candidate, sentences, selected_anchors, min_clip_ms
+                merged,
+                selected_candidate,
+                sentences,
+                selected_anchors,
+                min_clip_ms,
+                allow_padding=allow_padding,
             ),
         )
 
@@ -2398,7 +2446,12 @@ def run_pipeline(
                 run = replace(
                     run,
                     rejected=_rejected_candidates(
-                        merged, winner, sentences, selected_anchors, min_clip_ms
+                        merged,
+                        winner,
+                        sentences,
+                        selected_anchors,
+                        min_clip_ms,
+                        allow_padding=allow_padding,
                     ),
                 )
             run = replace(run, editorial=None, billed_calls=tuple(billed_calls))
@@ -3198,6 +3251,18 @@ def run_pipeline(
                 for start, end in silence_plan.retained_intervals_ms
             )
 
+        active_relation_ids: tuple[str, ...] = ()
+        if transcript is not None and sentences:
+            story_rels = produce_story_relations(transcript, sentences)
+            if assembly_spans is not None and len(assembly_spans) > 1:
+                runs = _partition_into_contiguous_spans(select_sentences)
+                span_groups = [[sentences[i] for i in run] for run in runs]
+                _, active_relation_ids = order_moments_by_story_map(
+                    span_groups, story_rels, all_sentences=sentences
+                )
+            elif story_rels:
+                active_relation_ids = tuple(r.relation_id for r in story_rels[:1])
+
         brief = EditorialBrief(
             viewer_takeaway=(
                 effective_clip.output.title_ckb
@@ -3210,6 +3275,7 @@ def run_pipeline(
                 max(ct_profile.min_clip_ms, clip.out_ms - clip.in_ms),
             ),
             protected_regions=("lower_third_captions", "speaker_face"),
+            relation_ids=active_relation_ids,
         )
         reframe_str = reframe_mode.value if hasattr(reframe_mode, "value") else str(reframe_mode)
         config = EffectiveConfiguration.resolve(
@@ -3251,6 +3317,7 @@ def run_pipeline(
             punch_in_ms=tuple(p[0] for p in planned_punch_ins),
             speaker_turns=spk_turns,
             sentences=tuple(selected),
+            relation_ids=active_relation_ids,
         )
         rendered = render_clip(
             effective_clip,
@@ -4304,7 +4371,8 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         hook_text=getattr(args, "hook_text", None),
         music_bed_path=getattr(args, "music_bed", None),
         music_ducking_volume=getattr(args, "music_ducking_volume", 0.25),
-        assemble=getattr(args, "assemble", False),
+        assemble=getattr(args, "assemble", False)
+        or (getattr(args, "profile", "default") == "production"),
     )
 
 

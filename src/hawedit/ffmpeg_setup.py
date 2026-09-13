@@ -134,12 +134,12 @@ def _run_provisioner(script: Path, install_dir: Path) -> int:
         result = subprocess.run(
             (str(bash), "--noprofile", "--norc", str(script)),
             env=environment,
-            timeout=None,
+            timeout=1800.0,
             check=False,
         )
-    except OSError as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
         raise FfmpegSetupError(
-            f"cannot launch the authenticated FFmpeg provisioner: {exc}"
+            f"cannot launch or complete the authenticated FFmpeg provisioner: {exc}"
         ) from exc
     return int(result.returncode)
 

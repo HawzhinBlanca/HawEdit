@@ -4,6 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from hawedit.edit_plan import (
+    CURRENT_PLAN_VERSION,
+    EditorialBrief,
+    EffectiveConfiguration,
+    SourceTimeMapping,
+    VisualEditPlan,
+)
+from hawedit.sentences import Sentence
 from hawedit.story import (
     StoryCandidateResult,
     StoryGroundingError,
@@ -11,7 +19,10 @@ from hawedit.story import (
     StoryRelation,
     StoryRelationKind,
     build_story_map,
+    order_moments_by_story_map,
+    produce_story_relations,
 )
+from hawedit.transcripts import Word
 
 
 def test_story_relations_require_canonical_and_visual_evidence() -> None:
@@ -360,3 +371,93 @@ def test_visual_candidate_keeps_required_context_and_landing_beat() -> None:
     res_dict = res_setup.to_dict()
     restored_res = StoryCandidateResult.from_dict(res_dict)
     assert restored_res == res_setup
+
+
+def test_story_map_orders_payoff_after_setup() -> None:
+    """Task B4: Story map producer orders assembled moments with payoff succeeding setup.
+
+    Proves:
+    1. produce_story_relations extracts grounded relations from Kurdish speech (setup->payoff).
+    2. order_moments_by_story_map re-orders moments so setup precedes payoff
+       (payoff succeeds setup).
+    3. The plan JSON carries relation_ids for the join.
+    """
+    # Create Kurdish sentences for ep29:
+    # Sentence 0 (Setup): "ئەگەر سەرەتا سەیری دۆخەکە بکەین هەموو شتێک ئاڵۆز دیار بوو."
+    setup_words = (
+        Word(w="ئەگەر", start_ms=1000, end_ms=1400, conf=0.96),
+        Word(w="سەرەتا", start_ms=1400, end_ms=1800, conf=0.95),
+        Word(w="سەیری", start_ms=1800, end_ms=2200, conf=0.94),
+        Word(w="دۆخەکە", start_ms=2200, end_ms=2600, conf=0.95),
+        Word(w="بکەین.", start_ms=2600, end_ms=3000, conf=0.96),
+    )
+    setup_sentence = Sentence(words=setup_words, complete=True)
+
+    # Sentence 1 (Payoff): "لە ئەنجامدا دەرکەوت کە دەستکەوتەکە زۆر گرنگ بوو."
+    payoff_words = (
+        Word(w="لە", start_ms=15000, end_ms=15300, conf=0.96),
+        Word(w="ئەنجامدا", start_ms=15300, end_ms=15800, conf=0.95),
+        Word(w="دەرکەوت", start_ms=15800, end_ms=16300, conf=0.95),
+        Word(w="کە", start_ms=16300, end_ms=16600, conf=0.94),
+        Word(w="دەستکەوتەکە", start_ms=16600, end_ms=17200, conf=0.95),
+        Word(w="گرنگ", start_ms=17200, end_ms=17700, conf=0.94),
+        Word(w="بوو.", start_ms=17700, end_ms=18200, conf=0.96),
+    )
+    payoff_sentence = Sentence(words=payoff_words, complete=True)
+
+    sentences = (setup_sentence, payoff_sentence)
+
+    # 1. Producer extracts grounded relation connecting setup to payoff
+    relations = produce_story_relations(None, sentences, media_id="ep29")
+    assert len(relations) >= 1
+    rel = relations[0]
+    assert rel.kind == StoryRelationKind.SETUP_PAYOFF
+    assert rel.required_context_sentence_ids == ("s_00",)
+    assert rel.canonical_sentence_ids == ("s_01",)
+
+    # 2. Moments provided in reverse narrative order: [payoff_moment, setup_moment]
+    payoff_moment = [payoff_sentence]
+    setup_moment = [setup_sentence]
+    reverse_moments = [payoff_moment, setup_moment]
+
+    ordered_moments, relation_ids = order_moments_by_story_map(
+        reverse_moments, relations, all_sentences=sentences
+    )
+
+    # Ordering from story map ensures payoff succeeds setup: setup_moment is first!
+    assert ordered_moments[0] == setup_moment
+    assert ordered_moments[1] == payoff_moment
+    assert relation_ids == (rel.relation_id,)
+
+    # 3. The VisualEditPlan carries relation_ids in its contract and JSON representation
+    brief = EditorialBrief.default_for_content(
+        "podcast", duration_ms=20_000, relation_ids=relation_ids
+    )
+    assert brief.relation_ids == relation_ids
+
+    config = EffectiveConfiguration.resolve("podcast")
+    time_map = SourceTimeMapping(
+        clip_in_ms=1000,
+        clip_out_ms=18200,
+        retained_intervals_ms=((1000, 3000), (15000, 18200)),
+    )
+    plan = VisualEditPlan(
+        version=CURRENT_PLAN_VERSION,
+        clip_id="ep29_assembled_clip",
+        media_id="ep29",
+        media_sha256="0" * 64,
+        brief=brief,
+        config=config,
+        time_mapping=time_map,
+        sentences=sentences,
+        relation_ids=relation_ids,
+    )
+    plan_dict = plan.to_dict()
+    assert plan_dict["relation_ids"] == list(relation_ids)
+    assert plan_dict["brief"]["relation_ids"] == list(relation_ids)
+
+    # Plan JSON round-trip preserves relation_ids
+    plan_json = plan.to_json()
+    restored = VisualEditPlan.from_json(plan_json)
+    assert restored.relation_ids == relation_ids
+    assert restored.brief.relation_ids == relation_ids

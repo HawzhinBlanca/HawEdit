@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from hawedit.checkpoint import (
     clear_stage_checkpoint,
     hash_bytes,
+    hash_file,
     is_stage_complete,
     load_stage_checkpoint,
     save_stage_checkpoint,
 )
+from hawedit.clip import DiscoveryPath
+from hawedit.discovery import Candidate
+from hawedit.events import RunEvent, RunState
 from hawedit.ingest import IngestResult
+from hawedit.judge import JudgeRequest, JudgeVerdict
+from hawedit.pipeline import StageSkipped, run_pipeline
+from hawedit.transcripts import AsrProvenance, NormalizedTranscript, RawTranscript, Word
 
 
 def test_checkpoint_lifecycle(tmp_path: Path) -> None:
@@ -121,3 +132,153 @@ def test_pipeline_stage0_corrupted_json_falls_back_safely(tmp_path: Path) -> Non
     assert run2.ingest.source_sha256 == run1.ingest.source_sha256
     # And valid json is restored
     assert ingest_json.read_text(encoding="utf-8").startswith("{")
+
+
+def test_pipeline_resume_is_byte_identical_after_kill_at_every_stage(
+    tmp_path: Path,
+) -> None:
+    """Prompt D2 / Claim R3: Kill after every stage, resume, byte-identical final mp4.
+
+    Exercises 7 kills across the 7 pipeline stages:
+    1. ingest
+    2. transcript
+    3. index
+    4. discovery
+    5. editorial
+    6. boundary
+    7. render
+
+    Asserts that resuming in the same work directory produces an MP4 whose SHA256 is
+    byte-identical to the baseline uninterupted run.
+    """
+    fixture = (
+        Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+    )
+    fixture_sha = hash_file(fixture)
+
+    words = (
+        Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=800, conf=0.95),
+        Word(w="کوردی.", start_ms=800, end_ms=1_700, conf=0.94),
+        Word(w="لە", start_ms=2_000, end_ms=2_400, conf=0.93),
+        Word(w="هەولێر.", start_ms=2_400, end_ms=4_100, conf=0.92),
+    )
+    transcript = RawTranscript(
+        media_id="resume_test",
+        text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
+        words=words,
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=fixture_sha,
+    )
+    verdict = JudgeVerdict(
+        candidate_id="cand_resume",
+        hook_score=0.8,
+        self_contained=True,
+        payoff_at_ms=1500,
+        meaning_fidelity=0.9,
+        misleading_edit_risk=0.05,
+        cultural_landing=0.8,
+        narrative_role="payoff",
+        title_ckb="ڕۆژنامەوانی کوردی لە هەولێر",
+        description_ckb="بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
+        hashtags_ckb=("#کوردی",),
+        judge="gemini-2.5-pro",
+        clip_in_ms=100,
+        clip_out_ms=4100,
+    )
+
+    class MockJudge:
+        model_id = "gemini-2.5-pro"
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            return replace(
+                verdict,
+                clip_in_ms=request.clip_in_ms,
+                clip_out_ms=request.clip_out_ms,
+                candidate_id=request.candidate_id,
+            )
+
+    def discover_fn(_n: NormalizedTranscript) -> Sequence[Candidate]:
+        return [
+            Candidate(
+                "cand_resume", "resume_test", 100, 4_100, DiscoveryPath.VERBAL, rank=1, score=0.95
+            )
+        ]
+
+    judge_fn = MockJudge()
+
+    # Establish baseline non-interrupted ground-truth render
+    baseline_work = tmp_path / "baseline_work"
+    baseline_run = run_pipeline(
+        fixture,
+        baseline_work,
+        media_id="resume_test",
+        transcript=transcript,
+        select_sentences=(0, 1),
+        discover=discover_fn,
+        judge=judge_fn,
+    )
+    assert baseline_run.render is not None and not isinstance(baseline_run.render, StageSkipped)
+    baseline_mp4 = Path(baseline_run.render.path)
+    assert baseline_mp4.is_file()
+    baseline_sha = hash_file(baseline_mp4)
+
+    stages_to_kill = (
+        "ingest",
+        "transcript",
+        "index",
+        "discovery",
+        "editorial",
+        "boundary",
+        "render",
+    )
+
+    class SimulatedKillError(RuntimeError):
+        pass
+
+    for kill_stage in stages_to_kill:
+        trial_work = tmp_path / f"kill_{kill_stage}"
+        killed = False
+
+        def on_event(event: RunEvent, target: str = kill_stage) -> None:
+            nonlocal killed
+            # Trigger kill once the targeted stage has completed
+            if event.stage == target and event.state == RunState.COMPLETED:
+                killed = True
+                raise SimulatedKillError(f"Simulated kill after {target}")
+
+        with pytest.raises(SimulatedKillError):
+            run_pipeline(
+                fixture,
+                trial_work,
+                media_id="resume_test",
+                transcript=transcript,
+                select_sentences=(0, 1),
+                discover=discover_fn,
+                judge=judge_fn,
+                on_event=on_event,
+            )
+
+        assert killed is True, f"Kill event failed to fire for stage {kill_stage}"
+
+        # Resume execution in the same trial directory
+        resumed_run = run_pipeline(
+            fixture,
+            trial_work,
+            media_id="resume_test",
+            transcript=transcript,
+            select_sentences=(0, 1),
+            discover=discover_fn,
+            judge=judge_fn,
+        )
+        assert resumed_run.render is not None and not isinstance(
+            resumed_run.render, StageSkipped
+        ), f"Resumed run failed at stage {resumed_run.render}"
+
+        resumed_mp4 = Path(resumed_run.render.path)
+        assert resumed_mp4.is_file()
+        resumed_sha = hash_file(resumed_mp4)
+
+        assert resumed_sha == baseline_sha, (
+            f"Resumed run after killing {kill_stage} produced non-identical output: "
+            f"{resumed_sha} != {baseline_sha}"
+        )

@@ -6041,6 +6041,41 @@ def test_a_candidate_already_in_range_is_left_alone() -> None:
     ), "the over-long span was cut to fit the maximum"
 
 
+def test_no_span_is_grown_past_its_payoff() -> None:
+    """Prompt B3 / T12: Remove the 30-second padding.
+
+    No span is grown past its payoff — a moment is as long as its setup and payoff,
+    and meeting the 30-55s duration target happens by assembling discrete moments
+    via `assemble_spans`, never by padding one moment outward into unrelated footage.
+    """
+    seeded = _ranked("hot", 40_000, 45_300, rank=1)
+
+    # With allow_padding=True (legacy standalone single-clip mode), it grew outward:
+    grown_padded = _grown_sentence_run(
+        seeded, _EPISODE_SENTENCES, MIN_CANDIDATE_SPAN_MS, allow_padding=True
+    )
+    assert grown_padded == (5, 6, 7, 8, 9, 10)
+    assert _run_span_ms(grown_padded, _EPISODE_SENTENCES) >= MIN_CANDIDATE_SPAN_MS
+
+    # With allow_padding=False (production profile / assembly mode per Prompt B3):
+    grown_unpadded = _grown_sentence_run(
+        seeded, _EPISODE_SENTENCES, MIN_CANDIDATE_SPAN_MS, allow_padding=False
+    )
+    assert grown_unpadded == (8,), "span was grown past its setup/payoff"
+    assert _run_span_ms(grown_unpadded, _EPISODE_SENTENCES) < MIN_CANDIDATE_SPAN_MS
+
+    # In production profile, judgeable plans preserve the unpadded seed span:
+    plans = _judgeable_plans(
+        (seeded,),
+        _EPISODE_SENTENCES,
+        limit=1,
+        minimum=MIN_CANDIDATE_SPAN_MS,
+        allow_padding=False,
+    )
+    assert len(plans) == 1
+    assert plans[0][1] == (8,), "judgeable plan in production profile padded span outward"
+
+
 def test_a_candidate_smaller_than_every_sentence_still_seeds() -> None:
     """ep01's case, and the reason growth cannot depend on containment.
 

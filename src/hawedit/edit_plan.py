@@ -44,6 +44,7 @@ class EditorialBrief:
     content_type: ContentType
     target_duration_ms: tuple[int, int]
     protected_regions: tuple[str, ...] = ("lower_third_captions", "speaker_face")
+    relation_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.content_type, str):
@@ -59,6 +60,7 @@ class EditorialBrief:
         cls,
         content_type: ContentType | str | None,
         duration_ms: int = 30_000,
+        relation_ids: tuple[str, ...] = (),
     ) -> EditorialBrief:
         """Create a conservative default brief for unspecified inputs."""
         ct = ContentType(content_type) if content_type is not None else ContentType.PODCAST
@@ -70,6 +72,7 @@ class EditorialBrief:
             content_type=ct,
             target_duration_ms=(min_dur, max_dur),
             protected_regions=("lower_third_captions", "speaker_face"),
+            relation_ids=relation_ids,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +81,7 @@ class EditorialBrief:
             "content_type": self.content_type.value,
             "target_duration_ms": list(self.target_duration_ms),
             "protected_regions": list(self.protected_regions),
+            "relation_ids": list(self.relation_ids),
         }
 
     @classmethod
@@ -88,6 +92,7 @@ class EditorialBrief:
             content_type=ContentType(data["content_type"]),
             target_duration_ms=(int(dur[0]), int(dur[1])),
             protected_regions=tuple(str(r) for r in data.get("protected_regions", ())),
+            relation_ids=tuple(str(r) for r in data.get("relation_ids", ())),
         )
 
 
@@ -330,6 +335,7 @@ class VisualEditPlan:
     punch_in_ms: tuple[int, ...] = ()
     speaker_turns: tuple[tuple[int, int, str], ...] = ()
     sentences: tuple[Sentence, ...] = ()
+    relation_ids: tuple[str, ...] = ()
 
     def derive_sentences_for_output(self) -> tuple[Sentence, ...]:
         """Derive sentences with words mapped strictly to output timeline (0-based)."""
@@ -521,6 +527,7 @@ class VisualEditPlan:
                 }
                 for s in self.sentences
             ],
+            "relation_ids": list(self.relation_ids or self.brief.relation_ids),
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -557,6 +564,7 @@ class VisualEditPlan:
             punch_in_ms=tuple(int(x) for x in data.get("punch_in_ms", ())),
             speaker_turns=speaker_turns,
             sentences=tuple(sentences),
+            relation_ids=tuple(str(r) for r in data.get("relation_ids", ())),
         )
 
     @classmethod

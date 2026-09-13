@@ -16,3 +16,7 @@ Restores honesty, strict gate invariants, zero skipped tests, contract-driven re
 - [ ] T8 Default filler excision with repetition and false-start detection
 - [ ] T9 Speaking face share measurement and delivery threshold
 - [ ] T10 Reproducible discovery voting (K=5) and human dependency logging in `BLOCKED.md`
+- [ ] T11 Subprocess timeouts invariant across `src/hawedit/`
+- [ ] T12 Highlight-only span growth and production assembly default
+- [ ] T13 Pipeline stage resume invariant across all 7 stages
+- [ ] T14 Story map producer with relation-ordered plans

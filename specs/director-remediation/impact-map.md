@@ -11,3 +11,8 @@
 | `src/hawedit/delivery.py` | `publish_delivery_bundle`, `reconcile_delivery` | Enforces `plan` presence in `ArtifactBundle.suffixes()`, verifies speaking face share threshold. |
 | `src/hawedit/silence.py` | `tighten_silence`, `plan_silence_tightening` | Implements repetition (n-gram) and false-start detection. |
 | `src/hawedit/measure.py` | `measure_clip`, `ClipMeasurement` | Computes `speaking_face_share` across diarization speech frames. |
+| `src/hawedit/ffmpeg_setup.py` | `_run_provisioner` | Enforces finite timeout=1800.0 instead of timeout=None. |
+| `src/hawedit/pipeline.py` | `_grown_sentence_run`, `_judgeable_plans`, `run_pipeline` | Eliminates 30s padding when allow_padding=False; defaults assemble=True in production profile. |
+| `src/hawedit/checkpoint.py` | `is_stage_complete`, `save_stage_checkpoint` | Enforces stage checkpoint resumption across all 7 stages. |
+| `src/hawedit/story.py` | `produce_story_relations`, `StoryMap` | Generates narrative relations and orders payoff moments after setup moments. |
+| `src/hawedit/edit_plan.py` | `EditorialBrief`, `VisualEditPlan` | Carries explicit `relation_ids` across plan serialization and delivery. |

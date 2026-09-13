@@ -10,3 +10,7 @@
 - [x] T8 Default filler excision with repetition and false-start detection
 - [x] T9 Speaking face share measurement and delivery threshold
 - [x] T10 Reproducible discovery voting K=5 and human dependency logging in BLOCKED.md
+- [ ] T11 Subprocess timeouts invariant: all subprocess executions in src/ have explicit timeouts
+- [ ] T12 Highlight-only span growth: eliminate 30s padding in _grown_sentence_run, default --assemble in production profile
+- [ ] T13 Pipeline stage resume invariant: resume after kill at each of 7 stages produces byte-identical mp4
+- [ ] T14 Story map producer: relation producer orders payoff after setup and carries relation_ids in edit_plan.json
