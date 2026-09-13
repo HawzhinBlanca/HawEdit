@@ -3190,7 +3190,6 @@ def run_pipeline(
                 min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
 
-
         fps = frame_rate(source, ffmpeg)
         retained_intervals: tuple[tuple[int, int], ...] | None = None
         if silence_plan is not None and silence_plan.total_removed_ms > 0:
