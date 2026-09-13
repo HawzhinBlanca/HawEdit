@@ -46,10 +46,21 @@ fi
 # Task ids and test names go into regexes below. Constrained rather than escaped, because the
 # set of things that belong here is small and known, and a rejected argument is a better
 # outcome than a metacharacter quietly widening a match that decides what counts as done.
-if [[ ! "$task" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-  echo "REFUSED: task id '${task}' is not [A-Za-z0-9_.-]+." >&2
+IFS=',' read -r -a task_list <<< "$task"
+if [[ ${#task_list[@]} -eq 0 ]]; then
+  echo "REFUSED: no task id supplied." >&2
   exit 2
 fi
+for t in "${task_list[@]}"; do
+  if [[ ! "$t" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    echo "REFUSED: task id '${t}' is not [A-Za-z0-9_.-]+." >&2
+    exit 2
+  fi
+  if ! grep -qE "^- \[[ xX]\] ${t}([[:space:]]|$)" "$ledger"; then
+    echo "REFUSED: no row for task '${t}' in ${ledger}." >&2
+    exit 2
+  fi
+done
 
 IFS=',' read -r -a cites <<< "$tests"
 if [[ ${#cites[@]} -eq 0 ]]; then
@@ -63,16 +74,6 @@ for cite in "${cites[@]}"; do
     exit 2
   fi
 done
-
-if ! grep -qE "^- \[[ xX]\] ${task}([[:space:]]|$)" "$ledger"; then
-  echo "REFUSED: no row for task '${task}' in ${ledger}." >&2
-  exit 2
-fi
-
-if grep -qE "^- \[[xX]\] ${task}([[:space:]]|$)" "$ledger"; then
-  echo "Nothing to do: ${feature}/${task} is already marked done in ${ledger}."
-  exit 0
-fi
 
 echo "==> gate"
 if ! bash scripts/verify.sh; then
@@ -97,26 +98,32 @@ for cite in "${cites[@]}"; do
 done
 
 echo "==> flip"
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
-awk -v task="$task" '
-  BEGIN { flipped = 0 }
-  {
-    if ($0 ~ "^- \\[ \\] " task "([ \t]|$)") {
-      sub(/^- \[ \]/, "- [x]")
-      flipped = 1
+for t in "${task_list[@]}"; do
+  if grep -qE "^- \[[xX]\] ${t}([[:space:]]|$)" "$ledger"; then
+    echo "Nothing to do: ${feature}/${t} is already marked done in ${ledger}."
+    continue
+  fi
+  tmp="$(mktemp)"
+  awk -v task="$t" '
+    BEGIN { flipped = 0 }
+    {
+      if ($0 ~ "^- \\[ \\] " task "([ \t]|$)") {
+        sub(/^- \[ \]/, "- [x]")
+        flipped = 1
+      }
+      print
     }
-    print
-  }
-  END { if (flipped != 1) exit 3 }
-' "$ledger" > "$tmp"
-cat "$tmp" > "$ledger"
+    END { if (flipped != 1) exit 3 }
+  ' "$ledger" > "$tmp"
+  cat "$tmp" > "$ledger"
+  rm -f "$tmp"
 
-# Provenance, written ONLY here and ONLY after all three checks passed. It is what lets a
-# reader tell a row the gate flipped from a row somebody typed an x into.
-printf 'TS=%s FEATURE=%s TASK=%s TESTS=%s VERIFY=pass REPORT=%s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$feature" "$task" "$tests" "$report" \
-  >> "specs/${feature}/ledger.log"
+  # Provenance, written ONLY here and ONLY after all three checks passed. It is what lets a
+  # reader tell a row the gate flipped from a row somebody typed an x into.
+  printf 'TS=%s FEATURE=%s TASK=%s TESTS=%s VERIFY=pass REPORT=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$feature" "$t" "$tests" "$report" \
+    >> "specs/${feature}/ledger.log"
 
-echo "Ledger updated: ${feature}/${task} done (tests: ${tests}; gate green; provenance recorded)."
+  echo "Ledger updated: ${feature}/${t} done (tests: ${tests}; gate green; provenance recorded)."
+done
 echo "Not finished until the required CI checks are green on the pull request."
