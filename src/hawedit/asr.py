@@ -377,8 +377,8 @@ class OmniAsrBackend:
         lora_adapter: Path | None = None,
     ) -> None:
         assert_canonical_omni_cards(llm_card, ctc_card)
-        self.llm_device = llm_device
-        self.ctc_device = ctc_device
+        self.llm_device = os.environ.get("HAWEDIT_ASR_LLM_DEVICE", llm_device)
+        self.ctc_device = os.environ.get("HAWEDIT_ASR_CTC_DEVICE", ctc_device)
         self.language = language
         self.llm_card = llm_card
         self.ctc_card = ctc_card
@@ -1276,12 +1276,15 @@ class WslOmniAsrProducer:
 
             wsl_request = self._wsl_path(request_path)
             wsl_output = self._wsl_path(output_path)
+            env_args = ["env", "PYTHONDONTWRITEBYTECODE=1", f"PYTHONPATH={wsl_source}"]
+            for var in ("HAWEDIT_ASR_LLM_DEVICE", "HAWEDIT_ASR_CTC_DEVICE"):
+                val = os.environ.get(var)
+                if val:
+                    env_args.append(f"{var}={val}")
             result = subprocess.run(
                 [
                     *self._prefix(),
-                    "env",
-                    "PYTHONDONTWRITEBYTECODE=1",
-                    f"PYTHONPATH={wsl_source}",
+                    *env_args,
                     interpreter,
                     "-m",
                     "hawedit.asr_worker",
