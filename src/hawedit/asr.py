@@ -296,7 +296,7 @@ class QwenSoraniValidator:
             )
         self.model_id = model_id
         self.model_dir = model_dir
-        self.device = device
+        self.device = os.environ.get("HAWEDIT_ASR_VALIDATOR_DEVICE", device)
         self._model: Any | None = None
 
     def _load(self) -> Any:
@@ -1277,7 +1277,11 @@ class WslOmniAsrProducer:
             wsl_request = self._wsl_path(request_path)
             wsl_output = self._wsl_path(output_path)
             env_args = ["env", "PYTHONDONTWRITEBYTECODE=1", f"PYTHONPATH={wsl_source}"]
-            for var in ("HAWEDIT_ASR_LLM_DEVICE", "HAWEDIT_ASR_CTC_DEVICE"):
+            for var in (
+                "HAWEDIT_ASR_LLM_DEVICE",
+                "HAWEDIT_ASR_CTC_DEVICE",
+                "HAWEDIT_ASR_VALIDATOR_DEVICE",
+            ):
                 val = os.environ.get(var)
                 if val:
                     env_args.append(f"{var}={val}")

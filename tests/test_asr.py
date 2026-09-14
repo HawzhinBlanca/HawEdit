@@ -930,6 +930,16 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     assert not lock_active
 
 
+def test_qwen_validator_device_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_dir = tmp_path / "validator"
+    model_dir.mkdir()
+    monkeypatch.setenv("HAWEDIT_ASR_VALIDATOR_DEVICE", "cuda:0")
+    validator = QwenSoraniValidator(model_dir)
+    assert validator.device == "cuda:0"
+
+
 def test_qwen_validator_integrity_failure_precedes_config_parse_and_import(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
