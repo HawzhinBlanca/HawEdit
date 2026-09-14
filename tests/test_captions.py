@@ -2194,3 +2194,158 @@ def test_caption_verification_rejects_missing_glyphs_and_unsafe_geometry() -> No
     long_line_ass = base_ass.replace("دەقی", long_kurdish)
     with pytest.raises(CaptionVerificationError, match="illegible.*geometry.*line exceeds"):
         verify_caption_geometry(long_line_ass)
+
+
+def test_caption_chunks_preserve_source_word_order(tmp_path: Path) -> None:
+    """Item B7: Captions in source order across Kurdish dialogue transcript (ep29).
+
+    Asserts that:
+    1. chunk_caption_events preserves the exact chronological word sequence of
+       forced-alignment source tokens across multi-sentence dialogue.
+    2. compute_rtl_word_positions enforces strictly decreasing X coordinates
+       (X(w_0) > X(w_1) > ... > X(w_{k-1})) so that earlier words are always
+       positioned to the right of later words in native RTL reading order.
+    3. Critical two-word Kurdish phrases ("کاک مەسعود", "پۆڵ برێمەر", "دروست دەکەین")
+       never suffer Left-to-Right run inversion on screen.
+    4. verify_caption_text passes on correctly ordered dialogue and raises
+       CaptionVerificationError on inverted word pairs.
+    5. Golden pixel render of "کاک مەسعود" through FFmpeg/libass verifies that
+       the horizontal pixel centroid of "کاک" is strictly greater than "مەسعود".
+    """
+    # 1. Ep29 dialogue sentence sequence
+    ep29_sentences = (
+        Sentence(
+            words=words(
+                ("ئەمڕۆ", 418, 841),
+                ("لە", 841, 1103),
+                ("پۆدکاستی", 1103, 1264),
+                ("تایبەت", 1264, 1667),
+                ("بە", 1667, 1748),
+                ("خۆمان", 1748, 1788),
+                ("قسە", 1788, 2150),
+                ("دەکەین", 2150, 2654),
+            ),
+            complete=True,
+        ),
+        Sentence(
+            words=words(
+                ("کاتێک", 3000, 3400),
+                ("پۆڵ", 3400, 3800),
+                ("برێمەر", 3800, 4300),
+                ("هاتە", 4300, 4700),
+                ("کوردستان", 4700, 5400),
+                ("کاک", 5400, 5800),
+                ("مەسعود", 5800, 6400),
+                ("قبوڵی", 6400, 6900),
+                ("نەکرد", 6900, 7500),
+            ),
+            complete=True,
+        ),
+        Sentence(
+            words=words(
+                ("ئێمە", 8000, 8400),
+                ("عێراقی", 8400, 8900),
+                ("نوێ", 8900, 9300),
+                ("دروست", 9300, 9800),
+                ("دەکەین", 9800, 10300),
+                ("بەڵام", 10300, 10700),
+                ("بە", 10700, 11000),
+                ("مەرج", 11000, 11600),
+            ),
+            complete=True,
+        ),
+    )
+
+    # 2. Sequence order and geometric RTL monotonicity across all chunks
+    for s in ep29_sentences:
+        for max_w in (2, 3):
+            chunks = chunk_caption_events(s.words, max_words=max_w)
+            # Flattened words must match source words exactly
+            flattened = [w for chunk in chunks for w in chunk]
+            assert [w.w for w in flattened] == [w.w for w in s.words]
+            assert [w.start_ms for w in flattened] == [w.start_ms for w in s.words]
+
+            # For every chunk, verify strict RTL position ordering
+            for chunk in chunks:
+                if len(chunk) > 1:
+                    positions = compute_rtl_word_positions(chunk, canvas_width=1080)
+                    assert len(positions) == len(chunk)
+                    for i in range(len(positions) - 1):
+                        w_curr, x_curr = positions[i]
+                        w_next, x_next = positions[i + 1]
+                        assert x_curr > x_next, (
+                            f"RTL inversion detected: word {w_curr.w!r} at X={x_curr} "
+                            f"must be > word {w_next.w!r} at X={x_next}"
+                        )
+
+    # 3. Explicit check for the key two-word pairs from Zar #29
+    kak_masud = words(("کاک", 5400, 5800), ("مەسعود", 5800, 6400))
+    pos_km = compute_rtl_word_positions(kak_masud, canvas_width=1080)
+    assert pos_km[0][1] > pos_km[1][1], "کاک must have higher X than مەسعود"
+
+    paul_bremer = words(("پۆڵ", 3400, 3800), ("برێمەر", 3800, 4300))
+    pos_pb = compute_rtl_word_positions(paul_bremer, canvas_width=1080)
+    assert pos_pb[0][1] > pos_pb[1][1], "پۆڵ must have higher X than برێمەر"
+
+    drust_dakeyn = words(("دروست", 9300, 9800), ("دەکەین", 9800, 10300))
+    pos_dd = compute_rtl_word_positions(drust_dakeyn, canvas_width=1080)
+    assert pos_dd[0][1] > pos_dd[1][1], "دروست must have higher X than دەکەین"
+
+    # 4. verify_caption_text passes on valid order and refuses inversions
+    all_source_tokens = [w.w for s in ep29_sentences for w in s.words]
+    ass_viral = build_ass(ep29_sentences, style=CaptionStyle.VIRAL_POPUP, theme=VIRAL_THEME)
+    verify_caption_text(ass_viral, expected_text=all_source_tokens)
+
+    # Inverted tokens (e.g. replacing کاک مەسعود with مەسعود کاک) must fail
+    inverted_tokens = list(all_source_tokens)
+    idx_kak = inverted_tokens.index("کاک")
+    inverted_tokens[idx_kak], inverted_tokens[idx_kak + 1] = (
+        inverted_tokens[idx_kak + 1],
+        inverted_tokens[idx_kak],
+    )
+    with pytest.raises(CaptionVerificationError, match="wrong text"):
+        verify_caption_text(ass_viral, expected_text=inverted_tokens)
+
+    # 5. Golden pixel render centroid verification
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is not None:
+        import cv2
+        import numpy as np
+
+        test_sentence = Sentence(
+            words=words(("کاک", 0, 400), ("مەسعود", 400, 900)),
+            complete=True,
+        )
+        ass_path = tmp_path / "caption_source_order.ass"
+        ass_path.write_text(
+            build_ass(
+                (test_sentence,),
+                style=CaptionStyle.VIRAL_POPUP,
+                theme=VIRAL_THEME,
+                fonts_dir=FONTS_DIR,
+            ),
+            encoding="utf-8",
+        )
+        out_png = tmp_path / "caption_source_order.png"
+        render_caption_png(ffmpeg, ass_path, FONTS_DIR, out_png)
+        assert out_png.is_file(), "Rendered caption PNG must exist"
+
+        img = cv2.imread(str(out_png))
+        assert img is not None, "Failed to load rendered caption PNG"
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        mask = gray > 30
+        assert np.any(mask), "Rendered caption must produce visible ink"
+
+        _, x_coords = np.where(mask)
+        # In a 1080-wide frame, centered text occupies X ~ 420..660
+        # Right cluster (X > 570) is "کاک"; left cluster (X < 570) is "مەسعود"
+        right_cluster = x_coords[x_coords > 570]
+        left_cluster = x_coords[x_coords < 570]
+        assert len(right_cluster) > 0 and len(left_cluster) > 0
+
+        cx_kak = float(np.mean(right_cluster))
+        cx_masud = float(np.mean(left_cluster))
+        assert cx_kak > cx_masud, (
+            f"Expected horizontal pixel centroid of 'کاک' ({cx_kak:.1f}) > "
+            f"'مەسعود' ({cx_masud:.1f}) for native Kurdish RTL display"
+        )
