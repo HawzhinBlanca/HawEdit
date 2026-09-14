@@ -1,0 +1,1 @@
+TS=2026-09-14T07:54:42Z FEATURE=caption-source-order TASK=T1 TESTS=test_caption_chunks_preserve_source_word_order VERIFY=pass REPORT=.gate/last-test-run.xml
