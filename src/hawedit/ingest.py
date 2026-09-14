@@ -125,10 +125,12 @@ class SpeechSegment:
 
 
 def _run(command: list[str], *, timeout: float = 300.0) -> subprocess.CompletedProcess[bytes]:
+    env_timeout = os.environ.get("HAWEDIT_INGEST_TIMEOUT_S")
+    effective_timeout = float(env_timeout) if env_timeout else timeout
     try:
-        result = subprocess.run(command, capture_output=True, timeout=timeout)
+        result = subprocess.run(command, capture_output=True, timeout=effective_timeout)
     except subprocess.TimeoutExpired as exc:
-        raise IngestError(f"{Path(command[0]).name} timed out after {timeout}s") from exc
+        raise IngestError(f"{Path(command[0]).name} timed out after {effective_timeout}s") from exc
     if result.returncode != 0:
         raise IngestError(
             f"{Path(command[0]).name} failed ({result.returncode}): "
