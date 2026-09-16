@@ -2281,7 +2281,8 @@ def verify_caption_text(
                     f"broken joining: presentation form character U+{cp:04X} detected in caption"
                 )
 
-        if re.search(r"[\u0600-\u06FF]\s+[\u0600-\u06FF]\s+[\u0600-\u06FF]", d_line):
+        disconnected_re = r"(?:^|\s)[\u0600-\u06FF]\s+[\u0600-\u06FF]\s+[\u0600-\u06FF](?:\s|$)"
+        if re.search(disconnected_re, d_line):
             raise CaptionVerificationError(
                 "broken joining: disconnected letters separated by spaces"
             )

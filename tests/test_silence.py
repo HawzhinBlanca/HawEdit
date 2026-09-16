@@ -587,3 +587,27 @@ def test_every_excision_cut_has_a_framing_change() -> None:
     scheduled_punch_times = {p[0] for p in updated_punches}
     for excision_cut in plan.cut_points_ms:
         assert excision_cut in scheduled_punch_times
+
+
+def test_tighten_sentences_excises_punctuated_fillers_without_zip_mismatch() -> None:
+    """Regression: tighten_sentences handles punctuated and multi-word filler tokens cleanly."""
+    s1 = Sentence(
+        words=(
+            _make_word("کاکەژین", 100, 500),
+            _make_word("یەعنی،", 600, 900),  # Filler token with trailing punctuation
+            _make_word("باشە", 1000, 1400),
+        ),
+        complete=True,
+    )
+    s2 = Sentence(
+        words=(
+            _make_word("لە", 1500, 1800),
+            _make_word("ژیانتا.", 1900, 2400),
+        ),
+        complete=True,
+    )
+    tightened, removed = tighten_sentences((s1, s2), filler_tokens=KURDISH_FILLER_TOKENS)
+    assert removed > 0
+    assert len(tightened) == 2
+    assert [w.w for w in tightened[0].words] == ["کاکەژین", "باشە"]
+    assert [w.w for w in tightened[1].words] == ["لە", "ژیانتا."]

@@ -479,10 +479,7 @@ def tighten_sentences(
             word_offset += count
         return tuple(reconstructed), total_removed
 
-    norm_fillers = {t.strip() for t in filler_tokens if t.strip()}
-    is_filler = [w.w.strip() in norm_fillers for w in all_words]
-    if all(is_filler):
-        is_filler = [False] * len(all_words)
+    is_filler, _ = _identify_filler_words(all_words, filler_tokens)
 
     surviving_tags = [sentence_word_tags[i] for i, f in enumerate(is_filler) if not f]
     by_sentence: dict[int, list[Word]] = {i: [] for i in range(len(sentences))}

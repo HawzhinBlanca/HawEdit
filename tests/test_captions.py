@@ -2138,6 +2138,13 @@ def test_caption_verification_detects_wrong_text_and_broken_joining() -> None:
     with pytest.raises(CaptionVerificationError, match="broken joining.*orphan tatweel"):
         verify_caption_text(broken_tatweel)
 
+    # 6. Valid Kurdish conjunction 'و' between words is accepted
+    conjunction_ass = valid_ass.replace("سڵاو لە هەمووان", "فەلسەفەی ژاپۆنی و کەمکردنەوەی سترێس")
+    verify_caption_text(
+        conjunction_ass,
+        expected_text=["فەلسەفەی", "ژاپۆنی", "و", "کەمکردنەوەی", "سترێس"],
+    )
+
 
 def test_caption_verification_rejects_missing_glyphs_and_unsafe_geometry() -> None:
     """AC-06: Verification rejects missing glyphs, unsafe placement, and illegible geometry."""

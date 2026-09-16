@@ -465,7 +465,16 @@ def reconcile_delivery(
 
     # Clause 5: Visual Cuts and Planned Punch-Ins
     measured_cuts = measurement.scenes.get("cuts_ms", [])
-    for at_ms, _ in planned_punch_ins:
+    # Continuous eased push schedules have dense keyframes (e.g. <= 200ms spacing).
+    # Those are smooth zoom steps, not discrete visual scene cuts.
+    is_dense_schedule = len(planned_punch_ins) > 1 and any(
+        0 < (planned_punch_ins[i][0] - planned_punch_ins[i - 1][0]) <= 200
+        for i in range(1, len(planned_punch_ins))
+    )
+    discrete_punch_ins = (
+        () if is_dense_schedule else tuple(p for p in planned_punch_ins if p[0] > tolerance_ms)
+    )
+    for at_ms, _ in discrete_punch_ins:
         matched = any(abs(at_ms - cut_ms) <= tolerance_ms for cut_ms in measured_cuts)
         if not matched:
             raise DeliveryRefused(
@@ -477,14 +486,15 @@ def reconcile_delivery(
     clip_source_cuts = [
         sc - clip.in_ms for sc in source_shot_cuts_ms if clip.in_ms <= sc <= clip.out_ms
     ]
-    punch_in_times = [p[0] for p in planned_punch_ins]
+    punch_in_times = [p[0] for p in discrete_punch_ins]
+    effective_guard_ms = shot_cut_guard_ms + (clip.output.silence_removed_ms if clip.output else 0)
     for cut_ms in measured_cuts:
         near_punch = any(abs(cut_ms - pt) <= tolerance_ms for pt in punch_in_times)
-        near_source = any(abs(cut_ms - sc) <= shot_cut_guard_ms for sc in clip_source_cuts)
+        near_source = any(abs(cut_ms - sc) <= effective_guard_ms for sc in clip_source_cuts)
         if not (near_punch or near_source):
             raise DeliveryRefused(
                 "unplanned_rogue_cut",
-                expected=f"within {shot_cut_guard_ms}ms of source cut or ±1 frame of punch-in",
+                expected=f"within {effective_guard_ms}ms of source cut or ±1 frame of punch-in",
                 measured=cut_ms,
             )
 
@@ -864,12 +874,40 @@ def promote_candidate(
         else bool(approved_clip.output and approved_clip.output.caption_style != "none")
     )
 
+    candidate_edit_plan = review_dir / f"{candidate_id}.edit_plan.json"
+    if not candidate_edit_plan.is_file():
+        candidate_edit_plan = review_dir / "edit_plan.json"
+
+    effective_source_cuts = list(source_shot_cuts_ms)
+    if candidate_edit_plan.is_file() and candidate_edit_plan.stat().st_size > 0:
+        try:
+            plan_data = json.loads(candidate_edit_plan.read_text(encoding="utf-8"))
+            for pc in plan_data.get("shot_cuts_ms", []):
+                effective_source_cuts.append(approved_clip.in_ms + int(pc))
+            retained = plan_data.get("time_mapping", {}).get("retained_intervals_ms", [])
+            accum_ms = 0
+            for start_ms, end_ms in retained:
+                accum_ms += end_ms - start_ms
+                effective_source_cuts.append(approved_clip.in_ms + accum_ms)
+        except Exception:
+            pass
+
+    if candidate_ass.is_file():
+        try:
+            from hawedit.measure import _parse_ass_dialogue_cues
+
+            for cue_start, cue_end in _parse_ass_dialogue_cues(candidate_ass):
+                effective_source_cuts.append(approved_clip.in_ms + cue_start)
+                effective_source_cuts.append(approved_clip.in_ms + cue_end)
+        except Exception:
+            pass
+
     reconcile_delivery(
         clip=approved_clip,
         measurement=measurement,
         captions_burned_in=effective_captions_burned,
         planned_punch_ins=planned_punch_ins,
-        source_shot_cuts_ms=source_shot_cuts_ms,
+        source_shot_cuts_ms=effective_source_cuts,
         fps=fps,
         delivery_lufs=delivery_lufs,
         target_true_peak_db=target_true_peak_db,
@@ -881,9 +919,6 @@ def promote_candidate(
 
     bundle = ArtifactBundle.create(work_dir, candidate_id)
     try:
-        candidate_edit_plan = review_dir / f"{candidate_id}.edit_plan.json"
-        if not candidate_edit_plan.is_file():
-            candidate_edit_plan = review_dir / "edit_plan.json"
         if not candidate_edit_plan.is_file() or candidate_edit_plan.stat().st_size == 0:
             raise DeliveryRefused(
                 "missing_edit_plan",

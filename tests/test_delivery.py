@@ -970,6 +970,19 @@ def test_delivery_refuses_unplanned_cuts_or_missing_punch_ins() -> None:
     assert exc_info_rogue.value.reason == "unplanned_rogue_cut"
 
 
+def test_delivery_reconciliation_handles_dense_eased_push_and_opening_frame() -> None:
+    clip, measurement = _make_valid_reconciliation_pair()
+    # Dense continuous eased push keyframes starting at 0 ms with 100ms intervals
+    dense_schedule = tuple((i * 100, 1.0 + (i * 0.001)) for i in range(20))
+    # Should not raise missing_punch_in_cut for 0 or dense zoom steps
+    reconcile_delivery(
+        clip,
+        measurement,
+        planned_punch_ins=dense_schedule,
+        source_shot_cuts_ms=[clip.in_ms + 500],
+    )
+
+
 def test_delivery_refuses_a_caption_claim_the_frames_do_not_show() -> None:
     from dataclasses import replace
 

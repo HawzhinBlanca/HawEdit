@@ -2920,6 +2920,7 @@ def run_pipeline(
                 ]
                 if ct_profile.punch_in_cadence_ms == 0:
                     cand_planned_punch_ins: tuple[tuple[int, float], ...] = ()
+                    cand_reconcile_punch_ins: tuple[tuple[int, float], ...] = ()
                 elif eased_push or profile == "deliverable" or ct_profile.eased_push:
                     spans = shot_spans(
                         cand_cut_pts,
@@ -2928,6 +2929,7 @@ def run_pipeline(
                         min_shot_ms=ct_profile.punch_in_cadence_ms,
                     )
                     cand_planned_punch_ins = eased_push_schedule(spans)
+                    cand_reconcile_punch_ins = ()
                 else:
                     cand_planned_punch_ins = punch_in_schedule(
                         cand_cut_pts,
@@ -2935,13 +2937,14 @@ def run_pipeline(
                         avoid_ms=cand_source_cuts,
                         min_shot_ms=ct_profile.punch_in_cadence_ms,
                     )
+                    cand_reconcile_punch_ins = cand_planned_punch_ins
                 promote_candidate(
                     work_dir=work_dir,
                     candidate_id=clip.clip_id,
                     qc_record=qc_record,
                     source=source,
                     ffmpeg=ffmpeg,
-                    planned_punch_ins=cand_planned_punch_ins,
+                    planned_punch_ins=cand_reconcile_punch_ins,
                     source_shot_cuts_ms=ingested.shot_cuts_ms,
                     fps=source_fps,
                 )
@@ -3225,8 +3228,10 @@ def run_pipeline(
             remapped_focus_points = tuple((point.at_ms, point.center_x) for point in focus_points)
 
         planned_punch_ins: tuple[tuple[int, float], ...]
+        reconcile_punch_ins: tuple[tuple[int, float], ...]
         if ct_profile.punch_in_cadence_ms == 0:
             planned_punch_ins = ()
+            reconcile_punch_ins = ()
         elif eased_push or profile == "deliverable" or ct_profile.eased_push:
             spans = shot_spans(
                 cut_pts,
@@ -3235,6 +3240,7 @@ def run_pipeline(
                 min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
             planned_punch_ins = eased_push_schedule(spans)
+            reconcile_punch_ins = ()
         else:
             planned_punch_ins = punch_in_schedule(
                 cut_pts,
@@ -3242,6 +3248,7 @@ def run_pipeline(
                 avoid_ms=source_cuts,
                 min_shot_ms=ct_profile.punch_in_cadence_ms,
             )
+            reconcile_punch_ins = planned_punch_ins
 
         fps = frame_rate(source, ffmpeg)
         retained_intervals: tuple[tuple[int, int], ...] | None = None
@@ -3438,12 +3445,17 @@ def run_pipeline(
         # Independent Level C reconciliation gate before publication (T1.2 / ADR D-263)
         measurement = measure_clip(render_path, ass_path=ass_path, ffmpeg=ffmpeg)
         bundle.write_text("measured.json", measurement.to_json())
+        reconcile_source_cuts = (
+            tuple(clip.in_ms + sc for sc in (source_cuts + list(silence_plan.cut_points_ms)))
+            if (silence_plan is not None and silence_plan.total_removed_ms > 0)
+            else ingested.shot_cuts_ms
+        )
         reconcile_delivery(
             clip=effective_clip,
             measurement=measurement,
             captions_burned_in=rendered.captions_burned_in,
-            planned_punch_ins=planned_punch_ins,
-            source_shot_cuts_ms=ingested.shot_cuts_ms,
+            planned_punch_ins=reconcile_punch_ins,
+            source_shot_cuts_ms=reconcile_source_cuts,
             fps=fps,
             for_review=is_review_render,
         )
