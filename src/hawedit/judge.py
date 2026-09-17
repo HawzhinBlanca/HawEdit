@@ -819,8 +819,14 @@ def tournament_score(verdict: JudgeVerdict) -> float:
 
 def tournament_rank_verdicts(
     verdicts: Sequence[JudgeVerdict],
+    *,
+    require_eligible: bool = True,
 ) -> tuple[tuple[JudgeVerdict, float], ...]:
-    """Rank passing verdicts using calibrated multi-dimensional tournament scoring.
+    """Rank passing verdicts using calibrated multi-dimensional tournament scoring (T4.3 / AC-13).
+
+    When require_eligible is True (default), candidates failing hard eligibility rules
+    (meaning_fidelity < 0.70, misleading_edit_risk > 0.10, or self_contained=False)
+    are excluded before ranking. High hook score cannot override meaning failure.
 
     Returns tuple of (verdict, tournament_score) sorted from highest to lowest score.
     """
@@ -831,7 +837,16 @@ def tournament_rank_verdicts(
         "confession": 2,
         "story_open": 1,
     }
-    scored = [(v, tournament_score(v)) for v in verdicts]
+    candidates = (
+        tuple(
+            v
+            for v in verdicts
+            if v.meaning_fidelity >= 0.70 and v.misleading_edit_risk <= 0.10 and v.self_contained
+        )
+        if require_eligible
+        else tuple(verdicts)
+    )
+    scored = [(v, tournament_score(v)) for v in candidates]
     scored.sort(
         key=lambda item: (
             item[1],

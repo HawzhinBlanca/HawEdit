@@ -20,6 +20,8 @@ from hawedit.sentences import Sentence
 from hawedit.transcripts import RawTranscript, validate_media_id
 
 __all__ = [
+    "EditorialProposal",
+    "EditorialProposalResult",
     "StoryCandidateResult",
     "StoryGroundingError",
     "StoryMap",
@@ -28,6 +30,8 @@ __all__ = [
     "build_story_map",
     "order_moments_by_story_map",
     "produce_story_relations",
+    "rank_editorial_proposals",
+    "validate_editorial_proposal",
 ]
 
 
@@ -256,9 +260,16 @@ class StoryMap:
         If a payoff or answer is included, its setup/question context must not be severed.
         """
         for rel in self.relations:
-            # Check if this relation's core landing beat overlaps the candidate
+            # Check if this relation's core landing beat or setup overlaps the candidate
             core_overlap = rel.in_ms < candidate_out_ms and rel.out_ms > candidate_in_ms
-            if not core_overlap:
+            setup_overlap = False
+            for cid in rel.required_context_sentence_ids:
+                span = sentence_spans.get(cid)
+                if span and span[0] < candidate_out_ms and span[1] > candidate_in_ms:
+                    setup_overlap = True
+                    break
+
+            if not (core_overlap or setup_overlap):
                 continue
 
             # Check all required context sentences
@@ -274,6 +285,22 @@ class StoryMap:
                     raise StoryGroundingError(
                         f"candidate [{candidate_in_ms}..{candidate_out_ms}ms] severs "
                         f"required context sentence {cid!r} ([{c_start}..{c_end}ms]) "
+                        f"for relation {rel.relation_id!r} ({rel.kind.value}: {rel.summary})"
+                    )
+
+            # Check all canonical landing beat / qualification sentences
+            for sid in rel.canonical_sentence_ids:
+                span = sentence_spans.get(sid)
+                if span is None:
+                    raise StoryGroundingError(
+                        f"canonical sentence {sid!r} has no measured time span"
+                    )
+                s_start, s_end = span
+                # Landing beat / qualification must be covered by the candidate interval
+                if not (candidate_in_ms <= s_start and s_end <= candidate_out_ms):
+                    raise StoryGroundingError(
+                        f"candidate [{candidate_in_ms}..{candidate_out_ms}ms] severs "
+                        f"canonical qualification sentence {sid!r} ([{s_start}..{s_end}ms]) "
                         f"for relation {rel.relation_id!r} ({rel.kind.value}: {rel.summary})"
                     )
 
@@ -722,3 +749,237 @@ def order_moments_by_story_map(
                     moment_list.insert(payoff_moment_idx, setup_moment)
 
     return tuple(moment_list), tuple(sorted(set(active_rel_ids)))
+
+
+@dataclass(frozen=True, slots=True)
+class EditorialProposal:
+    """An editorial candidate proposal citing source sentence IDs and editorial attributes.
+
+    Enforces strict grounding (AC-13 / Task T08):
+    - Must cite valid canonical sentence IDs.
+    - Timing must be grounded in cited sentence spans (no invented millisecond bounds).
+    - Must not reverse protected negation or attribution.
+    - Meaning fidelity must meet the MIN_MEANING_FIDELITY floor.
+    """
+
+    proposal_id: str
+    in_ms: int
+    out_ms: int
+    canonical_sentence_ids: tuple[str, ...]
+    hook_score: float
+    meaning_fidelity: float = 1.0
+    speaker_id: str | None = None
+    attribution: str | None = None
+    reverses_negation: bool = False
+    reverses_attribution: bool = False
+    reason_ckb: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.proposal_id, str) or not self.proposal_id.strip():
+            raise ValueError("proposal_id must be a non-empty string")
+        if type(self.in_ms) is not int or type(self.out_ms) is not int:
+            raise TypeError("timestamps must be exact integers")
+        if not (0.0 <= float(self.hook_score) <= 1.0):
+            raise ValueError(f"hook_score must be in [0.0, 1.0], got {self.hook_score}")
+        if not (0.0 <= float(self.meaning_fidelity) <= 1.0):
+            raise ValueError(f"meaning_fidelity must be in [0.0, 1.0], got {self.meaning_fidelity}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "proposal_id": self.proposal_id,
+            "in_ms": self.in_ms,
+            "out_ms": self.out_ms,
+            "canonical_sentence_ids": list(self.canonical_sentence_ids),
+            "hook_score": round(float(self.hook_score), 4),
+            "meaning_fidelity": round(float(self.meaning_fidelity), 4),
+            "speaker_id": self.speaker_id,
+            "attribution": self.attribution,
+            "reverses_negation": self.reverses_negation,
+            "reverses_attribution": self.reverses_attribution,
+            "reason_ckb": self.reason_ckb,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EditorialProposal:
+        return cls(
+            proposal_id=str(data["proposal_id"]),
+            in_ms=int(data["in_ms"]),
+            out_ms=int(data["out_ms"]),
+            canonical_sentence_ids=tuple(str(s) for s in data.get("canonical_sentence_ids", ())),
+            hook_score=float(data["hook_score"]),
+            meaning_fidelity=float(data.get("meaning_fidelity", 1.0)),
+            speaker_id=str(data["speaker_id"]) if data.get("speaker_id") else None,
+            attribution=str(data["attribution"]) if data.get("attribution") else None,
+            reverses_negation=bool(data.get("reverses_negation", False)),
+            reverses_attribution=bool(data.get("reverses_attribution", False)),
+            reason_ckb=str(data.get("reason_ckb", "")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EditorialProposalResult:
+    """Outcome of validating an editorial proposal against source grounding and meaning rules."""
+
+    proposal_id: str
+    valid: bool
+    rejection_reason: str | None = None
+    candidate_result: StoryCandidateResult | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "proposal_id": self.proposal_id,
+            "valid": self.valid,
+            "rejection_reason": self.rejection_reason,
+            "candidate_result": self.candidate_result.to_dict() if self.candidate_result else None,
+        }
+
+
+def validate_editorial_proposal(
+    proposal: EditorialProposal,
+    story_map: StoryMap,
+    sentence_spans: Mapping[str, tuple[int, int]],
+    *,
+    ordered_sentence_ids: Sequence[str] = (),
+    max_duration_ms: int = 60_000,
+    min_duration_ms: int = 0,
+    min_meaning_fidelity: float = 0.70,
+) -> EditorialProposalResult:
+    """Validate an editorial proposal against canonical source grounding and meaning rules (AC-13).
+
+    Rejection triggers (before ranking or rendering):
+    1. Cites missing or ungrounded sentence IDs not in the canonical source transcript.
+    2. Invents timing outside the measured spans of the cited sentences.
+    3. Reverses protected negation (e.g. reverses polarity, cuts negation marker).
+    4. Reverses protected attribution (e.g. assigns statement to wrong speaker).
+    5. Fails the meaning fidelity floor (meaning_fidelity < min_meaning_fidelity).
+    6. Fails candidate resolution (severs context, breaks contiguous flow, exceeds budget).
+    """
+    # 1. Basic timestamp sanity
+    if proposal.in_ms < 0 or proposal.out_ms <= proposal.in_ms:
+        return EditorialProposalResult(
+            proposal_id=proposal.proposal_id,
+            valid=False,
+            rejection_reason=(
+                f"proposal has invalid timestamps "
+                f"(in_ms={proposal.in_ms}, out_ms={proposal.out_ms})"
+            ),
+        )
+
+    # 2. Missing / ungrounded sentence IDs (AC-13 clause 1)
+    if not proposal.canonical_sentence_ids:
+        return EditorialProposalResult(
+            proposal_id=proposal.proposal_id,
+            valid=False,
+            rejection_reason="proposal cites no canonical sentence IDs",
+        )
+
+    for sid in proposal.canonical_sentence_ids:
+        if sid not in story_map.known_sentence_ids or sid not in sentence_spans:
+            return EditorialProposalResult(
+                proposal_id=proposal.proposal_id,
+                valid=False,
+                rejection_reason=f"proposal cites missing or ungrounded sentence ID {sid!r}",
+            )
+
+    # 3. Timing grounding / invented timing (AC-13 clause 2)
+    cited_spans = [sentence_spans[sid] for sid in proposal.canonical_sentence_ids]
+    min_sentence_start = min(span[0] for span in cited_spans)
+    max_sentence_end = max(span[1] for span in cited_spans)
+
+    if proposal.in_ms < min_sentence_start or proposal.out_ms > max_sentence_end:
+        return EditorialProposalResult(
+            proposal_id=proposal.proposal_id,
+            valid=False,
+            rejection_reason=(
+                f"proposal invents timing [{proposal.in_ms}..{proposal.out_ms}ms] "
+                f"outside cited sentence bounds [{min_sentence_start}..{max_sentence_end}ms]"
+            ),
+        )
+
+    # 4. Protected negation reversal (AC-13 clause 3)
+    if proposal.reverses_negation:
+        return EditorialProposalResult(
+            proposal_id=proposal.proposal_id,
+            valid=False,
+            rejection_reason="proposal reverses protected negation",
+        )
+
+    # 5. Protected attribution reversal (AC-13 clause 3)
+    if proposal.reverses_attribution:
+        return EditorialProposalResult(
+            proposal_id=proposal.proposal_id,
+            valid=False,
+            rejection_reason="proposal reverses protected attribution",
+        )
+
+    # 6. Meaning fidelity floor (AC-13 clause 4)
+    if proposal.meaning_fidelity < min_meaning_fidelity:
+        return EditorialProposalResult(
+            proposal_id=proposal.proposal_id,
+            valid=False,
+            rejection_reason=(
+                f"proposal meaning fidelity {proposal.meaning_fidelity:.2f} is below "
+                f"required floor {min_meaning_fidelity:.2f}"
+            ),
+        )
+
+    # 7. Story map candidate resolution & contiguous context preservation (AC-12)
+    cand_res = story_map.resolve_candidate(
+        candidate_id=proposal.proposal_id,
+        in_ms=proposal.in_ms,
+        out_ms=proposal.out_ms,
+        sentence_spans=sentence_spans,
+        ordered_sentence_ids=ordered_sentence_ids,
+        max_duration_ms=max_duration_ms,
+        min_duration_ms=min_duration_ms,
+    )
+    if not cand_res.eligible:
+        return EditorialProposalResult(
+            proposal_id=proposal.proposal_id,
+            valid=False,
+            rejection_reason=cand_res.rejection_reason,
+            candidate_result=cand_res,
+        )
+
+    return EditorialProposalResult(
+        proposal_id=proposal.proposal_id,
+        valid=True,
+        rejection_reason=None,
+        candidate_result=cand_res,
+    )
+
+
+def rank_editorial_proposals(
+    proposals: Sequence[EditorialProposal],
+    story_map: StoryMap,
+    sentence_spans: Mapping[str, tuple[int, int]],
+    *,
+    ordered_sentence_ids: Sequence[str] = (),
+    max_duration_ms: int = 60_000,
+    min_duration_ms: int = 0,
+    min_meaning_fidelity: float = 0.70,
+) -> tuple[tuple[EditorialProposal, float, EditorialProposalResult], ...]:
+    """Rank passing editorial proposals using multi-dimensional scoring (AC-13).
+
+    Proposals that fail grounding, timing, negation/attribution protection, or meaning fidelity
+    are REJECTED before ranking. A high hook score CANNOT override meaning failure.
+    """
+    valid_items: list[tuple[EditorialProposal, float, EditorialProposalResult]] = []
+    for prop in proposals:
+        res = validate_editorial_proposal(
+            prop,
+            story_map,
+            sentence_spans,
+            ordered_sentence_ids=ordered_sentence_ids,
+            max_duration_ms=max_duration_ms,
+            min_duration_ms=min_duration_ms,
+            min_meaning_fidelity=min_meaning_fidelity,
+        )
+        if not res.valid:
+            continue
+
+        score = round(0.50 * prop.hook_score + 0.50 * prop.meaning_fidelity, 4)
+        valid_items.append((prop, score, res))
+
+    valid_items.sort(key=lambda item: (item[1], item[0].hook_score), reverse=True)
+    return tuple(valid_items)
