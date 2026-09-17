@@ -49,7 +49,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, fields, replace
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO
+from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO, TypeVar, overload
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
@@ -99,7 +99,12 @@ from hawedit.clip import (
     QcRecord,
     RejectedCandidate,
 )
-from hawedit.content_type import ContentType, get_content_type_profile
+from hawedit.content_type import (
+    ContentType,
+    EffectiveConfiguration,
+    resolve_effective_configuration,
+    resolve_effective_configuration_from_args,
+)
 from hawedit.credentials import CredentialError
 from hawedit.delivery import (
     DeliveryError,
@@ -114,9 +119,11 @@ from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.edit_plan import (
     CURRENT_PLAN_VERSION,
     EditorialBrief,
-    EffectiveConfiguration,
     SourceTimeMapping,
     VisualEditPlan,
+)
+from hawedit.edit_plan import (
+    EffectiveConfiguration as VisualEffectiveConfiguration,
 )
 from hawedit.escalation import (
     DEFAULT_DISAGREEMENT_CER,
@@ -361,6 +368,7 @@ class PipelineRun:
     billed_calls: tuple[BilledCall, ...] = ()
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
+    config: EffectiveConfiguration | None = None
 
     def _rejected_by_path(self) -> dict[str, int]:
         """How many candidates each discovery path lost, which is what §8.2 partitions on.
@@ -1794,6 +1802,7 @@ def run_pipeline(
     music_bed_path: Path | str | None = None,
     music_ducking_volume: float = 0.25,
     assemble: bool = False,
+    config: EffectiveConfiguration | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1853,20 +1862,36 @@ def run_pipeline(
             "so Qwen retrieval/reranking bounds the scenes sent to VideoChat3"
         )
 
-    if two_person_split not in ("auto", "always", "never"):
-        raise ValueError(
-            f"two_person_split must be 'auto', 'always', or 'never', got {two_person_split!r}"
-        )
-
     if brand_kit is not None:
         brand_kit.assert_valid()
 
-    ct_profile = get_content_type_profile(content_type)
-    resolved_caption_style: CaptionStyle = (
-        CaptionStyle(caption_style) if caption_style is not None else ct_profile.caption_style
-    )
-    if min_clip_ms == MIN_CANDIDATE_SPAN_MS and ct_profile.min_clip_ms != MIN_CANDIDATE_SPAN_MS:
-        min_clip_ms = ct_profile.min_clip_ms
+    if config is None:
+        config = resolve_effective_configuration(
+            content_type=content_type,
+            caption_style=caption_style,
+            min_clip_ms=min_clip_ms,
+            eased_push=eased_push,
+            silence_threshold_ms=silence_threshold_ms,
+            silence_target_gap_ms=silence_target_gap_ms,
+            excise_fillers=excise_fillers,
+            two_person_split=two_person_split,
+            hook_banner=bool(hook_banner) if hook_banner is not None else None,
+            keyword_emphasis=keyword_emphasis,
+            brand_kit=(
+                brand_kit.logo_path.as_posix() if (brand_kit and brand_kit.logo_path) else None
+            ),
+            work_dir=work_dir,
+        )
+
+    resolved_caption_style: CaptionStyle = config.caption_style
+    min_clip_ms = config.min_clip_ms
+    silence_threshold_ms = config.silence_threshold_ms
+    silence_target_gap_ms = config.silence_target_gap_ms
+    excise_fillers = config.excise_fillers
+    two_person_split = config.two_person_split
+    if hook_banner is None:
+        hook_banner = config.hook_banner
+
     if profile == "production" and not assemble:
         assemble = True
 
@@ -2033,6 +2058,7 @@ def run_pipeline(
         boundary=_not_reached("boundary", "complete selected sentences"),
         render=_not_reached("render", "a judged boundary and QC pass"),
         delivery=_not_reached("delivery", "a successful render"),
+        config=config,
     )
     if asr_failure is not None:
         return replace(run, transcript=asr_failure)
@@ -2928,15 +2954,15 @@ def run_pipeline(
                     for cut_ms in ingested.shot_cuts_ms
                     if clip.in_ms <= cut_ms <= clip.out_ms
                 ]
-                if ct_profile.punch_in_cadence_ms == 0:
+                if config.punch_in_cadence_ms == 0:
                     cand_planned_punch_ins: tuple[tuple[int, float], ...] = ()
                     cand_reconcile_punch_ins: tuple[tuple[int, float], ...] = ()
-                elif eased_push or profile == "deliverable" or ct_profile.eased_push:
+                elif eased_push or profile == "deliverable" or config.eased_push:
                     spans = shot_spans(
                         cand_cut_pts,
                         clip.out_ms - clip.in_ms,
                         source_cuts_ms=cand_source_cuts,
-                        min_shot_ms=ct_profile.punch_in_cadence_ms,
+                        min_shot_ms=config.punch_in_cadence_ms,
                     )
                     cand_planned_punch_ins = eased_push_schedule(spans)
                     cand_reconcile_punch_ins = ()
@@ -2945,7 +2971,7 @@ def run_pipeline(
                         cand_cut_pts,
                         clip.out_ms - clip.in_ms,
                         avoid_ms=cand_source_cuts,
-                        min_shot_ms=ct_profile.punch_in_cadence_ms,
+                        min_shot_ms=config.punch_in_cadence_ms,
                     )
                     cand_reconcile_punch_ins = cand_planned_punch_ins
                 promote_candidate(
@@ -3239,15 +3265,15 @@ def run_pipeline(
 
         planned_punch_ins: tuple[tuple[int, float], ...]
         reconcile_punch_ins: tuple[tuple[int, float], ...]
-        if ct_profile.punch_in_cadence_ms == 0:
+        if config.punch_in_cadence_ms == 0:
             planned_punch_ins = ()
             reconcile_punch_ins = ()
-        elif eased_push or profile == "deliverable" or ct_profile.eased_push:
+        elif eased_push or profile == "deliverable" or config.eased_push:
             spans = shot_spans(
                 cut_pts,
                 render_duration_ms,
                 source_cuts_ms=source_cuts,
-                min_shot_ms=ct_profile.punch_in_cadence_ms,
+                min_shot_ms=config.punch_in_cadence_ms,
             )
             planned_punch_ins = eased_push_schedule(spans)
             reconcile_punch_ins = ()
@@ -3256,7 +3282,7 @@ def run_pipeline(
                 cut_pts,
                 render_duration_ms,
                 avoid_ms=source_cuts,
-                min_shot_ms=ct_profile.punch_in_cadence_ms,
+                min_shot_ms=config.punch_in_cadence_ms,
             )
             reconcile_punch_ins = planned_punch_ins
 
@@ -3286,23 +3312,23 @@ def run_pipeline(
                 if effective_clip.output
                 else "Kurdish highlight clip"
             ),
-            content_type=ct_profile.content_type,
+            content_type=config.content_type,
             target_duration_ms=(
-                ct_profile.min_clip_ms,
-                max(ct_profile.min_clip_ms, clip.out_ms - clip.in_ms),
+                config.min_clip_ms,
+                max(config.min_clip_ms, clip.out_ms - clip.in_ms),
             ),
             protected_regions=("lower_third_captions", "speaker_face"),
             relation_ids=active_relation_ids,
         )
         reframe_str = reframe_mode.value if hasattr(reframe_mode, "value") else str(reframe_mode)
-        config = EffectiveConfiguration.resolve(
-            content_type=ct_profile.content_type,
+        visual_config = VisualEffectiveConfiguration.resolve(
+            content_type=config.content_type,
             caption_style=resolved_caption_style,
             reframe_mode=reframe_str,
             silence_threshold_ms=silence_threshold_ms,
             silence_target_gap_ms=silence_target_gap_ms,
-            punch_in_cadence_ms=ct_profile.punch_in_cadence_ms,
-            eased_push=eased_push or ct_profile.eased_push,
+            punch_in_cadence_ms=config.punch_in_cadence_ms,
+            eased_push=eased_push or config.eased_push,
             two_person_split="auto",
             keyword_emphasis=keyword_emphasis,
             fps=fps,
@@ -3328,7 +3354,7 @@ def run_pipeline(
             media_id=clip.media_id,
             media_sha256=clip.media_sha256 or (ingested.source_sha256 or ""),
             brief=brief,
-            config=config,
+            config=visual_config,
             time_mapping=time_mapping,
             shot_cuts_ms=tuple(source_cuts),
             punch_in_ms=tuple(p[0] for p in planned_punch_ins),
@@ -3687,6 +3713,50 @@ def build_visual_composer(args: argparse.Namespace) -> VisualComposer:
     )
 
 
+_N = TypeVar("_N")
+
+
+class HawEditArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that records which option destinations were explicitly passed on argv."""
+
+    @overload
+    def parse_known_args(
+        self, args: Sequence[str] | None = None, namespace: None = None
+    ) -> tuple[argparse.Namespace, list[str]]: ...
+
+    @overload
+    def parse_known_args(
+        self, args: Sequence[str] | None, namespace: _N
+    ) -> tuple[_N, list[str]]: ...
+
+    @overload
+    def parse_known_args(self, *, namespace: _N) -> tuple[_N, list[str]]: ...
+
+    def parse_known_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: Any = None,
+    ) -> tuple[Any, list[str]]:
+        argv = list(args) if args is not None else sys.argv[1:]
+        options_to_dest: dict[str, str] = {}
+        for action in self._actions:
+            for opt in action.option_strings:
+                options_to_dest[opt] = action.dest
+
+        explicit: set[str] = set()
+        for token in argv:
+            opt_name = token.split("=")[0]
+            if opt_name in options_to_dest:
+                explicit.add(options_to_dest[opt_name])
+
+        ns, extra = super().parse_known_args(args=args, namespace=namespace)
+        if not hasattr(ns, "_explicit_keys"):
+            ns._explicit_keys = explicit
+        else:
+            ns._explicit_keys.update(explicit)
+        return ns, extra
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI surface, built here so its defaults can be asserted without a run.
 
@@ -3694,7 +3764,7 @@ def build_parser() -> argparse.ArgumentParser:
     Extracted from `main` because a default nothing can read is a default nothing can hold to
     the blueprint — D-137's test asserts on the parsed values, not on a comment.
     """
-    parser = argparse.ArgumentParser(
+    parser = HawEditArgumentParser(
         prog=program_name("hawedit.pipeline"),
         description="Run §3 over one media file, as far as it can go.",
     )
@@ -4084,39 +4154,20 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
             "the old centred behaviour"
         )
 
-    if getattr(args, "preset", None) == "broadcast":
-        if not args.caption_style:
-            args.caption_style = CaptionStyle.BROADCAST_STUDIO.value
-        args.silence_threshold_ms = 0
-        if not args.brand_kit:
-            candidate_bk = args.work_dir / "brand_kit.json"
-            if candidate_bk.is_file():
-                args.brand_kit = str(candidate_bk)
-        if not args.logo:
-            candidate_logo = args.work_dir / "zar_logo.png"
-            if candidate_logo.is_file():
-                args.logo = str(candidate_logo)
-        if not args.speaker_metadata:
-            candidate_spk = args.work_dir / "speaker_metadata.json"
-            if candidate_spk.is_file():
-                args.speaker_metadata = str(candidate_spk)
-        if args.hook_banner is None:
-            args.hook_banner = True
-    elif getattr(args, "preset", None) == "viral":
-        if not args.caption_style:
-            args.caption_style = CaptionStyle.RTL_WORD_HIGHLIGHT.value
-        if args.silence_threshold_ms == 0:
-            args.silence_threshold_ms = 250
-        if getattr(args, "silence_target_gap_ms", 150) == 150:
-            args.silence_target_gap_ms = 100
-        if not args.excise_fillers:
-            args.excise_fillers = True
-        if args.hook_banner is None:
-            args.hook_banner = True
-    elif getattr(args, "preset", None) == "split":
-        args.two_person_split = "always"
-        if not args.caption_style:
-            args.caption_style = CaptionStyle.BROADCAST_STUDIO.value
+    effective_cfg = resolve_effective_configuration_from_args(args)
+    args.content_type = effective_cfg.content_type.value
+    args.caption_style = effective_cfg.caption_style.value
+    args.silence_threshold_ms = effective_cfg.silence_threshold_ms
+    args.silence_target_gap_ms = effective_cfg.silence_target_gap_ms
+    args.excise_fillers = effective_cfg.excise_fillers
+    args.two_person_split = effective_cfg.two_person_split
+    args.hook_banner = effective_cfg.hook_banner
+    if effective_cfg.brand_kit:
+        args.brand_kit = effective_cfg.brand_kit
+    if effective_cfg.logo:
+        args.logo = effective_cfg.logo
+    if effective_cfg.speaker_metadata:
+        args.speaker_metadata = effective_cfg.speaker_metadata
 
     if args.transcript and args.omni_asr:
         raise ValueError("--transcript and --omni-asr are mutually exclusive Stage 1 sources")
@@ -4400,6 +4451,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         music_ducking_volume=getattr(args, "music_ducking_volume", 0.25),
         assemble=getattr(args, "assemble", False)
         or (getattr(args, "profile", "default") == "production"),
+        config=effective_cfg,
     )
 
 
