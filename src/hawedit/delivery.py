@@ -394,6 +394,7 @@ def reconcile_delivery(
     lufs_tolerance: float | None = None,
     min_face_share: float | None = None,
     for_review: bool = False,
+    speaker_turns: Sequence[tuple[int, int, str]] = (),
 ) -> None:
     """Reconcile contract claims against independently measured ground truth.
 
@@ -513,15 +514,19 @@ def reconcile_delivery(
             measured=measurement.captions.ink_energy_detected_share,
         )
 
-    # Clause 7: Face Tracking In-Frame Presence
+    # Clause 7: Face Tracking In-Frame Presence (AC-07 / Task T04)
     required_face_share = (
         min_face_share
         if min_face_share is not None
         else (0.90 if measurement.video.duration_ms >= 3_000 else 0.50)
     )
+    tracked_crop_targets = ("face_tracked", "speaker_face")
     if (
         clip.output
-        and clip.output.crop_target == "face_tracked"
+        and (
+            clip.output.crop_target == "face_tracked"
+            or (clip.output.crop_target == "speaker_face" and min_face_share is not None)
+        )
         and round(measurement.faces.face_detected_share, 2) < round(required_face_share, 2)
     ):
         raise DeliveryRefused(
@@ -530,7 +535,7 @@ def reconcile_delivery(
             measured=measurement.faces.face_detected_share,
         )
 
-    # Clause 7a: Speaking-Frame Face Share (Item 7 / B5)
+    # Clause 7a: Speaking-Frame Face Share (Item 7 / B5 / Task T04)
     required_speaking_face_share = (
         min_face_share
         if min_face_share is not None
@@ -539,7 +544,10 @@ def reconcile_delivery(
     if (
         not for_review
         and clip.output
-        and clip.output.crop_target == "face_tracked"
+        and (
+            clip.output.crop_target == "face_tracked"
+            or (clip.output.crop_target == "speaker_face" and min_face_share is not None)
+        )
         and required_speaking_face_share > 0.0
         and measurement.faces.speaking_samples_count > 0
         and round(measurement.faces.speaking_face_share, 2) < round(required_speaking_face_share, 2)
@@ -550,10 +558,10 @@ def reconcile_delivery(
             measured=measurement.faces.speaking_face_share,
         )
 
-    # Clause 7b: First-Frame Subject Face Gate (Task T2.3)
+    # Clause 7b: First-Frame Subject Face Gate (Task T2.3 / Task T04)
     if (
         clip.output
-        and clip.output.crop_target == "face_tracked"
+        and clip.output.crop_target in tracked_crop_targets
         and min_face_share is not None
         and min_face_share > 0.0
         and measurement.faces.first_frame_face_share is not None
@@ -563,6 +571,19 @@ def reconcile_delivery(
             "first_frame_lacks_subject",
             expected=">= 0.05 face share in opening frame",
             measured=measurement.faces.first_frame_face_share,
+        )
+
+    # Clause 7c: Speaker Identity Attribution Evidence (AC-07 / Task T04)
+    if (
+        not for_review
+        and clip.output
+        and clip.output.crop_target == "speaker_face"
+        and not speaker_turns
+    ):
+        raise DeliveryRefused(
+            "speaker_tracking_unsubstantiated",
+            expected="active speaker turns evidence",
+            measured="no speaker evidence supplied for speaker_face crop",
         )
 
     # Clause 8: Human Review Binding (Task T1.3 / Register Row 4)
@@ -714,6 +735,7 @@ def promote_candidate(
     shot_cut_guard_ms: int = 1500,
     lufs_tolerance: float | None = None,
     min_face_share: float | None = None,
+    speaker_turns: Sequence[tuple[int, int, str]] = (),
 ) -> tuple[Path, ...]:
     """Verify and promote an unchanged review candidate to public delivery (AC-02).
 
@@ -915,6 +937,7 @@ def promote_candidate(
         lufs_tolerance=lufs_tolerance,
         min_face_share=min_face_share,
         for_review=False,
+        speaker_turns=speaker_turns,
     )
 
     bundle = ArtifactBundle.create(work_dir, candidate_id)

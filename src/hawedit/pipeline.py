@@ -1776,6 +1776,7 @@ def run_pipeline(
     speaker_tracker: SpeakerSubjectTracker | None = None,
     profile: str = "default",
     first_frame_gate: bool = False,
+    min_face_share: float | None = None,
     eased_push: bool = False,
     visual_variety: bool = False,
     content_type: ContentType | str | None = None,
@@ -3459,6 +3460,9 @@ def run_pipeline(
             if (silence_plan is not None and silence_plan.total_removed_ms > 0)
             else ingested.shot_cuts_ms
         )
+        effective_min_face_share = (
+            min_face_share if min_face_share is not None else (0.08 if first_frame_gate else None)
+        )
         reconcile_delivery(
             clip=effective_clip,
             measurement=measurement,
@@ -3467,6 +3471,8 @@ def run_pipeline(
             source_shot_cuts_ms=reconcile_source_cuts,
             fps=fps,
             for_review=is_review_render,
+            speaker_turns=spk_turns,
+            min_face_share=effective_min_face_share,
         )
 
         # Stage 6.5 Post-render sequence critique & join verification (B1 / VE-11)

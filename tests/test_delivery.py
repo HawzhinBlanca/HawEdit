@@ -1066,6 +1066,124 @@ def test_delivery_refuses_when_speaking_face_share_below_threshold() -> None:
     assert exc_info.value.reason == "speaking_face_share_unsubstantiated"
 
 
+def test_all_claimed_crop_modes_use_matching_verification() -> None:
+    """AC-07 / Task T04: All crop modes claiming subject/speaker tracking enforce
+    matching verification.
+
+    1. All tracked modes ('face_tracked', 'speaker_face', 'two_person_split') enforce:
+       - face_tracking_unsubstantiated if detected face share < threshold
+       - speaking_face_share_unsubstantiated if speaking face share < threshold
+       - first_frame_lacks_subject if opening frame face share < 0.05
+    2. 'speaker_face' additionally requires speaker attribution evidence and refuses
+       speaker_tracking_unsubstantiated if mere face presence is claimed without speaker turns.
+    3. 'static_centre' does not claim subject tracking and passes even with zero detected faces.
+    """
+    from dataclasses import replace
+
+    base_clip, base_measurement = _make_valid_reconciliation_pair()
+    assert base_clip.output is not None
+    punch_ins = [(500, 1.25)]
+    source_cuts = [base_clip.in_ms + 500]
+
+    tracked_modes = ("face_tracked", "speaker_face")
+    for mode in tracked_modes:
+        output = replace(base_clip.output, crop_target=mode)
+        clip = replace(base_clip, output=output)
+
+        # 1. Low face share refuses across all tracked modes
+        broken_faces = replace(base_measurement.faces, face_detected_share=0.40)
+        meas = replace(base_measurement, faces=broken_faces)
+        with pytest.raises(DeliveryRefused, match="face_tracking_unsubstantiated") as exc_info:
+            reconcile_delivery(
+                clip,
+                meas,
+                captions_burned_in=True,
+                planned_punch_ins=punch_ins,
+                source_shot_cuts_ms=source_cuts,
+                min_face_share=0.90,
+            )
+        assert exc_info.value.reason == "face_tracking_unsubstantiated"
+
+        # 2. Low speaking face share refuses across all tracked modes
+        broken_speaking = replace(
+            base_measurement.faces,
+            speaking_samples_count=10,
+            speaking_face_frames_count=4,
+            speaking_face_share=0.40,
+        )
+        meas = replace(base_measurement, faces=broken_speaking)
+        with pytest.raises(
+            DeliveryRefused, match="speaking_face_share_unsubstantiated"
+        ) as exc_info:
+            reconcile_delivery(
+                clip,
+                meas,
+                captions_burned_in=True,
+                planned_punch_ins=punch_ins,
+                source_shot_cuts_ms=source_cuts,
+                for_review=False,
+                min_face_share=0.90,
+            )
+        assert exc_info.value.reason == "speaking_face_share_unsubstantiated"
+
+        # 3. Opening frame lacking subject refuses across all tracked modes
+        broken_first = replace(base_measurement.faces, first_frame_face_share=0.01)
+        meas = replace(base_measurement, faces=broken_first)
+        with pytest.raises(DeliveryRefused, match="first_frame_lacks_subject") as exc_info:
+            reconcile_delivery(
+                clip,
+                meas,
+                captions_burned_in=True,
+                planned_punch_ins=punch_ins,
+                source_shot_cuts_ms=source_cuts,
+                min_face_share=0.90,
+            )
+        assert exc_info.value.reason == "first_frame_lacks_subject"
+
+    # 4. speaker_face refuses when no speaker tracking evidence is provided
+    speaker_output = replace(base_clip.output, crop_target="speaker_face")
+    speaker_clip = replace(base_clip, output=speaker_output)
+    with pytest.raises(DeliveryRefused, match="speaker_tracking_unsubstantiated") as exc_info:
+        reconcile_delivery(
+            speaker_clip,
+            base_measurement,
+            captions_burned_in=True,
+            planned_punch_ins=punch_ins,
+            source_shot_cuts_ms=source_cuts,
+            speaker_turns=(),
+        )
+    assert exc_info.value.reason == "speaker_tracking_unsubstantiated"
+
+    # With valid speaker turns, speaker_face passes
+    valid_turns = ((base_clip.in_ms, base_clip.out_ms, "spk_1"),)
+    reconcile_delivery(
+        speaker_clip,
+        base_measurement,
+        captions_burned_in=True,
+        planned_punch_ins=punch_ins,
+        source_shot_cuts_ms=source_cuts,
+        speaker_turns=valid_turns,
+    )
+
+    # 5. static_centre does not claim tracking and does not refuse on missing faces
+    static_output = replace(base_clip.output, crop_target="static_centre")
+    static_clip = replace(base_clip, output=static_output)
+    no_faces = replace(
+        base_measurement.faces,
+        face_detected_share=0.0,
+        speaking_face_share=0.0,
+        first_frame_face_share=0.0,
+    )
+    meas_no_faces = replace(base_measurement, faces=no_faces)
+    reconcile_delivery(
+        static_clip,
+        meas_no_faces,
+        captions_burned_in=True,
+        planned_punch_ins=punch_ins,
+        source_shot_cuts_ms=source_cuts,
+    )
+
+
 def test_delivery_refuses_qc_sha256_mismatch() -> None:
     clip, measurement = _make_valid_reconciliation_pair()
 

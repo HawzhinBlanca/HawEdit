@@ -2260,6 +2260,57 @@ def test_reconciliation_failure_skips_delivery_and_discards_bundle(
     assert _sidecars_on_disk(work, "reconcile_refused-s0-0") == []
 
 
+def test_opening_subject_check_runs_through_default_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-07 / Task T04: Default pipeline (min_face_share=None) executes Clause 7b
+    and refuses delivery when the opening frame lacks the subject (first_frame_face_share < 0.05).
+    """
+    import hawedit.measure as measure_mod
+    import hawedit.pipeline as pipeline_mod
+    from hawedit.reframe import FocusPoint
+
+    class Tracker:
+        def track(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            shot_cuts_ms: Sequence[int] = (),
+        ) -> tuple[FocusPoint, ...]:
+            return (FocusPoint(in_ms, 120), FocusPoint(out_ms - 1, 520))
+
+    real_measure = measure_mod.measure_clip
+
+    def broken_opening_measure(*args: Any, **kwargs: Any) -> Any:
+        meas = real_measure(*args, **kwargs)
+        broken_faces = replace(
+            meas.faces,
+            face_detected_share=1.0,
+            speaking_face_share=1.0,
+            first_frame_face_share=0.01,
+        )
+        return replace(meas, faces=broken_faces)
+
+    monkeypatch.setattr(pipeline_mod, "measure_clip", broken_opening_measure)
+
+    work = tmp_path / "work"
+    run = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="opening_subject_refused",
+        transcript=a_transcript("opening_subject_refused"),
+        select_sentences=(0,),
+        qc=_test_qc(True),
+        verdict=a_verdict(100, 1_700),
+        subject_tracker=Tracker(),
+        min_face_share=0.08,
+    )
+    assert isinstance(run.delivery, StageSkipped)
+    assert "first_frame_lacks_subject" in run.delivery.reason
+    assert _sidecars_on_disk(work, "opening_subject_refused-s0-0") == []
+
+
 def test_the_cli_defaults_put_each_visual_model_where_section_6_puts_it() -> None:
     """§6, VIDEO PHASE: `GPU 0 → VideoChat3-4B` and `GPU 1 → Embedding / Reranker / TimeLens2`.
 
