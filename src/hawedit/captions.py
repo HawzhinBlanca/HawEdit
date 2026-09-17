@@ -65,6 +65,8 @@ __all__ = [
     "POPUP_MAX_WIDTH_PX",
     "POPUP_MAX_WORDS",
     "REPORT_THEME",
+    "RESTRAINED_MOBILE_FONT_SIZE",
+    "RESTRAINED_MOBILE_THEME",
     "SPEAKER_TAG_FONT_SIZE",
     "SPEAKER_TAG_MS",
     "SPEAKER_TAG_THEME",
@@ -97,6 +99,7 @@ __all__ = [
     "find_ffmpeg",
     "intersects_caption_band",
     "measure_rendered_caption_width",
+    "mobile_caption_layout",
     "parse_ass_colour",
     "parse_dialogue_times",
     "relative_luminance",
@@ -381,6 +384,26 @@ BROADCAST_THEME: Final = CaptionTheme(
     margin_l=80,
     margin_r=80,
     margin_v=440,
+)
+
+# Mobile-restrained caption configuration (Task T12, ADR D-268, AC-06, AC-18).
+# Tailored for handheld phone reading in vertical (9:16) video formats.
+# Font size 76 yields an ink height of ~45-50px, readable at arm's length without crowding.
+# Vertical margin 380 lifts captions cleanly above mobile platform UI chrome (TikTok, Reels,
+# Shorts bottom bars ~300px). 80px left/right margins protect text from screen curve/bezels.
+RESTRAINED_MOBILE_FONT_SIZE: Final = 76
+
+RESTRAINED_MOBILE_THEME: Final = CaptionTheme(
+    primary="&H00FFFFFF",
+    secondary="&H0000E5FF",
+    outline_colour="&H00000000",
+    back_colour="&H80000000",
+    bold=True,
+    outline=4.0,
+    shadow=1.5,
+    margin_l=80,
+    margin_r=80,
+    margin_v=380,
 )
 
 HOOK_BANNER_FONT_SIZE: Final = 54
@@ -2433,3 +2456,83 @@ def verify_caption_integrity(
         geometry_ok=True,
         details={},
     )
+
+
+def mobile_caption_layout(
+    sentences: Sequence[Sentence],
+    *,
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = RESTRAINED_MOBILE_FONT_SIZE,
+    play_res_x: int = 1080,
+    play_res_y: int = 1920,
+    style: CaptionStyle = CaptionStyle.LINE,
+    max_chars_per_line: int = DEFAULT_MAX_CHARS_PER_LINE,
+    clip_in_ms: int = 0,
+    clip_duration_ms: int | None = None,
+    theme: CaptionTheme = RESTRAINED_MOBILE_THEME,
+    max_words_per_event: int | None = None,
+    title_ckb: str | None = None,
+    max_line_width_px: int | None = None,
+    max_popup_width_px: int | None = None,
+    fonts_dir: Path | None = None,
+    face_intervals: Sequence[tuple[int, int, int, int]] | None = None,
+    plate_intervals: Sequence[tuple[int, int]] | None = None,
+    speaker_turns: Sequence[tuple[int, int, str]] | None = None,
+    speaker_metadata: dict[str, SpeakerBio] | None = None,
+    end_card: EndCardConfig | None = None,
+    hook_banner: HookBannerConfig | None = None,
+    keyword_emphasis: bool = True,
+    margin_v: int | None = None,
+) -> str:
+    """Generate and verify restrained, phone-optimized Kurdish captions (T12).
+
+    Enforces safe mobile geometry, clears platform UI overlays, and guarantees that
+    canonical transcript text and Kurdish cursive joining are verified and preserved
+    without silent degradation.
+
+    Raises:
+        ValueError: empty sentences or incomplete sentence (invariant #2).
+        CaptionsOutsideClip: sentence timing outside clip bounds.
+        CaptionVerificationError: text corruption, broken joining, missing glyphs,
+            or unsafe placement.
+    """
+    effective_max_chars = min(max_chars_per_line, DEFAULT_MAX_CHARS_PER_LINE)
+    ass_content = build_ass(
+        sentences,
+        font_name=font_name,
+        font_size=font_size,
+        play_res_x=play_res_x,
+        play_res_y=play_res_y,
+        style=style,
+        max_chars_per_line=effective_max_chars,
+        clip_in_ms=clip_in_ms,
+        clip_duration_ms=clip_duration_ms,
+        theme=theme,
+        max_words_per_event=max_words_per_event,
+        title_ckb=title_ckb,
+        max_line_width_px=max_line_width_px,
+        max_popup_width_px=max_popup_width_px,
+        fonts_dir=fonts_dir,
+        face_intervals=face_intervals,
+        plate_intervals=plate_intervals,
+        speaker_turns=speaker_turns,
+        speaker_metadata=speaker_metadata,
+        end_card=end_card,
+        hook_banner=hook_banner,
+        keyword_emphasis=keyword_emphasis,
+        margin_v=margin_v,
+    )
+
+    expected_words: Sequence[str] | None = (
+        None
+        if style is CaptionStyle.RTL_WORD_HIGHLIGHT
+        else [w.w for s in sentences for w in s.words]
+    )
+    verify_caption_integrity(
+        ass_content,
+        expected_text=expected_words,
+        fonts_dir=fonts_dir,
+        play_res_x=play_res_x,
+        play_res_y=play_res_y,
+    )
+    return ass_content

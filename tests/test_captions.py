@@ -43,6 +43,8 @@ from hawedit.captions import (
     POPUP_MAX_CHARS,
     POPUP_MAX_WIDTH_PX,
     REPORT_THEME,
+    RESTRAINED_MOBILE_FONT_SIZE,
+    RESTRAINED_MOBILE_THEME,
     VIRAL_FONT_SIZE,
     VIRAL_THEME,
     CaptionsOutsideClip,
@@ -70,6 +72,7 @@ from hawedit.captions import (
     find_ffmpeg,
     intersects_caption_band,
     measure_rendered_caption_width,
+    mobile_caption_layout,
     parse_ass_colour,
     parse_dialogue_times,
     relative_luminance,
@@ -2356,3 +2359,133 @@ def test_caption_chunks_preserve_source_word_order(tmp_path: Path) -> None:
             f"Expected horizontal pixel centroid of 'کاک' ({cx_kak:.1f}) > "
             f"'مەسعود' ({cx_masud:.1f}) for native Kurdish RTL display"
         )
+
+
+def test_mobile_caption_layout_preserves_canonical_sorani(tmp_path: Path) -> None:
+    """T12 (AC-06, AC-18): Restrained caption policy reads well on phones and preserves text.
+
+    Asserts that:
+    1. Canonical Sorani transcript containing the full Kurdish character repertoire
+       (ک, ی, ڕ, ڵ, ۆ, ێ, چ, ژ, پ, گ, ە, ه, ھ) is preserved in exact chronological
+       order without word omissions, inversions, or corrupted cursive joining.
+    2. Geometry conforms to restrained mobile phone reading standards:
+       - Vertical canvas 1080x1920 (PlayResX=1080, PlayResY=1920).
+       - Font size 76 pt (calibrated for 45-50px ink height at arm's length).
+       - Vertical margin 380 px (safe clearance above platform UI overlays on social apps).
+       - Side margins 80 px (safe clearance from bezel and curved screen edges).
+       - Word-boundary line wrapping with max length <= 32 characters per line.
+    3. Caption integrity verification runs automatically and passes on conforming layout.
+    4. Text corruption or token reversals raise CaptionVerificationError (strict fail-stop).
+    5. Unsafe placement (e.g. margin_v=20) or illegible geometry (e.g. font_size=16) raise
+       CaptionVerificationError.
+    6. Empty or incomplete sentence sequences are rejected with ValueError (invariant #2).
+    """
+    # 1. Canonical Sorani sentences with all distinctive Kurdish characters
+    sentence1 = Sentence(
+        words=words(
+            ("ئەمڕۆ", 0, 500),
+            ("لە", 500, 800),
+            ("پۆدکاستی", 800, 1400),
+            ("تایبەت", 1400, 1900),
+            ("بە", 1900, 2100),
+            ("خۆمان", 2100, 2600),
+            ("قسە", 2600, 3000),
+            ("لەسەر", 3000, 3400),
+            ("فەلسەفەی", 3400, 4000),
+            ("ژاپۆنی", 4000, 4600),
+            ("و", 4600, 4800),
+            ("کەمکردنەوەی", 4800, 5600),
+            ("سترێس", 5600, 6200),
+            ("دەکەین", 6200, 6800),
+        ),
+        complete=True,
+    )
+    sentence2 = Sentence(
+        words=words(
+            ("کاتێک", 7000, 7400),
+            ("پۆڵ", 7400, 7800),
+            ("برێمەر", 7800, 8300),
+            ("هاتە", 8300, 8700),
+            ("کوردستان", 8700, 9400),
+            ("کاک", 9400, 9800),
+            ("مەسعود", 9800, 10400),
+            ("قبوڵی", 10400, 10900),
+            ("نەکرد", 10900, 11500),
+        ),
+        complete=True,
+    )
+    sentences = (sentence1, sentence2)
+
+    # 2. Render restrained mobile layout and verify conformance
+    ass_text = mobile_caption_layout(sentences, fonts_dir=FONTS_DIR)
+
+    # Script Info checks
+    assert "PlayResX: 1080" in ass_text
+    assert "PlayResY: 1920" in ass_text
+    assert "WrapStyle: 2" in ass_text
+
+    # Restrained mobile style row checks
+    assert RESTRAINED_MOBILE_THEME.margin_v == 380
+    assert RESTRAINED_MOBILE_THEME.margin_l == 80 and RESTRAINED_MOBILE_THEME.margin_r == 80
+    assert RESTRAINED_MOBILE_THEME.bold is True
+    assert RESTRAINED_MOBILE_THEME.outline == 4.0
+    assert f"Style: Kurdish,Noto Naskh Arabic,{RESTRAINED_MOBILE_FONT_SIZE}" in ass_text
+    assert ",80,80,380,1" in ass_text
+
+    # Explicit theme override equals default layout
+    ass_explicit = mobile_caption_layout(
+        sentences,
+        theme=RESTRAINED_MOBILE_THEME,
+        fonts_dir=FONTS_DIR,
+    )
+    assert ass_explicit == ass_text
+
+    # Dialogue lines wrapping & content check
+    dialogue_lines = [
+        line.split(",", 9)[9].strip()
+        for line in ass_text.splitlines()
+        if line.startswith("Dialogue:")
+    ]
+    assert len(dialogue_lines) == 2
+
+    # Verify line wrapping at word boundaries and length <= 32 chars
+    for d_line in dialogue_lines:
+        sub_lines = d_line.split(r"\N")
+        for sl in sub_lines:
+            assert len(sl.strip()) <= DEFAULT_MAX_CHARS_PER_LINE
+            for word_part in sl.split():
+                assert len(word_part) > 0
+
+    # Verification report from verify_caption_integrity
+    report = verify_caption_integrity(
+        ass_text,
+        expected_text=[w.w for s in sentences for w in s.words],
+        fonts_dir=FONTS_DIR,
+    )
+    assert report.text_ok and report.joining_ok and report.glyphs_ok and report.geometry_ok
+
+    # 3. Fail-stop checks on corruption and invalid parameters
+    corrupted_words = [w.w for s in sentences for w in s.words]
+    corrupted_words[0], corrupted_words[1] = corrupted_words[1], corrupted_words[0]
+    with pytest.raises(CaptionVerificationError, match="wrong text"):
+        verify_caption_text(ass_text, expected_text=corrupted_words)
+
+    # Unsafe vertical margin fails geometry verification
+    with pytest.raises(CaptionVerificationError, match="unsafe placement.*vertical margin"):
+        mobile_caption_layout(sentences, margin_v=20, fonts_dir=FONTS_DIR)
+
+    # Illegibly small font size fails geometry verification
+    with pytest.raises(CaptionVerificationError, match="illegible.*geometry.*font size"):
+        mobile_caption_layout(sentences, font_size=16, fonts_dir=FONTS_DIR)
+
+    # Incomplete sentence rejected (invariant #2)
+    incomplete_sentence = Sentence(
+        words=words(("ئەمڕۆ", 0, 500)),
+        complete=False,
+    )
+    with pytest.raises(ValueError, match="not complete"):
+        mobile_caption_layout((incomplete_sentence,))
+
+    # Empty sentence list rejected
+    with pytest.raises(ValueError, match="no sentences"):
+        mobile_caption_layout(())
