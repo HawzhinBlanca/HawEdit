@@ -17,7 +17,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] T10 Tracker handles off-screen speakers/listener shots and resets at scene cuts
 - [x] T11 Shot layout stays stable on ambiguity and responds to verified sustained changes
 - [x] T12 One restrained caption policy reads well on phones and preserves canonical text
-- [ ] T13 Final audio meets the existing contract and conditioning is supported by listening evidence
+- [x] T13 Final audio meets the existing contract and conditioning is supported by listening evidence
 - [ ] T14 Episode CLI produces up to N actual distinct deliveries with shared preprocessing and honest item states
 - [ ] T15 Restart/duplicate submission preserve verified work and publish once
 - [ ] T16 Unknown billed outcomes and retries remain persisted, bounded and explicit
