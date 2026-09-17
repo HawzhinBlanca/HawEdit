@@ -11,7 +11,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] T04 Canonical and revision routes use the shared claim-verification boundary for all crop modes
 - [x] T05 One resolved configuration defines the exact behavior before expensive work
 - [x] T06 One retained-interval mapping drives every export and media clock
-- [ ] T07 Trimming protects quiet speech, uncertain regions and meaningful pauses/reactions
+- [x] T07 Trimming protects quiet speech, uncertain regions and meaningful pauses/reactions
 - [ ] T08 Candidate context is canonical, contiguous, source-linked and preserved or refused
 - [ ] T09 Independent discovery and shared ranking obey coverage, integrity and budget constraints
 - [ ] T10 Tracker handles off-screen speakers/listener shots and resets at scene cuts
