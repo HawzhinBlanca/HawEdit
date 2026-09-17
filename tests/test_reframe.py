@@ -1109,3 +1109,223 @@ def test_motion_speaker_tracker_with_yunet_and_speaker_cuts(tmp_path: Path) -> N
     # Keyframes must step at the speaker cut without slow wandering
     assert any(kf.at_ms == 2000 and kf.center_x == 150 for kf in steady)
     assert any(kf.at_ms == 2001 and kf.center_x == 550 for kf in steady)
+
+
+def test_visible_listener_is_not_assigned_to_offscreen_speaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-16 / T10: Visible listener or off-screen speaker is not falsely attributed.
+
+    When another person speaks off-screen, visible listeners are explicitly labelled as
+    'listener' with is_speaking=False. When no faces are in frame, off-screen speakers
+    fall back to explicitly labelled acceptable framing without inventing speaker identity.
+    """
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "offscreen_listener_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+
+    # Frame 0..2 (0..600ms): SPEAKER_00 speaks on left (center 140) with active mouth motion.
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (100, 155), (180, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    # Frame 3..5 (600..1200ms): SPEAKER_01 is active in diarization off-screen.
+    # Left face (center 140, established as SPEAKER_00) is visible and reacts with mouth motion.
+    # Must NOT be attributed to SPEAKER_01!
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        val = 240 if i % 2 == 1 else 60
+        cv2.rectangle(frame, (100, 155), (180, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    # Frame 6..8 (1200..1800ms): SPEAKER_01 speaks on screen at Right face (center 440).
+    for i in range(3):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (400, 100), (480, 180), (128, 128, 128), -1)
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (400, 155), (480, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    # Frame 9..10 (1800..2200ms): SPEAKER_01 continues speaking off-screen, no faces visible.
+    for _ in range(2):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        writer.write(frame)
+
+    writer.release()
+
+    class _MockClassifier:
+        def __init__(self, is_profile: bool = False) -> None:
+            self._is_profile = is_profile
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self._is_profile:
+                return []
+            img = args[0] if args else kwargs.get("image")
+            assert img is not None
+            res = []
+            if bool(np.any(img[100:180, 100:180] > 0)):
+                res.append((100, 100, 80, 80))
+            if bool(np.any(img[100:180, 400:480] > 0)):
+                res.append((400, 100, 80, 80))
+            return res
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", lambda p: _MockClassifier("profile" in str(p)))
+
+    tracker = MotionSpeakerTracker(sample_fps=5.0, motion_threshold=2.0)
+    turns = (
+        Segment(0, 600, "SPEAKER_00"),
+        Segment(600, 1200, "SPEAKER_01"),
+        Segment(1200, 1800, "SPEAKER_01"),
+        Segment(1800, 2200, "SPEAKER_01"),
+    )
+
+    points = tracker.track_speakers(video_path, 0, 2200, turns)
+    assert len(points) >= 10
+
+    # 0..600ms: SPEAKER_00 speaking on screen
+    spk0_pts = [p for p in points if p.at_ms < 600]
+    assert any(
+        p.state == "speaker" and p.is_speaking is True and p.center_x == 140 for p in spk0_pts
+    )
+    assert tracker.confirmed_speaker_centers.get("SPEAKER_00") == 140
+
+    # 600..1200ms: SPEAKER_01 speaking off-screen, visible reacting face at 140 is a listener
+    listener_pts = [p for p in points if 600 <= p.at_ms < 1200]
+    assert len(listener_pts) >= 2
+    for p in listener_pts:
+        assert p.speaker == "SPEAKER_01"
+        assert p.center_x == 140
+        assert p.state == "listener"
+        assert p.is_speaking is False
+
+    # SPEAKER_01 is NOT mapped to listener position
+    assert tracker.confirmed_speaker_centers.get("SPEAKER_01") != 140
+
+    # 1200..1800ms: SPEAKER_01 on screen speaking at 440
+    spk1_active = [p for p in points if 1200 <= p.at_ms < 1800]
+    assert any(
+        p.state == "speaker" and p.is_speaking is True and p.center_x == 440 for p in spk1_active
+    )
+    assert tracker.confirmed_speaker_centers.get("SPEAKER_01") == 440
+
+    # 1800..2200ms: SPEAKER_01 steps off-screen, holds confirmed speaker center with off_screen
+    offscreen_pts = [p for p in points if p.at_ms >= 1800]
+    assert len(offscreen_pts) >= 1
+    for p in offscreen_pts:
+        assert p.speaker == "SPEAKER_01"
+        assert p.state == "off_screen"
+        assert p.is_speaking is False
+        assert p.center_x == 440
+
+    # Strict validation passes
+    validated = validate_speaker_focus_points(points, turns, 0, 2200)
+    assert len(validated) == len(points)
+
+
+def test_scene_cut_resets_invalid_speaker_spatial_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-16 / T10: Shot cuts reset speaker spatial state and prevent false cross-cut diffs.
+
+    Across a scene cut, remembered speaker coordinates and frame diff history are cleared.
+    A quiet face after the cut is not assumed to be the speaker from the prior shot.
+    """
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "scene_cut_reset_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+
+    # Shot 1 (0..800ms): SPEAKER_00 speaks on left (center 140) with active mouth motion
+    for i in range(4):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (100, 100), (180, 180), (128, 128, 128), -1)
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (100, 155), (180, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    # Shot cut occurs at 800ms.
+    # Shot 2 (800..1400ms, frames 4..6): Camera cut to wide shot (background inverted).
+    # A quiet face exists at center 140 (silent listener / static).
+    for _ in range(3):
+        frame = np.full((480, 640, 3), 40, dtype=np.uint8)
+        cv2.rectangle(frame, (100, 100), (180, 180), (180, 180, 180), -1)
+        cv2.rectangle(frame, (100, 155), (180, 180), (90, 90, 90), -1)
+        writer.write(frame)
+
+    # Shot 2 continued (1400..2000ms, frames 7..9): SPEAKER_00 speaks on right (center 440)
+    for i in range(3):
+        frame = np.full((480, 640, 3), 40, dtype=np.uint8)
+        cv2.rectangle(frame, (400, 100), (480, 180), (180, 180, 180), -1)
+        val = 250 if i % 2 == 1 else 50
+        cv2.rectangle(frame, (400, 155), (480, 180), (val, val, val), -1)
+        writer.write(frame)
+
+    writer.release()
+
+    class _CutMockClassifier:
+        def __init__(self, is_profile: bool = False) -> None:
+            self._is_profile = is_profile
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self._is_profile:
+                return []
+            img = args[0] if args else kwargs.get("image")
+            assert img is not None
+            res = []
+            if float(np.mean(img[100:180, 100:180])) > 80.0:
+                res.append((100, 100, 80, 80))
+            if float(np.mean(img[100:180, 400:480])) > 80.0:
+                res.append((400, 100, 80, 80))
+            return res
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", lambda p: _CutMockClassifier("profile" in str(p)))
+
+    tracker = MotionSpeakerTracker(sample_fps=5.0, motion_threshold=2.0)
+    turns = (
+        Segment(0, 800, "SPEAKER_00"),
+        Segment(800, 1400, "SPEAKER_00"),
+        Segment(1400, 2000, "SPEAKER_00"),
+    )
+    shot_cuts = (800,)
+
+    points = tracker.track_speakers(video_path, 0, 2000, turns, shot_cuts_ms=shot_cuts)
+    assert len(points) >= 9
+
+    # In Shot 1 (0..800ms): Confirmed speaking at 140
+    shot1_pts = [p for p in points if p.at_ms < 800]
+    assert any(
+        p.state == "speaker" and p.is_speaking is True and p.center_x == 140 for p in shot1_pts
+    )
+
+    # In Shot 2 (800..1400ms): After cut, quiet face at 140 is NOT attributed as speaking
+    post_cut_pts = [p for p in points if 800 <= p.at_ms < 1400]
+    assert len(post_cut_pts) >= 2
+    for p in post_cut_pts:
+        assert p.is_speaking is False
+        assert p.state in ("unknown", "listener")
+
+    # In Shot 2 (1400..2000ms): Fresh mouth motion at 440 confirms new position
+    shot2_pts = [p for p in points if p.at_ms >= 1400]
+    assert any(
+        p.state == "speaker" and p.is_speaking is True and p.center_x == 440 for p in shot2_pts
+    )
+    assert tracker.confirmed_speaker_centers.get("SPEAKER_00") == 440
+
+    # Validates cleanly
+    validated = validate_speaker_focus_points(points, turns, 0, 2000)
+    assert len(validated) == len(points)

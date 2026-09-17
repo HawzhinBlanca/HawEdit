@@ -49,7 +49,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, fields, replace
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO, TypeVar, cast, overload
 
 from hawedit.artifact_bundle import ArtifactBundle, BundleError
 from hawedit.asr import CanonicalTranscriptProducer
@@ -162,6 +162,7 @@ from hawedit.qwen_visual import EmbedderUnavailable
 from hawedit.reframe import (
     FocusPoint,
     SpeakerAssociationError,
+    SpeakerFocusPoint,
     SpeakerSubjectTracker,
     SubjectTracker,
     compute_two_person_split_crops,
@@ -2734,12 +2735,23 @@ def run_pipeline(
             )
         try:
             _assert_source_unchanged(source, ingested.source_sha256, "speaker/face association")
-            speaker_points = speaker_tracker.track_speakers(
-                source,
-                boundary.final_in_ms,
-                boundary.final_out_ms,
-                overlapping_turns,
-            )
+            try:
+                speaker_points: tuple[SpeakerFocusPoint, ...] = cast(
+                    Any, speaker_tracker
+                ).track_speakers(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    overlapping_turns,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+            except TypeError:
+                speaker_points = speaker_tracker.track_speakers(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    overlapping_turns,
+                )
         except RuntimeError as exc:
             return replace(
                 run,

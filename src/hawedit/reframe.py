@@ -566,7 +566,8 @@ class MotionSpeakerTracker:
                         break
 
                 # Reset scene-local cache across shot cuts: identity across cuts requires
-                # fresh evidence rather than remembered coordinates.
+                # fresh evidence rather than remembered coordinates, and prev_gray must be reset
+                # so cross-shot pixel differences do not trigger false mouth-motion spikes.
                 if (
                     cuts
                     and previous_at is not None
@@ -574,6 +575,7 @@ class MotionSpeakerTracker:
                 ):
                     speaker_face_centers.clear()
                     last_known_center = None
+                    prev_gray = None
 
                 active = [
                     turn for turn in overlapping_turns if turn.start_ms <= at_int < turn.end_ms
@@ -647,11 +649,20 @@ class MotionSpeakerTracker:
                         for spk, sc in speaker_face_centers.items()
                         if spk != active_speaker and abs(cx - sc) <= fw
                     ]
+                    contradicts_active = (
+                        active_speaker in speaker_face_centers
+                        and abs(cx - speaker_face_centers[active_speaker]) > fw
+                    )
                     if other_speakers:
                         point_state = "listener"
                         point_is_speaking = False
                         point_confidence = 0.8
-                        last_known_center = selected_center
+                    elif contradicts_active:
+                        # The visible face is at a spatial location contradictory to active
+                        # speaker's confirmed position on this continuous shot: listener reaction.
+                        point_state = "listener"
+                        point_is_speaking = False
+                        point_confidence = 0.7
                     elif has_motion:
                         if motion_val >= self.motion_threshold:
                             point_state = "speaker"
@@ -663,7 +674,6 @@ class MotionSpeakerTracker:
                             point_state = "listener"
                             point_is_speaking = False
                             point_confidence = 0.5
-                            last_known_center = selected_center
                     else:
                         # First frame: no motion measurement yet.
                         if active_speaker in speaker_face_centers:
@@ -671,6 +681,7 @@ class MotionSpeakerTracker:
                                 point_state = "speaker"
                                 point_is_speaking = True
                                 point_confidence = 0.8
+                                last_known_center = cx
                             else:
                                 point_state = "unknown"
                                 point_is_speaking = False
@@ -679,7 +690,6 @@ class MotionSpeakerTracker:
                             point_state = "unknown"
                             point_is_speaking = False
                             point_confidence = 0.4
-                        last_known_center = selected_center
                 elif len(deduped_faces) > 1:
                     face_motions: list[tuple[float, tuple[int, int, int, int]]] = []
                     for face in deduped_faces:
@@ -701,11 +711,26 @@ class MotionSpeakerTracker:
                     face_motions.sort(key=lambda item: item[0], reverse=True)
                     best_motion, best_face = face_motions[0]
                     second_motion = face_motions[1][0] if len(face_motions) > 1 else 0.0
+                    best_cx = best_face[0] + best_face[2] // 2
+                    is_other_speaker = any(
+                        spk != active_speaker and abs(best_cx - sc) <= best_face[2]
+                        for spk, sc in speaker_face_centers.items()
+                    )
+                    contradicts_active_multi = (
+                        active_speaker in speaker_face_centers
+                        and abs(best_cx - speaker_face_centers[active_speaker]) > best_face[2]
+                    )
 
-                    if best_motion >= self.motion_threshold and (
-                        second_motion == 0.0 or best_motion >= second_motion * self.ambiguity_ratio
+                    if (
+                        best_motion >= self.motion_threshold
+                        and (
+                            second_motion == 0.0
+                            or best_motion >= second_motion * self.ambiguity_ratio
+                        )
+                        and not is_other_speaker
+                        and not contradicts_active_multi
                     ):
-                        selected_center = best_face[0] + best_face[2] // 2
+                        selected_center = best_cx
                         speaker_face_centers[active_speaker] = selected_center
                         last_known_center = selected_center
                         point_state = "speaker"
@@ -721,8 +746,7 @@ class MotionSpeakerTracker:
                                 key=lambda f: abs((f[0] + f[2] // 2) - known),
                             )
                             selected_center = closest_face[0] + closest_face[2] // 2
-                            last_known_center = selected_center
-                            point_state = "unknown"
+                            point_state = "listener" if is_other_speaker else "unknown"
                             point_confidence = 0.6
                         elif last_known_center is not None:
                             target_x = last_known_center
@@ -731,22 +755,18 @@ class MotionSpeakerTracker:
                                 key=lambda f: abs((f[0] + f[2] // 2) - target_x),
                             )
                             selected_center = closest_face[0] + closest_face[2] // 2
-                            point_state = "unknown"
+                            point_state = "listener" if is_other_speaker else "unknown"
                             point_confidence = 0.4
                         else:
                             largest_face = max(deduped_faces, key=lambda f: f[2] * f[3])
                             selected_center = largest_face[0] + largest_face[2] // 2
-                            last_known_center = selected_center
-                            point_state = "unknown"
+                            point_state = "listener" if is_other_speaker else "unknown"
                             point_confidence = 0.3
                 else:
                     point_state = "off_screen"
                     point_is_speaking = False
                     point_confidence = 0.5
-                    if active_speaker in speaker_face_centers:
-                        selected_center = speaker_face_centers[active_speaker]
-                    elif last_known_center is not None:
-                        selected_center = last_known_center
+                    selected_center = speaker_face_centers.get(active_speaker)
 
                 if selected_center is not None:
                     points.append(
