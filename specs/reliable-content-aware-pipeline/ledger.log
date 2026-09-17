@@ -14,3 +14,4 @@ TS=2026-09-17T20:19:01Z FEATURE=reliable-content-aware-pipeline TASK=T12 TESTS=t
 TS=2026-09-17T20:42:26Z FEATURE=reliable-content-aware-pipeline TASK=T13 TESTS=test_final_audio_is_measured_after_conditioning_and_encode VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-17T22:30:47Z FEATURE=reliable-content-aware-pipeline TASK=T14 TESTS=test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest,test_episode_manifest_exposes_partial_failure_and_no_clip_outcome VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-17T22:52:18Z FEATURE=reliable-content-aware-pipeline TASK=T15 TESTS=test_restart_at_each_artifact_boundary_preserves_verified_work,test_duplicate_submission_cannot_duplicate_public_delivery VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-17T23:28:54Z FEATURE=reliable-content-aware-pipeline TASK=T16 TESTS=test_unknown_billed_outcome_is_not_blindly_retried,test_retry_budget_survives_process_restart VERIFY=pass REPORT=.gate/last-test-run.xml
