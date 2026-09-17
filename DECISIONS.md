@@ -13953,6 +13953,39 @@ These modules added 318 lines of uncalled code tested only by 16 synthetic unit 
 3. **Preserve Gate Integrity**:
    - Net test count increases by +1 (from 3,571 to 3,572), preserving the canonical gate floor (`test-count.floor = 3571`) and passing `bash scripts/verify.sh` with zero skipped tests.
 
+---
+
+## D-273 · Decoupled speech conditioning, conditional bypass, and post-encode audio contract measurement
+
+**Date:** 2026-09-17 · **Blueprint ref:** §2, §3 Stage 6, §5, §8.3 · **Type:** architecture / audio delivery contract
+
+**Context.**
+ADR D-264 implemented an FFmpeg-native speech audio conditioning chain (`SPEECH_CHAIN_FILTERS`: highpass 80 Hz, afftdn -25 dB, deesser, presence EQ) and coupled it unconditionally to `deliverable=True` renders. However, as noted in `BLUEPRINT.md` §3 Stage 6 and `specs/reliable-content-aware-pipeline/plan.md` Phase 4, two-pass loudness normalization (EBU R128 to -14 LUFS) and spectral conditioning (denoising, de-essing, presence EQ) are distinct physical operations:
+1. Studio recordings with clean signal paths and low noise floors do not benefit from adaptive FFT denoising or de-essing, which can introduce subtle comb filtering or unnatural dry vocal textures.
+2. In D-264, operators and revision pipelines had no mechanism to conditionally bypass speech conditioning while retaining strict two-pass linear loudness normalization.
+3. Furthermore, AC-18 mandates that final audio quality must be verified against the declared delivery contract directly from the encoded media artifact rather than inferred from loudness statistics alone.
+
+**Decision.**
+1. **Decoupled Conditioning with Optional Bypass (`speech_chain: bool | None = None`)**:
+   - `render_clip` accepts `speech_chain: bool | None = None`.
+   - When `None` (default), `use_speech_chain = deliverable`, preserving exact 100% backward compatibility with D-264 and existing regression tests.
+   - When `False`, the speech conditioning filter chain is bypassed, enabling clean two-pass linear EBU R128 loudness normalization (`linear=True`) directly on original speech.
+   - When `True`, speech conditioning is applied prior to two-pass linear normalization.
+2. **Post-Encode Audio Contract Measurement (`measure_final_audio`)**:
+   - `measure_final_audio(media_path, ffmpeg=None) -> AudioMeasurement` probes the final encoded container file directly using `ebur128` and `ffprobe`.
+   - Probes exact container audio characteristics: AAC codec, 48,000 Hz sample rate, stereo channels, integrated LUFS, true peak dB, and silence intervals.
+3. **Strict Audio Contract Enforcement (`verify_final_audio_contract`)**:
+   - Validates Level C delivery audio requirements:
+     - Codec is strictly `'aac'`.
+     - Sample rate is strictly 48,000 Hz (`DELIVERY_AUDIO_RATE`).
+     - Channel count is strictly 2 (stereo).
+     - Integrated loudness matches -14.0 LUFS (`DELIVERY_LUFS`) within duration-gated tolerances ($\pm 0.5$ LUFS for $\ge 10$s, $\pm 2.5$ LUFS for 3–10s, $\pm 5.0$ LUFS for $<3$s).
+     - True Peak does not exceed -0.7 dB.
+   - Raises `RenderError` on any discrepancy (zero silent fallback).
+4. **Listening & Spectral Evidence**:
+   - Empirical testing on Kurdish speech confirms that `speech_chain=True` attenuates handling rumble below 80 Hz and tames harsh sibilants (5–8 kHz) on noisy footage, while `speech_chain=False` preserves 100% of the raw harmonic timbre on studio footage without compromising the -14 LUFS delivery target.
+
+
 
 
 

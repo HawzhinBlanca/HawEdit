@@ -62,6 +62,7 @@ from hawedit.captions import (
 )
 from hawedit.clip import Clip
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
+from hawedit.measure import AudioMeasurement
 from hawedit.silence import SilencePlan, silence_trim_filter
 from hawedit.transcripts import Word
 
@@ -96,10 +97,12 @@ __all__ = [
     "frame_rate",
     "linked_libraries",
     "measure_audio_loudness",
+    "measure_final_audio",
     "quality_args",
     "render_clip",
     "shot_spans",
     "two_person_split_filter",
+    "verify_final_audio_contract",
     "vertical_crop_size",
 ]
 
@@ -430,6 +433,93 @@ def audio_filter(
         f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11,"
         f"aresample={DELIVERY_AUDIO_RATE}"
     )
+
+
+def measure_final_audio(
+    media_path: Path,
+    ffmpeg: Path | None = None,
+) -> AudioMeasurement:
+    """Independently probe and measure the final audio stream of an encoded media file (T13).
+
+    Measures codec, sample rate, channels, duration, integrated loudness (LUFS), true peak (dB),
+    and silence intervals from the encoded container without trusting internal state.
+    """
+    from hawedit.captions import ffprobe_for, find_ffmpeg
+    from hawedit.measure import probe_audio_dynamics, probe_container
+
+    binary = ffmpeg or find_ffmpeg()
+    if binary is None or not binary.is_file():
+        raise RenderError("ffmpeg binary could not be found for final audio measurement")
+    ffprobe = ffprobe_for(binary)
+
+    video_meas, audio_info, _ = probe_container(media_path, ffprobe)
+    return probe_audio_dynamics(media_path, binary, audio_info, video_meas.duration_ms)
+
+
+def verify_final_audio_contract(
+    media_path: Path,
+    *,
+    target_lufs: float = DELIVERY_LUFS,
+    target_true_peak_db: float = -0.7,
+    lufs_tolerance: float | None = None,
+    ffmpeg: Path | None = None,
+) -> AudioMeasurement:
+    """Verify that the final encoded media artifact meets the delivery audio contract (T13).
+
+    Checks Level C delivery audio constraints:
+    - Codec is 'aac'.
+    - Sample rate is 48,000 Hz (DELIVERY_AUDIO_RATE).
+    - Channel count is 2 (stereo).
+    - Integrated loudness matches target_lufs (-14.0 LUFS) within duration-gated tolerance:
+      * +/-0.5 LUFS for >= 10s clips
+      * +/-2.5 LUFS for 3-10s clips
+      * +/-7.0 LUFS for < 3s clips (ITU-R BS.1770 gating limit)
+    - True Peak does not exceed target_true_peak_db (-0.7 dB).
+
+    Raises:
+        RenderError: if any contract condition is violated.
+    """
+    measurement = measure_final_audio(media_path, ffmpeg=ffmpeg)
+
+    if measurement.codec.lower() != "aac":
+        raise RenderError(
+            f"delivery audio contract violation: codec must be 'aac', got {measurement.codec!r}"
+        )
+    if measurement.sample_rate != DELIVERY_AUDIO_RATE:
+        raise RenderError(
+            f"delivery audio contract violation: sample rate must be {DELIVERY_AUDIO_RATE} Hz, "
+            f"got {measurement.sample_rate} Hz"
+        )
+    if measurement.channels != 2:
+        raise RenderError(
+            f"delivery audio contract violation: channels must be 2 (stereo), "
+            f"got {measurement.channels}"
+        )
+
+    if lufs_tolerance is not None:
+        tol = lufs_tolerance
+    elif measurement.duration_ms >= 10_000:
+        tol = 0.5
+    elif measurement.duration_ms >= 3_000:
+        tol = 2.5
+    else:
+        tol = 7.0
+
+    lufs_diff = abs(measurement.integrated_lufs - target_lufs)
+    if lufs_diff > tol:
+        raise RenderError(
+            f"delivery audio contract violation: integrated loudness "
+            f"{measurement.integrated_lufs:.2f} LUFS deviates from target {target_lufs:.2f} LUFS "
+            f"by {lufs_diff:.2f} LU (max {tol:.2f} LU)"
+        )
+
+    if measurement.true_peak_db > target_true_peak_db:
+        raise RenderError(
+            f"delivery audio contract violation: true peak {measurement.true_peak_db:.2f} dB "
+            f"exceeds ceiling {target_true_peak_db:.2f} dB"
+        )
+
+    return measurement
 
 
 def _publish_render(staging: Path, output: Path) -> None:
@@ -1282,6 +1372,7 @@ def render_clip(
     punch_ins: Sequence[tuple[int, float]] = (),
     fps: float | None = None,
     deliverable: bool = False,
+    speech_chain: bool | None = None,
     silence_plan: SilencePlan | None = None,
     split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None,
     brand_kit: BrandKit | None = None,
@@ -1477,19 +1568,20 @@ def render_clip(
 
     loudness_p1: LoudnessStats | None = None
     loudness_p2: LoudnessStats | None = None
+    use_speech_chain = deliverable if speech_chain is None else speech_chain
     if deliverable:
         loudness_p1 = measure_audio_loudness(
             source=source,
             in_ms=clip.in_ms,
             duration_ms=duration_ms,
             binary=binary,
-            speech_chain=True,
+            speech_chain=use_speech_chain,
             retained_intervals_ms=silence_plan.retained_intervals_ms if silence_plan else (),
         )
-        af_chain = audio_filter(measured=loudness_p1, linear=True, speech_chain=True)
+        af_chain = audio_filter(measured=loudness_p1, linear=True, speech_chain=use_speech_chain)
         loglevel_args = ["-loglevel", "info"]
     else:
-        af_chain = audio_filter()
+        af_chain = audio_filter(speech_chain=use_speech_chain)
         loglevel_args = ["-loglevel", "error"]
 
     pb_f: str | None = None

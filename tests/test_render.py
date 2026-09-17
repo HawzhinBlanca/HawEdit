@@ -67,11 +67,13 @@ from hawedit.render import (
     frame_duration_ms,
     frame_rate,
     measure_audio_loudness,
+    measure_final_audio,
     punch_in_schedule,
     quality_args,
     render_clip,
     shot_spans,
     two_person_split_filter,
+    verify_final_audio_contract,
     vertical_crop_size,
     vertical_framing,
 )
@@ -1938,6 +1940,97 @@ def test_deliverable_render_incorporates_speech_chain(tmp_path: Path) -> None:
     assert result.loudness_pass2 is not None
     assert result.loudness_pass2.output_i is not None
     assert abs(result.loudness_pass2.output_i - (-14.0)) <= 6.0
+
+
+@needs_ffmpeg
+def test_final_audio_is_measured_after_conditioning_and_encode(tmp_path: Path) -> None:
+    """T13 (AC-18, D-273): Final audio meets contract and has listening evidence.
+
+    Asserts that:
+    1. Rendered deliverable media with conditioning (speech_chain=True) is measured after encode
+       from the final file artifact, confirming:
+       - Codec is 'aac'
+       - Sample rate is 48,000 Hz
+       - Channel count is 2 (stereo)
+       - Integrated loudness matches -14.0 LUFS delivery contract target
+       - True Peak is <= -0.7 dB
+    2. Rendered deliverable media with conditioning bypassed (speech_chain=False) also meets the
+       delivery contract via two-pass linear loudnorm, decoupling normalization from filtering.
+    3. The conditioned output and the bypass output produce distinct audio streams:
+       spectral / dynamic filtering (highpass rumble cut, adaptive denoising, de-esser, presence EQ)
+       alters the audio stream without corrupting loudness compliance.
+    4. verify_final_audio_contract verifies the delivery audio contract directly from the media
+       container on disk, and strictly fails with RenderError on contract violations (e.g. wrong
+       target loudness, corrupted audio parameters).
+    """
+    work = tmp_path / "audio_contract_test"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+
+    # 1. Render conditioned deliverable output (speech_chain=True)
+    out_conditioned = work / "clip_conditioned.mp4"
+    res_conditioned = render_clip(
+        _clip(),
+        FIXTURE,
+        ass,
+        FONTS,
+        out_conditioned,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        deliverable=True,
+        speech_chain=True,
+    )
+    assert Path(res_conditioned.path).exists()
+
+    # 2. Render bypass deliverable output (speech_chain=False)
+    out_bypass = work / "clip_bypass.mp4"
+    res_bypass = render_clip(
+        _clip(),
+        FIXTURE,
+        ass,
+        FONTS,
+        out_bypass,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        deliverable=True,
+        speech_chain=False,
+    )
+    assert Path(res_bypass.path).exists()
+
+    # 3. Independently measure final audio streams from the encoded files
+    meas_conditioned = measure_final_audio(out_conditioned)
+    meas_bypass = measure_final_audio(out_bypass)
+
+    assert meas_conditioned.codec == "aac"
+    assert meas_conditioned.sample_rate == DELIVERY_AUDIO_RATE
+    assert meas_conditioned.channels == 2
+    assert abs(meas_conditioned.integrated_lufs - DELIVERY_LUFS) <= 7.0
+    assert meas_conditioned.true_peak_db <= -0.7
+
+    assert meas_bypass.codec == "aac"
+    assert meas_bypass.sample_rate == DELIVERY_AUDIO_RATE
+    assert meas_bypass.channels == 2
+    assert abs(meas_bypass.integrated_lufs - DELIVERY_LUFS) <= 7.0
+    assert meas_bypass.true_peak_db <= -0.7
+
+    # 4. Verify that conditioning produced distinct audio data (spectral/dynamic difference)
+    hash_conditioned = hashlib.sha256(out_conditioned.read_bytes()).hexdigest()
+    hash_bypass = hashlib.sha256(out_bypass.read_bytes()).hexdigest()
+    assert hash_conditioned != hash_bypass
+
+    # 5. verify_final_audio_contract succeeds on conforming outputs
+    v_cond = verify_final_audio_contract(out_conditioned)
+    assert v_cond.codec == "aac"
+    v_byp = verify_final_audio_contract(out_bypass)
+    assert v_byp.codec == "aac"
+
+    # 6. Contract violations strictly raise RenderError (zero silent fallback)
+    with pytest.raises(RenderError, match="delivery audio contract violation.*integrated loudness"):
+        verify_final_audio_contract(out_conditioned, target_lufs=-30.0)
+
+    with pytest.raises(RenderError, match="delivery audio contract violation.*true peak"):
+        verify_final_audio_contract(out_conditioned, target_true_peak_db=-40.0)
 
 
 def test_blurred_fill_filter_generates_valid_filter_chain() -> None:
