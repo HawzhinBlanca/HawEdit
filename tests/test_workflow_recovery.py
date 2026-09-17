@@ -15,9 +15,11 @@ from hawedit.workflow_recovery import (
     ResourceCapacityError,
     RetryBudgetExhaustedError,
     ScopedResourceOwnership,
+    StructuredPipelineFault,
     VisualWorkflowRecoveryManager,
     WorkflowResumePlan,
     WorkflowStepStatus,
+    classify_and_contain_fault,
     publish_visual_package_idempotent,
     reconcile_external_billed_call,
     validate_preflight_resources,
@@ -551,3 +553,124 @@ def test_retry_budget_survives_process_restart(tmp_path: Path) -> None:
 
     with pytest.raises(RetryBudgetExhaustedError, match="Further retries are prohibited"):
         mgr3.consume_retry(budget_id, default_max_retries=3)
+
+
+def test_fault_matrix_preserves_failure_reason_and_no_false_delivery(tmp_path: Path) -> None:
+    """AC-22: Real process, storage and runtime faults preserve primary reasons and withhold output.
+
+    WHEN disk, GPU, WSL, network or cache integrity fails,
+    THE system SHALL return a structured actionable failure, release owned resources
+    and withhold invalid public output.
+    """
+    delivery_dir = tmp_path / "public_deliveries"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+    scratch_root = tmp_path / "scratch"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+
+    # Fault domain test matrix: (domain, simulated_exception, expected_remediation_snippet)
+    fault_scenarios: tuple[tuple[str, Exception, str], ...] = (
+        (
+            "disk",
+            ResourceCapacityError(
+                "Insufficient disk space in work_dir: 14 MB free, 100 MB required"
+            ),
+            "Free disk capacity",
+        ),
+        (
+            "gpu",
+            RuntimeError(
+                "CUDA out of memory: tried to allocate 2.40 GiB on GPU 0; NVENC encoder reset"
+            ),
+            "Verify NVIDIA driver",
+        ),
+        (
+            "wsl",
+            ConnectionRefusedError(
+                "WSL ASR bridge unreachable on unix:/tmp/wsl-asr.sock; daemon is not running"
+            ),
+            "Check WSL2 virtual machine status",
+        ),
+        (
+            "network",
+            ExternalReconciliationError(
+                "External billed request 'gemini_judge_882' timed out without acknowledgement"
+            ),
+            "Verify cloud API network connectivity",
+        ),
+        (
+            "cache",
+            ValueError(
+                "Cache integrity validation failed: SHA256 mismatch for 'transcript.norm.json'"
+            ),
+            "Purge corrupted intermediate cache artifacts",
+        ),
+    )
+
+    for domain, exc, expected_remediation in fault_scenarios:
+        domain_scratch = scratch_root / domain
+        domain_scratch.mkdir(parents=True, exist_ok=True)
+        pkg_id = f"kurdish_reel_fault_{domain}"
+
+        # 1. Simulate active private scratch files generated before fault occurred
+        scratch_frame = domain_scratch / "frame_0001_raw.rgba"
+        scratch_frame.write_bytes(b"RGBA_MOCK_UNENCODED_PIXELS")
+        scratch_chunk = domain_scratch / "chunk_audio.pcm"
+        scratch_chunk.write_bytes(b"RAW_AUDIO_PCM_SAMPLES")
+        assert scratch_frame.exists()
+        assert scratch_chunk.exists()
+
+        # 2. Classify and contain fault
+        report = classify_and_contain_fault(
+            domain=domain,
+            exc=exc,
+            scratch_dir=domain_scratch,
+            delivery_dir=delivery_dir,
+            package_id=pkg_id,
+        )
+
+        # 3. Assert structured failure properties
+        assert isinstance(report, StructuredPipelineFault)
+        assert report.domain == domain
+        assert report.primary_reason == str(exc)
+        assert expected_remediation in report.actionable_remediation
+        assert report.resources_released is True
+        assert report.delivery_withheld is True
+
+        # 4. Assert owned private scratch resources were strictly released
+        assert not scratch_frame.exists()
+        assert not scratch_chunk.exists()
+
+        # 5. Assert invalid public delivery was strictly withheld
+        assert not (delivery_dir / pkg_id).exists()
+
+        # 6. Verify serialization round-trip
+        report_dict = report.to_dict()
+        assert report_dict["domain"] == domain
+        assert report_dict["primary_reason"] == str(exc)
+        assert report_dict["resources_released"] is True
+        assert report_dict["delivery_withheld"] is True
+
+    # 7. Fault during secondary cleanup preserves primary failure reason
+    from hawedit.pipeline import _safe_exception_text
+
+    primary_error = RuntimeError("Primary NVENC hardware encoder crashed during vertical reframe")
+    cleanup_error = OSError("Permission denied when removing staging bundle")
+    combined_message = (
+        f"private bundle cleanup also failed: "
+        f"{_safe_exception_text(str(cleanup_error), budget=512)}; original failure: "
+        f"{_safe_exception_text(str(primary_error), budget=512)}"
+    )
+    assert "original failure: Primary NVENC hardware encoder crashed" in combined_message
+
+    # 8. ScopedResourceOwnership context manager releases files on exception
+    scoped_scratch = scratch_root / "scoped_test"
+    with (
+        pytest.raises(RuntimeError, match="Simulated crash in worker"),
+        ScopedResourceOwnership(scoped_scratch) as scoped,
+    ):
+        f1 = scoped.register_owned(scoped_scratch / "tmp1.bin")
+        f1.write_bytes(b"TMP_DATA")
+        assert f1.exists()
+        raise RuntimeError("Simulated crash in worker")
+
+    assert not (scoped_scratch / "tmp1.bin").exists()

@@ -30,10 +30,12 @@ __all__ = [
     "ResourceCapacityError",
     "RetryBudgetExhaustedError",
     "ScopedResourceOwnership",
+    "StructuredPipelineFault",
     "VisualWorkflowCheckpoint",
     "VisualWorkflowRecoveryManager",
     "WorkflowResumePlan",
     "WorkflowStepStatus",
+    "classify_and_contain_fault",
     "publish_visual_package_idempotent",
     "reconcile_external_billed_call",
     "validate_preflight_resources",
@@ -246,6 +248,74 @@ class ScopedResourceOwnership:
                     f.unlink(missing_ok=True)
                 elif f.is_dir():
                     shutil.rmtree(f, ignore_errors=True)
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredPipelineFault:
+    """Structured actionable record of a contained process, storage, or runtime fault."""
+
+    domain: str  # "disk", "gpu", "wsl", "network", "cache"
+    primary_reason: str
+    actionable_remediation: str
+    resources_released: bool
+    delivery_withheld: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "domain": self.domain,
+            "primary_reason": self.primary_reason,
+            "actionable_remediation": self.actionable_remediation,
+            "resources_released": self.resources_released,
+            "delivery_withheld": self.delivery_withheld,
+        }
+
+
+def classify_and_contain_fault(
+    domain: str,
+    exc: Exception,
+    scratch_dir: Path | None = None,
+    delivery_dir: Path | None = None,
+    package_id: str | None = None,
+) -> StructuredPipelineFault:
+    """Classifies a runtime fault, cleans up owned scratch resources, and guarantees
+
+    that invalid public delivery is withheld.
+    """
+    remediation_by_domain = {
+        "disk": "Free disk capacity or check directory permissions before re-running.",
+        "gpu": "Verify NVIDIA driver / CUDA installation and ensure sufficient VRAM is free.",
+        "wsl": "Check WSL2 virtual machine status and ensure ASR service endpoint is listening.",
+        "network": "Verify cloud API network connectivity and check provider quota/status.",
+        "cache": "Purge corrupted intermediate cache artifacts and re-verify upstream evidence.",
+    }
+    remediation = remediation_by_domain.get(
+        domain, "Investigate system logs and re-execute from last verified checkpoint."
+    )
+
+    resources_released = True
+    if scratch_dir and scratch_dir.exists():
+        try:
+            for item in scratch_dir.iterdir():
+                if item.is_file():
+                    item.unlink(missing_ok=True)
+                elif item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+        except Exception:
+            resources_released = False
+
+    delivery_withheld = True
+    if delivery_dir and package_id:
+        target = delivery_dir / package_id
+        if target.exists():
+            delivery_withheld = False
+
+    return StructuredPipelineFault(
+        domain=domain,
+        primary_reason=str(exc),
+        actionable_remediation=remediation,
+        resources_released=resources_released,
+        delivery_withheld=delivery_withheld,
+    )
 
 
 def reconcile_external_billed_call(
