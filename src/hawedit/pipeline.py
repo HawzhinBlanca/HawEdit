@@ -167,6 +167,7 @@ from hawedit.reframe import (
     SubjectTracker,
     compute_two_person_split_crops,
     detect_rapid_speaker_exchange,
+    layout_policy,
     median_face_box,
     probe_first_frame_face,
     stabilize,
@@ -2807,18 +2808,17 @@ def run_pipeline(
                 reframe_mode = Reframe.TWO_PERSON_SPLIT
                 focus_points = ()
             else:
-                speaker_cuts = [
-                    turn.start_ms
-                    for turn in overlapping_turns
-                    if boundary.final_in_ms < turn.start_ms < boundary.final_out_ms
-                ]
-                all_cuts = sorted(set(ingested.shot_cuts_ms) | set(speaker_cuts))
-                focus_points = _steady_camera(
-                    focus_points,
-                    source,
-                    ffmpeg,
-                    source_dimensions,
-                    shot_cuts_ms=all_cuts,
+                width, height = source_dimensions
+                crop_w, _ = vertical_crop_size(width, height)
+                focus_points = layout_policy(
+                    speaker_points,
+                    overlapping_turns,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    dead_zone_px=max(1, crop_w // 10),
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                    max_pan_px=max(1, int(crop_w * 0.6)),
+                    cut_on_max_pan=True,
                 )
                 reframe_mode = Reframe.SPEAKER_TRACKED
 

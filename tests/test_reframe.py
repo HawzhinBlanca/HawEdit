@@ -16,6 +16,7 @@ from hawedit.reframe import (
     SpeakerFocusPoint,
     _create_tracker,
     choose_face,
+    layout_policy,
     median_face_box,
     probe_first_frame_face,
     stabilize,
@@ -1329,3 +1330,105 @@ def test_scene_cut_resets_invalid_speaker_spatial_state(
     # Validates cleanly
     validated = validate_speaker_focus_points(points, turns, 0, 2000)
     assert len(validated) == len(points)
+
+
+def test_layout_policy_holds_on_ambiguity_and_switches_on_verified_turn() -> None:
+    """AC-17: Layout policy holds on brief variations/ambiguity and switches on sustained turn."""
+    # 1. Brief transient turn (< min_dwell_ms) holds on established speaker (zero camera jitter)
+    # Speaker 0 speaks 0..3000ms at center_x=200
+    # Speaker 1 interjects 3000..3300ms (300ms < 600ms) at center_x=800
+    # Speaker 0 resumes 3300..6000ms at center_x=200
+    turns_transient = (
+        Segment(0, 3000, "SPEAKER_00"),
+        Segment(3000, 3300, "SPEAKER_01"),
+        Segment(3300, 6000, "SPEAKER_00"),
+    )
+    points_transient = (
+        SpeakerFocusPoint(500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(1500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(2500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        # Interjection points at 800
+        SpeakerFocusPoint(3100, 800, "SPEAKER_01", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(3200, 800, "SPEAKER_01", state="speaker", is_speaking=True),
+        # Resumed turn points at 200
+        SpeakerFocusPoint(3500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(4500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(5500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+    )
+    steady_path = layout_policy(
+        points_transient,
+        turns_transient,
+        0,
+        6000,
+        dead_zone_px=50,
+        min_dwell_ms=600,
+    )
+    assert len(steady_path) >= 2
+    # The camera held at 200 across the transient interjection; never switched or moved to 800
+    assert all(kp.center_x == 200 for kp in steady_path)
+
+    # 2. Ambiguous evidence (listener or low confidence) holds confirmed position
+    # During a sustained turn, a frame detects ambiguous / listener face at 600
+    turns_ambiguous = (Segment(0, 4000, "SPEAKER_00"),)
+    points_ambiguous = (
+        SpeakerFocusPoint(500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(1000, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(
+            1500, 600, "SPEAKER_00", state="listener", is_speaking=False, confidence=0.4
+        ),
+        SpeakerFocusPoint(2000, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(3000, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+    )
+    ambiguity_path = layout_policy(
+        points_ambiguous,
+        turns_ambiguous,
+        0,
+        4000,
+        dead_zone_px=50,
+    )
+    assert all(kp.center_x == 200 for kp in ambiguity_path)
+
+    # 3. Verified sustained turn change switches to the new speaker at the turn boundary
+    turns_sustained = (
+        Segment(0, 3000, "SPEAKER_00"),
+        Segment(3000, 6000, "SPEAKER_01"),
+    )
+    points_sustained = (
+        SpeakerFocusPoint(500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(1500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(2500, 200, "SPEAKER_00", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(3500, 800, "SPEAKER_01", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(4500, 800, "SPEAKER_01", state="speaker", is_speaking=True),
+        SpeakerFocusPoint(5500, 800, "SPEAKER_01", state="speaker", is_speaking=True),
+    )
+    switched_path = layout_policy(
+        points_sustained,
+        turns_sustained,
+        0,
+        6000,
+        dead_zone_px=50,
+        min_dwell_ms=600,
+    )
+    # The path holds at 200 until the 3000ms cut, then steps cleanly to 800
+    assert any(kp.center_x == 200 for kp in switched_path if kp.at_ms < 3000)
+    assert any(kp.center_x == 800 for kp in switched_path if kp.at_ms >= 3000)
+    # Verify cut step at 3000ms
+    kp_3000 = [kp for kp in switched_path if kp.at_ms == 3000]
+    assert kp_3000 and kp_3000[0].center_x == 200
+    kp_post = [kp for kp in switched_path if kp.at_ms > 3000]
+    assert kp_post and kp_post[0].center_x == 800
+
+    # 4. Input validation
+    assert layout_policy((), turns_sustained, 0, 6000) == ()
+    assert layout_policy(points_sustained, (), 0, 6000) == ()
+    with pytest.raises(ValueError, match="dead zone must be positive"):
+        layout_policy(points_sustained, turns_sustained, 0, 6000, dead_zone_px=0)
+    with pytest.raises(ValueError, match="min_dwell_ms must be positive"):
+        layout_policy(points_sustained, turns_sustained, 0, 6000, min_dwell_ms=-10)
+    with pytest.raises(TypeError, match="points must contain only SpeakerFocusPoint values"):
+        layout_policy(
+            cast(Any, (FocusPoint(100, 200),)),
+            turns_sustained,
+            0,
+            6000,
+        )

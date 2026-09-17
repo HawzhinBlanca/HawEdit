@@ -12,6 +12,7 @@ from typing import Any, Final, Protocol
 from hawedit.diarization import Segment, assert_exclusive
 
 __all__ = [
+    "DEFAULT_MIN_DWELL_MS",
     "DEFAULT_MOVE_MS",
     "DEFAULT_SETTLE_MS",
     "MIN_FACE_AREA",
@@ -26,10 +27,14 @@ __all__ = [
     "choose_face",
     "compute_two_person_split_crops",
     "detect_rapid_speaker_exchange",
+    "layout_policy",
     "probe_first_frame_face",
     "stabilize",
     "validate_speaker_focus_points",
 ]
+
+# Minimum duration of a diarized speaker turn required to justify a camera transition.
+DEFAULT_MIN_DWELL_MS: Final = 600
 
 # How long a committed camera move takes. Under ~250 ms it reads as a cut with a smear; over
 # ~600 ms the audience notices the camera rather than the speaker.
@@ -1118,3 +1123,164 @@ def compute_two_person_split_crops(
     top_crop = _crop_for_center(top_center_x, top_center_y)
     bot_crop = _crop_for_center(bottom_center_x, bottom_center_y)
     return top_crop, bot_crop
+
+
+def layout_policy(
+    points: Sequence[SpeakerFocusPoint],
+    turns: Sequence[Segment],
+    in_ms: int,
+    out_ms: int,
+    *,
+    dead_zone_px: int = 100,
+    min_dwell_ms: int = DEFAULT_MIN_DWELL_MS,
+    move_ms: int = DEFAULT_MOVE_MS,
+    settle_ms: int = DEFAULT_SETTLE_MS,
+    shot_cuts_ms: Sequence[int] = (),
+    max_pan_px: int | None = None,
+    cut_on_max_pan: bool = True,
+    min_confidence: float = 0.6,
+) -> tuple[FocusPoint, ...]:
+    """Derive stable camera keyframes obeying persistence policy on brief variations.
+
+    Task T11 (AC-17 / §3 Stage 6 / VE-08):
+    When speaker evidence varies briefly (e.g. short interjections, backchannels, or listener
+    reactions < min_dwell_ms) or becomes ambiguous (state != "speaker" or confidence <
+    min_confidence), the camera holds the established speaker's position rather than jittering
+    or whip-cutting. When a turn change is verified and sustained (duration >= min_dwell_ms with
+    verified speaker evidence), the camera transitions cleanly at the sustained turn boundary.
+
+    Scene shot cuts (shot_cuts_ms) reset spatial identity across the cut and step instantaneously.
+    """
+    _exact_non_negative_int(in_ms, "layout policy in-point")
+    _exact_non_negative_int(out_ms, "layout policy out-point")
+    if out_ms <= in_ms:
+        raise ValueError(f"span has no duration: {in_ms}..{out_ms}ms")
+    if dead_zone_px <= 0:
+        raise ValueError("dead zone must be positive")
+    if min_dwell_ms <= 0:
+        raise ValueError("min_dwell_ms must be positive")
+    if move_ms <= 0:
+        raise ValueError("camera move duration must be positive")
+    if settle_ms <= 0:
+        raise ValueError("settle duration must be positive")
+    if not (0.0 <= min_confidence <= 1.0):
+        raise ValueError("min_confidence must be in [0.0, 1.0]")
+
+    assert_exclusive(turns)
+
+    if not points:
+        return ()
+
+    for p in points:
+        if not isinstance(p, SpeakerFocusPoint):
+            raise TypeError("points must contain only SpeakerFocusPoint values")
+        if not (in_ms <= p.at_ms < out_ms):
+            raise ValueError(f"point at {p.at_ms} ms is outside clip range [{in_ms}, {out_ms})")
+
+    for earlier, later in pairwise(points):
+        if later.at_ms <= earlier.at_ms:
+            raise ValueError("focus point timestamps must be strictly increasing")
+
+    overlapping_turns = tuple(t for t in turns if t.start_ms < out_ms and t.end_ms > in_ms)
+    if not overlapping_turns:
+        return ()
+
+    # Identify sustained speaker cut boundaries
+    sustained_speaker_cuts: list[int] = []
+    prev_turn_speaker: str | None = None
+    for turn in overlapping_turns:
+        eff_start = max(turn.start_ms, in_ms)
+        eff_end = min(turn.end_ms, out_ms)
+        dur = eff_end - eff_start
+        if (
+            eff_start > in_ms
+            and prev_turn_speaker is not None
+            and turn.speaker != prev_turn_speaker
+        ):
+            if dur >= min_dwell_ms:
+                has_verified = any(
+                    p.speaker == turn.speaker
+                    and p.state == "speaker"
+                    and p.is_speaking
+                    and p.confidence >= min_confidence
+                    for p in points
+                    if eff_start <= p.at_ms < eff_end
+                )
+                if has_verified:
+                    sustained_speaker_cuts.append(eff_start)
+                    prev_turn_speaker = turn.speaker
+        else:
+            if prev_turn_speaker is None or dur >= min_dwell_ms:
+                prev_turn_speaker = turn.speaker
+
+    cuts = sorted(c for c in shot_cuts_ms if in_ms <= c <= out_ms)
+    all_cuts = sorted(set(cuts) | set(sustained_speaker_cuts))
+
+    filtered_points: list[FocusPoint] = []
+    held_center: int | None = None
+    established_speaker: str | None = None
+    last_pt_time: int | None = None
+
+    for p in points:
+        # Reset spatial continuity across scene cuts
+        if cuts and last_pt_time is not None and any(last_pt_time < c <= p.at_ms for c in cuts):
+            held_center = None
+            established_speaker = None
+
+        active_turns = [t for t in overlapping_turns if t.start_ms <= p.at_ms < t.end_ms]
+        if not active_turns:
+            continue
+        active_turn = active_turns[0]
+        eff_start = max(active_turn.start_ms, in_ms)
+        eff_end = min(active_turn.end_ms, out_ms)
+        dur = eff_end - eff_start
+        is_turn_sustained = (dur >= min_dwell_ms) or (
+            len({t.speaker for t in overlapping_turns}) == 1
+        )
+
+        is_verified_speaker = (
+            p.speaker == active_turn.speaker
+            and p.state == "speaker"
+            and p.is_speaking
+            and p.confidence >= min_confidence
+        )
+
+        resolved_center: int
+        if is_turn_sustained and is_verified_speaker:
+            resolved_center = p.center_x
+            held_center = p.center_x
+            established_speaker = active_turn.speaker
+        elif not is_turn_sustained and established_speaker is not None and held_center is not None:
+            # Transient turn by other speaker: hold the established speaker's position
+            resolved_center = held_center
+        elif (
+            is_turn_sustained
+            and established_speaker == active_turn.speaker
+            and held_center is not None
+        ):
+            # Sustained turn by established speaker, but ambiguous frame: hold established center
+            resolved_center = held_center
+        elif held_center is not None:
+            # Ambiguous frame on transition: hold last confirmed center
+            resolved_center = held_center
+        else:
+            resolved_center = p.center_x
+            held_center = p.center_x
+            if is_verified_speaker:
+                established_speaker = active_turn.speaker
+
+        filtered_points.append(FocusPoint(p.at_ms, resolved_center))
+        last_pt_time = p.at_ms
+
+    if not filtered_points:
+        return ()
+
+    return stabilize(
+        filtered_points,
+        dead_zone_px=dead_zone_px,
+        move_ms=move_ms,
+        settle_ms=settle_ms,
+        shot_cuts_ms=all_cuts,
+        max_pan_px=max_pan_px,
+        cut_on_max_pan=cut_on_max_pan,
+    )
