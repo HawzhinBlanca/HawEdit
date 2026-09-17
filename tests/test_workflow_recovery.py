@@ -160,3 +160,240 @@ def test_visual_workflow_recovery_preserves_evidence_and_publication_identity(
             package_id=package_id,
             artifacts=conflicting_artifacts,
         )
+
+
+def test_restart_at_each_artifact_boundary_preserves_verified_work(tmp_path: Path) -> None:
+    """AC-20: Restart after interruption at each artifact boundary preserves verified work.
+
+    WHEN a run restarts after interruption at an artifact or publication boundary,
+    THE system SHALL reuse verified completed work, preserve approved bundles and
+    publish each artifact at most once.
+    """
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    run_id = "kurdish_episode_boundary_run"
+
+    mgr = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+
+    # 1. Boundary: Ingest & Transcribe
+    ingest_evidence = work_dir / "transcript.norm.json"
+    ingest_evidence.write_text('{"text": "دەستپێکی بەرنامە"}', encoding="utf-8")
+    audio_evidence = work_dir / "audio.wav"
+    audio_evidence.write_bytes(b"RIFF_MOCK_AUDIO_DATA_INGEST")
+    mgr.save_checkpoint(
+        step_name="ingest_and_transcribe",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"duration_ms": 45000, "word_count": 85},
+        evidence_files=[ingest_evidence, audio_evidence],
+    )
+    # Simulate process interruption & restart
+    r_mgr1 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan1 = r_mgr1.plan_resumption()
+    assert plan1.completed_steps == ("ingest_and_transcribe",)
+    assert plan1.last_completed_step == "ingest_and_transcribe"
+    assert plan1.pending_steps[0] == "observation_inventory"
+    assert plan1.can_resume is True
+
+    # 2. Boundary: Observation Inventory
+    obs_evidence = work_dir / "observation.json"
+    obs_evidence.write_text('{"scenes": 12, "speaker_turns": 4}', encoding="utf-8")
+    mgr.save_checkpoint(
+        step_name="observation_inventory",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"coverage": 1.0},
+        evidence_files=[obs_evidence],
+    )
+    r_mgr2 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan2 = r_mgr2.plan_resumption()
+    assert plan2.completed_steps == ("ingest_and_transcribe", "observation_inventory")
+    assert plan2.last_completed_step == "observation_inventory"
+    assert plan2.pending_steps[0] == "story_mapping"
+
+    # 3. Boundary: Story Mapping
+    story_evidence = work_dir / "story_mapping.json"
+    story_evidence.write_text('{"relations": ["setup_to_payoff"]}', encoding="utf-8")
+    mgr.save_checkpoint(
+        step_name="story_mapping",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"relations_count": 1},
+        evidence_files=[story_evidence],
+    )
+    r_mgr3 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan3 = r_mgr3.plan_resumption()
+    assert plan3.completed_steps == (
+        "ingest_and_transcribe",
+        "observation_inventory",
+        "story_mapping",
+    )
+    assert plan3.pending_steps[0] == "shot_planning"
+
+    # 4. Boundary: Shot Planning
+    shot_evidence = work_dir / "shot_plan.json"
+    shot_evidence.write_text('{"cuts": [1500, 3200], "focus": "speaker"}', encoding="utf-8")
+    mgr.save_checkpoint(
+        step_name="shot_planning",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"shots_count": 3},
+        evidence_files=[shot_evidence],
+    )
+    r_mgr4 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan4 = r_mgr4.plan_resumption()
+    assert plan4.last_completed_step == "shot_planning"
+    assert plan4.pending_steps[0] == "composition_and_timing"
+
+    # 5. Boundary: Composition and Timing
+    comp_evidence = work_dir / "composition.json"
+    comp_evidence.write_text('{"layout": "single_subject_eased", "fps": 25}', encoding="utf-8")
+    mgr.save_checkpoint(
+        step_name="composition_and_timing",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"rendered_fps": 25.0},
+        evidence_files=[comp_evidence],
+    )
+    r_mgr5 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan5 = r_mgr5.plan_resumption()
+    assert plan5.last_completed_step == "composition_and_timing"
+    assert plan5.pending_steps[0] == "render_critic"
+
+    # 6. Boundary: Render Critic (review bundle retained)
+    review_evidence = work_dir / "render_critic.json"
+    review_evidence.write_text('{"status": "pass", "defects": []}', encoding="utf-8")
+    mgr.save_checkpoint(
+        step_name="render_critic",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"critic_status": "pass"},
+        evidence_files=[review_evidence],
+    )
+    r_mgr6 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan6 = r_mgr6.plan_resumption()
+    assert plan6.last_completed_step == "render_critic"
+    assert plan6.pending_steps[0] == "visual_repair"
+
+    # 7. Boundary: Visual Repair
+    repair_evidence = work_dir / "visual_repair.json"
+    repair_evidence.write_text('{"repairs": []}', encoding="utf-8")
+    mgr.save_checkpoint(
+        step_name="visual_repair",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"applied_repairs": 0},
+        evidence_files=[repair_evidence],
+    )
+    r_mgr7 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan7 = r_mgr7.plan_resumption()
+    assert plan7.last_completed_step == "visual_repair"
+    assert plan7.pending_steps == ("package_delivery",)
+
+    # 8. Boundary: Package Delivery
+    pkg_evidence = work_dir / "delivery.json"
+    pkg_evidence.write_text(
+        '{"package_id": "clip_kurdish_01", "published": true}', encoding="utf-8"
+    )
+    mgr.save_checkpoint(
+        step_name="package_delivery",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"package_id": "clip_kurdish_01"},
+        evidence_files=[pkg_evidence],
+    )
+    r_mgr8 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan8 = r_mgr8.plan_resumption()
+    assert plan8.last_completed_step == "package_delivery"
+    assert plan8.completed_steps == VisualWorkflowRecoveryManager.ALL_STEPS
+    assert len(plan8.pending_steps) == 0
+    assert plan8.can_resume is True
+
+    # 9. Verify that evidence files remain strictly byte-identical
+    assert ingest_evidence.read_text(encoding="utf-8") == '{"text": "دەستپێکی بەرنامە"}'
+    assert audio_evidence.read_bytes() == b"RIFF_MOCK_AUDIO_DATA_INGEST"
+    assert obs_evidence.read_text(encoding="utf-8") == '{"scenes": 12, "speaker_turns": 4}'
+
+    # 10. Tampering with any evidence file invalidates that step on resume
+    obs_evidence.write_text('{"scenes": 999, "tampered": true}', encoding="utf-8")
+    tampered_mgr = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    tampered_plan = tampered_mgr.plan_resumption()
+    assert "observation_inventory" not in tampered_plan.completed_steps
+    assert "observation_inventory" in tampered_plan.pending_steps
+
+
+def test_duplicate_submission_cannot_duplicate_public_delivery(tmp_path: Path) -> None:
+    """AC-20: Duplicate submission cannot duplicate or overwrite public delivery.
+
+    WHEN duplicate submissions occur for the same package or delivery bundle,
+    THE system SHALL preserve the approved bundle, reuse existing published artifacts
+    idempotently when identical, and refuse to duplicate or overwrite public output.
+    """
+    from hawedit.artifact_bundle import ArtifactBundle, BundleAlreadyExists
+    from hawedit.pipeline import _assert_no_existing_artifacts
+
+    delivery_dir = tmp_path / "public_delivery"
+    package_id = "kurdish_reel_episode_01"
+
+    artifacts = {
+        "clip.mp4": b"PRO_KURDISH_REEL_MP4_CANONICAL_BYTES",
+        "clip.ass": b"[Script Info]\nTitle: Kurdish Reel",
+        "clip.srt": "1\n00:00:00,000 --> 00:00:03,000\nدەقی کوردی".encode(),
+        "clip.edl": b"TITLE: Reel\n001 AX V C 00:00:00:00 00:00:03:00 00:00:00:00 00:00:03:00",
+        "clip.json": b'{"clip_id": "kurdish_reel_episode_01"}',
+        "clip.measured.json": b'{"lufs": -16.0, "peak": -1.5}',
+        "clip.edit_plan.json": b'{"version": 1, "cuts": []}',
+    }
+
+    # 1. First submission publishes successfully
+    pub1 = publish_visual_package_idempotent(
+        delivery_dir=delivery_dir,
+        package_id=package_id,
+        artifacts=artifacts,
+    )
+    assert pub1.package_id == package_id
+    assert pub1.already_existed is False
+    pub_dir = delivery_dir / package_id
+    assert pub_dir.is_dir()
+    manifest_path = pub_dir / "manifest.json"
+    assert manifest_path.is_file()
+
+    # 2. Duplicate submission with identical artifacts is idempotent and does NOT duplicate
+    pub2 = publish_visual_package_idempotent(
+        delivery_dir=delivery_dir,
+        package_id=package_id,
+        artifacts=artifacts,
+    )
+    assert pub2.package_id == package_id
+    assert pub2.already_existed is True
+    assert pub2.published_files == pub1.published_files
+    # Directory count must strictly remain 1 (no duplicate folders like kurdish_reel_episode_01_1)
+    published_dirs = [
+        p for p in delivery_dir.iterdir() if p.is_dir() and not p.name.startswith(".")
+    ]
+    assert len(published_dirs) == 1
+    assert published_dirs[0].name == package_id
+
+    # 3. Conflicting duplicate submission with altered bytes is strictly refused
+    conflicting_artifacts = dict(artifacts)
+    conflicting_artifacts["clip.mp4"] = b"TAMPERED_WRONG_MP4_BYTES"
+    with pytest.raises(PublicationConflictError, match="already exists with different artifact"):
+        publish_visual_package_idempotent(
+            delivery_dir=delivery_dir,
+            package_id=package_id,
+            artifacts=conflicting_artifacts,
+        )
+
+    # 4. Published artifacts are write-once and preserved exactly
+    assert (pub_dir / "clip.mp4").read_bytes() == b"PRO_KURDISH_REEL_MP4_CANONICAL_BYTES"
+
+    # 5. ArtifactBundle write-once invariant prevents duplicate overwrite
+    bundle_root = tmp_path / "bundles"
+    bundle_id = "bundle-s0-0"
+    bundle1 = ArtifactBundle.create(bundle_root, bundle_id)
+    for suffix in ArtifactBundle.suffixes():
+        if suffix == "mp4":
+            bundle1.staged_path(suffix).write_bytes(b"VIDEO_CONTENT")
+        else:
+            bundle1.write_text(suffix, f"content_{suffix}")
+    bundle1.publish()
+
+    # Second creation under the same ID strictly refuses with BundleAlreadyExists
+    with pytest.raises(BundleAlreadyExists, match="refusing to overwrite completed bundle"):
+        ArtifactBundle.create(bundle_root, bundle_id)
+
+    # 6. Pipeline level preflight guard prevents duplicate overwrite
+    with pytest.raises(FileExistsError, match="refusing to overwrite existing delivery artifact"):
+        _assert_no_existing_artifacts(bundle_root, "bundle", (0, 0))
