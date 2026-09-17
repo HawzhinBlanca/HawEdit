@@ -1641,6 +1641,7 @@ def _steady_camera(
         dead_zone_px=max(1, crop_w // 10),
         shot_cuts_ms=shot_cuts_ms,
         max_pan_px=max(1, int(crop_w * 0.6)),
+        cut_on_max_pan=True,
     )
 
 
@@ -2785,9 +2786,17 @@ def run_pipeline(
     if not focus_points and subject_tracker is not None:
         _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
         try:
-            focus_points = subject_tracker.track(
-                source, boundary.final_in_ms, boundary.final_out_ms
-            )
+            try:
+                focus_points = subject_tracker.track(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+            except TypeError:
+                focus_points = subject_tracker.track(
+                    source, boundary.final_in_ms, boundary.final_out_ms
+                )
         except RuntimeError as exc:
             return replace(
                 run,

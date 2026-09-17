@@ -33,6 +33,16 @@ def test_face_choice_prefers_area_then_preserves_subject_continuity() -> None:
     assert choose_face((near, far), previous_x=115) == near
 
 
+def test_choose_face_rejects_distant_faces_beyond_max_distance() -> None:
+    # Established subject at x=115 (near). Far subject across table at x=550 (center 550)
+    far = (500, 10, 100, 100)
+    # When near drops out and only far is detected, with max_distance=200 it returns None
+    # rather than latching onto the far subject.
+    assert choose_face((far,), previous_x=115, max_distance=200) is None
+    # When far is within max_distance, it can be chosen
+    assert choose_face((far,), previous_x=115, max_distance=500) == far
+
+
 def test_speaker_focus_evidence_is_exact_and_carries_a_safe_label() -> None:
     assert SpeakerFocusPoint(100, 320, "SPEAKER_00").speaker == "SPEAKER_00"
 
@@ -388,6 +398,31 @@ def test_stabilize_prevents_slow_panning_across_distant_empty_space_on_wide_shot
     assert positions == {300}
 
 
+def test_stabilize_steps_instantaneously_on_sustained_distant_move() -> None:
+    """When cut_on_max_pan is True, distant moves step instantaneously without slow panning."""
+    wide_track = (
+        FocusPoint(0, 300),
+        FocusPoint(500, 300),
+        FocusPoint(1_000, 300),
+        FocusPoint(1_500, 900),
+        FocusPoint(2_000, 900),
+        FocusPoint(2_500, 900),
+    )
+    # With cut_on_max_pan=True, the camera transitions instantaneously from 300 to 900 in 1 ms
+    keyframes = stabilize(wide_track, dead_zone_px=60, max_pan_px=250, cut_on_max_pan=True)
+    positions = [k.center_x for k in keyframes]
+    assert 900 in positions
+    # Transition is an instant 1ms cut step with no intermediate pan coordinates
+    step_indices = [
+        i
+        for i, k in enumerate(keyframes[:-1])
+        if keyframes[i].center_x == 300 and keyframes[i + 1].center_x == 900
+    ]
+    assert len(step_indices) == 1
+    idx = step_indices[0]
+    assert keyframes[idx + 1].at_ms - keyframes[idx].at_ms == 1
+
+
 def test_probe_first_frame_face_reports_no_face_on_digit_fixture() -> None:
     # The fixture contains large digits rather than human faces, so probe_first_frame_face
     # accurately reports (False, None) rather than fabricating a face.
@@ -522,6 +557,107 @@ def test_face_tracker_bridges_detection_dropouts_via_tracker(
     assert points[0].center_x == 140
     assert 145 <= points[1].center_x <= 170
     assert points[2].center_x == 180
+
+
+def test_opencv_face_tracker_resets_across_shot_cuts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Across a Stage 0 shot cut, tracker resets previous state so fresh angles start cleanly."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "shot_cut_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+    for _ in range(2):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        writer.write(frame)
+    writer.release()
+
+    call_count = [0]
+
+    class _CutClassifier:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self.kind != "frontal":
+                return []
+            count = call_count[0]
+            call_count[0] += 1
+            if count == 0:
+                # Shot 1: face at x=100
+                return [(100, 100, 80, 80)]
+            else:
+                # Shot 2: face at x=500 (distant angle)
+                return [(500, 100, 80, 80)]
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _CutClassifier("frontal" if "frontal" in str(p) else "profile"),
+    )
+
+    tracker = OpenCvFaceTracker(sample_fps=5.0, enable_tracker=False)
+    # Cut at 150ms
+    points = tracker.track(video_path, 0, 400, shot_cuts_ms=(150,))
+    assert len(points) == 2
+    assert points[0].center_x == 140
+    # Across cut at 150ms, it starts fresh and detects 540 directly
+    assert points[1].center_x == 540
+
+
+def test_opencv_face_tracker_holds_during_single_frame_distant_dropout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Single-frame dropout on a wide shot does not latch onto a distant face."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "dropout_test.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+    for _ in range(2):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        writer.write(frame)
+    writer.release()
+
+    call_count = [0]
+
+    class _WideClassifier:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self.kind != "frontal":
+                return []
+            count = call_count[0]
+            call_count[0] += 1
+            if count == 0:
+                # Frame 0: primary speaker at x=100
+                return [(100, 100, 80, 80)]
+            else:
+                # Frame 1: primary speaker drops out, only distant face at x=500 detected
+                return [(500, 100, 80, 80)]
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _WideClassifier("frontal" if "frontal" in str(p) else "profile"),
+    )
+
+    tracker = OpenCvFaceTracker(sample_fps=5.0, enable_tracker=False)
+    points = tracker.track(video_path, 0, 400)
+    assert len(points) == 2
+    assert points[0].center_x == 140
+    # On frame 1, distant face at 540 is rejected as dropout; position 140 is held
+    assert points[1].center_x == 140
 
 
 def test_motion_speaker_tracker_validates_constructor_and_runtime_arguments() -> None:

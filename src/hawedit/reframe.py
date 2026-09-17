@@ -129,7 +129,13 @@ class SpeakerFocusPoint:
 
 
 class SubjectTracker(Protocol):
-    def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]: ...
+    def track(
+        self,
+        source: Path,
+        in_ms: int,
+        out_ms: int,
+        shot_cuts_ms: Sequence[int] = (),
+    ) -> tuple[FocusPoint, ...]: ...
 
 
 class SpeakerSubjectTracker(Protocol):
@@ -200,18 +206,27 @@ def choose_face(
     faces: Sequence[tuple[int, int, int, int]],
     previous_x: int | None,
     min_area: int = MIN_FACE_AREA,
+    max_distance: int | None = None,
 ) -> tuple[int, int, int, int] | None:
     """Prefer a large face while preserving continuity with the prior subject.
 
     Detections smaller than ``min_area`` are dropped before selection.  A 40×40
     box on a 1920×1080 frame is 1,600 px² — noise, not a face — and letting it
     win (when nothing else is found) drags the crop to a background artefact.
+
+    When ``previous_x`` and ``max_distance`` are provided, candidates further than
+    ``max_distance`` from ``previous_x`` are rejected, preventing single-frame
+    dropouts on wide two-shots from immediately flipping to a distant listener.
     """
     faces = tuple(f for f in faces if f[2] * f[3] >= min_area)
     if not faces:
         return None
     if previous_x is None:
         return max(faces, key=lambda face: (face[2] * face[3], -face[0]))
+    if max_distance is not None:
+        faces = tuple(f for f in faces if abs(f[0] + f[2] // 2 - previous_x) <= max_distance)
+        if not faces:
+            return None
     return max(
         faces,
         key=lambda face: (
@@ -260,7 +275,13 @@ class OpenCvFaceTracker:
         self.detector_kind = detector_kind
         self.yunet_model_path = yunet_model_path
 
-    def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+    def track(
+        self,
+        source: Path,
+        in_ms: int,
+        out_ms: int,
+        shot_cuts_ms: Sequence[int] = (),
+    ) -> tuple[FocusPoint, ...]:
         if out_ms <= in_ms:
             raise ValueError(f"reframe span has no duration: {in_ms}..{out_ms}ms")
         try:
@@ -307,7 +328,9 @@ class OpenCvFaceTracker:
         step_ms = 1000 / self.sample_fps
         points: list[FocusPoint] = []
         previous: int | None = None
+        previous_at: int | None = None
         tracker: Any = None
+        cuts = sorted(c for c in shot_cuts_ms if in_ms <= c <= out_ms)
 
         def boxes(classifier: Any, image: Any) -> list[tuple[int, int, int, int]]:
             return [
@@ -320,6 +343,14 @@ class OpenCvFaceTracker:
         try:
             at = float(in_ms)
             while at < out_ms:
+                at_int = round(at)
+                if (
+                    cuts
+                    and previous_at is not None
+                    and any(previous_at < c <= at_int for c in cuts)
+                ):
+                    previous = None
+                    tracker = None
                 capture.set(cv2.CAP_PROP_POS_MSEC, at)
                 ok, frame = capture.read()
                 if not ok:
@@ -340,7 +371,8 @@ class OpenCvFaceTracker:
                     faces = boxes(frontal, gray) + boxes(profile, gray)
                     flipped_profile = boxes(profile, cv2.flip(gray, 1))
                     faces += [(width - (x + w), y, w, h) for x, y, w, h in flipped_profile]
-                chosen = choose_face(tuple(faces), previous)
+                max_dist = int(width * 0.35) if previous is not None else None
+                chosen = choose_face(tuple(faces), previous, max_distance=max_dist)
                 if chosen is not None:
                     center = chosen[0] + chosen[2] // 2
                     # The detected centre, not a running mean of it. `stabilize` decides what
@@ -391,6 +423,7 @@ class OpenCvFaceTracker:
                 elif previous is not None:
                     # CD-11: Hold last stable confirmed face position rather than dead zone
                     points.append(FocusPoint(round(at), previous))
+                previous_at = at_int
                 at += step_ms
         finally:
             capture.release()
@@ -839,6 +872,7 @@ def stabilize(
     settle_ms: int = DEFAULT_SETTLE_MS,
     shot_cuts_ms: Sequence[int] = (),
     max_pan_px: int | None = None,
+    cut_on_max_pan: bool = False,
 ) -> tuple[FocusPoint, ...]:
     """Turn a per-sample face track into a camera path that holds still and then moves.
 
@@ -913,6 +947,11 @@ def stabilize(
 
         # Prevent slow panning across distant empty space on a continuous shot
         if not cuts_in_move and max_pan_px is not None and abs(target - held) > max_pan_px:
+            if cut_on_max_pan:
+                if start > keyframes[-1].at_ms:
+                    keyframes.append(FocusPoint(start, held))
+                keyframes.append(FocusPoint(max(start + 1, keyframes[-1].at_ms + 1), target))
+                held = target
             pending.clear()
             continue
 

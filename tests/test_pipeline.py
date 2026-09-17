@@ -1527,7 +1527,13 @@ def test_subject_tracking_marks_output_for_dynamic_reframing(tmp_path: Path) -> 
     from hawedit.reframe import FocusPoint
 
     class Tracker:
-        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+        def track(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            shot_cuts_ms: Sequence[int] = (),
+        ) -> tuple[FocusPoint, ...]:
             assert source == FIXTURE and out_ms > in_ms
             return (FocusPoint(in_ms, 120), FocusPoint(out_ms - 1, 520))
 
@@ -1568,7 +1574,13 @@ def test_speaker_tracking_receives_only_overlapping_turns_and_labels_the_artifac
             )
 
     class FaceFallback:
-        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+        def track(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            shot_cuts_ms: Sequence[int] = (),
+        ) -> tuple[FocusPoint, ...]:
             pytest.fail("validated speaker evidence must win before the face-only fallback")
 
     run = run_pipeline(
@@ -1607,7 +1619,13 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
             return ()
 
     class FaceFallback:
-        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+        def track(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            shot_cuts_ms: Sequence[int] = (),
+        ) -> tuple[FocusPoint, ...]:
             return (FocusPoint(in_ms, 120), FocusPoint(out_ms - 1, 520))
 
     run = run_pipeline(
@@ -1736,7 +1754,13 @@ def test_invalid_or_failed_speaker_association_is_not_silently_treated_as_ambigu
     from hawedit.reframe import FocusPoint, SpeakerFocusPoint
 
     class FaceFallback:
-        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[FocusPoint, ...]:
+        def track(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            shot_cuts_ms: Sequence[int] = (),
+        ) -> tuple[FocusPoint, ...]:
             pytest.fail("invalid or failed association is not an ambiguous empty result")
 
     class WrongSpeaker:
@@ -4913,7 +4937,13 @@ def test_requested_tracker_runtime_failure_skips_render_without_static_fallback(
     tmp_path: Path,
 ) -> None:
     class BrokenTracker:
-        def track(self, source: Path, in_ms: int, out_ms: int) -> tuple[Any, ...]:
+        def track(
+            self,
+            source: Path,
+            in_ms: int,
+            out_ms: int,
+            shot_cuts_ms: Sequence[int] = (),
+        ) -> tuple[Any, ...]:
             raise RuntimeError("OpenCV could not decode a frame")
 
     run = run_pipeline(
