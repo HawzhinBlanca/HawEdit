@@ -13983,9 +13983,48 @@ ADR D-264 implemented an FFmpeg-native speech audio conditioning chain (`SPEECH_
      - True Peak does not exceed -0.7 dB.
    - Raises `RenderError` on any discrepancy (zero silent fallback).
 4. **Listening & Spectral Evidence**:
-   - Empirical testing on Kurdish speech confirms that `speech_chain=True` attenuates handling rumble below 80 Hz and tames harsh sibilants (5–8 kHz) on noisy footage, while `speech_chain=False` preserves 100% of the raw harmonic timbre on studio footage without compromising the -14 LUFS delivery target.
+   - Empirical testing on Kurdish speech confirms that `speech_chain=True` attenuates handling
+     rumble below 80 Hz and tames harsh sibilants (5–8 kHz) on noisy footage, while
+     `speech_chain=False` preserves 100% of the raw harmonic timbre on studio footage without
+     compromising the -14 LUFS delivery target.
 
 
+## D-274 · Episode orchestration: shared preprocessing, quota ceiling, and truthful item states
 
+**Date:** 2026-09-17 · **Blueprint ref:** §2, §3, §4, §5 · **Type:** architecture / episode pipeline
 
+**Context.**
+Long-form Kurdish media repurposing (podcasts, interviews, broadcasts) extracts up to N distinct
+high-retention social reels from a single source video. Historically, the pipeline executed for
+single clips. Re-running end-to-end preprocessing for each clip would multiply expensive Stage 0
+ingest, Stage 1 OmniASR transcription (LLM-7B + CTC-3B), Stage 2 sentence indexing, and Stage 3
+discovery.
 
+Furthermore, AC-19 establishes two core editorial and operational requirements:
+1. N is a ceiling, never a quota: under no circumstances may the system lower editorial
+   standards (meaning fidelity >= 0.70, misleading edit risk <= 0.10, self-contained) to fill N.
+2. Honest item accounting: every evaluated candidate must be tracked with its truthful state
+   (`selected`, `published`, `pending-review`, `failed`, `rejected` with explicit reasons). Both
+   partial failures (some clips delivered while another failed during render) and no-clip outcomes
+   (zero candidates met editorial standards) must be explicitly represented and reconciled.
+
+**Decision.**
+1. **Shared Preprocessing Across All Candidates**:
+   - Stages 0–3 execute exactly once per episode and are shared across all candidates.
+   - Stage 4 evaluates candidate spans with the editorial judge using candidate-specific keyframes.
+2. **Episode Planning & Quota Ceiling (`plan_episode`)**:
+   - Evaluates candidates against hard editorial thresholds.
+   - Applies stable ranking (tournament score, hook priority, hook score, payoff strength).
+   - Enforces the `max_clips` ceiling, zero temporal collisions, minimum temporal separation
+     (default 15,000 ms), and lexical Jaccard diversity (default <= 0.50).
+   - Records truthful `EpisodeItemRecord` entries for every evaluated candidate.
+3. **Independent Delivery Bundles & Partial Failure Resilience**:
+   - Each selected clip is rendered into its own isolated `ArtifactBundle` (`work_dir / clip_id`).
+   - If an individual clip experiences a rendering or delivery fault, previously published clips
+     remain intact; the failed candidate is marked `status="failed"` with its error recorded.
+   - `EpisodeManifest` records `has_partial_failure` and `is_no_clip_outcome`.
+4. **Reconciliation & Cover Generation**:
+   - Each delivered clip produces all 7 required files: `.mp4`, `.ass`, `.srt`, `.edl`, `.json`,
+     `.measured.json`, and `.cover.png`.
+   - `reconcile_episode_manifest` validates bundle integrity, measured duration, and zero temporal
+     collisions across delivered clips, succeeding cleanly on valid no-clip manifests.

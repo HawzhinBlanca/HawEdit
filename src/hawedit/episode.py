@@ -7,10 +7,13 @@ and independent delivery bundle verification per clip.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
@@ -25,10 +28,15 @@ __all__ = [
     "DEFAULT_MIN_SEPARATION_MS",
     "EpisodeClipSummary",
     "EpisodeError",
+    "EpisodeItemRecord",
+    "EpisodeItemStatus",
     "EpisodeManifest",
     "EpisodePlanConfig",
     "EpisodeReconciliationError",
+    "build_episode_parser",
     "compute_text_similarity",
+    "main",
+    "plan_episode",
     "reconcile_episode_manifest",
     "select_episode_plan",
 ]
@@ -130,6 +138,61 @@ class EpisodeClipSummary:
         )
 
 
+class EpisodeItemStatus(str, Enum):
+    """Truthful per-candidate state in an episode run (AC-19)."""
+
+    SELECTED = "selected"
+    PUBLISHED = "published"
+    PENDING_REVIEW = "pending-review"
+    FAILED = "failed"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True)
+class EpisodeItemRecord:
+    """Truthful status and audit trail for an individual candidate in an episode run."""
+
+    candidate_id: str
+    status: str
+    in_ms: int = 0
+    out_ms: int = 0
+    duration_ms: int = 0
+    hook_score: float = 0.0
+    title_ckb: str = ""
+    delivery_dir: str | None = None
+    error: str | None = None
+    rejection_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "status": self.status,
+            "in_ms": self.in_ms,
+            "out_ms": self.out_ms,
+            "duration_ms": self.duration_ms,
+            "hook_score": round(self.hook_score, 4),
+            "title_ckb": self.title_ckb,
+            "delivery_dir": self.delivery_dir,
+            "error": self.error,
+            "rejection_reason": self.rejection_reason,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EpisodeItemRecord:
+        return cls(
+            candidate_id=str(data["candidate_id"]),
+            status=str(data["status"]),
+            in_ms=int(data.get("in_ms", 0)),
+            out_ms=int(data.get("out_ms", 0)),
+            duration_ms=int(data.get("duration_ms", 0)),
+            hook_score=float(data.get("hook_score", 0.0)),
+            title_ckb=str(data.get("title_ckb", "")),
+            delivery_dir=data.get("delivery_dir"),
+            error=data.get("error"),
+            rejection_reason=data.get("rejection_reason"),
+        )
+
+
 @dataclass(frozen=True)
 class EpisodeManifest:
     """Consolidated catalog for all delivered clips from an episode run."""
@@ -142,6 +205,31 @@ class EpisodeManifest:
     clips: tuple[EpisodeClipSummary, ...]
     reconciled: bool = False
     total_cost_usd: float = 0.0
+    items: tuple[EpisodeItemRecord, ...] = ()
+
+    @property
+    def published_items(self) -> tuple[EpisodeItemRecord, ...]:
+        return tuple(it for it in self.items if it.status == EpisodeItemStatus.PUBLISHED.value)
+
+    @property
+    def failed_items(self) -> tuple[EpisodeItemRecord, ...]:
+        return tuple(it for it in self.items if it.status == EpisodeItemStatus.FAILED.value)
+
+    @property
+    def rejected_items(self) -> tuple[EpisodeItemRecord, ...]:
+        return tuple(it for it in self.items if it.status == EpisodeItemStatus.REJECTED.value)
+
+    @property
+    def pending_review_items(self) -> tuple[EpisodeItemRecord, ...]:
+        return tuple(it for it in self.items if it.status == EpisodeItemStatus.PENDING_REVIEW.value)
+
+    @property
+    def has_partial_failure(self) -> bool:
+        return len(self.failed_items) > 0 and (len(self.published_items) > 0 or len(self.clips) > 0)
+
+    @property
+    def is_no_clip_outcome(self) -> bool:
+        return self.clips_count == 0 and len(self.clips) == 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -153,12 +241,16 @@ class EpisodeManifest:
             "total_duration_ms": self.total_duration_ms,
             "total_cost_usd": round(self.total_cost_usd, 4),
             "reconciled": self.reconciled,
+            "has_partial_failure": self.has_partial_failure,
+            "is_no_clip_outcome": self.is_no_clip_outcome,
             "clips": [c.to_dict() for c in self.clips],
+            "items": [it.to_dict() for it in self.items],
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EpisodeManifest:
         clips = tuple(EpisodeClipSummary.from_dict(c) for c in data.get("clips", []))
+        items = tuple(EpisodeItemRecord.from_dict(it) for it in data.get("items", []))
         return cls(
             episode_id=str(data["episode_id"]),
             media_id=str(data["media_id"]),
@@ -168,6 +260,7 @@ class EpisodeManifest:
             clips=clips,
             reconciled=bool(data.get("reconciled", False)),
             total_cost_usd=float(data.get("total_cost_usd", 0.0)),
+            items=items,
         )
 
     def write_json(self, path: Path) -> Path:
@@ -176,47 +269,59 @@ class EpisodeManifest:
         return path
 
 
-def select_episode_plan(
+def plan_episode(
     judged_items: Sequence[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]],
     config: EpisodePlanConfig,
     normalized_transcript: NormalizedTranscript | None = None,
     *,
     require_eligible: bool = True,
-) -> list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]]:
-    """Select up to N diverse, non-overlapping winners satisfying episode constraints.
+) -> tuple[
+    list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]],
+    list[EpisodeItemRecord],
+]:
+    """Evaluate and select up to N diverse, non-overlapping winners with truthful statuses.
 
-    WHEN single-clip and episode selection evaluate the same candidates, THE system
-    SHALL apply the same eligibility and stable ranking policy (AC-15).
-
-    Args:
-        judged_items: Sequence of (candidate, sentence_indices, verdict).
-        config: EpisodePlanConfig parameters.
-        normalized_transcript: Optional transcript for lexical diversity checks.
-        require_eligible: If True (default), only candidates passing hard editorial
-            eligibility (meaning_fidelity >= 0.70, misleading_edit_risk <= 0.10,
-            self_contained == True) are eligible. Quotas are never filled with weak clips.
-
-    Returns:
-        List of selected (candidate, sentence_indices, verdict) tuples in ranked order.
+    WHEN an episode requests up to N clips, THE system SHALL deliver only distinct eligible
+    candidates using shared preprocessing and record every selected item's actual state
+    without filling the quota with weak clips (AC-19, AC-15).
     """
     if not judged_items:
-        return []
+        return [], []
 
-    # Enforce shared eligibility policy with single-clip mode (AC-15)
-    candidates = [
-        item
-        for item in judged_items
-        if (
-            not require_eligible
-            or (
-                item[2].meaning_fidelity >= MIN_MEANING_FIDELITY
-                and item[2].misleading_edit_risk <= MAX_MISLEADING_EDIT_RISK
-                and item[2].self_contained
+    item_records: list[EpisodeItemRecord] = []
+    candidates: list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]] = []
+
+    for item in judged_items:
+        cand, indices, verdict = item
+        in_ms, out_ms = cand.span
+        duration_ms = out_ms - in_ms
+        if require_eligible and (
+            verdict.meaning_fidelity < MIN_MEANING_FIDELITY
+            or verdict.misleading_edit_risk > MAX_MISLEADING_EDIT_RISK
+            or not verdict.self_contained
+        ):
+            reason = (
+                f"Failed editorial thresholds (fidelity={verdict.meaning_fidelity:.2f}, "
+                f"risk={verdict.misleading_edit_risk:.2f}, "
+                f"self_contained={verdict.self_contained})"
             )
-        )
-    ]
+            item_records.append(
+                EpisodeItemRecord(
+                    candidate_id=cand.candidate_id,
+                    status=EpisodeItemStatus.REJECTED.value,
+                    in_ms=in_ms,
+                    out_ms=out_ms,
+                    duration_ms=duration_ms,
+                    hook_score=verdict.hook_score,
+                    title_ckb=verdict.title_ckb,
+                    rejection_reason=reason,
+                )
+            )
+        else:
+            candidates.append(item)
+
     if not candidates:
-        return []
+        return [], item_records
 
     hook_priority = {
         "question": 5,
@@ -253,14 +358,32 @@ def select_episode_plan(
             ]
             if words:
                 return " ".join(words)
-        return cand.candidate_id
+        return ""
 
     for candidate, sentence_indices, verdict in ranked:
+        in_ms, out_ms = candidate.span
+        duration_ms = out_ms - in_ms
+
         if len(selected) >= config.max_clips:
-            break
+            item_records.append(
+                EpisodeItemRecord(
+                    candidate_id=candidate.candidate_id,
+                    status=EpisodeItemStatus.REJECTED.value,
+                    in_ms=in_ms,
+                    out_ms=out_ms,
+                    duration_ms=duration_ms,
+                    hook_score=verdict.hook_score,
+                    title_ckb=verdict.title_ckb,
+                    rejection_reason=(
+                        f"Quota reached: maximum {config.max_clips} clips already selected"
+                    ),
+                )
+            )
+            continue
 
         cand_span = candidate.span
         conflict = False
+        rejection_reason = None
 
         # Constraint 1: Zero temporal overlap and minimum separation
         for existing_cand, _, _ in selected:
@@ -270,6 +393,9 @@ def select_episode_plan(
             overlap = not (cand_span[1] <= exist_span[0] or cand_span[0] >= exist_span[1])
             if overlap:
                 conflict = True
+                rejection_reason = (
+                    f"Temporal overlap with selected clip '{existing_cand.candidate_id}'"
+                )
                 break
 
             # Minimum separation check
@@ -278,27 +404,105 @@ def select_episode_plan(
             separation = max(dist_left, dist_right)
             if separation < config.min_separation_ms:
                 conflict = True
+                rejection_reason = (
+                    f"Separation {separation} ms is below required "
+                    f"{config.min_separation_ms} ms from clip '{existing_cand.candidate_id}'"
+                )
                 break
 
         if conflict:
+            item_records.append(
+                EpisodeItemRecord(
+                    candidate_id=candidate.candidate_id,
+                    status=EpisodeItemStatus.REJECTED.value,
+                    in_ms=in_ms,
+                    out_ms=out_ms,
+                    duration_ms=duration_ms,
+                    hook_score=verdict.hook_score,
+                    title_ckb=verdict.title_ckb,
+                    rejection_reason=rejection_reason,
+                )
+            )
             continue
 
         # Constraint 2: Lexical / topic diversity check
         cand_text = _get_text(candidate)
         too_similar = False
-        for existing_text in selected_texts:
-            similarity = compute_text_similarity(cand_text, existing_text)
-            if similarity > config.max_text_similarity:
-                too_similar = True
-                break
+        if cand_text:
+            for existing_text in selected_texts:
+                if not existing_text:
+                    continue
+                similarity = compute_text_similarity(cand_text, existing_text)
+                if similarity > config.max_text_similarity:
+                    too_similar = True
+                    rejection_reason = (
+                        f"Lexical similarity ({similarity:.2f} > "
+                        f"{config.max_text_similarity:.2f}) with selected clip"
+                    )
+                    break
 
         if too_similar:
+            item_records.append(
+                EpisodeItemRecord(
+                    candidate_id=candidate.candidate_id,
+                    status=EpisodeItemStatus.REJECTED.value,
+                    in_ms=in_ms,
+                    out_ms=out_ms,
+                    duration_ms=duration_ms,
+                    hook_score=verdict.hook_score,
+                    title_ckb=verdict.title_ckb,
+                    rejection_reason=rejection_reason,
+                )
+            )
             continue
 
         # All constraints satisfied: add to episode selection
         selected.append((candidate, sentence_indices, verdict))
         selected_texts.append(cand_text)
+        item_records.append(
+            EpisodeItemRecord(
+                candidate_id=candidate.candidate_id,
+                status=EpisodeItemStatus.SELECTED.value,
+                in_ms=in_ms,
+                out_ms=out_ms,
+                duration_ms=duration_ms,
+                hook_score=verdict.hook_score,
+                title_ckb=verdict.title_ckb,
+            )
+        )
 
+    return selected, item_records
+
+
+def select_episode_plan(
+    judged_items: Sequence[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]],
+    config: EpisodePlanConfig,
+    normalized_transcript: NormalizedTranscript | None = None,
+    *,
+    require_eligible: bool = True,
+) -> list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]]:
+    """Select up to N diverse, non-overlapping winners satisfying episode constraints.
+
+    WHEN single-clip and episode selection evaluate the same candidates, THE system
+    SHALL apply the same eligibility and stable ranking policy (AC-15).
+
+    Args:
+        judged_items: Sequence of (candidate, sentence_indices, verdict).
+        config: EpisodePlanConfig parameters.
+        normalized_transcript: Optional transcript for lexical diversity checks.
+        require_eligible: If True (default), only candidates passing hard editorial
+            eligibility (meaning_fidelity >= 0.70, misleading_edit_risk <= 0.10,
+            self_contained == True) are eligible. Quotas are never filled with weak clips.
+
+    Returns:
+        List of selected (candidate, sentence_indices, verdict) tuples in ranked order.
+    """
+    selected, _ = plan_episode(
+        judged_items,
+        config,
+        normalized_transcript=normalized_transcript,
+        require_eligible=require_eligible,
+    )
     return selected
 
 
@@ -389,3 +593,36 @@ def reconcile_episode_manifest(
                 f"({c1.in_ms}..{c1.out_ms} ms) overlaps with clip {c2.clip_id} "
                 f"({c2.in_ms}..{c2.out_ms} ms)"
             )
+
+
+def build_episode_parser() -> argparse.ArgumentParser:
+    """Build command-line parser for episode delivery CLI."""
+    from hawedit.cli import program_name
+    from hawedit.pipeline import build_parser
+
+    parser = build_parser()
+    parser.prog = program_name("hawedit.episode")
+    parser.description = (
+        "Plan and deliver up to N distinct Kurdish social reels from an episode "
+        "with shared preprocessing and honest item state accounting."
+    )
+    parser.set_defaults(max_clips=3)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for episode repurposing (`python -m hawedit.episode`)."""
+    from hawedit.cli import machine_readable_stdout, use_utf8_streams
+    from hawedit.pipeline import _run_from_args
+
+    use_utf8_streams()
+    parser = build_episode_parser()
+    args = parser.parse_args(argv)
+    if not args.json:
+        return _run_from_args(args, sys.stdout)
+    with machine_readable_stdout() as report_stream:
+        return _run_from_args(args, report_stream)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

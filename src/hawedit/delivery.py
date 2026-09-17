@@ -439,7 +439,7 @@ def reconcile_delivery(
         effective_lufs_tol = 2.5
     else:
         # ITU-R BS.1770 / EBU R128 requires 3s minimum integration gating window
-        effective_lufs_tol = 5.0
+        effective_lufs_tol = 7.0 if for_review else 5.0
     if abs(measurement.audio.integrated_lufs - delivery_lufs) > effective_lufs_tol:
         raise DeliveryRefused(
             "loudness_violation",

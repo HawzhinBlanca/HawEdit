@@ -2,24 +2,52 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from hawedit.captions import find_ffmpeg
 from hawedit.clip import DiscoveryPath, Sv6d
-from hawedit.discovery import MergedCandidate
+from hawedit.discovery import Candidate, MergedCandidate
 from hawedit.episode import (
     EpisodeClipSummary,
+    EpisodeItemRecord,
+    EpisodeItemStatus,
     EpisodeManifest,
     EpisodePlanConfig,
     EpisodeReconciliationError,
     compute_text_similarity,
+    plan_episode,
     reconcile_episode_manifest,
     select_episode_plan,
 )
-from hawedit.judge import JudgeVerdict
-from hawedit.transcripts import NormalizedTranscript, Word
+from hawedit.judge import JudgeRequest, JudgeVerdict
+from hawedit.pipeline import build_parser, run_pipeline
+from hawedit.transcripts import AsrProvenance, NormalizedTranscript, RawTranscript, Word
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
+FIXTURE_SHA256 = hashlib.sha256(FIXTURE.read_bytes()).hexdigest() if FIXTURE.is_file() else ""
+
+_WORDS = (
+    Word(w="ڕۆژنامەوانی", start_ms=100, end_ms=800, conf=0.95),
+    Word(w="کوردی.", start_ms=800, end_ms=1_500, conf=0.94),
+    Word(w="لە", start_ms=2_000, end_ms=2_400, conf=0.93),
+    Word(w="هەولێر.", start_ms=2_400, end_ms=4_100, conf=0.92),
+)
+
+
+def _a_transcript(media_id: str = "fixture") -> RawTranscript:
+    return RawTranscript(
+        media_id=media_id,
+        text_ckb="ڕۆژنامەوانی کوردی. لە هەولێر.",
+        words=_WORDS,
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
+    )
 
 
 def _make_dummy_candidate(
@@ -263,3 +291,286 @@ def test_reconcile_episode_manifest_verifies_bundles_and_detects_collision(tmp_p
     (clip_dir / f"{clip_id}.cover.png").unlink()
     with pytest.raises(EpisodeReconciliationError, match="missing required delivery file"):
         reconcile_episode_manifest(manifest, base_dir)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest(tmp_path: Path) -> None:
+    """AC-19: Episode pipeline delivers up to N distinct clips with shared preprocessing."""
+    # 1. Assert CLI surface parses episode arguments accurately
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            str(FIXTURE),
+            "--max-clips",
+            "2",
+            "--min-separation-ms",
+            "100",
+            "--max-text-similarity",
+            "0.7",
+            "--episode-id",
+            "ep-custom-123",
+        ]
+    )
+    assert args.max_clips == 2
+    assert args.min_separation_ms == 100
+    assert args.max_text_similarity == 0.7
+    assert args.episode_id == "ep-custom-123"
+
+    # 2. Run pipeline with max_clips=2 over FIXTURE with 3 candidates
+    cand1 = Candidate("c1", "fixture", 100, 1_500, DiscoveryPath.VERBAL, rank=1, score=0.95)
+    cand2 = Candidate("c2", "fixture", 2_000, 4_100, DiscoveryPath.VERBAL, rank=2, score=0.90)
+    cand3 = Candidate("c3", "fixture", 100, 4_100, DiscoveryPath.VERBAL, rank=3, score=0.85)
+
+    class MultiJudge:
+        model_id = "gemini-2.5-pro"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            self.calls.append(request.candidate_id)
+            score = (
+                0.95
+                if request.candidate_id == "c1"
+                else (0.90 if request.candidate_id == "c2" else 0.85)
+            )
+            return JudgeVerdict(
+                candidate_id=request.candidate_id,
+                clip_in_ms=request.clip_in_ms,
+                clip_out_ms=request.clip_out_ms,
+                hook_score=score,
+                self_contained=True,
+                payoff_at_ms=(request.clip_in_ms + request.clip_out_ms) // 2,
+                meaning_fidelity=0.92,
+                misleading_edit_risk=0.03,
+                cultural_landing=0.85,
+                narrative_role="payoff",
+                title_ckb=f"سەردێڕی {request.candidate_id}",
+                description_ckb="وەسفی کورتی گرتەکە",
+                hashtags_ckb=("#کوردستان",),
+                judge="gemini-2.5-pro",
+                payoff_strength=0.85,
+                ends_on_a_beat=True,
+                reason_ckb="شیاوە بۆ بڵاوکردنەوە",
+                title_variants_ckb=(f"سەردێڕی {request.candidate_id}", "پرسیار", "وەڵام"),
+            )
+
+    work_dir = tmp_path / "work"
+    judge = MultiJudge()
+    run = run_pipeline(
+        FIXTURE,
+        work_dir,
+        media_id="fixture",
+        transcript=_a_transcript("fixture"),
+        discover=lambda _n: [cand1, cand2, cand3],
+        judge=judge,
+        auto_select=True,
+        judge_top_n=3,
+        min_clip_ms=1_000,
+        max_clips=2,
+        min_separation_ms=100,
+        episode_id="ep-custom-123",
+    )
+
+    # Preprocessing (Stage 0 ingest) ran once
+    assert run.ingest is not None
+    stage0_json = work_dir / "stage0" / "ingest.json"
+    assert stage0_json.is_file()
+
+    # Manifest checks
+    assert run.episode_manifest is not None
+    manifest = run.episode_manifest
+    assert manifest.episode_id == "ep-custom-123"
+    assert manifest.clips_count == 2
+    assert len(manifest.clips) == 2
+    assert manifest.reconciled is True
+    assert manifest.has_partial_failure is False
+    assert manifest.is_no_clip_outcome is False
+
+    # Delivered items are c1 and c2, c3 is rejected
+    delivered_ids = [c.clip_id for c in manifest.clips]
+    assert delivered_ids == ["c1", "c2"]
+
+    # Check honest item records
+    assert len(manifest.items) == 3
+    rec_by_id = {it.candidate_id: it for it in manifest.items}
+    assert rec_by_id["c1"].status in (
+        EpisodeItemStatus.PUBLISHED.value,
+        EpisodeItemStatus.PENDING_REVIEW.value,
+    )
+    assert rec_by_id["c2"].status in (
+        EpisodeItemStatus.PUBLISHED.value,
+        EpisodeItemStatus.PENDING_REVIEW.value,
+    )
+    assert rec_by_id["c3"].status == EpisodeItemStatus.REJECTED.value
+    assert rec_by_id["c3"].rejection_reason is not None
+
+    # Disk deliverables check: all 7 required files exist for both clips
+    for clip_summary in manifest.clips:
+        clip_dir = work_dir / clip_summary.delivery_dir
+        assert clip_dir.is_dir()
+        for suffix in (
+            ".mp4",
+            ".ass",
+            ".srt",
+            ".edl",
+            ".json",
+            ".measured.json",
+            ".cover.png",
+        ):
+            target = clip_dir / f"{clip_summary.clip_id}{suffix}"
+            assert target.is_file(), f"Missing delivery file: {target}"
+            assert target.stat().st_size > 0
+
+    # Verify manifest file on disk
+    manifest_on_disk = EpisodeManifest.from_dict(
+        json.loads((work_dir / "episode.json").read_text(encoding="utf-8"))
+    )
+    assert manifest_on_disk.episode_id == "ep-custom-123"
+    assert manifest_on_disk.clips_count == 2
+    assert manifest_on_disk.reconciled is True
+    assert len(manifest_on_disk.items) == 3
+
+    # Reconcile passes cleanly without errors
+    reconcile_episode_manifest(manifest, work_dir)
+
+
+def test_episode_manifest_exposes_partial_failure_and_no_clip_outcome(tmp_path: Path) -> None:
+    """AC-19: Truthful item states preserve partial failure resilience and no-clip outcome."""
+    # Part A: Partial Failure
+    # Two candidates selected, but candidate 2 fails during rendering
+    work_dir = tmp_path / "work_partial"
+
+    # Set up clip 1 delivery on disk
+    clip1_dir = work_dir / "c1"
+    clip1_dir.mkdir(parents=True, exist_ok=True)
+    for suffix in (".mp4", ".ass", ".srt", ".edl", ".json", ".cover.png"):
+        (clip1_dir / f"c1{suffix}").write_bytes(b"content")
+    (clip1_dir / "c1.measured.json").write_text(
+        json.dumps({"video": {"duration_ms": 30_000}}), encoding="utf-8"
+    )
+
+    clip1_summary = EpisodeClipSummary(
+        clip_id="c1",
+        in_ms=0,
+        out_ms=30_000,
+        duration_ms=30_000,
+        hook_score=0.95,
+        title_ckb="سەردێڕی یەکەم",
+        delivery_dir="c1",
+    )
+
+    # Record states: c1 published, c2 failed with explicit error
+    item1 = EpisodeItemRecord(
+        candidate_id="c1",
+        status=EpisodeItemStatus.PUBLISHED.value,
+        in_ms=0,
+        out_ms=30_000,
+        duration_ms=30_000,
+        hook_score=0.95,
+        title_ckb="سەردێڕی یەکەم",
+        delivery_dir="c1",
+    )
+    item2 = EpisodeItemRecord(
+        candidate_id="c2",
+        status=EpisodeItemStatus.FAILED.value,
+        in_ms=60_000,
+        out_ms=90_000,
+        duration_ms=30_000,
+        hook_score=0.90,
+        title_ckb="سەردێڕی دووەم",
+        error="RenderError: NVENC session allocation exhausted on GPU 0",
+    )
+
+    manifest_partial = EpisodeManifest(
+        episode_id="ep-partial",
+        media_id="test-media",
+        media_sha256="0" * 64,
+        clips_count=1,
+        total_duration_ms=30_000,
+        clips=(clip1_summary,),
+        reconciled=False,
+        total_cost_usd=0.04,
+        items=(item1, item2),
+    )
+
+    assert manifest_partial.has_partial_failure is True
+    assert manifest_partial.is_no_clip_outcome is False
+    assert len(manifest_partial.published_items) == 1
+    assert len(manifest_partial.failed_items) == 1
+    assert "NVENC" in (manifest_partial.failed_items[0].error or "")
+
+    # Reconciling manifest_partial passes for published clip1
+    reconcile_episode_manifest(manifest_partial, work_dir)
+
+    # Serializes to episode.json and preserves states
+    json_path = work_dir / "episode.json"
+    manifest_partial.write_json(json_path)
+    loaded_partial = EpisodeManifest.from_dict(json.loads(json_path.read_text(encoding="utf-8")))
+    assert loaded_partial.has_partial_failure is True
+    assert loaded_partial.failed_items[0].error == item2.error
+
+    # Part B: No-clip Outcome
+    # Candidates judged, but ALL fail hard editorial thresholds
+    # (fidelity < 0.70, risk > 0.10, or not self_contained)
+    work_dir_none = tmp_path / "work_noclip"
+    work_dir_none.mkdir(parents=True, exist_ok=True)
+
+    cand_bad1 = _make_dummy_candidate("bad1", 0, 30_000, hook_score=0.95)
+    cand_bad1 = (
+        cand_bad1[0],
+        cand_bad1[1],
+        replace(cand_bad1[2], meaning_fidelity=0.55),  # fails fidelity < 0.70
+    )
+    cand_bad2 = _make_dummy_candidate("bad2", 40_000, 70_000, hook_score=0.90)
+    cand_bad2 = (
+        cand_bad2[0],
+        cand_bad2[1],
+        replace(cand_bad2[2], misleading_edit_risk=0.25),  # fails risk > 0.10
+    )
+    cand_bad3 = _make_dummy_candidate("bad3", 80_000, 110_000, hook_score=0.85)
+    cand_bad3 = (
+        cand_bad3[0],
+        cand_bad3[1],
+        replace(cand_bad3[2], self_contained=False),  # uncontained fragment
+    )
+
+    config = EpisodePlanConfig(max_clips=3, min_separation_ms=5_000)
+    selected_empty, rejected_records = plan_episode(
+        [cand_bad1, cand_bad2, cand_bad3],
+        config,
+        require_eligible=True,
+    )
+    assert len(selected_empty) == 0
+    assert len(rejected_records) == 3
+    assert all(r.status == EpisodeItemStatus.REJECTED.value for r in rejected_records)
+    assert all(r.rejection_reason is not None for r in rejected_records)
+
+    manifest_none = EpisodeManifest(
+        episode_id="ep-none",
+        media_id="test-media",
+        media_sha256="0" * 64,
+        clips_count=0,
+        total_duration_ms=0,
+        clips=(),
+        reconciled=True,
+        total_cost_usd=0.06,
+        items=tuple(rejected_records),
+    )
+
+    assert manifest_none.is_no_clip_outcome is True
+    assert manifest_none.has_partial_failure is False
+    assert manifest_none.clips_count == 0
+    assert len(manifest_none.published_items) == 0
+    assert len(manifest_none.rejected_items) == 3
+
+    # Reconcile empty manifest succeeds cleanly
+    reconcile_episode_manifest(manifest_none, work_dir_none)
+
+    # Persist and round-trip
+    none_json_path = work_dir_none / "episode.json"
+    manifest_none.write_json(none_json_path)
+    loaded_none = EpisodeManifest.from_dict(json.loads(none_json_path.read_text(encoding="utf-8")))
+    assert loaded_none.is_no_clip_outcome is True
+    assert loaded_none.has_partial_failure is False
+    assert len(loaded_none.rejected_items) == 3

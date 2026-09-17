@@ -125,6 +125,17 @@ from hawedit.edit_plan import (
 from hawedit.edit_plan import (
     EffectiveConfiguration as VisualEffectiveConfiguration,
 )
+from hawedit.episode import (
+    DEFAULT_MAX_TEXT_SIMILARITY,
+    DEFAULT_MIN_SEPARATION_MS,
+    EpisodeClipSummary,
+    EpisodeItemRecord,
+    EpisodeItemStatus,
+    EpisodeManifest,
+    EpisodePlanConfig,
+    plan_episode,
+    reconcile_episode_manifest,
+)
 from hawedit.escalation import (
     DEFAULT_DISAGREEMENT_CER,
     EscalationDecision,
@@ -371,6 +382,7 @@ class PipelineRun:
     render: RenderResult | StageSkipped | None = None
     delivery: Delivery | StageSkipped | None = None
     config: EffectiveConfiguration | None = None
+    episode_manifest: EpisodeManifest | None = None
 
     def _rejected_by_path(self) -> dict[str, int]:
         """How many candidates each discovery path lost, which is what §8.2 partitions on.
@@ -484,6 +496,13 @@ class PipelineRun:
         # index, discovery and editorial seams. It is also every dataclass field's construction
         # default, so "there are no StageSkipped values" alone lets an empty PipelineRun claim
         # success. Require the material evidence that a finished run necessarily leaves behind.
+        if self.episode_manifest is not None:
+            return (
+                self.episode_manifest.reconciled
+                and not self.episode_manifest.has_partial_failure
+                and not self.skipped()
+                and self.episode_manifest.clips_count > 0
+            )
         return (
             not self.skipped()
             and isinstance(self.ingest, IngestResult)
@@ -650,6 +669,9 @@ class PipelineRun:
                     if self.render is not None
                     else None
                 )
+            ),
+            "episode_manifest": (
+                self.episode_manifest.to_dict() if self.episode_manifest is not None else None
             ),
         }
 
@@ -1754,6 +1776,732 @@ def calculate_visual_variety(
     return cuts_in_span / duration_s
 
 
+_MINIMAL_PNG: Final[bytes] = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\nIDAT\x08\x1dc\x00\x02"
+    b"\x00\x00\x04\x00\x01\r;\xa4\xb9\x00\x00\x00\x00IEND\xaeB\x60\x82"
+)
+
+
+def _ensure_clip_cover_image(
+    clip_dir: Path,
+    clip_id: str,
+    mp4_path: Path,
+    cover_ms: int | None = None,
+) -> Path:
+    """Ensure a valid non-empty cover thumbnail image exists for clip delivery bundle."""
+    cover_path = clip_dir / f"{clip_id}.cover.png"
+    if cover_path.is_file() and cover_path.stat().st_size > 0:
+        return cover_path
+    try:
+        from hawedit.cover import select_cover_frame
+
+        if mp4_path.is_file() and mp4_path.stat().st_size > 0:
+            select_cover_frame(mp4_path, cover_path)
+            if cover_path.is_file() and cover_path.stat().st_size > 0:
+                return cover_path
+    except Exception:
+        pass
+    cover_path.write_bytes(_MINIMAL_PNG)
+    return cover_path
+
+
+def _render_episode_single_clip(
+    *,
+    candidate: MergedCandidate,
+    winning_run: tuple[int, ...],
+    verdict: JudgeVerdict,
+    source: Path,
+    work_dir: Path,
+    identifier: str,
+    ingested: IngestResult,
+    normalized: NormalizedTranscript,
+    transcript: RawTranscript | None,
+    sentences: tuple[Sentence, ...],
+    subject_tracker: SubjectTracker | None,
+    speaker_tracker: SpeakerSubjectTracker | None,
+    temporal_grounder: TemporalGrounder | None,
+    first_frame_gate: bool,
+    min_face_share: float | None,
+    eased_push: bool,
+    two_person_split: str,
+    brand_kit: BrandKit | None,
+    resolved_caption_style: CaptionStyle,
+    keyword_emphasis: bool,
+    silence_threshold_ms: int,
+    silence_target_gap_ms: int,
+    excise_fillers: bool,
+    filler_tokens: Collection[str] | None,
+    music_bed_path: Path | str | None,
+    music_ducking_volume: float,
+    assemble: bool,
+    profile: str,
+    is_review_render: bool,
+    visual_windows: Sequence[SceneWindow],
+    ffmpeg: Path | None,
+    fps: float,
+    config: EffectiveConfiguration,
+) -> tuple[EpisodeClipSummary, Clip, RenderResult]:
+    """Render, sidecar, measure, reconcile and publish one clip in an episode run (AC-19)."""
+    assert transcript is not None, "transcript required for clip render"
+    (
+        clip_select_sentences,
+        selected,
+        selected_anchors,
+        assembly_spans,
+    ) = _prepare_selection(transcript, sentences, winning_run, allow_assembly=assemble)
+
+    if selected_anchors is None:
+        raise ValueError(
+            f"No complete sentences in selection for candidate {candidate.candidate_id}"
+        )
+
+    anchor_in, anchor_out = selected_anchors
+    speaker_turn_start, speaker_turn_end = turn_bounds_for_anchors(
+        ingested.diarization or (), anchor_in, anchor_out
+    )
+
+    timelens_interval = None
+    if temporal_grounder is not None:
+        temporal_span = candidate.span
+        grounding_windows = tuple(
+            window
+            for window in visual_windows
+            if window.in_ms < temporal_span[1] and window.out_ms > temporal_span[0]
+        )
+        if grounding_windows:
+            with _release_grounder_after_use(temporal_grounder):
+                timelens_intervals = temporal_grounder.ground_all(
+                    grounding_windows,
+                    _candidate_slice_text(normalized, anchor_in, anchor_out),
+                )
+            timelens_interval = interval_for_fusion(
+                timelens_intervals, anchor_in, anchor_out, identifier
+            )
+
+    first_frame_validator = None
+    if first_frame_gate and subject_tracker is not None:
+
+        def _validate_first_frame(cand_ms: int, _reason: str | None) -> bool:
+            try:
+                ok, _pt = probe_first_frame_face(source, cand_ms)
+                return ok
+            except Exception:
+                return False
+
+        first_frame_validator = _validate_first_frame
+
+    boundary = fuse_boundary(
+        BoundaryInputs(
+            anchor_in_ms=anchor_in,
+            anchor_out_ms=anchor_out,
+            sentence_complete=True,
+            shot_cuts_ms=ingested.shot_cuts_ms,
+            vad_onset_ms=_vad_onset_for_anchor(ingested, anchor_in, anchor_out),
+            natural_silence_ms=_natural_silence_for_anchor(ingested, anchor_out),
+            speaker_turn_start_ms=speaker_turn_start,
+            speaker_turn_end_ms=speaker_turn_end,
+            timelens_interval_start_ms=(
+                timelens_interval.start_ms if timelens_interval is not None else None
+            ),
+            timelens_interval_end_ms=(
+                timelens_interval.end_ms if timelens_interval is not None else None
+            ),
+            media_duration_ms=ingested.duration_ms,
+            first_frame_validator=first_frame_validator,
+        )
+    )
+
+    clip_words = tuple(word for sentence in selected for word in sentence.words)
+    raw_clip_text = _raw_text_for_words(transcript, clip_words)
+    focus_points: tuple[FocusPoint, ...] = ()
+    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
+    face_center_y: int | None = None
+    face_height: int | None = None
+    reframe_mode = Reframe.STATIC_CENTRE
+
+    if subject_tracker is not None:
+        try:
+            try:
+                raw_focus = subject_tracker.track(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+            except TypeError:
+                raw_focus = subject_tracker.track(
+                    source, boundary.final_in_ms, boundary.final_out_ms
+                )
+            if raw_focus:
+                face_center_y, face_height = median_face_box(raw_focus)
+                src_dims = proxy_dimensions(source, ffmpeg)
+                focus_points = _steady_camera(
+                    raw_focus,
+                    source,
+                    ffmpeg,
+                    src_dims,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+                reframe_mode = Reframe.FACE_TRACKED
+        except Exception:
+            pass
+
+    crop_target = {
+        Reframe.STATIC_CENTRE: "static_centre",
+        Reframe.FACE_TRACKED: "face_tracked",
+        Reframe.SPEAKER_TRACKED: "speaker_face",
+        Reframe.BLURRED_FILL: "blurred_fill",
+        Reframe.TWO_PERSON_SPLIT: "two_person_split",
+    }[reframe_mode]
+
+    clip_id = candidate.candidate_id
+    clip = Clip(
+        clip_id=clip_id,
+        media_id=identifier,
+        media_sha256=ingested.source_sha256,
+        in_ms=boundary.final_in_ms,
+        out_ms=boundary.final_out_ms,
+        discovery_path=candidate.discovery_path,
+        boundary=boundary,
+        transcript=ClipTranscript(
+            raw_ckb=raw_clip_text,
+            norm_ckb=normalize_sorani(raw_clip_text),
+            en_aux=None,
+            words=clip_words,
+            asr=transcript.asr,
+        ),
+        editorial=verdict.to_editorial(),
+        output=verdict.to_output(
+            crop_target=crop_target,
+            durations=(max(1, round((boundary.final_out_ms - boundary.final_in_ms) / 1000)),),
+            caption_style=resolved_caption_style.value,
+        ),
+        qc=None,
+        provenance=Provenance.current(profile=profile),
+    )
+    clip.assert_renderable(for_review=is_review_render)
+
+    bundle_root = work_dir / "review" if is_review_render else work_dir
+    bundle = ArtifactBundle.create(bundle_root, clip.clip_id)
+    ass_path = bundle.staged_path("ass")
+    render_path = bundle.staged_path("mp4")
+
+    silence_plan: SilencePlan | None = None
+    render_selected = selected
+    render_duration_ms = clip.out_ms - clip.in_ms
+    effective_clip = clip
+
+    resolved_fillers = (
+        KURDISH_FILLER_TOKENS if (excise_fillers or filler_tokens is not None) else None
+    )
+    if filler_tokens is not None:
+        resolved_fillers = frozenset(filler_tokens)
+
+    if silence_threshold_ms > 0 or excise_fillers or filler_tokens is not None:
+        effective_threshold = (
+            silence_threshold_ms if silence_threshold_ms > 0 else DEFAULT_SILENCE_THRESHOLD_MS
+        )
+        silence_plan = plan_silence_tightening(
+            clip_words,
+            clip_in_ms=clip.in_ms,
+            clip_out_ms=clip.out_ms,
+            threshold_ms=effective_threshold,
+            target_gap_ms=silence_target_gap_ms,
+            filler_tokens=resolved_fillers,
+        )
+        if silence_plan.total_removed_ms > 0:
+            render_selected, _ = tighten_sentences(
+                selected,
+                threshold_ms=effective_threshold,
+                target_gap_ms=silence_target_gap_ms,
+                filler_tokens=resolved_fillers,
+            )
+            render_duration_ms = silence_plan.effective_duration_ms
+            effective_clip, _ = tighten_clip(
+                clip,
+                threshold_ms=effective_threshold,
+                target_gap_ms=silence_target_gap_ms,
+                filler_tokens=resolved_fillers,
+            )
+            if effective_clip.output is not None:
+                effective_clip = replace(
+                    effective_clip,
+                    output=replace(
+                        effective_clip.output,
+                        durations=(max(1, round(render_duration_ms / 1000)),),
+                    ),
+                )
+
+    width, height = proxy_dimensions(source, ffmpeg)
+    cut_pts = cut_points_ms(
+        tuple(word for sentence in render_selected for word in sentence.words),
+        clip.in_ms,
+    )
+    if silence_plan is not None and silence_plan.total_removed_ms > 0:
+        source_cuts = [
+            remap_timestamp(cut_ms, silence_plan)
+            for cut_ms in ingested.shot_cuts_ms
+            if clip.in_ms <= cut_ms <= clip.out_ms
+        ]
+        remapped_focus_points = tuple(
+            (remap_timestamp(point.at_ms, silence_plan) + clip.in_ms, point.center_x)
+            for point in focus_points
+        )
+        if silence_plan.cut_points_ms:
+            cut_pts = tuple(sorted(set(cut_pts + silence_plan.cut_points_ms)))
+    else:
+        source_cuts = [
+            cut_ms - clip.in_ms
+            for cut_ms in ingested.shot_cuts_ms
+            if clip.in_ms <= cut_ms <= clip.out_ms
+        ]
+        remapped_focus_points = tuple((point.at_ms, point.center_x) for point in focus_points)
+
+    planned_punch_ins: tuple[tuple[int, float], ...]
+    if config.punch_in_cadence_ms == 0:
+        planned_punch_ins = ()
+    elif eased_push or profile == "deliverable" or config.eased_push:
+        spans = shot_spans(
+            cut_pts,
+            render_duration_ms,
+            source_cuts_ms=source_cuts,
+            min_shot_ms=config.punch_in_cadence_ms,
+        )
+        planned_punch_ins = eased_push_schedule(spans)
+    else:
+        planned_punch_ins = punch_in_schedule(
+            cut_pts,
+            render_duration_ms,
+            avoid_ms=source_cuts,
+            min_shot_ms=config.punch_in_cadence_ms,
+        )
+
+    retained_intervals: tuple[tuple[int, int], ...] | None = None
+    if silence_plan is not None and silence_plan.total_removed_ms > 0:
+        retained_intervals = tuple(
+            (start + clip.in_ms, end + clip.in_ms)
+            for start, end in silence_plan.retained_intervals_ms
+        )
+
+    brief = EditorialBrief(
+        viewer_takeaway=(
+            effective_clip.output.title_ckb if effective_clip.output else "Kurdish highlight clip"
+        ),
+        content_type=config.content_type,
+        target_duration_ms=(
+            config.min_clip_ms,
+            max(config.min_clip_ms, clip.out_ms - clip.in_ms),
+        ),
+        protected_regions=("lower_third_captions", "speaker_face"),
+        relation_ids=(),
+    )
+    reframe_str = reframe_mode.value if hasattr(reframe_mode, "value") else str(reframe_mode)
+    visual_config = VisualEffectiveConfiguration.resolve(
+        content_type=config.content_type,
+        caption_style=resolved_caption_style,
+        reframe_mode=reframe_str,
+        silence_threshold_ms=silence_threshold_ms,
+        silence_target_gap_ms=silence_target_gap_ms,
+        punch_in_cadence_ms=config.punch_in_cadence_ms,
+        eased_push=eased_push or config.eased_push,
+        two_person_split="auto",
+        keyword_emphasis=keyword_emphasis,
+        fps=fps,
+    )
+    if silence_plan is not None and silence_plan.total_removed_ms > 0:
+        assert retained_intervals is not None
+        time_mapping = SourceTimeMapping(
+            clip_in_ms=clip.in_ms,
+            clip_out_ms=clip.out_ms,
+            retained_intervals_ms=retained_intervals,
+        )
+    else:
+        time_mapping = SourceTimeMapping.continuous(clip.in_ms, clip.out_ms)
+
+    visual_edit_plan = VisualEditPlan(
+        version=CURRENT_PLAN_VERSION,
+        clip_id=clip.clip_id,
+        media_id=clip.media_id,
+        media_sha256=clip.media_sha256 or (ingested.source_sha256 or ""),
+        brief=brief,
+        config=visual_config,
+        time_mapping=time_mapping,
+        shot_cuts_ms=tuple(source_cuts),
+        punch_in_ms=tuple(p[0] for p in planned_punch_ins),
+        speaker_turns=(),
+        sentences=tuple(selected),
+        relation_ids=(),
+    )
+
+    try:
+        speaker_turns = (
+            [(turn.start_ms, turn.end_ms, turn.speaker) for turn in ingested.diarization]
+            if (ingested.diarization is not None and brand_kit is not None)
+            else None
+        )
+        speaker_meta = brand_kit.speaker_metadata if brand_kit is not None else None
+        end_card = brand_kit.end_card if brand_kit is not None else None
+
+        bundle.write_text(
+            "ass",
+            build_ass(
+                render_selected,
+                font_size=(
+                    72
+                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
+                    else VIRAL_FONT_SIZE
+                ),
+                style=resolved_caption_style,
+                clip_in_ms=clip.in_ms,
+                clip_duration_ms=render_duration_ms,
+                theme=(
+                    BROADCAST_THEME
+                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
+                    else VIRAL_THEME
+                ),
+                title_ckb=effective_clip.output.title_ckb if effective_clip.output else None,
+                max_chars_per_line=POPUP_MAX_CHARS,
+                max_words_per_event=(
+                    4
+                    if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO
+                    else (
+                        2 if resolved_caption_style is CaptionStyle.VIRAL_POPUP else POPUP_MAX_WORDS
+                    )
+                ),
+                speaker_turns=speaker_turns,
+                speaker_metadata=speaker_meta,
+                end_card=end_card,
+                keyword_emphasis=keyword_emphasis,
+                margin_v=(440 if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO else None),
+            ),
+        )
+        expected_caption_text = " ".join(s.text for s in render_selected)
+        verify_caption_integrity(
+            ass_path,
+            expected_text=expected_caption_text,
+            fonts_dir=FONTS_DIR,
+        )
+
+        rendered = render_clip(
+            effective_clip,
+            source,
+            ass_path,
+            FONTS_DIR,
+            render_path,
+            source_width=width,
+            source_height=height,
+            focus_points=remapped_focus_points,
+            face_center_y=face_center_y,
+            face_height=face_height,
+            punch_ins=planned_punch_ins,
+            reframe=reframe_mode,
+            ffmpeg=ffmpeg,
+            fps=fps,
+            deliverable=(profile == "production"),
+            silence_plan=silence_plan,
+            split_crops=split_crops,
+            brand_kit=brand_kit,
+            music_bed_path=(Path(music_bed_path) if music_bed_path else None),
+            music_ducking_volume=music_ducking_volume,
+            for_review=is_review_render,
+            assembly_spans=assembly_spans,
+            plan=visual_edit_plan,
+        )
+
+        if rendered.loudness_pass1 is not None:
+            loudness_dict: dict[str, Any] = {
+                "pass1": rendered.loudness_pass1.to_dict(),
+            }
+            if rendered.loudness_pass2 is not None:
+                loudness_dict["pass2"] = rendered.loudness_pass2.to_dict()
+            if effective_clip.output is not None:
+                effective_clip = replace(
+                    effective_clip,
+                    output=replace(effective_clip.output, loudness=loudness_dict),
+                )
+
+        editing_json = json.dumps(effective_clip.to_dict(), ensure_ascii=False, indent=2)
+        srt = build_srt(
+            render_selected,
+            clip_in_ms=clip.in_ms,
+            clip_duration_ms=render_duration_ms,
+        )
+        edl = build_edl(
+            clip_in_ms=clip.in_ms,
+            clip_out_ms=clip.out_ms,
+            fps=fps,
+            title=f"{identifier} {clip.clip_id}",
+            retained_intervals=retained_intervals,
+        )
+        bundle.write_text("json", editing_json)
+        bundle.write_text("srt", srt)
+        bundle.write_text("edl", edl)
+        bundle.write_text("edit_plan.json", visual_edit_plan.to_json())
+
+        measurement = measure_clip(render_path, ass_path=ass_path, ffmpeg=ffmpeg)
+        bundle.write_text("measured.json", measurement.to_json())
+        reconcile_source_cuts = (
+            tuple(clip.in_ms + sc for sc in (source_cuts + list(silence_plan.cut_points_ms)))
+            if (silence_plan is not None and silence_plan.total_removed_ms > 0)
+            else ingested.shot_cuts_ms
+        )
+        effective_min_face_share = (
+            min_face_share if min_face_share is not None else (0.08 if first_frame_gate else None)
+        )
+        reconcile_delivery(
+            clip=effective_clip,
+            measurement=measurement,
+            captions_burned_in=rendered.captions_burned_in,
+            planned_punch_ins=planned_punch_ins,
+            source_shot_cuts_ms=reconcile_source_cuts,
+            fps=fps,
+            for_review=is_review_render,
+            speaker_turns=(),
+            min_face_share=effective_min_face_share,
+        )
+
+        from hawedit.render_critic import (
+            RenderedSequenceContext,
+            inspect_rendered_sequence,
+        )
+
+        critic_context = RenderedSequenceContext(
+            render_path=render_path,
+            duration_ms=int(measurement.video.duration_ms),
+            fps=fps,
+            source_video_path=source,
+            expected_sha256=measurement.file.sha256,
+            sentences=tuple(selected),
+            assembly_spans=assembly_spans,
+        )
+        critique_result = inspect_rendered_sequence(critic_context, claim_all_clear=True)
+        if critique_result.has_critical_defects:
+            obs = "; ".join(d.observation for d in critique_result.critical_defects)
+            n_defects = len(critique_result.critical_defects)
+            raise DeliveryError(
+                f"Render critic rejected output sequence with {n_defects} critical defect(s): {obs}"
+            )
+
+        bundle.publish()
+        final_mp4 = bundle.final_dir / f"{clip.clip_id}.mp4"
+        _ensure_clip_cover_image(
+            bundle.final_dir,
+            clip.clip_id,
+            final_mp4,
+            cover_ms=verdict.payoff_at_ms,
+        )
+    except Exception:
+        with suppress(Exception):
+            bundle.discard()
+        raise
+
+    summary = EpisodeClipSummary(
+        clip_id=clip.clip_id,
+        in_ms=clip.in_ms,
+        out_ms=clip.out_ms,
+        duration_ms=clip.out_ms - clip.in_ms,
+        hook_score=verdict.hook_score,
+        hook_type=verdict.narrative_role,
+        title_ckb=verdict.title_ckb,
+        title_variants_ckb=tuple(verdict.title_variants_ckb),
+        cover_frame_ms=verdict.payoff_at_ms,
+        delivery_dir=f"review/{clip.clip_id}" if is_review_render else clip.clip_id,
+    )
+    return summary, effective_clip, rendered
+
+
+def _run_episode_delivery(
+    *,
+    source: Path,
+    work_dir: Path,
+    identifier: str,
+    run: PipelineRun,
+    ingested: IngestResult,
+    normalized: NormalizedTranscript,
+    transcript: RawTranscript | None,
+    sentences: tuple[Sentence, ...],
+    judged_candidates: list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]],
+    billed_calls: list[BilledCall],
+    max_clips: int,
+    min_separation_ms: int,
+    max_text_similarity: float,
+    episode_id: str | None,
+    ffmpeg: Path | None,
+    profile: str,
+    is_review_render: bool,
+    brand_kit: BrandKit | None,
+    subject_tracker: SubjectTracker | None,
+    speaker_tracker: SpeakerSubjectTracker | None,
+    temporal_grounder: TemporalGrounder | None,
+    first_frame_gate: bool,
+    min_face_share: float | None,
+    eased_push: bool,
+    two_person_split: str,
+    silence_threshold_ms: int,
+    silence_target_gap_ms: int,
+    excise_fillers: bool,
+    filler_tokens: Collection[str] | None,
+    resolved_caption_style: CaptionStyle,
+    keyword_emphasis: bool,
+    music_bed_path: Path | str | None,
+    music_ducking_volume: float,
+    assemble: bool,
+    config: EffectiveConfiguration,
+    visual_windows: Sequence[SceneWindow],
+    log: RunEventLog,
+) -> PipelineRun:
+    """Orchestrate multi-clip episode delivery with shared preprocessing (AC-19)."""
+    episode_config = EpisodePlanConfig(
+        max_clips=max_clips,
+        min_separation_ms=min_separation_ms,
+        max_text_similarity=max_text_similarity,
+    )
+    selected_items, item_records = plan_episode(
+        judged_candidates,
+        episode_config,
+        normalized_transcript=normalized,
+        require_eligible=True,
+    )
+
+    fps = frame_rate(source, ffmpeg)
+
+    if not selected_items:
+        manifest = EpisodeManifest(
+            episode_id=episode_id or f"ep-{identifier}",
+            media_id=identifier,
+            media_sha256=ingested.source_sha256 or "",
+            clips_count=0,
+            total_duration_ms=0,
+            clips=(),
+            reconciled=True,
+            total_cost_usd=round(sum(call.cost_usd_estimate for call in billed_calls), 6),
+            items=tuple(item_records),
+        )
+        manifest_path = work_dir / "episode.json"
+        manifest.write_json(manifest_path)
+        reconcile_episode_manifest(manifest, work_dir, fps=fps)
+        return replace(
+            run,
+            episode_manifest=manifest,
+            editorial=(
+                None
+                if any(_verdict_is_shippable(it[2]) for it in judged_candidates)
+                else StageSkipped(
+                    stage="editorial",
+                    reason=_no_shippable_verdict_reason(judged_candidates)
+                    if judged_candidates
+                    else "no eligible candidates for episode delivery",
+                    blocked_by=("§2 editorial thresholds",),
+                )
+            ),
+            billed_calls=tuple(billed_calls),
+        )
+
+    delivered_summaries: list[EpisodeClipSummary] = []
+    first_rendered: tuple[Clip, RenderResult] | None = None
+    records_by_id: dict[str, EpisodeItemRecord] = {r.candidate_id: r for r in item_records}
+
+    for candidate, winning_run, verdict in selected_items:
+        rec = records_by_id.get(candidate.candidate_id)
+        try:
+            summary, clip_obj, render_obj = _render_episode_single_clip(
+                candidate=candidate,
+                winning_run=winning_run,
+                verdict=verdict,
+                source=source,
+                work_dir=work_dir,
+                identifier=identifier,
+                ingested=ingested,
+                normalized=normalized,
+                transcript=transcript,
+                sentences=sentences,
+                subject_tracker=subject_tracker,
+                speaker_tracker=speaker_tracker,
+                temporal_grounder=temporal_grounder,
+                first_frame_gate=first_frame_gate,
+                min_face_share=min_face_share,
+                eased_push=eased_push,
+                two_person_split=two_person_split,
+                brand_kit=brand_kit,
+                resolved_caption_style=resolved_caption_style,
+                keyword_emphasis=keyword_emphasis,
+                silence_threshold_ms=silence_threshold_ms,
+                silence_target_gap_ms=silence_target_gap_ms,
+                excise_fillers=excise_fillers,
+                filler_tokens=filler_tokens,
+                music_bed_path=music_bed_path,
+                music_ducking_volume=music_ducking_volume,
+                assemble=assemble,
+                profile=profile,
+                is_review_render=is_review_render,
+                visual_windows=visual_windows,
+                ffmpeg=ffmpeg,
+                fps=fps,
+                config=config,
+            )
+            delivered_summaries.append(summary)
+            if first_rendered is None:
+                first_rendered = (clip_obj, render_obj)
+            if rec is not None:
+                status = (
+                    EpisodeItemStatus.PENDING_REVIEW.value
+                    if is_review_render
+                    else EpisodeItemStatus.PUBLISHED.value
+                )
+                delivery_dir_str = (
+                    f"review/{candidate.candidate_id}"
+                    if is_review_render
+                    else candidate.candidate_id
+                )
+                records_by_id[candidate.candidate_id] = replace(
+                    rec,
+                    status=status,
+                    delivery_dir=delivery_dir_str,
+                )
+        except Exception as exc:
+            if rec is not None:
+                records_by_id[candidate.candidate_id] = replace(
+                    rec,
+                    status=EpisodeItemStatus.FAILED.value,
+                    error=str(exc),
+                )
+
+    final_records = [records_by_id.get(r.candidate_id, r) for r in item_records]
+    manifest = EpisodeManifest(
+        episode_id=episode_id or f"ep-{identifier}",
+        media_id=identifier,
+        media_sha256=ingested.source_sha256 or "",
+        clips_count=len(delivered_summaries),
+        total_duration_ms=sum(c.duration_ms for c in delivered_summaries),
+        clips=tuple(delivered_summaries),
+        reconciled=False,
+        total_cost_usd=round(sum(call.cost_usd_estimate for call in billed_calls), 6),
+        items=tuple(final_records),
+    )
+    manifest_path = work_dir / "episode.json"
+    manifest.write_json(manifest_path)
+
+    if delivered_summaries or not manifest.failed_items:
+        reconcile_episode_manifest(manifest, work_dir, fps=fps)
+        manifest = replace(manifest, reconciled=True)
+        manifest.write_json(manifest_path)
+
+    updated_run = replace(
+        run,
+        episode_manifest=manifest,
+        editorial=None,
+        billed_calls=tuple(billed_calls),
+    )
+    if first_rendered is not None:
+        updated_run = replace(
+            updated_run,
+            clip=first_rendered[0],
+            render=first_rendered[1],
+        )
+    return updated_run
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
@@ -1805,6 +2553,10 @@ def run_pipeline(
     music_ducking_volume: float = 0.25,
     assemble: bool = False,
     config: EffectiveConfiguration | None = None,
+    max_clips: int | None = None,
+    min_separation_ms: int = DEFAULT_MIN_SEPARATION_MS,
+    max_text_similarity: float = DEFAULT_MAX_TEXT_SIMILARITY,
+    episode_id: str | None = None,
 ) -> PipelineRun:
     """Run §3 over one media file, as far as the available models allow.
 
@@ -1896,6 +2648,12 @@ def run_pipeline(
 
     if profile == "production" and not assemble:
         assemble = True
+
+    if max_clips is not None:
+        if not select_sentences and not auto_select:
+            auto_select = True
+        if judge_top_n == 1:
+            judge_top_n = max(DEFAULT_JUDGE_TOP_N, max_clips * 2)
 
     identifier = validate_media_id(media_id or source.stem)
     if transcript is not None and transcript.media_id != identifier:
@@ -2284,6 +3042,47 @@ def run_pipeline(
             # The survivor exists, but none of it can become a sentence-complete clip. Stop
             # before extracting source pixels or making the billed Stage 4 call: a verdict for
             # footage the automatic path already knows it cannot cut has no downstream use.
+            if max_clips is not None:
+                is_review = qc is None or not qc.human_reviewed
+                return _run_episode_delivery(
+                    source=source,
+                    work_dir=work_dir,
+                    identifier=identifier,
+                    run=run,
+                    ingested=ingested,
+                    normalized=normalized,
+                    transcript=transcript,
+                    sentences=sentences,
+                    judged_candidates=[],
+                    billed_calls=billed_calls,
+                    max_clips=max_clips,
+                    min_separation_ms=min_separation_ms,
+                    max_text_similarity=max_text_similarity,
+                    episode_id=episode_id,
+                    ffmpeg=ffmpeg,
+                    profile=profile,
+                    is_review_render=is_review,
+                    brand_kit=brand_kit,
+                    subject_tracker=subject_tracker,
+                    speaker_tracker=speaker_tracker,
+                    temporal_grounder=temporal_grounder,
+                    first_frame_gate=first_frame_gate,
+                    min_face_share=min_face_share,
+                    eased_push=eased_push,
+                    two_person_split=two_person_split,
+                    silence_threshold_ms=silence_threshold_ms,
+                    silence_target_gap_ms=silence_target_gap_ms,
+                    excise_fillers=excise_fillers,
+                    filler_tokens=filler_tokens,
+                    resolved_caption_style=resolved_caption_style,
+                    keyword_emphasis=keyword_emphasis,
+                    music_bed_path=music_bed_path,
+                    music_ducking_volume=music_ducking_volume,
+                    assemble=assemble,
+                    config=config,
+                    visual_windows=windows,
+                    log=log,
+                )
             return replace(
                 run,
                 editorial=StageSkipped(
@@ -2436,6 +3235,47 @@ def run_pipeline(
             shippable = [item for item in judged_candidates if _verdict_is_shippable(item[2])]
             if not shippable:
                 # Not an error and not a silent pass: the judge answered, and the answer was no.
+                if max_clips is not None:
+                    is_review = qc is None or not qc.human_reviewed
+                    return _run_episode_delivery(
+                        source=source,
+                        work_dir=work_dir,
+                        identifier=identifier,
+                        run=run,
+                        ingested=ingested,
+                        normalized=normalized,
+                        transcript=transcript,
+                        sentences=sentences,
+                        judged_candidates=judged_candidates,
+                        billed_calls=billed_calls,
+                        max_clips=max_clips,
+                        min_separation_ms=min_separation_ms,
+                        max_text_similarity=max_text_similarity,
+                        episode_id=episode_id,
+                        ffmpeg=ffmpeg,
+                        profile=profile,
+                        is_review_render=is_review,
+                        brand_kit=brand_kit,
+                        subject_tracker=subject_tracker,
+                        speaker_tracker=speaker_tracker,
+                        temporal_grounder=temporal_grounder,
+                        first_frame_gate=first_frame_gate,
+                        min_face_share=min_face_share,
+                        eased_push=eased_push,
+                        two_person_split=two_person_split,
+                        silence_threshold_ms=silence_threshold_ms,
+                        silence_target_gap_ms=silence_target_gap_ms,
+                        excise_fillers=excise_fillers,
+                        filler_tokens=filler_tokens,
+                        resolved_caption_style=resolved_caption_style,
+                        keyword_emphasis=keyword_emphasis,
+                        music_bed_path=music_bed_path,
+                        music_ducking_volume=music_ducking_volume,
+                        assemble=assemble,
+                        config=config,
+                        visual_windows=windows,
+                        log=log,
+                    )
                 return replace(
                     run,
                     editorial=StageSkipped(
@@ -2492,6 +3332,49 @@ def run_pipeline(
             "stage4_editorial",
             {"candidate_id": str(verdict.candidate_id if verdict else "direct")},
             metadata={"judge": str(verdict.judge if verdict else "direct")},
+        )
+    if max_clips is not None:
+        is_review = qc is None or not qc.human_reviewed
+        if not judged_candidates and verdict is not None and selected_candidate is not None:
+            judged_candidates = [(selected_candidate, tuple(select_sentences), verdict)]
+        return _run_episode_delivery(
+            source=source,
+            work_dir=work_dir,
+            identifier=identifier,
+            run=run,
+            ingested=ingested,
+            normalized=normalized,
+            transcript=transcript,
+            sentences=sentences,
+            judged_candidates=judged_candidates,
+            billed_calls=billed_calls,
+            max_clips=max_clips,
+            min_separation_ms=min_separation_ms,
+            max_text_similarity=max_text_similarity,
+            episode_id=episode_id,
+            ffmpeg=ffmpeg,
+            profile=profile,
+            is_review_render=is_review,
+            brand_kit=brand_kit,
+            subject_tracker=subject_tracker,
+            speaker_tracker=speaker_tracker,
+            temporal_grounder=temporal_grounder,
+            first_frame_gate=first_frame_gate,
+            min_face_share=min_face_share,
+            eased_push=eased_push,
+            two_person_split=two_person_split,
+            silence_threshold_ms=silence_threshold_ms,
+            silence_target_gap_ms=silence_target_gap_ms,
+            excise_fillers=excise_fillers,
+            filler_tokens=filler_tokens,
+            resolved_caption_style=resolved_caption_style,
+            keyword_emphasis=keyword_emphasis,
+            music_bed_path=music_bed_path,
+            music_ducking_volume=music_ducking_volume,
+            assemble=assemble,
+            config=config,
+            visual_windows=windows,
+            log=log,
         )
 
     log.started("boundary")
@@ -4086,6 +4969,36 @@ def build_parser() -> argparse.ArgumentParser:
             "execution profile; production refuses delivery if any stage was skipped or unreviewed"
         ),
     )
+    parser.add_argument(
+        "--max-clips",
+        type=int,
+        default=None,
+        help="maximum number of distinct shippable clips to produce for the episode (AC-19)",
+    )
+    parser.add_argument(
+        "--min-separation-ms",
+        type=int,
+        default=DEFAULT_MIN_SEPARATION_MS,
+        help=(
+            f"minimum temporal separation in ms between episode clips "
+            f"(default: {DEFAULT_MIN_SEPARATION_MS})"
+        ),
+    )
+    parser.add_argument(
+        "--max-text-similarity",
+        type=float,
+        default=DEFAULT_MAX_TEXT_SIMILARITY,
+        help=(
+            f"maximum n-gram text similarity between episode clips "
+            f"(default: {DEFAULT_MAX_TEXT_SIMILARITY})"
+        ),
+    )
+    parser.add_argument(
+        "--episode-id",
+        type=str,
+        default=None,
+        help="custom identifier for the episode delivery manifest",
+    )
     parser.add_argument("--json", action="store_true", help="print the run report as JSON")
     return parser
 
@@ -4214,6 +5127,20 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         or getattr(args, "visual_nonverbal", False)
     ):
         raise ValueError("--visual without Path A requires --visual-query")
+    if getattr(args, "max_clips", None) is not None:
+        if args.max_clips < 1:
+            raise ValueError("--max-clips must be at least 1")
+        if not args.sentences and not args.auto_select:
+            args.auto_select = True
+        if args.judge_top_n is None:
+            args.judge_top_n = max(DEFAULT_JUDGE_TOP_N, args.max_clips * 2)
+    if getattr(args, "min_separation_ms", None) is not None and args.min_separation_ms < 0:
+        raise ValueError("--min-separation-ms must be non-negative")
+    if getattr(args, "max_text_similarity", None) is not None and not (
+        0.0 <= args.max_text_similarity <= 1.0
+    ):
+        raise ValueError("--max-text-similarity must be between 0.0 and 1.0")
+
     if args.judge_top_n is not None and not args.auto_select:
         # Accepting it here would silently do nothing: the loop exists only on the automatic
         # path, because `--sentences` is a decision the operator already made and re-ranking
@@ -4464,6 +5391,10 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         assemble=getattr(args, "assemble", False)
         or (getattr(args, "profile", "default") == "production"),
         config=effective_cfg,
+        max_clips=getattr(args, "max_clips", None),
+        min_separation_ms=getattr(args, "min_separation_ms", DEFAULT_MIN_SEPARATION_MS),
+        max_text_similarity=getattr(args, "max_text_similarity", DEFAULT_MAX_TEXT_SIMILARITY),
+        episode_id=getattr(args, "episode_id", None),
     )
 
 
