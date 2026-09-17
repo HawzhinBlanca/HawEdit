@@ -15,7 +15,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] T08 Candidate context is canonical, contiguous, source-linked and preserved or refused
 - [x] T09 Independent discovery and shared ranking obey coverage, integrity and budget constraints
 - [x] T10 Tracker handles off-screen speakers/listener shots and resets at scene cuts
-- [ ] T11 Shot layout stays stable on ambiguity and responds to verified sustained changes
+- [x] T11 Shot layout stays stable on ambiguity and responds to verified sustained changes
 - [ ] T12 One restrained caption policy reads well on phones and preserves canonical text
 - [ ] T13 Final audio meets the existing contract and conditioning is supported by listening evidence
 - [ ] T14 Episode CLI produces up to N actual distinct deliveries with shared preprocessing and honest item states
