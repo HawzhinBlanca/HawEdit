@@ -24,9 +24,11 @@ from hawedit.atomic_fs import write_text_atomic
 __all__ = [
     "ExternalCallStatus",
     "ExternalReconciliationError",
+    "PersistentRetryBudget",
     "PublicationConflictError",
     "PublishedVisualPackage",
     "ResourceCapacityError",
+    "RetryBudgetExhaustedError",
     "ScopedResourceOwnership",
     "VisualWorkflowCheckpoint",
     "VisualWorkflowRecoveryManager",
@@ -52,6 +54,10 @@ class PublicationConflictError(WorkflowRecoveryError):
 
 class ExternalReconciliationError(WorkflowRecoveryError):
     """Raised when an uncertain external billed request requires explicit operator review."""
+
+
+class RetryBudgetExhaustedError(WorkflowRecoveryError):
+    """Raised when an operation has exhausted its persistent retry budget."""
 
 
 class WorkflowStepStatus(str, Enum):
@@ -100,6 +106,51 @@ class VisualWorkflowCheckpoint:
             state_payload=dict(data.get("state_payload", {})),
             evidence_hashes=dict(data.get("evidence_hashes", {})),
             timestamp_iso=str(data["timestamp_iso"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PersistentRetryBudget:
+    """Persistent retry budget that survives process crashes and restarts."""
+
+    budget_id: str
+    max_retries: int
+    used_retries: int = 0
+    exhausted: bool = False
+
+    def can_retry(self) -> bool:
+        return not self.exhausted and self.used_retries < self.max_retries
+
+    def record_attempt(self) -> PersistentRetryBudget:
+        if self.exhausted or self.used_retries >= self.max_retries:
+            raise RetryBudgetExhaustedError(
+                f"Retry budget '{self.budget_id}' is exhausted "
+                f"({self.used_retries}/{self.max_retries}). "
+                "Further retries are prohibited to prevent unbounded cloud spend."
+            )
+        new_used = self.used_retries + 1
+        return PersistentRetryBudget(
+            budget_id=self.budget_id,
+            max_retries=self.max_retries,
+            used_retries=new_used,
+            exhausted=new_used >= self.max_retries,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "budget_id": self.budget_id,
+            "max_retries": self.max_retries,
+            "used_retries": self.used_retries,
+            "exhausted": self.exhausted,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PersistentRetryBudget:
+        return cls(
+            budget_id=str(data["budget_id"]),
+            max_retries=int(data["max_retries"]),
+            used_retries=int(data["used_retries"]),
+            exhausted=bool(data.get("exhausted", False)),
         )
 
 
@@ -319,8 +370,11 @@ class VisualWorkflowRecoveryManager:
         self.work_dir = work_dir
         self.run_id = run_id
         self.checkpoint_path = work_dir / f"checkpoints_{run_id}.json"
+        self.retry_budget_path = work_dir / f"retry_budgets_{run_id}.json"
         self._checkpoints: dict[str, VisualWorkflowCheckpoint] = {}
+        self._retry_budgets: dict[str, PersistentRetryBudget] = {}
         self._load_checkpoints()
+        self._load_retry_budgets()
 
     def _load_checkpoints(self) -> None:
         if self.checkpoint_path.exists():
@@ -330,6 +384,39 @@ class VisualWorkflowRecoveryManager:
                     self._checkpoints[step_name] = VisualWorkflowCheckpoint.from_dict(data)
             except Exception:
                 self._checkpoints = {}
+
+    def _load_retry_budgets(self) -> None:
+        if self.retry_budget_path.exists():
+            try:
+                raw = json.loads(self.retry_budget_path.read_text(encoding="utf-8"))
+                for b_id, b_data in raw.items():
+                    self._retry_budgets[b_id] = PersistentRetryBudget.from_dict(b_data)
+            except Exception:
+                self._retry_budgets = {}
+
+    def get_retry_budget(
+        self, budget_id: str, default_max_retries: int = 3
+    ) -> PersistentRetryBudget:
+        if budget_id not in self._retry_budgets:
+            self._retry_budgets[budget_id] = PersistentRetryBudget(
+                budget_id=budget_id,
+                max_retries=default_max_retries,
+                used_retries=0,
+                exhausted=False,
+            )
+            self._save_retry_budgets()
+        return self._retry_budgets[budget_id]
+
+    def consume_retry(self, budget_id: str, default_max_retries: int = 3) -> PersistentRetryBudget:
+        budget = self.get_retry_budget(budget_id, default_max_retries=default_max_retries)
+        updated = budget.record_attempt()
+        self._retry_budgets[budget_id] = updated
+        self._save_retry_budgets()
+        return updated
+
+    def _save_retry_budgets(self) -> None:
+        serialized = {k: v.to_dict() for k, v in self._retry_budgets.items()}
+        write_text_atomic(self.retry_budget_path, json.dumps(serialized, indent=2))
 
     def save_checkpoint(
         self,

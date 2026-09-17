@@ -9,9 +9,11 @@ import pytest
 from hawedit.workflow_recovery import (
     ExternalCallStatus,
     ExternalReconciliationError,
+    PersistentRetryBudget,
     PublicationConflictError,
     PublishedVisualPackage,
     ResourceCapacityError,
+    RetryBudgetExhaustedError,
     ScopedResourceOwnership,
     VisualWorkflowRecoveryManager,
     WorkflowResumePlan,
@@ -397,3 +399,155 @@ def test_duplicate_submission_cannot_duplicate_public_delivery(tmp_path: Path) -
     # 6. Pipeline level preflight guard prevents duplicate overwrite
     with pytest.raises(FileExistsError, match="refusing to overwrite existing delivery artifact"):
         _assert_no_existing_artifacts(bundle_root, "bundle", (0, 0))
+
+
+def test_unknown_billed_outcome_is_not_blindly_retried(tmp_path: Path) -> None:
+    """AC-21: Unknown billed outcome is not blindly retried and halts execution safely.
+
+    WHEN a cloud request outcome is unknown or ambiguous,
+    THE system SHALL persist the uncertainty and stop or reconcile under the approved policy
+    instead of silently resubmitting or asserting exactly-once billing.
+    """
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    run_id = "kurdish_cloud_billed_run_01"
+
+    mgr = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+
+    # 1. Complete early steps with valid evidence
+    t_file = work_dir / "transcript.norm.json"
+    t_file.write_text('{"text": "دەقی پشکنین"}', encoding="utf-8")
+    mgr.save_checkpoint(
+        step_name="ingest_and_transcribe",
+        status=WorkflowStepStatus.COMPLETED,
+        state_payload={"words": 40},
+        evidence_files=[t_file],
+    )
+
+    # 2. Simulate external billed model call (e.g. Gemini critic / editorial judge)
+    # The call drops connection after sending bytes: outcome is UNKNOWN / UNCERTAIN
+    call_id = "call_gemini_critic_ack_timeout_99"
+    provider = "gemini-2.5-pro"
+
+    # Save the uncertain state into workflow checkpoint
+    mgr.save_checkpoint(
+        step_name="render_critic",
+        status=WorkflowStepStatus.UNCERTAIN_EXTERNAL,
+        state_payload={
+            "call_id": call_id,
+            "provider": provider,
+            "disconnect_phase": "socket_timeout_after_send",
+            "billed_probability": "uncertain",
+        },
+    )
+
+    # 3. Process restart / resumption planning detects uncertain external billing
+    resumed_mgr = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    plan = resumed_mgr.plan_resumption()
+
+    # Invariants:
+    # - can_resume is strictly False
+    # - requires_external_reconciliation is strictly True
+    # - render_critic is NOT marked as completed
+    # - render_critic is in pending_steps awaiting operator reconciliation
+    assert plan.can_resume is False
+    assert plan.requires_external_reconciliation is True
+    assert "render_critic" not in plan.completed_steps
+    assert "render_critic" in plan.pending_steps
+    assert "uncertain external billing" in str(plan.reconciliation_message)
+
+    # 4. Blind retry without operator ledger confirmation is strictly refused
+    # to prevent duplicate charges / non-idempotent duplicate billing
+    with pytest.raises(
+        ExternalReconciliationError,
+        match="Blind retries are prohibited to prevent duplicate billing",
+    ):
+        reconcile_external_billed_call(
+            call_id=call_id,
+            provider=provider,
+            status=ExternalCallStatus.UNCERTAIN_DISCONNECTED,
+            recorded_ledger={},  # Empty unverified ledger
+        )
+
+    # 5. Operator reconciles with authoritative provider audit ledger
+    # Scenario A: Provider ledger confirms request never executed -> safe to fail/retry
+    reconciled_fail = reconcile_external_billed_call(
+        call_id=call_id,
+        provider=provider,
+        status=ExternalCallStatus.UNCERTAIN_DISCONNECTED,
+        recorded_ledger={call_id: "confirmed_failure"},
+    )
+    assert reconciled_fail == "confirmed_failure"
+
+    # Scenario B: Provider ledger confirms request was processed and billed -> reuse outcome
+    reconciled_succ = reconcile_external_billed_call(
+        call_id=call_id,
+        provider=provider,
+        status=ExternalCallStatus.UNCERTAIN_DISCONNECTED,
+        recorded_ledger={call_id: "confirmed_success"},
+    )
+    assert reconciled_succ == "confirmed_success"
+
+
+def test_retry_budget_survives_process_restart(tmp_path: Path) -> None:
+    """AC-21: Retry budget is bounded and survives process crashes and restarts.
+
+    WHEN an operation consumes retries or a retry budget is exhausted,
+    THE system SHALL persist the retry budget state across process restarts and
+    strictly prevent unbounded retries or silent resets.
+    """
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    run_id = "kurdish_retry_budget_run_02"
+    budget_id = "gemini_rate_limit_retry"
+
+    # 1. Initial process session: budget starts with max 3 attempts
+    mgr1 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    budget1 = mgr1.get_retry_budget(budget_id, default_max_retries=3)
+    assert isinstance(budget1, PersistentRetryBudget)
+    assert budget1.max_retries == 3
+    assert budget1.used_retries == 0
+    assert budget1.can_retry() is True
+    assert budget1.exhausted is False
+
+    # First transient failure consumes 1 retry
+    b_after_1 = mgr1.consume_retry(budget_id, default_max_retries=3)
+    assert b_after_1.used_retries == 1
+    assert b_after_1.can_retry() is True
+
+    # Second transient failure consumes 2nd retry
+    b_after_2 = mgr1.consume_retry(budget_id, default_max_retries=3)
+    assert b_after_2.used_retries == 2
+    assert b_after_2.can_retry() is True
+
+    # 2. Process CRASH / RESTART: fresh recovery manager instance
+    mgr2 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    budget2 = mgr2.get_retry_budget(budget_id, default_max_retries=3)
+
+    # Invariant: used_retries did NOT reset to 0!
+    assert budget2.used_retries == 2
+    assert budget2.can_retry() is True
+    assert budget2.exhausted is False
+
+    # Third failure consumes the final retry in the budget
+    b_after_3 = mgr2.consume_retry(budget_id, default_max_retries=3)
+    assert b_after_3.used_retries == 3
+    assert b_after_3.exhausted is True
+    assert b_after_3.can_retry() is False
+
+    # 3. Further retries on the exhausted budget are strictly refused
+    with pytest.raises(
+        RetryBudgetExhaustedError,
+        match=r"Retry budget 'gemini_rate_limit_retry' is exhausted \(3/3\)",
+    ):
+        mgr2.consume_retry(budget_id, default_max_retries=3)
+
+    # 4. Second process CRASH / RESTART: budget remains permanently exhausted
+    mgr3 = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+    budget3 = mgr3.get_retry_budget(budget_id, default_max_retries=3)
+    assert budget3.used_retries == 3
+    assert budget3.exhausted is True
+    assert budget3.can_retry() is False
+
+    with pytest.raises(RetryBudgetExhaustedError, match="Further retries are prohibited"):
+        mgr3.consume_retry(budget_id, default_max_retries=3)
