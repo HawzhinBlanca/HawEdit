@@ -12,3 +12,4 @@ TS=2026-09-17T19:33:52Z FEATURE=reliable-content-aware-pipeline TASK=T10 TESTS=t
 TS=2026-09-17T19:56:46Z FEATURE=reliable-content-aware-pipeline TASK=T11 TESTS=test_layout_policy_holds_on_ambiguity_and_switches_on_verified_turn VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-17T20:19:01Z FEATURE=reliable-content-aware-pipeline TASK=T12 TESTS=test_mobile_caption_layout_preserves_canonical_sorani VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-09-17T20:42:26Z FEATURE=reliable-content-aware-pipeline TASK=T13 TESTS=test_final_audio_is_measured_after_conditioning_and_encode VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-17T22:30:47Z FEATURE=reliable-content-aware-pipeline TASK=T14 TESTS=test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest,test_episode_manifest_exposes_partial_failure_and_no_clip_outcome VERIFY=pass REPORT=.gate/last-test-run.xml
