@@ -2291,7 +2291,15 @@ def _render_episode_single_clip(
             final_mp4,
             cover_ms=verdict.payoff_at_ms,
         )
-    except Exception:
+    except (
+        DeliveryError,
+        UndeliverableOrder,
+        RenderError,
+        BundleError,
+        OSError,
+        ValueError,
+        Exception,
+    ):
         with suppress(Exception):
             bundle.discard()
         raise

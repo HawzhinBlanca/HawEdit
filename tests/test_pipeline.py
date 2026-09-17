@@ -3532,6 +3532,21 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         ["--speaker-metadata", "[1, 2, 3]"],
         "speaker metadata JSON must be an object",
     ),
+    (
+        "max clips below one",
+        ["--max-clips", "0"],
+        "--max-clips must be at least 1",
+    ),
+    (
+        "min separation negative",
+        ["--min-separation-ms", "-1"],
+        "--min-separation-ms must be non-negative",
+    ),
+    (
+        "max text similarity out of bounds",
+        ["--max-text-similarity", "1.5"],
+        "--max-text-similarity must be between 0.0 and 1.0",
+    ),
 )
 
 # Refused for a reason that a *different* refusal always reaches first, so no argv can trigger it
@@ -5287,6 +5302,21 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "ZDR attribution without cloud",
         ("--zdr-confirmed-by", "Hawa"),
         "governance flags apply only",
+    ),
+    (
+        "max clips below one",
+        ("--max-clips", "0"),
+        "--max-clips must be at least 1",
+    ),
+    (
+        "min separation negative",
+        ("--min-separation-ms", "-1"),
+        "--min-separation-ms must be non-negative",
+    ),
+    (
+        "max text similarity out of bounds",
+        ("--max-text-similarity", "1.5"),
+        "--max-text-similarity must be between 0.0 and 1.0",
     ),
 )
 
