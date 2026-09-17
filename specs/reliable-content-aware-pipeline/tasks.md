@@ -13,7 +13,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] T06 One retained-interval mapping drives every export and media clock
 - [x] T07 Trimming protects quiet speech, uncertain regions and meaningful pauses/reactions
 - [x] T08 Candidate context is canonical, contiguous, source-linked and preserved or refused
-- [ ] T09 Independent discovery and shared ranking obey coverage, integrity and budget constraints
+- [x] T09 Independent discovery and shared ranking obey coverage, integrity and budget constraints
 - [ ] T10 Tracker handles off-screen speakers/listener shots and resets at scene cuts
 - [ ] T11 Shot layout stays stable on ambiguity and responds to verified sustained changes
 - [ ] T12 One restrained caption policy reads well on phones and preserves canonical text
