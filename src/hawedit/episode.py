@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from hawedit.clip import MAX_MISLEADING_EDIT_RISK, MIN_MEANING_FIDELITY
 from hawedit.discovery import MergedCandidate
-from hawedit.judge import JudgeVerdict
+from hawedit.judge import JudgeVerdict, tournament_score
 from hawedit.normalize import normalize_sorani
 from hawedit.transcripts import NormalizedTranscript
 
@@ -179,13 +180,21 @@ def select_episode_plan(
     judged_items: Sequence[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]],
     config: EpisodePlanConfig,
     normalized_transcript: NormalizedTranscript | None = None,
+    *,
+    require_eligible: bool = True,
 ) -> list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]]:
     """Select up to N diverse, non-overlapping winners satisfying episode constraints.
+
+    WHEN single-clip and episode selection evaluate the same candidates, THE system
+    SHALL apply the same eligibility and stable ranking policy (AC-15).
 
     Args:
         judged_items: Sequence of (candidate, sentence_indices, verdict).
         config: EpisodePlanConfig parameters.
         normalized_transcript: Optional transcript for lexical diversity checks.
+        require_eligible: If True (default), only candidates passing hard editorial
+            eligibility (meaning_fidelity >= 0.70, misleading_edit_risk <= 0.10,
+            self_contained == True) are eligible. Quotas are never filled with weak clips.
 
     Returns:
         List of selected (candidate, sentence_indices, verdict) tuples in ranked order.
@@ -193,18 +202,44 @@ def select_episode_plan(
     if not judged_items:
         return []
 
-    # Rank shippable items by composite editorial quality
+    # Enforce shared eligibility policy with single-clip mode (AC-15)
+    candidates = [
+        item
+        for item in judged_items
+        if (
+            not require_eligible
+            or (
+                item[2].meaning_fidelity >= MIN_MEANING_FIDELITY
+                and item[2].misleading_edit_risk <= MAX_MISLEADING_EDIT_RISK
+                and item[2].self_contained
+            )
+        )
+    ]
+    if not candidates:
+        return []
+
+    hook_priority = {
+        "question": 5,
+        "claim": 4,
+        "contrast": 3,
+        "confession": 2,
+        "story_open": 1,
+    }
+
+    # Rank shippable items by composite tournament quality matching single-clip mode
     def _rank_key(
         item: tuple[MergedCandidate, tuple[int, ...], JudgeVerdict],
-    ) -> tuple[float, float, bool]:
+    ) -> tuple[float, int, float, float, bool]:
         _cand, _indices, verdict = item
         return (
+            tournament_score(verdict),
+            hook_priority.get(getattr(verdict, "hook_type", ""), 0),
             verdict.hook_score,
             getattr(verdict, "payoff_strength", 0.0),
             getattr(verdict, "ends_on_a_beat", False),
         )
 
-    ranked = sorted(judged_items, key=_rank_key, reverse=True)
+    ranked = sorted(candidates, key=_rank_key, reverse=True)
 
     selected: list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]] = []
     selected_texts: list[str] = []

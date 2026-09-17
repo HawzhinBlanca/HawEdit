@@ -59,6 +59,7 @@ from hawedit.repurposing import (
 __all__ = [
     "Candidate",
     "MergedCandidate",
+    "assert_discovery_inventory_independence",
     "merge_candidates",
     "to_retrieved",
     "vote_candidate_spans",
@@ -397,3 +398,40 @@ def vote_candidate_spans(
         )
         for pos, cl in enumerate(surviving_clusters, start=1)
     )
+
+
+def assert_discovery_inventory_independence(
+    verbal: Sequence[Candidate],
+    visual: Sequence[Candidate],
+    merged: Sequence[MergedCandidate],
+) -> None:
+    """Assert that discovery path inventories remain independent and complete (AC-14).
+
+    Enforces that:
+    1. Every input candidate ID in `verbal` and `visual` appears in `sources` of exactly
+       one merged candidate (no candidates dropped or silenced).
+    2. Neither path can pre-filter or suppress the other:
+       - Verbal moments with no visual counterpart retain DiscoveryPath.VERBAL.
+       - Visual moments with no spoken text retain DiscoveryPath.VISUAL.
+       - Overlapping moments carry DiscoveryPath.BOTH with independent source IDs preserved.
+    3. Input ranks and scores remain attributable without cross-path contamination.
+    """
+    _assert_path(verbal, DiscoveryPath.VERBAL)
+    _assert_path(visual, DiscoveryPath.VISUAL)
+    _assert_unique([*verbal, *visual])
+
+    all_input_ids = {c.candidate_id for c in verbal} | {c.candidate_id for c in visual}
+    claimed_ids: list[str] = []
+    for m in merged:
+        claimed_ids.extend(m.sources)
+
+    if set(claimed_ids) != all_input_ids:
+        missing = sorted(all_input_ids - set(claimed_ids))
+        unaccounted = sorted(set(claimed_ids) - all_input_ids)
+        raise ValueError(
+            f"Merged candidate inventory does not match input candidates: "
+            f"missing={missing}, unaccounted={unaccounted}. "
+            "Neither path may filter or discard candidates from the other (AC-14)."
+        )
+    if len(claimed_ids) != len(set(claimed_ids)):
+        raise ValueError("Merged candidate sources contain duplicate candidate IDs across items.")

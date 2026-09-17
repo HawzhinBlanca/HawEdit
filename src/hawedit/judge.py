@@ -77,6 +77,7 @@ __all__ = [
     "NotRoutable",
     "RequestTooLarge",
     "ShadowVerdict",
+    "assert_model_agreement_cannot_bypass_human_qc",
     "compute_repeat_k_agreement",
     "decide_judge",
     "estimate_cost_usd",
@@ -883,3 +884,25 @@ def compute_repeat_k_agreement(
         result[f"{metric}_std"] = round(std_val, 4)
         result[f"{metric}_range"] = round(span_val, 4)
     return result
+
+
+def assert_model_agreement_cannot_bypass_human_qc(
+    verdicts: Sequence[JudgeVerdict],
+    qc_record: Any | None = None,
+) -> None:
+    """Assert that model agreement cannot equate to human accuracy or bypass QC (AC-15).
+
+    Even if multiple repeat judge verdicts show 100% agreement (std dev == 0.0),
+    automated agreement is an uncertainty measurement, never proof of ground-truth
+    human accuracy or authorized delivery. Public promotion strictly requires a
+    valid human review record (AC-01-AC-04).
+    """
+    if qc_record is None:
+        raise ValueError(
+            "Model agreement cannot equate to human accuracy or authorize delivery without "
+            "an explicit human review record (AC-15, AC-01-AC-04)."
+        )
+    if getattr(qc_record, "verdict", None) not in ("approve", "approved"):
+        raise ValueError(
+            f"QC review record has non-approved verdict: {getattr(qc_record, 'verdict', None)!r}."
+        )

@@ -37,10 +37,12 @@ from hawedit.clip import DiscoveryPath, Sv6d
 from hawedit.discovery import (
     Candidate,
     MergedCandidate,
+    assert_discovery_inventory_independence,
     merge_candidates,
     to_retrieved,
     vote_candidate_spans,
 )
+from hawedit.observation import ObservationError, build_observation_inventory
 from hawedit.repurposing import DEFAULT_IOU_MATCH, GoldCandidate, path_unique_wins, recall_at_k
 
 MEDIA = "ep01"
@@ -527,3 +529,100 @@ def test_discovery_reproducible_k5_voting() -> None:
     )
     agreement_rate = agreement_count / len(spans)
     assert agreement_rate >= 0.90
+
+
+def test_discovery_paths_remain_independent_with_full_coverage() -> None:
+    """WHEN both discovery paths run, THE system SHALL preserve independent candidate inventories,
+    reject instruction-driven policy changes and account for full source coverage (AC-14).
+    """
+    media_id = "ep01"
+    valid_sha = "f" * 64
+    duration_ms = 90_000
+
+    # 1. Independent candidate inventories
+    # Verbal candidates: v1 overlaps visual, v2 is purely verbal (static talking head)
+    v1 = verbal("v1", 10_000, 25_000, rank=1, score=0.95)
+    v2 = verbal("v2", 40_000, 55_000, rank=2, score=0.85)
+
+    # Visual candidates: vis1 overlaps v1, vis2 is non-verbal reaction shot
+    vis1 = visual("vis1", 10_000, 24_000, rank=1, score=0.90)
+    vis2 = visual("vis2", 70_000, 85_000, rank=2, score=0.88)
+
+    merged = merge_candidates([v1, v2], [vis1, vis2], iou_match=0.50)
+
+    # Invariant: Neither path may filter the other
+    assert_discovery_inventory_independence([v1, v2], [vis1, vis2], merged)
+    assert len(merged) == 3
+
+    # Check v2 (purely verbal) survived without visual counterpart
+    m_v2 = next(m for m in merged if m.candidate_id == "v2")
+    assert m_v2.discovery_path == DiscoveryPath.VERBAL
+    assert m_v2.verbal_rank == 2
+    assert m_v2.verbal_score == 0.85
+    assert m_v2.visual_score is None
+
+    # Check vis2 (purely visual) survived without verbal counterpart
+    m_vis2 = next(m for m in merged if m.candidate_id == "vis2")
+    assert m_vis2.discovery_path == DiscoveryPath.VISUAL
+    assert m_vis2.visual_rank == 2
+    assert m_vis2.visual_score == 0.88
+    assert m_vis2.verbal_score is None
+
+    # Check v1 & vis1 merged cleanly into BOTH with sources preserved
+    m_both = next(m for m in merged if m.candidate_id == "v1")
+    assert m_both.discovery_path == DiscoveryPath.BOTH
+    assert m_both.sources == ("v1", "vis1")
+    assert m_both.verbal_score == 0.95
+    assert m_both.visual_score == 0.90
+
+    # Corrupted / dropping inventory assertion
+    with pytest.raises(ValueError, match="does not match input candidates"):
+        assert_discovery_inventory_independence([v1, v2], [vis1, vis2], (m_both, m_v2))
+
+    # 2. Source coverage accounting
+    shot_cuts = (30_000, 60_000)
+    speech_intervals = (
+        (10_000, 25_000),  # Active speech with normal motion
+        (40_000, 55_000),  # Static speech talking head (motion=0.01)
+    )
+    motion_scores = (0.20, 0.01, 0.35)
+
+    inventory = build_observation_inventory(
+        media_id=media_id,
+        source_sha256=valid_sha,
+        duration_ms=duration_ms,
+        shot_cuts_ms=shot_cuts,
+        scanned_range_ms=(0, duration_ms),
+        speech_intervals=speech_intervals,
+        sampled_frame_times_ms=(5_000, 45_000, 75_000),
+        motion_scores_by_shot=motion_scores,
+    )
+
+    # Full coverage: no unseen intervals across media duration
+    assert inventory.unseen_intervals() == ()
+    summary = inventory.coverage_summary()
+    assert summary["duration_ms"] == duration_ms
+    assert summary["speech_ms"] == 30_000
+    assert summary["static_speech_ms"] == 15_000
+    assert sum(summary["by_level_share"].values()) == pytest.approx(1.0, rel=1e-3)
+
+    # Static speech preservation: candidate spans that include the static speech moment pass
+    candidate_spans = [m.span for m in merged]
+    inventory.assert_static_speech_preserved(candidate_spans)
+
+    # If static speech moment (40s..55s) was dropped from discovery, it must be refused
+    with pytest.raises(ObservationError, match="dropped from candidate discovery"):
+        inventory.assert_static_speech_preserved([(10_000, 25_000), (70_000, 85_000)])
+
+    # If inspection had an uninspected tail (e.g. 70s..90s), inventory truthfully reports it
+    partial_inv = build_observation_inventory(
+        media_id=media_id,
+        source_sha256=valid_sha,
+        duration_ms=duration_ms,
+        shot_cuts_ms=shot_cuts,
+        scanned_range_ms=(0, 70_000),
+        speech_intervals=speech_intervals,
+        sampled_frame_times_ms=(5_000, 45_000),
+        motion_scores_by_shot=motion_scores,
+    )
+    assert partial_inv.unseen_intervals() == ((70_000, 90_000),)
