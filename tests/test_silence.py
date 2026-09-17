@@ -10,6 +10,7 @@ from hawedit.sentences import Sentence
 from hawedit.silence import (
     KURDISH_FILLER_TOKENS,
     SilencePlan,
+    SilencePolicy,
     plan_silence_tightening,
     remap_timestamp,
     silence_trim_filter,
@@ -17,6 +18,7 @@ from hawedit.silence import (
     tighten_sentences,
     tighten_silence,
 )
+from hawedit.timing_continuity import ProtectedPause
 from hawedit.transcripts import AsrProvenance, Word
 
 
@@ -611,3 +613,115 @@ def test_tighten_sentences_excises_punctuated_fillers_without_zip_mismatch() -> 
     assert len(tightened) == 2
     assert [w.w for w in tightened[0].words] == ["کاکەژین", "باشە"]
     assert [w.w for w in tightened[1].words] == ["لە", "ژیانتا."]
+
+
+def test_silence_policy_preserves_quiet_speech_and_protected_beats() -> None:
+    """AC-11 / Task T07: Trimming protects quiet speech, uncertain regions, and protected beats.
+
+    WHEN a candidate removal intersects speech, uncertain alignment, protected breathing/reaction
+    or context-bearing pause, THE system SHALL retain that interval or request review rather
+    than classify the word gap as disposable silence.
+    """
+    # 1. Quiet Speech Protection:
+    # Word 1: 1000..2000 ms, Word 2: 6000..7000 ms -> 4000 ms raw gap (2000..6000 ms)
+    # Without protection, candidate removal would be 2150..6000 ms (target gap 150 ms).
+    # Quiet speech exists at 3000..4500 ms (e.g. from VAD vocalization / whisper).
+    words_speech = (
+        _make_word("دەستپێک", 1000, 2000),
+        _make_word("کۆتایی", 6000, 7000),
+    )
+    plan_speech = plan_silence_tightening(
+        words_speech,
+        clip_in_ms=1000,
+        clip_out_ms=7000,
+        threshold_ms=600,
+        target_gap_ms=150,
+        speech_intervals=((3000, 4500),),
+    )
+    # The candidate removal (2150..6000 ms on source = 1150..5000 ms relative)
+    # intersects the quiet speech (3000..4500 ms on source = 2000..3500 ms relative).
+    # The quiet speech MUST be retained!
+    # Expected removed intervals: 1150..2000 ms (source 2150..3000 ms) and
+    # 3500..5000 ms (source 4500..6000 ms)
+    assert (1150, 2000) in plan_speech.removed_intervals_ms
+    assert (3500, 5000) in plan_speech.removed_intervals_ms
+    # The quiet speech interval 2000..3500 relative (3000..4500 source) is strictly retained:
+    assert (2000, 3500) in plan_speech.retained_intervals_ms
+    # And total removed ms reflects only the true dead air (850 + 1500 = 2350 ms):
+    assert plan_speech.total_removed_ms == 2350
+    # Quiet speech is in protected_intervals_ms:
+    assert (3000, 4500) in plan_speech.protected_intervals_ms
+
+    # 2. Protected Breathing / Reaction / Dramatic Pause Beat:
+    # A protected pause (e.g. dramatic breathing / emotional transition) spans 3000..5500 ms.
+    words_beat = (
+        _make_word("پەیام", 1000, 2000),
+        _make_word("وەڵام", 7000, 8000),
+    )
+    pause_beat = ProtectedPause(
+        pause_id="dramatic_breath",
+        start_ms=3000,
+        end_ms=5500,
+        reason="Dramatic emotional transition and audible breath",
+        min_retained_duration_ms=2500,
+    )
+    plan_beat = plan_silence_tightening(
+        words_beat,
+        clip_in_ms=1000,
+        clip_out_ms=8000,
+        threshold_ms=600,
+        target_gap_ms=150,
+        protected_intervals=(pause_beat,),
+    )
+    # The protected beat 3000..5500 ms is strictly preserved:
+    assert (3000, 5500) in plan_beat.protected_intervals_ms
+    # Relative retained intervals include 2000..4500 (3000..5500 source):
+    assert (2000, 4500) in plan_beat.retained_intervals_ms
+    # Dead air before the beat (1150..2000) and after (4500..6000) are excised:
+    assert (1150, 2000) in plan_beat.removed_intervals_ms
+    assert (4500, 6000) in plan_beat.removed_intervals_ms
+
+    # 3. Uncertain Alignment Handling & Review Requirement:
+    # Word with uncertain alignment confidence (0.42 < 0.70) or explicit uncertain region
+    words_uncertain = (
+        _make_word("وشەی_ئاسایی", 1000, 2000, conf=0.98),
+        _make_word("وشەی_نادیار", 5000, 6000, conf=0.42),
+    )
+    policy_review = SilencePolicy(
+        threshold_ms=600,
+        target_gap_ms=150,
+        min_word_conf=0.70,
+        protect_uncertain_alignment=True,
+        review_uncertain=True,
+    )
+    plan_uncertain = plan_silence_tightening(
+        words_uncertain,
+        clip_in_ms=1000,
+        clip_out_ms=6000,
+        policy=policy_review,
+    )
+    # The safety margin around the uncertain word is retained:
+    assert plan_uncertain.review_required is True
+    assert len(plan_uncertain.review_reasons) > 0
+    assert any("uncertain" in r for r in plan_uncertain.review_reasons)
+    # Candidate removal must NOT collapse the uncertain margin to disposable silence:
+    assert plan_uncertain.total_removed_ms < 2850
+
+    # 4. Explicit Uncertain Intervals Override:
+    plan_explicit_u = plan_silence_tightening(
+        words_speech,
+        clip_in_ms=1000,
+        clip_out_ms=7000,
+        threshold_ms=600,
+        target_gap_ms=150,
+        uncertain_intervals=((3200, 4800),),
+        review_uncertain=True,
+    )
+    assert plan_explicit_u.review_required is True
+    assert any("uncertain" in r for r in plan_explicit_u.review_reasons)
+    # The uncertain interval is retained rather than classified as disposable silence:
+    for r_s, r_e in plan_explicit_u.removed_intervals_ms:
+        source_r_s = r_s + 1000
+        source_r_e = r_e + 1000
+        # No removal slices into the uncertain span 3200..4800
+        assert not (max(source_r_s, 3200) < min(source_r_e, 4800))

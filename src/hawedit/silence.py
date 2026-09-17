@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
-from typing import Final
+from typing import Any, Final
 
 from hawedit.clip import Clip, ClipTranscript, Output
 from hawedit.sentences import Sentence
@@ -24,6 +24,7 @@ __all__ = [
     "DEFAULT_TARGET_GAP_MS",
     "KURDISH_FILLER_TOKENS",
     "SilencePlan",
+    "SilencePolicy",
     "plan_silence_tightening",
     "remap_timestamp",
     "silence_trim_filter",
@@ -139,6 +140,9 @@ class SilencePlan:
     removed_intervals_ms: tuple[tuple[int, int], ...]
     total_removed_ms: int
     excised_word_count: int = 0
+    protected_intervals_ms: tuple[tuple[int, int], ...] = ()
+    review_required: bool = False
+    review_reasons: tuple[str, ...] = ()
 
     @property
     def effective_duration_ms(self) -> int:
@@ -161,6 +165,78 @@ class SilencePlan:
         return tuple(cuts)
 
 
+@dataclass(frozen=True)
+class SilencePolicy:
+    """Policy governing silence tightening, speech protection, and pause preservation."""
+
+    threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS
+    target_gap_ms: int = DEFAULT_TARGET_GAP_MS
+    min_word_conf: float = 0.0
+    protect_quiet_speech: bool = True
+    protect_uncertain_alignment: bool = True
+    review_uncertain: bool = False
+    min_trim_duration_ms: int = 50
+
+
+def _merge_intervals(intervals: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge overlapping and contiguous closed-open millisecond intervals."""
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if end <= start:
+            continue
+        if not merged:
+            merged.append((start, end))
+        else:
+            prev_s, prev_e = merged[-1]
+            if start <= prev_e:
+                merged[-1] = (prev_s, max(prev_e, end))
+            else:
+                merged.append((start, end))
+    return merged
+
+
+def _subtract_intervals(
+    base_intervals: Sequence[tuple[int, int]],
+    sub_intervals: Sequence[tuple[int, int]],
+    *,
+    min_duration: int = 50,
+) -> list[tuple[int, int]]:
+    """Subtract `sub_intervals` from `base_intervals`.
+
+    Returns the portions of `base_intervals` that do not overlap any interval
+    in `sub_intervals`, dropping fragments shorter than `min_duration`.
+    """
+    if not sub_intervals:
+        return [(s, e) for s, e in base_intervals if e - s >= min_duration]
+
+    merged_sub = _merge_intervals(sub_intervals)
+    result: list[tuple[int, int]] = []
+
+    for b_start, b_end in base_intervals:
+        if b_end <= b_start:
+            continue
+        current_pieces: list[tuple[int, int]] = [(b_start, b_end)]
+        for s_start, s_end in merged_sub:
+            next_pieces: list[tuple[int, int]] = []
+            for p_start, p_end in current_pieces:
+                if s_end <= p_start or s_start >= p_end:
+                    next_pieces.append((p_start, p_end))
+                else:
+                    if s_start > p_start:
+                        next_pieces.append((p_start, s_start))
+                    if s_end < p_end:
+                        next_pieces.append((s_end, p_end))
+            current_pieces = next_pieces
+            if not current_pieces:
+                break
+
+        for piece_start, piece_end in current_pieces:
+            if piece_end - piece_start >= min_duration:
+                result.append((piece_start, piece_end))
+
+    return _merge_intervals(result)
+
+
 def plan_silence_tightening(
     words: Sequence[Word],
     clip_in_ms: int,
@@ -169,11 +245,31 @@ def plan_silence_tightening(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    speech_intervals: Sequence[tuple[int, int]] = (),
+    protected_intervals: Sequence[tuple[int, int] | Any] = (),
+    uncertain_intervals: Sequence[tuple[int, int]] = (),
+    min_word_conf: float = 0.0,
+    review_uncertain: bool = False,
+    policy: SilencePolicy | None = None,
 ) -> SilencePlan:
     """Compute exact retained and excised intervals for a clip.
 
     All interval bounds are relative to `clip_in_ms` (0 to clip_duration_ms).
+    Protects quiet speech, protected beats, and uncertain alignment from being excised.
     """
+    if policy is not None:
+        if threshold_ms == DEFAULT_SILENCE_THRESHOLD_MS:
+            threshold_ms = policy.threshold_ms
+        if target_gap_ms == DEFAULT_TARGET_GAP_MS:
+            target_gap_ms = policy.target_gap_ms
+        if min_word_conf == 0.0:
+            min_word_conf = policy.min_word_conf
+        if not review_uncertain:
+            review_uncertain = policy.review_uncertain
+        min_trim_ms = policy.min_trim_duration_ms
+    else:
+        min_trim_ms = 50
+
     if threshold_ms <= 0:
         raise ValueError(f"threshold_ms must be positive, got {threshold_ms}")
     if target_gap_ms < 0:
@@ -191,6 +287,52 @@ def plan_silence_tightening(
     clip_dur = clip_out_ms - clip_in_ms
     clip_words = [w for w in words if w.end_ms > clip_in_ms and w.start_ms < clip_out_ms]
 
+    # Collect all intervals (clip-relative) that MUST NOT be excised
+    speech_preserve: list[tuple[int, int]] = []
+    if speech_intervals and (policy is None or policy.protect_quiet_speech):
+        for s_s, s_e in speech_intervals:
+            if s_e > clip_in_ms and s_s < clip_out_ms:
+                rel_s = max(0, s_s - clip_in_ms)
+                rel_e = min(clip_dur, s_e - clip_in_ms)
+                if rel_e > rel_s:
+                    speech_preserve.append((rel_s, rel_e))
+
+    protected_preserve: list[tuple[int, int]] = []
+    for p in protected_intervals:
+        if isinstance(p, tuple) and len(p) >= 2:
+            p_s, p_e = int(p[0]), int(p[1])
+        else:
+            p_obj: Any = p
+            if hasattr(p_obj, "start_ms") and hasattr(p_obj, "end_ms"):
+                min_ret = getattr(p_obj, "min_retained_duration_ms", 0)
+                p_s = int(p_obj.start_ms)
+                p_e = p_s + min_ret if min_ret > 0 else int(p_obj.end_ms)
+            else:
+                continue
+        if p_e > clip_in_ms and p_s < clip_out_ms:
+            rel_s = max(0, p_s - clip_in_ms)
+            rel_e = min(clip_dur, p_e - clip_in_ms)
+            if rel_e > rel_s:
+                protected_preserve.append((rel_s, rel_e))
+
+    uncertain_preserve: list[tuple[int, int]] = []
+    if policy is None or policy.protect_uncertain_alignment:
+        for u_s, u_e in uncertain_intervals:
+            if u_e > clip_in_ms and u_s < clip_out_ms:
+                rel_s = max(0, u_s - clip_in_ms)
+                rel_e = min(clip_dur, u_e - clip_in_ms)
+                if rel_e > rel_s:
+                    uncertain_preserve.append((rel_s, rel_e))
+        if min_word_conf > 0.0:
+            for w in clip_words:
+                if w.conf < min_word_conf:
+                    rel_s = max(0, w.start_ms - target_gap_ms - clip_in_ms)
+                    rel_e = min(clip_dur, w.end_ms + target_gap_ms - clip_in_ms)
+                    if rel_e > rel_s:
+                        uncertain_preserve.append((rel_s, rel_e))
+
+    to_preserve = _merge_intervals([*speech_preserve, *protected_preserve, *uncertain_preserve])
+
     if len(clip_words) == 0:
         return SilencePlan(
             clip_in_ms=clip_in_ms,
@@ -201,6 +343,9 @@ def plan_silence_tightening(
             removed_intervals_ms=(),
             total_removed_ms=0,
             excised_word_count=0,
+            protected_intervals_ms=(),
+            review_required=review_uncertain and bool(uncertain_preserve),
+            review_reasons=(),
         )
 
     is_filler, excised_count = _identify_filler_words(clip_words, filler_tokens)
@@ -216,6 +361,9 @@ def plan_silence_tightening(
                 removed_intervals_ms=(),
                 total_removed_ms=0,
                 excised_word_count=0,
+                protected_intervals_ms=(),
+                review_required=review_uncertain and bool(uncertain_preserve),
+                review_reasons=(),
             )
         raw_removed: list[tuple[int, int]] = []
         for i in range(1, len(clip_words)):
@@ -285,19 +433,31 @@ def plan_silence_tightening(
             if trail_cut_end > trail_cut_start:
                 raw_removed.append((trail_cut_start, trail_cut_end))
 
-    # Merge overlapping/contiguous removed intervals
-    merged_removed: list[tuple[int, int]] = []
-    for r_start, r_end in sorted(raw_removed):
-        if r_end <= r_start:
-            continue
-        if not merged_removed:
-            merged_removed.append((r_start, r_end))
-        else:
-            prev_s, prev_e = merged_removed[-1]
-            if r_start <= prev_e:
-                merged_removed[-1] = (prev_s, max(prev_e, r_end))
-            else:
-                merged_removed.append((r_start, r_end))
+    # Detect preserved intervals and review triggers
+    preserved_source_spans: list[tuple[int, int]] = []
+    review_reasons: list[str] = []
+    review_needed = False
+
+    for r_s, r_e in raw_removed:
+        for p_s, p_e in to_preserve:
+            ov_s = max(r_s, p_s)
+            ov_e = min(r_e, p_e)
+            if ov_s < ov_e:
+                preserved_source_spans.append((ov_s + clip_in_ms, ov_e + clip_in_ms))
+
+        for u_s, u_e in uncertain_preserve:
+            ov_s = max(r_s, u_s)
+            ov_e = min(r_e, u_e)
+            if ov_s < ov_e:
+                review_needed = True
+                review_reasons.append(
+                    f"Candidate removal [{r_s + clip_in_ms}..{r_e + clip_in_ms}]ms intersects "
+                    f"uncertain interval [{ov_s + clip_in_ms}..{ov_e + clip_in_ms}]ms; "
+                    "retained for review rather than classified as disposable silence"
+                )
+
+    filtered_removed = _subtract_intervals(raw_removed, to_preserve, min_duration=min_trim_ms)
+    merged_removed = _merge_intervals(filtered_removed)
 
     if not merged_removed:
         return SilencePlan(
@@ -309,6 +469,9 @@ def plan_silence_tightening(
             removed_intervals_ms=(),
             total_removed_ms=0,
             excised_word_count=excised_count,
+            protected_intervals_ms=tuple(_merge_intervals(preserved_source_spans)),
+            review_required=review_needed or (review_uncertain and bool(uncertain_preserve)),
+            review_reasons=tuple(review_reasons),
         )
 
     retained: list[tuple[int, int]] = []
@@ -331,6 +494,9 @@ def plan_silence_tightening(
         removed_intervals_ms=tuple(merged_removed),
         total_removed_ms=total_removed,
         excised_word_count=excised_count,
+        protected_intervals_ms=tuple(_merge_intervals(preserved_source_spans)),
+        review_required=review_needed or (review_uncertain and bool(uncertain_preserve)),
+        review_reasons=tuple(review_reasons),
     )
 
 
@@ -383,6 +549,12 @@ def tighten_silence(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    speech_intervals: Sequence[tuple[int, int]] = (),
+    protected_intervals: Sequence[tuple[int, int] | Any] = (),
+    uncertain_intervals: Sequence[tuple[int, int]] = (),
+    min_word_conf: float = 0.0,
+    review_uncertain: bool = False,
+    policy: SilencePolicy | None = None,
 ) -> tuple[tuple[Word, ...], int]:
     """Tighten pauses and excise conversational filler words between consecutive words.
 
@@ -393,6 +565,12 @@ def tighten_silence(
     Raises:
         ValueError: if threshold_ms <= 0, target_gap_ms < 0, or target_gap_ms >= threshold_ms.
     """
+    if policy is not None:
+        if threshold_ms == DEFAULT_SILENCE_THRESHOLD_MS:
+            threshold_ms = policy.threshold_ms
+        if target_gap_ms == DEFAULT_TARGET_GAP_MS:
+            target_gap_ms = policy.target_gap_ms
+
     if threshold_ms <= 0:
         raise ValueError(f"threshold_ms must be positive, got {threshold_ms}")
     if target_gap_ms < 0:
@@ -420,6 +598,12 @@ def tighten_silence(
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
         filler_tokens=filler_tokens,
+        speech_intervals=speech_intervals,
+        protected_intervals=protected_intervals,
+        uncertain_intervals=uncertain_intervals,
+        min_word_conf=min_word_conf,
+        review_uncertain=review_uncertain,
+        policy=policy,
     )
 
     if plan.total_removed_ms == 0:
@@ -447,6 +631,12 @@ def tighten_sentences(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    speech_intervals: Sequence[tuple[int, int]] = (),
+    protected_intervals: Sequence[tuple[int, int] | Any] = (),
+    uncertain_intervals: Sequence[tuple[int, int]] = (),
+    min_word_conf: float = 0.0,
+    review_uncertain: bool = False,
+    policy: SilencePolicy | None = None,
 ) -> tuple[tuple[Sentence, ...], int]:
     """Tighten pauses across a sequence of sentences while preserving grouping.
 
@@ -467,6 +657,12 @@ def tighten_sentences(
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
         filler_tokens=filler_tokens,
+        speech_intervals=speech_intervals,
+        protected_intervals=protected_intervals,
+        uncertain_intervals=uncertain_intervals,
+        min_word_conf=min_word_conf,
+        review_uncertain=review_uncertain,
+        policy=policy,
     )
 
     if not filler_tokens:
@@ -504,6 +700,12 @@ def tighten_clip(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    speech_intervals: Sequence[tuple[int, int]] = (),
+    protected_intervals: Sequence[tuple[int, int] | Any] = (),
+    uncertain_intervals: Sequence[tuple[int, int]] = (),
+    min_word_conf: float = 0.0,
+    review_uncertain: bool = False,
+    policy: SilencePolicy | None = None,
 ) -> tuple[Clip, int]:
     """Tighten silence in a Clip contract, recording total removed ms in output.
 
@@ -514,6 +716,12 @@ def tighten_clip(
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
         filler_tokens=filler_tokens,
+        speech_intervals=speech_intervals,
+        protected_intervals=protected_intervals,
+        uncertain_intervals=uncertain_intervals,
+        min_word_conf=min_word_conf,
+        review_uncertain=review_uncertain,
+        policy=policy,
     )
 
     new_text = " ".join(w.w for w in tightened_words)
