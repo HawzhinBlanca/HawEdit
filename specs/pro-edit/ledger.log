@@ -5,3 +5,4 @@ TS=2026-08-29T03:42:02Z FEATURE=pro-edit TASK=T3 TESTS=test_the_longest_word_car
 TS=2026-08-29T05:43:59Z FEATURE=pro-edit TASK=T8 TESTS=test_the_measured_edit_evidence_is_recorded VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-08-29T13:26:40Z FEATURE=pro-edit TASK=T7 TESTS=test_an_unavailable_diarizer_never_claims_speaker_tracking VERIFY=pass REPORT=.gate/last-test-run.xml
 TS=2026-08-29T14:15:51Z FEATURE=pro-edit TASK=T6 TESTS=test_an_assembled_reel_is_judged_as_one,test_the_verdict_is_recorded_against_the_assembly,test_editorial_thresholds_apply_to_the_assembly VERIFY=pass REPORT=.gate/last-test-run.xml
+TS=2026-09-17T15:52:41Z FEATURE=pro-edit TASK=T4 TESTS=test_a_long_internal_pause_is_removed,test_captions_shift_with_the_removed_silence,test_the_removed_total_is_recorded VERIFY=pass REPORT=.gate/last-test-run.xml

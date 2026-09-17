@@ -15,7 +15,7 @@
                                   (tests: test_the_longest_word_carries_the_emphasis,
                                           test_emphasis_never_alters_the_caption_text)
 
-- [ ] T4  Silence tightening: internal pauses above the threshold are cut and every later caption
+- [x] T4  Silence tightening: internal pauses above the threshold are cut and every later caption
           shifts by the removed duration; the contract records the total.
                                   (tests: test_a_long_internal_pause_is_removed,
                                           test_captions_shift_with_the_removed_silence,
