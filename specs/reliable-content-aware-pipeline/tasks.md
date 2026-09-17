@@ -19,7 +19,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] T12 One restrained caption policy reads well on phones and preserves canonical text
 - [x] T13 Final audio meets the existing contract and conditioning is supported by listening evidence
 - [x] T14 Episode CLI produces up to N actual distinct deliveries with shared preprocessing and honest item states
-- [ ] T15 Restart/duplicate submission preserve verified work and publish once
+- [x] T15 Restart/duplicate submission preserve verified work and publish once
 - [ ] T16 Unknown billed outcomes and retries remain persisted, bounded and explicit
 - [ ] T17 Real process/storage/runtime faults preserve primary reasons, cleanup and delivery integrity
 - [ ] T18 Relevant changes invalidate only dependent artifacts; schema/release rollback works
