@@ -10,7 +10,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] T03 Caption verification rejects textured no-caption footage and damaged text/geometry
 - [x] T04 Canonical and revision routes use the shared claim-verification boundary for all crop modes
 - [x] T05 One resolved configuration defines the exact behavior before expensive work
-- [ ] T06 One retained-interval mapping drives every export and media clock
+- [x] T06 One retained-interval mapping drives every export and media clock
 - [ ] T07 Trimming protects quiet speech, uncertain regions and meaningful pauses/reactions
 - [ ] T08 Candidate context is canonical, contiguous, source-linked and preserved or refused
 - [ ] T09 Independent discovery and shared ranking obey coverage, integrity and budget constraints
