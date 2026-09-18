@@ -19,6 +19,7 @@ __pycache__/
 *.egg-info/
 /work/
 /out/
+/media/
 /corpus/audio/
 .ffmpeg/
 # Weights never enter the repository. `sources.json` is not weights — it is the few dozen bytes
