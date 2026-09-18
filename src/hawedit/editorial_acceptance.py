@@ -56,9 +56,11 @@ __all__ = [
     "AcceptanceScorecard",
     "EditorialAcceptanceError",
     "PreparedEditorialStudy",
+    "ScopedAcceptanceReport",
     "VerifiedEditorialStudy",
     "compute_acceptance_scorecard",
     "evaluate_editorial_study",
+    "evaluate_scoped_acceptance",
     "main",
     "partition_episode_disjoint",
     "prepare_editorial_study",
@@ -1923,6 +1925,95 @@ def compute_acceptance_scorecard(
         episodes_evaluated=episodes_evaluated,
         episodes_with_no_clips=episodes_with_no_clips,
         margin_of_error=round(margin_of_error, 4),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedAcceptanceReport:
+    """Scoped acceptance report documenting holdout results and gate evidence (AC-24)."""
+
+    commit_sha: str
+    scorecard: AcceptanceScorecard
+    gate_verified: bool
+    human_review_verified: bool
+    ci_verified: bool
+    is_sample_sufficient: bool
+    acceptance_status: str
+    evidence_intact: bool
+    deficiencies: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "acceptance_status": self.acceptance_status,
+            "ci_verified": self.ci_verified,
+            "commit_sha": self.commit_sha,
+            "deficiencies": list(self.deficiencies),
+            "evidence_intact": self.evidence_intact,
+            "gate_verified": self.gate_verified,
+            "human_review_verified": self.human_review_verified,
+            "is_sample_sufficient": self.is_sample_sufficient,
+            "scorecard": self.scorecard.to_dict(),
+        }
+
+    def assert_accepted(self) -> None:
+        """Raises EditorialAcceptanceError if the report did not achieve accepted status."""
+        if self.acceptance_status != "accepted":
+            reasons = "; ".join(self.deficiencies)
+            raise EditorialAcceptanceError(
+                f"Acceptance refused ({self.acceptance_status}): {reasons}"
+            )
+
+
+def evaluate_scoped_acceptance(
+    *,
+    commit_sha: str,
+    scorecard: AcceptanceScorecard,
+    gate_verified: bool,
+    human_review_verified: bool,
+    ci_verified: bool,
+    min_sample_size: int = MIN_STUDY_ITEMS,
+) -> ScopedAcceptanceReport:
+    """Evaluates acceptance evidence and reports sample sufficiency and evidence status (AC-24)."""
+    deficiencies: list[str] = []
+
+    if not commit_sha or len(commit_sha) < 7:
+        deficiencies.append("Missing or invalid committed commit SHA")
+
+    is_sample_sufficient = scorecard.total_proposed_clips >= min_sample_size
+    if not is_sample_sufficient:
+        deficiencies.append(
+            f"Sample size ({scorecard.total_proposed_clips}) is below required threshold "
+            f"({min_sample_size})"
+        )
+
+    if not gate_verified:
+        deficiencies.append("Local canonical verification gate has not passed with green status")
+
+    if not human_review_verified:
+        deficiencies.append(
+            "Missing verified independent Kurdish human reviewer signatures and evaluation"
+        )
+
+    if not ci_verified:
+        deficiencies.append("Required hosted CI checks are not green at the exact committed SHA")
+
+    if not is_sample_sufficient:
+        status = "refused_insufficient_sample"
+    elif not (gate_verified and human_review_verified and ci_verified and commit_sha):
+        status = "refused_unverified_evidence"
+    else:
+        status = "accepted"
+
+    return ScopedAcceptanceReport(
+        commit_sha=commit_sha,
+        scorecard=scorecard,
+        gate_verified=gate_verified,
+        human_review_verified=human_review_verified,
+        ci_verified=ci_verified,
+        is_sample_sufficient=is_sample_sufficient,
+        acceptance_status=status,
+        evidence_intact=len(deficiencies) == 0,
+        deficiencies=tuple(deficiencies),
     )
 
 

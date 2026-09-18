@@ -19,9 +19,11 @@ from hawedit.editorial_acceptance import (
     AcceptanceScorecard,
     EditorialAcceptanceError,
     PreparedEditorialStudy,
+    ScopedAcceptanceReport,
     VerifiedEditorialStudy,
     compute_acceptance_scorecard,
     evaluate_editorial_study,
+    evaluate_scoped_acceptance,
     main,
     partition_episode_disjoint,
     prepare_editorial_study,
@@ -831,3 +833,117 @@ def test_scorecard_counts_refusals_and_all_proposed_clips() -> None:
             episodes_evaluated=5,
             episodes_with_no_clips=6,
         )
+
+
+def test_acceptance_requires_current_evidence_and_reports_insufficient_sample() -> None:
+    """AC-24: Scoped acceptance report requires current evidence and reports insufficient sample.
+
+    WHEN acceptance results are reported, THE system SHALL reject episode/speaker leakage,
+    account for refusals and all proposals, report uncertainty and refuse acceptance
+    without the required current evidence.
+    """
+    # 1. Sufficient sample scorecard (200 proposed clips, 40 refusals, 160 accepted)
+    sufficient_scorecard = compute_acceptance_scorecard(
+        total_proposed_clips=200,
+        refusal_count=40,
+        accepted_count=160,
+        episodes_evaluated=20,
+        episodes_with_no_clips=2,
+    )
+
+    # 2. Insufficient sample scorecard (50 proposed clips < MIN_STUDY_ITEMS 200)
+    insufficient_scorecard = compute_acceptance_scorecard(
+        total_proposed_clips=50,
+        refusal_count=10,
+        accepted_count=40,
+        episodes_evaluated=5,
+        episodes_with_no_clips=0,
+    )
+
+    valid_commit = "ccd7c1c0a8f93e9a"
+
+    # Case A: Insufficient sample size reports deficiency and refuses acceptance
+    underpowered_report = evaluate_scoped_acceptance(
+        commit_sha=valid_commit,
+        scorecard=insufficient_scorecard,
+        gate_verified=True,
+        human_review_verified=True,
+        ci_verified=True,
+    )
+    assert isinstance(underpowered_report, ScopedAcceptanceReport)
+    assert underpowered_report.is_sample_sufficient is False
+    assert underpowered_report.acceptance_status == "refused_insufficient_sample"
+    assert any("below required threshold" in d for d in underpowered_report.deficiencies)
+    with pytest.raises(EditorialAcceptanceError, match="below required threshold"):
+        underpowered_report.assert_accepted()
+
+    # Case B: Missing local verification gate evidence refuses acceptance
+    gate_failed_report = evaluate_scoped_acceptance(
+        commit_sha=valid_commit,
+        scorecard=sufficient_scorecard,
+        gate_verified=False,
+        human_review_verified=True,
+        ci_verified=True,
+    )
+    assert gate_failed_report.is_sample_sufficient is True
+    assert gate_failed_report.acceptance_status == "refused_unverified_evidence"
+    assert any("canonical verification gate" in d for d in gate_failed_report.deficiencies)
+    with pytest.raises(EditorialAcceptanceError, match="canonical verification gate"):
+        gate_failed_report.assert_accepted()
+
+    # Case C: Missing verified human review evidence refuses acceptance
+    human_missing_report = evaluate_scoped_acceptance(
+        commit_sha=valid_commit,
+        scorecard=sufficient_scorecard,
+        gate_verified=True,
+        human_review_verified=False,
+        ci_verified=True,
+    )
+    assert human_missing_report.acceptance_status == "refused_unverified_evidence"
+    assert any("human reviewer" in d for d in human_missing_report.deficiencies)
+    with pytest.raises(EditorialAcceptanceError, match="human reviewer"):
+        human_missing_report.assert_accepted()
+
+    # Case D: Missing hosted CI verification at exact commit SHA refuses acceptance
+    ci_missing_report = evaluate_scoped_acceptance(
+        commit_sha=valid_commit,
+        scorecard=sufficient_scorecard,
+        gate_verified=True,
+        human_review_verified=True,
+        ci_verified=False,
+    )
+    assert ci_missing_report.acceptance_status == "refused_unverified_evidence"
+    assert any("hosted CI checks" in d for d in ci_missing_report.deficiencies)
+    with pytest.raises(EditorialAcceptanceError, match="hosted CI checks"):
+        ci_missing_report.assert_accepted()
+
+    # Case E: Missing or invalid commit SHA refuses acceptance
+    no_commit_report = evaluate_scoped_acceptance(
+        commit_sha="",
+        scorecard=sufficient_scorecard,
+        gate_verified=True,
+        human_review_verified=True,
+        ci_verified=True,
+    )
+    assert no_commit_report.acceptance_status == "refused_unverified_evidence"
+    assert any("commit SHA" in d for d in no_commit_report.deficiencies)
+
+    # Case F: All required evidence present and verified on sufficient sample
+    valid_report = evaluate_scoped_acceptance(
+        commit_sha=valid_commit,
+        scorecard=sufficient_scorecard,
+        gate_verified=True,
+        human_review_verified=True,
+        ci_verified=True,
+    )
+    assert valid_report.acceptance_status == "accepted"
+    assert valid_report.is_sample_sufficient is True
+    assert valid_report.evidence_intact is True
+    assert len(valid_report.deficiencies) == 0
+    valid_report.assert_accepted()
+
+    # Serialized dictionary preserves all fields
+    report_dict = valid_report.to_dict()
+    assert report_dict["acceptance_status"] == "accepted"
+    assert report_dict["commit_sha"] == valid_commit
+    assert report_dict["scorecard"]["total_proposed_clips"] == 200
