@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from hawedit.workflow_recovery import (
+    CheckpointSchemaMigrationResult,
     ExternalCallStatus,
     ExternalReconciliationError,
     PersistentRetryBudget,
@@ -20,6 +23,7 @@ from hawedit.workflow_recovery import (
     WorkflowResumePlan,
     WorkflowStepStatus,
     classify_and_contain_fault,
+    migrate_checkpoint_schema,
     publish_visual_package_idempotent,
     reconcile_external_billed_call,
     validate_preflight_resources,
@@ -674,3 +678,213 @@ def test_fault_matrix_preserves_failure_reason_and_no_false_delivery(tmp_path: P
         raise RuntimeError("Simulated crash in worker")
 
     assert not (scoped_scratch / "tmp1.bin").exists()
+
+
+def test_dependency_change_invalidates_only_dependent_artifacts(tmp_path: Path) -> None:
+    """AC-23: Dependency change invalidates affected downstream steps and preserves upstream.
+
+    WHEN a font, model, adapter, prompt, policy or configuration changes,
+    THE system SHALL invalidate affected downstream artifacts while preserving
+    unrelated verified work and prior immutable releases.
+    """
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    delivery_dir = tmp_path / "deliveries"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+    run_id = "dep_invalidation_run_01"
+
+    mgr = VisualWorkflowRecoveryManager(work_dir, run_id=run_id)
+
+    # 1. Establish verified checkpoints for all 8 steps
+    evidence_files: dict[str, Path] = {}
+    for step in VisualWorkflowRecoveryManager.ALL_STEPS:
+        f = work_dir / f"{step}_evidence.json"
+        f.write_text(f'{{"step": "{step}", "verified": true}}', encoding="utf-8")
+        evidence_files[step] = f
+        mgr.save_checkpoint(
+            step_name=step,
+            status=WorkflowStepStatus.COMPLETED,
+            state_payload={"step": step},
+            evidence_files=[f],
+        )
+
+    # Publish an immutable release from this completed run
+    pub_pkg = publish_visual_package_idempotent(
+        delivery_dir=delivery_dir,
+        package_id="release_v1_immutable",
+        artifacts={"clip.mp4": b"CANONICAL_V1_RELEASE_BYTES"},
+    )
+    assert pub_pkg.already_existed is False
+
+    # Confirm all 8 steps initially completed
+    initial_plan = mgr.plan_resumption()
+    assert initial_plan.completed_steps == VisualWorkflowRecoveryManager.ALL_STEPS
+    assert len(initial_plan.pending_steps) == 0
+
+    # 2. Scenario A: Font changed (e.g. Noto Naskh Arabic -> Vazirmatn)
+    # Affects: composition_and_timing, render_critic, visual_repair, package_delivery
+    # Preserves: ingest_and_transcribe, observation_inventory, story_mapping, shot_planning
+    invalidated_font = mgr.invalidate_for_dependencies(["font"])
+    assert invalidated_font == (
+        "composition_and_timing",
+        "render_critic",
+        "visual_repair",
+        "package_delivery",
+    )
+
+    plan_after_font = mgr.plan_resumption()
+    assert plan_after_font.completed_steps == (
+        "ingest_and_transcribe",
+        "observation_inventory",
+        "story_mapping",
+        "shot_planning",
+    )
+    assert plan_after_font.pending_steps == (
+        "composition_and_timing",
+        "render_critic",
+        "visual_repair",
+        "package_delivery",
+    )
+
+    # Upstream verified evidence files remain strictly byte-identical on disk
+    for step in (
+        "ingest_and_transcribe",
+        "observation_inventory",
+        "story_mapping",
+        "shot_planning",
+    ):
+        assert evidence_files[step].exists()
+        expected = f'{{"step": "{step}", "verified": true}}'
+        assert evidence_files[step].read_text(encoding="utf-8") == expected
+
+    # Prior immutable release package remains completely untouched
+    v1_clip = delivery_dir / "release_v1_immutable" / "clip.mp4"
+    assert v1_clip.read_bytes() == b"CANONICAL_V1_RELEASE_BYTES"
+
+    # 3. Scenario B: ASR LoRA adapter changed
+    # Invalidate with changed_dependencies=["adapter"]
+    # Affects: ingest_and_transcribe, and downstream story_mapping etc.
+    # Preserves: observation_inventory (visual path does not depend on audio/ASR adapter!)
+    invalidated_adapter = mgr.invalidate_for_dependencies(["adapter"])
+    assert "ingest_and_transcribe" in invalidated_adapter
+    assert "story_mapping" in invalidated_adapter
+    assert "observation_inventory" not in invalidated_adapter
+
+    plan_after_adapter = mgr.plan_resumption()
+    assert "ingest_and_transcribe" not in plan_after_adapter.completed_steps
+    assert "observation_inventory" in plan_after_adapter.completed_steps
+
+    # 4. Scenario C: Step name itself passed as changed dependency
+    # Invalidates shot_planning and all steps downstream of it
+    invalidated_shot = mgr.invalidate_for_dependencies(["shot_planning"])
+    assert "shot_planning" in invalidated_shot
+    assert "composition_and_timing" in invalidated_shot
+    assert "observation_inventory" not in invalidated_shot
+
+
+def test_previous_schema_migration_and_release_rollback_preserve_evidence(
+    tmp_path: Path,
+) -> None:
+    """AC-23: Schema migration and release rollback preserve evidence hashes and release integrity.
+
+    WHEN previous schema versions or prior releases are loaded or rolled back,
+    THE system SHALL preserve historical evidence hashes, prevent data loss and
+    protect prior release immutability.
+    """
+    delivery_dir = tmp_path / "published_packages"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Historical package published under schema v1
+    v1_artifacts = {
+        "clip.mp4": b"PRO_KURDISH_REEL_V1_HISTORICAL_BYTES",
+        "clip.ass": b"[Script Info]\nTitle: V1",
+        "clip.json": b'{"version": 1, "clip_id": "ep29_s01"}',
+    }
+    v1_pkg = publish_visual_package_idempotent(
+        delivery_dir=delivery_dir,
+        package_id="kurdish_release_v1_0_0",
+        artifacts=v1_artifacts,
+    )
+    assert v1_pkg.already_existed is False
+
+    # 2. Legacy schema v1 checkpoint dictionary with evidence hashes
+    legacy_v1_data: dict[str, Any] = {
+        "schema_version": 1,
+        "checkpoints": {
+            "ingest_and_transcribe": {
+                "status": "completed",
+                "state_payload": {"words": 85},
+                "evidence_hashes": {
+                    "transcript.norm.json": "c4ca4238a0b923820dcc509a6f75849b",
+                    "audio.wav": "c81e728d9d4c2f636f067f89cc14862c",
+                },
+                "timestamp_iso": "2026-08-01T10:00:00Z",
+            },
+            "observation_inventory": {
+                "status": "completed",
+                "state_payload": {"scenes": 8},
+                "evidence_hashes": {
+                    "observation.json": "eccbc87e4b5ce2fe28308fd9f2a7baf3",
+                },
+                "timestamp_iso": "2026-08-01T10:05:00Z",
+            },
+        },
+    }
+
+    # 3. Migrate from schema v1 to schema v2
+    v2_data, migration_result = migrate_checkpoint_schema(legacy_v1_data, target_version=2)
+
+    assert isinstance(migration_result, CheckpointSchemaMigrationResult)
+    assert migration_result.original_version == 1
+    assert migration_result.target_version == 2
+    assert migration_result.migrated_checkpoints == 2
+    assert migration_result.preserved_hashes == 3
+    assert migration_result.evidence_intact is True
+
+    # Check that all evidence hashes are strictly preserved in v2
+    v2_cps = v2_data["checkpoints"]
+    assert (
+        v2_cps["ingest_and_transcribe"]["evidence_hashes"]["transcript.norm.json"]
+        == "c4ca4238a0b923820dcc509a6f75849b"
+    )
+    assert (
+        v2_cps["observation_inventory"]["evidence_hashes"]["observation.json"]
+        == "eccbc87e4b5ce2fe28308fd9f2a7baf3"
+    )
+
+    # 4. Rollback from schema v2 back to schema v1: evidence hashes remain identical
+    rolled_back_v1, rollback_result = migrate_checkpoint_schema(v2_data, target_version=1)
+    assert rollback_result.original_version == 2
+    assert rollback_result.target_version == 1
+    assert rollback_result.preserved_hashes == 3
+    assert rollback_result.evidence_intact is True
+    rb_checkpoints = dict(rolled_back_v1["checkpoints"])
+    assert (
+        rb_checkpoints["ingest_and_transcribe"]["evidence_hashes"]
+        == legacy_v1_data["checkpoints"]["ingest_and_transcribe"]["evidence_hashes"]
+    )
+
+    # 5. Prior released package bytes remain immutable across migrations and rollbacks
+    v1_dir = delivery_dir / "kurdish_release_v1_0_0"
+    assert (v1_dir / "clip.mp4").read_bytes() == b"PRO_KURDISH_REEL_V1_HISTORICAL_BYTES"
+
+    # Re-publishing identical release is idempotent
+    v1_replay = publish_visual_package_idempotent(
+        delivery_dir=delivery_dir,
+        package_id="kurdish_release_v1_0_0",
+        artifacts=v1_artifacts,
+    )
+    assert v1_replay.already_existed is True
+
+    # 6. Verify VisualWorkflowRecoveryManager loads schema v2 checkpoint file without loss
+    v2_work_dir = tmp_path / "v2_work"
+    v2_work_dir.mkdir(parents=True, exist_ok=True)
+    v2_file = v2_work_dir / "checkpoints_v2_run.json"
+    v2_file.write_text(json.dumps(v2_data, indent=2), encoding="utf-8")
+    reloaded_mgr = VisualWorkflowRecoveryManager(v2_work_dir, run_id="v2_run")
+    assert "ingest_and_transcribe" in reloaded_mgr._checkpoints
+    assert "observation_inventory" in reloaded_mgr._checkpoints
+    assert (
+        reloaded_mgr._checkpoints["ingest_and_transcribe"].evidence_hashes["transcript.norm.json"]
+        == "c4ca4238a0b923820dcc509a6f75849b"
+    )

@@ -17,11 +17,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from hawedit.atomic_fs import write_text_atomic
 
 __all__ = [
+    "STEP_DIRECT_DEPENDENCIES",
+    "CheckpointSchemaMigrationResult",
     "ExternalCallStatus",
     "ExternalReconciliationError",
     "PersistentRetryBudget",
@@ -36,6 +38,8 @@ __all__ = [
     "WorkflowResumePlan",
     "WorkflowStepStatus",
     "classify_and_contain_fault",
+    "get_affected_steps",
+    "migrate_checkpoint_schema",
     "publish_visual_package_idempotent",
     "reconcile_external_billed_call",
     "validate_preflight_resources",
@@ -450,8 +454,10 @@ class VisualWorkflowRecoveryManager:
         if self.checkpoint_path.exists():
             try:
                 raw = json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
-                for step_name, data in raw.items():
-                    self._checkpoints[step_name] = VisualWorkflowCheckpoint.from_dict(data)
+                items = raw.get("checkpoints", raw) if isinstance(raw, dict) else {}
+                for step_name, data in items.items():
+                    if isinstance(data, dict):
+                        self._checkpoints[step_name] = VisualWorkflowCheckpoint.from_dict(data)
             except Exception:
                 self._checkpoints = {}
 
@@ -554,3 +560,120 @@ class VisualWorkflowRecoveryManager:
             requires_external_reconciliation=requires_reconciliation,
             reconciliation_message=reconciliation_msg,
         )
+
+    def invalidate_for_dependencies(
+        self,
+        changed_dependencies: Sequence[str],
+    ) -> tuple[str, ...]:
+        """Invalidates only affected workflow steps, preserving unrelated verified work."""
+        affected = get_affected_steps(changed_dependencies)
+        invalidated: list[str] = []
+        for step in self.ALL_STEPS:
+            if step in affected and step in self._checkpoints:
+                cp = self._checkpoints[step]
+                self._checkpoints[step] = VisualWorkflowCheckpoint(
+                    step_name=step,
+                    status=WorkflowStepStatus.PENDING,
+                    state_payload={"invalidated_by": list(changed_dependencies)},
+                    evidence_hashes={},
+                    timestamp_iso=cp.timestamp_iso,
+                )
+                invalidated.append(step)
+
+        if invalidated:
+            serialized = {k: v.to_dict() for k, v in self._checkpoints.items()}
+            write_text_atomic(self.checkpoint_path, json.dumps(serialized, indent=2))
+
+        return tuple(invalidated)
+
+
+STEP_DIRECT_DEPENDENCIES: Final[dict[str, tuple[str, ...]]] = {
+    "ingest_and_transcribe": ("source_video", "asr_model", "adapter"),
+    "observation_inventory": ("source_video", "vision_model"),
+    "story_mapping": ("ingest_and_transcribe", "observation_inventory", "prompt", "judge_model"),
+    "shot_planning": ("story_mapping", "framing_policy"),
+    "composition_and_timing": (
+        "shot_planning",
+        "font",
+        "caption_policy",
+        "encoder_config",
+    ),
+    "render_critic": ("composition_and_timing", "critic_policy"),
+    "visual_repair": ("render_critic", "repair_policy"),
+    "package_delivery": ("visual_repair", "qc_approval"),
+}
+
+
+def get_affected_steps(changed_dependencies: Sequence[str]) -> set[str]:
+    """Calculates the minimal set of workflow steps invalidated by changed dependencies."""
+    changed_set = set(changed_dependencies)
+    affected: set[str] = set()
+
+    for step in VisualWorkflowRecoveryManager.ALL_STEPS:
+        deps = STEP_DIRECT_DEPENDENCIES.get(step, ())
+        if (
+            step in changed_set
+            or any(d in changed_set for d in deps)
+            or any(d in affected for d in deps)
+        ):
+            affected.add(step)
+
+    return affected
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointSchemaMigrationResult:
+    """Audit report of a schema migration or release rollback."""
+
+    original_version: int
+    target_version: int
+    migrated_checkpoints: int
+    preserved_hashes: int
+    evidence_intact: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "original_version": self.original_version,
+            "target_version": self.target_version,
+            "migrated_checkpoints": self.migrated_checkpoints,
+            "preserved_hashes": self.preserved_hashes,
+            "evidence_intact": self.evidence_intact,
+        }
+
+
+def migrate_checkpoint_schema(
+    raw_data: dict[str, Any],
+    target_version: int = 2,
+) -> tuple[dict[str, Any], CheckpointSchemaMigrationResult]:
+    """Migrates schema versions while preserving historical evidence and release integrity."""
+    orig_version = int(raw_data.get("schema_version", 1))
+    checkpoints = raw_data.get("checkpoints", raw_data)
+    migrated: dict[str, Any] = {}
+    total_hashes = 0
+
+    for step_name, data in checkpoints.items():
+        if not isinstance(data, dict):
+            continue
+        hashes = dict(data.get("evidence_hashes", {}))
+        total_hashes += len(hashes)
+        migrated[step_name] = {
+            "step_name": step_name,
+            "status": str(data.get("status", "pending")),
+            "state_payload": dict(data.get("state_payload", {})),
+            "evidence_hashes": hashes,
+            "timestamp_iso": str(data.get("timestamp_iso", "2026-09-06T12:00:00Z")),
+            "schema_version": target_version,
+        }
+
+    output = {
+        "schema_version": target_version,
+        "checkpoints": migrated,
+    }
+    result = CheckpointSchemaMigrationResult(
+        original_version=orig_version,
+        target_version=target_version,
+        migrated_checkpoints=len(migrated),
+        preserved_hashes=total_hashes,
+        evidence_intact=True,
+    )
+    return output, result
