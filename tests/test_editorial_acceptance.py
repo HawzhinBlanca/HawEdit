@@ -20,10 +20,12 @@ from hawedit.editorial_acceptance import (
     EditorialAcceptanceError,
     PreparedEditorialStudy,
     ScopedAcceptanceReport,
+    SustainedAcceptanceReport,
     VerifiedEditorialStudy,
     compute_acceptance_scorecard,
     evaluate_editorial_study,
     evaluate_scoped_acceptance,
+    evaluate_sustained_acceptance,
     main,
     partition_episode_disjoint,
     prepare_editorial_study,
@@ -947,3 +949,142 @@ def test_acceptance_requires_current_evidence_and_reports_insufficient_sample() 
     assert report_dict["acceptance_status"] == "accepted"
     assert report_dict["commit_sha"] == valid_commit
     assert report_dict["scorecard"]["total_proposed_clips"] == 200
+
+
+def test_sustained_acceptance_requires_fresh_holdout_and_use_window() -> None:
+    """T20 / AC-24: Sustained acceptance requires fresh holdout and owner/editor signoff."""
+    valid_commit = "baae57c09dbd54353ced49b0f92e3d10ff66568e"
+    sufficient_scorecard = AcceptanceScorecard(
+        total_proposed_clips=200,
+        refusal_count=20,
+        accepted_count=180,
+        refusal_rate=0.1,
+        first_pass_publishable_rate=0.9,
+        episodes_evaluated=10,
+        episodes_with_no_clips=0,
+        margin_of_error=0.0416,
+    )
+    insufficient_scorecard = AcceptanceScorecard(
+        total_proposed_clips=50,
+        refusal_count=5,
+        accepted_count=45,
+        refusal_rate=0.1,
+        first_pass_publishable_rate=0.9,
+        episodes_evaluated=3,
+        episodes_with_no_clips=0,
+        margin_of_error=0.0832,
+    )
+    base_accepted_report = evaluate_scoped_acceptance(
+        commit_sha=valid_commit,
+        scorecard=sufficient_scorecard,
+        gate_verified=True,
+        human_review_verified=True,
+        ci_verified=True,
+    )
+    base_unaccepted_report = evaluate_scoped_acceptance(
+        commit_sha=valid_commit,
+        scorecard=sufficient_scorecard,
+        gate_verified=False,
+        human_review_verified=True,
+        ci_verified=True,
+    )
+
+    # Case A: Base scoped acceptance not accepted
+    unaccepted_base = evaluate_sustained_acceptance(
+        scoped_report=base_unaccepted_report,
+        fresh_holdout_scorecard=sufficient_scorecard,
+        fresh_holdout_verified=True,
+        use_window_days=30,
+        kurdish_editor_signoff=True,
+        owner_signoff=True,
+    )
+    assert unaccepted_base.is_sustained is False
+    assert unaccepted_base.sustained_status == "refused_unverified_evidence"
+    assert any("Base scoped acceptance is not accepted" in d for d in unaccepted_base.deficiencies)
+    with pytest.raises(EditorialAcceptanceError, match="Sustained acceptance refused"):
+        unaccepted_base.assert_sustained()
+
+    # Case B: Fresh holdout sample size insufficient
+    insufficient_fresh = evaluate_sustained_acceptance(
+        scoped_report=base_accepted_report,
+        fresh_holdout_scorecard=insufficient_scorecard,
+        fresh_holdout_verified=True,
+        use_window_days=30,
+        kurdish_editor_signoff=True,
+        owner_signoff=True,
+    )
+    assert insufficient_fresh.is_sustained is False
+    assert insufficient_fresh.sustained_status == "refused_insufficient_sample"
+    assert any("Fresh holdout sample size" in d for d in insufficient_fresh.deficiencies)
+
+    # Case C: Fresh holdout unverified (prior tuning leakage or unverified protocol)
+    unverified_fresh = evaluate_sustained_acceptance(
+        scoped_report=base_accepted_report,
+        fresh_holdout_scorecard=sufficient_scorecard,
+        fresh_holdout_verified=False,
+        use_window_days=30,
+        kurdish_editor_signoff=True,
+        owner_signoff=True,
+    )
+    assert unverified_fresh.is_sustained is False
+    assert any("prior tuning leakage" in d for d in unverified_fresh.deficiencies)
+
+    # Case D: Representative use window below 30 days
+    short_window = evaluate_sustained_acceptance(
+        scoped_report=base_accepted_report,
+        fresh_holdout_scorecard=sufficient_scorecard,
+        fresh_holdout_verified=True,
+        use_window_days=14,
+        kurdish_editor_signoff=True,
+        owner_signoff=True,
+    )
+    assert short_window.is_sustained is False
+    assert any("Representative use window (14 days)" in d for d in short_window.deficiencies)
+
+    # Case E: Missing Kurdish editor or owner signoff
+    missing_signoff = evaluate_sustained_acceptance(
+        scoped_report=base_accepted_report,
+        fresh_holdout_scorecard=sufficient_scorecard,
+        fresh_holdout_verified=True,
+        use_window_days=30,
+        kurdish_editor_signoff=False,
+        owner_signoff=True,
+    )
+    assert missing_signoff.is_sustained is False
+    assert any("Kurdish editor sign-off" in d for d in missing_signoff.deficiencies)
+
+    # Case F: Prohibits automatic rating claim without complete external evidence
+    auto_rating = evaluate_sustained_acceptance(
+        scoped_report=base_accepted_report,
+        fresh_holdout_scorecard=sufficient_scorecard,
+        fresh_holdout_verified=True,
+        use_window_days=30,
+        kurdish_editor_signoff=False,
+        owner_signoff=False,
+        automatic_rating_claimed=True,
+        rating_claim="10/10",
+    )
+    assert auto_rating.is_sustained is False
+    assert any("Automatic rating claim prohibited" in d for d in auto_rating.deficiencies)
+
+    # Case G: All sustained criteria satisfied
+    sustained_report = evaluate_sustained_acceptance(
+        scoped_report=base_accepted_report,
+        fresh_holdout_scorecard=sufficient_scorecard,
+        fresh_holdout_verified=True,
+        use_window_days=30,
+        kurdish_editor_signoff=True,
+        owner_signoff=True,
+        rating_claim="10/10 verified",
+    )
+    assert isinstance(sustained_report, SustainedAcceptanceReport)
+    assert sustained_report.is_sustained is True
+    assert sustained_report.sustained_status == "sustained"
+    assert len(sustained_report.deficiencies) == 0
+    sustained_report.assert_sustained()
+
+    payload = sustained_report.to_dict()
+    assert payload["is_sustained"] is True
+    assert payload["sustained_status"] == "sustained"
+    assert payload["use_window_days"] == 30
+    assert payload["rating_claim"] == "10/10 verified"

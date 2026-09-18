@@ -57,10 +57,12 @@ __all__ = [
     "EditorialAcceptanceError",
     "PreparedEditorialStudy",
     "ScopedAcceptanceReport",
+    "SustainedAcceptanceReport",
     "VerifiedEditorialStudy",
     "compute_acceptance_scorecard",
     "evaluate_editorial_study",
     "evaluate_scoped_acceptance",
+    "evaluate_sustained_acceptance",
     "main",
     "partition_episode_disjoint",
     "prepare_editorial_study",
@@ -2014,6 +2016,120 @@ def evaluate_scoped_acceptance(
         acceptance_status=status,
         evidence_intact=len(deficiencies) == 0,
         deficiencies=tuple(deficiencies),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SustainedAcceptanceReport:
+    """Sustained acceptance report documenting fresh holdout and use window evidence (AC-24)."""
+
+    scoped_report: ScopedAcceptanceReport
+    fresh_holdout_scorecard: AcceptanceScorecard
+    fresh_holdout_verified: bool
+    use_window_days: int
+    kurdish_editor_signoff: bool
+    owner_signoff: bool
+    sustained_status: str
+    is_sustained: bool
+    deficiencies: tuple[str, ...]
+    rating_claim: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "deficiencies": list(self.deficiencies),
+            "fresh_holdout_scorecard": self.fresh_holdout_scorecard.to_dict(),
+            "fresh_holdout_verified": self.fresh_holdout_verified,
+            "is_sustained": self.is_sustained,
+            "kurdish_editor_signoff": self.kurdish_editor_signoff,
+            "owner_signoff": self.owner_signoff,
+            "rating_claim": self.rating_claim,
+            "scoped_report": self.scoped_report.to_dict(),
+            "sustained_status": self.sustained_status,
+            "use_window_days": self.use_window_days,
+        }
+
+    def assert_sustained(self) -> None:
+        """Raises EditorialAcceptanceError if sustained acceptance is not established."""
+        if not self.is_sustained:
+            reasons = "; ".join(self.deficiencies)
+            raise EditorialAcceptanceError(
+                f"Sustained acceptance refused ({self.sustained_status}): {reasons}"
+            )
+
+
+def evaluate_sustained_acceptance(
+    *,
+    scoped_report: ScopedAcceptanceReport,
+    fresh_holdout_scorecard: AcceptanceScorecard,
+    fresh_holdout_verified: bool,
+    use_window_days: int,
+    kurdish_editor_signoff: bool,
+    owner_signoff: bool,
+    min_use_window_days: int = 30,
+    min_sample_size: int = MIN_STUDY_ITEMS,
+    automatic_rating_claimed: bool = False,
+    rating_claim: str | None = None,
+) -> SustainedAcceptanceReport:
+    """Evaluates sustained acceptance over fresh holdout and representative use window (AC-24)."""
+    deficiencies: list[str] = []
+
+    if scoped_report.acceptance_status != "accepted":
+        deficiencies.append(
+            f"Base scoped acceptance is not accepted ({scoped_report.acceptance_status})"
+        )
+
+    is_fresh_sample_sufficient = fresh_holdout_scorecard.total_proposed_clips >= min_sample_size
+    if not is_fresh_sample_sufficient:
+        deficiencies.append(
+            f"Fresh holdout sample size ({fresh_holdout_scorecard.total_proposed_clips}) "
+            f"is below required threshold ({min_sample_size})"
+        )
+
+    if not fresh_holdout_verified:
+        deficiencies.append(
+            "Missing verified fresh independent holdout evaluation without prior tuning leakage"
+        )
+
+    if use_window_days < min_use_window_days:
+        deficiencies.append(
+            f"Representative use window ({use_window_days} days) is below required duration "
+            f"({min_use_window_days} days)"
+        )
+
+    if not kurdish_editor_signoff:
+        deficiencies.append(
+            "Missing explicit verified Kurdish editor sign-off on sustained performance"
+        )
+
+    if not owner_signoff:
+        deficiencies.append("Missing explicit verified system owner sign-off on sustained release")
+
+    if automatic_rating_claimed or (
+        rating_claim is not None and not (kurdish_editor_signoff and owner_signoff)
+    ):
+        deficiencies.append(
+            "Automatic rating claim prohibited: a 9.5/10 or 10/10 rating requires complete "
+            "external human evidence and explicit owner/editor sign-off"
+        )
+
+    if not is_fresh_sample_sufficient:
+        status = "refused_insufficient_sample"
+    elif deficiencies:
+        status = "refused_unverified_evidence"
+    else:
+        status = "sustained"
+
+    return SustainedAcceptanceReport(
+        scoped_report=scoped_report,
+        fresh_holdout_scorecard=fresh_holdout_scorecard,
+        fresh_holdout_verified=fresh_holdout_verified,
+        use_window_days=use_window_days,
+        kurdish_editor_signoff=kurdish_editor_signoff,
+        owner_signoff=owner_signoff,
+        sustained_status=status,
+        is_sustained=len(deficiencies) == 0,
+        deficiencies=tuple(deficiencies),
+        rating_claim=rating_claim,
     )
 
 
