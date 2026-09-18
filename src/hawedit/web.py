@@ -17,12 +17,27 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urlparse
 
 from hawedit.cli import use_utf8_streams
+from hawedit.transcripts import validate_media_id
 
 ROOT = Path(__file__).resolve().parents[2]
+
+ALLOWED_MEDIA_EXTENSIONS: Final[set[str]] = {
+    ".mp4",
+    ".mov",
+    ".webm",
+    ".wav",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".ass",
+    ".srt",
+    ".edl",
+    ".json",
+}
 
 FONTS_URL = (
     "https://fonts.googleapis.com/css2?"
@@ -548,7 +563,7 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
               currentClips = job.clips;
               renderClipTabs(currentClips);
             }}
-          }} else if (job.status === 'failed') {{
+          }} else if (job.status === 'failed' || job.status === 'skipped') {{
             clearInterval(pollTimer);
             pollTimer = null;
             btn.disabled = false;
@@ -663,6 +678,7 @@ class JobInfo:
     headline: str
     clips: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    client_token: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -677,6 +693,7 @@ class JobInfo:
             "headline": self.headline,
             "clips": self.clips,
             "error": self.error,
+            "client_token": self.client_token,
         }
 
 
@@ -738,8 +755,12 @@ class JobManager:
             self._save_job(job)
             return job.to_dict()
 
-    def submit_job(self, source: str) -> dict[str, Any]:
+    def submit_job(self, source: str, client_token: str | None = None) -> dict[str, Any]:
         with self._lock:
+            if client_token:
+                for existing in self._jobs.values():
+                    if existing.client_token == client_token:
+                        return existing.to_dict()
             job_id = f"job-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
             now = time.time()
             source_p = Path(source)
@@ -775,6 +796,7 @@ class JobManager:
                 updated_at=now,
                 headline=str(clips[0]["headline"]),
                 clips=clips,
+                client_token=client_token,
             )
             self._jobs[job_id] = job
             self._save_job(job)
@@ -934,14 +956,18 @@ class JobManager:
                     self._jobs[job_id].progress_percent = 100
                 elif run.skipped():
                     last_skipped = run.skipped()[-1]
-                    self._jobs[job_id].status = "completed"
+                    self._jobs[job_id].status = "failed"
                     self._jobs[job_id].stage = last_skipped[0]
                     self._jobs[
                         job_id
                     ].error = f"Pipeline skipped at {last_skipped[0]}: {last_skipped[1].reason}"
+                    self._jobs[job_id].progress_percent = stage_pct.get(last_skipped[0], 50)
                 else:
-                    self._jobs[job_id].status = "completed"
-                    self._jobs[job_id].progress_percent = 100
+                    self._jobs[job_id].status = "failed"
+                    self._jobs[
+                        job_id
+                    ].error = "Pipeline completed without producing an authorized delivery bundle."
+                    self._jobs[job_id].progress_percent = 95
                 self._jobs[job_id].updated_at = time.time()
                 self._save_job(self._jobs[job_id])
         except Exception as exc:
@@ -1047,7 +1073,10 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
                 )
                 return
 
-            job = JOB_MANAGER.submit_job(source=str(source_path))
+            client_token = (
+                str(payload.get("client_token", payload.get("idempotency_key", ""))).strip() or None
+            )
+            job = JOB_MANAGER.submit_job(source=str(source_path), client_token=client_token)
             self.send_response(201)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1142,28 +1171,87 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path.startswith("/media/"):
-            filename = path.replace("/media/", "").strip("/")
+            raw_filename = path.replace("/media/", "", 1).strip()
+            if (
+                not raw_filename
+                or "/" in raw_filename
+                or "\\" in raw_filename
+                or ":" in raw_filename
+                or ".." in raw_filename
+            ):
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Media file not found")
+                return
+
+            filename_p = Path(raw_filename)
+            filename = filename_p.name
+            if filename != raw_filename or filename.startswith("."):
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Media file not found")
+                return
+
+            suffix = filename_p.suffix.lower()
+            if suffix not in ALLOWED_MEDIA_EXTENSIONS:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Media file not found")
+                return
+
+            try:
+                validate_media_id(filename_p.stem)
+            except ValueError:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Media file not found")
+                return
+
             candidates = [
                 ROOT / "work" / filename,
                 ROOT / "media" / filename,
                 ROOT / "tests" / "fixtures" / filename,
             ]
+            for job in JOB_MANAGER.get_all_jobs():
+                job_work = JOB_MANAGER._jobs_dir / str(job["job_id"])
+                candidates.append(job_work / filename)
+                candidates.append(job_work / "delivery" / filename)
+                candidates.append(job_work / "deliverables" / filename)
             candidates.extend(list((ROOT / "work").glob(f"*/{filename}")))
             candidates.extend(list((ROOT / "work" / "jobs").glob(f"*/{filename}")))
+
+            allowed_roots = [
+                ROOT / "work",
+                ROOT / "media",
+                ROOT / "tests" / "fixtures",
+                JOB_MANAGER._jobs_dir,
+            ]
             for candidate in candidates:
-                if candidate.is_file():
-                    mime_type, _ = mimetypes.guess_type(str(candidate))
-                    self.send_response(200)
-                    self.send_header("Content-Type", mime_type or "application/octet-stream")
-                    self.send_header("Content-Length", str(candidate.stat().st_size))
-                    self.end_headers()
-                    try:
-                        with open(candidate, "rb") as f:
-                            while chunk := f.read(65536):
-                                self.wfile.write(chunk)
-                    except (ConnectionResetError, BrokenPipeError):
-                        return
+                try:
+                    resolved = candidate.resolve()
+                    if not resolved.is_file():
+                        continue
+                    if not any(
+                        resolved.is_relative_to(root.resolve())
+                        for root in allowed_roots
+                        if root.exists()
+                    ):
+                        continue
+                except Exception:
+                    continue
+
+                mime_type, _ = mimetypes.guess_type(str(resolved))
+                self.send_response(200)
+                self.send_header("Content-Type", mime_type or "application/octet-stream")
+                self.send_header("Content-Length", str(resolved.stat().st_size))
+                self.end_headers()
+                try:
+                    with open(resolved, "rb") as f:
+                        while chunk := f.read(65536):
+                            self.wfile.write(chunk)
+                except (ConnectionResetError, BrokenPipeError):
                     return
+                return
 
             self.send_response(404)
             self.end_headers()

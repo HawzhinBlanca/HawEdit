@@ -297,3 +297,78 @@ def test_studio_job_runs_pipeline_and_lists_only_delivered_bundles(
         s_code, _, body = _handle_request(req)
         assert s_code == 200
         assert hashlib.sha256(body).hexdigest() == clip["sha256"]
+
+
+def test_web_handler_media_rejects_path_traversal_and_forbidden_extensions() -> None:
+    # 1. Path traversal with ..
+    req1 = b"GET /media/../../pyproject.toml HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    code1, _, _ = _handle_request(req1)
+    assert code1 == 404
+
+    # 2. Hidden file
+    req2 = b"GET /media/.env HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    code2, _, _ = _handle_request(req2)
+    assert code2 == 404
+
+    # 3. Disallowed extension (e.g. .py, .sh)
+    req3 = b"GET /media/web.py HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    code3, _, _ = _handle_request(req3)
+    assert code3 == 404
+
+
+def test_web_handler_job_fails_when_pipeline_skips_or_delivery_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from hawedit.pipeline import PipelineRun, StageSkipped
+    from hawedit.web import JobManager
+
+    jm = JobManager(jobs_dir=tmp_path / "skip_jobs")
+    fixture_video = Path("tests/fixtures/kurdish-speech-3cuts.mp4")
+    job = jm.submit_job(str(fixture_video))
+    job_id = job["job_id"]
+
+    # Case A: Pipeline skipped a stage
+    mock_run_skipped = PipelineRun(
+        media_id="test-skip",
+        source=str(fixture_video),
+        work_dir=str(tmp_path / "work"),
+        editorial=StageSkipped("stage4_editorial", "quota exceeded"),
+    )
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", lambda *args, **kwargs: mock_run_skipped)
+    jm.run_job_sync(job_id)
+
+    updated = jm.get_job(job_id)
+    assert updated is not None
+    assert updated["status"] == "failed"
+    assert "editorial" in str(updated["error"])
+    assert "quota exceeded" in str(updated["error"])
+    assert updated["progress_percent"] < 100
+
+    # Case B: Pipeline completed without a delivery bundle
+    job2 = jm.submit_job(str(fixture_video))
+    job2_id = job2["job_id"]
+    mock_run_no_del = PipelineRun(
+        media_id="test-no-delivery",
+        source=str(fixture_video),
+        work_dir=str(tmp_path / "work2"),
+        delivery=None,
+    )
+    monkeypatch.setattr("hawedit.pipeline.run_pipeline", lambda *args, **kwargs: mock_run_no_del)
+    jm.run_job_sync(job2_id)
+
+    updated2 = jm.get_job(job2_id)
+    assert updated2 is not None
+    assert updated2["status"] == "failed"
+    assert "delivery bundle" in str(updated2["error"])
+
+
+def test_web_handler_submit_job_supports_idempotency_token(tmp_path: Path) -> None:
+    from hawedit.web import JobManager
+
+    jm = JobManager(jobs_dir=tmp_path / "idem_jobs")
+    fixture_video = Path("tests/fixtures/kurdish-speech-3cuts.mp4")
+    token = "token-12345"
+
+    job1 = jm.submit_job(str(fixture_video), client_token=token)
+    job2 = jm.submit_job(str(fixture_video), client_token=token)
+    assert job1["job_id"] == job2["job_id"]
