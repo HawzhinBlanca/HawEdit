@@ -23,7 +23,7 @@ Every row is proposed and unchecked. Read the linked specification for full EARS
 - [x] T16 Unknown billed outcomes and retries remain persisted, bounded and explicit
 - [x] T17 Real process/storage/runtime faults preserve primary reasons, cleanup and delivery integrity
 - [x] T18 Relevant changes invalidate only dependent artifacts; schema/release rollback works
-- [ ] T19 Independent holdout, blind comparisons, current gate/CI and owner review produce a scoped acceptance report
+- [x] T19 Independent holdout, blind comparisons, current gate/CI and owner review produce a scoped acceptance report
 - [ ] T20 A fresh holdout and representative use window substantiate sustained acceptance
 
 | Task | Dependency | Smallest observable outcome | Criteria / proposed test evidence |
