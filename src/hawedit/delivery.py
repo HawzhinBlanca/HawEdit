@@ -61,6 +61,7 @@ __all__ = [
     "DeliveryError",
     "DeliveryRefused",
     "build_edl",
+    "build_effective_source_cuts",
     "build_srt",
     "ms_to_srt_time",
     "ms_to_timecode",
@@ -378,6 +379,32 @@ def build_edl(
         cumulative_record_frames += duration_frames
 
     return "\n".join(lines) + "\n"
+
+
+def build_effective_source_cuts(
+    clip_in_ms: int,
+    source_shot_cuts_ms: Sequence[int],
+    *,
+    edit_plan_cuts: Sequence[int] = (),
+    silence_cuts: Sequence[int] = (),
+    ass_path: Path | None = None,
+) -> tuple[int, ...]:
+    """Combine source shot cuts with planned edit plan cuts, silence trim boundaries,
+    and dialogue cue transitions.
+    """
+    effective: list[int] = list(source_shot_cuts_ms)
+    for pc in edit_plan_cuts:
+        effective.append(clip_in_ms + int(pc))
+    for sc in silence_cuts:
+        effective.append(clip_in_ms + int(sc))
+    if ass_path is not None and ass_path.is_file():
+        with contextlib.suppress(Exception):
+            from hawedit.measure import _parse_ass_dialogue_cues
+
+            for cue_start, cue_end in _parse_ass_dialogue_cues(ass_path):
+                effective.append(clip_in_ms + cue_start)
+                effective.append(clip_in_ms + cue_end)
+    return tuple(sorted(set(effective)))
 
 
 def reconcile_delivery(
@@ -900,29 +927,27 @@ def promote_candidate(
     if not candidate_edit_plan.is_file():
         candidate_edit_plan = review_dir / "edit_plan.json"
 
-    effective_source_cuts = list(source_shot_cuts_ms)
+    edit_plan_cuts: list[int] = []
+    silence_cuts: list[int] = []
     if candidate_edit_plan.is_file() and candidate_edit_plan.stat().st_size > 0:
         try:
             plan_data = json.loads(candidate_edit_plan.read_text(encoding="utf-8"))
-            for pc in plan_data.get("shot_cuts_ms", []):
-                effective_source_cuts.append(approved_clip.in_ms + int(pc))
+            edit_plan_cuts.extend(int(pc) for pc in plan_data.get("shot_cuts_ms", []))
             retained = plan_data.get("time_mapping", {}).get("retained_intervals_ms", [])
             accum_ms = 0
             for start_ms, end_ms in retained:
                 accum_ms += end_ms - start_ms
-                effective_source_cuts.append(approved_clip.in_ms + accum_ms)
+                silence_cuts.append(accum_ms)
         except Exception:
             pass
 
-    if candidate_ass.is_file():
-        try:
-            from hawedit.measure import _parse_ass_dialogue_cues
-
-            for cue_start, cue_end in _parse_ass_dialogue_cues(candidate_ass):
-                effective_source_cuts.append(approved_clip.in_ms + cue_start)
-                effective_source_cuts.append(approved_clip.in_ms + cue_end)
-        except Exception:
-            pass
+    effective_source_cuts = build_effective_source_cuts(
+        approved_clip.in_ms,
+        source_shot_cuts_ms,
+        edit_plan_cuts=edit_plan_cuts,
+        silence_cuts=silence_cuts,
+        ass_path=candidate_ass if candidate_ass.is_file() else None,
+    )
 
     reconcile_delivery(
         clip=approved_clip,

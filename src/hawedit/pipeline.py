@@ -110,6 +110,7 @@ from hawedit.delivery import (
     DeliveryError,
     DeliveryRefused,
     build_edl,
+    build_effective_source_cuts,
     build_srt,
     promote_candidate,
     reconcile_delivery,
@@ -2241,10 +2242,16 @@ def _render_episode_single_clip(
 
         measurement = measure_clip(render_path, ass_path=ass_path, ffmpeg=ffmpeg)
         bundle.write_text("measured.json", measurement.to_json())
-        reconcile_source_cuts = (
-            tuple(clip.in_ms + sc for sc in (source_cuts + list(silence_plan.cut_points_ms)))
-            if (silence_plan is not None and silence_plan.total_removed_ms > 0)
-            else ingested.shot_cuts_ms
+        reconcile_source_cuts = build_effective_source_cuts(
+            clip.in_ms,
+            ingested.shot_cuts_ms,
+            edit_plan_cuts=visual_edit_plan.shot_cuts_ms,
+            silence_cuts=(
+                silence_plan.cut_points_ms
+                if (silence_plan is not None and silence_plan.total_removed_ms > 0)
+                else ()
+            ),
+            ass_path=ass_path,
         )
         effective_min_face_share = (
             min_face_share if min_face_share is not None else (0.08 if first_frame_gate else None)
@@ -3886,6 +3893,7 @@ def run_pipeline(
                     planned_punch_ins=cand_reconcile_punch_ins,
                     source_shot_cuts_ms=ingested.shot_cuts_ms,
                     fps=source_fps,
+                    min_face_share=min_face_share,
                 )
                 log.finished("render", "promoted from review candidate without re-rendering")
                 log.finished("delivery")
@@ -4167,10 +4175,8 @@ def run_pipeline(
             remapped_focus_points = tuple((point.at_ms, point.center_x) for point in focus_points)
 
         planned_punch_ins: tuple[tuple[int, float], ...]
-        reconcile_punch_ins: tuple[tuple[int, float], ...]
         if config.punch_in_cadence_ms == 0:
             planned_punch_ins = ()
-            reconcile_punch_ins = ()
         elif eased_push or profile == "deliverable" or config.eased_push:
             spans = shot_spans(
                 cut_pts,
@@ -4179,7 +4185,6 @@ def run_pipeline(
                 min_shot_ms=config.punch_in_cadence_ms,
             )
             planned_punch_ins = eased_push_schedule(spans)
-            reconcile_punch_ins = ()
         else:
             planned_punch_ins = punch_in_schedule(
                 cut_pts,
@@ -4187,7 +4192,6 @@ def run_pipeline(
                 avoid_ms=source_cuts,
                 min_shot_ms=config.punch_in_cadence_ms,
             )
-            reconcile_punch_ins = planned_punch_ins
 
         fps = frame_rate(source, ffmpeg)
         retained_intervals: tuple[tuple[int, int], ...] | None = None
@@ -4384,10 +4388,16 @@ def run_pipeline(
         # Independent Level C reconciliation gate before publication (T1.2 / ADR D-263)
         measurement = measure_clip(render_path, ass_path=ass_path, ffmpeg=ffmpeg)
         bundle.write_text("measured.json", measurement.to_json())
-        reconcile_source_cuts = (
-            tuple(clip.in_ms + sc for sc in (source_cuts + list(silence_plan.cut_points_ms)))
-            if (silence_plan is not None and silence_plan.total_removed_ms > 0)
-            else ingested.shot_cuts_ms
+        reconcile_source_cuts = build_effective_source_cuts(
+            clip.in_ms,
+            ingested.shot_cuts_ms,
+            edit_plan_cuts=visual_edit_plan.shot_cuts_ms,
+            silence_cuts=(
+                silence_plan.cut_points_ms
+                if (silence_plan is not None and silence_plan.total_removed_ms > 0)
+                else ()
+            ),
+            ass_path=ass_path,
         )
         effective_min_face_share = (
             min_face_share if min_face_share is not None else (0.08 if first_frame_gate else None)
@@ -4396,7 +4406,7 @@ def run_pipeline(
             clip=effective_clip,
             measurement=measurement,
             captions_burned_in=rendered.captions_burned_in,
-            planned_punch_ins=reconcile_punch_ins,
+            planned_punch_ins=planned_punch_ins,
             source_shot_cuts_ms=reconcile_source_cuts,
             fps=fps,
             for_review=is_review_render,
@@ -4792,6 +4802,14 @@ def build_parser() -> argparse.ArgumentParser:
             "hold the vertical crop at the centre of frame instead of tracking faces. The "
             "default tracks, because a centred crop was measured putting an empty wall on "
             "screen with both speakers cut off at the edges (D-258)"
+        ),
+    )
+    parser.add_argument(
+        "--min-face-share",
+        type=float,
+        default=None,
+        help=(
+            "minimum required face-detected and speaking-face presence share (default: 0.90 / 0.98)"
         ),
     )
     parser.add_argument(
@@ -5389,6 +5407,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         excise_fillers=getattr(args, "excise_fillers", True),
         two_person_split=getattr(args, "two_person_split", "auto"),
         brand_kit=brand_kit,
+        min_face_share=getattr(args, "min_face_share", None),
         caption_style=getattr(args, "caption_style", None),
         keyword_emphasis=getattr(args, "keyword_emphasis", True),
         visual_nonverbal=getattr(args, "visual_nonverbal", False),

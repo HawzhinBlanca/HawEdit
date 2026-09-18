@@ -40,6 +40,7 @@ from hawedit.delivery import (
     DeliveryError,
     DeliveryRefused,
     build_edl,
+    build_effective_source_cuts,
     build_srt,
     ms_to_srt_time,
     ms_to_timecode,
@@ -1484,3 +1485,24 @@ def test_promotion_rejects_changed_sidecar_or_plan_binding(tmp_path: Path) -> No
             qc_record=qc_record,
             source=source_file,
         )
+
+
+def test_build_effective_source_cuts(tmp_path: Path) -> None:
+    ass_file = tmp_path / "test.ass"
+    ass_file.write_text(
+        "[Script Info]\nScriptType: v4.00+\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,Word1\n"
+        "Dialogue: 0,0:00:03.00,0:00:04.00,Default,,0,0,0,,Word2\n",
+        encoding="utf-8",
+    )
+    cuts = build_effective_source_cuts(
+        clip_in_ms=1000,
+        source_shot_cuts_ms=[500, 2000],
+        edit_plan_cuts=[300, 800],
+        silence_cuts=[150],
+        ass_path=ass_file,
+    )
+    expected = (500, 1150, 1300, 1800, 2000, 3500, 4000, 5000)
+    assert cuts == expected
