@@ -19,8 +19,10 @@ import pytest
 from hawedit.captions import (
     HOOK_BANNER_MARGIN_V,
     CaptionStyle,
+    CaptionVerificationError,
     HookBannerConfig,
     build_ass,
+    verify_caption_text,
 )
 from hawedit.pipeline import build_parser
 from hawedit.render import BRollItem, ProvenanceViolation, render_clip
@@ -58,6 +60,13 @@ def test_kinetic_pop_style_emits_dynamic_bounce_tags(sample_sentence: Sentence) 
     assert "پۆڵ" in ass
     assert "برێمەر" in ass
     assert "پێشمەرگە" in ass
+
+    # Multi-event kinetic animation passes caption text verification
+    verify_caption_text(ass, expected_text=sample_sentence.text)
+
+    # Inverted / wrong text is still strictly rejected
+    with pytest.raises(CaptionVerificationError, match="wrong text"):
+        verify_caption_text(ass, expected_text=["هەڵە", "دەق"])
 
 
 def test_hook_banner_ass_generation_layer_and_timing(sample_sentence: Sentence) -> None:

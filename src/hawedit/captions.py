@@ -2236,6 +2236,41 @@ def compare_golden_render(reference: Path, candidate: Path, ffmpeg: Path | None 
 _ASS_OVERRIDE_TAGS: Final = re.compile(r"\{[^}]*\}")
 
 
+def _collapse_repeated_token_blocks(tokens: list[str], max_block_size: int = 8) -> list[str]:
+    """Collapse contiguous repeated token blocks emitted by animated subtitle styles.
+
+    For example, animated chunk ['A', 'B', 'C'] emitted 3 times as
+    ['A', 'B', 'C', 'A', 'B', 'C', 'A', 'B', 'C'] collapses to ['A', 'B', 'C'].
+    """
+    if not tokens:
+        return []
+    result: list[str] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        matched_block_len = 0
+        matched_repeats = 0
+        for k in range(min(max_block_size, (n - i) // 2), 0, -1):
+            block = tokens[i : i + k]
+            repeats = 1
+            while (
+                i + (repeats + 1) * k <= n
+                and tokens[i + repeats * k : i + (repeats + 1) * k] == block
+            ):
+                repeats += 1
+            if repeats > 1:
+                matched_block_len = k
+                matched_repeats = repeats
+                break
+        if matched_block_len > 0:
+            result.extend(tokens[i : i + matched_block_len])
+            i += matched_block_len * matched_repeats
+        else:
+            result.append(tokens[i])
+            i += 1
+    return result
+
+
 def verify_caption_text(
     ass_text_or_path: str | Path,
     expected_text: Sequence[str] | str | None = None,
@@ -2291,9 +2326,30 @@ def verify_caption_text(
                     found_tokens.append(normalize_sorani(clean_w))
 
         if expected_tokens != found_tokens:
-            raise CaptionVerificationError(
-                f"wrong text: expected {expected_tokens!r} but found {found_tokens!r}"
-            )
+            # Check 1: Deduplicate consecutive identical dialogue lines (e.g. KINETIC_POP)
+            deduped_lines: list[str] = []
+            for d_line in dialogue_lines:
+                if not deduped_lines or d_line != deduped_lines[-1]:
+                    deduped_lines.append(d_line)
+
+            deduped_tokens: list[str] = []
+            for d_line in deduped_lines:
+                for w in d_line.split():
+                    clean_w = _PUNCT_CLEANER.sub("", w).strip()
+                    if clean_w:
+                        deduped_tokens.append(normalize_sorani(clean_w))
+
+            if expected_tokens == deduped_tokens:
+                found_tokens = deduped_tokens
+            else:
+                # Check 2: Collapse contiguous repeating word blocks (e.g. RTL_WORD_HIGHLIGHT)
+                collapsed_tokens = _collapse_repeated_token_blocks(found_tokens)
+                if expected_tokens == collapsed_tokens:
+                    found_tokens = collapsed_tokens
+                else:
+                    raise CaptionVerificationError(
+                        f"wrong text: expected {expected_tokens!r} but found {found_tokens!r}"
+                    )
 
     # 2. Broken joining check
     for d_line in all_lines:
