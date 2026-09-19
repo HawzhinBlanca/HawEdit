@@ -487,7 +487,7 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
             <select id="optScreener" class="form-select">
               <option value="none" selected>ئاسایی (Direct Ingest)</option>
               <option value="gemini-flash">Gemini 2.5 Flash (Kurdish AI Screener)</option>
-              <option value="heuristic">خێرا (Rule-based Fast Screener)</option>
+              <option value="jev">TypeSafe Jev (System One AI Screener)</option>
             </select>
           </div>
           <div class="form-group">
