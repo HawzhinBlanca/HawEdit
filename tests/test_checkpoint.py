@@ -91,7 +91,9 @@ def test_pipeline_generates_stage_checkpoints(tmp_path: Path) -> None:
     assert (work / "stage0" / "ingest.json").is_file()
 
 
-def test_pipeline_resumes_stage0_from_checkpoint(tmp_path: Path) -> None:
+def test_pipeline_resumes_stage0_from_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """run_pipeline reuses stage0 artifacts when valid checkpoint marker exists."""
     from hawedit.pipeline import run_pipeline
 
@@ -101,6 +103,11 @@ def test_pipeline_resumes_stage0_from_checkpoint(tmp_path: Path) -> None:
     work = tmp_path / "work"
     run1 = run_pipeline(fixture, work)
     assert isinstance(run1.ingest, IngestResult)
+
+    def _fail_ingest(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("ingest was re-run instead of resuming from checkpoint")
+
+    monkeypatch.setattr("hawedit.pipeline.ingest", _fail_ingest)
 
     # Re-running into the same work directory resumes Stage 0 from checkpoint
     run2 = run_pipeline(fixture, work)

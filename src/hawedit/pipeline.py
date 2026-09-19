@@ -198,6 +198,7 @@ from hawedit.render import (
     shot_spans,
     vertical_crop_size,
 )
+from hawedit.screener import CandidateScreener, get_screener
 from hawedit.sentences import (
     Sentence,
     UndeliverableOrder,
@@ -2532,6 +2533,7 @@ def run_pipeline(
     visual_composer: VisualComposer | None = None,
     visual_query: str | None = None,
     judge: EditorialJudge | None = None,
+    screener: CandidateScreener | str | None = None,
     temporal_grounder: TemporalGrounder | None = None,
     subject_tracker: SubjectTracker | None = None,
     auto_select: bool = False,
@@ -2661,6 +2663,10 @@ def run_pipeline(
     if hook_banner is None:
         hook_banner = config.hook_banner
 
+    resolved_screener: CandidateScreener | None = (
+        get_screener(screener) if isinstance(screener, str) else screener
+    )
+
     if profile == "production" and not assemble:
         assemble = True
 
@@ -2701,8 +2707,8 @@ def run_pipeline(
                 and audio_p.stat().st_size > 0
                 and proxy_p.stat().st_size > 0
             ):
-                probe_stream(proxy_p, "v", ffmpeg=ffmpeg)
-                probe_stream(audio_p, "a", ffmpeg=ffmpeg)
+                probe_stream(proxy_p, "stream=index", ffmpeg=ffmpeg, video_only=True)
+                probe_stream(audio_p, "stream=index", ffmpeg=ffmpeg)
                 ingested = saved_ingest
                 log.finished("ingest", "resumed from checkpoint")
         except Exception:
@@ -3028,9 +3034,27 @@ def run_pipeline(
         # candidates and 18 candidates, one judged each time, hook 0.20 both times.
         # `_candidate_priority` orders by discovery rank and knows nothing about editorial
         # quality, so nothing established rank #1 was the *best* candidate.
-        judge_plans = _judgeable_plans(
-            merged, sentences, judge_top_n, min_clip_ms, allow_padding=allow_padding
-        )
+        if resolved_screener is not None:
+            all_plans = _judgeable_plans(
+                merged, sentences, len(merged), min_clip_ms, allow_padding=allow_padding
+            )
+            if all_plans:
+                candidate_pairs = [
+                    (cand, _candidate_slice_text(normalized, cand.in_ms, cand.out_ms))
+                    for cand, _ in all_plans
+                ]
+                screened = resolved_screener.screen(candidate_pairs, top_k=judge_top_n)
+                ordered_plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
+                for s in screened:
+                    for cand, run_indices in all_plans:
+                        if cand.candidate_id == s.candidate_id:
+                            ordered_plans.append((cand, run_indices))
+                            break
+                judge_plans = tuple(ordered_plans)
+        else:
+            judge_plans = _judgeable_plans(
+                merged, sentences, judge_top_n, min_clip_ms, allow_padding=allow_padding
+            )
         automatic = judge_plans[0][1] if judge_plans else ()
         if not automatic:
             # `--auto-select` ran, examined every candidate and chose nothing. Reported as a
@@ -4968,6 +4992,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--screener",
+        choices=("none", "gemini-flash", "jev"),
+        default="none",
+        help=(
+            "pre-screen candidate spans using fast System One models before Stage 4 judging (D-275)"
+        ),
+    )
+    parser.add_argument(
         "--min-clip-seconds",
         type=float,
         # `None` rather than the value, so "the operator asked for the default" and "the
@@ -5178,6 +5210,11 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         )
     if args.judge_top_n is not None and args.judge_top_n < 1:
         raise ValueError("--judge-top-n must be at least 1")
+
+    if getattr(args, "screener", "none") != "none" and not args.auto_select:
+        raise ValueError(
+            "--screener requires --auto-select; with --sentences the span is already chosen"
+        )
 
     if args.min_clip_seconds is not None and args.min_clip_seconds <= 0:
         raise ValueError("--min-clip-seconds must be greater than 0")
@@ -5422,6 +5459,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         min_separation_ms=getattr(args, "min_separation_ms", DEFAULT_MIN_SEPARATION_MS),
         max_text_similarity=getattr(args, "max_text_similarity", DEFAULT_MAX_TEXT_SIMILARITY),
         episode_id=getattr(args, "episode_id", None),
+        screener=getattr(args, "screener", None),
     )
 
 

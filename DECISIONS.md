@@ -14028,3 +14028,31 @@ Furthermore, AC-19 establishes two core editorial and operational requirements:
      `.measured.json`, and `.cover.png`.
    - `reconcile_episode_manifest` validates bundle integrity, measured duration, and zero temporal
      collisions across delivered clips, succeeding cleanly on valid no-clip manifests.
+
+---
+
+## D-275 · Pluggable Two-Tier Candidate Screening Funnel with Fast System One Models
+
+**Date:** 2026-09-18 · **Blueprint ref:** §3 Stage 3/4 · **Type:** architectural optimization
+
+**Context.**
+In full episodes with dozens of candidate spans, judging more than 3 candidates with Gemini 2.5 Pro
+costs significant latency (30-60s) and billed tokens per run. `specs/judge-top-n/plan.md` noted:
+`Stage 3 ranks candidates by discovery score; Stage 4 judges rank #1 and the run lives or dies on
+that single sample ... N is a spend multiplier`.
+
+**Decision.**
+1. Implement `CandidateScreener` protocol in `src/hawedit/screener.py` defining fast, sub-second
+   pre-screening across all eligible candidate spans before Stage 4.
+2. Provide two screener backends:
+   - `GeminiFlashScreener` (default): Uses `gemini-2.5-flash-lite` with structured JSON schema
+     (`SCREENER_SCHEMA`) to score hook potential, payoff strength, self-containment, and misleading
+     risk across candidates in a single parallel call. Zero new external accounts or keys required.
+   - `JevScreener`: Optional accelerator using TypeSafe AI's System One decision model (`Choice`,
+     `Score`, `Noul` primitives) via `TYPESAFE_API_KEY`.
+3. In `src/hawedit/pipeline.py`, `--screener [none|gemini-flash|jev]` enables the funnel: eligible
+   candidates are evaluated and sorted by composite score before the top $N$ survivors are passed
+   to Stage 4 Gemini 2.5 Pro for rich Sorani Kurdish editorial copywriting.
+4. Fail-stop: If `JevScreener` is requested without `TYPESAFE_API_KEY`, raise `CredentialError`
+   immediately rather than silently degrading.
+

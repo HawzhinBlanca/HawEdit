@@ -3416,6 +3416,11 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--judge-top-n requires --auto-select",
     ),
     (
+        "screener where it cannot act",
+        ["--screener", "gemini-flash"],
+        "--screener requires --auto-select",
+    ),
+    (
         "judging fewer than one candidate",
         ["--judge-top-n", "0", "--auto-select"],
         "--judge-top-n must be at least 1",
@@ -5218,6 +5223,11 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "judge-top-n without auto-select",
         ("--judge-top-n", "5"),
         "--judge-top-n requires --auto-select",
+    ),
+    (
+        "screener without auto-select",
+        ("--screener", "gemini-flash"),
+        "--screener requires --auto-select",
     ),
     (
         "judging fewer than one candidate",

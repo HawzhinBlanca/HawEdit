@@ -581,6 +581,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `video_grounding.py` | §3 Stage 5 | `MCG-NJU/TimeLens2-4B` grounding a query in one scene. It answers in seconds from the window's start; `VisualEvidenceInterval.from_window` moves that onto the media's clock, because an unshifted span can overlap the anchored sentence and extend the clip on footage from elsewhere. |
 | `visual_pipeline.py` | §3 Stages 2–3B | Extract once → Qwen embed → top-50 retrieve → rerank every hit → bounded survivors → VideoChat3 only on those survivors, with exact ID/score provenance. |
 | `keyframes.py` | §3 Stage 4 | Real source-timestamped JPEG extraction for the multimodal judge, capped at 20 images and 5 MiB per bounded read. |
+| `screener.py` | §3 Stage 3/4 | Fast Two-Tier Candidate Screening Funnel (D-275): prunes candidate spans via Gemini Flash or TypeSafe Jev before Stage 4 editorial judging. |
 | `reframe.py` | §3 Stage 6 | Dominant-face continuity plus strict speaker-labelled focus evidence reconciled to exclusive diarization turns; the production active-speaker associator remains external. |
 | `assembly.py` | §3 Stage 6 extension | Multi-moment story assembly, timeline re-offsetting, and unified editorial scoring across spliced spans. |
 | `cover.py` | §3 Stage 6 extension | Automatic thumbnail cover selection via face share, sharpness, and open-eyes heuristic, plus Kurdish title variants. |
