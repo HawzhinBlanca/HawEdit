@@ -186,6 +186,7 @@ from hawedit.reframe import (
     validate_speaker_focus_points,
 )
 from hawedit.render import (
+    BRollItem,
     Encoder,
     Reframe,
     RenderError,
@@ -1837,6 +1838,7 @@ def _render_episode_single_clip(
     music_bed_path: Path | str | None,
     music_ducking_volume: float,
     assemble: bool,
+    b_roll: Sequence[BRollItem] = (),
     profile: str,
     is_review_render: bool,
     visual_windows: Sequence[SceneWindow],
@@ -1946,8 +1948,14 @@ def _render_episode_single_clip(
                     shot_cuts_ms=ingested.shot_cuts_ms,
                 )
                 reframe_mode = Reframe.FACE_TRACKED
+            elif profile in ("production", "deliverable"):
+                raise RuntimeError(
+                    f"Subject tracking requested but detected zero faces for clip "
+                    f"{candidate.candidate_id}"
+                )
         except Exception:
-            pass
+            if profile in ("production", "deliverable"):
+                raise
 
     crop_target = {
         Reframe.STATIC_CENTRE: "static_centre",
@@ -2206,6 +2214,7 @@ def _render_episode_single_clip(
             brand_kit=brand_kit,
             music_bed_path=(Path(music_bed_path) if music_bed_path else None),
             music_ducking_volume=music_ducking_volume,
+            b_roll=b_roll,
             for_review=is_review_render,
             assembly_spans=assembly_spans,
             plan=visual_edit_plan,
@@ -2366,6 +2375,7 @@ def _run_episode_delivery(
     config: EffectiveConfiguration,
     visual_windows: Sequence[SceneWindow],
     log: RunEventLog,
+    b_roll: Sequence[BRollItem] = (),
 ) -> PipelineRun:
     """Orchestrate multi-clip episode delivery with shared preprocessing (AC-19)."""
     episode_config = EpisodePlanConfig(
@@ -2449,6 +2459,7 @@ def _run_episode_delivery(
                 music_bed_path=music_bed_path,
                 music_ducking_volume=music_ducking_volume,
                 assemble=assemble,
+                b_roll=b_roll,
                 profile=profile,
                 is_review_render=is_review_render,
                 visual_windows=visual_windows,
@@ -2569,6 +2580,7 @@ def run_pipeline(
     music_bed_path: Path | str | None = None,
     music_ducking_volume: float = 0.25,
     assemble: bool = False,
+    b_roll: Sequence[BRollItem] | str | Path | None = None,
     config: EffectiveConfiguration | None = None,
     max_clips: int | None = None,
     min_separation_ms: int = DEFAULT_MIN_SEPARATION_MS,
@@ -2675,6 +2687,55 @@ def run_pipeline(
             auto_select = True
         if judge_top_n == 1:
             judge_top_n = max(DEFAULT_JUDGE_TOP_N, max_clips * 2)
+
+    resolved_b_roll: tuple[BRollItem, ...] = ()
+    if b_roll is not None:
+        if isinstance(b_roll, str | Path):
+            b_path = Path(b_roll)
+            if b_path.is_file() and b_path.suffix.lower() == ".json":
+                try:
+                    b_data = json.loads(b_path.read_text(encoding="utf-8"))
+                    if isinstance(b_data, list):
+                        items_list = []
+                        for item in b_data:
+                            if isinstance(item, dict):
+                                items_list.append(
+                                    BRollItem(
+                                        path=Path(item["path"]),
+                                        start_ms=int(item.get("start_ms", 1000)),
+                                        duration_ms=int(item.get("duration_ms", 2500)),
+                                        position=str(item.get("position", "upper")),
+                                        width=int(item.get("width", 920)),
+                                    )
+                                )
+                        resolved_b_roll = tuple(items_list)
+                except Exception as exc:
+                    raise ValueError(f"invalid b-roll JSON file {b_path}: {exc}") from exc
+            elif b_path.is_file():
+                resolved_b_roll = (BRollItem(path=b_path, start_ms=1000, duration_ms=2500),)
+            else:
+                try:
+                    b_data = json.loads(str(b_roll))
+                    if isinstance(b_data, list):
+                        items_list = []
+                        for item in b_data:
+                            if isinstance(item, dict):
+                                items_list.append(
+                                    BRollItem(
+                                        path=Path(item["path"]),
+                                        start_ms=int(item.get("start_ms", 1000)),
+                                        duration_ms=int(item.get("duration_ms", 2500)),
+                                        position=str(item.get("position", "upper")),
+                                        width=int(item.get("width", 920)),
+                                    )
+                                )
+                        resolved_b_roll = tuple(items_list)
+                    else:
+                        raise ValueError("b-roll inline JSON must be a list of objects")
+                except Exception as exc:
+                    raise ValueError(f"unrecognized b-roll input: {b_roll}") from exc
+        else:
+            resolved_b_roll = tuple(b_roll)
 
     identifier = validate_media_id(media_id or source.stem)
     if transcript is not None and transcript.media_id != identifier:
@@ -3121,6 +3182,7 @@ def run_pipeline(
                     config=config,
                     visual_windows=windows,
                     log=log,
+                    b_roll=resolved_b_roll,
                 )
             return replace(
                 run,
@@ -3314,6 +3376,7 @@ def run_pipeline(
                         config=config,
                         visual_windows=windows,
                         log=log,
+                        b_roll=resolved_b_roll,
                     )
                 return replace(
                     run,
@@ -3414,6 +3477,7 @@ def run_pipeline(
             config=config,
             visual_windows=windows,
             log=log,
+            b_roll=resolved_b_roll,
         )
 
     log.started("boundary")
@@ -3776,6 +3840,16 @@ def run_pipeline(
                 shot_cuts_ms=ingested.shot_cuts_ms,
             )
             reframe_mode = Reframe.FACE_TRACKED
+        elif profile in ("production", "deliverable"):
+            return replace(
+                run,
+                boundary=boundary,
+                render=_operational_failure(
+                    "render",
+                    "requested subject tracking",
+                    RuntimeError(f"zero faces detected in {media_id} for production profile"),
+                ),
+            )
 
     crop_target = {
         Reframe.STATIC_CENTRE: "static_centre",
@@ -4321,6 +4395,7 @@ def run_pipeline(
             brand_kit=brand_kit,
             music_bed_path=(Path(music_bed_path) if music_bed_path else None),
             music_ducking_volume=music_ducking_volume,
+            b_roll=resolved_b_roll,
             for_review=is_review_render,
             assembly_spans=assembly_spans,
             plan=visual_edit_plan,
@@ -4969,6 +5044,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="background music volume level under dialogue during ducking (default: 0.25)",
     )
     parser.add_argument(
+        "--b-roll",
+        type=str,
+        default=None,
+        help="path to B-roll cutaway media file or JSON specification (Task 5, ADR D-273)",
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -5460,6 +5541,7 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         max_text_similarity=getattr(args, "max_text_similarity", DEFAULT_MAX_TEXT_SIMILARITY),
         episode_id=getattr(args, "episode_id", None),
         screener=getattr(args, "screener", None),
+        b_roll=getattr(args, "b_roll", None),
     )
 
 

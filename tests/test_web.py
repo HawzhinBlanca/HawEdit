@@ -372,3 +372,65 @@ def test_web_handler_submit_job_supports_idempotency_token(tmp_path: Path) -> No
     job1 = jm.submit_job(str(fixture_video), client_token=token)
     job2 = jm.submit_job(str(fixture_video), client_token=token)
     assert job1["job_id"] == job2["job_id"]
+
+
+def test_web_handler_post_repurpose_forwards_studio_options() -> None:
+    from hawedit.web import JOB_MANAGER
+
+    payload = {
+        "source": "kurdish-speech-3cuts.mp4",
+        "preset": "viral",
+        "caption_style": "kinetic_pop",
+        "hook_banner": True,
+        "max_clips": 3,
+    }
+    body_bytes = json.dumps(payload).encode("utf-8")
+    req = (
+        b"POST /api/repurpose HTTP/1.1\r\n"
+        b"Host: localhost:8080\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(body_bytes)).encode("ascii") + b"\r\n\r\n" + body_bytes
+    )
+    status_code, headers, body = _handle_request(req)
+    assert status_code == 201
+    data = json.loads(body.decode("utf-8"))
+    assert "job_id" in data
+    job = JOB_MANAGER.get_job(data["job_id"])
+    assert job is not None
+    opts = job.get("options", {})
+    assert opts.get("preset") == "viral"
+    assert opts.get("caption_style") == "kinetic_pop"
+    assert opts.get("hook_banner") is True
+    assert opts.get("max_clips") == 3
+
+
+def test_web_handler_serves_media_from_review_dir() -> None:
+    from hawedit.web import JOB_MANAGER
+
+    job_id = f"test-job-media-{int(json.loads(json.dumps(12345)))}"
+    review_dir = JOB_MANAGER._jobs_dir / job_id / "review" / "testclip"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    media_file = review_dir / "testclip.mp4"
+    media_file.write_bytes(b"dummy video data")
+
+    # Add a mock job entry so JOB_MANAGER recognizes job_id
+    from hawedit.web import JobInfo
+
+    JOB_MANAGER._jobs[job_id] = JobInfo(
+        job_id=job_id,
+        source="source.mp4",
+        status="completed",
+        stage="render",
+        stage_index=6,
+        progress_percent=100,
+        created_at=0.0,
+        updated_at=0.0,
+        headline="test",
+        clips=[],
+    )
+
+    req = b"GET /media/testclip.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    status_code, headers, body = _handle_request(req)
+    assert status_code == 200
+    assert "video/mp4" in headers.get("content-type", "")
+    assert body == b"dummy video data"

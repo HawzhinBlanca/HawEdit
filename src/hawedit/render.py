@@ -78,6 +78,7 @@ __all__ = [
     "SPEECH_CHAIN_FILTERS",
     "VERTICAL_HEIGHT",
     "VERTICAL_WIDTH",
+    "BRollItem",
     "Encoder",
     "LoudnessStats",
     "ProvenanceViolation",
@@ -1352,6 +1353,37 @@ def assert_asset_provenance(asset_path: Path) -> None:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class BRollItem:
+    """A contextual B-roll cutaway item (image or video) overlaid on the reel (Task 5, ADR D-273).
+
+    Parameters:
+        path: Path to the media asset (image or video).
+        start_ms: Offset in milliseconds from the start of the rendered clip.
+        duration_ms: Duration in milliseconds for the cutaway overlay (default 2500 ms).
+        position: 'center', 'upper', or 'top' (default 'upper').
+        width: Rendered width in pixels on the 1080x1920 canvas (default 920).
+    """
+
+    path: Path
+    start_ms: int
+    duration_ms: int = 2500
+    position: str = "upper"
+    width: int = 920
+
+    def __post_init__(self) -> None:
+        if not self.path.is_file():
+            raise FileNotFoundError(f"b-roll media file not found: {self.path}")
+        if self.start_ms < 0:
+            raise ValueError(f"start_ms must be non-negative, got {self.start_ms}")
+        if self.duration_ms <= 0:
+            raise ValueError(f"duration_ms must be positive, got {self.duration_ms}")
+        if self.width <= 0 or self.width > VERTICAL_WIDTH:
+            raise ValueError(f"width must be in (0, {VERTICAL_WIDTH}], got {self.width}")
+        if self.position not in ("upper", "center", "top"):
+            raise ValueError(f"position must be 'upper', 'center', or 'top', got {self.position!r}")
+
+
 def render_clip(
     clip: Clip,
     source: Path,
@@ -1378,6 +1410,7 @@ def render_clip(
     brand_kit: BrandKit | None = None,
     music_bed_path: Path | None = None,
     music_ducking_volume: float = 0.25,
+    b_roll: Sequence[BRollItem] = (),
     for_review: bool = False,
     assembly_spans: Sequence[AssemblySpan] | None = None,
     plan: VisualEditPlan | None = None,
@@ -1403,6 +1436,9 @@ def render_clip(
         if deliverable:
             raise ProvenanceViolation("production profile forbids unvetted background music bed")
         assert_asset_provenance(music_bed_path)
+
+    for b_item in b_roll:
+        assert_asset_provenance(b_item.path)
 
     if plan is not None:
         if plan.clip_id != clip.clip_id:
@@ -1596,19 +1632,35 @@ def render_clip(
 
     sub_f = subtitle_filter(ass_path, fonts_dir)
     extra_inputs: list[str] = []
+    has_logo = brand_kit is not None and brand_kit.logo_path is not None
+    has_b_roll = len(b_roll) > 0
+    has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
+    has_music = music_bed_path is not None
+    has_assembly = assembly_spans is not None and len(assembly_spans) > 0
 
-    if brand_kit is not None and brand_kit.logo_path is not None:
+    current_input_idx = 1
+    logo_input_idx: int | None = None
+    if has_logo and brand_kit is not None and brand_kit.logo_path is not None:
         extra_inputs.extend(["-i", str(brand_kit.logo_path)])
-    if music_bed_path is not None:
+        logo_input_idx = current_input_idx
+        current_input_idx += 1
+
+    b_roll_inputs: list[tuple[int, BRollItem]] = []
+    if has_b_roll:
+        for b_item in b_roll:
+            extra_inputs.extend(["-i", str(b_item.path)])
+            b_roll_inputs.append((current_input_idx, b_item))
+            current_input_idx += 1
+
+    music_input_idx: int | None = None
+    if has_music and music_bed_path is not None:
         if not music_bed_path.is_file():
             raise FileNotFoundError(f"music bed file not found: {music_bed_path}")
         extra_inputs.extend(["-i", str(music_bed_path)])
+        music_input_idx = current_input_idx
+        current_input_idx += 1
 
-    has_logo = brand_kit is not None and brand_kit.logo_path is not None
-    has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
-    has_music = music_bed_path is not None
-
-    if has_logo or has_silence or has_music or has_assembly:
+    if has_logo or has_silence or has_music or has_assembly or has_b_roll:
         if has_assembly and assembly_spans is not None:
             from hawedit.assembly import assembled_splice_filter
 
@@ -1624,19 +1676,52 @@ def render_clip(
             v_in = "[0:v]"
             a_in = "[0:a]"
 
-        if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
-            v_base = f"{v_in}{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+        if has_b_roll:
+            v_base = f"{v_in}{video_filter}[v_cut]"
+            v_current = "[v_cut]"
+            broll_steps = ""
+            for idx, (b_in_idx, b_item) in enumerate(b_roll_inputs):
+                b_dur_s = b_item.duration_ms / 1000.0
+                b_st_s = b_item.start_ms / 1000.0
+                b_end_s = b_st_s + b_dur_s
+                fade_d = min(0.2, b_dur_s / 3.0)
+                b_y = (
+                    "120"
+                    if b_item.position == "top"
+                    else ("(H-h)/2" if b_item.position == "center" else "280")
+                )
+                b_out_tag = f"broll_out_{idx}"
+                v_next = f"[v_brolled_{idx}]"
+                broll_prep = (
+                    f"[{b_in_idx}:v]format=rgba,loop=loop=-1:size=2,"
+                    f"scale={b_item.width}:-2,setpts=PTS-STARTPTS+{b_st_s}/TB,"
+                    f"fade=t=in:st={b_st_s:.3f}:d={fade_d:.3f}:alpha=1,"
+                    f"fade=t=out:st={b_end_s - fade_d:.3f}:d={fade_d:.3f}:alpha=1[{b_out_tag}];"
+                )
+                broll_overlay = (
+                    f"{v_current}[{b_out_tag}]overlay=x=(W-w)/2:y={b_y}:"
+                    f"enable='between(t,{b_st_s:.3f},{b_end_s:.3f})':eof_action=repeat{v_next};"
+                )
+                broll_steps += f"{broll_prep}{broll_overlay}"
+                v_current = v_next
+            v_sub_chain = f"{v_current}{sub_f}[v_sub]"
+            full_video = f"{v_base};{broll_steps}{v_sub_chain}"
         else:
-            v_base = f"{v_in}{video_filter},{sub_f}[v_sub]"
+            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                v_base = f"{v_in}{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+            else:
+                v_base = f"{v_in}{video_filter},{sub_f}[v_sub]"
+            full_video = v_base
 
         v_current = "[v_sub]"
         logo_steps = ""
         if has_logo and brand_kit is not None and brand_kit.logo_path is not None:
+            assert logo_input_idx is not None
             logo_x, logo_y = logo_overlay_coordinates(
                 brand_kit.logo_position, brand_kit.logo_margin
             )
             logo_prep = (
-                f"[1:v]scale={brand_kit.logo_width}:-2,format=rgba,"
+                f"[{logo_input_idx}:v]scale={brand_kit.logo_width}:-2,format=rgba,"
                 f"colorchannelmixer=aa={brand_kit.logo_opacity:.2f}[logo];"
             )
             logo_overlay = (
@@ -1648,7 +1733,7 @@ def render_clip(
         v_pb = f"{v_current}{pb_f}[v_out]" if pb_f is not None else f"{v_current}null[v_out]"
 
         if has_music:
-            music_input_idx = 2 if has_logo else 1
+            assert music_input_idx is not None
             dur_s = effective_duration_ms / 1000.0
             sc_filter = "sidechaincompress=threshold=0.03:ratio=6:attack=80:release=400"
             mix_filter = "amix=inputs=2:weights=1.0 1.0:dropout_transition=2"
@@ -1663,7 +1748,7 @@ def render_clip(
         else:
             a_chain = f"{a_in}{af_chain}[a_out]"
 
-        full_complex = f"{trim_prefix}{v_base};{logo_steps}{v_pb};{a_chain}"
+        full_complex = f"{trim_prefix}{full_video};{logo_steps}{v_pb};{a_chain}"
         stream_filter_args = [
             "-filter_complex",
             full_complex,

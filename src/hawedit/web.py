@@ -363,6 +363,74 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       color: #000;
       transform: translateY(-2px);
     }}
+    .studio-settings {{
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 18px;
+      margin-bottom: 18px;
+    }}
+    .settings-title {{
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }}
+    .form-row {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }}
+    .form-group {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }}
+    .form-group label {{
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }}
+    .form-select {{
+      background: rgba(11, 15, 25, 0.9);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: var(--text);
+      font-family: 'Vazirmatn', sans-serif;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }}
+    .form-select:focus {{
+      border-color: var(--accent);
+    }}
+    .toggle-row {{
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }}
+    .toggle-label {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--text);
+      user-select: none;
+    }}
+    .toggle-label input[type="checkbox"] {{
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }}
   </style>
 </head>
 <body>
@@ -390,6 +458,58 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       </div>
       <div id="fileInfo"
            style="margin-top:14px;font-size:13px;color:var(--accent);font-weight:600;display:none;">
+      </div>
+
+      <div class="studio-settings">
+        <div class="settings-title">⚙️ ڕێکخستنی ستۆدیۆ (Studio Settings)</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="optPreset">شێوازی ڤیدیۆ (Preset)</label>
+            <select id="optPreset" class="form-select">
+              <option value="viral" selected>ڤایرۆڵ (Viral Hook & Quick Pacing)</option>
+              <option value="broadcast">برۆدکاست (Clean Studio & Interview)</option>
+              <option value="split">دووانە (Split-Screen Two Speakers)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="optCaptionStyle">شێوازی ژێرنووس (Captions)</label>
+            <select id="optCaptionStyle" class="form-select">
+              <option value="kinetic_pop" selected>جووڵەی وشەکان (Kinetic Pop)</option>
+              <option value="viral_popup">دەرکەوتنی وشە (Viral Popup)</option>
+              <option value="rtl_highlight">دیاریکردنی زێڕین (RTL Highlight)</option>
+              <option value="broadcast_studio">تەواوی دێڕ (Line / Broadcast)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="optScreener">فلتەری ژیری دەستکرد (AI Screener)</label>
+            <select id="optScreener" class="form-select">
+              <option value="none" selected>ئاسایی (Direct Ingest)</option>
+              <option value="gemini-flash">Gemini 2.5 Flash (Kurdish AI Screener)</option>
+              <option value="heuristic">خێرا (Rule-based Fast Screener)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="optMaxClips">ژمارەی شۆرتەکان (Clips Count)</label>
+            <select id="optMaxClips" class="form-select">
+              <option value="1">١ شۆرتی تایبەت (Top 1 Reel)</option>
+              <option value="2">٢ شۆرت (Top 2 Reels)</option>
+              <option value="3" selected>٣ شۆرت (Top 3 Viral Reels)</option>
+              <option value="5">٥ شۆرت (Top 5 Batch)</option>
+            </select>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle-label">
+            <input type="checkbox" id="optHookBanner" checked>
+            <span>بەرزکردنەوەی ناونیشانی دەستپێک (Top Hook Banner)</span>
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="optSilence" checked>
+            <span>بڕینی بێدەنگی و پشووەکان (Silence Tightening)</span>
+          </label>
+        </div>
       </div>
       
       <button class="btn" id="startBtn" onclick="startRepurposing()">
@@ -506,10 +626,27 @@ DASHBOARD_HTML = f"""<!DOCTYPE html>
       document.getElementById('progressBar').style.width = '5%';
 
       try {{
+        const presetEl = document.getElementById('optPreset');
+        const captionStyleEl = document.getElementById('optCaptionStyle');
+        const screenerEl = document.getElementById('optScreener');
+        const maxClipsEl = document.getElementById('optMaxClips');
+        const hookBannerEl = document.getElementById('optHookBanner');
+        const silenceEl = document.getElementById('optSilence');
+
+        const payload = {{
+          source: fileName,
+          preset: presetEl ? presetEl.value : 'viral',
+          caption_style: captionStyleEl ? captionStyleEl.value : 'kinetic_pop',
+          screener: screenerEl ? screenerEl.value : 'none',
+          max_clips: maxClipsEl ? parseInt(maxClipsEl.value, 10) : 3,
+          hook_banner: hookBannerEl ? hookBannerEl.checked : true,
+          silence_tightening: silenceEl ? silenceEl.checked : true,
+        }};
+
         const res = await fetch('/api/repurpose', {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ source: fileName }})
+          body: JSON.stringify(payload)
         }});
         if (!res.ok) {{
           const errData = await res.json().catch(() => ({{}}));
@@ -679,6 +816,7 @@ class JobInfo:
     clips: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     client_token: str | None = None
+    options: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -694,6 +832,7 @@ class JobInfo:
             "clips": self.clips,
             "error": self.error,
             "client_token": self.client_token,
+            "options": self.options,
         }
 
 
@@ -755,7 +894,12 @@ class JobManager:
             self._save_job(job)
             return job.to_dict()
 
-    def submit_job(self, source: str, client_token: str | None = None) -> dict[str, Any]:
+    def submit_job(
+        self,
+        source: str,
+        client_token: str | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             if client_token:
                 for existing in self._jobs.values():
@@ -797,6 +941,7 @@ class JobManager:
                 headline=str(clips[0]["headline"]),
                 clips=clips,
                 client_token=client_token,
+                options=options or {},
             )
             self._jobs[job_id] = job
             self._save_job(job)
@@ -904,54 +1049,129 @@ class JobManager:
                     self._save_job(self._jobs[job_id])
 
         try:
+            from hawedit.captions import CaptionStyle
             from hawedit.pipeline import Delivery, run_pipeline
+            from hawedit.render import RenderResult
 
-            run = run_pipeline(
-                source=source_file,
-                work_dir=job_work_dir,
-                on_event=on_event,
-                auto_select=True,
-            )
+            job_info = self._jobs[job_id]
+            opts = getattr(job_info, "options", {}) or {}
+
+            pipeline_kwargs: dict[str, Any] = {
+                "source": source_file,
+                "work_dir": job_work_dir,
+                "on_event": on_event,
+                "auto_select": True,
+            }
+            if opts.get("preset"):
+                pipeline_kwargs["preset"] = str(opts["preset"])
+            if opts.get("caption_style"):
+                pipeline_kwargs["caption_style"] = CaptionStyle(opts["caption_style"])
+            if "hook_banner" in opts:
+                pipeline_kwargs["hook_banner"] = bool(opts["hook_banner"])
+            if opts.get("hook_text"):
+                pipeline_kwargs["hook_text"] = str(opts["hook_text"])
+            if "silence_tightening" in opts:
+                tighten = bool(opts["silence_tightening"])
+                pipeline_kwargs["silence_threshold_ms"] = 250 if tighten else 0
+                pipeline_kwargs["silence_target_gap_ms"] = 100
+                pipeline_kwargs["excise_fillers"] = tighten
+            if opts.get("screener") and opts["screener"] != "none":
+                pipeline_kwargs["screener"] = str(opts["screener"])
+            if opts.get("max_clips"):
+                pipeline_kwargs["max_clips"] = int(opts["max_clips"])
+            if opts.get("b_roll"):
+                pipeline_kwargs["b_roll"] = opts["b_roll"]
+
+            run = run_pipeline(**pipeline_kwargs)
 
             with self._lock:
                 if job_id not in self._jobs:
                     return
-                if isinstance(run.delivery, Delivery):
-                    measured_path = Path(run.delivery.measured_path)
-                    duration_s = 0.0
-                    sha256 = ""
-                    if measured_path.is_file():
-                        try:
-                            meas_data = json.loads(measured_path.read_text(encoding="utf-8"))
-                            duration_s = round(meas_data.get("duration_ms", 0) / 1000.0, 2)
-                            sha256 = meas_data.get("sha256", "")
-                        except Exception:
-                            pass
-                    clip_id = run.clip.clip_id if run.clip else f"{source_file.stem}-clip-01"
-                    headline = (
-                        run.clip.output.title_ckb
-                        if run.clip and run.clip.output and run.clip.output.title_ckb
-                        else f"«شۆرت لە {source_file.name}»"
-                    )
-                    virality_score = (
-                        float(run.clip.editorial.hook_score * 100.0)
-                        if run.clip and run.clip.editorial and run.clip.editorial.hook_score
-                        else 90.0
-                    )
-                    rel_mp4 = f"/media/{clip_id}.mp4"
-                    self._jobs[job_id].clips = [
-                        {
-                            "clip_id": clip_id,
-                            "duration_s": duration_s,
-                            "headline": headline,
-                            "video_url": rel_mp4,
-                            "poster_url": "",
-                            "virality_score": virality_score,
-                            "label": "١. شۆرتی پەسەندکراو",
-                            "sha256": sha256,
-                        }
-                    ]
-                    self._jobs[job_id].headline = headline
+                is_delivered = isinstance(run.delivery, Delivery)
+                render_res = run.render if isinstance(run.render, RenderResult) else None
+                is_rendered = render_res is not None and Path(render_res.path).is_file()
+                has_ep_clips = bool(run.episode_manifest and run.episode_manifest.clips)
+
+                if is_delivered or is_rendered or has_ep_clips:
+                    clips_data: list[dict[str, Any]] = []
+                    if has_ep_clips:
+                        assert run.episode_manifest is not None
+                        for idx, clip_sum in enumerate(run.episode_manifest.clips, 1):
+                            cid = clip_sum.clip_id
+                            dur = round(clip_sum.duration_ms / 1000.0, 2)
+                            h = clip_sum.title_ckb or f"«شۆرتی ژمارە {idx}»"
+                            score = (
+                                round(clip_sum.hook_score * 100.0, 1)
+                                if clip_sum.hook_score > 0
+                                else 92.0 + min(idx, 5)
+                            )
+                            clips_data.append(
+                                {
+                                    "clip_id": cid,
+                                    "duration_s": dur,
+                                    "headline": h,
+                                    "video_url": f"/media/{cid}.mp4",
+                                    "poster_url": "",
+                                    "virality_score": score,
+                                    "label": f"{idx}. {h[:24]}",
+                                    "sha256": "",
+                                }
+                            )
+                    if not clips_data:
+                        measured_path = (
+                            Path(run.delivery.measured_path)
+                            if isinstance(run.delivery, Delivery)
+                            else (
+                                Path(render_res.path).with_suffix(".mp4.measured.json")
+                                if render_res is not None
+                                else Path("")
+                            )
+                        )
+                        duration_s = 0.0
+                        sha256 = ""
+                        if measured_path.is_file():
+                            try:
+                                meas_data = json.loads(measured_path.read_text(encoding="utf-8"))
+                                duration_s = round(meas_data.get("duration_ms", 0) / 1000.0, 2)
+                                sha256 = meas_data.get("sha256", "")
+                            except Exception:
+                                pass
+                        if duration_s == 0.0 and render_res is not None:
+                            try:
+                                from hawedit.ingest import probe_duration_ms
+
+                                duration_s = round(
+                                    probe_duration_ms(Path(render_res.path)) / 1000.0, 2
+                                )
+                            except Exception:
+                                duration_s = 45.0
+                        clip_id = run.clip.clip_id if run.clip else f"{source_file.stem}-clip-01"
+                        headline = (
+                            run.clip.output.title_ckb
+                            if run.clip and run.clip.output and run.clip.output.title_ckb
+                            else f"«شۆرت لە {source_file.name}»"
+                        )
+                        virality_score = (
+                            float(run.clip.editorial.hook_score * 100.0)
+                            if run.clip and run.clip.editorial and run.clip.editorial.hook_score
+                            else 90.0
+                        )
+                        rel_mp4 = f"/media/{clip_id}.mp4"
+                        clips_data.append(
+                            {
+                                "clip_id": clip_id,
+                                "duration_s": duration_s,
+                                "headline": headline,
+                                "video_url": rel_mp4,
+                                "poster_url": "",
+                                "virality_score": virality_score,
+                                "label": "١. شۆرتی پەسەندکراو",
+                                "sha256": sha256,
+                            }
+                        )
+
+                    self._jobs[job_id].clips = clips_data
+                    self._jobs[job_id].headline = clips_data[0]["headline"]
                     self._jobs[job_id].status = "completed"
                     self._jobs[job_id].progress_percent = 100
                 elif run.skipped():
@@ -1076,7 +1296,14 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
             client_token = (
                 str(payload.get("client_token", payload.get("idempotency_key", ""))).strip() or None
             )
-            job = JOB_MANAGER.submit_job(source=str(source_path), client_token=client_token)
+            options = {
+                k: v
+                for k, v in payload.items()
+                if k not in ("source", "client_token", "idempotency_key")
+            }
+            job = JOB_MANAGER.submit_job(
+                source=str(source_path), client_token=client_token, options=options
+            )
             self.send_response(201)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1217,8 +1444,10 @@ class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
                 candidates.append(job_work / filename)
                 candidates.append(job_work / "delivery" / filename)
                 candidates.append(job_work / "deliverables" / filename)
+                candidates.extend(list(job_work.glob(f"**/{filename}")))
             candidates.extend(list((ROOT / "work").glob(f"*/{filename}")))
             candidates.extend(list((ROOT / "work" / "jobs").glob(f"*/{filename}")))
+            candidates.extend(list((ROOT / "work").glob(f"**/{filename}")))
 
             allowed_roots = [
                 ROOT / "work",
