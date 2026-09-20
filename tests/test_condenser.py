@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import json
+import urllib.request
+
 import pytest
 
 from hawedit.condenser import (
     BeatKind,
     CondensedStoryPlan,
+    GeminiStoryEvaluator,
+    JevStoryEvaluator,
+    SentenceEvaluation,
     StoryBeat,
     StoryCondensationError,
+    StoryEvaluationResult,
     StorySummary,
     condense_multiple_arcs,
     condense_story,
     remap_words_to_condensed_timeline,
 )
+from hawedit.credentials import CredentialError
 from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
 
@@ -380,3 +388,254 @@ def test_condenser_evaluates_late_episode_windows_before_selection() -> None:
         any(s_idx >= 10 for s_idx in p.retained_sentence_indices) for p in plans
     )
     assert late_sentence_included is True
+
+
+def test_sentence_evaluation_invariants() -> None:
+    """SentenceEvaluation validates index and importance score bounds."""
+    ev = SentenceEvaluation(
+        index=0,
+        narrative_role="hook",
+        importance_score=0.95,
+        keep=True,
+        reason="Strong opening hook",
+    )
+    assert ev.index == 0
+    assert ev.importance_score == 0.95
+
+    with pytest.raises(ValueError, match="index must be non-negative"):
+        SentenceEvaluation(index=-1, narrative_role="hook", importance_score=0.5, keep=True)
+
+    with pytest.raises(ValueError, match="importance_score must be in 0.0..1.0"):
+        SentenceEvaluation(index=0, narrative_role="hook", importance_score=1.5, keep=True)
+
+
+def test_story_evaluation_result_invariants() -> None:
+    """StoryEvaluationResult validates non-empty strings and virality score bounds."""
+    ev = SentenceEvaluation(index=0, narrative_role="hook", importance_score=0.9, keep=True)
+    res = StoryEvaluationResult(
+        headline_kurdish="سەردێڕ",
+        summary_kurdish="کورتە",
+        virality_score=85.0,
+        core_topic="بابەت",
+        sentence_evaluations=(ev,),
+        evaluator_name="test-evaluator",
+    )
+    assert res.virality_score == 85.0
+
+    with pytest.raises(ValueError, match="headline_kurdish"):
+        StoryEvaluationResult(
+            headline_kurdish="",
+            summary_kurdish="کورتە",
+            virality_score=85.0,
+            core_topic="بابەت",
+            sentence_evaluations=(ev,),
+            evaluator_name="test",
+        )
+
+    with pytest.raises(ValueError, match="virality_score"):
+        StoryEvaluationResult(
+            headline_kurdish="سەردێڕ",
+            summary_kurdish="کورتە",
+            virality_score=-5.0,
+            core_topic="بابەت",
+            sentence_evaluations=(ev,),
+            evaluator_name="test",
+        )
+
+
+def test_gemini_story_evaluator_missing_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GeminiStoryEvaluator raises CredentialError when GEMINI_API_KEY is missing."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("hawedit.credentials.read_credential", lambda key: None)
+    with pytest.raises(CredentialError, match="GEMINI_API_KEY is required"):
+        GeminiStoryEvaluator()
+
+
+def test_gemini_story_evaluator_empty_sentences() -> None:
+    """GeminiStoryEvaluator raises StoryCondensationError on empty input."""
+    evaluator = GeminiStoryEvaluator(api_key="mock-key", transport=lambda req: b"{}")
+    with pytest.raises(StoryCondensationError, match="empty sentence sequence"):
+        evaluator.evaluate_story(())
+
+
+def test_gemini_story_evaluator_success() -> None:
+    """GeminiStoryEvaluator queries Gemini API and parses structured Kurdish evaluation."""
+    s0 = _make_sentence([_make_word("نامەیەکی", 0, 2000), _make_word("هەڕەشەم", 2100, 5000)])
+    s1 = _make_sentence([_make_word("دەزانی", 5500, 7000), _make_word("وەڵا", 7100, 9000)])
+    s2 = _make_sentence([_make_word("گەیشتینە", 9500, 12000), _make_word("هەولێر", 12100, 15000)])
+
+    response_payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {
+                                    "headline_kurdish": "هەڕەشەی کوشتن لە بەغدا",
+                                    "summary_kurdish": "نامەی هەڕەشە گەیشت و پەنا بۆ هەولێر برا.",
+                                    "virality_score": 93.5,
+                                    "core_topic": "تیرۆر و هەڵاتن",
+                                    "sentences": [
+                                        {
+                                            "index": 0,
+                                            "narrative_role": "hook",
+                                            "importance_score": 0.95,
+                                            "keep": True,
+                                            "reason": "Strong opening hook",
+                                        },
+                                        {
+                                            "index": 1,
+                                            "narrative_role": "tangent",
+                                            "importance_score": 0.20,
+                                            "keep": False,
+                                            "reason": "Conversational filler",
+                                        },
+                                        {
+                                            "index": 2,
+                                            "narrative_role": "climax",
+                                            "importance_score": 0.90,
+                                            "keep": True,
+                                            "reason": "Resolution and safety",
+                                        },
+                                    ],
+                                }
+                            )
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    def mock_transport(req: urllib.request.Request) -> bytes:
+        assert req.get_method() == "POST"
+        assert "gemini-2.5-flash-lite" in req.full_url
+        return json.dumps(response_payload).encode("utf-8")
+
+    evaluator = GeminiStoryEvaluator(api_key="mock-key", transport=mock_transport)
+    assert "gemini-story-evaluator" in evaluator.name
+    res = evaluator.evaluate_story((s0, s1, s2))
+    assert res.headline_kurdish == "هەڕەشەی کوشتن لە بەغدا"
+    assert res.virality_score == 93.5
+    assert len(res.sentence_evaluations) == 3
+    assert res.sentence_evaluations[0].keep is True
+    assert res.sentence_evaluations[1].keep is False
+    assert res.sentence_evaluations[2].keep is True
+
+
+def test_jev_story_evaluator_missing_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """JevStoryEvaluator raises CredentialError when TYPESAFE_API_KEY is missing."""
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr("hawedit.credentials.read_credential", lambda key: None)
+    with pytest.raises(CredentialError, match="TYPESAFE_API_KEY is required"):
+        JevStoryEvaluator()
+
+
+def test_jev_story_evaluator_empty_sentences() -> None:
+    """JevStoryEvaluator raises StoryCondensationError on empty input."""
+    evaluator = JevStoryEvaluator(api_key="mock-key", transport=lambda req: b"{}")
+    with pytest.raises(StoryCondensationError, match="empty sentence sequence"):
+        evaluator.evaluate_story(())
+
+
+def test_jev_story_evaluator_success() -> None:
+    """JevStoryEvaluator queries TypeSafe Jev System One endpoints and parses evaluations."""
+    s0 = _make_sentence([_make_word("ڕووداوێک", 0, 3000)])
+    s1 = _make_sentence([_make_word("یەعنی", 3500, 6000)])
+
+    call_count = 0
+
+    def mock_transport(req: urllib.request.Request) -> bytes:
+        nonlocal call_count
+        call_count += 1
+        assert req.get_method() == "POST"
+        auth = req.headers.get("Authorization", "")
+        assert "Bearer mock-jev-key" in auth
+        if call_count == 1:
+            return json.dumps(
+                {
+                    "questions": {
+                        "is_essential": {"answer": True},
+                        "importance_score": {"answer": 90.0},
+                        "narrative_role": {"answer": "hook"},
+                    }
+                }
+            ).encode("utf-8")
+        return json.dumps(
+            {
+                "questions": {
+                    "is_essential": {"answer": False},
+                    "importance_score": {"answer": 25.0},
+                    "narrative_role": {"answer": "tangent"},
+                }
+            }
+        ).encode("utf-8")
+
+    evaluator = JevStoryEvaluator(api_key="mock-jev-key", transport=mock_transport)
+    assert evaluator.name == "typesafe-jev-evaluator"
+    res = evaluator.evaluate_story((s0, s1))
+    assert len(res.sentence_evaluations) == 2
+    assert res.sentence_evaluations[0].keep is True
+    assert res.sentence_evaluations[0].narrative_role == "hook"
+    assert res.sentence_evaluations[1].keep is False
+    assert res.sentence_evaluations[1].importance_score == 0.25
+
+
+def test_condense_story_with_evaluator_guidance() -> None:
+    """condense_story respects StoryEvaluator recommendations while preserving story arc."""
+    s0 = _make_sentence([_make_word("نامەیەکی", 0, 5000), _make_word("هەڕەشە", 5500, 12000)])
+    s1 = _make_sentence([_make_word("دەزانی", 13000, 20000), _make_word("وەڵا", 20500, 28000)])
+    s2 = _make_sentence([_make_word("پۆڵ", 29000, 36000), _make_word("برێمەر", 36500, 44000)])
+    s3 = _make_sentence([_make_word("هەولێر", 44500, 51000), _make_word("پارێزراو", 51500, 57000)])
+
+    class MockEvaluator:
+        @property
+        def name(self) -> str:
+            return "mock-evaluator"
+
+        def evaluate_story(
+            self,
+            sentences: tuple[Sentence, ...],
+            *,
+            target_duration_ms: int = 50_000,
+        ) -> StoryEvaluationResult:
+            return StoryEvaluationResult(
+                headline_kurdish="پێشبینی ژیری دەستکرد بۆ ڕووداوەکە",
+                summary_kurdish="پوختەکردنی وردی بەسەرهاتەکە لە ڕێگەی ژیری دەستکرد.",
+                virality_score=95.0,
+                core_topic="مێژووی هاوچەرخ",
+                sentence_evaluations=(
+                    SentenceEvaluation(
+                        index=0, narrative_role="hook", importance_score=0.95, keep=True
+                    ),
+                    SentenceEvaluation(
+                        index=1, narrative_role="tangent", importance_score=0.15, keep=False
+                    ),
+                    SentenceEvaluation(
+                        index=2, narrative_role="conflict", importance_score=0.85, keep=True
+                    ),
+                    SentenceEvaluation(
+                        index=3, narrative_role="climax", importance_score=0.92, keep=True
+                    ),
+                ),
+                evaluator_name="mock-evaluator",
+            )
+
+    plan = condense_story(
+        (s0, s1, s2, s3),
+        min_duration_ms=25000,
+        max_duration_ms=50000,
+        evaluator=MockEvaluator(),  # type: ignore[arg-type]
+    )
+
+    assert plan.summary.headline_kurdish == "پێشبینی ژیری دەستکرد بۆ ڕووداوەکە"
+    assert plan.summary.virality_score == 95.0
+    assert 1 in plan.pruned_sentence_indices
+    assert 0 in plan.retained_sentence_indices
+    assert 2 in plan.retained_sentence_indices
+    assert 3 in plan.retained_sentence_indices
+    assert len(plan.retained_spans) == 2  # Span 1 (S0: 0..12000), Span 2 (S2+S3: 29000..57000)
+    assert plan.retained_spans[0] == (0, 12000)
+    assert plan.retained_spans[1] == (29000, 57000)
+    assert plan.condensed_duration_ms == 12000 + (57000 - 29000)

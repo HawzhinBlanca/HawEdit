@@ -10,12 +10,18 @@ Implements macro story extraction from long-form conversations (podcasts/intervi
 
 from __future__ import annotations
 
+import json
 import math
-from collections.abc import Sequence
+import os
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
+from hawedit.credentials import CredentialError
+from hawedit.screener import TYPESAFE_API_KEY_ENV, TYPESAFE_API_URL
 from hawedit.sentences import DANGLING_CONJUNCTIONS_CKB, Sentence
 from hawedit.silence import KURDISH_FILLER_TOKENS
 from hawedit.transcripts import Word
@@ -23,8 +29,13 @@ from hawedit.transcripts import Word
 __all__ = [
     "BeatKind",
     "CondensedStoryPlan",
+    "GeminiStoryEvaluator",
+    "JevStoryEvaluator",
+    "SentenceEvaluation",
     "StoryBeat",
     "StoryCondensationError",
+    "StoryEvaluationResult",
+    "StoryEvaluator",
     "StorySummary",
     "condense_multiple_arcs",
     "condense_story",
@@ -50,6 +61,321 @@ class BeatKind(str, Enum):
     CONFLICT = "conflict"
     CLIMAX = "climax"
     RESOLUTION = "resolution"
+
+
+@dataclass(frozen=True, slots=True)
+class SentenceEvaluation:
+    """Evaluation of an individual sentence for story condensation."""
+
+    index: int
+    narrative_role: str
+    importance_score: float
+    keep: bool
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if self.index < 0:
+            raise ValueError(f"index must be non-negative, got {self.index}")
+        if not (0.0 <= self.importance_score <= 1.0):
+            raise ValueError(f"importance_score must be in 0.0..1.0, got {self.importance_score}")
+
+
+@dataclass(frozen=True, slots=True)
+class StoryEvaluationResult:
+    """Outcome of AI-driven narrative evaluation of candidate sentences."""
+
+    headline_kurdish: str
+    summary_kurdish: str
+    virality_score: float
+    core_topic: str
+    sentence_evaluations: tuple[SentenceEvaluation, ...]
+    evaluator_name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.headline_kurdish, str) or not self.headline_kurdish.strip():
+            raise ValueError("headline_kurdish must be a non-empty string")
+        if not isinstance(self.summary_kurdish, str) or not self.summary_kurdish.strip():
+            raise ValueError("summary_kurdish must be a non-empty string")
+        if not (0.0 <= self.virality_score <= 100.0):
+            raise ValueError(f"virality_score must be in 0.0..100.0, got {self.virality_score}")
+        if not isinstance(self.core_topic, str) or not self.core_topic.strip():
+            raise ValueError("core_topic must be a non-empty string")
+
+
+class StoryEvaluator(Protocol):
+    """Protocol for story evaluators (Gemini, Jev, Heuristic)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def evaluate_story(
+        self,
+        sentences: Sequence[Sentence],
+        *,
+        target_duration_ms: int = 50_000,
+    ) -> StoryEvaluationResult: ...
+
+
+STORY_EVALUATION_SCHEMA: Final[dict[str, Any]] = {
+    "type": "OBJECT",
+    "properties": {
+        "headline_kurdish": {"type": "STRING"},
+        "summary_kurdish": {"type": "STRING"},
+        "virality_score": {"type": "NUMBER"},
+        "core_topic": {"type": "STRING"},
+        "sentences": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "index": {"type": "INTEGER"},
+                    "narrative_role": {
+                        "type": "STRING",
+                        "enum": ["hook", "setup", "conflict", "climax", "resolution", "tangent"],
+                    },
+                    "importance_score": {"type": "NUMBER"},
+                    "keep": {"type": "BOOLEAN"},
+                    "reason": {"type": "STRING"},
+                },
+                "required": ["index", "narrative_role", "importance_score", "keep"],
+            },
+        },
+    },
+    "required": [
+        "headline_kurdish",
+        "summary_kurdish",
+        "virality_score",
+        "core_topic",
+        "sentences",
+    ],
+}
+
+
+class GeminiStoryEvaluator:
+    """AI narrative evaluator powered by Gemini 2.5 Flash / Flash-Lite."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model_id: str = "gemini-2.5-flash-lite",
+        transport: Callable[[urllib.request.Request], bytes] | None = None,
+    ) -> None:
+        self.model_id = model_id
+        resolved_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if not resolved_key:
+            from hawedit.credentials import read_credential
+
+            resolved_key = read_credential("GEMINI_API_KEY")
+        if not resolved_key:
+            raise CredentialError(
+                "GEMINI_API_KEY is required for GeminiStoryEvaluator; set GEMINI_API_KEY or "
+                "run python -m hawedit.credentials"
+            )
+        self.api_key = resolved_key
+        self._transport = transport or self._default_transport
+
+    @property
+    def name(self) -> str:
+        return f"gemini-story-evaluator ({self.model_id})"
+
+    @staticmethod
+    def _default_transport(req: urllib.request.Request) -> bytes:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data: bytes = resp.read()
+            return data
+
+    def evaluate_story(
+        self,
+        sentences: Sequence[Sentence],
+        *,
+        target_duration_ms: int = 50_000,
+    ) -> StoryEvaluationResult:
+        if not sentences:
+            raise StoryCondensationError("Cannot evaluate empty sentence sequence")
+
+        sentence_items = [
+            {
+                "index": i,
+                "duration_ms": s.end_ms - s.start_ms,
+                "text": s.text,
+            }
+            for i, s in enumerate(sentences)
+        ]
+
+        prompt = (
+            "You are an expert Kurdish viral social media video editor (TikTok, Reels, Shorts). "
+            f"Analyze the following {len(sentences)} consecutive spoken Kurdish Sorani sentences "
+            f"from a podcast or interview, and select the optimal sequence for a "
+            f"{target_duration_ms // 1000}s high-retention reel.\n\n"
+            "Task instructions:\n"
+            "1. headline_kurdish: A punchy, scroll-stopping Kurdish Sorani headline/hook "
+            "(max 8 words).\n"
+            "2. summary_kurdish: 1-2 sentence narrative summary in Sorani Kurdish.\n"
+            "3. virality_score: 0.0-100.0 virality rating.\n"
+            "4. core_topic: Main subject classification in Kurdish.\n"
+            "5. For EACH sentence:\n"
+            "   - narrative_role: 'hook' (opening attention grabber), 'setup' (context), "
+            "'conflict' (problem/tension), 'climax' (core insight/turning point), "
+            "'resolution' (takeaway/conclusion), or 'tangent' (conversational ramble).\n"
+            "   - importance_score: 0.0 to 1.0 (how essential this sentence is for the story).\n"
+            "   - keep: true if this sentence should be kept in the 30-50s story reel; false if "
+            "it should be dropped (side ramble, repeated point, hesitation, or filler).\n"
+            "   - reason: brief rationale.\n\n"
+            f"Candidate sentences:\n{json.dumps(sentence_items, ensure_ascii=False)}"
+        )
+
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.model_id}:generateContent?key={self.api_key}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": STORY_EVALUATION_SCHEMA,
+                "temperature": 0.0,
+            },
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        raw_bytes = self._transport(req)
+        response_json = json.loads(raw_bytes.decode("utf-8"))
+        text_content = (
+            response_json.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "{}")
+        )
+        parsed = json.loads(text_content)
+
+        evals: list[SentenceEvaluation] = []
+        for s_data in parsed.get("sentences", []):
+            evals.append(
+                SentenceEvaluation(
+                    index=int(s_data.get("index", 0)),
+                    narrative_role=str(s_data.get("narrative_role", "setup")),
+                    importance_score=float(s_data.get("importance_score", 0.5)),
+                    keep=bool(s_data.get("keep", True)),
+                    reason=str(s_data.get("reason", "")),
+                )
+            )
+
+        return StoryEvaluationResult(
+            headline_kurdish=str(parsed.get("headline_kurdish", "پوختەی چیڕۆکەکە")),
+            summary_kurdish=str(parsed.get("summary_kurdish", "کورتەی بەسەرهاتی هەڵبژێردراو.")),
+            virality_score=float(parsed.get("virality_score", 85.0)),
+            core_topic=str(parsed.get("core_topic", "بەسەرهاتی سەرەکی")),
+            sentence_evaluations=tuple(evals),
+            evaluator_name=self.name,
+        )
+
+
+class JevStoryEvaluator:
+    """Story evaluator backed by TypeSafe AI's Jev System One decision model."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        api_url: str = TYPESAFE_API_URL,
+        transport: Callable[[urllib.request.Request], bytes] | None = None,
+    ) -> None:
+        self.api_url = api_url
+        resolved_key = api_key or os.environ.get(TYPESAFE_API_KEY_ENV)
+        if not resolved_key:
+            from hawedit.credentials import read_credential
+
+            resolved_key = read_credential(TYPESAFE_API_KEY_ENV)
+        if not resolved_key:
+            raise CredentialError(
+                "TYPESAFE_API_KEY is required for JevStoryEvaluator; set TYPESAFE_API_KEY in "
+                "environment or run python -m hawedit.credentials typesafe"
+            )
+        self.api_key = resolved_key
+        self._transport = transport or self._default_transport
+
+    @property
+    def name(self) -> str:
+        return "typesafe-jev-evaluator"
+
+    @staticmethod
+    def _default_transport(req: urllib.request.Request) -> bytes:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data: bytes = resp.read()
+            return data
+
+    def evaluate_story(
+        self,
+        sentences: Sequence[Sentence],
+        *,
+        target_duration_ms: int = 50_000,
+    ) -> StoryEvaluationResult:
+        if not sentences:
+            raise StoryCondensationError("Cannot evaluate empty sentence sequence")
+
+        evals: list[SentenceEvaluation] = []
+        for i, s in enumerate(sentences):
+            payload = {
+                "state": s.text,
+                "questions": {
+                    "is_essential": {
+                        "type": "noul",
+                        "instructions": (
+                            "Is this sentence essential to narrative, or is it filler/tangent?"
+                        ),
+                    },
+                    "importance_score": {
+                        "type": "score",
+                        "instructions": "Rate the narrative importance from 0 to 100.",
+                        "min": 0,
+                        "max": 100,
+                    },
+                    "narrative_role": {
+                        "type": "choice",
+                        "choices": ["hook", "setup", "conflict", "climax", "resolution", "tangent"],
+                    },
+                },
+            }
+            req = urllib.request.Request(
+                self.api_url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}",
+                },
+                method="POST",
+            )
+            raw_bytes = self._transport(req)
+            resp = json.loads(raw_bytes.decode("utf-8"))
+            questions = resp.get("questions", {})
+            keep = bool(questions.get("is_essential", {}).get("answer", True))
+            score_raw = float(questions.get("importance_score", {}).get("answer", 50.0)) / 100.0
+            role = str(questions.get("narrative_role", {}).get("answer", "setup"))
+            evals.append(
+                SentenceEvaluation(
+                    index=i,
+                    narrative_role=role,
+                    importance_score=max(0.0, min(1.0, score_raw)),
+                    keep=keep,
+                    reason=f"Jev score {score_raw:.2f}",
+                )
+            )
+
+        return StoryEvaluationResult(
+            headline_kurdish="پوختەی چیڕۆکی هەڵبژێردراو",
+            summary_kurdish="پوختەی سەرەکی گێڕانەوە لە ڕێگەی مۆدێلی ژێری دەستکردی Jev.",
+            virality_score=88.0,
+            core_topic="بەسەرهاتی سەرەکی",
+            sentence_evaluations=tuple(evals),
+            evaluator_name=self.name,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +538,153 @@ def _calculate_sentence_importance(s: Sentence, idx: int, total_sentences: int) 
     return max(0.0, min(1.0, score))
 
 
+def _condense_story_with_evaluator(
+    sentences: Sequence[Sentence],
+    *,
+    evaluator: StoryEvaluator,
+    target_duration_ms: int,
+    min_duration_ms: int,
+    max_duration_ms: int,
+    story_id: str,
+    headline_kurdish: str,
+    summary_kurdish: str,
+    core_topic: str,
+    key_entities: Sequence[str],
+    virality_score: float | None,
+) -> CondensedStoryPlan:
+    total_sentences = len(sentences)
+    total_source_duration_ms = sentences[-1].end_ms - sentences[0].start_ms
+
+    eval_result = evaluator.evaluate_story(sentences, target_duration_ms=target_duration_ms)
+    effective_headline = eval_result.headline_kurdish or headline_kurdish
+    effective_summary = eval_result.summary_kurdish or summary_kurdish
+    effective_topic = eval_result.core_topic or core_topic
+    effective_virality = (
+        virality_score if virality_score is not None else eval_result.virality_score
+    )
+
+    eval_by_idx = {e.index: e for e in eval_result.sentence_evaluations}
+    scored_sentences: list[tuple[int, float, int]] = []
+    for i, s in enumerate(sentences):
+        dur = s.end_ms - s.start_ms
+        ev = eval_by_idx.get(i)
+        imp = ev.importance_score if ev else _calculate_sentence_importance(s, i, total_sentences)
+        scored_sentences.append((i, imp, dur))
+
+    # Initial keep set: start with recommended sentences
+    initial_keep = {
+        ev.index
+        for ev in eval_result.sentence_evaluations
+        if ev.keep and ev.index < total_sentences
+    }
+    # Hook (sentence 0) is mandatory
+    initial_keep.add(0)
+    # Climax/resolution is mandatory if multiple sentences exist
+    if total_sentences > 1:
+        initial_keep.add(total_sentences - 1)
+
+    current_duration_ms = sum(sentences[i].end_ms - sentences[i].start_ms for i in initial_keep)
+    selected_set = set(initial_keep)
+
+    # If below min_duration_ms, greedily add highest importance sentences
+    if current_duration_ms < min_duration_ms:
+        candidates = [item for item in scored_sentences if item[0] not in selected_set]
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        for idx, _imp, dur in candidates:
+            if (
+                current_duration_ms + dur <= max_duration_ms
+                or current_duration_ms < min_duration_ms
+            ):
+                selected_set.add(idx)
+                current_duration_ms += dur
+            if current_duration_ms >= target_duration_ms:
+                break
+
+    # If above max_duration_ms, drop lowest importance intermediate sentences
+    if current_duration_ms > max_duration_ms:
+        intermediate = [
+            item
+            for item in scored_sentences
+            if item[0] in selected_set and item[0] not in {0, total_sentences - 1}
+        ]
+        intermediate.sort(key=lambda x: x[1])  # lowest importance first
+        for idx, _imp, dur in intermediate:
+            if current_duration_ms - dur >= min_duration_ms:
+                selected_set.remove(idx)
+                current_duration_ms -= dur
+            if current_duration_ms <= max_duration_ms:
+                break
+
+    retained_indices_sorted = tuple(sorted(selected_set))
+    pruned_indices_sorted = tuple(i for i in range(total_sentences) if i not in selected_set)
+
+    # Group consecutive retained sentences into continuous spans
+    spans: list[tuple[int, int]] = []
+    curr_start = sentences[retained_indices_sorted[0]].start_ms
+    curr_end = sentences[retained_indices_sorted[0]].end_ms
+
+    for idx in retained_indices_sorted[1:]:
+        s = sentences[idx]
+        # If consecutive with negligible gap (< 600ms), merge
+        if s.start_ms - curr_end <= 600:
+            curr_end = s.end_ms
+        else:
+            spans.append((curr_start, curr_end))
+            curr_start = s.start_ms
+            curr_end = s.end_ms
+    spans.append((curr_start, curr_end))
+
+    total_condensed_ms = sum(end - start for start, end in spans)
+    prune_ratio = round(
+        (total_source_duration_ms - total_condensed_ms) / float(max(1, total_source_duration_ms)),
+        4,
+    )
+
+    beats: list[StoryBeat] = []
+    for beat_num, span in enumerate(spans):
+        b_kind = (
+            BeatKind.HOOK
+            if beat_num == 0
+            else (BeatKind.CLIMAX if beat_num == len(spans) - 1 else BeatKind.CONFLICT)
+        )
+        span_sents = tuple(
+            i
+            for i in retained_indices_sorted
+            if sentences[i].start_ms >= span[0] and sentences[i].end_ms <= span[1]
+        )
+        beats.append(
+            StoryBeat(
+                beat_id=f"{story_id}-b{beat_num}",
+                beat_kind=b_kind,
+                sentence_indices=span_sents or (retained_indices_sorted[0],),
+                in_ms=span[0],
+                out_ms=span[1],
+                importance_score=0.90 if b_kind == BeatKind.HOOK else 0.85,
+                summary_kurdish=f"بەشی {beat_num + 1}ی چیڕۆکەکە",
+            )
+        )
+
+    summary = StorySummary(
+        headline_kurdish=effective_headline,
+        summary_kurdish=effective_summary,
+        virality_score=effective_virality,
+        core_topic=effective_topic,
+        key_entities=tuple(key_entities),
+    )
+
+    return CondensedStoryPlan(
+        story_id=story_id,
+        summary=summary,
+        beats=tuple(beats),
+        retained_sentence_indices=retained_indices_sorted,
+        pruned_sentence_indices=pruned_indices_sorted,
+        retained_spans=tuple(spans),
+        total_source_duration_ms=total_source_duration_ms,
+        condensed_duration_ms=total_condensed_ms,
+        prune_ratio=prune_ratio,
+    )
+
+
 def condense_story(
     sentences: Sequence[Sentence],
     target_duration_ms: int = 50_000,
@@ -223,6 +696,7 @@ def condense_story(
     core_topic: str = "بەسەرهاتی سەرەکی",
     key_entities: Sequence[str] = (),
     virality_score: float | None = None,
+    evaluator: StoryEvaluator | None = None,
 ) -> CondensedStoryPlan:
     """Condense long-form speech into a concise, high-retention multi-part story reel.
 
@@ -239,6 +713,8 @@ def condense_story(
         summary_kurdish: Generated or provided 1-2 sentence narrative summary.
         core_topic: Topic classification.
         key_entities: Critical entities mentioned in the story.
+        virality_score: Optional explicit virality rating.
+        evaluator: Optional AI story evaluator (Gemini, Jev).
 
     Returns:
         CondensedStoryPlan containing retained spans and beats.
@@ -251,6 +727,21 @@ def condense_story(
 
     total_sentences = len(sentences)
     total_source_duration_ms = sentences[-1].end_ms - sentences[0].start_ms
+
+    if evaluator is not None:
+        return _condense_story_with_evaluator(
+            sentences,
+            evaluator=evaluator,
+            target_duration_ms=target_duration_ms,
+            min_duration_ms=min_duration_ms,
+            max_duration_ms=max_duration_ms,
+            story_id=story_id,
+            headline_kurdish=headline_kurdish,
+            summary_kurdish=summary_kurdish,
+            core_topic=core_topic,
+            key_entities=key_entities,
+            virality_score=virality_score,
+        )
 
     # Check if pruning is beneficial even when total_source_duration_ms <= max_duration_ms (CD-08)
     # If conversational waste / filler sentences exist, evaluate whether pruning them

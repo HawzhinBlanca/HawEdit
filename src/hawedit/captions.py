@@ -1878,6 +1878,16 @@ def build_ass(
                     else ("KurdishPlate" if is_plate else "Kurdish")
                 )
 
+                align_tag = "\\an8" if is_top else "\\an2"
+                y_pos = DEFAULT_TOP_MARGIN_V if is_top else (play_res_y - theme.margin_v)
+                positions = compute_rtl_word_positions(
+                    chunk,
+                    font_name=font_name,
+                    font_size=font_size,
+                    canvas_width=play_res_x,
+                    fonts_dir=fonts_dir,
+                )
+
                 for w_idx, active_word in enumerate(chunk):
                     w_start = active_word.start_ms
                     w_end = active_word.end_ms
@@ -1889,8 +1899,7 @@ def build_ass(
                     if w_end <= w_start:
                         continue
 
-                    parts = []
-                    for j, word_item in enumerate(chunk):
+                    for j, (word_item, x_pos) in enumerate(positions):
                         escaped = _escape_ass_text(word_item.w)
                         if j == w_idx:
                             cat = (
@@ -1903,14 +1912,17 @@ def build_ass(
                                 if (cat is not EmphasisCategory.DEFAULT and cat in CATEGORY_COLORS)
                                 else "&H0000FFFF"
                             )
-                            parts.append(
-                                f"{{\\t(0,60,\\fscx118\\fscy118)\\t(60,130,\\fscx100\\fscy100)\\c{color_code}&}}{escaped}{{\\c&H00FFFFFF&\\fscx100\\fscy100}}"
+                            word_text = (
+                                f"{{{align_tag}\\pos({x_pos},{y_pos})"
+                                f"\\t(0,60,\\fscx118\\fscy118)\\t(60,130,\\fscx100\\fscy100)\\c{color_code}&}}"
+                                f"{escaped}{{\\c&H00FFFFFF&\\fscx100\\fscy100}}"
                             )
                         else:
-                            parts.append(f"{{\\c&H00FFFFFF&}}{escaped}")
+                            word_text = (
+                                f"{{{align_tag}\\pos({x_pos},{y_pos})\\c&H00FFFFFF&}}{escaped}"
+                            )
 
-                    chunk_text = " ".join(parts)
-                    events.append(event(w_start, w_end, chunk_text, style_name=style_name))
+                        events.append(event(w_start, w_end, word_text, style_name=style_name))
             continue
 
         if style is CaptionStyle.VIRAL_POPUP:

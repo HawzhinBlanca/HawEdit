@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -60,6 +61,13 @@ def test_kinetic_pop_style_emits_dynamic_bounce_tags(sample_sentence: Sentence) 
     assert "پۆڵ" in ass
     assert "برێمەر" in ass
     assert "پێشمەرگە" in ass
+
+    # Assert RTL absolute word positioning prevents libass LTR run inversion
+    assert r"\pos(" in ass
+    pos_bremer = re.search(r"\\pos\((\d+),\s*\d+\)[^}]*\}برێمەر", ass)
+    pos_paul = re.search(r"\\pos\((\d+),\s*\d+\)[^}]*\}پۆڵ", ass)
+    assert pos_bremer is not None and pos_paul is not None
+    assert int(pos_paul.group(1)) > int(pos_bremer.group(1))
 
     # Multi-event kinetic animation passes caption text verification
     verify_caption_text(ass, expected_text=sample_sentence.text)
