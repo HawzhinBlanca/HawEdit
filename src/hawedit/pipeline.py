@@ -245,6 +245,7 @@ from hawedit.visual_index import (
 from hawedit.visual_pipeline import VisualComposer, VisualDiscoveryResult, VisualPipelineError
 
 if TYPE_CHECKING:
+    from hawedit.gemini import Transport
     from hawedit.models import ModelStore
 
 __all__ = [
@@ -5180,7 +5181,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run_from_args(args, report_stream)
 
 
-def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> PipelineRun:
+def _build_and_run(
+    args: argparse.Namespace,
+    on_event: EventSink = discard,
+    *,
+    judge_transport: Transport | None = None,
+) -> PipelineRun:
     """Validate `args`, build every §3 producer they name, and run the pipeline.
 
     Everything `_run_from_args` used to do between parsing and reporting, extracted so a second
@@ -5351,9 +5357,10 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
                 args.vertex_project,
                 location=args.vertex_location,
                 governance=governance,
+                transport=judge_transport,
             )
             if args.vertex_project
-            else GeminiJudge(governance=governance)
+            else GeminiJudge(governance=governance, transport=judge_transport)
         )
         path_a = PathADiscovery(client=judge)
         discover = path_a.discover

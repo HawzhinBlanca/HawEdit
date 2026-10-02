@@ -1,0 +1,27 @@
+==> lint
+src\hawedit\studio_private.py:208:13: SIM105 Use `contextlib.suppress(OSError, StudioStorageError)` instead of `try`-`except`-`pass`
+    |
+206 |       finally:
+207 |           if owned is not None:
+208 | /             try:
+209 | |                 directory.remove_owned(temporary, owned)
+210 | |             except (OSError, StudioStorageError):
+211 | |                 # Lost/unsafe storage is evidence, not permission to clean a new namespace.
+212 | |                 pass
+    | |____________________^ SIM105
+    |
+    = help: Replace with `contextlib.suppress(OSError, StudioStorageError)`
+
+tests\test_studio_storage.py:93:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+   |
+92 |       monkeypatch.setattr(uploads, "_probe", probe_then_replace)
+93 | /     with MEDIA.open("rb") as stream:
+94 | |         with pytest.raises((UploadError, StudioStorageError, OSError)):
+   | |_______________________________________________________________________^ SIM117
+95 |               store.receive(ticket["upload_id"], stream, MEDIA.stat().st_size)
+96 |       assert (media.read_bytes(), manifest.read_bytes()) == before
+   |
+   = help: Combine `with` statements
+
+Found 2 errors.
+No fixes available (1 hidden fix can be enabled with the `--unsafe-fixes` option).

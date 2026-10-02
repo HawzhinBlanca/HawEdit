@@ -1,0 +1,205 @@
+{
+  "status": "synthetic-unaccepted-engineering-replay",
+  "head_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+  "source_package_sha256": "34a644856c471944b78d0a3db432f68e264b7c598da92bbe531e1d9ce3185365",
+  "python": "3.12.10",
+  "independent_human_evidence_supplied": false,
+  "observations": [
+    {
+      "scoped": {
+        "evidence_status": "descriptive-unverified",
+        "acceptance_status": "refused_unverified_evidence",
+        "ci_verified": false,
+        "commit_sha": "not-a-sha",
+        "deficiencies": [
+          "Missing or invalid committed commit SHA",
+          "Boolean caller assertions do not verify canonical gate, exact-SHA hosted CI, independent signed study, frozen quality thresholds or artifact/source binding"
+        ],
+        "evidence_intact": false,
+        "gate_verified": false,
+        "human_review_verified": false,
+        "is_sample_sufficient": true,
+        "sample_sufficiency_basis": "proposal-count-only-not-verified-independent-episodes",
+        "reported_checks": {
+          "gate_verified": true,
+          "human_review_verified": true,
+          "ci_verified": true
+        },
+        "scorecard": {
+          "evidence_status": "descriptive-unverified",
+          "accepted_count": 0,
+          "episodes_evaluated": 20,
+          "episodes_with_no_clips": 20,
+          "first_pass_publishable_rate": 0.0,
+          "margin_of_error": 0.0,
+          "margin_of_error_method": "unclustered-wald-reference-only",
+          "refusal_count": 200,
+          "refusal_rate": 1.0,
+          "total_proposed_clips": 200
+        }
+      },
+      "sustained": {
+        "evidence_status": "descriptive-unverified",
+        "deficiencies": [
+          "Base scoped acceptance is not accepted (refused_unverified_evidence)",
+          "Boolean caller assertions and claimed day counts do not verify a fresh independent holdout, real representative-use journal or authenticated owner/editor sign-off"
+        ],
+        "fresh_holdout_scorecard": {
+          "evidence_status": "descriptive-unverified",
+          "accepted_count": 0,
+          "episodes_evaluated": 20,
+          "episodes_with_no_clips": 20,
+          "first_pass_publishable_rate": 0.0,
+          "margin_of_error": 0.0,
+          "margin_of_error_method": "unclustered-wald-reference-only",
+          "refusal_count": 200,
+          "refusal_rate": 1.0,
+          "total_proposed_clips": 200
+        },
+        "fresh_holdout_verified": false,
+        "is_sustained": false,
+        "kurdish_editor_signoff": false,
+        "owner_signoff": false,
+        "rating_claim": null,
+        "reported_checks": {
+          "fresh_holdout_verified": true,
+          "kurdish_editor_signoff": true,
+          "owner_signoff": true
+        },
+        "requested_rating_claim": "10/10",
+        "scoped_report": {
+          "evidence_status": "descriptive-unverified",
+          "acceptance_status": "refused_unverified_evidence",
+          "ci_verified": false,
+          "commit_sha": "not-a-sha",
+          "deficiencies": [
+            "Missing or invalid committed commit SHA",
+            "Boolean caller assertions do not verify canonical gate, exact-SHA hosted CI, independent signed study, frozen quality thresholds or artifact/source binding"
+          ],
+          "evidence_intact": false,
+          "gate_verified": false,
+          "human_review_verified": false,
+          "is_sample_sufficient": true,
+          "sample_sufficiency_basis": "proposal-count-only-not-verified-independent-episodes",
+          "reported_checks": {
+            "gate_verified": true,
+            "human_review_verified": true,
+            "ci_verified": true
+          },
+          "scorecard": {
+            "evidence_status": "descriptive-unverified",
+            "accepted_count": 0,
+            "episodes_evaluated": 20,
+            "episodes_with_no_clips": 20,
+            "first_pass_publishable_rate": 0.0,
+            "margin_of_error": 0.0,
+            "margin_of_error_method": "unclustered-wald-reference-only",
+            "refusal_count": 200,
+            "refusal_rate": 1.0,
+            "total_proposed_clips": 200
+          }
+        },
+        "sustained_status": "refused_unverified_evidence",
+        "use_window_days": 30,
+        "use_window_days_basis": "caller-reported-not-observed"
+      }
+    },
+    {
+      "scoped": {
+        "evidence_status": "descriptive-unverified",
+        "acceptance_status": "refused_unverified_evidence",
+        "ci_verified": false,
+        "commit_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+        "deficiencies": [
+          "Boolean caller assertions do not verify canonical gate, exact-SHA hosted CI, independent signed study, frozen quality thresholds or artifact/source binding"
+        ],
+        "evidence_intact": false,
+        "gate_verified": false,
+        "human_review_verified": false,
+        "is_sample_sufficient": true,
+        "sample_sufficiency_basis": "proposal-count-only-not-verified-independent-episodes",
+        "reported_checks": {
+          "gate_verified": true,
+          "human_review_verified": true,
+          "ci_verified": true
+        },
+        "scorecard": {
+          "evidence_status": "descriptive-unverified",
+          "accepted_count": 200,
+          "episodes_evaluated": 20,
+          "episodes_with_no_clips": 0,
+          "first_pass_publishable_rate": 1.0,
+          "margin_of_error": 0.0,
+          "margin_of_error_method": "unclustered-wald-reference-only",
+          "refusal_count": 0,
+          "refusal_rate": 0.0,
+          "total_proposed_clips": 200
+        }
+      },
+      "sustained": {
+        "evidence_status": "descriptive-unverified",
+        "deficiencies": [
+          "Base scoped acceptance is not accepted (refused_unverified_evidence)",
+          "Boolean caller assertions and claimed day counts do not verify a fresh independent holdout, real representative-use journal or authenticated owner/editor sign-off"
+        ],
+        "fresh_holdout_scorecard": {
+          "evidence_status": "descriptive-unverified",
+          "accepted_count": 200,
+          "episodes_evaluated": 20,
+          "episodes_with_no_clips": 0,
+          "first_pass_publishable_rate": 1.0,
+          "margin_of_error": 0.0,
+          "margin_of_error_method": "unclustered-wald-reference-only",
+          "refusal_count": 0,
+          "refusal_rate": 0.0,
+          "total_proposed_clips": 200
+        },
+        "fresh_holdout_verified": false,
+        "is_sustained": false,
+        "kurdish_editor_signoff": false,
+        "owner_signoff": false,
+        "rating_claim": null,
+        "reported_checks": {
+          "fresh_holdout_verified": true,
+          "kurdish_editor_signoff": true,
+          "owner_signoff": true
+        },
+        "requested_rating_claim": "10/10",
+        "scoped_report": {
+          "evidence_status": "descriptive-unverified",
+          "acceptance_status": "refused_unverified_evidence",
+          "ci_verified": false,
+          "commit_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+          "deficiencies": [
+            "Boolean caller assertions do not verify canonical gate, exact-SHA hosted CI, independent signed study, frozen quality thresholds or artifact/source binding"
+          ],
+          "evidence_intact": false,
+          "gate_verified": false,
+          "human_review_verified": false,
+          "is_sample_sufficient": true,
+          "sample_sufficiency_basis": "proposal-count-only-not-verified-independent-episodes",
+          "reported_checks": {
+            "gate_verified": true,
+            "human_review_verified": true,
+            "ci_verified": true
+          },
+          "scorecard": {
+            "evidence_status": "descriptive-unverified",
+            "accepted_count": 200,
+            "episodes_evaluated": 20,
+            "episodes_with_no_clips": 0,
+            "first_pass_publishable_rate": 1.0,
+            "margin_of_error": 0.0,
+            "margin_of_error_method": "unclustered-wald-reference-only",
+            "refusal_count": 0,
+            "refusal_rate": 0.0,
+            "total_proposed_clips": 200
+          }
+        },
+        "sustained_status": "refused_unverified_evidence",
+        "use_window_days": 30,
+        "use_window_days_basis": "caller-reported-not-observed"
+      }
+    }
+  ]
+}

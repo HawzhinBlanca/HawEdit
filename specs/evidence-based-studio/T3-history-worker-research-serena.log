@@ -1,0 +1,7 @@
+Could not find containing symbol for src\hawedit\model_fetch.py:49:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\vertex_acceptance.py:51:4. Returning file symbol instead
+Could not find containing symbol for tests\test_model_fetch.py:34:37. Returning file symbol instead
+Could not find containing symbol for src\hawedit\model_fetch.py:48:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\vertex_acceptance.py:50:4. Returning file symbol instead
+Could not find containing symbol for tests\test_vertex_acceptance.py:32:37. Returning file symbol instead
+Mapped 180 symbols with Serena

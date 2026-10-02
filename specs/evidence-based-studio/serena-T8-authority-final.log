@@ -1,0 +1,27 @@
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:56:5. Returning file symbol instead
+Could not find containing symbol for tests\test_acceptance_authority.py:10:4. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:18:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\acceptance_authority_probe.py:11:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\acceptance_flags_probe.py:10:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:62:5. Returning file symbol instead
+Could not find containing symbol for tests\test_acceptance_authority.py:14:4. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:24:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:59:5. Returning file symbol instead
+Could not find containing symbol for tests\test_acceptance_authority.py:12:4. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:21:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\acceptance_authority_probe.py:12:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\acceptance_flags_probe.py:11:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:64:5. Returning file symbol instead
+Could not find containing symbol for tests\test_acceptance_authority.py:15:4. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:26:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:60:5. Returning file symbol instead
+Could not find containing symbol for tests\test_acceptance_authority.py:13:4. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:22:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\acceptance_authority_probe.py:13:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\acceptance_flags_probe.py:12:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:65:5. Returning file symbol instead
+Could not find containing symbol for tests\test_acceptance_authority.py:16:4. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:27:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\visual_scorecard.py:28:5. Returning file symbol instead
+Could not find containing symbol for tests\test_acceptance_authority.py:24:4. Returning file symbol instead
+Captured 18 actual authority guard records

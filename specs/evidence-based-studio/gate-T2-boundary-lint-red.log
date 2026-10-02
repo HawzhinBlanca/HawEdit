@@ -1,0 +1,14 @@
+==> lint
+src\hawedit\studio_generation.py:93:5: B010 [*] Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.
+   |
+91 | def _parse(argv: Sequence[str]) -> argparse.Namespace:
+92 |     parser = build_parser()
+93 |     setattr(parser, "exit_on_error", False)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ B010
+94 |     try:
+95 |         return parser.parse_args(list(argv))
+   |
+   = help: Replace `setattr` with assignment
+
+Found 1 error.
+[*] 1 fixable with the `--fix` option.

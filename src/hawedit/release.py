@@ -49,6 +49,9 @@ _REQUIRED_WHEEL_MEMBERS: Final = (
     "hawedit/release.py",
     "share/hawedit/assets/fonts/NotoNaskhArabic-Regular.ttf",
     "share/hawedit/assets/fonts/OFL.txt",
+    "share/hawedit/assets/fonts/Vazirmatn.ttf",
+    "share/hawedit/assets/fonts/Vazirmatn.ttf.provenance.json",
+    "share/hawedit/assets/fonts/Vazirmatn-COPYRIGHT.txt",
     "share/hawedit/models/sources.json",
     "share/hawedit/models/revisions.json",
     "share/hawedit/models/integrity.json",
@@ -942,6 +945,33 @@ def _spdx_sbom(
             "spdxElementId": root_id,
             "relationshipType": "CONTAINS",
             "relatedSpdxElement": font_id,
+        }
+    )
+    studio_font_path = "share/hawedit/assets/fonts/Vazirmatn.ttf"
+    studio_font = _wheel_member_bytes(wheel, studio_font_path)
+    studio_font_id = "SPDXRef-Package-Vazirmatn"
+    packages.append(
+        {
+            "SPDXID": studio_font_id,
+            "name": "Vazirmatn",
+            "packageFileName": studio_font_path,
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "checksums": [
+                {"algorithm": "SHA256", "checksumValue": hashlib.sha256(studio_font).hexdigest()}
+            ],
+            "licenseConcluded": "OFL-1.1",
+            "licenseDeclared": "OFL-1.1",
+            "copyrightText": "Copyright 2015 The Vazirmatn Project Authors",
+            "primaryPackagePurpose": "FILE",
+            "comment": "Bundled studio font with provenance, copyright notice and OFL text.",
+        }
+    )
+    relationships.append(
+        {
+            "spdxElementId": root_id,
+            "relationshipType": "CONTAINS",
+            "relatedSpdxElement": studio_font_id,
         }
     )
     for requirement in requirements:

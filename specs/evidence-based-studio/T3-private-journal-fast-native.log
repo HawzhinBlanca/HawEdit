@@ -1,0 +1,51 @@
+==> lint
+src\hawedit\studio_private.py:97:21: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+    |
+ 95 |                       except FileNotFoundError:
+ 96 |                           continue
+ 97 | /                     raise StudioStorageError(
+ 98 | |                         "Studio private journal refuses orphan SQLite sidecars"
+ 99 | |                     )
+    | |_____________________^ B904
+100 |                   flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+101 |                   try:
+    |
+
+tests\test_studio_billing.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+   |
+ 1 |   """Actual SQLite and loopback protocol evidence, not paid-provider acceptance."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | import hashlib
+ 6 | | import json
+ 7 | | import os
+ 8 | | import socket
+ 9 | | import sqlite3
+10 | | import subprocess
+11 | | import sys
+12 | | import threading
+13 | | import time
+14 | | import urllib.request
+15 | | from collections.abc import Callable, Iterator, Mapping
+16 | | from concurrent.futures import ThreadPoolExecutor
+17 | | from dataclasses import replace
+18 | | from http.server import BaseHTTPRequestHandler, HTTPServer
+19 | | from pathlib import Path
+20 | | from typing import Any
+21 | |
+22 | | import pytest
+23 | |
+24 | | from hawedit.gemini import API_ROOT, GeminiJudge, VertexGeminiJudge
+25 | | from hawedit.studio_billing import BillingPolicy, GuardedGeminiTransport
+26 | | from hawedit.studio_submissions import StudioStorageError
+27 | | from hawedit.workflow_recovery import ExternalReconciliationError
+28 | | from hawedit.windows_security import create_private_directory
+   | |_____________________________________________________________^ I001
+29 |
+30 |   BASE = API_ROOT + "/models/gemini-2.5-pro"
+   |
+   = help: Organize imports
+
+Found 2 errors.
+[*] 1 fixable with the `--fix` option.

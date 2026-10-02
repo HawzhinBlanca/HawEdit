@@ -1,0 +1,54 @@
+.....................................................FFF...              [100%]
+================================== FAILURES ===================================
+_ test_studio_reads_refuse_ambiguous_or_neighbor_origins[Sec-Fetch-Site: same-site\r\n] _
+
+headers = 'Sec-Fetch-Site: same-site\r\n'
+
+    @pytest.mark.parametrize("headers", [
+        "Sec-Fetch-Site: same-site\r\n", "Sec-Fetch-Site: invalid\r\n",
+        "Origin: http://localhost:8080\r\nOrigin: https://attacker.invalid\r\n",
+    ])
+    def test_studio_reads_refuse_ambiguous_or_neighbor_origins(headers: str) -> None:
+        status, _, _ = request("/api/status", headers=headers)
+>       assert status == 403
+E       assert 200 == 403
+
+tests\test_studio_artifacts.py:325: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:07:32] "GET /api/status HTTP/1.1" 200 -
+_ test_studio_reads_refuse_ambiguous_or_neighbor_origins[Sec-Fetch-Site: invalid\r\n] _
+
+headers = 'Sec-Fetch-Site: invalid\r\n'
+
+    @pytest.mark.parametrize("headers", [
+        "Sec-Fetch-Site: same-site\r\n", "Sec-Fetch-Site: invalid\r\n",
+        "Origin: http://localhost:8080\r\nOrigin: https://attacker.invalid\r\n",
+    ])
+    def test_studio_reads_refuse_ambiguous_or_neighbor_origins(headers: str) -> None:
+        status, _, _ = request("/api/status", headers=headers)
+>       assert status == 403
+E       assert 200 == 403
+
+tests\test_studio_artifacts.py:325: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:07:32] "GET /api/status HTTP/1.1" 200 -
+_ test_studio_reads_refuse_ambiguous_or_neighbor_origins[Origin: http://localhost:8080\r\nOrigin: https://attacker.invalid\r\n] _
+
+headers = 'Origin: http://localhost:8080\r\nOrigin: https://attacker.invalid\r\n'
+
+    @pytest.mark.parametrize("headers", [
+        "Sec-Fetch-Site: same-site\r\n", "Sec-Fetch-Site: invalid\r\n",
+        "Origin: http://localhost:8080\r\nOrigin: https://attacker.invalid\r\n",
+    ])
+    def test_studio_reads_refuse_ambiguous_or_neighbor_origins(headers: str) -> None:
+        status, _, _ = request("/api/status", headers=headers)
+>       assert status == 403
+E       assert 200 == 403
+
+tests\test_studio_artifacts.py:325: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:07:32] "GET /api/status HTTP/1.1" 200 -
+=========================== short test summary info ===========================
+FAILED tests/test_studio_artifacts.py::test_studio_reads_refuse_ambiguous_or_neighbor_origins[Sec-Fetch-Site: same-site\r\n]
+FAILED tests/test_studio_artifacts.py::test_studio_reads_refuse_ambiguous_or_neighbor_origins[Sec-Fetch-Site: invalid\r\n]
+FAILED tests/test_studio_artifacts.py::test_studio_reads_refuse_ambiguous_or_neighbor_origins[Origin: http://localhost:8080\r\nOrigin: https://attacker.invalid\r\n]

@@ -1,0 +1,14 @@
+{
+  "before": {
+    "buttonHeight": 44,
+    "dpr": 1.0000000298023224,
+    "fontSize": "16px",
+    "width": 1280
+  },
+  "after": {
+    "buttonHeight": 44,
+    "dpr": 1.0000000298023224,
+    "fontSize": "16px",
+    "width": 1280
+  }
+}

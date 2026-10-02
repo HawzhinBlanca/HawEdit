@@ -14056,3 +14056,191 @@ that single sample ... N is a spend multiplier`.
 4. Fail-stop: If `JevScreener` is requested without `TYPESAFE_API_KEY`, raise `CredentialError`
    immediately rather than silently degrading.
 
+## D-276 - Evidence-based local studio trust boundaries
+
+**Date:** 2026-10-02. **Blueprint:** §§2-5, §§8.1-8.3. **Approval:** Wareen's explicit
+implementation request for `specs/evidence-based-studio/plan.md`. Extends D-263/D-274;
+no change to canonical ASR, transcript/timing invariants or frozen benchmark policy.
+
+**Decision.** Keep Python/vanilla frontend, loopback and existing pinned DBOS 2.29.0/SQLite.
+Implement two-phase real-byte uploads with opaque generated storage names, 32 GiB default
+ceiling (local `HAWEDIT_UPLOAD_MAX_BYTES` override), disk reservations, exact lengths,
+bounded file-only supported-container probing/first-frame decoding, atomic finalization
+and digest-bound resolution. Original filenames are display metadata, not executable paths.
+Interrupted sources never become runnable. No new runtime dependency is introduced.
+
+Upload response-loss recovery uses guarded `GET /api/uploads/{id}`. A ready response verifies
+the committed source manifest against the original reservation and hashes the actual media.
+An interrupted final ticket write may be repaired only after those checks and successful
+atomic persistence. Old receiving tickets without committed media remain non-runnable.
+Active transfers are tracked within the single-server process, not as a cross-process lease.
+
+The studio generation request is schema 1 with source_id, client_token and a bounded options
+object. Raw server paths and unscoped media/model/QC references are refused by the web API;
+CLI path input is unchanged. Shared-parser argv preparation and report/event projections are
+separate from queue ownership and producer/spending authorization. An interim validated web
+request reports the unavailable durable runner without starting legacy daemon work. No report
+flag or measured private preview authenticates publication. Full queued execution and current
+runtime/model/governance bindings remain required before this intermediate unit is accepted.
+
+The studio request ledger is a versioned SQLite outbox, distinct from DBOS's system database.
+Commit token/content identity before enqueue and reconcile the same workflow ID after uncertain
+acknowledgement; these two databases are not claimed to share a transaction. Identity binds
+source/configuration, normalized immutable argv, registered worker and execution-binding digest.
+The protected worker must verify that binding; a stored digest alone is not readiness or owner
+authority. Keep dispatch acknowledgement separate from generation and authenticated publication.
+The pinned queue persists global/worker concurrency one and refuses conflicting existing policy,
+instead of silently overwriting it. Mechanism probes do not authorize or certify paid production.
+
+The approved remaining units use the shared parser/producer builder, content-bound durable
+queue identity and explicit private review states; render existence does not authorize a
+completed deliverable. Web approval must authenticate detached OpenSSH evidence bound to
+the exact media, sidecars, plan, source and effective configuration before invoking existing
+promotion/reconciliation. Parsed QcRecord fields alone are not authentication. Burned-in
+edits require new measured revisions, not metadata mutation. These remaining units are a
+contract, not a claim they are already implemented or accepted.
+
+**Evidence / limits.** Current source/caller research and task ledger are in
+`specs/evidence-based-studio/`. Old completion claims retain their original SHA. No current
+human study, CI acceptance, quality superiority or 10/10 claim follows from this ADR.
+Spending, licence acceptance, trusted reviewer configuration and release remain separately
+owner-gated; blockers #1/#3/#4/#21/#24/#25 are not waived.
+
+**Guarded producer transport extension (2026-10-02).** Add optional keyword-only
+judge_transport to the shared builder, forwarded to existing Developer API/Vertex clients.
+Private SQLite billed-call evidence binds each job, policy, bounded effective request and
+per-content occurrence. Reserve conservative input/output/thinking allocation atomically
+before generation; return a response only after immutable persistence. Retain uncertainty
+without automatic refunds/retries and keep K discovery passes distinct. Integer micro-USD
+reservations are policy-based upper allocations, not measured invoices or an account-wide
+provider guarantee. No frozen cost-table edit or new dependency. Trusted authorization,
+live route/cap semantics and runtime preflight remain separate before enabling the worker.
+
+**Private journal adoption (2026-10-02).** Make billed-call storage privacy mandatory,
+not a constructor label. Bind real root/database identity, refuse alias components and
+multiply linked/nonregular files, create only a missing leaf privately, and check actual
+WAL/SHM/rollback sidecars. Reuse protected native Windows ACL creation/checks; POSIX requires
+current owner and private modes. Refuse existing unsafe permissions/bytes without repairing
+or deleting them. Fence every SQLite opening/commit and all upstream requests/results,
+including direct token counting. Legitimate vanished sidecars do not justify recreating
+a lost main file; revalidate the bound root/main after inspection. Preserve committed
+uncertainty, original arithmetic and actual crash-recovery evidence. No new dependency,
+HTTP authentication, signed authorization, provider invoice, certified mount or enabled
+producer follows from these checks. Current-owner/SYSTEM/Administrators remain privileged;
+observed path substitution is detected, not all privileged races eliminated. Full protected
+studio storage and persisted supervisor authority/recovery remain required before adoption.
+
+**Private upload/outbox adoption (2026-10-02).** Reuse the same leaf storage module for
+mandatory private upload directories/files and submission SQLite checks. Move the shared
+StudioStorageError definition there and explicitly re-export the old import; retain actual
+old pickle/catcher compatibility, with no circular import or added dependency. Private
+atomic metadata uses exclusive mode-0600 temporary files, fsync and stable destination
+identity before replace. Generic atomic_fs callers are unchanged. Track only transfer-owned
+file identities; changed/moved staging refuses cleanup instead of unlinking unrelated data.
+The submission outbox fences opening/commit/close and refuses lost main state without
+empty recreation. Its existing token/content/DBOS reconciliation semantics remain intact.
+
+Initialize uploads explicitly at server startup, never by public checkout import. Default
+Windows root is LocalAppData/HawEditStudio; POSIX is home/.hawedit-studio; local
+HAWEDIT_STUDIO_STORAGE_ROOT may select another genuinely private root. Preserve old jobs,
+media and uploads unchanged; no silent chmod, move or legacy adoption. Bare unconfigured
+handlers and observed storage loss produce contextual refusal. Actual supported-container
+validation narrows both FFprobe and frame-decoder demuxers by declared suffix and checks
+measured format aliases; real positive media cases guard against blanket rejection.
+Native HTTP/ACL/mode/SQLite evidence is bounded and version/source-bound. These checks do
+not establish complete privileged-race prevention, a media sandbox, certified filesystem,
+authenticated sessions, persisted supervisor authority, private DBOS/checkpoints or an
+enabled production worker. Those approved obligations remain required before paid adoption.
+
+**Read-boundary extension (2026-10-02).** Replace directory-serving inheritance with explicit
+local GET/HEAD routes; no workspace fallback or recursive filename-only media lookup. Serve
+private MP4 previews only through a job/clip report manifest and measured digest/size/duration.
+Copy/hash a bounded snapshot before headers so later source edits cannot change returned bytes.
+Serialize snapshot preparation/serving with bounded waits and transport timeouts; reserve enough
+temporary storage, close copies after use, and make no performance or OS-ACL acceptance claim.
+Support single byte ranges and strong digest validators; unsupported/malformed/multiple ranges
+receive full current representation, valid unsatisfiable ranges 416, HEAD no content. Ship the
+existing OFL-1.1 Vazirmatn locally, bound to its unchanged provenance digest. Missing protected
+worker status is unavailable, not ready; legacy completion flags do not identify a verified reel.
+Preserve original records/media, refusing their old unscoped URLs rather than authorizing them
+from filenames. Authenticated export, migration/history and frontend adoption remain open.
+
+Offline packaging includes the unchanged Vazirmatn binary, provenance and its own copyright
+notice alongside the full OFL-1.1 text; the source's embedded metadata and pinned upstream
+notice agree. No NonCommercial asset or new runtime dependency. Add a distinct font package
+and containment relation to the release SBOM. Installed font resolution uses the existing
+RECORD-authenticating data resolver, with a second bounded/stable digest check before serving.
+An absent or altered checkout asset must refuse rather than borrow an installed copy.
+
+**Historical read extension (2026-10-02).** Historical HTTP projections are read-only and
+bound to stable bounded original-record digests. Preserve job/media files rather than
+rewriting legacy completion into current truth. Old completed/review flags are explicitly
+unverified-historical; queued/running records are interrupted pending recovery reconciliation,
+never auto-enqueued. Retain reported failure/cancellation but do not expose raw errors,
+server paths, tokens/options, fabricated measurements or elapsed-work percentages. Private
+candidate IDs must be report-manifest listed; preview reads separately validate media bytes.
+Fresh disk changes and refused entries are visible through versioned history diagnostics.
+Entry/time/byte limits produce partial-scan diagnostics, not an empty complete history.
+Until an immutable measured revision path exists, edit_caption refuses without modifying
+metadata, media or canonical ASR. This does not authorize work, authenticate publication,
+replace the protected worker lifecycle, or certify OS-private storage or browser acceptance.
+
+**Studio adoption extension (2026-10-02).** Extract the vanilla dashboard into studio_ui.py
+while retaining web.py's public DASHBOARD_HTML import. Visible native file input sends File
+bytes through the two-phase upload contract; only a validated source ID enables preparation.
+Persist upload identity and exact schema-1 submission intent before network egress. Response
+loss keeps the same token/content and locks competing submissions until reconciliation; no
+invented source, new token or successful empty-storage fallback. Corrupt browser storage is
+visible and blocks new work. Browser persistence is not a durable worker or OS-private store.
+
+Explicit historical selection adopts bounded server projections. Render text with textContent,
+clear stale media/measurements when selection changes, and cancel superseded preview checks.
+Preview requires successful measured private HEAD validation before playback; seek/download
+remain private, not authenticated export. Missing quality is unknown, observed stage progress
+is not work percentage, and missing producer readiness cannot appear ready. Disabled rendered
+revision, approval and verified export controls expose unmet prerequisites. No metadata-only
+edit, forged QC, paid route or publication is enabled by this unit.
+
+Retain dark Sorani/RTL/local-font identity with semantic controls, collapsible settings,
+visible focus/live errors, shrinkable layouts and 44px primary targets. Structural/declared
+color tests and native fixture screenshots at five widths establish bounded implementation
+evidence only. Complete AA, NVDA, zoom, real producer and independent creator/editor studies
+remain required. The uncommitted source and red gate are not release or 10/10 acceptance.
+
+**Paired comparison extension (2026-10-03).** Keep version-1 overall review records
+readable without inferring unrecoverable A/B differences or misleading attribution.
+Version 2 records each option's bounded integer scores, explicit flags and optional
+self-reported watched/correction seconds; absence stays unknown. Reject coercion,
+duplicate reviewer/pair observations, malformed schema/time and nonbijective/incomplete
+unblinding maps. Reviewer labels are not authenticated identity or independence.
+Descriptive differences use actual option mapping, never cumulative wins. Report pooled
+independent Wilson bounds as reference only; ci_lower/ci_upper remain unknown and H7
+superiority unapproved pending verified preregistered episode/reviewer inference. Correct
+requested confidence with stdlib NormalDist, no new runtime dependency or statistical
+method choice. Refuse preference-to-QcRecord export rather than invent watched seconds,
+fidelity verdict or signatures. Preserve historical defect evidence and existing vote/
+valid-95% assertions; replace false-authority expectations with stronger refusal contracts.
+Deterministic unsealed staging and scorecard authorization remain separate mandatory
+repairs; this is not signed independent evaluation, completed T8 or release acceptance.
+
+**Acceptance authority guard (2026-10-03).** Public scoped/sustained compatibility helpers
+receive aggregate counts, Boolean claims and a claimed day count, not re-verifiable release
+evidence. Preserve descriptive accounting, explicit refusal reasons and reported checks;
+verified fields stay false. Those helpers and direct report assertions cannot authorize
+acceptance, sustained use or a rating. Preserve requested ratings separately as unverified
+input. Enforce the frozen minimum 200 proposals and 30 days without treating count
+sufficiency as independent-episode or elapsed-use verification. Direct aggregate constructors
+validate accounting, finite rates and episode consistency; existing Wald uncertainty is
+explicitly unclustered reference only, never release inference. The visual scorecard likewise
+cannot authorize release or leadership from supplied confidence bounds or names; its current
+inference is labelled diagnostic/not-preregistered. Keep existing useful refusal/leakage/count
+assertions and strengthen the false-acceptance tests. No new dependency or statistical method.
+
+This removes a reproduced false admission, not the need for a real positive admission path.
+Actual exact-SHA canonical/hosted evidence, trusted signed independent raw observations,
+sealed disjoint real-media studies, preregistered episode/reviewer inference, frozen quality
+thresholds and an authenticated representative-use journal remain mandatory. Existing signed
+judge-label study/release approval verifiers retain their limited contracts; neither is
+promoted into full acceptance by this guard. No human study, publication, accepted task,
+spending, trust configuration or 10/10 follows from Boolean claims or this implementation.
+

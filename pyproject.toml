@@ -130,6 +130,9 @@ where = ["src"]
 "share/hawedit/assets/fonts" = [
     "assets/fonts/NotoNaskhArabic-Regular.ttf",
     "assets/fonts/OFL.txt",
+    "assets/fonts/Vazirmatn.ttf",
+    "assets/fonts/Vazirmatn.ttf.provenance.json",
+    "assets/fonts/Vazirmatn-COPYRIGHT.txt",
 ]
 "share/hawedit/models" = [
     "models/sources.json",

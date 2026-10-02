@@ -1,0 +1,8 @@
+{
+  "observed_date": "2026-10-02",
+  "repository": "HawzhinBlanca/HawEdit",
+  "command": "gh api repos/HawzhinBlanca/HawEdit/actions/runners --jq '{total_count: .total_count, runners: [.runners[] | {id, name, os, status, busy, labels: [.labels[].name]}]}'",
+  "exit_code": 0,
+  "response": {"runners": [], "total_count": 0},
+  "scope": "Repository API observation only; not a registration, workflow dispatch, or acceptance result."
+}

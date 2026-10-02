@@ -1,0 +1,10 @@
+/mnt/c/Users/Wareen/AppData/Local/HawEdit/wsl-asr/venvs/Ubuntu-33853eeafb05ecf1b998dc84/environment/lib/python3.12/site-packages/nagisa/tagger.py:45: SyntaxWarning: invalid escape sequence '\('
+  single_word_list = [w.replace('(', '\(').replace(')', '\)')
+/mnt/c/Users/Wareen/AppData/Local/HawEdit/wsl-asr/venvs/Ubuntu-33853eeafb05ecf1b998dc84/environment/lib/python3.12/site-packages/nagisa/tagger.py:45: SyntaxWarning: invalid escape sequence '\)'
+  single_word_list = [w.replace('(', '\(').replace(')', '\)')
+/mnt/c/Users/Wareen/AppData/Local/HawEdit/wsl-asr/venvs/Ubuntu-33853eeafb05ecf1b998dc84/environment/lib/python3.12/site-packages/nagisa/tagger.py:45: SyntaxWarning: invalid escape sequence '\('
+  single_word_list = [w.replace('(', '\(').replace(')', '\)')
+/mnt/c/Users/Wareen/AppData/Local/HawEdit/wsl-asr/venvs/Ubuntu-33853eeafb05ecf1b998dc84/environment/lib/python3.12/site-packages/nagisa/tagger.py:45: SyntaxWarning: invalid escape sequence '\)'
+  single_word_list = [w.replace('(', '\(').replace(')', '\)')
+OmniASR import OK; CUDA GPUs visible: 2
+READY: OmniASR WSL2 runtime at C:\Users\Wareen\AppData\Local\HawEdit\wsl-asr

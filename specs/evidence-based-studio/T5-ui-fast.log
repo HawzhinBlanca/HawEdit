@@ -1,0 +1,10 @@
+==> lint
+All checks passed!
+==> typecheck
+tests\test_studio_ui.py:10: error: Module "hawedit.web" does not explicitly export attribute "DASHBOARD_HTML"  [attr-defined]
+tests\test_web.py:12: error: Module "hawedit.web" does not explicitly export attribute "DASHBOARD_HTML"  [attr-defined]
+tests\test_studio_artifacts.py:222: error: Module "hawedit.web" does not explicitly export attribute "DASHBOARD_HTML"  [attr-defined]
+tests\test_studio_artifacts.py:223: error: Module "hawedit.web" does not explicitly export attribute "DASHBOARD_HTML"  [attr-defined]
+tests\test_studio_artifacts.py:225: error: Module "hawedit.web" does not explicitly export attribute "DASHBOARD_HTML"  [attr-defined]
+tests\test_robustness_audit.py:32: error: Module "hawedit.web" does not explicitly export attribute "DASHBOARD_HTML"  [attr-defined]
+Found 6 errors in 4 files (checked 268 source files)

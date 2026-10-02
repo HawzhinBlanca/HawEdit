@@ -1,0 +1,12 @@
+Could not find containing symbol for src\hawedit\gemini.py:65:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\path_a.py:54:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\smoke.py:27:27. Returning file symbol instead
+Could not find containing symbol for tests\test_gemini.py:31:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\gemini.py:69:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\vertex_acceptance.py:32:39. Returning file symbol instead
+Could not find containing symbol for tests\test_gemini.py:35:4. Returning file symbol instead
+Could not find containing symbol for tests\test_vertex_acceptance.py:20:39. Returning file symbol instead
+Could not find containing symbol for src\hawedit\path_a.py:57:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\workflow_recovery.py:27:5. Returning file symbol instead
+Could not find containing symbol for tests\test_workflow_recovery.py:13:4. Returning file symbol instead
+Mapped 92 symbols with Serena

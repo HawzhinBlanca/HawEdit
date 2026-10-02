@@ -1,0 +1,15 @@
+
+=================================== ERRORS ====================================
+________________ ERROR collecting tests/test_studio_billing.py ________________
+ImportError while importing test module 'C:\Users\Wareen\Desktop\HawEdit\tests\test_studio_billing.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_studio_billing.py:21: in <module>
+    from hawedit.studio_billing import BillingPolicy, GuardedGeminiTransport
+E   ModuleNotFoundError: No module named 'hawedit.studio_billing'
+=========================== short test summary info ===========================
+ERROR tests/test_studio_billing.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!

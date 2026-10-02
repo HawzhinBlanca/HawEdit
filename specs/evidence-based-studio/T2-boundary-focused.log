@@ -1,0 +1,14 @@
+........................................................................ [ 43%]
+.................................................F...................... [ 86%]
+......................                                                   [100%]
+================================== FAILURES ===================================
+__________________ test_the_ledger_accounts_for_every_module __________________
+tests\test_claims.py:741: in test_the_ledger_accounts_for_every_module
+    assert on_disk <= claimed, (
+E   AssertionError: modules with no status in any PROGRESS.md ledger row: ['studio_generation.py']. Add a row, or name the module in an existing row's evidence cell � a description in prose after the table does not put it in the DONE/PARTIAL tally.
+E   assert {'agent.py', ...mbly.py', ...} <= {'__init__.py...rker.py', ...}
+E     
+E     Extra items in the left set:
+E     'studio_generation.py'
+=========================== short test summary info ===========================
+FAILED tests/test_claims.py::test_the_ledger_accounts_for_every_module - Asse...

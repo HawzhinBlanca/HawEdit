@@ -1,0 +1,23 @@
+F...........................................................             [100%]
+================================== FAILURES ===================================
+____________ test_studio_font_packaging_and_sbom_cover_actual_font ____________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7007/test_studio_font_packaging_and0')
+
+    def test_studio_font_packaging_and_sbom_cover_actual_font(tmp_path: Path) -> None:
+        from hawedit.release import _spdx_sbom
+    
+        data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        paths = set(data["tool"]["setuptools"]["data-files"]["share/hawedit/assets/fonts"])
+        required = {"assets/fonts/Vazirmatn.ttf", "assets/fonts/Vazirmatn.ttf.provenance.json", "assets/fonts/Vazirmatn-COPYRIGHT.txt", "assets/fonts/OFL.txt"}
+>       assert required <= paths
+E       AssertionError: assert {'assets/font...venance.json'} <= {'assets/font...onts/OFL.txt'}
+E         
+E         Extra items in the left set:
+E         'assets/fonts/Vazirmatn-COPYRIGHT.txt'
+E         'assets/fonts/Vazirmatn.ttf'
+E         'assets/fonts/Vazirmatn.ttf.provenance.json'
+
+tests\test_studio_artifacts.py:79: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_artifacts.py::test_studio_font_packaging_and_sbom_cover_actual_font

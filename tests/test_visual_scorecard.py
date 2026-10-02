@@ -1,11 +1,8 @@
-"""Tests for visual scorecard and holdout evaluation (V15).
+"""Descriptive scorecard counts, supplied-identity overlaps and authority refusals.
 
-Verifies step V15 (VE-15):
-- requires unseen current evidence with strict provenance,
-- enforces complete accounting of all proposed clips and refusals,
-- clusters by episode to avoid pseudo-replication,
-- detects and excludes leaked/contaminated holdouts,
-- strictly refuses unsupported leadership or 10/10 claims.
+Synthetic helper tests do not establish verified provenance, independent holdouts or
+accepted V15/VE-15 research inference. Existing numeric/refusal checks remain regressions,
+not evidence that the full acceptance program has passed.
 """
 
 from __future__ import annotations
@@ -166,7 +163,7 @@ def test_visual_scorecard_requires_unseen_current_evidence_and_full_accounting()
     # First pass rate MUST be over total_proposed (18/21), NOT over (18/19)!
     assert scorecard.first_pass_rate == pytest.approx(18 / 21, abs=1e-4)
     assert scorecard.first_pass_ci_lower < scorecard.first_pass_rate < scorecard.first_pass_ci_upper
-    assert scorecard.is_release_eligible is True
+    assert scorecard.is_release_eligible is False
 
     # 4. Episode Clustering Prevents Pseudo-Replication
     single_cluster_proposals = [
@@ -257,7 +254,7 @@ def test_visual_scorecard_requires_unseen_current_evidence_and_full_accounting()
     with pytest.raises(UnsupportedLeadershipClaimError, match="critical fidelity defect"):
         scorecard_defective.evaluate_leadership_claim("superior Kurdish performance")
 
-    # Fully substantiated claim with zero critical defects, winning CI, and dual signoff passes
+    # Supplied confidence bounds and sign-off names are not authenticated evidence
     scorecard_substantiated = compute_visual_scorecard(
         provenance=valid_provenance,
         split=clean_holdout,
@@ -266,5 +263,7 @@ def test_visual_scorecard_requires_unseen_current_evidence_and_full_accounting()
         signoff_owner="Tech Lead",
         signoff_editor="Senior Kurdish Editor",
     )
-    # Does not raise!
-    scorecard_substantiated.evaluate_leadership_claim("market leader in Kurdish short-form video")
+    with pytest.raises(UnsupportedLeadershipClaimError, match="unverified descriptive"):
+        scorecard_substantiated.evaluate_leadership_claim(
+            "market leader in Kurdish short-form video"
+        )

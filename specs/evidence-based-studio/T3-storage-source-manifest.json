@@ -1,0 +1,1160 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-02T20:58:48.4698936Z",
+  "head_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+  "source_package_sha256": "6bde42cba644a4510bbdb1bdd28596dba7cece5c328612c6dcbcb0e3d7f0b2cb",
+  "files": [
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\AGENTS.md",
+      "sha256": "e32658378dfce890b8fa142c93f860ab4448644dd3ec962d07a31be22b2d8371"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\DECISIONS.md",
+      "sha256": "34e5267e89fee537093f511c828788300a1bf9008bbee6c65ce0fb661f049715"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\PROGRESS.md",
+      "sha256": "a0ca2d79dbc040ac3fbdaede3cdf68be52b26aa933573fb42024af0d62150874"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\pyproject.toml",
+      "sha256": "bf2bb21b034912de649728a46c21cf3e53bc8db3e27c8afa99670508ca0617ef"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\README.md",
+      "sha256": "938e4b64511b755e4c136f59da2088dc83388f1d41d051d9b1147507beef32e5"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\build-wheel.sh",
+      "sha256": "31c93241eac7713a18f6ba28250b85051696a1f219447733bf76980ede9a2a60"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\claude-stop-verify.sh",
+      "sha256": "2e9ec3027cf0e549c3022f763c12d37d1c454b1588aa528745dacf18e5f3c160"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\fetch-ffmpeg.sh",
+      "sha256": "3da1d48bcab6f97e5ab28d65a5bc3f8b322da87f6d216280904519f79ea8a131"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\fetch-models.sh",
+      "sha256": "625743295bfef0a7b79ca289ad10a850c8052f70438254fcff8f692615dc1599"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\guard-pretooluse.sh",
+      "sha256": "5add9096cc7ad3ac566e8cfc8ca9767c515dbdb197fd04042e8453d5cd159460"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\guard-test.sh",
+      "sha256": "32e5cf3e30edca4b8dab6dc47038fad7d48772d52ee29703fe4b2f41d1cf3914"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\install-host.sh",
+      "sha256": "092170e823bbc3db01458d27a2e84d9eeb8a11bc8e018e710a74c65634082513"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\lock_host_dependencies.py",
+      "sha256": "03569c48380162f6f5799058e4f6b2f2cc8ed5572910ae501790a3b4bd2e13f6"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\measure_collisions.py",
+      "sha256": "fa395341a792f8596c11d8c63bbcc5051c425dc7ff2a4c01d22f7407460f16ce"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\run_bremer_story_demonstration.py",
+      "sha256": "6f8b0a98fb25214c3788c81e23b662ad41e275ca6811233684244c9e2262bb56"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\run_tier3_demonstration.py",
+      "sha256": "8dc568543a2231b72c3b74bab5a791850e259870490a2be965214b6a71f24389"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\serena_studio_map.py",
+      "sha256": "9d3537e62beeb8968763b506554188877d33bceb4d3f64d8ca8088ed2954ae47"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\setup.sh",
+      "sha256": "58a1123454133d4443fd456b3c3aa7bff077d0f2118354484ab72496d5b42e8c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\update-ledger.sh",
+      "sha256": "bb31c3936cc54e47edea2c39ddd8b4d9d3915a9f0e34132e0ff52ae1811165bd"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\verify-sha256.sh",
+      "sha256": "7da0708996a1aabef5899d83e7cf099c47d2f5ab02b12bf083a834f705ebed99"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\scripts\\verify.sh",
+      "sha256": "e1ddb0eb88fed2cbfb3b5524eab99b7fe466266a2f8106509fd74e2ea7e26119"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\__init__.py",
+      "sha256": "2df580642b4e69ab839be0ba2cd2234fba18d3358ffc1cbfd9bb3ff5c3efd9cc"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\agent.py",
+      "sha256": "4db0b278d1ddbd8d082fc130ecba8aa15a2d47f17a5eada067c7310be315442d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\alignment.py",
+      "sha256": "0e69f6208cf5b1b035fbd3495d9cd197b4842a6fc3d05306fa2a6af1ff959da7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\artifact_bundle.py",
+      "sha256": "c2fb1d5ba0445c995bdee171a7ea7d79cae9cec2987e797fe0d56a9207efb1d1"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\asr_worker.py",
+      "sha256": "a7470021c0199acc2872d77562b56a6437c871e33e418f98fd5badec241fffe2"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\asr.py",
+      "sha256": "d4f871f1e7b1cc9dcb872e9baf1dc0d1199a59d2682ecdecf7c5dd099d9081f3"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\assembly.py",
+      "sha256": "b25d701e5bfffd7bc7a7fb81ce798e88b570946f5c93d8803747d7d2cc4d052c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\atomic_fs.py",
+      "sha256": "658baf1542e7d0bae3f478e1d501c076fa3a96c475f3aa3a48c2c8378ca74201"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\bench.py",
+      "sha256": "67a9bc6d3d06e17b2f3f933cac9861c37b648c0987df47fbdccf240449c4197d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\boundary.py",
+      "sha256": "60192c0fe737f374f89977aaa47f2959fbb77638dacc08a593ee02ce3a7ef405"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\brand.py",
+      "sha256": "ac4cabec063529f62ac880a8a68d80743404c5a85af9ba4304a70bc2a13c72ec"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\caption_layout.py",
+      "sha256": "43c31b7d7d46ffee3ec8862905fb7b0137e623d2c70058fcd142e03cac44fe9c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\captions.py",
+      "sha256": "182c5b07a258828eff0200fe80cca19947dadd6674390f7248d6e14d3b12af7b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\checkpoint.py",
+      "sha256": "b5eb1fa9e3c560b4c326ece3e7ce791e7b68aa49b3840fafa5f6e40ce6577dbb"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\cli.py",
+      "sha256": "04071f5017faa524cd44c808169524954d3b71260872a9bb173a2f605c97d536"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\clip.py",
+      "sha256": "3f25633a25e29b007031c7079bbb541096f4a60ede912763ee76699a53e943a4"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\collisions.py",
+      "sha256": "2e94ee9361dff3eeb5105ba6a69210e282c5eed6dd89913a4d63cc4a39609c83"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\comparison_kit.py",
+      "sha256": "c89a7af67898e5c30a34c2179b516d3e52ce6ad979cb59883aa7b77d58719191"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\condenser.py",
+      "sha256": "b0da6f222e8e95bcf043a2cc538eb3ad19f13866c8eb3d2ae7cdb357ce3ff215"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\content_type.py",
+      "sha256": "84ca1a887cc21b04067f29bfe612782a332ae7d90b13eb2db8f7d3469f90217f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\corpus_acceptance.py",
+      "sha256": "e74e696bf93203b93dd04c161c6c8b8fe6ec450e82ea0616811e62498c464ab8"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\corpus_import.py",
+      "sha256": "b8bdf4469a885c069889dd0e1c03f29e76686332232a10a3b3cbd21a07a57657"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\corpus.py",
+      "sha256": "b6922288fce056b1af281f030adebc01991aba4f2b89e96243ef98dee925e1d5"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\cover.py",
+      "sha256": "9fa9428aee18191217f45e0231f27b5c9a1ba2d36d8f8fcc20c98ef132b48758"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\credentials.py",
+      "sha256": "ed2739b877bdaf338439b66e6c8c677b8ed255bf5229aa017ed157fa2efc1769"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\decision_packets.py",
+      "sha256": "7357fedf1e9c445a17f2e6dcfbf40963f8ffc4d96bba314d1743254c1ccf99c7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\delivery.py",
+      "sha256": "ab0d7984db93c5c0750c27d6c3a5a59132bdebecac1dccc444e96e77eee0881f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\developer_report.py",
+      "sha256": "5989e671b0eb9bcb8f0c168f35bacdfcf4911d978ff18aebfcc04d81dc21780b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\diagnostics_agent.py",
+      "sha256": "902458fc0088c0111a453da1c7156c0dccde1d2c8ccb5826f87c6a38a3cdf7ce"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\diarization_acceptance.py",
+      "sha256": "edccf0dcb71e90c91f7be77cb600c9fc597604e33462038cd5db776d0b393d82"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\diarization.py",
+      "sha256": "39728498dea7d38cbfb0e60d00681ba3c8853fbc790cff53ff591b2df8530957"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\discovery.py",
+      "sha256": "5aa17c2f6cda7724a04598a2a7f5ad099bef651e424665d917f48a311d119c8a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\durable_workflow.py",
+      "sha256": "966079f3c9c2d734b205cc4970ce47df497b7621a716eb79dba9b40542a7be06"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\durable.py",
+      "sha256": "e41fb1d8d83206be51ce783c6de6f8f6bda18d1630acfba734e224e246f19ebc"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\edit_plan.py",
+      "sha256": "10e2dd1c27de20feaaf98e9e539c6e0e5e692364385ec675a6de473c6325dd7e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\editor_agent.py",
+      "sha256": "406d39e8621d38ded446fc8155386076aa143a9f45d1620df14d90d0bd889a31"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\editorial_acceptance.py",
+      "sha256": "4b7d2aa7bfedf5a46b34439d8953d855ddd7c968789a7bb7bf9efc8e39ba94d7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\editorial_bench.py",
+      "sha256": "f840aacab5ebeb05dcd18e04cdf7a21d7ac46cf18e7c8fb4dd3f53423bae73af"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\environment.py",
+      "sha256": "accd6186a7a611260b89043c209fa602790a0f032b1bdcaec8e256b4005775af"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\episode_package.py",
+      "sha256": "c7679ca2dbe18d429047686331f9783e5af7310c36f9b9de616147232d268685"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\episode.py",
+      "sha256": "d8ad81904ed3087f1eefb5f62f40bdc48febf11479cd541bc6f1cb6b42184587"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\escalation.py",
+      "sha256": "99a578be4408d70fe445d6409ae64ccd82fcd154b79a8589cadb714ec03bfd4a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\events.py",
+      "sha256": "0c102607cf190a0a24db75190a318e483b55a12214018ee9174578bf224661e9"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\explorer_agent.py",
+      "sha256": "ac5c9828a4a713f1fc4a79053e6e0c1a5edf641428dc0f4a3f093979ed192d4c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\ffmpeg_setup.py",
+      "sha256": "bf5eeadf3e06ad180be15b7f85ad3d86f27af880b13037103bb6d6ba5b55d9e6"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\forced_alignment.py",
+      "sha256": "a44c3fa767e284d33c768a8bd75985f2dbeddab8c52028537433d61444ce3bec"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\gate.py",
+      "sha256": "720d6bfa0b6331d79cc1ed24f879b30a6a03821e75302a554e90f8aeee8d8464"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\gemini.py",
+      "sha256": "4a15956fe513ccab091fff1a64934401037fd7faa0f95ceb6502bab5c09c5d28"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\gpu_runtime.py",
+      "sha256": "de082f24c202c33dea39700dc888bf71212480c5e27a3bc239e68545c9179fe0"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\host_lock_hashes.py",
+      "sha256": "e055b059771244b04f048c0518cea239a08905dda853a98da36c114d83222287"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\http_transport.py",
+      "sha256": "3daa0e126c1c4acacc68caa9422d629f1e8ed670d3de8a251fad1ca19e1ecfd2"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\index.py",
+      "sha256": "acdb2d7125af6c20b9153e1464ff5c2d78ecc9368c7beb88ded337df67c63d12"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\ingest.py",
+      "sha256": "4e84e4975dda10373cff54559d9b001576d4cd898e88219e9c17535fb037f480"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\judge.py",
+      "sha256": "d320ec1a9eba615fa60ef58b3cfcd2631527b5220f7f75ffbae6ee599dd23671"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\keyframes.py",
+      "sha256": "46f61743c0a1ea486107f43c54cfc7528498acba53a801f6c034cd5f5f7ad917"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\learning.py",
+      "sha256": "2a47d4c3fcecbf8b41495eb427216c15e9f6b8e551640a38947ffcce8ab295bf"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\log.py",
+      "sha256": "86c969696a05d1852f90bee3cc37d479bfc18e32dae672eb8a49e6e05bea7a34"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\measure.py",
+      "sha256": "0be2ed792cc97b53312b87f664869576f526c1f2cb9cd399233fb4f8d03b5227"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\metrics.py",
+      "sha256": "64e781d733ed602bb57c2ce9e2679b8fa5ee1c4e552c24294b197842c98146ac"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\model_fetch.py",
+      "sha256": "21d55592fcf9ae3a4972ca153ee3af38bbbf7a5537f1efd3d9843c9217a3499d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\models.py",
+      "sha256": "5866109ee0e1d4a14f092f7af59724cf813dcc9ff33d809e0f6809c68019b446"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\normalize.py",
+      "sha256": "90bf5f71e248e61a40f453703fa9069364520a38af7eb6b2f414003c0e0e5fde"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\observation.py",
+      "sha256": "5f6227a2e575355b595a8609ca618b8d70699d7ae7c8ff85fde77a286fcdb8e3"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\omni_assets.py",
+      "sha256": "8dd97bfffc0b5840217700c88a7d41f93d887aaff6f036b983def377c5fac9f7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\path_a.py",
+      "sha256": "263cb9a5b05ef7feb9646184f7913511d20876bf55134cca5de3cc8998e3af59"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\path_b.py",
+      "sha256": "3e9004ef9741cfed0891224937bdb061ee12bc4d9505f0eff9a38c80e37c4480"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\pipeline.py",
+      "sha256": "d4e23cb80a022d67ea973e6da6aea4e6b43fad76d1170a08fc2a6b8aa3553e9d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\policy.py",
+      "sha256": "808d93c4873f2e6ab1ee8d1c2cb959665ebc33d3eee7e62e7bdc363cb0510f0b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\promotion.py",
+      "sha256": "26944578c89c4134b0f191ac20e12119c862a7fe8dc280fc8d86144e573a891e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\proposals.py",
+      "sha256": "a6be9f848f820b088f2fc58a00478eae893f340716f6d31649d52ab02012e692"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\pyannote_adapter.py",
+      "sha256": "c07c70f74dc1d4b003af33841f59acd857e03e2001287ad25c937c11bb649e12"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\qwen_visual.py",
+      "sha256": "4bda10573ebf3a386d0f4755485625fc7c0139b0fb73fa53cf8ff2a9904172eb"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\reframe.py",
+      "sha256": "d985673d71465cbda963a324731065ddc3333faccc84482b3ece4a380135809f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\registry.py",
+      "sha256": "6fa701f7d8acaff9c7f3686f526cf45114dc2c9c01af5c82bfb2872fed4a808d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\release_approval.py",
+      "sha256": "6328ddb6f6471c7c7e5d767cf08ff22b763d34b69272d93f218e4644f1297b41"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\release.py",
+      "sha256": "e06f24489a53768c152e0d981c744103f572be8d0b33e6a2baa3b4f67614d897"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\render_agent.py",
+      "sha256": "1d9f22aba6db69b31c2db5edbc40fc4ff86d1c76077302bee2653e51a09f6d2e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\render_critic.py",
+      "sha256": "f6ab80b8f7423a45c8752877b2806f2e820ae4d227e1ce14107aab596d44f779"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\render.py",
+      "sha256": "3ae0471dd37c9d064face07fbf9a8119c5136454174baba2593965eaf5a6fd84"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\repurposing.py",
+      "sha256": "fe9f2aea2f3bf410ca6a1ffe1b709160c7ff773f378e58804f8131ec2c1e0f90"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\resolve.py",
+      "sha256": "6f02fb85a2d12123460f8c77b7bd1e8543f3c23a5479be14dc3221b8126f383d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\sanity_gate.py",
+      "sha256": "8a1873750739a067602ed5af41dc6ae8dd213ffe5141fb86dafb765fc9b6640f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\screener.py",
+      "sha256": "0288c3702bc18908b6302a401754ab5af4258cb1fee3d2d71b5330d7edf6c9a6"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\sentences.py",
+      "sha256": "48446d5ea1eae521068380bf0f73f00f1aeac61a484eb5bbfff68c9fae5a7186"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\setup_panel.py",
+      "sha256": "3f00bbf4d328255a1adbb088c55ea42102679d95d38e86ef00077c8cb0a2119c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\shot_composition.py",
+      "sha256": "121d41f804c5441bccb0442fe64b62cf6ff1509af07a0c0e3536d9773411768e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\shot_plan.py",
+      "sha256": "cc413150f7e34f1cb9d37cead7f1414b724c0ce35c13378829ee08695526d5e8"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\silence.py",
+      "sha256": "c5459a1942b61932ffea035aa115c53623257bc5befcd3caf136870cbed36df5"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\smoke.py",
+      "sha256": "7a761a9fbc7a6853ceda3857c7858b3ee317b9fb68c11536a0f482e1dbaf9c78"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\story.py",
+      "sha256": "903c644258a43aa28b967b83c624703a5f9c1ff0c1a053a9e95dc85e16ecc832"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_artifacts.py",
+      "sha256": "8251790f945d6d8787cbf56bf37cea330965469925c90c04303234ae24bace50"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_billing.py",
+      "sha256": "0f62bab8a4571e0af8c36ec8d51da85b066eafa405a7a6f5b33c0690cb5ca5a5"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_generation.py",
+      "sha256": "6cf3594cca8a73971fff0953a162cc3b2e8eb305c6d8c8ecf3b2886bc957a345"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_history.py",
+      "sha256": "463a7d6dd5f81d9f17a4c4af9f1eedfbb11b90e3a12acb38b2184b5c60db0bb5"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_private.py",
+      "sha256": "d8e9fcfd3190ffd0937e98336b6cea2c6bee6a200978ac95afeab19c2933fd2e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_queue.py",
+      "sha256": "fcd36c87cdabeb5883c01cfb576f8c5f3945f8ef09dd978c5a2394d5d4065f30"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_submissions.py",
+      "sha256": "31199636614c3385c053487560a071bccaa9a4df2d6c60c2df5e7ac352265c3a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_ui.py",
+      "sha256": "a08a45ae69de2437551417db5c786b89869c99a241151ab69e9a54961ed5c019"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\studio_uploads.py",
+      "sha256": "f3924e82b93dd5fcc4bf922d3f9b86d5a3e417e8106591d386dc916a95e7777c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\timelens.py",
+      "sha256": "83b9421abac873a3556f486ca40eac4b1225b7fe115f1d3b358ee8ff212dd222"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\timeline.py",
+      "sha256": "2b20d34e2db7e8bdd8f4577957c3251c36f3e0f9b3e241da3473df51b30b9583"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\timing_continuity.py",
+      "sha256": "23bf8a7e28885eb3b2ae7a2b0ba649145010e9fb4091a2fab4c8bb06d2c21bf8"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\transcripts.py",
+      "sha256": "bfc5225fbc5a7b471f550821f5e70aa0f427371ac634269c8266c84cd8774f80"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\vertex_acceptance.py",
+      "sha256": "34f9691cad5592bcf2939ebae0a8e543043bd9f7f532882f46f8d4d98b2a448b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\vex.py",
+      "sha256": "5f25188c542e0bcdeaf7232eacbbb39f49a5ba8c6764b111fe6814ef57421d18"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\video_grounding.py",
+      "sha256": "d221ac664d31fe566ed66429ee4867911723ef2d965e18a8416c9ad7afdd6dbe"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\video_input.py",
+      "sha256": "f3c0ef2435935263dbbaf1754800af2472e2869da31f1c2284247b6c0190ad0c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\video_reader.py",
+      "sha256": "5df803175a56bd4ac39a6a3ab31184a5bf386e4963847402743d5ff63a357d19"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\visual_index.py",
+      "sha256": "5d11325d539d3bae38c1f8dd610aa41a9985e9eebf526f91db1f81ba4838320e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\visual_pipeline.py",
+      "sha256": "3a42c77b1c58d6ebc2a057d9691b7ab834c82b25c2b3c9d3dee00c8c8fd871b0"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\visual_repair.py",
+      "sha256": "1677b0c617043268024d436d09478eb35418dc928fee9165c487a607cfaac00a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\visual_scorecard.py",
+      "sha256": "5d838f81a33c7fe7147c045afb9ac330a66b18ffc4745fbe03bddc6fa9f207cf"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\web.py",
+      "sha256": "da85cae56f26c76bd74619baf8a6ba01970d8568f0bfddb62e993d25447b3bf6"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\windows_security.py",
+      "sha256": "99db1918caea508824c980649c4a7ebe84e9bba2b5cbc3d1932ebb83f4de4ced"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\workflow_agent.py",
+      "sha256": "821af7733bc48d4fa0cece76c2d3200937fe9c8b631c0ab54437ee890c6f5287"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\workflow_control.py",
+      "sha256": "0fa83afeaada53a34745e8b88299c4f9ef70c45e7b9fdd2ac1a27e050c03d613"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\workflow_recovery.py",
+      "sha256": "8501ee59d3a07a09a2a201207c5d2a299050ffe0443cb09a69e0daed5d1a4ab3"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\wsl_asr_locks.py",
+      "sha256": "63b4ca3b5906ff1db43308ac8352a54a92624df4f8b30f284e83263738ef3fb2"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\wsl_audit_locks.py",
+      "sha256": "529b084a9f2c4568eb6d39a2d57c720ccc869b55cdb55cc7200abb64b641e99d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\wsl_setup.py",
+      "sha256": "4b678ce2d0c2f62c7b97697791c8dfa0ebcc77e516329e16045f48ce44edfa4a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\src\\hawedit\\wsl_vex_gate.py",
+      "sha256": "5618cbf9f83f2e3fb37f3dab53e5c7c718cc11566f9a52955911abb98568dde4"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\conftest.py",
+      "sha256": "3e18c17a8f262375859348fe10df6adce1a26b6a5790153f8272e63861c5b303"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\media\\test_real_media_tier.py",
+      "sha256": "c9a44a092f022774b4f739d07378029e0198254dc4293d393156475a58a66e46"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\studio_test_storage.py",
+      "sha256": "b23fbac3f75d95b25fdab8b3d98ed445ba837f52e1303eb9e6206283c8439d59"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_agent.py",
+      "sha256": "0c6c449bbe0d7e1d125839bb58e10d54d83c7315f8597af2d8465d4f6619ffb0"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_alignment.py",
+      "sha256": "fc5109e1719dd37a3f33b8367009204653612348b03e62835f755d56a13aff8b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_artifact_bundle.py",
+      "sha256": "d063fa5d33e4c299d7a25fe522c1d8e7d1832c98c1a7aff299f5dd718b7dd81e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_asr.py",
+      "sha256": "9c1ff05c487bca0098e69262102039bcaf100a69c7539916b6cb6e6b015ed440"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_assembly.py",
+      "sha256": "c24f73f9c962eb70444815147695460205c213db128077e5bcf645bf3a66728b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_atomic_fs.py",
+      "sha256": "d7700d67142994ccc33d1d85a00cb272a7ff0d0720d53f8fe4763f8c7ccfcd0e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_audit_regressions.py",
+      "sha256": "c3ed6e5ba3432282ed23f1e0ee5c066dc906de4f09e908dcc459ac742b0ac4ad"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_bench.py",
+      "sha256": "d85b565798468cc5159934f2706c3959d9340400b1375ee52472f0f49e9f09c5"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_boundary.py",
+      "sha256": "1c2e618b828fd8a5374fd3c30d494df9e4c58159c8da790d1c51165af7e454af"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_brand.py",
+      "sha256": "8b7136f8ecb1c56d771346902a18b11522fa3bd2983d08dd5831f8c5a36cdc43"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_broadcast_studio.py",
+      "sha256": "a61ecf50a53937e8231d2545faacef8f3dd728fea821b4ad38684346a43043ee"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_build.py",
+      "sha256": "bacb57e987a8e094d59b23b76366cf3e91e0101322a11db95eea7264ac13a4ce"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_capability_surface.py",
+      "sha256": "2101a9e4a75c84484e97f87daf8467946d9d4eed0a5cff87674bd9e76602c246"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_caption_layout.py",
+      "sha256": "1c8dd63f811174602c8d41e3b047eaccdc2f9761cccf2024a9b6654fe563844d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_caption_timing.py",
+      "sha256": "d7a1a6220a22dc8dd6ae510b5b74c7316deb5d676f60a70bc4f1abe24d206de7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_captions.py",
+      "sha256": "5fad770a9489bbdad390bb11e4f800fddd5fc91054e79fe9a8a5f6e6c139ab72"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_checkpoint.py",
+      "sha256": "b52a0121bbd5b4c7795c7608a50df9334384ab1a605797200db0a23970dd058d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_claims.py",
+      "sha256": "c27467e12be01629b402f0ae0186308f66570141de9dcc4300a2a76c44b1970a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_cli.py",
+      "sha256": "619b49ea00da7ed8a620b4d2202af9b3c25bffdf1aa520e0cc254e51d87bada1"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_clip.py",
+      "sha256": "3b2e38be29c09f49ef2d71000ebf731c8415e8e1948635deac3037d58996e23f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_collisions.py",
+      "sha256": "773eb84f19e99685a2bc2d44ad07c8e919bffe1887b720f1de616c8135ab19c7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_comparison_kit.py",
+      "sha256": "19ee4431d2dfc410ecfde959ad8a2b3b757441cde754c885fcd3e1f0d1fc8215"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_condenser.py",
+      "sha256": "aa49f9d089b628a63d67e1f56ad4c3ec7e33853c4496f9d36c81c1c7dde3ac73"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_content_type.py",
+      "sha256": "d9c61bd8059757133484b1515046f2097cf810d71a0f08ee1eedfc05c2b93cf4"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_corpus_acceptance.py",
+      "sha256": "9996f79d0423633b1e3710a2e75ed505741c295bd726e508ebf6ac51e3a7200d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_corpus_import.py",
+      "sha256": "badeec047d37fcd565365b10ead71ac64bcb4a082b7927b092132f445441007e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_corpus.py",
+      "sha256": "d85bb6b65d408a97e42c6bbfc6647f4086cc029a5779504c9ef9827bb1750c8a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_cover.py",
+      "sha256": "b1dfbb9c8626f87786064b04c9ce829081a7664626e144783fe6d6db1d8e7fc5"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_credentials.py",
+      "sha256": "597e69bbf88cd36420ea573e1992c30bd52f15cbbbadbea8577bdfafe13aaadd"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_decision_packets.py",
+      "sha256": "abe96fc893216898ff0c068dd8491631b52cf7a24af81bb34a1eae494ba4504a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_delivery.py",
+      "sha256": "8bd2e4c727d5e857991e22b38561d59bb6a210071b58905e89c72be64d111fbf"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_dependency_security.py",
+      "sha256": "15bd98209fb213ceb807542d6619268f40958157020c84bcd4c5cce8dab416cc"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_developer_report.py",
+      "sha256": "3cb668a83c93c1e80d414da03be95000f791884b9d1540485a906bcde3a61c6c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_diagnostics_agent.py",
+      "sha256": "e0d49fe84ec2df2577e669ebce0f3e7b87598d7bfd8855f1724a82deac4a8d8c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_diarization_acceptance.py",
+      "sha256": "05bc8a3367622f81a5cc93eeefe4d5f403ac261d1381ca923be1024a926b7de4"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_diarization.py",
+      "sha256": "635c2268736af741372e75ca3784825ce5c47aceccc5ba49e400fe4472ee057c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_discovery.py",
+      "sha256": "1ccb864ad4ef2ae9f3f49a43a801a6d6b5326758e56982fff666b35e7a3ce844"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_durable.py",
+      "sha256": "72463184601897b9f8fef2fe9f5037c79a56886369635f33c38751cfdb27efb6"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_edit_plan.py",
+      "sha256": "9cb61a1d142158c55027cf989eceaf06e70afc35fbe902855c33c1d6c5eb6645"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_editor_agent.py",
+      "sha256": "7941c1f1e53b1ce9b9c997798c2fc44edada99c8c20b1c78c584cc2b2a930aba"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_editorial_acceptance.py",
+      "sha256": "2fb48ac1092fa04bad3bf30b466f2945bea565888827a63c0d8bca1afd0cc649"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_editorial_bench.py",
+      "sha256": "46710d94d8535a0d5672d2dec33febb78cf6d2b6346866f99f2fccfd808a4bba"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_environment.py",
+      "sha256": "de8d121bd0fd5cd8e51a3d69e403663c97f2d97f9bef52352f915e8fc4f9a1de"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_episode_package.py",
+      "sha256": "2f225a51de23b99514c09350853bea2c9749ca092310d391d1e9e453d23ee0b0"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_episode.py",
+      "sha256": "2b435aa480db0d19c5205ddb96b8be016db4e46c7bb9d0f45d9dec6f6ceda28a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_escalation.py",
+      "sha256": "0aad85250b4b62276fc1357e56c6219a70e2f060b08711621238e96e151cedf0"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_events.py",
+      "sha256": "272892e507c30fce7499bbf87d2010ae20b0caa300f8c500d0a7d35f199ad744"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_exploration_tools.py",
+      "sha256": "8afe6af2cd7a2b1f3fb3691158979d73bcbff53714720ad79fea1e4e1ae5de1d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_explorer_agent.py",
+      "sha256": "749b7b37e0ec5fcabbc82d399bddfa1850154a9a36c9e7e22a8d55a254dbe611"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_fetch_scripts.py",
+      "sha256": "0eb981680ad35c7fea229b93293102a214f06ebf5806e825a7834eb9a795889b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_ffmpeg_setup.py",
+      "sha256": "5c2ee7c2350a787d59b45b0716f90205d2d5a3a53d090d539467c4bfdd83d7d7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_forced_alignment.py",
+      "sha256": "648fc1693951b6f5e5f4ce7807df98a79a341de21ec5f3068ef0ee7c15567b2b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_gate_evidence.py",
+      "sha256": "f20fc0f24fc9558bc491660252ecf1311c98e476cf264b89bee63e3cd54e7589"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_gate.py",
+      "sha256": "7a50685d1802f917f2804bf8808439045684f384b43cb8e3c936b8445b7858c2"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_gemini.py",
+      "sha256": "9f823dabbce12c1e044319e00b4fa3a7e4786f4accbbf5c5cc90e008fc1d563e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_gpu_runtime.py",
+      "sha256": "a8c524afd8e33a12767245ca4871c64f654dbf10c0b40efbf14fec975d91139d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_harness_scripts.py",
+      "sha256": "d4ef5df0625db9ac8909cc7e515eaec52d616c4bba70aeeafd6048c2deb3b639"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_host_dependencies.py",
+      "sha256": "5df2251089c131e147915049aee99fcaebfd9c2e6fb9dd408a0fc00b3ec84a1d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_http_transport.py",
+      "sha256": "881c56f165a5237407ca372addbfdd2c1db93314e3e47e8eb28707253cc9e152"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_index.py",
+      "sha256": "819274c06f25233fce521ef0071349b2eff23a118f543372787b89cba031b2a7"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_ingest.py",
+      "sha256": "453b61064290540af216ad1690bd9c522aa9f54b59fe09736496f562c72c929d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_judge_calibration.py",
+      "sha256": "697b58025801cf990a7a3c277132e9186903fd9073978c0d3bb2bb7ef26f6df1"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_judge.py",
+      "sha256": "38930ebc68ceb517a5b2fd01cd7204b11cb85dc87a4ac685d0b7c1ee1e4c39be"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_keyframes.py",
+      "sha256": "0a350f82a694be69658646359130a70178f70980f5b96d9641b0b2142fa28f0f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_learning.py",
+      "sha256": "a20455feab870701f252973c6f585112e697919d1ff8f7e7d28333dc5a7f2e76"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_log.py",
+      "sha256": "814a96ef54933f9d241de2b7dfc7fafae3825cd2d19ddd7207a19e12b0e6bf12"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_measure.py",
+      "sha256": "c8f59809ba117b3a10995c9fce7c5348d9c634c8c4e6d609ef6e56320b4c322d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_metrics.py",
+      "sha256": "bec3bc8634ea2d1181a93ac599b08b3ceb478222d9c2e421c8043677fc80c329"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_model_fetch.py",
+      "sha256": "0e90a94546f0c83fb19ee96e9667b3fe166938824290950febf38ef20be1d0fe"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_models.py",
+      "sha256": "a009a5d0df4fa0042832098d4fb8995c58588289d4d955e180eec8800668d635"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_no_telemetry_transmission.py",
+      "sha256": "082f12b614c3710e10fda590767ddbe1535cd82ba4059c587ac5ee899be0e236"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_normalize.py",
+      "sha256": "a3b282e57e718122118a1b5d8737a02dddc679dd0654b1f1da729a1fbefdd203"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_observation.py",
+      "sha256": "59541ca7779b6b2f56322f51de58cc78fe78d1ac0c5e8f2b450093a3e0b70c41"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_omni_assets.py",
+      "sha256": "4a1706b96d6fd4e5f002f22528d0c1884abe084647af7b0cfaa859bcd6434b07"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_path_a.py",
+      "sha256": "30f74f862890b7c3c5293aa6275e495ab863cffb83dd3c3afdc3075937037727"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_path_b.py",
+      "sha256": "1e8f5dd924f262fca0db6276e872bcff4062bc81fb7249e42518ddf237454504"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_pipeline.py",
+      "sha256": "0e03fe67d184dfa084ec66272b0d22eab87e5ad3661f75658e54e67738fdea4a"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_policy.py",
+      "sha256": "b89d8fa7a2efac580c77f98641d9833a8d175fdcd4c424c2e5ab198d5104d0b1"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_pro_video_repurpose.py",
+      "sha256": "8719b5efcd26c409273ca847b83fed07a03dd8c8b14f677bf2066382777f9ae3"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_promotion.py",
+      "sha256": "1b2205e46a9e3d668e551e47cb589ab61dbd4fc74017a1beaafc83d5cdd88231"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_prompt_injection.py",
+      "sha256": "b18ff29c57836df7c710cda6f18c38350cdda312412b1a7c2423d0ccdb1825ed"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_proposals.py",
+      "sha256": "7250c61f7217f08a0495b12227dd654d9dbbeb0fe6aaa108c8d6332252b4d49d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_pyannote_adapter.py",
+      "sha256": "fa2601b86d94d3117d3b1219bbf4052234a5a3a4f17532d69c0929577955a9fb"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_python_support.py",
+      "sha256": "c7c050e3d5ae25adf37f371a913da5493ddd5f9aee1a1ae4b9eda5b273178182"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_qwen_visual.py",
+      "sha256": "b3bfa5064c812432508815094ce92c43e2ea85055b819fa2105d95f884060c1c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_reframe.py",
+      "sha256": "bb549c00ab65f7ccf873a4726aa8e0b60f20bf6f75ff2271d87e68fa45706cd6"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_registry.py",
+      "sha256": "cd22846d75e4e282a16095710a9bdd5763c6f81a40e898471da814868f9661db"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_release_approval.py",
+      "sha256": "a8e160d909ab7cfb8f615143b774a4a765dee8c189918bb265c619361f9fadf9"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_release_workflow.py",
+      "sha256": "a913fc16d90df74f1046abb180d488e4edc650f1efcc71cb1c068e9a9974fbe3"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_release.py",
+      "sha256": "5247ca69c0f0792aa342469630843dcb812e8a49cf85bb822f75e5fa0e7cde95"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_render_boundary_revision.py",
+      "sha256": "34f4c5f8fb98101304db0ec78522966fd0210053d64c7d2c839d88707f942922"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_render_caption_revision.py",
+      "sha256": "167dd1a815b4aad6c7b7cdd7517b1ad5ee133b0169a0331b39060f0d5713cb00"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_render_critic.py",
+      "sha256": "f592c1d4eb57495feb17ea2783c878d630ecc65dab5fc5dc2bb02cb2f5074464"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_render.py",
+      "sha256": "a2c8380691bea883d3856cbc16210e349d8f615a14a80af1fe5cd05faac7d8a8"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_repurposing.py",
+      "sha256": "33f3caa30c38de394ddfeff518328cef6fd9c26d0cfa4d93eec569385951a4f4"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_resolve.py",
+      "sha256": "06e2730882b0e6eaf2f78c7a83f3cc6ee1958f789f8deaf2a8b444ac444334fb"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_review_findings.py",
+      "sha256": "b86a9a326746d0ba009406964ab0a0409f3d8c2b52f2d7775f7e90ece379a96b"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_robustness_audit.py",
+      "sha256": "3d05a38faefc7e4f70a2de4630e7592dfe838d79e9ba2325648419fb6025921f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_run_cost.py",
+      "sha256": "3de98b89e484d20ed2eba22666fb4bdd3fd4fc808af724e3de6ab9a429f47c51"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_sanity_gate.py",
+      "sha256": "dd2555305a56ac909e7eb9121fd447dcb1fe864219941c9c36bd6e8725350c07"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_screener.py",
+      "sha256": "bad677cacfbc039d7993a696060b62a50ce6747018ba5e2642555752e629b432"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_sentences.py",
+      "sha256": "f7403fd5bba44ade70002677f5b88a86cb595f94e03007e65ed9702984344e4c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_setup_panel.py",
+      "sha256": "5e5cc44d762dec90c20f4b6a4e4475306344794da4cc861a5b0db3a7576fcb82"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_shot_composition.py",
+      "sha256": "59518c78a739096a3445b8cfd6c33c29bea24e9a2f8bcfbdb608662d5e083b67"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_shot_plan.py",
+      "sha256": "d7c8d290a7031b5126bd0f2df66975ce77da50129e6a1226e9c1677527a92316"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_silence.py",
+      "sha256": "481aa2a8c73d199fb9fb772a05f8f4bf4c06f3bb39557e69b61b62f6dbeb35ea"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_smoke.py",
+      "sha256": "e3f632584ddccbc07947af79c5abdcc535851e48e737c456764ee27abd0e296d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_soak.py",
+      "sha256": "b165550c79a868146b5272531188a41990c7394d0b960b77236ebc48c21c965e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_story.py",
+      "sha256": "e581ee78470fa18223499164e6494a1007739d3c8e10accde84ba63c600b26da"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_artifacts.py",
+      "sha256": "d60b4f5521ecea985d5e1afa492918f318364c2248c9454bb9920861b07f7f2c"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_billing.py",
+      "sha256": "ef5c8d0dd2b7b6d08ade38c559a6dc3755ccf0013293241bbd43a09bd4d6ea56"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_generation.py",
+      "sha256": "96fd5fb6a33c7bdd3a588f7d9d415271de61e373f5b87f307af08f4e65871c50"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_history.py",
+      "sha256": "12e4bb2db7cb030ebd71a90d89534c7a2843363c5d4a42360f791566033ef440"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_private.py",
+      "sha256": "fe92a2600a79d4f22764daf022009d6c04e6a3d461072bb79a38a5f38998fc70"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_queue.py",
+      "sha256": "d119a12b22ec8f31efa0f428fa43cbe7a7678bc5287b2c1c0d457050cf067e49"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_storage.py",
+      "sha256": "b504af882702fd30fe34ea023aeacafcc6f0ae38df834b95f8791d9b0d0b1589"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_submissions.py",
+      "sha256": "4ca8dceac49f73d35e3f66a2113d62d6c4550d41b1e41c0693a79a8bfe161b98"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_ui.py",
+      "sha256": "efab80adf9acf6c64d716dd7c7262bb56d1fc89938e1402c5887563c4961d131"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_studio_uploads.py",
+      "sha256": "9b0a858760093ee57c80c7689fe3293a6495dfb834cd857cc1ed49f6862d0ce8"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_supply_chain.py",
+      "sha256": "bf3a8820ecc8522026bb6d2d702dced9696a074cab3b9a51a5a5d943da4f9447"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_timelens.py",
+      "sha256": "51c6759cb22bea77f0b9cfa04a91b8dc6652f12497d9d924cebe825a3260e114"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_timeline.py",
+      "sha256": "a71885c68a35a180cd1f099c83b4959a165d95d3fb9e1cc6c807ec2b4677d09f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_timeouts.py",
+      "sha256": "abbc56b141990f9b49cd9a47f0e0207715a089522d7310319e93f80fad1f5db8"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_timing_continuity.py",
+      "sha256": "55702cbd24025754eb2c9cb36aebc8681988f69afe8e4ea0dd6c09eba4e30568"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_transcripts.py",
+      "sha256": "f17db65f86b224f7815816ec0e020055cbf5b9e4de9b76dd00bde1e39d30ea9d"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_vertex_acceptance.py",
+      "sha256": "00a084347c01c823568a04ea203c7cdedcd854dc4e25b08217c40d40b984b9c4"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_vex.py",
+      "sha256": "deed971184e225c114da88be24ebe593bf05adf5efd99c75576263abac004832"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_video_grounding.py",
+      "sha256": "961ee68ad98306afb883e8b8f5e3b9b5da1045be6f2f2da590f617e2feb56ed2"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_video_input.py",
+      "sha256": "eeb25c20bc8917108fa539ed35a99ff245933b45f56daaebb78de22278b6a627"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_video_reader.py",
+      "sha256": "fbc1671ff1185a5132cb63c4cc6fe877d8f95b054aeb952e7c1291cc74e00843"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_visual_index.py",
+      "sha256": "4a5e85ddc6d3f7f04307114c6c984c27b310e84f3d087df9d6c6904ceee58132"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_visual_pipeline.py",
+      "sha256": "164b634079508aa259f0d16b5bcfc6596ede13e09c03374bb08db678f80ec21e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_visual_repair.py",
+      "sha256": "97a5460670363dd65b3da1457fe58c6fb1c1d12cfabc8e177573cb22f241abea"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_visual_scorecard.py",
+      "sha256": "2acce4fb9ff600435c7c8df025176c6a9fb0546701ee5723e5ae07d6d32d6243"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_waw.py",
+      "sha256": "20bedc8795b94805ff5ea79b208ccccb1c6fd4dd35387a3754c09424e274bd5f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_web.py",
+      "sha256": "e2ef2131f893377131347ef272f3cfbc961c689fa9e85717b47bdb3afe0270aa"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_workflow_agent.py",
+      "sha256": "cda768755964edab3b93d71505b1d8d10ade1580cef9fbcf4e28139409f84d00"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_workflow_control.py",
+      "sha256": "acbb9a26e0a147dcafa5c7674bdb32a3b0a563e188863c20bd78dda846ec0a4e"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_workflow_recovery.py",
+      "sha256": "e2c361ea6f8f6cb667cb3e84857ef0feabdfcc7bdb842e9c82dbcfe9710ad4e3"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_wsl_audit_locks.py",
+      "sha256": "2a33c0758aa9cfb95c17ebb40507a07923ed0f83ecc1851fbf767d792a7d9b6f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_wsl_setup.py",
+      "sha256": "81594576567fde13a1982dddba38be54a9561ccce87ee00fe582063d02ef016f"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_wsl_vex_gate.py",
+      "sha256": "a9ad0062ebb6721249222012eb75d54df9b20b3f4ca2b95232e2b39e6c4a7947"
+    },
+    {
+      "path": "C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\test_wsl_vex_workflow.py",
+      "sha256": "8ab844646311f17cc57fb335cfae283190d6e54a876aee96035d33f4710874f0"
+    }
+  ]
+}

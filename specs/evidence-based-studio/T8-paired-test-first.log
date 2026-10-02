@@ -1,0 +1,816 @@
+FFFFFFFF...FF.FFFFFFFFFF.FFFFFFFFF.FFFFFFF                               [100%]
+================================== FAILURES ===================================
+___________ test_comparison_paired_differences_are_order_invariant ____________
+
+    def test_comparison_paired_differences_are_order_invariant() -> None:
+        mapping = {**MAP, "q": {"A": "human", "B": "system"}, "r": MAP["p"]}
+>       observations = [paired(), paired("q", "B"), paired("r", "tie")]
+                        ^^^^^^^^
+
+tests\test_comparison_contract.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+pair_id = 'p', preference = 'A'
+
+    def paired(pair_id: str = "p", preference: str = "A") -> kit.PairRating:
+>       option = getattr(kit, "OptionRating")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'hawedit.comparison_kit' has no attribute 'OptionRating'
+
+tests\test_comparison_contract.py:28: AttributeError
+________ test_comparison_paired_flags_follow_option_not_preference[A] _________
+
+preference = 'A'
+
+    @pytest.mark.parametrize("preference", ["A", "B", "tie"])
+    def test_comparison_paired_flags_follow_option_not_preference(preference: str) -> None:
+>       sub = kit.RaterSubmission("rater", TIME, (paired(preference=preference),))
+                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_comparison_contract.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+pair_id = 'p', preference = 'A'
+
+    def paired(pair_id: str = "p", preference: str = "A") -> kit.PairRating:
+>       option = getattr(kit, "OptionRating")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'hawedit.comparison_kit' has no attribute 'OptionRating'
+
+tests\test_comparison_contract.py:28: AttributeError
+________ test_comparison_paired_flags_follow_option_not_preference[B] _________
+
+preference = 'B'
+
+    @pytest.mark.parametrize("preference", ["A", "B", "tie"])
+    def test_comparison_paired_flags_follow_option_not_preference(preference: str) -> None:
+>       sub = kit.RaterSubmission("rater", TIME, (paired(preference=preference),))
+                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_comparison_contract.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+pair_id = 'p', preference = 'B'
+
+    def paired(pair_id: str = "p", preference: str = "A") -> kit.PairRating:
+>       option = getattr(kit, "OptionRating")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'hawedit.comparison_kit' has no attribute 'OptionRating'
+
+tests\test_comparison_contract.py:28: AttributeError
+_______ test_comparison_paired_flags_follow_option_not_preference[tie] ________
+
+preference = 'tie'
+
+    @pytest.mark.parametrize("preference", ["A", "B", "tie"])
+    def test_comparison_paired_flags_follow_option_not_preference(preference: str) -> None:
+>       sub = kit.RaterSubmission("rater", TIME, (paired(preference=preference),))
+                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_comparison_contract.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+pair_id = 'p', preference = 'tie'
+
+    def paired(pair_id: str = "p", preference: str = "A") -> kit.PairRating:
+>       option = getattr(kit, "OptionRating")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'hawedit.comparison_kit' has no attribute 'OptionRating'
+
+tests\test_comparison_contract.py:28: AttributeError
+_________________ test_comparison_paired_submission_roundtrip _________________
+
+    def test_comparison_paired_submission_roundtrip() -> None:
+>       original = kit.RaterSubmission("self-declared reviewer", TIME, (paired(),))
+                                                                        ^^^^^^^^
+
+tests\test_comparison_contract.py:60: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+pair_id = 'p', preference = 'A'
+
+    def paired(pair_id: str = "p", preference: str = "A") -> kit.PairRating:
+>       option = getattr(kit, "OptionRating")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'hawedit.comparison_kit' has no attribute 'OptionRating'
+
+tests\test_comparison_contract.py:28: AttributeError
+_______________ test_comparison_legacy_differences_are_unknown ________________
+
+    def test_comparison_legacy_differences_are_unknown() -> None:
+        sub = kit.validate_ratings(payload(), {"p"})
+        assert kit.validate_ratings(sub.to_dict(), {"p"}) == sub
+        metrics = kit.analyze_study([sub], MAP)
+        assert metrics.system_wins == 1
+>       assert metrics.hook_mean_diff is None
+E       assert 5.0 is None
+E        +  where 5.0 = StudyMetrics(total_comparisons=1, system_wins=1, human_wins=0, ties=0, system_win_rate=1.0, ci_lower=0.2065, ci_upper=...ean_diff=5.0, clarity_mean_diff=4.0, shareability_mean_diff=3.0, misleading_rate_system=1.0, misleading_rate_human=0.0).hook_mean_diff
+
+tests\test_comparison_contract.py:75: AssertionError
+_______________ test_comparison_duplicate_observations_refused ________________
+
+    def test_comparison_duplicate_observations_refused() -> None:
+>       with pytest.raises(kit.ComparisonKitError, match="Duplicate"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:83: Failed
+_____ test_comparison_malformed_payloads_are_contextual[hook_score-True] ______
+
+field = 'hook_score', value = True
+
+    @pytest.mark.parametrize(("field", "value"), [
+        ("hook_score", True), ("hook_score", 1.5), ("clarity_score", 0), ("shareability_score", 6),
+        ("misleading_flag", "false"), ("misleading_flag", 0), ("preferred_option", 1),
+        ("notes", None), ("unknown", "extra"),
+    ])
+    def test_comparison_malformed_payloads_are_contextual(field: str, value: Any) -> None:
+        bad = payload()
+        bad["ratings"][0][field] = value
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:102: Failed
+__ test_comparison_malformed_payloads_are_contextual[misleading_flag-false] ___
+
+field = 'misleading_flag', value = 'false'
+
+    @pytest.mark.parametrize(("field", "value"), [
+        ("hook_score", True), ("hook_score", 1.5), ("clarity_score", 0), ("shareability_score", 6),
+        ("misleading_flag", "false"), ("misleading_flag", 0), ("preferred_option", 1),
+        ("notes", None), ("unknown", "extra"),
+    ])
+    def test_comparison_malformed_payloads_are_contextual(field: str, value: Any) -> None:
+        bad = payload()
+        bad["ratings"][0][field] = value
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:102: Failed
+____ test_comparison_malformed_payloads_are_contextual[misleading_flag-0] _____
+
+field = 'misleading_flag', value = 0
+
+    @pytest.mark.parametrize(("field", "value"), [
+        ("hook_score", True), ("hook_score", 1.5), ("clarity_score", 0), ("shareability_score", 6),
+        ("misleading_flag", "false"), ("misleading_flag", 0), ("preferred_option", 1),
+        ("notes", None), ("unknown", "extra"),
+    ])
+    def test_comparison_malformed_payloads_are_contextual(field: str, value: Any) -> None:
+        bad = payload()
+        bad["ratings"][0][field] = value
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:102: Failed
+________ test_comparison_malformed_payloads_are_contextual[notes-None] ________
+
+field = 'notes', value = None
+
+    @pytest.mark.parametrize(("field", "value"), [
+        ("hook_score", True), ("hook_score", 1.5), ("clarity_score", 0), ("shareability_score", 6),
+        ("misleading_flag", "false"), ("misleading_flag", 0), ("preferred_option", 1),
+        ("notes", None), ("unknown", "extra"),
+    ])
+    def test_comparison_malformed_payloads_are_contextual(field: str, value: Any) -> None:
+        bad = payload()
+        bad["ratings"][0][field] = value
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:102: Failed
+______ test_comparison_malformed_payloads_are_contextual[unknown-extra] _______
+
+field = 'unknown', value = 'extra'
+
+    @pytest.mark.parametrize(("field", "value"), [
+        ("hook_score", True), ("hook_score", 1.5), ("clarity_score", 0), ("shareability_score", 6),
+        ("misleading_flag", "false"), ("misleading_flag", 0), ("preferred_option", 1),
+        ("notes", None), ("unknown", "extra"),
+    ])
+    def test_comparison_malformed_payloads_are_contextual(field: str, value: Any) -> None:
+        bad = payload()
+        bad["ratings"][0][field] = value
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:102: Failed
+_______ test_comparison_missing_fields_refuse_contextually[hook_score] ________
+
+field = 'hook_score'
+
+    @pytest.mark.parametrize("field", ["hook_score", "clarity_score", "misleading_flag", "preferred_option"])
+    def test_comparison_missing_fields_refuse_contextually(field: str) -> None:
+        bad = payload()
+        del bad["ratings"][0][field]
+        with pytest.raises(kit.ComparisonKitError, match="fields"):
+>           kit.validate_ratings(bad, {"p"})
+
+tests\test_comparison_contract.py:111: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+payload = {'reviewer_name': 'reviewer', 'submitted_at_iso': '2026-10-03T09:30:00+03:00', 'ratings': [{'pair_id': 'p', 'clarity_score': 4, 'shareability_score': 3, 'misleading_flag': True, ...}]}
+expected_pair_ids = {'p'}
+
+    def validate_ratings(payload: dict[str, Any], expected_pair_ids: set[str]) -> RaterSubmission:
+        """Validate submitted ratings against the expected study schema and pairs.
+    
+        Raises:
+            ComparisonKitError: If schema is invalid, pairs are missing/duplicate,
+                or scores out of bounds.
+        """
+        reviewer = payload.get("reviewer_name")
+        if not isinstance(reviewer, str) or not reviewer.strip():
+            raise ComparisonKitError("reviewer_name must be a non-empty string")
+    
+        time_str = payload.get("submitted_at_iso")
+        if not isinstance(time_str, str) or not time_str.strip():
+            raise ComparisonKitError("submitted_at_iso must be a non-empty string")
+    
+        raw_ratings = payload.get("ratings")
+        if not isinstance(raw_ratings, list) or not raw_ratings:
+            raise ComparisonKitError("ratings must be a non-empty list")
+    
+        seen_pairs: set[str] = set()
+        validated_ratings: list[PairRating] = []
+    
+        for r in raw_ratings:
+            if not isinstance(r, dict):
+                raise ComparisonKitError("Each rating entry must be a dictionary")
+            pid = r.get("pair_id")
+            if not isinstance(pid, str) or pid not in expected_pair_ids:
+                raise ComparisonKitError(f"Unexpected or invalid pair_id: {pid}")
+            if pid in seen_pairs:
+                raise ComparisonKitError(f"Duplicate rating for pair: {pid}")
+            seen_pairs.add(pid)
+    
+            validated_ratings.append(
+                PairRating(
+                    pair_id=pid,
+>                   hook_score=r["hook_score"],
+                               ^^^^^^^^^^^^^^^
+                    clarity_score=r["clarity_score"],
+                    shareability_score=r["shareability_score"],
+                    misleading_flag=bool(r["misleading_flag"]),
+                    preferred_option=str(r["preferred_option"]),
+                    notes=str(r.get("notes", "")),
+                )
+            )
+E           KeyError: 'hook_score'
+
+src\hawedit\comparison_kit.py:388: KeyError
+______ test_comparison_missing_fields_refuse_contextually[clarity_score] ______
+
+field = 'clarity_score'
+
+    @pytest.mark.parametrize("field", ["hook_score", "clarity_score", "misleading_flag", "preferred_option"])
+    def test_comparison_missing_fields_refuse_contextually(field: str) -> None:
+        bad = payload()
+        del bad["ratings"][0][field]
+        with pytest.raises(kit.ComparisonKitError, match="fields"):
+>           kit.validate_ratings(bad, {"p"})
+
+tests\test_comparison_contract.py:111: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+payload = {'reviewer_name': 'reviewer', 'submitted_at_iso': '2026-10-03T09:30:00+03:00', 'ratings': [{'pair_id': 'p', 'hook_score': 5, 'shareability_score': 3, 'misleading_flag': True, ...}]}
+expected_pair_ids = {'p'}
+
+    def validate_ratings(payload: dict[str, Any], expected_pair_ids: set[str]) -> RaterSubmission:
+        """Validate submitted ratings against the expected study schema and pairs.
+    
+        Raises:
+            ComparisonKitError: If schema is invalid, pairs are missing/duplicate,
+                or scores out of bounds.
+        """
+        reviewer = payload.get("reviewer_name")
+        if not isinstance(reviewer, str) or not reviewer.strip():
+            raise ComparisonKitError("reviewer_name must be a non-empty string")
+    
+        time_str = payload.get("submitted_at_iso")
+        if not isinstance(time_str, str) or not time_str.strip():
+            raise ComparisonKitError("submitted_at_iso must be a non-empty string")
+    
+        raw_ratings = payload.get("ratings")
+        if not isinstance(raw_ratings, list) or not raw_ratings:
+            raise ComparisonKitError("ratings must be a non-empty list")
+    
+        seen_pairs: set[str] = set()
+        validated_ratings: list[PairRating] = []
+    
+        for r in raw_ratings:
+            if not isinstance(r, dict):
+                raise ComparisonKitError("Each rating entry must be a dictionary")
+            pid = r.get("pair_id")
+            if not isinstance(pid, str) or pid not in expected_pair_ids:
+                raise ComparisonKitError(f"Unexpected or invalid pair_id: {pid}")
+            if pid in seen_pairs:
+                raise ComparisonKitError(f"Duplicate rating for pair: {pid}")
+            seen_pairs.add(pid)
+    
+            validated_ratings.append(
+                PairRating(
+                    pair_id=pid,
+                    hook_score=r["hook_score"],
+>                   clarity_score=r["clarity_score"],
+                                  ^^^^^^^^^^^^^^^^^^
+                    shareability_score=r["shareability_score"],
+                    misleading_flag=bool(r["misleading_flag"]),
+                    preferred_option=str(r["preferred_option"]),
+                    notes=str(r.get("notes", "")),
+                )
+            )
+E           KeyError: 'clarity_score'
+
+src\hawedit\comparison_kit.py:389: KeyError
+_____ test_comparison_missing_fields_refuse_contextually[misleading_flag] _____
+
+field = 'misleading_flag'
+
+    @pytest.mark.parametrize("field", ["hook_score", "clarity_score", "misleading_flag", "preferred_option"])
+    def test_comparison_missing_fields_refuse_contextually(field: str) -> None:
+        bad = payload()
+        del bad["ratings"][0][field]
+        with pytest.raises(kit.ComparisonKitError, match="fields"):
+>           kit.validate_ratings(bad, {"p"})
+
+tests\test_comparison_contract.py:111: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+payload = {'reviewer_name': 'reviewer', 'submitted_at_iso': '2026-10-03T09:30:00+03:00', 'ratings': [{'pair_id': 'p', 'hook_score': 5, 'clarity_score': 4, 'shareability_score': 3, ...}]}
+expected_pair_ids = {'p'}
+
+    def validate_ratings(payload: dict[str, Any], expected_pair_ids: set[str]) -> RaterSubmission:
+        """Validate submitted ratings against the expected study schema and pairs.
+    
+        Raises:
+            ComparisonKitError: If schema is invalid, pairs are missing/duplicate,
+                or scores out of bounds.
+        """
+        reviewer = payload.get("reviewer_name")
+        if not isinstance(reviewer, str) or not reviewer.strip():
+            raise ComparisonKitError("reviewer_name must be a non-empty string")
+    
+        time_str = payload.get("submitted_at_iso")
+        if not isinstance(time_str, str) or not time_str.strip():
+            raise ComparisonKitError("submitted_at_iso must be a non-empty string")
+    
+        raw_ratings = payload.get("ratings")
+        if not isinstance(raw_ratings, list) or not raw_ratings:
+            raise ComparisonKitError("ratings must be a non-empty list")
+    
+        seen_pairs: set[str] = set()
+        validated_ratings: list[PairRating] = []
+    
+        for r in raw_ratings:
+            if not isinstance(r, dict):
+                raise ComparisonKitError("Each rating entry must be a dictionary")
+            pid = r.get("pair_id")
+            if not isinstance(pid, str) or pid not in expected_pair_ids:
+                raise ComparisonKitError(f"Unexpected or invalid pair_id: {pid}")
+            if pid in seen_pairs:
+                raise ComparisonKitError(f"Duplicate rating for pair: {pid}")
+            seen_pairs.add(pid)
+    
+            validated_ratings.append(
+                PairRating(
+                    pair_id=pid,
+                    hook_score=r["hook_score"],
+                    clarity_score=r["clarity_score"],
+                    shareability_score=r["shareability_score"],
+>                   misleading_flag=bool(r["misleading_flag"]),
+                                         ^^^^^^^^^^^^^^^^^^^^
+                    preferred_option=str(r["preferred_option"]),
+                    notes=str(r.get("notes", "")),
+                )
+            )
+E           KeyError: 'misleading_flag'
+
+src\hawedit\comparison_kit.py:391: KeyError
+____ test_comparison_missing_fields_refuse_contextually[preferred_option] _____
+
+field = 'preferred_option'
+
+    @pytest.mark.parametrize("field", ["hook_score", "clarity_score", "misleading_flag", "preferred_option"])
+    def test_comparison_missing_fields_refuse_contextually(field: str) -> None:
+        bad = payload()
+        del bad["ratings"][0][field]
+        with pytest.raises(kit.ComparisonKitError, match="fields"):
+>           kit.validate_ratings(bad, {"p"})
+
+tests\test_comparison_contract.py:111: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+payload = {'reviewer_name': 'reviewer', 'submitted_at_iso': '2026-10-03T09:30:00+03:00', 'ratings': [{'pair_id': 'p', 'hook_score': 5, 'clarity_score': 4, 'shareability_score': 3, ...}]}
+expected_pair_ids = {'p'}
+
+    def validate_ratings(payload: dict[str, Any], expected_pair_ids: set[str]) -> RaterSubmission:
+        """Validate submitted ratings against the expected study schema and pairs.
+    
+        Raises:
+            ComparisonKitError: If schema is invalid, pairs are missing/duplicate,
+                or scores out of bounds.
+        """
+        reviewer = payload.get("reviewer_name")
+        if not isinstance(reviewer, str) or not reviewer.strip():
+            raise ComparisonKitError("reviewer_name must be a non-empty string")
+    
+        time_str = payload.get("submitted_at_iso")
+        if not isinstance(time_str, str) or not time_str.strip():
+            raise ComparisonKitError("submitted_at_iso must be a non-empty string")
+    
+        raw_ratings = payload.get("ratings")
+        if not isinstance(raw_ratings, list) or not raw_ratings:
+            raise ComparisonKitError("ratings must be a non-empty list")
+    
+        seen_pairs: set[str] = set()
+        validated_ratings: list[PairRating] = []
+    
+        for r in raw_ratings:
+            if not isinstance(r, dict):
+                raise ComparisonKitError("Each rating entry must be a dictionary")
+            pid = r.get("pair_id")
+            if not isinstance(pid, str) or pid not in expected_pair_ids:
+                raise ComparisonKitError(f"Unexpected or invalid pair_id: {pid}")
+            if pid in seen_pairs:
+                raise ComparisonKitError(f"Duplicate rating for pair: {pid}")
+            seen_pairs.add(pid)
+    
+            validated_ratings.append(
+                PairRating(
+                    pair_id=pid,
+                    hook_score=r["hook_score"],
+                    clarity_score=r["clarity_score"],
+                    shareability_score=r["shareability_score"],
+                    misleading_flag=bool(r["misleading_flag"]),
+>                   preferred_option=str(r["preferred_option"]),
+                                         ^^^^^^^^^^^^^^^^^^^^^
+                    notes=str(r.get("notes", "")),
+                )
+            )
+E           KeyError: 'preferred_option'
+
+src\hawedit\comparison_kit.py:392: KeyError
+_____ test_comparison_timestamp_requires_actual_aware_datetime[yesterday] _____
+
+timestamp = 'yesterday'
+
+    @pytest.mark.parametrize("timestamp", ["yesterday", "2026-02-30T00:00:00Z", "2026-10-03T09:30:00", "2026-10-03"])
+    def test_comparison_timestamp_requires_actual_aware_datetime(timestamp: str) -> None:
+        bad = payload()
+        bad["submitted_at_iso"] = timestamp
+>       with pytest.raises(kit.ComparisonKitError, match="submitted_at_iso"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:118: Failed
+_ test_comparison_timestamp_requires_actual_aware_datetime[2026-02-30T00:00:00Z] _
+
+timestamp = '2026-02-30T00:00:00Z'
+
+    @pytest.mark.parametrize("timestamp", ["yesterday", "2026-02-30T00:00:00Z", "2026-10-03T09:30:00", "2026-10-03"])
+    def test_comparison_timestamp_requires_actual_aware_datetime(timestamp: str) -> None:
+        bad = payload()
+        bad["submitted_at_iso"] = timestamp
+>       with pytest.raises(kit.ComparisonKitError, match="submitted_at_iso"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:118: Failed
+_ test_comparison_timestamp_requires_actual_aware_datetime[2026-10-03T09:30:00] _
+
+timestamp = '2026-10-03T09:30:00'
+
+    @pytest.mark.parametrize("timestamp", ["yesterday", "2026-02-30T00:00:00Z", "2026-10-03T09:30:00", "2026-10-03"])
+    def test_comparison_timestamp_requires_actual_aware_datetime(timestamp: str) -> None:
+        bad = payload()
+        bad["submitted_at_iso"] = timestamp
+>       with pytest.raises(kit.ComparisonKitError, match="submitted_at_iso"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:118: Failed
+____ test_comparison_timestamp_requires_actual_aware_datetime[2026-10-03] _____
+
+timestamp = '2026-10-03'
+
+    @pytest.mark.parametrize("timestamp", ["yesterday", "2026-02-30T00:00:00Z", "2026-10-03T09:30:00", "2026-10-03"])
+    def test_comparison_timestamp_requires_actual_aware_datetime(timestamp: str) -> None:
+        bad = payload()
+        bad["submitted_at_iso"] = timestamp
+>       with pytest.raises(kit.ComparisonKitError, match="submitted_at_iso"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:118: Failed
+_____ test_comparison_unblinding_map_is_complete_and_bijective[mapping1] ______
+
+mapping = {'p': {'A': 'system', 'B': 'system'}}
+
+    @pytest.mark.parametrize("mapping", [
+        {}, {"p": {"A": "system", "B": "system"}}, {"p": {"A": "system"}},
+        {"p": {"A": "system", "B": "human", "C": "human"}},
+        {**MAP, "unrated": {"A": "human", "B": "system"}},
+    ])
+    def test_comparison_unblinding_map_is_complete_and_bijective(mapping: dict[str, dict[str, str]]) -> None:
+>       with pytest.raises(kit.ComparisonKitError, match="map"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:130: Failed
+_____ test_comparison_unblinding_map_is_complete_and_bijective[mapping2] ______
+
+mapping = {'p': {'A': 'system'}}
+
+    @pytest.mark.parametrize("mapping", [
+        {}, {"p": {"A": "system", "B": "system"}}, {"p": {"A": "system"}},
+        {"p": {"A": "system", "B": "human", "C": "human"}},
+        {**MAP, "unrated": {"A": "human", "B": "system"}},
+    ])
+    def test_comparison_unblinding_map_is_complete_and_bijective(mapping: dict[str, dict[str, str]]) -> None:
+>       with pytest.raises(kit.ComparisonKitError, match="map"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:130: Failed
+_____ test_comparison_unblinding_map_is_complete_and_bijective[mapping3] ______
+
+mapping = {'p': {'A': 'system', 'B': 'human', 'C': 'human'}}
+
+    @pytest.mark.parametrize("mapping", [
+        {}, {"p": {"A": "system", "B": "system"}}, {"p": {"A": "system"}},
+        {"p": {"A": "system", "B": "human", "C": "human"}},
+        {**MAP, "unrated": {"A": "human", "B": "system"}},
+    ])
+    def test_comparison_unblinding_map_is_complete_and_bijective(mapping: dict[str, dict[str, str]]) -> None:
+>       with pytest.raises(kit.ComparisonKitError, match="map"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:130: Failed
+_____ test_comparison_unblinding_map_is_complete_and_bijective[mapping4] ______
+
+mapping = {'p': {'A': 'system', 'B': 'human'}, 'unrated': {'A': 'human', 'B': 'system'}}
+
+    @pytest.mark.parametrize("mapping", [
+        {}, {"p": {"A": "system", "B": "system"}}, {"p": {"A": "system"}},
+        {"p": {"A": "system", "B": "human", "C": "human"}},
+        {**MAP, "unrated": {"A": "human", "B": "system"}},
+    ])
+    def test_comparison_unblinding_map_is_complete_and_bijective(mapping: dict[str, dict[str, str]]) -> None:
+>       with pytest.raises(kit.ComparisonKitError, match="map"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:130: Failed
+________ test_comparison_repeated_ratings_do_not_authorize_superiority ________
+
+    def test_comparison_repeated_ratings_do_not_authorize_superiority() -> None:
+        submissions = [kit.RaterSubmission(f"self-label-{i}", TIME, (legacy(),)) for i in range(200)]
+        result = kit.analyze_study(submissions, MAP)
+        assert result.total_comparisons == 200
+        assert result.system_win_rate == 1.0
+>       assert result.independent_reference_ci_lower > 0.98
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'StudyMetrics' object has no attribute 'independent_reference_ci_lower'
+
+tests\test_comparison_contract.py:139: AttributeError
+______________ test_comparison_wilson_uses_requested_confidence _______________
+
+    def test_comparison_wilson_uses_requested_confidence() -> None:
+        low90, high90 = kit.wilson_score_interval(0.5, 100, 0.90)
+        low95, high95 = kit.wilson_score_interval(0.5, 100, 0.95)
+        low99, high99 = kit.wilson_score_interval(0.5, 100, 0.99)
+>       assert low99 < low95 < low90 < 0.5 < high90 < high95 < high99
+E       assert 0.4038315303659956 < 0.40382982859014716
+
+tests\test_comparison_contract.py:152: AssertionError
+_________ test_comparison_wilson_invalid_inputs_refuse[0.5-True-0.95] _________
+
+proportion = 0.5, n = True, confidence = 0.95
+
+    @pytest.mark.parametrize(("proportion", "n", "confidence"), [
+        (0.5, True, 0.95), (0.5, 1.5, 0.95), (True, 10, 0.95),
+        (float("nan"), 10, 0.95), (0.5, 10, 0), (0.5, 10, 1),
+        (0.5, 10, float("nan")), (0.5, 10, True),
+    ])
+    def test_comparison_wilson_invalid_inputs_refuse(proportion: Any, n: Any, confidence: Any) -> None:
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:163: Failed
+_________ test_comparison_wilson_invalid_inputs_refuse[0.5-1.5-0.95] __________
+
+proportion = 0.5, n = 1.5, confidence = 0.95
+
+    @pytest.mark.parametrize(("proportion", "n", "confidence"), [
+        (0.5, True, 0.95), (0.5, 1.5, 0.95), (True, 10, 0.95),
+        (float("nan"), 10, 0.95), (0.5, 10, 0), (0.5, 10, 1),
+        (0.5, 10, float("nan")), (0.5, 10, True),
+    ])
+    def test_comparison_wilson_invalid_inputs_refuse(proportion: Any, n: Any, confidence: Any) -> None:
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:163: Failed
+_________ test_comparison_wilson_invalid_inputs_refuse[True-10-0.95] __________
+
+proportion = True, n = 10, confidence = 0.95
+
+    @pytest.mark.parametrize(("proportion", "n", "confidence"), [
+        (0.5, True, 0.95), (0.5, 1.5, 0.95), (True, 10, 0.95),
+        (float("nan"), 10, 0.95), (0.5, 10, 0), (0.5, 10, 1),
+        (0.5, 10, float("nan")), (0.5, 10, True),
+    ])
+    def test_comparison_wilson_invalid_inputs_refuse(proportion: Any, n: Any, confidence: Any) -> None:
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:163: Failed
+___________ test_comparison_wilson_invalid_inputs_refuse[0.5-10-0] ____________
+
+proportion = 0.5, n = 10, confidence = 0
+
+    @pytest.mark.parametrize(("proportion", "n", "confidence"), [
+        (0.5, True, 0.95), (0.5, 1.5, 0.95), (True, 10, 0.95),
+        (float("nan"), 10, 0.95), (0.5, 10, 0), (0.5, 10, 1),
+        (0.5, 10, float("nan")), (0.5, 10, True),
+    ])
+    def test_comparison_wilson_invalid_inputs_refuse(proportion: Any, n: Any, confidence: Any) -> None:
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:163: Failed
+___________ test_comparison_wilson_invalid_inputs_refuse[0.5-10-1] ____________
+
+proportion = 0.5, n = 10, confidence = 1
+
+    @pytest.mark.parametrize(("proportion", "n", "confidence"), [
+        (0.5, True, 0.95), (0.5, 1.5, 0.95), (True, 10, 0.95),
+        (float("nan"), 10, 0.95), (0.5, 10, 0), (0.5, 10, 1),
+        (0.5, 10, float("nan")), (0.5, 10, True),
+    ])
+    def test_comparison_wilson_invalid_inputs_refuse(proportion: Any, n: Any, confidence: Any) -> None:
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:163: Failed
+__________ test_comparison_wilson_invalid_inputs_refuse[0.5-10-nan] ___________
+
+proportion = 0.5, n = 10, confidence = nan
+
+    @pytest.mark.parametrize(("proportion", "n", "confidence"), [
+        (0.5, True, 0.95), (0.5, 1.5, 0.95), (True, 10, 0.95),
+        (float("nan"), 10, 0.95), (0.5, 10, 0), (0.5, 10, 1),
+        (0.5, 10, float("nan")), (0.5, 10, True),
+    ])
+    def test_comparison_wilson_invalid_inputs_refuse(proportion: Any, n: Any, confidence: Any) -> None:
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:163: Failed
+__________ test_comparison_wilson_invalid_inputs_refuse[0.5-10-True] __________
+
+proportion = 0.5, n = 10, confidence = True
+
+    @pytest.mark.parametrize(("proportion", "n", "confidence"), [
+        (0.5, True, 0.95), (0.5, 1.5, 0.95), (True, 10, 0.95),
+        (float("nan"), 10, 0.95), (0.5, 10, 0), (0.5, 10, 1),
+        (0.5, 10, float("nan")), (0.5, 10, True),
+    ])
+    def test_comparison_wilson_invalid_inputs_refuse(proportion: Any, n: Any, confidence: Any) -> None:
+>       with pytest.raises(kit.ComparisonKitError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ComparisonKitError
+
+tests\test_comparison_contract.py:163: Failed
+____________ test_comparison_preference_cannot_become_qc_approval _____________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7043/test_comparison_preference_can0')
+
+    def test_comparison_preference_cannot_become_qc_approval(tmp_path: Path) -> None:
+        study = kit.prepare_blind_study(
+            [kit.PairCandidate("p", tmp_path / "s", tmp_path / "h", "topic", 10)],
+            tmp_path / "study", copy_media=False,
+        )
+        with pytest.raises(kit.ComparisonKitError, match="preference.*QC"):
+>           kit.export_to_qc_records(kit.RaterSubmission("label", TIME, (legacy(),)), study)
+
+tests\test_comparison_contract.py:173: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\hawedit\comparison_kit.py:557: in export_to_qc_records
+    QcRecord(
+<string>:9: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = QcRecord(reviewer='label', reviewed_at='2026-10-03T09:30:00+03:00', mp4_sha256='35ad8cfc242e8deed3c68e78bfbed69084e09c...e3eb', seconds_watched=60.0, verdict='review', notes='Blind study preference: A; Hook: 5/5; Clarity: 4/5; Share: 3/5.')
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reviewer, str) or not self.reviewer.strip():
+            raise ValueError("qc_record.reviewer must be a non-empty string")
+        if not isinstance(self.reviewed_at, str) or not _ISO_TIMESTAMP_RE.match(self.reviewed_at):
+            raise ValueError(
+                f"qc_record.reviewed_at must be an ISO-8601 timestamp: {self.reviewed_at!r}"
+            )
+        if not isinstance(self.mp4_sha256, str) or not _SHA256_HEX_RE.match(
+            self.mp4_sha256.lower()
+        ):
+            raise ValueError(
+                f"qc_record.mp4_sha256 must be a 64-char lowercase hex SHA-256: {self.mp4_sha256!r}"
+            )
+        if not isinstance(self.seconds_watched, int | float) or self.seconds_watched <= 0:
+            raise ValueError(
+                f"qc_record.seconds_watched must be a positive number: {self.seconds_watched!r}"
+            )
+        if not isinstance(self.verdict, str) or not self.verdict.strip():
+            raise ValueError("qc_record.verdict must be a non-empty string")
+        verdict_norm = self.verdict.strip().lower()
+        if verdict_norm not in APPROVED_VERDICTS and verdict_norm not in REJECTED_VERDICTS:
+>           raise ValueError(
+                f"unsupported qc_record.verdict: {self.verdict!r}; "
+                f"expected one of {sorted(APPROVED_VERDICTS | REJECTED_VERDICTS)}"
+            )
+E           ValueError: unsupported qc_record.verdict: 'review'; expected one of ['accept', 'approved', 'declined', 'fail', 'failed', 'pass', 'passed', 'reject', 'rejected']
+
+src\hawedit\clip.py:701: ValueError
+__________________ test_comparison_form_requires_each_option __________________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7043/test_comparison_form_requires_0')
+
+    def test_comparison_form_requires_each_option(tmp_path: Path) -> None:
+        study = kit.prepare_blind_study(
+            [kit.PairCandidate("p", tmp_path / "s", tmp_path / "h", "topic", 10)],
+            tmp_path / "study", copy_media=False,
+        )
+        form = kit.generate_kurdish_rating_form(study)
+>       assert form["schema"] == 2
+               ^^^^^^^^^^^^^^
+E       KeyError: 'schema'
+
+tests\test_comparison_contract.py:182: KeyError
+___________ test_comparison_paired_invalid_and_mixed_schemas_refuse ___________
+
+    def test_comparison_paired_invalid_and_mixed_schemas_refuse() -> None:
+>       original = kit.RaterSubmission("reviewer", TIME, (paired(),)).to_dict()
+                                                          ^^^^^^^^
+
+tests\test_comparison_contract.py:191: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+pair_id = 'p', preference = 'A'
+
+    def paired(pair_id: str = "p", preference: str = "A") -> kit.PairRating:
+>       option = getattr(kit, "OptionRating")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'hawedit.comparison_kit' has no attribute 'OptionRating'
+
+tests\test_comparison_contract.py:28: AttributeError
+=========================== short test summary info ===========================
+FAILED tests/test_comparison_contract.py::test_comparison_paired_differences_are_order_invariant
+FAILED tests/test_comparison_contract.py::test_comparison_paired_flags_follow_option_not_preference[A]
+FAILED tests/test_comparison_contract.py::test_comparison_paired_flags_follow_option_not_preference[B]
+FAILED tests/test_comparison_contract.py::test_comparison_paired_flags_follow_option_not_preference[tie]
+FAILED tests/test_comparison_contract.py::test_comparison_paired_submission_roundtrip
+FAILED tests/test_comparison_contract.py::test_comparison_legacy_differences_are_unknown
+FAILED tests/test_comparison_contract.py::test_comparison_duplicate_observations_refused
+FAILED tests/test_comparison_contract.py::test_comparison_malformed_payloads_are_contextual[hook_score-True]
+FAILED tests/test_comparison_contract.py::test_comparison_malformed_payloads_are_contextual[misleading_flag-false]
+FAILED tests/test_comparison_contract.py::test_comparison_malformed_payloads_are_contextual[misleading_flag-0]
+FAILED tests/test_comparison_contract.py::test_comparison_malformed_payloads_are_contextual[notes-None]
+FAILED tests/test_comparison_contract.py::test_comparison_malformed_payloads_are_contextual[unknown-extra]
+FAILED tests/test_comparison_contract.py::test_comparison_missing_fields_refuse_contextually[hook_score]
+FAILED tests/test_comparison_contract.py::test_comparison_missing_fields_refuse_contextually[clarity_score]
+FAILED tests/test_comparison_contract.py::test_comparison_missing_fields_refuse_contextually[misleading_flag]
+FAILED tests/test_comparison_contract.py::test_comparison_missing_fields_refuse_contextually[preferred_option]
+FAILED tests/test_comparison_contract.py::test_comparison_timestamp_requires_actual_aware_datetime[yesterday]
+FAILED tests/test_comparison_contract.py::test_comparison_timestamp_requires_actual_aware_datetime[2026-02-30T00:00:00Z]
+FAILED tests/test_comparison_contract.py::test_comparison_timestamp_requires_actual_aware_datetime[2026-10-03T09:30:00]
+FAILED tests/test_comparison_contract.py::test_comparison_timestamp_requires_actual_aware_datetime[2026-10-03]
+FAILED tests/test_comparison_contract.py::test_comparison_unblinding_map_is_complete_and_bijective[mapping1]
+FAILED tests/test_comparison_contract.py::test_comparison_unblinding_map_is_complete_and_bijective[mapping2]
+FAILED tests/test_comparison_contract.py::test_comparison_unblinding_map_is_complete_and_bijective[mapping3]
+FAILED tests/test_comparison_contract.py::test_comparison_unblinding_map_is_complete_and_bijective[mapping4]
+FAILED tests/test_comparison_contract.py::test_comparison_repeated_ratings_do_not_authorize_superiority
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_uses_requested_confidence
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_invalid_inputs_refuse[0.5-True-0.95]
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_invalid_inputs_refuse[0.5-1.5-0.95]
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_invalid_inputs_refuse[True-10-0.95]
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_invalid_inputs_refuse[0.5-10-0]
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_invalid_inputs_refuse[0.5-10-1]
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_invalid_inputs_refuse[0.5-10-nan]
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_invalid_inputs_refuse[0.5-10-True]
+FAILED tests/test_comparison_contract.py::test_comparison_preference_cannot_become_qc_approval
+FAILED tests/test_comparison_contract.py::test_comparison_form_requires_each_option
+FAILED tests/test_comparison_contract.py::test_comparison_paired_invalid_and_mixed_schemas_refuse

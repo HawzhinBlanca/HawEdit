@@ -1,0 +1,3 @@
+Could not find containing symbol for src\hawedit\web.py:29:4. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_artifacts.py:16:52. Returning file symbol instead
+Mapped 131 symbols with Serena

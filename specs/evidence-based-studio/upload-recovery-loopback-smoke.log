@@ -1,0 +1,4 @@
+127.0.0.1 - - [02/Oct/2026 16:46:47] "POST /api/uploads HTTP/1.1" 201 -
+127.0.0.1 - - [02/Oct/2026 16:46:48] "PUT /api/uploads/d34d4ea219bf436a82b3410a21be77fd HTTP/1.1" 201 -
+127.0.0.1 - - [02/Oct/2026 16:46:48] "GET /api/uploads/d34d4ea219bf436a82b3410a21be77fd HTTP/1.1" 200 -
+{"status": "passed", "scope": "real-loopback-http-post-put-get-and-store-reconstruction", "bytes": 48021, "sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15", "source_id_reused": true, "publication": false}

@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "scope": "Bounded POSIX observations, not a canonical Linux gate or mount certificate",
+  "python": "3.12.0",
+  "sqlite": "3.43.1",
+  "platform": "Linux-6.18.40.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "executable": "/mnt/c/Users/Wareen/AppData/Local/HawEdit/wsl-asr/venvs/Ubuntu-33853eeafb05ecf1b998dc84/environment/bin/python",
+  "filesystem": "ext2/ext3",
+  "temporary_root": "/tmp/hawedit-storage-adoption-5lqq1c1m",
+  "source_package_sha256": "6bde42cba644a4510bbdb1bdd28596dba7cece5c328612c6dcbcb0e3d7f0b2cb",
+  "observations": [
+    {
+      "case": "private leaf and actual atomic metadata",
+      "result": "passed"
+    },
+    {
+      "case": "linked metadata",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "shared directory",
+      "result": "refused",
+      "message": "Studio private journal requires current-owner private storage"
+    },
+    {
+      "case": "symbolic directory alias",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "changed staging cleanup",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "private native outbox reopen",
+      "result": "passed"
+    },
+    {
+      "case": "missing outbox main file",
+      "result": "refused",
+      "message": "Studio private journal storage is unavailable or nonprivate"
+    }
+  ],
+  "provider_calls": 0,
+  "model_inference": false
+}

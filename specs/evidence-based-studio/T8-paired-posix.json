@@ -1,0 +1,16 @@
+{
+  "status": "unaccepted-native-runtime-probe",
+  "python": "3.12.0",
+  "platform": "Linux-6.18.40.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "executable": "/mnt/c/Users/Wareen/AppData/Local/HawEdit/wsl-asr/venvs/Ubuntu-33853eeafb05ecf1b998dc84/environment/bin/python",
+  "source_package_sha256": "a42bb02b387fd4c556235e971298d9a6d4e7517b408030d61c6d43e6b449a686",
+  "observations": [
+    "paired roundtrip, flags and order-independent differences",
+    "actual duplicate refusal",
+    "unknown legacy measurements and unavailable inference",
+    "requested confidence changes actual interval"
+  ],
+  "passed": true,
+  "gate_passed": false,
+  "human_evaluation": false
+}

@@ -1,0 +1,10 @@
+Could not find containing symbol for specs\evidence-based-studio\private_journal_posix_probe.py:15:39. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_billing.py:23:39. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_queue.py:16:57. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_submissions.py:21:54. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_billing.py:25:39. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_private.py:14:39. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_queue.py:33:39. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_storage.py:12:39. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_submissions.py:20:4. Returning file symbol instead
+Mapped 221 symbols with Serena

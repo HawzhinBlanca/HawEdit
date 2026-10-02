@@ -1,0 +1,157 @@
+FFFFFF.                                                                  [100%]
+================================== FAILURES ===================================
+___________ test_studio_upload_shared_root_is_preserved_and_refused ___________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_upload_shared_root0')
+
+    def test_studio_upload_shared_root_is_preserved_and_refused(tmp_path: Path) -> None:
+        root = tmp_path / "ordinary"
+        root.mkdir(mode=0o755)
+        marker = root / "original-owner-data"
+        marker.write_bytes(b"original owner bytes")
+        before = root.stat().st_mode
+>       with pytest.raises(StudioStorageError, match="private"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_storage.py:27: Failed
+________________ test_studio_upload_linked_ticket_is_preserved ________________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_upload_linked_tick0')
+
+    def test_studio_upload_linked_ticket_is_preserved(tmp_path: Path) -> None:
+        root = create_private_test_root(tmp_path)
+        store = UploadStore(root)
+        ticket = store.begin("episode.mp4", MEDIA.stat().st_size)
+        path = root / "tickets" / f"{ticket['upload_id']}.json"
+        before = path.read_bytes()
+        outside = tmp_path / "retained-original-ticket"
+        os.link(path, outside)
+>       with pytest.raises((UploadError, StudioStorageError), match="private|linked"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE any of (UploadError, StudioStorageError)
+
+tests\test_studio_storage.py:42: Failed
+______________ test_studio_upload_container_replacement_refuses _______________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_upload_container_r0')
+
+    def test_studio_upload_container_replacement_refuses(tmp_path: Path) -> None:
+        root = create_private_test_root(tmp_path)
+        store = UploadStore(root)
+        ticket = store.begin("episode.mp4", MEDIA.stat().st_size)
+        retained = tmp_path / "retained-sources"
+        assert (root / "sources").resolve().is_relative_to(tmp_path.resolve())
+        assert retained.resolve().is_relative_to(tmp_path.resolve())
+        (root / "sources").rename(retained)
+        make_private_directory(root / "sources")
+        before = (root / "tickets" / f"{ticket['upload_id']}.json").read_bytes()
+>       with pytest.raises(StudioStorageError, match="identity|private"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_storage.py:58: Failed
+______ test_studio_upload_failure_cleanup_cannot_follow_replaced_staging ______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_upload_failure_cle0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001E254D81D90>
+
+    def test_studio_upload_failure_cleanup_cannot_follow_replaced_staging(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import hawedit.studio_uploads as uploads
+    
+        root = create_private_test_root(tmp_path)
+        store = UploadStore(root)
+        ticket = store.begin("episode.mp4", MEDIA.stat().st_size)
+        staging = root / "incoming" / ticket["upload_id"]
+        retained = root / "incoming" / "retained-original-transfer"
+        outside = tmp_path / "owner-originals"
+        outside.mkdir()
+        media = outside / "source.mp4"
+        manifest = outside / "source.json"
+        media.write_bytes(b"unrelated owner media must never be removed")
+        manifest.write_bytes(b"unrelated owner manifest must never be removed")
+        before = (media.read_bytes(), manifest.read_bytes())
+        probe = uploads._probe
+    
+        def probe_then_replace(path: Path) -> dict[str, int]:
+            measured = probe(path)
+            assert measured["duration_ms"] > 0
+            assert staging.resolve().is_relative_to(root.resolve())
+            assert retained.resolve().is_relative_to(root.resolve())
+            staging.rename(retained)
+            directory_alias(staging, outside)
+            raise UploadError("deliberate post-probe transfer failure")
+    
+        monkeypatch.setattr(uploads, "_probe", probe_then_replace)
+        with MEDIA.open("rb") as stream:
+            with pytest.raises((UploadError, StudioStorageError, OSError)):
+                store.receive(ticket["upload_id"], stream, MEDIA.stat().st_size)
+>       assert (media.read_bytes(), manifest.read_bytes()) == before
+                ^^^^^^^^^^^^^^^^^^
+
+tests\test_studio_storage.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Programs\Python\Python312\Lib\pathlib.py:1019: in read_bytes
+    with self.open(mode='rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_upload_failure_cle0/owner-originals/source.mp4')
+mode = 'rb', buffering = -1, encoding = None, errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7034\\test_studio_upload_failure_cle0\\owner-originals\\source.mp4'
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\pathlib.py:1013: FileNotFoundError
+_________ test_studio_submission_shared_root_is_preserved_and_refused _________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_submission_shared_0')
+
+    def test_studio_submission_shared_root_is_preserved_and_refused(tmp_path: Path) -> None:
+        root = tmp_path / "ordinary"
+        root.mkdir(mode=0o755)
+        marker = root / "original-owner-data"
+        marker.write_bytes(b"original owner bytes")
+        before = root.stat().st_mode
+>       with pytest.raises(StudioStorageError, match="private"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_storage.py:109: Failed
+__________ test_studio_submission_missing_database_is_not_recreated ___________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_submission_missing0')
+
+    def test_studio_submission_missing_database_is_not_recreated(tmp_path: Path) -> None:
+        root = create_private_test_root(tmp_path)
+        store = SubmissionStore(root / "submissions.sqlite")
+        assert store.path.resolve().is_relative_to(root.resolve())
+        store.path.unlink()
+        with pytest.raises(StudioStorageError):
+            store.pending()
+>       assert not store.path.exists()
+E       AssertionError: assert not True
+E        +  where True = exists()
+E        +    where exists = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_submission_missing0/private-test-storage/submissions.sqlite').exists
+E        +      where WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7034/test_studio_submission_missing0/private-test-storage/submissions.sqlite') = <hawedit.studio_submissions.SubmissionStore object at 0x000001E254D81460>.path
+
+tests\test_studio_storage.py:123: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_storage.py::test_studio_upload_shared_root_is_preserved_and_refused
+FAILED tests/test_studio_storage.py::test_studio_upload_linked_ticket_is_preserved
+FAILED tests/test_studio_storage.py::test_studio_upload_container_replacement_refuses
+FAILED tests/test_studio_storage.py::test_studio_upload_failure_cleanup_cannot_follow_replaced_staging
+FAILED tests/test_studio_storage.py::test_studio_submission_shared_root_is_preserved_and_refused
+FAILED tests/test_studio_storage.py::test_studio_submission_missing_database_is_not_recreated
+6 failed, 1 passed in 1.98s

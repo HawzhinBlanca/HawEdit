@@ -1,0 +1,41 @@
+..................FF...                                                  [100%]
+================================== FAILURES ===================================
+_________ test_studio_submission_deep_snapshot_is_contextual_refusal __________
+
+prepared = PreparedGeneration(source_id='444d98f7464b41f09ea2b63dc93c4f8a', source_sha256='ed038e743a6b1ee167290741ceda926ac1077f...l_distro":null},"screener":"none"}', content_sha256='5ba5c2ccaf796f92269be818f37278e127a522eb5ecbee393532d3a54daee89e')
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6985/test_studio_submission_deep_sn0')
+
+    def test_studio_submission_deep_snapshot_is_contextual_refusal(
+        prepared: PreparedGeneration, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "submissions.sqlite"
+        store = SubmissionStore(path)
+        job = store.reserve(prepared, BINDING, WORKER)
+        depth = sys.getrecursionlimit() + 64
+        raw = "[" * depth + "0" + "]" * depth
+        assert len(raw) < 128 * 1024
+>       with pytest.raises(RecursionError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RecursionError
+
+tests\test_studio_submissions.py:241: Failed
+_____ test_studio_submission_deep_preparation_refuses_before_reservation ______
+
+prepared = PreparedGeneration(source_id='70f353aaf0684345acce2731ff5131b1', source_sha256='ed038e743a6b1ee167290741ceda926ac1077f...l_distro":null},"screener":"none"}', content_sha256='2f82953905d39be1d5a203aac62ef2b54225201d28d20f711b78b44d16ca6bd7')
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6985/test_studio_submission_deep_pr0')
+
+    def test_studio_submission_deep_preparation_refuses_before_reservation(
+        prepared: PreparedGeneration, tmp_path: Path
+    ) -> None:
+        store = SubmissionStore(tmp_path / "submissions.sqlite")
+        depth = sys.getrecursionlimit() + 64
+        raw = "[" * depth + "0" + "]" * depth
+        assert len(raw) < 128 * 1024
+>       with pytest.raises(RecursionError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RecursionError
+
+tests\test_studio_submissions.py:256: Failed
+=========================== short test summary info ===========================
+FAILED tests/test_studio_submissions.py::test_studio_submission_deep_snapshot_is_contextual_refusal
+FAILED tests/test_studio_submissions.py::test_studio_submission_deep_preparation_refuses_before_reservation

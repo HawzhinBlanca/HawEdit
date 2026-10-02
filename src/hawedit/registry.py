@@ -564,6 +564,12 @@ SHIPPED_ASSETS: Final[tuple[ShippedAsset, ...]] = (
         # a licence violation in every build, and `tests/test_claims.py` asserts the file.
         licence_file="assets/fonts/OFL.txt",
     ),
+    ShippedAsset(
+        name="Vazirmatn (The Vazirmatn Project Authors)",
+        role="Studio font",
+        licence=OFL_1_1,
+        licence_file="assets/fonts/OFL.txt",
+    ),
 )
 
 

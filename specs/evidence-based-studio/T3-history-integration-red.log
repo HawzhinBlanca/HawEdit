@@ -1,0 +1,170 @@
+........................................................................ [ 48%]
+..FFFF..........................................FF...................... [ 97%]
+...                                                                      [100%]
+================================== FAILURES ===================================
+________ test_studio_status_never_fabricates_readiness_or_reel[queued] ________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7014/test_studio_status_never_fabri0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000025C779A4140>
+legacy_status = 'queued'
+
+    @pytest.mark.parametrize("legacy_status", ["queued", "running", "completed", "failed"])
+    def test_studio_status_never_fabricates_readiness_or_reel(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_status: str
+    ) -> None:
+        import hawedit.web as web
+    
+        manager = web.JobManager(tmp_path / "jobs")
+        manager._jobs["old"] = web.JobInfo(
+            "old", "old.mp4", legacy_status, "render", 6, 100, 1, 1, "old"
+        )
+        monkeypatch.setattr(web, "JOB_MANAGER", manager)
+        status, _, body = request("/api/status")
+        document = json.loads(body)
+        assert status == 200 and document["status"] == "unavailable"
+        assert document["runner_ready"] is False and document["latest_reel"] is None
+>       assert document["historical_job_count"] == 1 and document["active_job"] is None
+E       assert (0 == 1)
+
+tests\test_studio_artifacts.py:201: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:59:24] "GET /api/status HTTP/1.1" 200 -
+_______ test_studio_status_never_fabricates_readiness_or_reel[running] ________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7014/test_studio_status_never_fabri1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000025C779A5A30>
+legacy_status = 'running'
+
+    @pytest.mark.parametrize("legacy_status", ["queued", "running", "completed", "failed"])
+    def test_studio_status_never_fabricates_readiness_or_reel(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_status: str
+    ) -> None:
+        import hawedit.web as web
+    
+        manager = web.JobManager(tmp_path / "jobs")
+        manager._jobs["old"] = web.JobInfo(
+            "old", "old.mp4", legacy_status, "render", 6, 100, 1, 1, "old"
+        )
+        monkeypatch.setattr(web, "JOB_MANAGER", manager)
+        status, _, body = request("/api/status")
+        document = json.loads(body)
+        assert status == 200 and document["status"] == "unavailable"
+        assert document["runner_ready"] is False and document["latest_reel"] is None
+>       assert document["historical_job_count"] == 1 and document["active_job"] is None
+E       assert (0 == 1)
+
+tests\test_studio_artifacts.py:201: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:59:24] "GET /api/status HTTP/1.1" 200 -
+______ test_studio_status_never_fabricates_readiness_or_reel[completed] _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7014/test_studio_status_never_fabri2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000025C779A7AD0>
+legacy_status = 'completed'
+
+    @pytest.mark.parametrize("legacy_status", ["queued", "running", "completed", "failed"])
+    def test_studio_status_never_fabricates_readiness_or_reel(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_status: str
+    ) -> None:
+        import hawedit.web as web
+    
+        manager = web.JobManager(tmp_path / "jobs")
+        manager._jobs["old"] = web.JobInfo(
+            "old", "old.mp4", legacy_status, "render", 6, 100, 1, 1, "old"
+        )
+        monkeypatch.setattr(web, "JOB_MANAGER", manager)
+        status, _, body = request("/api/status")
+        document = json.loads(body)
+        assert status == 200 and document["status"] == "unavailable"
+        assert document["runner_ready"] is False and document["latest_reel"] is None
+>       assert document["historical_job_count"] == 1 and document["active_job"] is None
+E       assert (0 == 1)
+
+tests\test_studio_artifacts.py:201: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:59:24] "GET /api/status HTTP/1.1" 200 -
+________ test_studio_status_never_fabricates_readiness_or_reel[failed] ________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7014/test_studio_status_never_fabri3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000025C779A5D90>
+legacy_status = 'failed'
+
+    @pytest.mark.parametrize("legacy_status", ["queued", "running", "completed", "failed"])
+    def test_studio_status_never_fabricates_readiness_or_reel(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_status: str
+    ) -> None:
+        import hawedit.web as web
+    
+        manager = web.JobManager(tmp_path / "jobs")
+        manager._jobs["old"] = web.JobInfo(
+            "old", "old.mp4", legacy_status, "render", 6, 100, 1, 1, "old"
+        )
+        monkeypatch.setattr(web, "JOB_MANAGER", manager)
+        status, _, body = request("/api/status")
+        document = json.loads(body)
+        assert status == 200 and document["status"] == "unavailable"
+        assert document["runner_ready"] is False and document["latest_reel"] is None
+>       assert document["historical_job_count"] == 1 and document["active_job"] is None
+E       assert (0 == 1)
+
+tests\test_studio_artifacts.py:201: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:59:24] "GET /api/status HTTP/1.1" 200 -
+____________________ test_web_handler_get_jobs_and_details ____________________
+
+    def test_web_handler_get_jobs_and_details() -> None:
+        # First query all jobs
+        req = b"GET /api/jobs HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+        status_code, headers, body = _handle_request(req)
+>       assert status_code == 200
+E       assert 409 == 200
+
+tests\test_web.py:192: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:59:36] "GET /api/jobs HTTP/1.1" 409 -
+_____________________ test_web_handler_post_edit_caption ______________________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7014/test_web_handler_post_edit_cap0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000025C2E3EC2C0>
+
+    def test_web_handler_post_edit_caption(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Existing historical display metadata, not a render revision or publication approval.
+        import hawedit.web as web
+    
+        manager = web.JobManager(tmp_path / "jobs")
+        job_id = "historical-caption-job"
+        manager._jobs[job_id] = web.JobInfo(
+            job_id=job_id,
+            source="source.mp4",
+            status="awaiting-review",
+            stage="render",
+            stage_index=6,
+            progress_percent=0,
+            created_at=1.0,
+            updated_at=1.0,
+            headline="before",
+        )
+        monkeypatch.setattr(web, "JOB_MANAGER", manager)
+    
+        # Now edit caption
+        edit_body = json.dumps({"job_id": job_id, "headline": "\u0633\u06d5\u0631\u062f\u06ce\u0695\u06cc \u0646\u0648\u06ce"}).encode()
+        edit_req = (
+            b"POST /api/edit_caption HTTP/1.1\r\n"
+            b"Host: localhost:8080\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: " + str(len(edit_body)).encode("ascii") + b"\r\n\r\n" + edit_body
+        )
+        e_status, _, e_body = _handle_request(edit_req)
+>       assert e_status == 200
+E       assert 404 == 200
+
+tests\test_web.py:234: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:59:36] "POST /api/edit_caption HTTP/1.1" 404 -
+=========================== short test summary info ===========================
+FAILED tests/test_studio_artifacts.py::test_studio_status_never_fabricates_readiness_or_reel[queued]
+FAILED tests/test_studio_artifacts.py::test_studio_status_never_fabricates_readiness_or_reel[running]
+FAILED tests/test_studio_artifacts.py::test_studio_status_never_fabricates_readiness_or_reel[completed]
+FAILED tests/test_studio_artifacts.py::test_studio_status_never_fabricates_readiness_or_reel[failed]
+FAILED tests/test_web.py::test_web_handler_get_jobs_and_details - assert 409 ...
+FAILED tests/test_web.py::test_web_handler_post_edit_caption - assert 404 == 200

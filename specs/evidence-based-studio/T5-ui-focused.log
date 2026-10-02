@@ -1,0 +1,20 @@
+...F.                                                                    [100%]
+================================== FAILURES ===================================
+_______________ test_studio_ui_history_and_preview_are_explicit _______________
+
+    def test_studio_ui_history_and_preview_are_explicit() -> None:
+        document = markup()
+        assert document.element("jobSelect")[0] == "select"
+        assert "api('/api/history')" in DASHBOARD_HTML
+        assert "jobs.find(" not in DASHBOARD_HTML
+        assert "historical" in DASHBOARD_HTML and "unverified-historical" in DASHBOARD_HTML
+        assert "function clearPreview" in DASHBOARD_HTML
+        assert "player.removeAttribute('src')" in DASHBOARD_HTML
+        assert "selectionEpoch" in DASHBOARD_HTML
+        assert "previewEpoch" in DASHBOARD_HTML
+>       assert "player.addEventListener('error'" in DASHBOARD_HTML
+E       assert "player.addEventListener('error'" in '<!DOCTYPE html>\n<html lang="ckb" dir="rtl">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="widt...) || \'\');\n      if (state.ticket) await recoverUpload();\n    }\n    initialize();\n  </script>\n</body>\n</html>\n'
+
+tests\test_studio_ui.py:96: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_ui.py::test_studio_ui_history_and_preview_are_explicit

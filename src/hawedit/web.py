@@ -1,15 +1,11 @@
-"""HawEdit Local Web UI Dashboard — Claim S1.
-
-Zero-dependency local web server using Python standard library `http.server`.
-Allows creators to drop video files, track pipeline stage progress in real-time,
-preview 9:16 vertical reels with Kurdish kinetic subtitles, and download deliverables.
-"""
+"""Local stdlib studio API; protected execution and publication remain explicit prerequisites."""
 
 from __future__ import annotations
 
 import http.server
 import json
-import mimetypes
+import os
+import socket
 import socketserver
 import sys
 import threading
@@ -17,787 +13,23 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
-from urllib.parse import urlparse
+from typing import Any
+from urllib.parse import unquote, urlparse
 
 from hawedit.cli import use_utf8_streams
-from hawedit.transcripts import validate_media_id
+from hawedit.studio_artifacts import (
+    ArtifactError,
+    UnsatisfiableRange,
+    byte_range,
+    font_bytes,
+    open_preview,
+)
+from hawedit.studio_history import HistoryError, read_historical_job, read_history
+from hawedit.studio_private import PrivateDirectory, StudioStorageError
+from hawedit.studio_ui import DASHBOARD_HTML as DASHBOARD_HTML
+from hawedit.studio_uploads import DEFAULT_MAX_BYTES, UploadError, UploadStore
 
 ROOT = Path(__file__).resolve().parents[2]
-
-ALLOWED_MEDIA_EXTENSIONS: Final[set[str]] = {
-    ".mp4",
-    ".mov",
-    ".webm",
-    ".wav",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".ass",
-    ".srt",
-    ".edl",
-    ".json",
-}
-
-FONTS_URL = (
-    "https://fonts.googleapis.com/css2?"
-    "family=Vazirmatn:wght@400;600;700;900"
-    "&family=Inter:wght@400;600;700&display=swap"
-)
-
-# Embedded Modern Web UI HTML
-DASHBOARD_HTML = f"""<!DOCTYPE html>
-<html lang="ckb" dir="rtl">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HawEdit — Pro Kurdish Social Reel Studio</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{FONTS_URL}" rel="stylesheet">
-  <style>
-    :root {{
-      --bg: #0b0f19;
-      --card-bg: rgba(23, 32, 54, 0.7);
-      --card-border: rgba(255, 255, 255, 0.08);
-      --accent: #00e5ff;
-      --gold: #ffb300;
-      --text: #f3f4f6;
-      --text-muted: #9ca3af;
-      --success: #10b981;
-      --radius: 16px;
-    }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow-x: hidden;
-      background-image:
-        radial-gradient(circle at 10% 20%, rgba(0, 229, 255, 0.05) 0%, transparent 40%),
-        radial-gradient(circle at 90% 80%, rgba(255, 179, 0, 0.05) 0%, transparent 40%);
-    }}
-    header {{
-      padding: 24px 40px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--card-border);
-      backdrop-filter: blur(12px);
-      background: rgba(11, 15, 25, 0.8);
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }}
-    .brand {{ display: flex; align-items: center; gap: 14px; }}
-    .brand h1 {{ font-size: 24px; font-weight: 900; letter-spacing: -0.5px; color: #fff; }}
-    .brand span {{
-      font-size: 13px;
-      color: var(--accent);
-      background: rgba(0, 229, 255, 0.1);
-      padding: 4px 10px;
-      border-radius: 20px;
-      font-family: 'Inter', sans-serif;
-      font-weight: 600;
-    }}
-    .status-badge {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--success);
-    }}
-    .status-dot {{
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--success);
-      box-shadow: 0 0 10px var(--success);
-    }}
-    
-    main {{
-      max-width: 1280px;
-      margin: 40px auto;
-      padding: 0 24px;
-      width: 100%;
-      display: grid;
-      grid-template-columns: 1fr 1.2fr;
-      gap: 32px;
-    }}
-    @media (max-width: 960px) {{ main {{ grid-template-columns: 1fr; }} }}
-    
-    .card {{
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: var(--radius);
-      padding: 32px;
-      backdrop-filter: blur(16px);
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-    }}
-    .card-title {{
-      font-size: 19px;
-      font-weight: 700;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: #fff;
-    }}
-    
-    .dropzone {{
-      border: 2px dashed rgba(0, 229, 255, 0.3);
-      border-radius: 12px;
-      padding: 48px 24px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      background: rgba(0, 229, 255, 0.02);
-    }}
-    .dropzone:hover {{
-      border-color: var(--accent);
-      background: rgba(0, 229, 255, 0.05);
-      transform: translateY(-2px);
-    }}
-    .dropzone-icon {{ font-size: 40px; margin-bottom: 12px; }}
-    .dropzone-text {{ font-size: 16px; font-weight: 600; margin-bottom: 6px; }}
-    .dropzone-hint {{ font-size: 13px; color: var(--text-muted); }}
-    
-    .btn {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      width: 100%;
-      padding: 16px;
-      background: linear-gradient(135deg, #00e5ff 0%, #0099ff 100%);
-      color: #000;
-      font-weight: 700;
-      font-size: 16px;
-      border: none;
-      border-radius: 12px;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      margin-top: 24px;
-      box-shadow: 0 8px 24px rgba(0, 229, 255, 0.3);
-    }}
-    .btn:hover {{
-      transform: translateY(-2px);
-      box-shadow: 0 12px 32px rgba(0, 229, 255, 0.4);
-    }}
-    .btn:disabled {{ opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }}
-    
-    .stepper {{ display: flex; flex-direction: column; gap: 16px; margin-top: 24px; }}
-    .step {{
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 14px 18px;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-    }}
-    .step.active {{ border-color: var(--accent); background: rgba(0, 229, 255, 0.08); }}
-    .step.completed {{ border-color: var(--success); background: rgba(16, 185, 129, 0.08); }}
-    .step-num {{
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 13px;
-      font-weight: 700;
-      background: rgba(255, 255, 255, 0.1);
-      color: var(--text-muted);
-      font-family: 'Inter', sans-serif;
-    }}
-    .step.active .step-num {{ background: var(--accent); color: #000; }}
-    .step.completed .step-num {{ background: var(--success); color: #000; }}
-    .step-label {{ font-size: 14px; font-weight: 600; flex: 1; }}
-    
-    .preview-container {{ display: flex; flex-direction: column; gap: 20px; }}
-    .video-wrapper {{
-      position: relative;
-      width: 100%;
-      aspect-ratio: 9 / 16;
-      max-height: 540px;
-      border-radius: 14px;
-      overflow: hidden;
-      background: #000;
-      border: 1px solid var(--card-border);
-      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
-      margin: 0 auto;
-    }}
-    video {{ width: 100%; height: 100%; object-fit: contain; }}
-    
-    .story-meta {{
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 12px;
-      padding: 20px;
-    }}
-    .headline {{
-      font-size: 17px;
-      font-weight: 800;
-      color: var(--gold);
-      margin-bottom: 8px;
-      line-height: 1.5;
-    }}
-    .summary {{ font-size: 14px; line-height: 1.8; color: var(--text-muted); }}
-    
-    .audit-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
-      margin-top: 16px;
-    }}
-    .audit-pill {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      padding: 8px 12px;
-      border-radius: 8px;
-      background: rgba(16, 185, 129, 0.1);
-      color: var(--success);
-      border: 1px solid rgba(16, 185, 129, 0.2);
-    }}
-    .progress-track {{
-      width: 100%;
-      height: 8px;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 4px;
-      margin-top: 18px;
-      overflow: hidden;
-    }}
-    .progress-fill {{
-      height: 100%;
-      width: 100%;
-      background: linear-gradient(90deg, #00e5ff 0%, #10b981 100%);
-      transition: width 0.3s ease;
-      box-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
-    }}
-    .clip-tabs {{
-      display: flex;
-      gap: 10px;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-    }}
-    .clip-tab {{
-      flex: 1 1 calc(33.333% - 10px);
-      min-width: 140px;
-      padding: 10px 14px;
-      border-radius: 10px;
-      font-size: 13px;
-      font-weight: 700;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(255, 255, 255, 0.03);
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.2s ease;
-      font-family: 'Vazirmatn', sans-serif;
-      text-align: center;
-    }}
-    .clip-tab:hover {{
-      border-color: var(--accent);
-      color: #fff;
-    }}
-    .clip-tab.active {{
-      background: rgba(0, 229, 255, 0.12);
-      border-color: var(--accent);
-      color: var(--accent);
-    }}
-    .headline-edit {{
-      flex: 1;
-      background: rgba(0, 0, 0, 0.3);
-      border: 1px solid var(--card-border);
-      border-radius: 10px;
-      padding: 10px 14px;
-      color: var(--gold);
-      font-family: 'Vazirmatn', sans-serif;
-      font-weight: 700;
-      font-size: 14px;
-    }}
-    .headline-edit:focus {{
-      outline: none;
-      border-color: var(--gold);
-    }}
-    .btn-save {{
-      padding: 10px 18px;
-      background: rgba(255, 179, 0, 0.15);
-      border: 1px solid var(--gold);
-      color: var(--gold);
-      border-radius: 10px;
-      font-weight: 700;
-      cursor: pointer;
-      font-family: 'Vazirmatn', sans-serif;
-      transition: all 0.2s ease;
-    }}
-    .btn-save:hover {{
-      background: var(--gold);
-      color: #000;
-    }}
-    .btn-download {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      width: 100%;
-      padding: 14px;
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid var(--success);
-      color: var(--success);
-      border-radius: 12px;
-      font-weight: 700;
-      text-decoration: none;
-      margin-top: 16px;
-      transition: all 0.2s ease;
-    }}
-    .btn-download:hover {{
-      background: var(--success);
-      color: #000;
-      transform: translateY(-2px);
-    }}
-    .studio-settings {{
-      background: rgba(0, 0, 0, 0.28);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 16px;
-      margin-top: 18px;
-      margin-bottom: 18px;
-    }}
-    .settings-title {{
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--accent);
-      margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }}
-    .form-row {{
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 12px;
-    }}
-    .form-group {{
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }}
-    .form-group label {{
-      font-size: 12px;
-      color: var(--text-muted);
-      font-weight: 600;
-    }}
-    .form-select {{
-      background: rgba(11, 15, 25, 0.9);
-      border: 1px solid var(--card-border);
-      border-radius: 8px;
-      padding: 8px 12px;
-      color: var(--text);
-      font-family: 'Vazirmatn', sans-serif;
-      font-size: 13px;
-      outline: none;
-      transition: border-color 0.2s;
-    }}
-    .form-select:focus {{
-      border-color: var(--accent);
-    }}
-    .toggle-row {{
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }}
-    .toggle-label {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      cursor: pointer;
-      color: var(--text);
-      user-select: none;
-    }}
-    .toggle-label input[type="checkbox"] {{
-      accent-color: var(--accent);
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
-    }}
-  </style>
-</head>
-<body>
-  <header>
-    <div class="brand">
-      <h1>HawEdit</h1>
-      <span>PRO V3</span>
-    </div>
-    <div class="status-badge">
-      <div class="status-dot"></div>
-      <span id="engineStatus">ئامادەیە بۆ کار</span>
-    </div>
-  </header>
-
-  <main>
-    <div class="card">
-      <div class="card-title">ڤیدیۆ هەڵبژێرە (Select Video)</div>
-      <div class="dropzone" id="dropzone"
-           onclick="document.getElementById('videoFile').click()">
-        <div class="dropzone-icon">🎬</div>
-        <div class="dropzone-text">ڤیدیۆ لێرە دابنێ یان کلیك بکە</div>
-        <div class="dropzone-hint">پشتیوانی لە هەموو فۆرماتێکی MP4 / MOV / MKV</div>
-        <input type="file" id="videoFile" accept="video/*" style="display:none"
-               onchange="fileSelected(this)">
-      </div>
-      <div id="fileInfo"
-           style="margin-top:14px;font-size:13px;color:var(--accent);font-weight:600;display:none;">
-      </div>
-
-      <div class="studio-settings">
-        <div class="settings-title">⚙️ ڕێکخستنی ستۆدیۆ (Studio Settings)</div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="optPreset">شێوازی ڤیدیۆ (Preset)</label>
-            <select id="optPreset" class="form-select">
-              <option value="viral" selected>ڤایرۆڵ (Viral Hook & Quick Pacing)</option>
-              <option value="broadcast">برۆدکاست (Clean Studio & Interview)</option>
-              <option value="split">دووانە (Split-Screen Two Speakers)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="optCaptionStyle">شێوازی ژێرنووس (Captions)</label>
-            <select id="optCaptionStyle" class="form-select">
-              <option value="kinetic_pop" selected>جووڵەی وشەکان (Kinetic Pop)</option>
-              <option value="viral_popup">دەرکەوتنی وشە (Viral Popup)</option>
-              <option value="rtl_highlight">دیاریکردنی زێڕین (RTL Highlight)</option>
-              <option value="broadcast_studio">تەواوی دێڕ (Line / Broadcast)</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="optScreener">فلتەری ژیری دەستکرد (AI Screener)</label>
-            <select id="optScreener" class="form-select">
-              <option value="none" selected>ئاسایی (Direct Ingest)</option>
-              <option value="gemini-flash">Gemini 2.5 Flash (Kurdish AI Screener)</option>
-              <option value="jev">TypeSafe Jev (System One AI Screener)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="optMaxClips">ژمارەی شۆرتەکان (Clips Count)</label>
-            <select id="optMaxClips" class="form-select">
-              <option value="1">١ شۆرتی تایبەت (Top 1 Reel)</option>
-              <option value="2">٢ شۆرت (Top 2 Reels)</option>
-              <option value="3" selected>٣ شۆرت (Top 3 Viral Reels)</option>
-              <option value="5">٥ شۆرت (Top 5 Batch)</option>
-            </select>
-          </div>
-        </div>
-        <div class="toggle-row">
-          <label class="toggle-label">
-            <input type="checkbox" id="optHookBanner" checked>
-            <span>بەرزکردنەوەی ناونیشانی دەستپێک (Top Hook Banner)</span>
-          </label>
-          <label class="toggle-label">
-            <input type="checkbox" id="optSilence" checked>
-            <span>بڕینی بێدەنگی و پشووەکان (Silence Tightening)</span>
-          </label>
-        </div>
-      </div>
-      
-      <button class="btn" id="startBtn" onclick="startRepurposing()">
-        دروستکردنی شۆرتی ڤایرۆڵ (Generate Reel)
-      </button>
-      
-      <div class="card-title" style="margin-top: 36px;">
-        قۆناغەکانی پڕۆسێس (Processing Stages)
-      </div>
-      <div class="stepper">
-        <div class="step completed" id="s0">
-          <div class="step-num">0</div>
-          <div class="step-label">وەرگرتن و جیاکردنەوەی دیمەنەکان (Ingest & Scene Cuts)</div>
-        </div>
-        <div class="step completed" id="s1">
-          <div class="step-num">1</div>
-          <div class="step-label">تێکستی کوردی دەنگ و کاتەکان (OmniASR & Alignment)</div>
-        </div>
-        <div class="step completed" id="s2">
-          <div class="step-num">2</div>
-          <div class="step-label">دیاریکردنی قسەکەر و شوێنپێهەڵگرتن (YuNet Tracking)</div>
-        </div>
-        <div class="step completed" id="s3">
-          <div class="step-num">3</div>
-          <div class="step-label">هەڵبژاردنی بەسەرهاتی کاریگەر (Story Condensation)</div>
-        </div>
-        <div class="step completed" id="s4">
-          <div class="step-num">4</div>
-          <div class="step-label">پشکنینی وردی کوالیتی (Sanity Gate Audit)</div>
-        </div>
-        <div class="step completed" id="s5">
-          <div class="step-num">5</div>
-          <div class="step-label">ڕێندەری کۆتایی بە 115pt و NVENC (Master Render)</div>
-        </div>
-      </div>
-      <div class="progress-track">
-        <div class="progress-fill" id="progressBar" style="width: 100%;"></div>
-      </div>
-    </div>
-
-    <div class="card preview-container">
-      <div class="card-title">شۆرتی ئامادەکراو (Pro Kurdish Short)</div>
-      
-      <div class="clip-tabs" id="clipTabs"></div>
-
-      <div class="video-wrapper">
-        <video id="player" controls playsinline>
-          Your browser does not support HTML5 video.
-        </video>
-      </div>
-
-      <div class="story-meta">
-        <div class="headline" id="headlineText">
-          چاوەڕوانی ئەنجامی پڕۆسێسکردن (Awaiting pipeline output)...
-        </div>
-        <div class="summary" id="summaryText">
-          پوختەی ناوەڕۆک لەگەڵ کاندیدەکان دوای تەواوبوونی پڕۆسێس ئامادە دەبێت.
-        </div>
-        
-        <div style="margin-top:14px;display:flex;gap:10px;">
-          <input type="text" id="headlineInput" class="headline-edit"
-                 placeholder="دەستکاری سەردێڕ (Edit headline)">
-          <button class="btn-save" onclick="saveHeadline()">پاشەکەوتکردن</button>
-        </div>
-
-        <a id="downloadBtn" href="#" class="btn-download" style="display:none;">
-          داگرتنی شۆرتی تەواوکراو (Download 9:16 Reel)
-        </a>
-        
-        <div class="audit-grid" id="auditGrid" style="display:none;">
-          <div class="audit-pill" id="pillFaces">✓ ڕوخسار لە هەموو دیمەنێکدا</div>
-          <div class="audit-pill" id="pillSubs">✓ ژێرنووسی Vazirmatn Bold (Synced RTL)</div>
-          <div class="audit-pill" id="pillAudio">✓ دەنگی ستاندارد (-14 LUFS)</div>
-          <div class="audit-pill" id="pillDuration">✓ ماوەی شۆرت</div>
-        </div>
-      </div>
-    </div>
-  </main>
-
-  <script>
-    let currentJobId = null;
-    let pollTimer = null;
-    let currentClips = [];
-
-    function fileSelected(input) {{
-      if (input.files && input.files[0]) {{
-        const file = input.files[0];
-        const info = document.getElementById('fileInfo');
-        info.style.display = 'block';
-        const sizeMb = (file.size / 1024 / 1024).toFixed(1);
-        info.textContent = 'فایلی هەڵبژێردراو: ' + file.name + ' (' + sizeMb + ' MB)';
-      }}
-    }}
-
-    async function startRepurposing() {{
-      const btn = document.getElementById('startBtn');
-      const fileInput = document.getElementById('videoFile');
-      const file = fileInput.files && fileInput.files[0];
-      if (!file) {{
-        alert('تکایە سەرەتا فایلی ڤیدیۆ هەڵبژێرە (Please select a video file first)');
-        document.getElementById('engineStatus').textContent = 'هەڵە: هیچ فایلێک هەڵنەبژێردراوە';
-        return;
-      }}
-      const fileName = file.name;
-
-      btn.disabled = true;
-      btn.textContent = 'خەریکی دروستکردنی شۆرتە...';
-      document.getElementById('engineStatus').textContent = 'پڕۆسێس دەکرێت...';
-      
-      for (let i = 0; i < 7; i++) {{
-        const el = document.getElementById('s' + i);
-        if (el) el.className = 'step';
-      }}
-      document.getElementById('progressBar').style.width = '5%';
-
-      try {{
-        const presetEl = document.getElementById('optPreset');
-        const captionStyleEl = document.getElementById('optCaptionStyle');
-        const screenerEl = document.getElementById('optScreener');
-        const maxClipsEl = document.getElementById('optMaxClips');
-        const hookBannerEl = document.getElementById('optHookBanner');
-        const silenceEl = document.getElementById('optSilence');
-
-        const payload = {{
-          source: fileName,
-          preset: presetEl ? presetEl.value : 'viral',
-          caption_style: captionStyleEl ? captionStyleEl.value : 'kinetic_pop',
-          screener: screenerEl ? screenerEl.value : 'none',
-          max_clips: maxClipsEl ? parseInt(maxClipsEl.value, 10) : 3,
-          hook_banner: hookBannerEl ? hookBannerEl.checked : true,
-          silence_tightening: silenceEl ? silenceEl.checked : true,
-        }};
-
-        const res = await fetch('/api/repurpose', {{
-          method: 'POST',
-          headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify(payload)
-        }});
-        if (!res.ok) {{
-          const errData = await res.json().catch(() => ({{}}));
-          throw new Error(errData.error || ('Server returned HTTP ' + res.status));
-        }}
-        const job = await res.json();
-        currentJobId = job.job_id;
-        if (job.clips) currentClips = job.clips;
-        pollJob(currentJobId);
-      }} catch (err) {{
-        console.error(err);
-        alert('هەڵەی پڕۆسێس: ' + err.message);
-        document.getElementById('engineStatus').textContent = 'هەڵە ڕوویدا: ' + err.message;
-        btn.disabled = false;
-        btn.textContent = 'دروستکردنی شۆرتی ڤایرۆڵ';
-      }}
-    }}
-
-    function pollJob(jobId) {{
-      const btn = document.getElementById('startBtn');
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(async () => {{
-        try {{
-          const res = await fetch('/api/jobs/' + jobId);
-          if (!res.ok) return;
-          const job = await res.json();
-
-          const bar = document.getElementById('progressBar');
-          bar.style.width = job.progress_percent + '%';
-          bar.textContent = job.progress_percent + '%';
-
-          for (let i = 0; i < 7; i++) {{
-            const el = document.getElementById('s' + i);
-            if (!el) continue;
-            if (i < job.stage_index) {{
-              el.className = 'step done';
-            }} else if (i === job.stage_index) {{
-              el.className = 'step active';
-            }} else {{
-              el.className = 'step';
-            }}
-          }}
-
-          if (job.status === 'completed') {{
-            clearInterval(pollTimer);
-            pollTimer = null;
-            btn.disabled = false;
-            btn.textContent = 'دروستکردنی شۆرتی تر';
-            document.getElementById('engineStatus').textContent = 'تەواوبوو (Ready)';
-            if (job.clips && job.clips.length > 0) {{
-              currentClips = job.clips;
-              renderClipTabs(currentClips);
-            }}
-          }} else if (job.status === 'failed' || job.status === 'skipped') {{
-            clearInterval(pollTimer);
-            pollTimer = null;
-            btn.disabled = false;
-            btn.textContent = 'دووبارە هەوڵبدەرەوە';
-            const errMsg = job.error || 'هەڵەی نەزانراو';
-            document.getElementById('engineStatus').textContent = 'شکستیهێنا: ' + errMsg;
-          }}
-        }} catch (e) {{
-          console.error(e);
-        }}
-      }}, 1000);
-    }}
-
-    async function saveHeadline() {{
-      const newHeadline = document.getElementById('headlineInput').value;
-      if (!currentJobId) return;
-      try {{
-        const res = await fetch('/api/edit_caption', {{
-          method: 'POST',
-          headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ job_id: currentJobId, headline: newHeadline }})
-        }});
-        if (res.ok) {{
-          document.getElementById('headlineText').textContent = newHeadline;
-          alert('سەردێڕ بە سەرکەوتوویی پاشەکەوتکرا');
-        }}
-      }} catch (e) {{}}
-    }}
-
-    function switchClip(idx) {{
-      const tabs = document.querySelectorAll('.clip-tab');
-      tabs.forEach((t, i) => t.classList.toggle('active', i === idx));
-      if (currentClips && currentClips[idx]) {{
-        const clip = currentClips[idx];
-        document.getElementById('headlineText').textContent = clip.headline || '';
-        document.getElementById('headlineInput').value = clip.headline || '';
-        if (clip.summary) {{
-          document.getElementById('summaryText').textContent = clip.summary;
-        }}
-        const pillDur = document.getElementById('pillDuration');
-        if (pillDur && clip.duration_s) {{
-          pillDur.textContent = '✓ ماوە: ' + clip.duration_s + ' چرکە';
-        }}
-        if (clip.video_url) {{
-          const player = document.getElementById('player');
-          player.src = clip.video_url;
-          if (clip.poster_url) player.poster = clip.poster_url;
-          player.load();
-          const dlBtn = document.getElementById('downloadBtn');
-          if (dlBtn) {{
-            dlBtn.href = clip.video_url;
-            const rawTitle = clip.headline || 'reel';
-            const cleanName = rawTitle.replace(/[^a-zA-Z0-9_\u0600-\u06ff-]/g, '_');
-            dlBtn.setAttribute('download', cleanName + '.mp4');
-            dlBtn.style.display = 'block';
-          }}
-          const auditGrid = document.getElementById('auditGrid');
-          if (auditGrid) auditGrid.style.display = 'grid';
-        }}
-      }}
-    }}
-
-    function renderClipTabs(clips) {{
-      const tabsContainer = document.getElementById('clipTabs');
-      if (!tabsContainer || !clips || clips.length === 0) return;
-      tabsContainer.innerHTML = '';
-      clips.forEach((clip, idx) => {{
-        const btn = document.createElement('button');
-        btn.className = 'clip-tab' + (idx === 0 ? ' active' : '');
-        const score = clip.virality_score ? ' (Rank #' + (idx + 1) + ')' : '';
-        btn.textContent = clip.label || ('بڕگەی ' + (idx + 1) + score);
-        btn.onclick = () => switchClip(idx);
-        tabsContainer.appendChild(btn);
-      }});
-      switchClip(0);
-    }}
-
-    window.addEventListener('DOMContentLoaded', async () => {{
-      try {{
-        const res = await fetch('/api/jobs');
-        if (res.ok) {{
-          const jobs = await res.json();
-          if (jobs && jobs.length > 0) {{
-            const latestJob = jobs.find(j => j.clips && j.clips.length > 0) || jobs[0];
-            if (latestJob && latestJob.clips && latestJob.clips.length > 0) {{
-              currentJobId = latestJob.job_id;
-              currentClips = latestJob.clips;
-              renderClipTabs(currentClips);
-            }}
-          }}
-        }}
-      }} catch (e) {{}}
-    }});
-  </script>
-</body>
-</html>
-"""
 
 
 @dataclass
@@ -1204,290 +436,399 @@ class JobManager:
 
 
 JOB_MANAGER = JobManager()
+UPLOAD_STORE: UploadStore | None = None
 
 
-class HawEditWebHandler(http.server.SimpleHTTPRequestHandler):
+def _upload_store() -> UploadStore:
+    if UPLOAD_STORE is None:
+        raise StudioStorageError(
+            "Private upload storage is not initialized; start the local studio server."
+        )
+    return UPLOAD_STORE
+
+
+class HawEditWebHandler(http.server.BaseHTTPRequestHandler):
     """Custom HTTP handler serving the dashboard and pipeline media."""
+
+    def setup(self) -> None:
+        super().setup()
+        if isinstance(self.connection, socket.socket):
+            self.connection.settimeout(60)
+
+    def _json_reply(self, status: int, payload: Any) -> None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def _local_write(self) -> bool:
+        host = self.headers.get("Host", "")
+        try:
+            authority = urlparse(f"http://{host}")
+            local = (
+                len(self.headers.get_all("Host", [])) == 1
+                and authority.hostname in {"localhost", "127.0.0.1", "::1"}
+                and authority.username is None
+                and authority.password is None
+                and not authority.path
+                and not authority.query
+                and not authority.fragment
+                and (authority.port is None or 0 < authority.port < 65536)
+            )
+        except ValueError:
+            local = False
+        if not local:
+            self._json_reply(403, {"error": "Local studio requests require a loopback host"})
+            return False
+        origins = self.headers.get_all("Origin", [])
+        if origins and (len(origins) != 1 or origins[0] != f"http://{host}"):
+            self._json_reply(403, {"error": "Cross-origin studio writes are refused"})
+            return False
+        if self.headers.get("Sec-Fetch-Site") not in {None, "none", "same-origin"}:
+            self._json_reply(403, {"error": "Cross-site studio writes are refused"})
+            return False
+        return True
+
+    def _request_length(self) -> int:
+        if self.headers.get("Transfer-Encoding"):
+            raise UploadError("Use a fixed Content-Length, not transfer encoding")
+        if len(self.headers.get_all("Content-Length", [])) != 1:
+            raise UploadError("Exactly one Content-Length is required")
+        value = self.headers.get("Content-Length", "")
+        if not value.isascii() or not value.isdecimal():
+            raise UploadError("A valid Content-Length is required")
+        value = value.lstrip("0") or "0"
+        if len(value) > 20:
+            raise UploadError("Content-Length exceeds the supported length limit")
+        return int(value)
+
+    def _read_json(self) -> dict[str, Any]:
+        length = self._request_length()
+        if not 0 < length <= 65536:
+            raise UploadError("JSON body must be between 1 and 65536 bytes")
+        if self.headers.get_content_type() != "application/json":
+            raise UploadError("Use application/json for this request")
+        if isinstance(self.connection, socket.socket):
+            self.connection.settimeout(60)
+        try:
+            raw = self.rfile.read(length)
+        except OSError as exc:
+            raise UploadError("JSON request transport is unavailable or timed out") from exc
+        if len(raw) != length:
+            raise UploadError("Request body is truncated")
+        try:
+            payload = json.loads(raw.decode("utf-8"), object_pairs_hook=self._unique_json_fields)
+        except (ValueError, UnicodeError, RecursionError) as exc:
+            raise UploadError("Invalid JSON request") from exc
+        if not isinstance(payload, dict):
+            raise UploadError("JSON request must be an object")
+        return payload
+
+    @staticmethod
+    def _unique_json_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise UploadError(f"Duplicate JSON field: {key}")
+            result[key] = value
+        return result
+
+    def do_PUT(self) -> None:
+        path = urlparse(self.path).path
+        if not path.startswith("/api/uploads/"):
+            self._json_reply(404, {"error": "Unknown upload endpoint"})
+            return
+        if not self._local_write():
+            return
+        try:
+            if isinstance(self.connection, socket.socket):
+                self.connection.settimeout(60)
+            source = _upload_store().receive(
+                path.removeprefix("/api/uploads/"),
+                self.rfile,
+                self._request_length(),
+            )
+            self._json_reply(201, source)
+        except UploadError as exc:
+            self._json_reply(400, {"error": str(exc)})
+        except (OSError, TimeoutError, StudioStorageError) as exc:
+            self._json_reply(503, {"error": f"Upload storage or transfer failed: {exc}"})
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path == "/api/repurpose":
-            content_length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        if path == "/api/uploads":
+            if not self._local_write():
+                return
             try:
-                payload = json.loads(raw_body.decode())
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                payload = {}
-            source_name = str(payload.get("source", "")).strip()
+                payload = self._read_json()
+                if set(payload) != {"filename", "size"}:
+                    raise UploadError("Upload request requires only filename and declared size")
+                self._json_reply(201, _upload_store().begin(payload["filename"], payload["size"]))
+            except UploadError as exc:
+                self._json_reply(400, {"error": str(exc)})
+            except (OSError, StudioStorageError) as exc:
+                self._json_reply(503, {"error": f"Upload storage failed: {exc}"})
+            return
 
-            if not source_name:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps(
-                        {"error": "Validation failed: source video path is required (CD-01)"}
-                    ).encode()
-                )
+        if path == "/api/repurpose":
+            from hawedit.studio_generation import GenerationError, GenerationRequest
+
+            if not self._local_write():
                 return
-
-            source_path = Path(source_name)
-            if not source_path.is_file():
-                alts = [
-                    Path("tests/fixtures") / source_name,
-                    Path("work") / source_name,
-                    Path("media") / source_name,
-                    Path(r"C:\Users\Wareen\Desktop\Test Videos\ZarPodcast") / source_name,
-                ]
-                found = next((p for p in alts if p.is_file()), None)
-                if found is not None:
-                    source_path = found
-                else:
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(
-                        json.dumps(
-                            {
-                                "error": (
-                                    f"Validation failed: source video '{source_name}' does "
-                                    "not exist on disk (CD-01)"
-                                )
-                            }
-                        ).encode()
-                    )
-                    return
-
-            if source_path.stat().st_size == 0:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps(
-                        {
-                            "error": (
-                                f"Validation failed: source video '{source_path}' is empty "
-                                "(0 bytes) (CD-01)"
-                            )
-                        }
-                    ).encode()
+            try:
+                request = GenerationRequest.from_payload(self._read_json())
+                request.validate_source(_upload_store())
+                self._json_reply(
+                    503,
+                    {
+                        "code": "studio_runner_unavailable",
+                        "error": (
+                            "Source validated. The durable studio runner and owner-authorized "
+                            "producer configuration are not connected yet; no job was queued."
+                        ),
+                    },
                 )
-                return
-
-            valid_video_exts = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".ts", ".m4v"}
-            if source_path.suffix.lower() not in valid_video_exts:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps(
-                        {
-                            "error": (
-                                f"Validation failed: source video '{source_path.name}' is not a "
-                                f"supported video container (CD-01)"
-                            )
-                        }
-                    ).encode()
-                )
-                return
-
-            client_token = (
-                str(payload.get("client_token", payload.get("idempotency_key", ""))).strip() or None
-            )
-            options = {
-                k: v
-                for k, v in payload.items()
-                if k not in ("source", "client_token", "idempotency_key")
-            }
-            job = JOB_MANAGER.submit_job(
-                source=str(source_path), client_token=client_token, options=options
-            )
-            self.send_response(201)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(job).encode())
+            except (GenerationError, UploadError) as exc:
+                self._json_reply(400, {"error": str(exc)})
+            except (OSError, StudioStorageError) as exc:
+                self._json_reply(503, {"error": f"Generation source storage failed: {exc}"})
             return
 
         if path == "/api/edit_caption":
-            content_length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
-            try:
-                payload = json.loads(raw_body.decode())
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                payload = {}
-            job_id = str(payload.get("job_id", ""))
-            headline = str(payload.get("headline", ""))
-            summary = payload.get("summary")
-            res = JOB_MANAGER.update_job_caption(job_id, headline, summary)
-            if res is None:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error": "Job not found"}')
+            if not self._local_write():
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(res).encode())
+            try:
+                payload = self._read_json()
+                if (
+                    not payload.keys() >= {"job_id", "headline"}
+                    or payload.keys() - {"job_id", "headline", "summary"}
+                    or not isinstance(payload["job_id"], str)
+                    or not isinstance(payload["headline"], str)
+                    or not payload["headline"].strip()
+                    or len(payload["headline"]) > 240
+                    or ("summary" in payload and not isinstance(payload["summary"], str))
+                ):
+                    raise UploadError(
+                        "Caption revision requires job_id and a bounded text headline"
+                    )
+                read_historical_job(
+                    JOB_MANAGER._jobs_dir, payload["job_id"], include_candidates=False
+                )
+                self._json_reply(
+                    409,
+                    {
+                        "code": "revision_required",
+                        "error": (
+                            "Burned-in content requires a new immutable measured render revision; "
+                            "metadata-only edits are refused. "
+                            "No artifact or transcript was changed."
+                        ),
+                    },
+                )
+            except UploadError as exc:
+                self._json_reply(400, {"error": str(exc)})
+            except HistoryError as exc:
+                self._json_reply(exc.status, {"error": str(exc), "code": exc.code})
             return
 
         self.send_response(404)
         self.end_headers()
         self.wfile.write(b"Not Found")
 
+    def do_HEAD(self) -> None:
+        self.do_GET()
+
+    def _serve_preview(self, job_id: str, clip_id: str) -> None:
+        if JOB_MANAGER.get_job(job_id) is None:
+            self._json_reply(404, {"error": "Job not found"})
+            return
+        try:
+            with open_preview(JOB_MANAGER._jobs_dir, job_id, clip_id) as preview:
+                etag = f'"{preview.sha256}"'
+                range_header = self.headers.get("Range")
+                if self.command == "HEAD" or len(self.headers.get_all("Range", [])) != 1:
+                    range_header = None
+                validators = self.headers.get_all("If-Range", [])
+                if validators and (len(validators) != 1 or validators[0] != etag):
+                    range_header = None
+                try:
+                    selected = byte_range(range_header, preview.size)
+                except UnsatisfiableRange:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{preview.size}")
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("ETag", etag)
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-HawEdit-Artifact-State", "private-preview")
+                    self.end_headers()
+                    return
+                start, end = selected if selected is not None else (0, preview.size - 1)
+                self.send_response(206 if selected is not None else 200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(end - start + 1))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-HawEdit-Artifact-State", "private-preview")
+                if selected is not None:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{preview.size}")
+                self.end_headers()
+                if self.command != "HEAD":
+                    if isinstance(self.connection, socket.socket):
+                        self.connection.settimeout(60)
+                    preview.stream.seek(start)
+                    remaining = end - start + 1
+                    while remaining:
+                        chunk = preview.stream.read(min(65536, remaining))
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+        except (ConnectionResetError, BrokenPipeError, TimeoutError):
+            return
+        except ArtifactError as exc:
+            self._json_reply(exc.status, {"error": str(exc), "code": "preview_evidence_refused"})
+
     def do_GET(self) -> None:
+        if not self._local_write():
+            return
         parsed = urlparse(self.path)
+        if parsed.scheme or parsed.netloc:
+            self._json_reply(400, {"error": "Use a relative local studio request target"})
+            return
         path = parsed.path
 
-        if path in ("/", "/index.html"):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(DASHBOARD_HTML.encode())
-            return
-
-        if path == "/api/jobs":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(JOB_MANAGER.get_all_jobs()).encode())
-            return
-
-        if path.startswith("/api/jobs/"):
-            job_id = path.replace("/api/jobs/", "").strip("/")
-            job = JOB_MANAGER.get_job(job_id)
-            if job is None:
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b'{"error": "Job not found"}')
+        if path == "/assets/fonts/Vazirmatn.ttf":
+            try:
+                data = font_bytes(ROOT)
+            except ArtifactError as exc:
+                self._json_reply(exc.status, {"error": str(exc)})
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "font/ttf")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
-            self.wfile.write(json.dumps(job).encode())
+            if self.command != "HEAD":
+                self.wfile.write(data)
+            return
+
+        components = path.split("/")
+        if (
+            len(components) == 7
+            and components[1:3] == ["api", "jobs"]
+            and components[4] == "clips"
+            and components[6] == "preview"
+        ):
+            try:
+                self._serve_preview(
+                    unquote(components[3], errors="strict"), unquote(components[5], errors="strict")
+                )
+            except UnicodeError:
+                self._json_reply(400, {"error": "Malformed studio identifier encoding"})
+            return
+
+        if path.startswith("/api/uploads/"):
+            if not self._local_write():
+                return
+            try:
+                self._json_reply(200, _upload_store().status(path.removeprefix("/api/uploads/")))
+            except UploadError as exc:
+                self._json_reply(400, {"error": str(exc)})
+            except (OSError, StudioStorageError) as exc:
+                self._json_reply(503, {"error": f"Upload recovery storage failed: {exc}"})
+            return
+
+        if path in ("/", "/index.html"):
+            data = DASHBOARD_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
+            return
+
+        if path in {"/api/jobs", "/api/history"}:
+            history = read_history(JOB_MANAGER._jobs_dir)
+            if path == "/api/jobs":
+                if not history["available"]:
+                    self._json_reply(
+                        503,
+                        {
+                            "error": "Historical storage is unavailable",
+                            "diagnostics": history["diagnostics"],
+                        },
+                    )
+                elif history["truncated"] or history["diagnostics"]:
+                    self._json_reply(
+                        409,
+                        {
+                            "code": "history_incomplete",
+                            "error": (
+                                "Historical entries were refused or the scan is partial; "
+                                "inspect /api/history diagnostics"
+                            ),
+                            "jobs": history["jobs"],
+                            "diagnostics": history["diagnostics"],
+                            "truncated": history["truncated"],
+                        },
+                    )
+                else:
+                    self._json_reply(200, history["jobs"])
+            else:
+                self._json_reply(200 if history["available"] else 503, history)
+            return
+
+        if len(components) == 4 and components[1:3] == ["api", "jobs"]:
+            try:
+                self._json_reply(
+                    200,
+                    read_historical_job(
+                        JOB_MANAGER._jobs_dir, unquote(components[3], errors="strict")
+                    ),
+                )
+            except HistoryError as exc:
+                self._json_reply(exc.status, {"error": str(exc), "code": exc.code})
+            except UnicodeError:
+                self._json_reply(400, {"error": "Malformed studio identifier encoding"})
             return
 
         if path == "/api/status":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            all_jobs = JOB_MANAGER.get_all_jobs()
-            active_job = all_jobs[0] if all_jobs else None
-            is_ready = not active_job or active_job["status"] == "completed"
-            status_payload: dict[str, Any] = {
-                "status": "ready" if is_ready else "busy",
-                "active_job": active_job,
-                "latest_reel": {
-                    "duration_s": 48.14,
-                    "headline": (
-                        active_job["headline"]
-                        if active_job and "headline" in active_job
-                        else "«شۆرتی ئامادەکراو»"
+            history = read_history(JOB_MANAGER._jobs_dir)
+            self._json_reply(
+                200 if history["available"] else 503,
+                {
+                    "status": "unavailable",
+                    "runner_ready": False,
+                    "code": "studio_runner_unavailable",
+                    "error": (
+                        "The protected studio producer worker is not connected; no new job can run."
                     ),
-                    "video_url": (
-                        active_job["clips"][0]["video_url"]
-                        if active_job and active_job.get("clips")
-                        else "/media/latest-reel.mp4"
-                    ),
-                    "audit_passed": True,
+                    "active_job": None,
+                    "latest_reel": None,
+                    "historical_job_count": len(history["jobs"])
+                    if history["available"] and not history["truncated"]
+                    else None,
+                    "history_available": history["available"],
+                    "history_truncated": history["truncated"],
+                    "history_diagnostics": history["diagnostics"],
+                    "history_verified": False,
                 },
-            }
-            self.wfile.write(json.dumps(status_payload).encode())
+            )
             return
 
-        if path.startswith("/media/"):
-            raw_filename = path.replace("/media/", "", 1).strip()
-            if (
-                not raw_filename
-                or "/" in raw_filename
-                or "\\" in raw_filename
-                or ":" in raw_filename
-                or ".." in raw_filename
-            ):
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b"Media file not found")
-                return
-
-            filename_p = Path(raw_filename)
-            filename = filename_p.name
-            if filename != raw_filename or filename.startswith("."):
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b"Media file not found")
-                return
-
-            suffix = filename_p.suffix.lower()
-            if suffix not in ALLOWED_MEDIA_EXTENSIONS:
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b"Media file not found")
-                return
-
-            try:
-                validate_media_id(filename_p.stem)
-            except ValueError:
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b"Media file not found")
-                return
-
-            candidates = [
-                ROOT / "work" / filename,
-                ROOT / "media" / filename,
-                ROOT / "tests" / "fixtures" / filename,
-            ]
-            for job in JOB_MANAGER.get_all_jobs():
-                job_work = JOB_MANAGER._jobs_dir / str(job["job_id"])
-                candidates.append(job_work / filename)
-                candidates.append(job_work / "delivery" / filename)
-                candidates.append(job_work / "deliverables" / filename)
-                candidates.extend(list(job_work.glob(f"**/{filename}")))
-            candidates.extend(list((ROOT / "work").glob(f"*/{filename}")))
-            candidates.extend(list((ROOT / "work" / "jobs").glob(f"*/{filename}")))
-            candidates.extend(list((ROOT / "work").glob(f"**/{filename}")))
-
-            allowed_roots = [
-                ROOT / "work",
-                ROOT / "media",
-                ROOT / "tests" / "fixtures",
-                JOB_MANAGER._jobs_dir,
-            ]
-            for candidate in candidates:
-                try:
-                    resolved = candidate.resolve()
-                    if not resolved.is_file():
-                        continue
-                    if not any(
-                        resolved.is_relative_to(root.resolve())
-                        for root in allowed_roots
-                        if root.exists()
-                    ):
-                        continue
-                except Exception:
-                    continue
-
-                mime_type, _ = mimetypes.guess_type(str(resolved))
-                self.send_response(200)
-                self.send_header("Content-Type", mime_type or "application/octet-stream")
-                self.send_header("Content-Length", str(resolved.stat().st_size))
-                self.end_headers()
-                try:
-                    with open(resolved, "rb") as f:
-                        while chunk := f.read(65536):
-                            self.wfile.write(chunk)
-                except (ConnectionResetError, BrokenPipeError):
-                    return
-                return
-
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(b"Media file not found")
-            return
-
-        super().do_GET()
+        self._json_reply(404, {"error": "Unknown studio route; filesystem access is refused"})
 
 
 class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -1497,6 +838,26 @@ class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 def run_web_server(port: int = 8080, host: str = "127.0.0.1") -> None:
     """Run the HawEdit local web dashboard server."""
+    if host not in {"127.0.0.1", "localhost"}:
+        raise ValueError("The local studio requires a supported loopback bind host")
+    global UPLOAD_STORE
+    if UPLOAD_STORE is None:
+        configured = os.environ.get("HAWEDIT_STUDIO_STORAGE_ROOT")
+        if configured:
+            root = Path(configured)
+        elif os.name == "nt":
+            local = os.environ.get("LOCALAPPDATA")
+            if not local:
+                raise StudioStorageError("A real local application-data directory is required")
+            root = Path(local) / "HawEditStudio"
+        else:
+            root = Path.home() / ".hawedit-studio"
+        private_root = PrivateDirectory(root)
+        uploads = private_root.child("uploads", create=True)
+        UPLOAD_STORE = UploadStore(
+            uploads.path,
+            max_bytes=int(os.environ.get("HAWEDIT_UPLOAD_MAX_BYTES", str(DEFAULT_MAX_BYTES))),
+        )
     use_utf8_streams()
     server_address = (host, port)
     with ThreadingTCPServer(server_address, HawEditWebHandler) as httpd:

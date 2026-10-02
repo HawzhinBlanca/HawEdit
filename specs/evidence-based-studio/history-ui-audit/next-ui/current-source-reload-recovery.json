@@ -1,0 +1,11 @@
+{
+  "approvalDisabled": true,
+  "exportDisabled": true,
+  "generateDisabled": true,
+  "hook": true,
+  "job": "fixture-interrupted",
+  "maxClips": "5",
+  "preset": "split",
+  "revisionDisabled": true,
+  "source": "kurdish-speech-3cuts.mp4 · c7bad4be30d64db597508fc07654863f"
+}

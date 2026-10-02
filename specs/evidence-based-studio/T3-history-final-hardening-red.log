@@ -1,0 +1,121 @@
+......................F.......................................F          [100%]
+================================== FAILURES ===================================
+______ test_studio_history_malformed_records_are_visible[surrogate-text] ______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7018/test_studio_history_malformed_14')
+damage = 'surrogate-text'
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            "duplicate-json",
+            "nonfinite-json",
+            "deep-json",
+            "invalid-utf8",
+            "non-object",
+            "wrong-id",
+            "unknown-field",
+            "unknown-status",
+            "boolean-time",
+            "string-time",
+            "negative-time",
+            "boolean-progress",
+            "bad-clips",
+            "bad-source",
+            "surrogate-text",
+            "huge-headline",
+            "missing-field",
+            "oversize",
+            "empty",
+            "job-directory",
+        ],
+    )
+    def test_studio_history_malformed_records_are_visible(tmp_path: Path, damage: str) -> None:
+        root = tmp_path / "jobs"
+        bad = stored_job(root, "bad-job")
+        stored_job(root, "good-job")
+        data = json.loads(bad.read_bytes())
+        replacements: dict[str, Any] = {
+            "wrong-id": {"job_id": "elsewhere"},
+            "unknown-field": {"published": True},
+            "unknown-status": {"status": "trusted-published"},
+            "boolean-time": {"created_at": True},
+            "string-time": {"created_at": "1"},
+            "negative-time": {"updated_at": -1},
+            "boolean-progress": {"progress_percent": True},
+            "bad-clips": {"clips": {}},
+            "bad-source": {"source": []},
+            "surrogate-text": {"headline": "\ud800"},
+            "huge-headline": {"headline": "x" * 4097},
+        }
+        if damage in replacements:
+            data.update(replacements[damage])
+            bad.write_text(json.dumps(data), encoding="utf-8")
+        elif damage == "missing-field":
+            del data["status"]
+            bad.write_text(json.dumps(data), encoding="utf-8")
+        elif damage == "job-directory":
+            bad.unlink()
+            bad.mkdir()
+        else:
+            payloads = {
+                "duplicate-json": b'{"job_id":"bad-job","job_id":"good-job"}',
+                "nonfinite-json": b'{"created_at":NaN}',
+                "deep-json": b'{"nested":' + b"[" * 16384 + b"0" + b"]" * 16384 + b"}",
+                "invalid-utf8": b"\xff",
+                "non-object": b"[]",
+                "empty": b"",
+                "oversize": b" " * (2 * 1024**2 + 1),
+            }
+            bad.write_bytes(payloads[damage])
+        before = bad.read_bytes() if bad.is_file() else None
+        result = read_history(root)
+>       assert [job["job_id"] for job in result["jobs"]] == ["good-job"]
+E       AssertionError: assert ['good-job', 'bad-job'] == ['good-job']
+E         
+E         Left contains one more item: 'bad-job'
+E         Use -v to get more diff
+
+tests\test_studio_history.py:169: AssertionError
+_____________ test_studio_history_native_http_refresh_and_origin ______________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7018/test_studio_history_native_htt0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002109C290230>
+
+    def test_studio_history_native_http_refresh_and_origin(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import hawedit.web as web
+    
+        root = tmp_path / "jobs"
+        record = stored_job(root)
+        monkeypatch.setattr(web, "JOB_MANAGER", JobManager(root))
+        observed_timeouts: list[float | None] = []
+        configured = threading.Event()
+    
+        class ObservingHandler(web.HawEditWebHandler):
+            def setup(self) -> None:
+                super().setup()
+                observed_timeouts.append(self.connection.gettimeout())
+                configured.set()
+    
+        with web.ThreadingTCPServer(("127.0.0.1", 0), ObservingHandler) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+            try:
+                connection.request("GET", "/api/history")
+                response = connection.getresponse()
+                assert response.status == 200
+                history = json.loads(response.read())
+>               assert configured.wait(2) and observed_timeouts[0] == 60
+E               assert (True and None == 60)
+E                +  where True = wait(2)
+E                +    where wait = <threading.Event at 0x2109c290560: set>.wait
+
+tests\test_studio_history.py:525: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 21:08:00] "GET /api/history HTTP/1.1" 200 -
+=========================== short test summary info ===========================
+FAILED tests/test_studio_history.py::test_studio_history_malformed_records_are_visible[surrogate-text]
+FAILED tests/test_studio_history.py::test_studio_history_native_http_refresh_and_origin

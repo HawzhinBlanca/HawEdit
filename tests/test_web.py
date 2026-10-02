@@ -55,8 +55,10 @@ def _handle_request(raw_request: bytes) -> tuple[int, dict[str, str], bytes]:
 def test_dashboard_html_contains_branding_and_stepper() -> None:
     assert "<title>HawEdit — Pro Kurdish Social Reel Studio</title>" in DASHBOARD_HTML
     assert "Vazirmatn" in DASHBOARD_HTML
-    assert "Sanity Gate Audit" in DASHBOARD_HTML
-    assert "Story Condensation" in DASHBOARD_HTML
+    assert 'id="stageList"' in DASHBOARD_HTML
+    assert 'id="jobSelect"' in DASHBOARD_HTML
+    assert "stage completed" not in DASHBOARD_HTML
+    assert "api('/api/history')" in DASHBOARD_HTML
 
 
 def test_web_handler_serves_dashboard() -> None:
@@ -73,11 +75,14 @@ def test_web_handler_serves_status_json() -> None:
     assert status_code == 200
     assert "application/json" in headers.get("content-type", "")
     data = json.loads(body.decode("utf-8"))
-    assert data["status"] in ("ready", "busy")
-    assert data["latest_reel"]["duration_s"] == 48.14
+    assert data["status"] == "unavailable" and data["runner_ready"] is False
+    assert data["latest_reel"] is None and data["active_job"] is None
+    assert data["code"] == "studio_runner_unavailable"
+    assert "audit_passed" not in body.decode("utf-8")
 
 
 def test_web_handler_post_repurpose_creates_job() -> None:
+    """Legacy test name: filename lookup must no longer fabricate an accepted job."""
     body_bytes = b'{"source": "kurdish-speech-3cuts.mp4"}'
     req = (
         b"POST /api/repurpose HTTP/1.1\r\n"
@@ -86,12 +91,11 @@ def test_web_handler_post_repurpose_creates_job() -> None:
         b"Content-Length: " + str(len(body_bytes)).encode("ascii") + b"\r\n\r\n" + body_bytes
     )
     status_code, headers, body = _handle_request(req)
-    assert status_code == 201
+    assert status_code == 400
     assert "application/json" in headers.get("content-type", "")
     data = json.loads(body.decode("utf-8"))
-    assert "job_id" in data
-    assert "kurdish-speech-3cuts.mp4" in data["source"]
-    assert data["status"] in ("queued", "running", "completed")
+    assert "source_id" in data["error"] and "server paths are refused" in data["error"]
+    assert "job_id" not in data and "clips" not in data
 
 
 def test_web_handler_post_repurpose_rejects_missing_and_empty_source() -> None:
@@ -106,7 +110,7 @@ def test_web_handler_post_repurpose_rejects_missing_and_empty_source() -> None:
     )
     status_code, _, body = _handle_request(bad_req_empty)
     assert status_code == 400
-    assert "Validation failed" in json.loads(body.decode())["error"]
+    assert "source_id" in json.loads(body.decode())["error"]
 
     # 2. Non-existent file path
     payload_nonexistent = b'{"source": "fake_nonexistent.mp4"}'
@@ -121,59 +125,115 @@ def test_web_handler_post_repurpose_rejects_missing_and_empty_source() -> None:
     )
     status_code, _, body = _handle_request(bad_req_nonexistent)
     assert status_code == 400
-    assert "does not exist on disk" in json.loads(body.decode())["error"]
+    assert "server paths are refused" in json.loads(body.decode())["error"]
 
 
-def test_web_handler_candidate_clips_have_distinct_video_urls() -> None:
-    """CD-14: Multiple ranked candidates must link to distinct, independent media paths."""
-    body_bytes = b'{"source": "kurdish-speech-3cuts.mp4"}'
-    req = (
-        b"POST /api/repurpose HTTP/1.1\r\n"
-        b"Host: localhost:8080\r\n"
-        b"Content-Type: application/json\r\n"
-        b"Content-Length: " + str(len(body_bytes)).encode("ascii") + b"\r\n\r\n" + body_bytes
-    )
-    status_code, _, body = _handle_request(req)
-    assert status_code == 201
-    data = json.loads(body.decode("utf-8"))
-    clips = data.get("clips", [])
-    assert len(clips) >= 2
-    video_urls = [c["video_url"] for c in clips]
-    # Invariant: No duplicate identical media paths across candidates
-    assert len(video_urls) == len(set(video_urls))
-    assert clips[0]["video_url"] != clips[1]["video_url"]
+def test_web_handler_candidate_clips_have_distinct_video_urls(tmp_path: Path) -> None:
+    """CD-14 artifact invariant: real distinct cuts, not invented pre-run candidate URLs.
+
+    Scoped HTTP playback remains T4; these are verified job-relative artifact references.
+    """
+    import hashlib
+    import subprocess
+
+    from hawedit.captions import find_ffmpeg
+    from hawedit.measure import measure_clip
+    from hawedit.studio_generation import project_generation_result
+
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    summaries = []
+    for clip_id, start in (("clip-a", "0"), ("clip-b", "2")):
+        folder = tmp_path / "review" / clip_id
+        folder.mkdir(parents=True)
+        media = folder / f"{clip_id}.mp4"
+        subprocess.run(
+            [
+                str(ffmpeg),
+                "-v",
+                "error",
+                "-nostdin",
+                "-ss",
+                start,
+                "-i",
+                "tests/fixtures/kurdish-speech-3cuts.mp4",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-threads",
+                "1",
+                "-c:a",
+                "aac",
+                str(media),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        measurement = measure_clip(media)
+        (folder / f"{clip_id}.measured.json").write_text(measurement.to_json(), encoding="utf-8")
+        summaries.append({"clip_id": clip_id, "delivery_dir": f"review/{clip_id}"})
+    result = project_generation_result({"episode_manifest": {"clips": summaries}}, tmp_path)
+    clips = result["clips"]
+    assert len(clips) == 2 and result["status"] == "awaiting-review"
+    paths = [clip["artifact_path"] for clip in clips]
+    assert len(paths) == len(set(paths)) and paths[0] != paths[1]
+    assert clips[0]["sha256"] != clips[1]["sha256"]
+    for clip in clips:
+        assert (
+            hashlib.sha256((tmp_path / clip["artifact_path"]).read_bytes()).hexdigest()
+            == clip["sha256"]
+        )
 
 
-def test_web_handler_get_jobs_and_details() -> None:
-    # First query all jobs
+def test_web_handler_get_jobs_and_details(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hawedit.web as web
+
+    manager = web.JobManager(tmp_path / "jobs")
+    job = web.JobInfo("history-job", "source.mp4", "completed", "render", 6, 100, 1, 2, "title")
+    folder = manager._jobs_dir / job.job_id
+    folder.mkdir()
+    (folder / "job.json").write_text(json.dumps(job.to_dict()), encoding="utf-8")
+    monkeypatch.setattr(web, "JOB_MANAGER", manager)
     req = b"GET /api/jobs HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
     status_code, headers, body = _handle_request(req)
     assert status_code == 200
     jobs = json.loads(body.decode("utf-8"))
-    assert isinstance(jobs, list)
+    assert isinstance(jobs, list) and len(jobs) == 1
+    target_id = jobs[0]["job_id"]
+    detail_req = f"GET /api/jobs/{target_id} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode()
+    d_status, _, d_body = _handle_request(detail_req)
+    assert d_status == 200
+    single_job = json.loads(d_body.decode())
+    assert single_job["job_id"] == target_id
+    assert single_job["status"] == "unverified-historical"
+    assert single_job["publication_verified"] is False
 
-    # If a job exists, query its specific endpoint
-    if jobs:
-        target_id = jobs[0]["job_id"]
-        detail_req = f"GET /api/jobs/{target_id} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode()
-        d_status, _, d_body = _handle_request(detail_req)
-        assert d_status == 200
-        single_job = json.loads(d_body.decode())
-        assert single_job["job_id"] == target_id
 
+def test_web_handler_post_edit_caption(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Burned-in edits must not return successful metadata mutation without a render revision.
+    import hawedit.web as web
 
-def test_web_handler_post_edit_caption() -> None:
-    # First create a job with valid source
-    create_body = b'{"source": "kurdish-speech-3cuts.mp4"}'
-    create_req = (
-        b"POST /api/repurpose HTTP/1.1\r\n"
-        b"Host: localhost:8080\r\n"
-        b"Content-Type: application/json\r\n"
-        b"Content-Length: " + str(len(create_body)).encode("ascii") + b"\r\n\r\n" + create_body
+    manager = web.JobManager(tmp_path / "jobs")
+    job_id = "historical-caption-job"
+    manager._jobs[job_id] = web.JobInfo(
+        job_id=job_id,
+        source="source.mp4",
+        status="awaiting-review",
+        stage="render",
+        stage_index=6,
+        progress_percent=0,
+        created_at=1.0,
+        updated_at=1.0,
+        headline="before",
     )
-    c_status, _, c_body = _handle_request(create_req)
-    assert c_status == 201
-    job_id = json.loads(c_body.decode())["job_id"]
+    folder = manager._jobs_dir / job_id
+    folder.mkdir()
+    record = folder / "job.json"
+    record.write_text(json.dumps(manager._jobs[job_id].to_dict()), encoding="utf-8")
+    original = record.read_bytes()
+    monkeypatch.setattr(web, "JOB_MANAGER", manager)
 
     # Now edit caption
     edit_body = json.dumps({"job_id": job_id, "headline": "سەردێڕی نوێ"}).encode()
@@ -184,9 +244,10 @@ def test_web_handler_post_edit_caption() -> None:
         b"Content-Length: " + str(len(edit_body)).encode("ascii") + b"\r\n\r\n" + edit_body
     )
     e_status, _, e_body = _handle_request(edit_req)
-    assert e_status == 200
+    assert e_status == 409
     res = json.loads(e_body.decode())
-    assert res["headline"] == "سەردێڕی نوێ"
+    assert res["code"] == "revision_required"
+    assert manager._jobs[job_id].headline == "before" and record.read_bytes() == original
 
     # Nonexistent job returns 404
     bad_body = json.dumps({"job_id": "nonexistent-job", "headline": "test"}).encode()
@@ -200,13 +261,23 @@ def test_web_handler_post_edit_caption() -> None:
     assert b_status == 404
 
 
-def test_web_handler_serves_media() -> None:
-    # Existing media serves 200
-    req = b"GET /media/kurdish-speech-3cuts.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+def test_web_handler_serves_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hashlib
+
+    from hawedit.measure import measure_clip
+    from test_studio_artifacts import URL, install_preview
+
+    _, _, payload = install_preview(
+        tmp_path,
+        monkeypatch,
+        measure_clip(Path("tests/fixtures/kurdish-speech-3cuts.mp4")).to_dict(),
+    )
+    req = f"GET {URL} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode("ascii")
     status_code, headers, body = _handle_request(req)
     assert status_code == 200
     assert "video/mp4" in headers.get("content-type", "")
-    assert len(body) > 0
+    assert body == payload and hashlib.sha256(body).hexdigest() == headers["etag"].strip('"')
+    assert headers["x-hawedit-artifact-state"] == "private-preview"
 
     # Nonexistent media returns 404
     bad_req = b"GET /media/nonexistent_file.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
@@ -292,11 +363,31 @@ def test_studio_job_runs_pipeline_and_lists_only_delivered_bundles(
         assert Path(mock_delivery.measured_path).is_file()
         assert clip["sha256"] == mp4_sha256
         assert clip["duration_s"] == 4.16
-        # Verify served media matches measured sha256
+        # A legacy renderer record cannot authorize an unscoped filename URL.
         req = f"GET {clip['video_url']} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode()
         s_code, _, body = _handle_request(req)
-        assert s_code == 200
-        assert hashlib.sha256(body).hexdigest() == clip["sha256"]
+        assert s_code == 404 and hashlib.sha256(body).hexdigest() != clip["sha256"]
+
+    # The scoped private preview additionally requires actual measured bytes and a manifest.
+    from hawedit.measure import measure_clip
+
+    measured_json_path.write_text(measure_clip(delivered_mp4).to_json(), encoding="utf-8")
+    (job_work_dir / "report.json").write_text(
+        json.dumps(
+            {"episode_manifest": {"clips": [{"clip_id": clip_id, "delivery_dir": "review"}]}}
+        ),
+        encoding="utf-8",
+    )
+    review_dir = job_work_dir / "review"
+    review_dir.mkdir(exist_ok=True)
+    (review_dir / delivered_mp4.name).write_bytes(delivered_mp4.read_bytes())
+    (review_dir / measured_json_path.name).write_bytes(measured_json_path.read_bytes())
+    req = (
+        f"GET /api/jobs/{job_id}/clips/{clip_id}/preview HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    ).encode()
+    s_code, headers, body = _handle_request(req)
+    assert s_code == 200 and hashlib.sha256(body).hexdigest() == mp4_sha256
+    assert headers["x-hawedit-artifact-state"] == "private-preview"
 
 
 def test_web_handler_media_rejects_path_traversal_and_forbidden_extensions() -> None:
@@ -377,6 +468,8 @@ def test_web_handler_submit_job_supports_idempotency_token(tmp_path: Path) -> No
 def test_web_handler_post_repurpose_forwards_studio_options() -> None:
     from hawedit.web import JOB_MANAGER
 
+    before = {job["job_id"] for job in JOB_MANAGER.get_all_jobs()}
+
     payload = {
         "source": "kurdish-speech-3cuts.mp4",
         "preset": "viral",
@@ -392,45 +485,29 @@ def test_web_handler_post_repurpose_forwards_studio_options() -> None:
         b"Content-Length: " + str(len(body_bytes)).encode("ascii") + b"\r\n\r\n" + body_bytes
     )
     status_code, headers, body = _handle_request(req)
-    assert status_code == 201
+    assert status_code == 400
     data = json.loads(body.decode("utf-8"))
-    assert "job_id" in data
-    job = JOB_MANAGER.get_job(data["job_id"])
-    assert job is not None
-    opts = job.get("options", {})
-    assert opts.get("preset") == "viral"
-    assert opts.get("caption_style") == "kinetic_pop"
-    assert opts.get("hook_banner") is True
-    assert opts.get("max_clips") == 3
+    assert "server paths are refused" in data["error"]
+    assert "job_id" not in data
+    assert {job["job_id"] for job in JOB_MANAGER.get_all_jobs()} == before
 
 
-def test_web_handler_serves_media_from_review_dir() -> None:
-    from hawedit.web import JOB_MANAGER
+def test_web_handler_serves_media_from_review_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit.measure import measure_clip
+    from test_studio_artifacts import URL, install_preview
 
-    job_id = f"test-job-media-{int(json.loads(json.dumps(12345)))}"
-    review_dir = JOB_MANAGER._jobs_dir / job_id / "review" / "testclip"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    media_file = review_dir / "testclip.mp4"
-    media_file.write_bytes(b"dummy video data")
-
-    # Add a mock job entry so JOB_MANAGER recognizes job_id
-    from hawedit.web import JobInfo
-
-    JOB_MANAGER._jobs[job_id] = JobInfo(
-        job_id=job_id,
-        source="source.mp4",
-        status="completed",
-        stage="render",
-        stage_index=6,
-        progress_percent=100,
-        created_at=0.0,
-        updated_at=0.0,
-        headline="test",
-        clips=[],
+    job, _, payload = install_preview(
+        tmp_path,
+        monkeypatch,
+        measure_clip(Path("tests/fixtures/kurdish-speech-3cuts.mp4")).to_dict(),
     )
-
-    req = b"GET /media/testclip.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    req = f"GET {URL} HTTP/1.1\r\nHost: localhost:8080\r\n\r\n".encode("ascii")
     status_code, headers, body = _handle_request(req)
     assert status_code == 200
     assert "video/mp4" in headers.get("content-type", "")
-    assert body == b"dummy video data"
+    assert body == payload
+    (job / "report.json").write_text('{"episode_manifest":{"clips":[]}}', encoding="utf-8")
+    refused, _, response = _handle_request(req)
+    assert refused == 404 and payload not in response

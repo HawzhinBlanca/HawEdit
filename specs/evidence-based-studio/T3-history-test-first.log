@@ -1,0 +1,15 @@
+
+=================================== ERRORS ====================================
+________________ ERROR collecting tests/test_studio_history.py ________________
+ImportError while importing test module 'C:\Users\Wareen\Desktop\HawEdit\tests\test_studio_history.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_studio_history.py:14: in <module>
+    from hawedit.studio_history import HistoryError, read_historical_job, read_history
+E   ModuleNotFoundError: No module named 'hawedit.studio_history'
+=========================== short test summary info ===========================
+ERROR tests/test_studio_history.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!

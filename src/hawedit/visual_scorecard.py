@@ -1,12 +1,9 @@
-"""Visual scorecard and holdout evaluation machinery.
+"""Descriptive visual scorecards and supplied-identity leakage diagnostics.
 
-Implements step V15 (VE-15) of the visual editor intelligence roadmap.
-Produces grounded release scorecards requiring:
-- current, verified provenance (git commit SHA, timestamp, hardware),
-- complete accounting of all proposed clips, refusals, and rejections,
-- cluster-aware confidence intervals across distinct episodes to avoid pseudo-replication,
-- contamination-free holdout sets disjoint from dev/training data, and
-- strict refusal of ungrounded leadership or 10/10 claims.
+Counts, names, provenance strings and diagnostic confidence bounds do not authenticate a
+study, complete its corpus accounting or establish preregistered episode/reviewer inference.
+These helpers refuse release and research-claim authority. Verified independent evaluation
+and the complete V15/VE-15 acceptance program remain separate requirements.
 """
 
 from __future__ import annotations
@@ -194,7 +191,7 @@ class VisualScorecardConfig:
 
 @dataclass(frozen=True, slots=True)
 class VisualScorecard:
-    """Release scorecard accounting for all proposals, clustering, and evidence."""
+    """Unverified descriptive scorecard, not release or research-claim authority."""
 
     provenance: ProvenanceRecord
     split_name: str
@@ -216,13 +213,8 @@ class VisualScorecard:
 
     @property
     def is_release_eligible(self) -> bool:
-        """True only if critical defects are zero and all proposals are accounted for."""
-        return (
-            self.critical_defects_total == 0
-            and self.total_proposed > 0
-            and self.total_proposed
-            == (self.accepted_count + self.rejected_count + self.refusal_count)
-        )
+        """Counts alone cannot establish authenticated release acceptance."""
+        return False
 
     def evaluate_leadership_claim(self, claim: str) -> None:
         """Strictly refuse unsupported leadership, 'number one', or 10/10 claims."""
@@ -232,13 +224,16 @@ class VisualScorecard:
             "number_one",
             "#1",
             "10/10",
+            "9.5/10",
             "best in market",
             "market leader",
             "superior",
             "industry leading",
         }
         if not any(token in normalized for token in leadership_tokens):
-            return
+            raise UnsupportedLeadershipClaimError(
+                f"Refused claim '{claim}': unverified descriptive metrics cannot authorize claims."
+            )
 
         # Refusal condition 1: Critical fidelity defects > 0
         if self.critical_defects_total > 0:
@@ -251,7 +246,7 @@ class VisualScorecard:
         if self.total_episodes < 3:
             raise UnsupportedLeadershipClaimError(
                 f"Refused leadership claim '{claim}': sample has only {self.total_episodes} "
-                "episode cluster(s); minimum 3 required to rule out pseudo-replication."
+                "episode cluster(s); legacy diagnostic minimum is 3, not proof of independence."
             )
         if self.total_proposed < 20:
             raise UnsupportedLeadershipClaimError(
@@ -262,14 +257,15 @@ class VisualScorecard:
         # Refusal condition 3: First pass rate lower bound below 0.50
         if self.first_pass_ci_lower <= 0.50:
             raise UnsupportedLeadershipClaimError(
-                f"Refused leadership claim '{claim}': cluster-adjusted first pass rate lower "
+                f"Refused leadership claim '{claim}': diagnostic first pass rate lower "
                 f"bound ({self.first_pass_ci_lower:.3f}) does not exceed 0.50."
             )
 
         # Refusal condition 4: Competitor comparison checks
         if not self.competitor_comparisons:
             raise UnsupportedLeadershipClaimError(
-                f"Refused leadership claim '{claim}': no pre-registered competitor comparisons."
+                f"Refused leadership claim '{claim}': no pre-registered competitor comparisons "
+                "have been supplied; supplied comparisons would still need verification."
             )
 
         for name, comp in self.competitor_comparisons.items():
@@ -286,8 +282,16 @@ class VisualScorecard:
                 f"owner ({self.signoff_owner}) and Kurdish editor ({self.signoff_editor})."
             )
 
+        raise UnsupportedLeadershipClaimError(
+            f"Refused leadership claim '{claim}': unverified descriptive metrics, supplied "
+            "confidence bounds and sign-off names do not authenticate independent evidence "
+            "or satisfy the frozen acceptance protocol."
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
+            "evidence_status": "descriptive-unverified",
+            "inference_status": "diagnostic-not-preregistered",
             "provenance": {
                 "commit_sha": self.provenance.commit_sha,
                 "timestamp": self.provenance.timestamp,

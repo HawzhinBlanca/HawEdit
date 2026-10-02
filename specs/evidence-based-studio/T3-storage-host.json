@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-02T20:57:22.5027361Z",
+  "scope": "Native host/runtime inventory, not a speed or reel-quality claim",
+  "runtime": {
+    "python": "3.12.10",
+    "sqlite": "3.49.1",
+    "libraries": {
+      "pytest": "9.1.1",
+      "ruff": "0.9.6",
+      "mypy": "1.15.0",
+      "dbos": "2.29.0"
+    },
+    "source_package_sha256": "6bde42cba644a4510bbdb1bdd28596dba7cece5c328612c6dcbcb0e3d7f0b2cb",
+    "ffmpeg_path": "C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin\\ffmpeg.EXE",
+    "ffmpeg_sha256": "09948d4cdd0650da6ff5a87577469f2a218dc2615ae379f8f734d24c49de0f73",
+    "ffmpeg_version": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe_sha256": "a6618e99bb58869ded3c6f37b53aa1a8d701c3591dbb7b5b317d47369c112be2"
+  },
+  "computer": {
+    "Name": "HAWAPC01",
+    "TotalPhysicalMemory": 274741166080,
+    "Manufacturer": "To Be Filled By O.E.M.",
+    "Model": "To Be Filled By O.E.M."
+  },
+  "os": {
+    "Caption": "Microsoft Windows 11 Pro",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200"
+  },
+  "cpu": [
+    {
+      "Name": "AMD Ryzen Threadripper 3990X 64-Core Processor ",
+      "NumberOfCores": 64,
+      "NumberOfLogicalProcessors": 128
+    }
+  ],
+  "display": [
+    {
+      "Name": "NVIDIA GeForce RTX 3090 Ti",
+      "DriverVersion": "32.0.16.1088"
+    },
+    {
+      "Name": "NVIDIA GeForce RTX 3090 Ti",
+      "DriverVersion": "32.0.16.1088"
+    }
+  ],
+  "fixture_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15"
+}

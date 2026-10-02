@@ -32,6 +32,167 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Where this stops, and why
 
+**Current-source correction 2026-10-02:** the historical completion summary below is not
+current acceptance. The dashboard audit found filename-only submission, bypassed producers,
+fabricated quality/duration/completion, ambiguous media/history and inaccessible/mobile
+controls. `specs/evidence-based-studio/` records the approved repair program. Its first full
+gate reported 3,816 passed, four failed and three errors; source/documentation, clean-build
+and VEX review prerequisites remain open. No new end-to-end reel or 10/10 claim is made.
+
+Latest T2 boundary gate: 3,869 passed, two failed, three errors, zero skipped in 953.11s;
+lint/types/format passed (256 files). All 29 generation and 38 upload cases passed. Current
+source remains uncommitted/unaccepted; clean-build prerequisites and VEX source binding
+remain red. Evidence: `specs/evidence-based-studio/T2-boundary-test-evidence.json` and
+`gate-T2-boundary.log`. The valid generation API still reports its missing durable runner;
+legacy reads/static fallback are unaccepted, not verified publication. T3 integration research
+is in `durable-studio-research.md`; no recovery or queue acceptance follows from research.
+
+The next T3 mechanism unit adds `src/hawedit/studio_submissions.py` and
+`src/hawedit/studio_queue.py`, with `tests/test_studio_submissions.py` and
+`tests/test_studio_queue.py`. Real SQLite/DBOS checks cover immutable token binding,
+transaction failure, serial execution, duplicate reuse and second-process enqueue recovery.
+The protected producer worker, runtime/governance/billing controls, read/migration adoption,
+green full gate and exact-SHA CI remain required. Dispatch confirmation is not reel completion;
+HTTP generation remains explicitly unavailable. No task row is accepted from these checks.
+
+Latest T3 mechanism gate: 3,899 passed, two failed, three errors, zero skipped in 1,035.03s;
+lint/types/format passed (260 files). Canonical JUnit confirms all 30 new outbox/queue cases,
+29 generation and 38 upload cases passed. The same clean-build prerequisites and current-source
+VEX binding remain red. Evidence: `specs/evidence-based-studio/T3-outbox-test-evidence.json`
+and `gate-T3-outbox.log`; source digest `830f77b6...`, baseline HEAD unchanged/uncommitted.
+`protected-worker-research.md` records the next producer/billing integration obligations,
+not executed paid-call safety. No CI pass, publication or task completion is inferred.
+
+Latest T3 billing gate: 3,943 passed, two failed, three errors, zero skipped in 1,058.88s;
+lint/types/format passed (262 files). Canonical JUnit confirms all 44 new billing cases and
+the earlier upload/generation/outbox/queue cases passed. Evidence:
+`specs/evidence-based-studio/T3-billing-test-evidence.json` and `gate-T3-billing.log`;
+source digest `69528dcc...`, baseline HEAD unchanged/uncommitted. Native SQLite/loopback
+and abrupt-process probes establish mechanism behavior, not actual bills or authenticated
+authority. Protected worker adoption, prompt-overhead semantics, separate screener controls,
+private storage, legacy reads, current VEX and exact-SHA CI remain open. No row was flipped.
+
+The T4 prerequisite read-boundary unit adds `src/hawedit/studio_artifacts.py` and
+`tests/test_studio_artifacts.py`: explicit routes, job/clip private preview snapshots/ranges,
+local pinned font and unavailable status. It removes generic GET/HEAD filesystem serving and
+recursive unscoped media lookup. Preview availability is not authenticated publication.
+Migration/history, frontend adoption, protected worker, current gate/CI and full acceptance
+remain open; this unit does not mark M9.40 or any task complete.
+
+Latest T4 read-boundary gate: 4,003 passed, three failed, three errors, zero skipped in
+1,047.02s; lint/types/format passed (264 files). Canonical JUnit confirms all 61 new artifact
+cases and the earlier upload/generation/outbox/queue/billing cases passed. Evidence:
+`specs/evidence-based-studio/T4-read-test-evidence.json` and `gate-T4-read.log`;
+source digest `510bfb7e...`, baseline HEAD unchanged/uncommitted. Failures are dirty-checkout
+wheel refusal, three dependent build fixture errors, current-source VEX binding, and the
+newly staged font copyright notice absent from HEAD's Git archive. The last is a new release
+provenance prerequisite, not an old failure or permission to unstage it to hide evidence.
+Native decoded-media snapshots, ranges and installed-data RECORD checks do not establish
+clean-install, browser/accessibility, producer or publication acceptance. No row was flipped.
+`statistical-acceptance-research.md` records synthetic counterexamples to order-invariant
+comparison, repeated-reviewer confidence, sealed blinding and the historical 10/10 scorecard;
+these are diagnostic experiments, not real study results or a repaired evaluation engine.
+
+Latest T3 historical-read adoption gate: 4,066 passed, three failed, three errors, zero skipped
+in 1,039.58s; lint/types/format passed (266 files). All 63 new history/input cases and the
+earlier six studio modules passed. Evidence: `specs/evidence-based-studio/T3-history-test-evidence.json`
+and `gate-T3-history.log`; current source digest `48785704...`, baseline HEAD unchanged.
+Original historical records/media remain byte-identical; HTTP no longer treats legacy flags,
+cache entries, scores or stage percentages as verified current work. Metadata-only HTTP edits
+refuse without mutation. The same dirty-build, missing-HEAD font notice and stale VEX failures
+remain; no row was flipped. Native ACL probes reject current storage under the existing private
+Windows policy, without changing permissions or testing another account's access. Fresh browser
+DOM reports 608px content at 320px and retains the ready badge; desktop capture was rejected
+and empty-input interaction stalled browser controls. `history-ui-audit/notes.md` records the
+limited visual baseline and verification gap. Protected lifecycle, private storage, frontend/
+rendered revisions, authenticated delivery, current CI and independent acceptance remain open.
+
+Latest T5 studio-adoption gate: 4,080 passed, three failed, three setup errors, zero skipped
+in 1,017.13s; lint/types/format passed (268 files). All 14 new UI cases, 67 claim cases and
+all seven earlier studio groups passed. Evidence: `specs/evidence-based-studio/T5-ui-test-evidence.json`,
+`T5-ui-junit.xml` and `gate-T5-ui-final.log`; source digest `66a377da...`, baseline HEAD
+unchanged/uncommitted. The first full run's two collection-time module-documentation failures
+remain preserved separately, not relabelled as passes. Current module map and WIP ledger entries
+resolve them in the fresh full run. Dirty-build, missing-HEAD font notice and stale VEX failures
+remain; no row was flipped or current-SHA CI claimed.
+
+The Sorani frontend now adopts visible real-byte upload, persisted response-loss identity,
+exact submission intent, explicit historical selection and guarded private preview recovery.
+Fresh native fixture uploads, reload/settings, five-width layout, bounded keyboard, seeking/
+private copy and stale-sidecar refusal/retry are recorded in `history-ui-audit/next-ui/notes.md`.
+A real committed upload with its transport acknowledgement dropped stays unknown/locked;
+guarded recovery and reload retain one source without a second upload. Native disk/log evidence
+binds actual bytes, one reservation/commit and zero generation requests. This is not automated
+complete browser, NVDA/zoom/full AA or real creator-workflow acceptance. Protected execution,
+private storage/authentication, rendered revisions, signed review/export and all independent/
+sustained acceptance remain open. No paid call, inference, release or 10/10 verdict.
+
+Latest T3 private-journal gate: 4,112 passed, three failed, three setup errors, zero skipped
+in 1,076.93s; lint/strict types/format passed (270 files). All 26 new private-path cases,
+50 billing cases (including the original 44), seven earlier studio groups and 67 claim cases
+passed. Evidence: `specs/evidence-based-studio/T3-private-journal-test-evidence.json`,
+`T3-private-journal-junit.xml` and `gate-T3-private-journal.log`; current uncommitted package
+digest `637e9acc...`, unchanged baseline HEAD. Clean-build prerequisites, staged font notice
+absent from HEAD archive and stale VEX remain red; no row was flipped or current-SHA CI claimed.
+Native Windows CPython 3.12.10/SQLite 3.49.1 journal checks now fence SQLite and every upstream
+request/result. A separately bound existing Linux CPython 3.12.0/SQLite 3.43.1 probe passed
+12 bounded owner/mode/alias/sidecar/WAL observations on actual /tmp, not a Linux canonical gate.
+Whole-studio storage/authentication, persistent pool/root authority, provider/runtime preflight,
+protected worker, revisions/review/export and every independent/sustained threshold remain open.
+No paid call, model inference, accepted candidate, studio completion or 10/10 follows.
+
+Latest T3 private upload/outbox adoption gate: 4,137 passed, three failed, three setup
+errors, zero skipped in 1,034.68s; lint/strict types/format pass (272 files). All 25 new
+storage cases, the 173 earlier upload/generation/outbox/queue/billing/private cases and
+the artifact/history/UI/claim groups passed. Evidence: `specs/evidence-based-studio/T3-storage-test-evidence.json`,
+`T3-storage-junit.xml` and `gate-T3-storage.log`; package digest `6bde42cb...`, unchanged
+uncommitted HEAD. All 288 frozen source/test/script/document files matched at terminal.
+Dirty-build/dependent fixtures, missing-HEAD font notice and stale qualified VEX remain red;
+no row was flipped or exact-SHA CI claimed. Actual Windows runtime and decoded-media fixture/
+FFmpeg 8.1.1 executable hashes are in `T3-storage-host.json`, not inferred from a pinned label.
+
+The new checks refuse unsafe/lost upload/outbox state without repair or empty recreation,
+preserve unrelated bytes after real staging-junction substitution, keep old error imports/
+deserialization and all original recovery assertions, and validate actual supported containers.
+Fresh native HTTP children test both private startup root choices and exact finalized bytes.
+Separate existing Linux CPython 3.12.0/SQLite 3.43.1 probes pass seven directory/metadata/outbox
+and twelve journal/WAL observations against the same package identity on actual /tmp, not
+a Linux canonical gate or production mount certificate. Fresh Serena has 42 unit and 17
+acceptance research records; CPython 3.14.6/serena-agent 1.7.1.dev0/tool hashes are captured.
+T8's synthetic current-package probe still reproduces unsupported 10/10 admission; it is a
+defect record, not human evaluation or an accepted score. Protected worker/root authority,
+whole-studio authentication/storage, signed rendered review/export, statistics repair and
+all independent/sustained thresholds remain required. The whole goal remains active.
+
+Latest paired-data canonical run (2026-10-03 local): 4,183 passed, three failed, three
+setup errors, zero skipped and one warning in 1039.88s. Lint, strict types and format pass
+for 273 files. All 150 comparison-contract/comparison-kit/visual-scorecard/editorial-study/
+claims cases pass, including the 46 new contract cases and existing actual signed-media
+checks. Frozen package a42bb02b387fd4c556235e971298d9a6d4e7517b408030d61c6d43e6b449a686;
+HEAD remains 372a16645d7a8558bc6cedcff34a9fbfa13f712f. Evidence is in
+specs/evidence-based-studio/T8-paired-test-evidence.json and its terminal canonical XML/
+source manifest. Native Windows CPython 3.12.10 on recorded HAWAPC01/Threadripper 3990X/
+two RTX 3090 Ti and all runtime/executable identities are in T8-paired-host.json. Four
+grouped Linux CPython 3.12.0 observations pass against the same package, not a Linux gate.
+Current full gate still refuses dirty-checkout wheel generation (plus three dependent
+setup errors), staged font-notice absence from HEAD archive and stale VEX source identity.
+No ledger row is flipped, VEX rebound, commit made or CI/release verdict inferred. Separate
+synthetic flags and native fixture-sampler diagnostics preserve unsupported verdict and
+overlapping holdout defects; no human study or production measurement is claimed. Verified
+clustered inference, sealed real-option studies, authenticated verdicts, protected producer/
+review/revision/export and every independent/sustained threshold remain mandatory work.
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M9.47 | Descriptive acceptance intake cannot authorize release/ratings from supplied flags, counts or names, with current gate and exact-SHA CI | WIP | `src/hawedit/editorial_acceptance.py`, `src/hawedit/visual_scorecard.py`, `tests/test_acceptance_authority.py`; AG-1-AG-6 claim/type/floor/construction regressions and preserved accounting/refusal tests. Actual signed study mechanisms remain narrower than full release acceptance. Historical M9.39's verified-provenance/complete holdout and leadership claims are contradicted by current research; old DONE status is not current acceptance. Positive bound-evidence admission, sealed disjoint real-option studies, preregistered episode/reviewer inference, protected production/revision/export, independent trials and 30-day owner/editor acceptance remain mandatory. Gate/CI unaccepted; T8 remains unticked. |
+| M9.46 | Truthful versioned paired review data and refusal of preference-derived QC/superiority, with current gate and exact-SHA CI | WIP | `src/hawedit/comparison_kit.py`, `tests/test_comparison_contract.py`, `tests/test_comparison_kit.py`; PC1-PC7 strict A/B/legacy schemas, duplicate/map refusals, order-invariant differences, actual option flag attribution, unknown legacy measurements, requested Wilson confidence and separate nonauthorizing pooled references. Historical M9.26's sealed-blinding, superiority and QC claims are contradicted by current research; neither that old DONE label nor helper tests certify independent acceptance. Sealed study preparation, scorecard authority, verified episode/reviewer inference, signed review and all human/sustained thresholds remain required. Full gate/CI remain unaccepted; T8 is unticked. |
+| M9.45 | Mandatory private upload/outbox storage, owned-transfer cleanup and actual supported-container validation, with current gate and exact-SHA CI | WIP | `src/hawedit/studio_private.py`, `src/hawedit/studio_submissions.py`, `src/hawedit/studio_uploads.py`, `src/hawedit/web.py`, `tests/test_studio_storage.py`, `tests/studio_test_storage.py`, `tests/test_studio_uploads.py`, `tests/test_studio_submissions.py`, `tests/test_studio_queue.py`, `tests/test_studio_generation.py`; native shared-root/hardlink/replacement/deleted-main refusals, preserved unrelated bytes after actual junction substitution, old exception compatibility, genuine remux/decode cases for seven suffixes and actual private-startup HTTP uploads. Original recovery/token/DBOS/billing assertions remain intact in real private fixtures. Research/PS7-PS14/actual Serena mapping are in `specs/evidence-based-studio/`. Full gate and exact-SHA CI remain unaccepted; protected worker/root authority, whole-studio storage/authentication, media sandboxing and independent/sustained acceptance remain required. No paid work, publication, task completion or 10/10 is inferred. |
+| M9.44 | Mandatory owner-private billed journal and drift refusal preserve actual crash recovery, with current gate and exact-SHA CI | WIP | `src/hawedit/studio_private.py`, `src/hawedit/studio_billing.py`, `tests/test_studio_private.py`, `tests/test_studio_billing.py`; native shared-root, hardlink, sidecar, filename-normalization, root/database replacement and abrupt-WAL/response-loss regressions. All 44 earlier billing contracts retain their original assertions in actual private test storage. `specs/evidence-based-studio/private-journal-research.md` records the measured prior privacy hole and scope. Full gate and CI remain unaccepted; whole-studio OS-private storage/authentication, persisted supervisor authority, provider cap/invoice semantics and actual protected worker adoption remain required. No paid call, production safety or completed task is inferred. |
+| M9.43 | Accessible truthful Sorani studio adopts real-byte upload, explicit history and private preview recovery, with full browser workflow, current gate and exact-SHA CI | WIP | `src/hawedit/studio_ui.py`, `src/hawedit/web.py`, `tests/test_studio_ui.py`, `tests/test_web.py`, `tests/test_robustness_audit.py`; structural contracts and declared-color contrast regressions, native fixture uploads, preserved source/settings on reload, explicit history, seeking/private download and stale-sidecar refusal/retry. Fresh accepted screenshots and bounded DOM observations are in `specs/evidence-based-studio/history-ui-audit/next-ui/`. Protected worker, OS-private storage/authentication, actual revisions/review/export, automated complete browser regressions, NVDA/zoom/full AA, current full gate/CI and independent acceptance remain required. No completed task, publication or accepted studio is inferred. |
+| M9.42 | Fresh non-destructive studio history, visible persistence diagnostics and refusal of metadata-only burned-in edits, with current gate and exact-SHA CI | WIP | `src/hawedit/studio_history.py`, `src/hawedit/studio_artifacts.py`, `src/hawedit/web.py`, `tests/test_studio_history.py`, `tests/test_studio_artifacts.py`, `tests/test_web.py`; raw-record binding, historical unverified/interrupted states, sanitized source display, scoped manifest candidates and non-mutation refusals. Native corruption/link/refresh and scan/storage evidence is under verification. Authoritative worker lifecycle, protected persistence, full UI/revision adoption, current gate/CI and independent acceptance remain open. No completed task or accepted migration is inferred. |
+| M9.41 | Explicit studio read boundary, measured manifest-bound private preview playback and offline font with current gate and exact-SHA CI | WIP | `src/hawedit/studio_artifacts.py`, `src/hawedit/web.py`, `src/hawedit/release.py`, `tests/test_studio_artifacts.py`, `tests/test_web.py`, `tests/test_robustness_audit.py`, `tests/test_release.py`; native snapshots/ranges and file/HTTP refusals, digest-bound source/installed font and distinct SBOM entry. Private preview is not authenticated export. Clean-build, current VEX, exact-SHA CI, OS ACL preflight, truthful history/frontend adoption and browser/accessibility/performance acceptance remain open. No completed task or release is inferred. |
+| M9.40 | Real uploaded bytes reach shared production generation and verified review/export with current gate and exact-SHA CI | WIP | `src/hawedit/studio_uploads.py`, `src/hawedit/studio_generation.py`, `src/hawedit/studio_submissions.py`, `src/hawedit/studio_queue.py`, `src/hawedit/studio_billing.py`, `src/hawedit/web.py`, `tests/test_studio_uploads.py`, `tests/test_studio_generation.py`, `tests/test_studio_submissions.py`, `tests/test_studio_queue.py`, `tests/test_studio_billing.py`; real-byte uploads, immutable SQLite submission outbox, real DBOS serial dispatch/reconciliation, strict source-ID preparation and measured candidate/event projections. Billed transport now journals intent/reservation and response evidence with distinct repeated-content occurrences; shared-builder optional injection keeps one producer graph. Policy values are not authenticated authority or measured invoices. Dispatch acknowledgement does not certify generation or publication. HTTP server-path generation is refused; valid requests report the missing protected producer worker. Frontend, trusted runtime/governance/spending policy, queued producer execution, legacy read/migration adoption, authenticated delivery and full acceptance remain open. Full gate is not green; VEX #24 must be reviewed for current source, not silently rebound. `specs/evidence-based-studio/tasks.md` remains unticked. |
+
 Everything that does not require credentials, model weights, a GPU, human annotators, or a
 decision from Hawa is built, tested and gated. `bash scripts/setup.sh` takes a clone to a green
 gate; `python -m hawedit.pipeline VIDEO.mp4` runs §3 as far as the available models allow and

@@ -1,0 +1,14 @@
+{
+  "observed_at_utc": "2026-10-02T22:21:15.2656301Z",
+  "head_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+  "source_package_sha256": "68e131df5008b8d5938e4f7915e2c4475ccd2b855eaa01e49e0cfb3390751bea",
+  "endpoint": "repos/HawzhinBlanca/HawEdit/commits/372a16645d7a8558bc6cedcff34a9fbfa13f712f/check-runs?per_page=100",
+  "command_exit_code": 1,
+  "response_text": [
+    "gh: No commit found for SHA: 372a16645d7a8558bc6cedcff34a9fbfa13f712f (HTTP 422)",
+    "{\"message\":\"No commit found for SHA: 372a16645d7a8558bc6cedcff34a9fbfa13f712f\",\"documentation_url\":\"https://docs.github.com/rest/checks/runs#list-check-runs-for-a-git-reference\",\"status\":\"422\"}"
+  ],
+  "verified_current_ci": false,
+  "changes_requested": false,
+  "limitation": "An API refusal is not an empty check-run result or a green CI verdict; local source is also uncommitted"
+}

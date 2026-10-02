@@ -1,0 +1,32 @@
+==> lint
+src\hawedit\editorial_acceptance.py:1894:47: UP038 Use `X | Y` in `isinstance` call instead of `(X, Y)`
+     |
+1892 |         for name in ("refusal_rate", "first_pass_publishable_rate", "margin_of_error"):
+1893 |             value = getattr(self, name)
+1894 |             if isinstance(value, bool) or not isinstance(value, (int, float)):
+     |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ UP038
+1895 |                 raise EditorialAcceptanceError(f"{name} must be a finite proportion")
+1896 |             if not math.isfinite(value) or not 0 <= value <= 1:
+     |
+     = help: Convert to `X | Y`
+
+src\hawedit\editorial_acceptance.py:2019:101: E501 Line too long (112 > 100)
+     |
+2017 |         reasons = "; ".join(self.deficiencies)
+2018 |         raise EditorialAcceptanceError(
+2019 |             f"Acceptance refused ({self.acceptance_status}): descriptive report is not authorization; {reasons}"
+     |                                                                                                     ^^^^^^^^^^^^ E501
+2020 |         )
+     |
+
+src\hawedit\editorial_acceptance.py:2147:101: E501 Line too long (121 > 100)
+     |
+2145 |         reasons = "; ".join(self.deficiencies)
+2146 |         raise EditorialAcceptanceError(
+2147 |             f"Sustained acceptance refused ({self.sustained_status}): descriptive report is not authorization; {reasons}"
+     |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^ E501
+2148 |         )
+     |
+
+Found 3 errors.
+No fixes available (1 hidden fix can be enabled with the `--unsafe-fixes` option).

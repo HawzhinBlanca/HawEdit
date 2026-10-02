@@ -1,0 +1,2 @@
+127.0.0.1 - - [02/Oct/2026 17:51:38] "GET /README.md HTTP/1.1" 200 -
+{"status": "unaccepted-security-observation", "route": "/README.md", "http_status": 200, "bytes": 62095, "response_sha256": "145aaafe1abdd2e2f563c5d15d5c0ce52f1e7393e7f907fddc97a3def3f4420c", "secrets_read": false, "generation_execution": false}

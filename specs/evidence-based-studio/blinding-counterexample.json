@@ -1,0 +1,11 @@
+{
+  "status": "synthetic-blinding-counterexample-not-evaluation",
+  "source_package_sha256": "510bfb7e333b7210cf6fd252cc26a7b22cb9ffd63b9d1b744f2527830ccac65a",
+  "public_seed_reconstructs_entire_unblinding_map": true,
+  "pair_count": 4,
+  "media_mode": "actual-existing-fixture-copied-for-protocol-only",
+  "limits": [
+    "no-commissioned-editor-or-human-trial",
+    "not-a-quality-measurement"
+  ]
+}

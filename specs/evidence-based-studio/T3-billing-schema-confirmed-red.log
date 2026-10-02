@@ -1,0 +1,32 @@
+................................F.....                                   [100%]
+================================== FAILURES ===================================
+_ test_studio_billing_unrecognized_storage_is_preserved[foreign-version-one] __
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6996/test_studio_billing_unrecogniz2')
+api = <test_studio_billing.LocalProtocol object at 0x00000227E3F4D2B0>
+damage = 'foreign-version-one'
+
+    @pytest.mark.parametrize("damage", ["version", "foreign", "foreign-version-one", "not-database"])
+    def test_studio_billing_unrecognized_storage_is_preserved(
+        tmp_path: Path, api: LocalProtocol, damage: str
+    ) -> None:
+        path = tmp_path / "billing.sqlite3"
+        if damage == "not-database":
+            path.write_bytes(b"not a database")
+        else:
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "PRAGMA user_version=2"
+                    if damage == "version"
+                    else "CREATE TABLE foreign_data(value)"
+                )
+                if damage == "foreign-version-one":
+                    db.execute("PRAGMA user_version=1")
+        before = path.read_bytes()
+>       with pytest.raises(StudioStorageError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_billing.py:528: Failed
+=========================== short test summary info ===========================
+FAILED tests/test_studio_billing.py::test_studio_billing_unrecognized_storage_is_preserved[foreign-version-one]

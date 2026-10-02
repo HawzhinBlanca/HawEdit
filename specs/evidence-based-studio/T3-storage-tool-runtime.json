@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-02T21:09:01.4554843Z",
+  "runtime": {
+    "python": "3.14.6",
+    "distributions": {
+      "serena-agent": "1.7.1.dev0"
+    },
+    "find_symbol_implementation": "C:\\Users\\Wareen\\AppData\\Local\\uv\\cache\\archive-v0\\9_fxmIrWO4VY1ZQk\\Lib\\site-packages\\serena\\tools\\symbol_tools.py",
+    "find_symbol_sha256": "168f9f7b3a32440a91e4bfa844e0d4e78fa69e6eb6fb5a5d79a398800ded46f0",
+    "references_implementation": "C:\\Users\\Wareen\\AppData\\Local\\uv\\cache\\archive-v0\\9_fxmIrWO4VY1ZQk\\Lib\\site-packages\\serena\\tools\\symbol_tools.py",
+    "references_sha256": "168f9f7b3a32440a91e4bfa844e0d4e78fa69e6eb6fb5a5d79a398800ded46f0",
+    "backend": "LSP"
+  }
+}

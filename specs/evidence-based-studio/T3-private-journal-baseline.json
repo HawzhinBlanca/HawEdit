@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "scope": "Native baseline accepts billing journal despite protected-root refusal; no egress or paid work",
+  "source_package_sha256": "66a377dabc4c08b265994e85ab18d66d8a89f90553e7a90cdec0f19ff8ebbd39",
+  "root": "C:\\Users\\Wareen\\AppData\\Local\\Temp\\hawedit-billing-privacy-baseline-2lkm_rjw",
+  "root_check": {
+    "root": "private staging path grants access to another principal: C:\\Users\\Wareen\\AppData\\Local\\Temp\\hawedit-billing-privacy-baseline-2lkm_rjw"
+  },
+  "created_database": true
+}

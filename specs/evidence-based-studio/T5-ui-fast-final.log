@@ -1,0 +1,5 @@
+==> lint
+All checks passed!
+==> typecheck
+Success: no issues found in 268 source files
+fast checks OK (lint + typecheck only — NOT the full gate, tests did not run)

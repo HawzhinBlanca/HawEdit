@@ -556,7 +556,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
 | `bench.py` | §8.1 | The benchmark run, the comparable report, and the canonical-model decision rule. |
 | `editorial_bench.py` | §8.2 | A real-media, two-reviewer, dialect-balanced editorial regression manifest and judge-promotion report. |
-| `editorial_acceptance.py` | §8.2 | Deterministic 200–500-item blinded A/B preparation, predeclared dialect-balanced holdout, independent signed review/adjudication import, content revalidation, and separate training/holdout evidence. |
+| `editorial_acceptance.py` | §8.2 | Deterministic 200–500-item judge-label A/B preparation, signed review/adjudication import, content revalidation and training/holdout reports. Current sampler/distribution do not establish disjoint sealed release holdouts. Aggregate scoped/sustained intake records self-reported claims but cannot authorize acceptance, ratings or elapsed use. |
 | `diarization.py` | §8.1, §3 Stages 0 and 5 | Production-exclusive DER, benchmark-only overlap-aware DER for the 3.1 control, boundary reconciliation, and anchor-edge-to-turn selection without nearest-turn invention. |
 | `diarization_acceptance.py` | §8.1, §3 Stages 0 and 6 | Content-bound real multi-speaker references and media, exact Community-1/control receipts, signed rights/access/crop approval, raw DER/boundary/association/crop metrics, explicit fallbacks, attribution, and atomic write-once reports. |
 | `pyannote_adapter.py` | §3 Stage 0, §7 | Concrete Stage 0 `Diarizer` implementing pyannote Community-1 conversion, monotonic millisecond rounding, and refusal enforcement. |
@@ -591,7 +591,16 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `condenser.py` | §3 Stage 6 extension | Multi-part narrative story arc mining, non-contiguous ramble pruning, and subtitle timeline remapping. |
 | `sanity_gate.py` | §3 Stage 6 extension | Automated pre-delivery quality audit: face presence, subtitle contrast/legibility, EBU R128 audio compliance, and story integrity. |
 | `checkpoint.py` | Phase 1 | Stage checkpointing and resumption engine: atomic `.done` markers with input SHA hashes. |
-| `web.py` | Phase 4 | Zero-dependency local web dashboard: file upload, live stage progress, Kurdish story preview and export. |
+| `web.py` | Local studio, WIP | Explicit loopback HTTP routes for uploads, history and private previews, with compatible dashboard re-export and deferred private upload startup. Default upload root: `%LOCALAPPDATA%/HawEditStudio` on Windows, `~/.hawedit-studio` on POSIX; local `HAWEDIT_STUDIO_STORAGE_ROOT` overrides it. Existing unsafe storage is refused, not repaired or migrated. Protected durable execution, whole-studio authentication and authenticated review/export remain open. |
+| `studio_ui.py` | Local studio, WIP | Sorani-first vanilla frontend: visible real-file upload, persisted response-loss recovery and exact submission intent, explicit historical job selection, measured/unknown states and guarded private preview recovery. Native responsive fixture checks are evidence, not full AA or creator-workflow acceptance. Generation, rendered revisions, authenticated approval and verified export remain unavailable. |
+| `studio_uploads.py` | Local studio, WIP | Two-phase real-byte uploads in mandatory private identity-bound roots/files: opaque names, reservations, suffix-specific file-only container probing/decoding, private atomic metadata and finalization, digest checks and identity-bound failure cleanup. Actual supported media and response-loss recovery are tested; protected generation, media sandboxing, whole-studio authentication and full-gate/CI acceptance remain open. |
+| `studio_generation.py` | Local studio, WIP | Strict source-ID requests and shared-parser producer preparation; measured-byte candidate views and state-preserving event projections. No invented scores or report-authorized publication. Durable execution, runtime/spending preflight, projection adoption and acceptance remain open. |
+| `studio_submissions.py` | Local studio, WIP | Mandatory private SQLite request/token outbox with immutable source/configuration/worker/execution identity and opening/commit/close fences. Lost main state refuses without empty recreation; scoped work directories are private. Dispatch acknowledgement is not generation success or publication. Protected supervisor/root authority, runtime preflight and worker adoption remain required. |
+| `studio_queue.py` | Local studio, WIP | Pinned DBOS serial queue and identity-bound outbox reconciliation, including uncertain acknowledgements and completed duplicate reuse. Requires a registered protected worker; no paid-work authorization or HTTP execution is connected by this mechanism alone. |
+| `studio_billing.py` | Local studio, WIP | Owner-private SQLite pre-request reservation/intent and confirmed response evidence, guarded canonical-model transport and K-preserving replay occurrences. Path/identity/permission checks fence SQLite and every upstream request/result. Trusted supervisor policy values are not authenticated authorization or an account invoice. Runtime/governance adoption and real provider cap/price validation remain required. |
+| `studio_private.py` | Local studio, WIP | Shared storage error, lifetime-bound private directory/file checks, private atomic metadata and SQLite root/main/sidecar fences adopted by billing, upload and outbox stores. Creates only missing private leaves; refuses unsafe existing data without repair, deleting only known owned staging identities. Native Windows ACL/POSIX mode observations are bounded evidence, not complete race elimination, whole-studio authentication or mount certification. |
+| `studio_artifacts.py` | Local studio, WIP | Manifest-scoped measured private MP4 snapshots, bounded byte ranges and digest-pinned local font, adopted by the frontend. No recursive file search or publication authorization. Protected worker, authenticated export, full browser workflow and performance acceptance remain required. |
+| `studio_history.py` | Local studio, WIP | Bounded read-only historical job projections with raw-record digests, fresh disk reads and visible corruption/storage diagnostics, adopted by explicit frontend job selection. Old completion is unverified and abandoned work requires reconciliation; tokens, server paths and invented measurements are not exposed. Authoritative worker lifecycle and authenticated release remain required. |
 | `log.py` | Phase 1 | Structured JSONL logging and EventSink bridge: namespaced loggers, rotating file handlers, and per-module log configuration. |
 | `discovery.py` | §3 Stage 3 | The dual-path union. Nothing is dropped, per-path attribution survives, overlap does not chain. |
 | `pipeline.py` | §3 | The runner. Joins every stage that can run and names every one that cannot. |
@@ -638,7 +647,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `timeline.py` | Editorial | Schema-compliant OpenTimelineIO (`.otio`) timeline and marker generator for DaVinci Resolve Studio handoff with colored editorial markers for Hook, Payoff, Punch-Ins, and Speaker turns. |
 | `resolve.py` | Editorial | DaVinci Resolve Studio live editorial integration bridge conforming 9:16 vertical timelines, EDL cuts, and editorial markers. |
 | `content_type.py` | Editorial | Content-type profiles (podcast, interview, news, social) driving editorial durations, caption styling, and camera pacing (Task T4.5, ADR D-265). |
-| `comparison_kit.py` | Phase 5 | Comparison kit for blind pairwise human evaluation: seeded randomisation, blinded staging, Kurdish Sorani rating forms, Wilson score 95% confidence intervals, and QcRecord export (Task T5.1, H7). |
+| `comparison_kit.py` | Phase 5 | Versioned A/B and legacy descriptive ratings, strict duplicate/schema/map validation, Sorani forms and confidence-specific independent Wilson references. Unknown paired evidence stays unknown; no preference-derived QC or superiority approval. `tests/test_comparison_contract.py` covers PC1-PC7. Staging is currently deterministic/unsealed; verified clustered studies and signed fidelity review remain required (Task T5.1, H7). |
 | `edit_plan.py` | Visual Editor | Unified visual edit contract, editorial brief, effective configuration, and source-to-output time mapping with deterministic multi-cut conforming across EDL, SRT, and OpenTimelineIO artifacts. |
 | `observation.py` | Visual Editor | Visual observation inventory partitioning source media into unknown, scanned, sampled, and model-inspected evidence while protecting static verbal speech from novelty-biased suppression. |
 | `story.py` | Visual Editor | Grounded narrative story relations connecting canonical sentences to visual evidence IDs with required context preservation. |
@@ -650,7 +659,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `visual_repair.py` | Visual Editor | Bounded iterative defect repair enforcing stop rules (non-improvement, oscillation, budgets) without changing speech text or self-approving. |
 | `episode_package.py` | Visual Editor | Multi-clip episode packaging sharing preprocessing, filtering semantic duplicates, and reporting truthful per-clip states without forcing filler outputs. |
 | `workflow_recovery.py` | Visual Editor | Workflow recovery preserving verified evidence across crashes, cleaning scratch resources, reconciling billed calls, and publishing packages idempotently. |
-| `visual_scorecard.py` | Visual Editor | Holdout release scorecard with full accounting of proposals/refusals, cluster-aware confidence bounds, contamination checks, and leadership refusal. |
+| `visual_scorecard.py` | Visual Editor | Descriptive proposal/refusal accounting and contamination checks; current bounds are diagnostic, not preregistered episode/reviewer inference. Supplied metrics or sign-off names cannot authorize release, superiority or 10/10. `tests/test_acceptance_authority.py` covers the authority boundary. |
 
 
 
@@ -674,6 +683,9 @@ incomplete set never looks unqualified.
 - ASS + libass/HarfBuzz/FriBidi — LGPL/GPL, attribution required.
 - Noto Naskh Arabic (The Noto Project Authors) — OFL-1.1. The licence must accompany the
   font: `assets/fonts/OFL.txt` ships beside it.
+- Vazirmatn (The Vazirmatn Project Authors) — OFL-1.1. The offline studio ships the existing
+  font bytes with provenance, `assets/fonts/Vazirmatn-COPYRIGHT.txt` and the full OFL text.
+  Both bundled fonts have distinct release SBOM entries.
 
 These must appear in shipped product documentation. `registry.attribution_notices()` generates
 the list, and `tests/test_claims.py` asserts this section matches it **in both directions** —

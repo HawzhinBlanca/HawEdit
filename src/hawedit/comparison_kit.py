@@ -1,13 +1,10 @@
 """Comparison kit for blind pairwise human evaluation (Task T5.1, H7).
 
-Provides the complete evaluation harness for blind pairwise comparisons between HawEdit
-system renders and human editor cuts:
-1. Deterministic seeded randomisation of clip pairs to Option A and Option B.
-2. Blinded file staging and metadata stripping to prevent experimenter leakage.
-3. Pre-registered rating forms in native Kurdish Sorani (ckb).
-4. Rigorous statistical analysis with Wilson score 95% confidence intervals and the
-   "Better than a team" rule (ci_lower > 0.50).
-5. Seamless export to standard QcRecord format (Task T1.3).
+Versioned A/B ratings and descriptive comparisons between system and human editor cuts.
+Legacy overall scores cannot identify option differences. Pooled Wilson references do
+not establish episode/reviewer independence or authorize superiority. Preference is not
+fidelity QC or authenticated approval. Staging is currently deterministic and unsealed;
+it must not be used as an independently blinded release study.
 """
 
 from __future__ import annotations
@@ -18,8 +15,10 @@ import math
 import random
 import shutil
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
+from statistics import NormalDist
 from typing import Any, Final
 
 from hawedit.clip import QcRecord
@@ -28,6 +27,7 @@ __all__ = [
     "BlindedItem",
     "BlindedStudy",
     "ComparisonKitError",
+    "OptionRating",
     "PairCandidate",
     "PairRating",
     "RaterSubmission",
@@ -59,12 +59,19 @@ def wilson_score_interval(p_hat: float, n: int, confidence: float = 0.95) -> tup
     Returns:
         (ci_lower, ci_upper) clamped strictly to [0.0, 1.0].
     """
-    if n <= 0:
+    if type(n) is not int or n <= 0:
         raise ComparisonKitError(f"Sample size n must be positive, got {n}")
-    if not (0.0 <= p_hat <= 1.0):
+    if isinstance(p_hat, bool) or not isinstance(p_hat, int | float) or not (0.0 <= p_hat <= 1.0):
         raise ComparisonKitError(f"p_hat must be within [0.0, 1.0], got {p_hat}")
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, int | float)
+        or not 0.0 < confidence < 1.0
+    ):
+        raise ComparisonKitError("confidence must be finite and strictly between 0 and 1")
 
-    z = Z_95 if abs(confidence - 0.95) < 1e-4 else 1.96
+    # The lower tail avoids rounding (1 + confidence) / 2 to one near confidence=1.
+    z = Z_95 if confidence == 0.95 else -NormalDist().inv_cdf((1.0 - confidence) / 2.0)
     z2 = z * z
     denominator = 1.0 + z2 / n
     center = (p_hat + z2 / (2.0 * n)) / denominator
@@ -221,37 +228,119 @@ def prepare_blind_study(
 
 
 @dataclass(frozen=True, slots=True)
-class PairRating:
-    """One reviewer's evaluation of a blinded pair."""
+class OptionRating:
+    """Self-reported observations for one option, not an authenticated QC record."""
 
-    pair_id: str
     hook_score: int
     clarity_score: int
     shareability_score: int
     misleading_flag: bool
-    preferred_option: str
-    notes: str = ""
+    seconds_watched: float | None = None
+    correction_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        if not self.pair_id.strip():
+        for name in ("hook_score", "clarity_score", "shareability_score"):
+            value = getattr(self, name)
+            if type(value) is not int or not 1 <= value <= 5:
+                raise ComparisonKitError(f"{name} must be an integer between 1 and 5")
+        if type(self.misleading_flag) is not bool:
+            raise ComparisonKitError("misleading_flag must be boolean")
+        for name in ("seconds_watched", "correction_seconds"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ComparisonKitError(f"{name} must be unknown or finite nonnegative seconds")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class PairRating:
+    """Version 1 overall scores or version 2 separate A/B observations."""
+
+    pair_id: str
+    hook_score: int | None
+    clarity_score: int | None
+    shareability_score: int | None
+    misleading_flag: bool | None
+    preferred_option: str
+    notes: str = ""
+    option_a: OptionRating | None = field(default=None, kw_only=True)
+    option_b: OptionRating | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pair_id, str) or not self.pair_id.strip():
             raise ComparisonKitError("pair_id must be non-empty")
-        for name, val in (
-            ("hook_score", self.hook_score),
-            ("clarity_score", self.clarity_score),
-            ("shareability_score", self.shareability_score),
+        if self.pair_id != self.pair_id.strip():
+            raise ComparisonKitError("pair_id must not have surrounding whitespace")
+        overall = (
+            self.hook_score,
+            self.clarity_score,
+            self.shareability_score,
+            self.misleading_flag,
+        )
+        if self.option_a is None and self.option_b is None:
+            for name, value in zip(
+                ("hook_score", "clarity_score", "shareability_score"), overall[:3], strict=True
+            ):
+                if type(value) is not int or not 1 <= value <= 5:
+                    raise ComparisonKitError(f"{name} must be an integer between 1 and 5")
+            if type(self.misleading_flag) is not bool:
+                raise ComparisonKitError("misleading_flag must be boolean")
+        elif (
+            not isinstance(self.option_a, OptionRating)
+            or not isinstance(self.option_b, OptionRating)
+            or any(value is not None for value in overall)
         ):
-            if not isinstance(val, int) or not (1 <= val <= 5):
-                raise ComparisonKitError(f"{name} must be an integer between 1 and 5, got {val}")
-        if not isinstance(self.misleading_flag, bool):
             raise ComparisonKitError(
-                f"misleading_flag must be boolean, got {type(self.misleading_flag)}"
+                "Paired schema requires A/B observations without overall scores"
             )
         if self.preferred_option not in ("A", "B", "tie"):
             raise ComparisonKitError(
                 f"preferred_option must be 'A', 'B', or 'tie', got {self.preferred_option!r}"
             )
+        if not isinstance(self.notes, str):
+            raise ComparisonKitError("notes must be a string")
+
+    @property
+    def schema(self) -> int:
+        return 2 if self.option_a is not None else 1
+
+    @classmethod
+    def from_options(
+        cls,
+        pair_id: str,
+        option_a: OptionRating,
+        option_b: OptionRating,
+        preferred_option: str,
+        notes: str = "",
+    ) -> PairRating:
+        return cls(
+            pair_id,
+            None,
+            None,
+            None,
+            None,
+            preferred_option,
+            notes,
+            option_a=option_a,
+            option_b=option_b,
+        )
 
     def to_dict(self) -> dict[str, Any]:
+        if self.option_a is not None and self.option_b is not None:
+            return {
+                "pair_id": self.pair_id,
+                "option_a": self.option_a.to_dict(),
+                "option_b": self.option_b.to_dict(),
+                "preferred_option": self.preferred_option,
+                "notes": self.notes,
+            }
         return {
             "pair_id": self.pair_id,
             "hook_score": self.hook_score,
@@ -265,14 +354,41 @@ class PairRating:
 
 @dataclass(frozen=True, slots=True)
 class RaterSubmission:
-    """A complete set of ratings submitted by one reviewer."""
+    """Distinct observations under a self-declared label, not trusted reviewer identity."""
 
     reviewer_name: str
     submitted_at_iso: str
     ratings: tuple[PairRating, ...]
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.reviewer_name, str) or not self.reviewer_name.strip():
+            raise ComparisonKitError("reviewer_name must be a non-empty string")
+        if self.reviewer_name != self.reviewer_name.strip():
+            raise ComparisonKitError("reviewer_name must not have surrounding whitespace")
+        if not isinstance(self.submitted_at_iso, str):
+            raise ComparisonKitError("submitted_at_iso must be a timezone-aware ISO datetime")
+        try:
+            timestamp = datetime.fromisoformat(self.submitted_at_iso)
+            if timestamp.utcoffset() is None:
+                raise ValueError("timezone missing")
+        except ValueError as exc:
+            raise ComparisonKitError(
+                "submitted_at_iso must be a timezone-aware ISO datetime"
+            ) from exc
+        if (
+            not isinstance(self.ratings, tuple)
+            or not self.ratings
+            or any(not isinstance(r, PairRating) for r in self.ratings)
+        ):
+            raise ComparisonKitError("ratings must be a non-empty tuple of PairRating")
+        if len({r.pair_id for r in self.ratings}) != len(self.ratings):
+            raise ComparisonKitError("Duplicate rating for reviewer/pair")
+        if len({r.schema for r in self.ratings}) != 1:
+            raise ComparisonKitError("Submission cannot mix rating schemas")
+
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema": self.ratings[0].schema,
             "reviewer_name": self.reviewer_name,
             "submitted_at_iso": self.submitted_at_iso,
             "ratings": [r.to_dict() for r in self.ratings],
@@ -282,6 +398,7 @@ class RaterSubmission:
 def generate_kurdish_rating_form(study: BlindedStudy) -> dict[str, Any]:
     """Generate structured rating template in Kurdish Sorani (ckb)."""
     return {
+        "schema": 2,
         "title_ckb": "فۆڕمی هەڵسەنگاندنی کوالێتی ڤیدیۆ — بەراوردی کوێرانە",
         "instructions_ckb": (
             "تکایە هەر جووتە ڤیدیۆیەک بە وردی تەماشا بکە (بژاردەی A و بژاردەی B). "
@@ -291,26 +408,31 @@ def generate_kurdish_rating_form(study: BlindedStudy) -> dict[str, Any]:
         "dimensions": [
             {
                 "id": "hook_score",
+                "scope": "per_option",
                 "label_ckb": "سەرنجڕاکێشی لە ۳ چرکەی یەکەمدا (Hook)",
                 "scale": "1 (زۆر لاواز) تا 5 (زۆر سەرنجڕاکێش)",
             },
             {
                 "id": "clarity_score",
+                "scope": "per_option",
                 "label_ckb": "ڕوونی پەیام و پاراستنی مانای دەق (Clarity)",
                 "scale": "1 (ناڕوون/پچڕاو) تا 5 (تەواو ڕوون و بەسوود)",
             },
             {
                 "id": "shareability_score",
+                "scope": "per_option",
                 "label_ckb": "ئارەزووی بڵاوکردنەوە لە تۆڕە کۆمەڵایەتییەکان (Shareability)",
                 "scale": "1 (هەرگیز بڵاوی ناکەمەوە) تا 5 (بە دڵنیاییەوە بڵاوی دەکەمەوە)",
             },
             {
                 "id": "misleading_flag",
+                "scope": "per_option",
                 "label_ckb": "ئایا دەستکارییەکە چەواشەکارانەیە یان واتاکەی شێواندووە؟ (Misleading)",
                 "type": "بەڵێ / نەخێر",
             },
             {
                 "id": "preferred_option",
+                "scope": "pair",
                 "label_ckb": "هەڵبژاردنی گشتیی پەسەندکراو (Overall Preference)",
                 "options": ["A", "B", "tie (یەکسان)"],
             },
@@ -321,6 +443,7 @@ def generate_kurdish_rating_form(study: BlindedStudy) -> dict[str, Any]:
                 "topic_ckb": item.topic_ckb,
                 "option_a": str(item.blinded_path_a.name),
                 "option_b": str(item.blinded_path_b.name),
+                "rating_options": ["A", "B"],
             }
             for item in study.items
         ],
@@ -346,6 +469,11 @@ def format_kurdish_form_markdown(study: BlindedStudy) -> str:
         lines.append(f"### {item['pair_id']} — {item['topic_ckb']}")
         lines.append(f"- پەڕگەی A: `{item['option_a']}`")
         lines.append(f"- پەڕگەی B: `{item['option_b']}`")
+        for option in item["rating_options"]:
+            lines.append(f"### {option}")
+            for dim in form["dimensions"][:4]:
+                lines.append(f"- {dim['label_ckb']}: ______")
+        lines.append(f"- {form['dimensions'][4]['label_ckb']}: A / B / tie")
         lines.append("")
     return "\n".join(lines)
 
@@ -357,6 +485,14 @@ def validate_ratings(payload: dict[str, Any], expected_pair_ids: set[str]) -> Ra
         ComparisonKitError: If schema is invalid, pairs are missing/duplicate,
             or scores out of bounds.
     """
+    if not isinstance(payload, dict):
+        raise ComparisonKitError("Submission must be a dictionary")
+    schema = payload.get("schema", 1)
+    if type(schema) is not int or schema not in (1, 2):
+        raise ComparisonKitError("Unsupported rating schema")
+    required = {"reviewer_name", "submitted_at_iso", "ratings"}
+    if not required <= payload.keys() or payload.keys() - required - {"schema"}:
+        raise ComparisonKitError("Submission fields are missing or unknown")
     reviewer = payload.get("reviewer_name")
     if not isinstance(reviewer, str) or not reviewer.strip():
         raise ComparisonKitError("reviewer_name must be a non-empty string")
@@ -382,46 +518,83 @@ def validate_ratings(payload: dict[str, Any], expected_pair_ids: set[str]) -> Ra
             raise ComparisonKitError(f"Duplicate rating for pair: {pid}")
         seen_pairs.add(pid)
 
-        validated_ratings.append(
-            PairRating(
+        fields = {"pair_id", "preferred_option"}
+        fields |= (
+            {"hook_score", "clarity_score", "shareability_score", "misleading_flag"}
+            if schema == 1
+            else {"option_a", "option_b"}
+        )
+        if not fields <= r.keys() or r.keys() - fields - {"notes"}:
+            raise ComparisonKitError(f"Rating fields are missing or unknown for pair {pid}")
+        if schema == 1:
+            rating = PairRating(
                 pair_id=pid,
                 hook_score=r["hook_score"],
                 clarity_score=r["clarity_score"],
                 shareability_score=r["shareability_score"],
-                misleading_flag=bool(r["misleading_flag"]),
-                preferred_option=str(r["preferred_option"]),
-                notes=str(r.get("notes", "")),
+                misleading_flag=r["misleading_flag"],
+                preferred_option=r["preferred_option"],
+                notes=r.get("notes", ""),
             )
-        )
+        else:
+            options: list[OptionRating] = []
+            for option_name in ("option_a", "option_b"):
+                raw = r[option_name]
+                required_option = {
+                    "hook_score",
+                    "clarity_score",
+                    "shareability_score",
+                    "misleading_flag",
+                }
+                if (
+                    not isinstance(raw, dict)
+                    or not required_option <= raw.keys()
+                    or raw.keys() - required_option - {"seconds_watched", "correction_seconds"}
+                ):
+                    raise ComparisonKitError(f"Invalid {option_name} fields for pair {pid}")
+                options.append(OptionRating(**raw))
+            rating = PairRating.from_options(
+                pid, options[0], options[1], r["preferred_option"], r.get("notes", "")
+            )
+        validated_ratings.append(rating)
 
     if seen_pairs != expected_pair_ids:
         missing = expected_pair_ids - seen_pairs
         raise ComparisonKitError(f"Submission is missing ratings for pairs: {sorted(missing)}")
 
     return RaterSubmission(
-        reviewer_name=reviewer.strip(),
-        submitted_at_iso=time_str.strip(),
+        reviewer_name=reviewer,
+        submitted_at_iso=time_str,
         ratings=tuple(validated_ratings),
     )
 
 
 @dataclass(frozen=True, slots=True)
 class StudyMetrics:
-    """Aggregated statistical outcomes from blind human pairwise evaluation."""
+    """Descriptive outcomes; independent reference bounds are not clustered inference."""
 
     total_comparisons: int
     system_wins: int
     human_wins: int
     ties: int
     system_win_rate: float
-    ci_lower: float
-    ci_upper: float
+    ci_lower: float | None
+    ci_upper: float | None
     better_than_a_team: bool
-    hook_mean_diff: float
-    clarity_mean_diff: float
-    shareability_mean_diff: float
-    misleading_rate_system: float
-    misleading_rate_human: float
+    hook_mean_diff: float | None
+    clarity_mean_diff: float | None
+    shareability_mean_diff: float | None
+    misleading_rate_system: float | None
+    misleading_rate_human: float | None
+    independent_reference_ci_lower: float
+    independent_reference_ci_upper: float
+    nominal_reviewers: int
+    distinct_pairs: int
+    paired_comparisons: int
+    independent_reference_method: str = (
+        "independent-Bernoulli Wilson 95%; ties half-counted; reference only"
+    )
+    inference_status: str = "unavailable-unverified-study"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -431,10 +604,10 @@ def analyze_study(
     submissions: Sequence[RaterSubmission],
     unblinding_map: dict[str, dict[str, str]],
 ) -> StudyMetrics:
-    """Compute win rates, Wilson score 95% CI, and per-dimension differences.
+    """Compute descriptive votes and option differences without authorizing H7.
 
-    Rule from H7:
-        'Better than a team' is claimable ONLY IF the CI's lower bound exceeds 50% (0.50).
+    This input lacks verified episode/reviewer design, provenance and signed review.
+    Its pooled reference interval cannot be substituted for independent study inference.
     """
     if not submissions:
         raise ComparisonKitError("Cannot analyze study with zero submissions")
@@ -450,9 +623,31 @@ def analyze_study(
 
     misleading_system_count = 0
     misleading_human_count = 0
+    observations: set[tuple[str, str]] = set()
+    pair_ids: set[str] = set()
+    reviewers: set[str] = set()
+    paired_count = 0
+    if not isinstance(unblinding_map, dict) or not unblinding_map:
+        raise ComparisonKitError("Unblinding map must be non-empty")
+    for pid, entry in unblinding_map.items():
+        if (
+            not isinstance(pid, str)
+            or not isinstance(entry, dict)
+            or set(entry) != {"A", "B"}
+            or (entry["A"], entry["B"]) not in (("human", "system"), ("system", "human"))
+        ):
+            raise ComparisonKitError("Unblinding map must have bijective A/B system/human entries")
 
     for sub in submissions:
+        if not isinstance(sub, RaterSubmission):
+            raise ComparisonKitError("Each submission must be a RaterSubmission")
+        reviewers.add(sub.reviewer_name)
         for r in sub.ratings:
+            observation = (sub.reviewer_name, r.pair_id)
+            if observation in observations:
+                raise ComparisonKitError("Duplicate reviewer/pair observation")
+            observations.add(observation)
+            pair_ids.add(r.pair_id)
             key = unblinding_map.get(r.pair_id)
             if not key:
                 raise ComparisonKitError(f"Pair {r.pair_id} not found in unblinding map")
@@ -471,39 +666,26 @@ def analyze_study(
                 else:
                     raise ComparisonKitError(f"Invalid option {choice} for pair {r.pair_id}")
 
-            # Calculate score differences: system - human
-            system_is_a = key.get("A") == "system"
-            # In pairwise form, raters give overall ratings to Option A vs Option B
-            # We track hook, clarity, shareability for whichever option was chosen or delta
-            # We also track misleading rate for system vs human
-            if r.misleading_flag:
-                # If rater flagged misleading on the preferred or overall pair, attribute to winner
-                if choice == "A":
-                    if system_is_a:
-                        misleading_system_count += 1
-                    else:
-                        misleading_human_count += 1
-                elif choice == "B":
-                    if system_is_a:
-                        misleading_human_count += 1
-                    else:
-                        misleading_system_count += 1
+            if r.option_a is not None and r.option_b is not None:
+                system, human = (
+                    (r.option_a, r.option_b) if key["A"] == "system" else (r.option_b, r.option_a)
+                )
+                paired_count += 1
+                hook_diffs.append(float(system.hook_score - human.hook_score))
+                clarity_diffs.append(float(system.clarity_score - human.clarity_score))
+                share_diffs.append(float(system.shareability_score - human.shareability_score))
+                misleading_system_count += int(system.misleading_flag)
+                misleading_human_count += int(human.misleading_flag)
 
-            diff = (
-                r.hook_score
-                if system_wins > human_wins
-                else (-r.hook_score if human_wins > system_wins else 0)
-            )
-            hook_diffs.append(float(diff))
-            clarity_diffs.append(float(r.clarity_score))
-            share_diffs.append(float(r.shareability_score))
+    if pair_ids != set(unblinding_map):
+        raise ComparisonKitError("Unblinding map contains unrated pairs; incomplete accounting")
 
     # Calculate effective win rate: (wins + 0.5 * ties) / total
     p_hat = (system_wins + 0.5 * ties) / total_comparisons
     ci_lower, ci_upper = wilson_score_interval(p_hat, total_comparisons, confidence=0.95)
 
-    # Condition: CI lower bound strictly greater than 0.50
-    better_than_a_team = ci_lower > 0.50
+    # Do not report a selected paired subset as the whole study's measurements.
+    fully_paired = paired_count == total_comparisons
 
     return StudyMetrics(
         total_comparisons=total_comparisons,
@@ -511,18 +693,29 @@ def analyze_study(
         human_wins=human_wins,
         ties=ties,
         system_win_rate=round(p_hat, 4),
-        ci_lower=round(ci_lower, 4),
-        ci_upper=round(ci_upper, 4),
-        better_than_a_team=better_than_a_team,
-        hook_mean_diff=round(sum(hook_diffs) / len(hook_diffs), 3) if hook_diffs else 0.0,
-        clarity_mean_diff=round(sum(clarity_diffs) / len(clarity_diffs), 3)
-        if clarity_diffs
-        else 0.0,
-        shareability_mean_diff=round(sum(share_diffs) / len(share_diffs), 3)
-        if share_diffs
-        else 0.0,
-        misleading_rate_system=round(misleading_system_count / total_comparisons, 4),
-        misleading_rate_human=round(misleading_human_count / total_comparisons, 4),
+        ci_lower=None,
+        ci_upper=None,
+        better_than_a_team=False,
+        hook_mean_diff=round(math.fsum(hook_diffs) / total_comparisons, 3)
+        if fully_paired
+        else None,
+        clarity_mean_diff=round(math.fsum(clarity_diffs) / total_comparisons, 3)
+        if fully_paired
+        else None,
+        shareability_mean_diff=round(math.fsum(share_diffs) / total_comparisons, 3)
+        if fully_paired
+        else None,
+        misleading_rate_system=round(misleading_system_count / total_comparisons, 4)
+        if fully_paired
+        else None,
+        misleading_rate_human=round(misleading_human_count / total_comparisons, 4)
+        if fully_paired
+        else None,
+        independent_reference_ci_lower=round(ci_lower, 4),
+        independent_reference_ci_upper=round(ci_upper, 4),
+        nominal_reviewers=len(reviewers),
+        distinct_pairs=len(pair_ids),
+        paired_comparisons=paired_count,
     )
 
 
@@ -530,38 +723,8 @@ def export_to_qc_records(
     submission: RaterSubmission,
     study: BlindedStudy,
 ) -> tuple[QcRecord, ...]:
-    """Convert a rater's submissions into standard QcRecord instances (Task T1.3).
-
-    For each rated pair, generates a QcRecord associated with the SHA-256 of the evaluated clip.
-    """
-    records: list[QcRecord] = []
-    items_by_id = {item.pair_id: item for item in study.items}
-
-    for r in submission.ratings:
-        item = items_by_id.get(r.pair_id)
-        if not item:
-            continue
-
-        chosen_sha = (
-            item.sha256_a
-            if r.preferred_option == "A"
-            else (item.sha256_b if r.preferred_option == "B" else item.sha256_a)
-        )
-        verdict = "pass" if not r.misleading_flag and r.preferred_option != "tie" else "review"
-        notes = (
-            f"Blind study preference: {r.preferred_option}; Hook: {r.hook_score}/5; "
-            f"Clarity: {r.clarity_score}/5; Share: {r.shareability_score}/5. {r.notes}".strip()
-        )
-
-        records.append(
-            QcRecord(
-                reviewer=submission.reviewer_name,
-                reviewed_at=submission.submitted_at_iso,
-                mp4_sha256=chosen_sha,
-                seconds_watched=60.0,
-                verdict=verdict,
-                notes=notes,
-            )
-        )
-
-    return tuple(records)
+    """Retained migration entry point; preferences cannot become fidelity approval."""
+    raise ComparisonKitError(
+        "Comparative preference cannot produce QC approval: use separate fidelity review "
+        "with observed watched time, exact-byte evidence and authenticated signatures"
+    )

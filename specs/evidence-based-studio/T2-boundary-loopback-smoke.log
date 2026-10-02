@@ -1,0 +1,5 @@
+127.0.0.1 - - [02/Oct/2026 17:36:21] "POST /api/uploads HTTP/1.1" 201 -
+127.0.0.1 - - [02/Oct/2026 17:36:22] "PUT /api/uploads/a00729c409fb41bba3eb2e13988faa25 HTTP/1.1" 201 -
+127.0.0.1 - - [02/Oct/2026 17:36:22] "POST /api/repurpose HTTP/1.1" 503 -
+127.0.0.1 - - [02/Oct/2026 17:36:22] "POST /api/repurpose HTTP/1.1" 400 -
+{"status": "passed", "scope": "real-loopback-byte-upload-and-source-id-validation", "source_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15", "source_request_http_status": 503, "server_path_http_status": 400, "jobs_created": 0, "model_calls": 0, "publication": false, "generation_execution": "not-connected"}

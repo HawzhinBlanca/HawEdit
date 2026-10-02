@@ -1,0 +1,19 @@
+{
+  "status": "unreviewed-diagnostic-scan",
+  "observed_at": "2026-10-02T13:08:38.640255+00:00",
+  "source_sha256": "52d23b1833eb3d761b4a6781a60ac43bd66b2cdca1b45fa1fc05c273bbebc8f0",
+  "generation": "Ubuntu-33853eeafb05ecf1b998dc84",
+  "python_version": "3.12.0",
+  "runtime_packages": 141,
+  "audit_tool": "pip-audit",
+  "audit_version": "2.10.1",
+  "uv_version": "0.11.15",
+  "audit_contract_sha256": "13223c803ec6012b2ad52350f09f591efb4053e7e3fdc2a2660baad3db78cd5e",
+  "scanner_packages_sha256": "b20c9ba80b886f9f64845197dcd6e88158ad0c126eb4bfd71e6d913e9e30ad6c",
+  "exit_code": 1,
+  "report_sha256": "c70c97e816a2ce2e85ab79d1d2ea03147739af609d7cad1e3440a6819250bed8",
+  "report": "wsl-pip-audit-current-2026-10-02.json",
+  "audited_packages": 141,
+  "findings": 18,
+  "receipt_sha256": "57ab593ceea33e027eb96e47dd4834d4a9e5100760a4f2b41fb9b14fde8d8825"
+}

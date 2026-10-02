@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-02T21:16:10.9400514Z",
+  "exit_code": 1,
+  "source_package_sha256": "6bde42cba644a4510bbdb1bdd28596dba7cece5c328612c6dcbcb0e3d7f0b2cb",
+  "command": "C:/Program Files/Git/bin/bash.exe scripts/verify.sh"
+}

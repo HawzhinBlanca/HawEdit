@@ -1,0 +1,71 @@
+Could not find containing symbol for src\hawedit\web.py:28:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\environment.py:61:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\ffmpeg_setup.py:16:55. Returning file symbol instead
+Could not find containing symbol for src\hawedit\models.py:46:55. Returning file symbol instead
+Could not find containing symbol for src\hawedit\vex.py:20:55. Returning file symbol instead
+Could not find containing symbol for tests\test_environment.py:22:4. Returning file symbol instead
+Task-7:<lambda> failed after 0.119 seconds
+Error during execution of Task-7:<lambda>: No symbol matching '_REQUIRED_DATA_FILES' found
+Traceback (most recent call last):
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\task_executor.py", line 63, in run_task
+    result = self._function()
+  File "C:\Users\Wareen\Desktop\HawEdit\scripts\serena_studio_map.py", line 61, in <lambda>
+    lambda n=name, p=path: references.apply(n, relative_path=p)
+                           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\tools\symbol_tools.py", line 288, in apply
+    references_in_symbols = symbol_retriever.find_referencing_symbols(
+        name_path,
+    ...<3 lines>...
+        exclude_kinds=parsed_exclude_kinds,
+    )
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\symbol.py", line 829, in find_referencing_symbols
+    symbol = self.find_unique(name_path, substring_matching=False, within_relative_path=relative_file_path)
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\symbol.py", line 785, in find_unique
+    raise ValueError(f"No symbol matching '{name_path_pattern}' found")
+ValueError: No symbol matching '_REQUIRED_DATA_FILES' found
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import scripts.serena_studio_map as m; m.TARGETS = {"src/hawedit/studio_artifacts.py": ["font_bytes"], "src/hawedit/environment.py": ["resolve_installed_hawedit_data"], "src/hawedit/release.py": ["_REQUIRED_DATA_FILES", "build_sbom"]}; m.main()
+                                                                                                                                                                                                                                                ~~~~~~^^
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\task_executor.py", line 117, in wait_until_done
+    self.future.result(timeout=self.timeout)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 454, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Wareen\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\Wareen\Desktop\HawEdit\scripts\serena_studio_map.py", line 60, in main
+    callers = agent.execute_task(
+        lambda n=name, p=path: references.apply(n, relative_path=p)
+    )
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\agent.py", line 1186, in execute_task
+    return self._task_executor.execute_task(task, name=name, logged=logged, timeout=timeout)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\task_executor.py", line 234, in execute_task
+    return task_obj.result(timeout=timeout)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\task_executor.py", line 95, in result
+    return self.future.result(timeout=timeout)
+           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 454, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Wareen\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 396, in __get_result
+    raise self._exception
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\task_executor.py", line 63, in run_task
+    result = self._function()
+  File "C:\Users\Wareen\Desktop\HawEdit\scripts\serena_studio_map.py", line 61, in <lambda>
+    lambda n=name, p=path: references.apply(n, relative_path=p)
+                           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\tools\symbol_tools.py", line 288, in apply
+    references_in_symbols = symbol_retriever.find_referencing_symbols(
+        name_path,
+    ...<3 lines>...
+        exclude_kinds=parsed_exclude_kinds,
+    )
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\symbol.py", line 829, in find_referencing_symbols
+    symbol = self.find_unique(name_path, substring_matching=False, within_relative_path=relative_file_path)
+  File "C:\Users\Wareen\AppData\Local\uv\cache\archive-v0\UdsnnAHiHxtdS6JP\Lib\site-packages\serena\symbol.py", line 785, in find_unique
+    raise ValueError(f"No symbol matching '{name_path_pattern}' found")
+ValueError: No symbol matching '_REQUIRED_DATA_FILES' found

@@ -1,0 +1,56 @@
+- banner:
+  - heading "HawEdit" [level=1]
+  - generic: PRO V3
+  - generic: ئامادەیە بۆ کار
+- main:
+  - generic: ڤیدیۆ هەڵبژێرە (Select Video)
+  - generic: 🎬
+  - generic: ڤیدیۆ لێرە دابنێ یان کلیك بکە
+  - generic: پشتیوانی لە هەموو فۆرماتێکی MP4 / MOV / MKV
+  - generic: ⚙️ ڕێکخستنی ستۆدیۆ (Studio Settings)
+  - generic: شێوازی ڤیدیۆ (Preset)
+  - combobox "شێوازی ڤیدیۆ (Preset)":
+    - option "ڤایرۆڵ (Viral Hook & Quick Pacing)" [selected]
+    - option "برۆدکاست (Clean Studio & Interview)"
+    - option "دووانە (Split-Screen Two Speakers)"
+  - generic: شێوازی ژێرنووس (Captions)
+  - combobox "شێوازی ژێرنووس (Captions)":
+    - option "جووڵەی وشەکان (Kinetic Pop)" [selected]
+    - option "دەرکەوتنی وشە (Viral Popup)"
+    - option "دیاریکردنی زێڕین (RTL Highlight)"
+    - option "تەواوی دێڕ (Line / Broadcast)"
+  - generic: فلتەری ژیری دەستکرد (AI Screener)
+  - combobox "فلتەری ژیری دەستکرد (AI Screener)":
+    - option "ئاسایی (Direct Ingest)" [selected]
+    - option "Gemini 2.5 Flash (Kurdish AI Screener)"
+    - option "TypeSafe Jev (System One AI Screener)"
+  - generic: ژمارەی شۆرتەکان (Clips Count)
+  - combobox "ژمارەی شۆرتەکان (Clips Count)":
+    - option "١ شۆرتی تایبەت (Top 1 Reel)"
+    - option "٢ شۆرت (Top 2 Reels)"
+    - option "٣ شۆرت (Top 3 Viral Reels)" [selected]
+    - option "٥ شۆرت (Top 5 Batch)"
+  - checkbox "بەرزکردنەوەی ناونیشانی دەستپێک (Top Hook Banner)" [checked]
+  - generic: بەرزکردنەوەی ناونیشانی دەستپێک (Top Hook Banner)
+  - checkbox "بڕینی بێدەنگی و پشووەکان (Silence Tightening)" [checked]
+  - generic: بڕینی بێدەنگی و پشووەکان (Silence Tightening)
+  - button "دروستکردنی شۆرتی ڤایرۆڵ (Generate Reel)"
+  - generic: قۆناغەکانی پڕۆسێس (Processing Stages)
+  - generic: "0"
+  - generic: وەرگرتن و جیاکردنەوەی دیمەنەکان (Ingest & Scene Cuts)
+  - generic: "1"
+  - generic: تێکستی کوردی دەنگ و کاتەکان (OmniASR & Alignment)
+  - generic: "2"
+  - generic: دیاریکردنی قسەکەر و شوێنپێهەڵگرتن (YuNet Tracking)
+  - generic: "3"
+  - generic: هەڵبژاردنی بەسەرهاتی کاریگەر (Story Condensation)
+  - generic: "4"
+  - generic: پشکنینی وردی کوالیتی (Sanity Gate Audit)
+  - generic: "5"
+  - generic: ڕێندەری کۆتایی بە 115pt و NVENC (Master Render)
+  - generic: شۆرتی ئامادەکراو (Pro Kurdish Short)
+  - generic: Your browser does not support HTML5 video.
+  - generic: چاوەڕوانی ئەنجامی پڕۆسێسکردن (Awaiting pipeline output)...
+  - generic: پوختەی ناوەڕۆک لەگەڵ کاندیدەکان دوای تەواوبوونی پڕۆسێس ئامادە دەبێت.
+  - textbox "دەستکاری سەردێڕ (Edit headline)"
+  - button "پاشەکەوتکردن"

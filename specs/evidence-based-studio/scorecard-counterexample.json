@@ -1,0 +1,33 @@
+{
+  "status": "synthetic-counterexample-not-evaluation",
+  "source_package_sha256": "510bfb7e333b7210cf6fd252cc26a7b22cb9ffd63b9d1b744f2527830ccac65a",
+  "unsupported_leadership_claim_was_refused": false,
+  "scorecard": {
+    "provenance": {
+      "commit_sha": "not-a-sha",
+      "timestamp": "not-a-date",
+      "hardware_info": "synthetic diagnostic",
+      "verifier_version": "unverified"
+    },
+    "split_name": "synthetic-not-holdout",
+    "total_episodes": 20,
+    "total_proposed": 200,
+    "accepted_count": 160,
+    "rejected_count": 40,
+    "refusal_count": 0,
+    "refusal_rate": 0.0,
+    "first_pass_rate": 0.8,
+    "first_pass_ci_lower": 0.7391,
+    "first_pass_ci_upper": 0.8495,
+    "critical_defects_total": 0,
+    "average_visual_relevance": 0.2,
+    "is_release_eligible": true,
+    "signoff_owner": "unverified-owner-string",
+    "signoff_editor": "unverified-editor-string"
+  },
+  "limitations": [
+    "no-human-review-or-signed-evidence",
+    "not-a-10-10-verdict",
+    "helper-must-not-authorize-release"
+  ]
+}

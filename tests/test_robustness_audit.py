@@ -87,7 +87,7 @@ def test_api_rejects_nonvideo_source_before_enqueue(tmp_path: Path) -> None:
     status_code, _, body = _handle_request(req)
     assert status_code == 400
     res = json.loads(body.decode("utf-8"))
-    assert "supported video container" in res["error"]
+    assert "supported video bytes" in res["error"] and "server paths are refused" in res["error"]
 
 
 def test_app_two_sources_return_their_own_rendered_artifacts(tmp_path: Path) -> None:
@@ -321,19 +321,75 @@ def test_face_check_missing_resources_cannot_pass(tmp_path: Path) -> None:
 
 
 def test_ui_handles_failed_missing_and_disconnected_jobs() -> None:
-    """RB-14: UI includes failed status handling and download link synchronization."""
-    assert "job.status === 'failed'" in DASHBOARD_HTML
-    assert "dlBtn.href = clip.video_url" in DASHBOARD_HTML
+    """RB-14: Failed reads/media stay visible; private copies are not published export."""
+    assert "failed:" in DASHBOARD_HTML
+    assert "message('jobError', error.message)" in DASHBOARD_HTML
+    assert "$('player').addEventListener('error'" in DASHBOARD_HTML
+    assert "link.download = clip.clip_id + '-private.mp4'" in DASHBOARD_HTML
+    assert 'id="exportBtn" type="button" disabled' in DASHBOARD_HTML
 
 
-def test_all_offered_candidates_are_playable_and_bound() -> None:
-    """RB-15: Candidate 2 media path (/media/ep29-pro-threat-story.mp4) is resolved with 200 OK."""
-    req = b"GET /media/ep29-pro-threat-story.mp4 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
-    status_code, headers, body = _handle_request(req)
-    candidate_file = Path("work/pro-threat-master/ep29-pro-threat-story.mp4")
-    if candidate_file.is_file():
-        assert status_code == 200
-        assert len(body) > 0
+def test_all_offered_candidates_are_playable_and_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RB-15: Duplicate filenames resolve to exact measured, manifest-scoped job bytes."""
+    import hashlib
+    import subprocess
+
+    import hawedit.web as web
+    from hawedit.captions import find_ffmpeg
+    from hawedit.measure import measure_clip
+    from test_studio_artifacts import install_preview
+
+    fixture = Path("tests/fixtures/kurdish-speech-3cuts.mp4")
+    _, _, first = install_preview(tmp_path, monkeypatch, measure_clip(fixture).to_dict())
+    first_manager = web.JOB_MANAGER
+    _, second_media, _ = install_preview(
+        tmp_path, monkeypatch, measure_clip(fixture).to_dict(), job_id="job-two"
+    )
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    subprocess.run(
+        [
+            str(ffmpeg),
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-ss",
+            "2",
+            "-i",
+            str(fixture),
+            "-t",
+            "1",
+            "-c:v",
+            "libx264",
+            "-threads",
+            "1",
+            "-c:a",
+            "aac",
+            str(second_media),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    second_media.with_suffix(".measured.json").write_text(
+        measure_clip(second_media).to_json(), encoding="utf-8"
+    )
+    first_manager._jobs["job-two"] = web.JOB_MANAGER._jobs["job-two"]
+    monkeypatch.setattr(web, "JOB_MANAGER", first_manager)
+    second = second_media.read_bytes()
+    assert first != second
+    for job_id, expected in (("job-one", first), ("job-two", second)):
+        req = (
+            f"GET /api/jobs/{job_id}/clips/clip-one/preview HTTP/1.1\r\n"
+            "Host: localhost:8080\r\n\r\n"
+        ).encode()
+        status_code, headers, body = _handle_request(req)
+        assert status_code == 200 and body == expected
+        assert headers["etag"] == '"' + hashlib.sha256(expected).hexdigest() + '"'
+        assert headers["x-hawedit-artifact-state"] == "private-preview"
 
 
 def test_artifact_mutation_invalidates_approval(tmp_path: Path) -> None:

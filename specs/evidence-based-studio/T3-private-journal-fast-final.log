@@ -1,0 +1,6 @@
+==> lint
+All checks passed!
+==> typecheck
+src\hawedit\studio_private.py:55: error: Module has no attribute "geteuid"; maybe "getpid"?  [attr-defined]
+tests\test_studio_private.py:57: error: Module has no attribute "geteuid"; maybe "getpid"?  [attr-defined]
+Found 2 errors in 2 files (checked 270 source files)

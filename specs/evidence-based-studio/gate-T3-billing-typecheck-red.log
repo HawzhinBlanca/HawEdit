@@ -1,0 +1,7 @@
+==> lint
+All checks passed!
+==> typecheck
+src\hawedit\visual_pipeline.py: error: Source file found twice under different module names: "test_pipeline" and "tests.test_pipeline"
+src\hawedit\visual_pipeline.py: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#mapping-file-paths-to-modules for more info
+src\hawedit\visual_pipeline.py: note: Common resolutions include: a) adding `__init__.py` somewhere, b) using `--explicit-package-bases` or adjusting MYPYPATH
+Found 1 error in 1 file (errors prevented further checking)

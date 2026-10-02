@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "observed_at": "2026-10-02T18:13:22.508156+00:00",
+  "python": "3.12.10",
+  "source_package_sha256": "487857046ae88bbc7f8a929e92bd65d54cd389dd11550f3fe51f43f311eeaaa8",
+  "checks": [
+    {
+      "path": "work",
+      "require_protected": false,
+      "outcome": "refused"
+    },
+    {
+      "path": "work",
+      "require_protected": true,
+      "outcome": "refused"
+    },
+    {
+      "path": "work/jobs",
+      "require_protected": false,
+      "outcome": "refused"
+    },
+    {
+      "path": "work/jobs",
+      "require_protected": true,
+      "outcome": "refused"
+    },
+    {
+      "path": "work/uploads",
+      "require_protected": false,
+      "outcome": "refused"
+    },
+    {
+      "path": "work/uploads",
+      "require_protected": true,
+      "outcome": "refused"
+    }
+  ],
+  "limitations": [
+    "read-only-permission-probe",
+    "no-permissions-changed",
+    "not-private-http-authentication",
+    "not-release-or-model-readiness"
+  ]
+}

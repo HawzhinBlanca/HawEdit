@@ -1,0 +1,6 @@
+==> lint
+All checks passed!
+==> typecheck
+tests\test_acceptance_authority.py:209: error: Argument 2 to "replace" of "AcceptanceScorecard" has incompatible type "**dict[str, object]"; expected "int"  [arg-type]
+tests\test_acceptance_authority.py:209: error: Argument 2 to "replace" of "AcceptanceScorecard" has incompatible type "**dict[str, object]"; expected "float"  [arg-type]
+Found 2 errors in 1 file (checked 274 source files)

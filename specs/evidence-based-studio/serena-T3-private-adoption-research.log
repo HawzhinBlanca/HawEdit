@@ -1,0 +1,22 @@
+Could not find containing symbol for specs\evidence-based-studio\private_journal_posix_probe.py:14:35. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_billing.py:22:35. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_private.py:13:35. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\private_journal_posix_probe.py:15:39. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_billing.py:23:39. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_private.py:13:39. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_queue.py:16:57. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_billing.py:25:39. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_private.py:14:39. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_queue.py:33:39. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_submissions.py:20:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_queue.py:16:77. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_queue.py:33:79. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_submissions.py:22:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\audit_upload_response_loss.py:12:35. Returning file symbol instead
+Could not find containing symbol for src\hawedit\studio_generation.py:24:48. Returning file symbol instead
+Could not find containing symbol for src\hawedit\web.py:28:67. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_generation.py:21:35. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_queue.py:34:35. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_submissions.py:24:35. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_uploads.py:13:48. Returning file symbol instead
+Mapped 210 symbols with Serena

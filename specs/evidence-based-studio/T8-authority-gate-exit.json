@@ -1,0 +1,6 @@
+{
+  "observed_at_utc": "2026-10-02T22:35:23.0288922Z",
+  "exit_code": 1,
+  "source_package_sha256": "68e131df5008b8d5938e4f7915e2c4475ccd2b855eaa01e49e0cfb3390751bea",
+  "command": "C:/Program Files/Git/bin/bash.exe scripts/verify.sh"
+}

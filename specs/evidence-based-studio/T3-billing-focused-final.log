@@ -1,0 +1,59 @@
+.........................F.............................................. [ 36%]
+........................................................................ [ 73%]
+...................................................                      [100%]
+================================== FAILURES ===================================
+_ test_studio_builder_routes_judging_with_real_frames_through_injected_transport _
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6993/test_studio_builder_routes_jud0')
+api = <test_studio_billing.LocalProtocol object at 0x000002563ECEC560>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002563EBFB830>
+
+    def test_studio_builder_routes_judging_with_real_frames_through_injected_transport(
+        tmp_path: Path, api: LocalProtocol, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tests.test_gemini import verdict_fields
+        from tests.test_pipeline import FIXTURE, a_transcript
+    
+        from hawedit.judge import JudgeVerdict
+        from hawedit.pipeline import build_and_run, build_parser
+    
+        transcript = tmp_path / "transcript.json"
+        transcript.write_text(a_transcript(FIXTURE.stem).to_json(), encoding="utf-8")
+        monkeypatch.setenv("GEMINI_API_KEY", KEY)
+        api.response = json.dumps(
+            {
+                "candidates": [
+                    {"content": {"parts": [{"text": json.dumps(verdict_fields(payoff_at_ms=1000))}]}}
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 10,
+                    "candidatesTokenCount": 5,
+                    "thoughtsTokenCount": 4,
+                    "totalTokenCount": 19,
+                },
+            }
+        )
+        args = build_parser().parse_args(
+            [
+                str(FIXTURE),
+                "--transcript",
+                str(transcript),
+                "--gemini",
+                "--sentences",
+                "0",
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
+        result = build_and_run(args, judge_transport=guard(tmp_path, api))
+        assert api.generated == 1
+>       assert isinstance(result.editorial, JudgeVerdict)
+E       assert False
+E        +  where False = isinstance(StageSkipped(stage='editorial', reason="no Stage 4 judge or persisted verdict was supplied. Use --gemini for non-confi...y zero, so --gemini needs billing on the key's project � BLOCKED.md #3.", blocked_by=('Stage 4 judgment not enabled',)), <class 'hawedit.judge.JudgeVerdict'>)
+E        +    where StageSkipped(stage='editorial', reason="no Stage 4 judge or persisted verdict was supplied. Use --gemini for non-confi...y zero, so --gemini needs billing on the key's project � BLOCKED.md #3.", blocked_by=('Stage 4 judgment not enabled',)) = PipelineRun(media_id='kurdish-speech-3cuts', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-spe...ault'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'default'))), episode_manifest=None).editorial
+
+tests\test_studio_billing.py:399: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+=========================== short test summary info ===========================
+FAILED tests/test_studio_billing.py::test_studio_builder_routes_judging_with_real_frames_through_injected_transport

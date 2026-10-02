@@ -1,0 +1,8 @@
+AUDIT_STORAGE=C:\Users\Wareen\AppData\Local\Temp\hawedit-ui-after-rjohrten
+HawEdit Web Dashboard running at http://127.0.0.1:8082/
+127.0.0.1 - - [02/Oct/2026 21:55:56] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:55:56] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:55:56] "GET /assets/fonts/Vazirmatn.ttf HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:55:56] "GET /api/history HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:55:56] "GET /api/jobs/fixture-review HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:55:56] "GET /api/uploads/bf624fcfc03b479dbe6e630b7f9e12e2 HTTP/1.1" 200 -

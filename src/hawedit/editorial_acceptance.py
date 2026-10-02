@@ -1,9 +1,10 @@
-"""Content-bound, blinded human acceptance studies for BLUEPRINT §8.2.
+"""Content-bound signed judge-label study machinery for BLUEPRINT §8.2.
 
-The existing :mod:`hawedit.editorial_bench` is the 20-item judge-regression gate.  This module
-owns the larger 200–500-item study: deterministic sampling, concealed A/B order, a frozen
-training/holdout split, signed independent reviews, exact disagreement adjudication, and the
-complete per-split metric report.  It prepares human work; it never fabricates human labels.
+The existing :mod:`hawedit.editorial_bench` is the 20-item judge-regression gate. This module
+prepares deterministic 200–500-item packets and verifies signed reviews/adjudication against
+exact bytes. Its current sampler/distribution do not establish sealed disjoint release
+holdouts or a professional-cut comparison. Aggregate scoped/sustained helpers are descriptive
+claim intake, not acceptance authority. No human labels or accepted releases are fabricated.
 """
 
 from __future__ import annotations
@@ -1857,6 +1858,8 @@ def partition_episode_disjoint(
 
 @dataclass(frozen=True, slots=True)
 class AcceptanceScorecard:
+    """Unverified aggregate observations, not independent study or release evidence."""
+
     total_proposed_clips: int
     refusal_count: int
     accepted_count: int
@@ -1866,13 +1869,50 @@ class AcceptanceScorecard:
     episodes_with_no_clips: int
     margin_of_error: float
 
+    def __post_init__(self) -> None:
+        for name in (
+            "total_proposed_clips",
+            "refusal_count",
+            "accepted_count",
+            "episodes_evaluated",
+            "episodes_with_no_clips",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise EditorialAcceptanceError(f"{name} must be a non-negative integer")
+        if self.total_proposed_clips != self.refusal_count + self.accepted_count:
+            raise EditorialAcceptanceError("Scorecard counts must account for all proposed clips")
+        if self.episodes_with_no_clips > self.episodes_evaluated:
+            raise EditorialAcceptanceError("No-clip episodes cannot exceed evaluated episodes")
+        if self.total_proposed_clips and not self.episodes_evaluated:
+            raise EditorialAcceptanceError("Proposed clips require evaluated episodes")
+        if self.accepted_count and self.episodes_with_no_clips == self.episodes_evaluated:
+            raise EditorialAcceptanceError(
+                "Accepted clips cannot coexist with all episodes having no clips"
+            )
+        for name in ("refusal_rate", "first_pass_publishable_rate", "margin_of_error"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise EditorialAcceptanceError(f"{name} must be a finite proportion")
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise EditorialAcceptanceError(f"{name} must be a finite proportion")
+        for actual, count in (
+            (self.refusal_rate, self.refusal_count),
+            (self.first_pass_publishable_rate, self.accepted_count),
+        ):
+            expected = count / self.total_proposed_clips if self.total_proposed_clips else 0.0
+            if not math.isclose(actual, expected, rel_tol=0.0, abs_tol=1e-12):
+                raise EditorialAcceptanceError("Scorecard rates must match counts")
+
     def to_dict(self) -> dict[str, object]:
         return {
+            "evidence_status": "descriptive-unverified",
             "accepted_count": self.accepted_count,
             "episodes_evaluated": self.episodes_evaluated,
             "episodes_with_no_clips": self.episodes_with_no_clips,
             "first_pass_publishable_rate": self.first_pass_publishable_rate,
             "margin_of_error": self.margin_of_error,
+            "margin_of_error_method": "unclustered-wald-reference-only",
             "refusal_count": self.refusal_count,
             "refusal_rate": self.refusal_rate,
             "total_proposed_clips": self.total_proposed_clips,
@@ -1932,7 +1972,7 @@ def compute_acceptance_scorecard(
 
 @dataclass(frozen=True, slots=True)
 class ScopedAcceptanceReport:
-    """Scoped acceptance report documenting holdout results and gate evidence (AC-24)."""
+    """Descriptive claim intake; no gate, CI or signed study is verified here."""
 
     commit_sha: str
     scorecard: AcceptanceScorecard
@@ -1943,9 +1983,24 @@ class ScopedAcceptanceReport:
     acceptance_status: str
     evidence_intact: bool
     deficiencies: tuple[str, ...]
+    reported_checks: tuple[tuple[str, bool], ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            self.acceptance_status
+            not in {"refused_insufficient_sample", "refused_unverified_evidence"}
+            or self.gate_verified is not False
+            or self.human_review_verified is not False
+            or self.ci_verified is not False
+            or self.evidence_intact is not False
+        ):
+            raise EditorialAcceptanceError(
+                "Scoped reports are descriptive, not acceptance authority"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "evidence_status": "descriptive-unverified",
             "acceptance_status": self.acceptance_status,
             "ci_verified": self.ci_verified,
             "commit_sha": self.commit_sha,
@@ -1954,16 +2009,18 @@ class ScopedAcceptanceReport:
             "gate_verified": self.gate_verified,
             "human_review_verified": self.human_review_verified,
             "is_sample_sufficient": self.is_sample_sufficient,
+            "sample_sufficiency_basis": "proposal-count-only-not-verified-independent-episodes",
+            "reported_checks": dict(self.reported_checks),
             "scorecard": self.scorecard.to_dict(),
         }
 
     def assert_accepted(self) -> None:
-        """Raises EditorialAcceptanceError if the report did not achieve accepted status."""
-        if self.acceptance_status != "accepted":
-            reasons = "; ".join(self.deficiencies)
-            raise EditorialAcceptanceError(
-                f"Acceptance refused ({self.acceptance_status}): {reasons}"
-            )
+        """Descriptive records cannot authorize acceptance, including direct constructions."""
+        reasons = "; ".join(self.deficiencies)
+        raise EditorialAcceptanceError(
+            f"Acceptance refused ({self.acceptance_status}): "
+            f"descriptive report is not authorization; {reasons}"
+        )
 
 
 def evaluate_scoped_acceptance(
@@ -1975,10 +2032,25 @@ def evaluate_scoped_acceptance(
     ci_verified: bool,
     min_sample_size: int = MIN_STUDY_ITEMS,
 ) -> ScopedAcceptanceReport:
-    """Evaluates acceptance evidence and reports sample sufficiency and evidence status (AC-24)."""
+    """Report aggregate sufficiency and unverified caller claims; never authorize acceptance.
+
+    The compatibility flags are self-reported, not evidence. A future admission path must
+    reopen actual canonical gate/CI, signed independent study and frozen policy evidence.
+    """
     deficiencies: list[str] = []
 
-    if not commit_sha or len(commit_sha) < 7:
+    if type(min_sample_size) is not int or min_sample_size < MIN_STUDY_ITEMS:
+        raise EditorialAcceptanceError(f"min_sample_size must be an integer >= {MIN_STUDY_ITEMS}")
+    reported_checks = (
+        ("gate_verified", gate_verified),
+        ("human_review_verified", human_review_verified),
+        ("ci_verified", ci_verified),
+    )
+    for name, value in reported_checks:
+        if type(value) is not bool:
+            raise EditorialAcceptanceError(f"{name} must be a boolean caller claim")
+
+    if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
         deficiencies.append("Missing or invalid committed commit SHA")
 
     is_sample_sufficient = scorecard.total_proposed_clips >= min_sample_size
@@ -1999,29 +2071,33 @@ def evaluate_scoped_acceptance(
     if not ci_verified:
         deficiencies.append("Required hosted CI checks are not green at the exact committed SHA")
 
+    deficiencies.append(
+        "Boolean caller assertions do not verify canonical gate, exact-SHA hosted CI, "
+        "independent signed study, frozen quality thresholds or artifact/source binding"
+    )
+
     if not is_sample_sufficient:
         status = "refused_insufficient_sample"
-    elif not (gate_verified and human_review_verified and ci_verified and commit_sha):
-        status = "refused_unverified_evidence"
     else:
-        status = "accepted"
+        status = "refused_unverified_evidence"
 
     return ScopedAcceptanceReport(
         commit_sha=commit_sha,
         scorecard=scorecard,
-        gate_verified=gate_verified,
-        human_review_verified=human_review_verified,
-        ci_verified=ci_verified,
+        gate_verified=False,
+        human_review_verified=False,
+        ci_verified=False,
         is_sample_sufficient=is_sample_sufficient,
         acceptance_status=status,
-        evidence_intact=len(deficiencies) == 0,
+        evidence_intact=False,
         deficiencies=tuple(deficiencies),
+        reported_checks=reported_checks,
     )
 
 
 @dataclass(frozen=True, slots=True)
 class SustainedAcceptanceReport:
-    """Sustained acceptance report documenting fresh holdout and use window evidence (AC-24)."""
+    """Descriptive sustained-use claims, not observed use or authenticated sign-off."""
 
     scoped_report: ScopedAcceptanceReport
     fresh_holdout_scorecard: AcceptanceScorecard
@@ -2033,9 +2109,26 @@ class SustainedAcceptanceReport:
     is_sustained: bool
     deficiencies: tuple[str, ...]
     rating_claim: str | None = None
+    reported_checks: tuple[tuple[str, bool], ...] = ()
+    requested_rating_claim: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.sustained_status
+            not in {"refused_insufficient_sample", "refused_unverified_evidence"}
+            or self.is_sustained is not False
+            or self.fresh_holdout_verified is not False
+            or self.kurdish_editor_signoff is not False
+            or self.owner_signoff is not False
+            or self.rating_claim is not None
+        ):
+            raise EditorialAcceptanceError(
+                "Sustained reports are descriptive, not acceptance authority"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "evidence_status": "descriptive-unverified",
             "deficiencies": list(self.deficiencies),
             "fresh_holdout_scorecard": self.fresh_holdout_scorecard.to_dict(),
             "fresh_holdout_verified": self.fresh_holdout_verified,
@@ -2043,18 +2136,21 @@ class SustainedAcceptanceReport:
             "kurdish_editor_signoff": self.kurdish_editor_signoff,
             "owner_signoff": self.owner_signoff,
             "rating_claim": self.rating_claim,
+            "reported_checks": dict(self.reported_checks),
+            "requested_rating_claim": self.requested_rating_claim,
             "scoped_report": self.scoped_report.to_dict(),
             "sustained_status": self.sustained_status,
             "use_window_days": self.use_window_days,
+            "use_window_days_basis": "caller-reported-not-observed",
         }
 
     def assert_sustained(self) -> None:
-        """Raises EditorialAcceptanceError if sustained acceptance is not established."""
-        if not self.is_sustained:
-            reasons = "; ".join(self.deficiencies)
-            raise EditorialAcceptanceError(
-                f"Sustained acceptance refused ({self.sustained_status}): {reasons}"
-            )
+        """Descriptive day counts and flags cannot authorize sustained acceptance."""
+        reasons = "; ".join(self.deficiencies)
+        raise EditorialAcceptanceError(
+            f"Sustained acceptance refused ({self.sustained_status}): "
+            f"descriptive report is not authorization; {reasons}"
+        )
 
 
 def evaluate_sustained_acceptance(
@@ -2070,8 +2166,25 @@ def evaluate_sustained_acceptance(
     automatic_rating_claimed: bool = False,
     rating_claim: str | None = None,
 ) -> SustainedAcceptanceReport:
-    """Evaluates sustained acceptance over fresh holdout and representative use window (AC-24)."""
+    """Report unverified sustained-use claims without authorizing release or a rating."""
     deficiencies: list[str] = []
+
+    if type(min_sample_size) is not int or min_sample_size < MIN_STUDY_ITEMS:
+        raise EditorialAcceptanceError(f"min_sample_size must be an integer >= {MIN_STUDY_ITEMS}")
+    if type(min_use_window_days) is not int or min_use_window_days < 30:
+        raise EditorialAcceptanceError("min_use_window_days must be an integer >= 30")
+    if type(use_window_days) is not int or use_window_days < 0:
+        raise EditorialAcceptanceError("use_window_days must be a non-negative integer claim")
+    reported_checks = (
+        ("fresh_holdout_verified", fresh_holdout_verified),
+        ("kurdish_editor_signoff", kurdish_editor_signoff),
+        ("owner_signoff", owner_signoff),
+    )
+    for name, value in (*reported_checks, ("automatic_rating_claimed", automatic_rating_claimed)):
+        if type(value) is not bool:
+            raise EditorialAcceptanceError(f"{name} must be a boolean caller claim")
+    if rating_claim is not None and not isinstance(rating_claim, str):
+        raise EditorialAcceptanceError("rating_claim must be text or None")
 
     if scoped_report.acceptance_status != "accepted":
         deficiencies.append(
@@ -2112,24 +2225,29 @@ def evaluate_sustained_acceptance(
             "external human evidence and explicit owner/editor sign-off"
         )
 
+    deficiencies.append(
+        "Boolean caller assertions and claimed day counts do not verify a fresh independent "
+        "holdout, real representative-use journal or authenticated owner/editor sign-off"
+    )
+
     if not is_fresh_sample_sufficient:
         status = "refused_insufficient_sample"
-    elif deficiencies:
-        status = "refused_unverified_evidence"
     else:
-        status = "sustained"
+        status = "refused_unverified_evidence"
 
     return SustainedAcceptanceReport(
         scoped_report=scoped_report,
         fresh_holdout_scorecard=fresh_holdout_scorecard,
-        fresh_holdout_verified=fresh_holdout_verified,
+        fresh_holdout_verified=False,
         use_window_days=use_window_days,
-        kurdish_editor_signoff=kurdish_editor_signoff,
-        owner_signoff=owner_signoff,
+        kurdish_editor_signoff=False,
+        owner_signoff=False,
         sustained_status=status,
-        is_sustained=len(deficiencies) == 0,
+        is_sustained=False,
         deficiencies=tuple(deficiencies),
-        rating_claim=rating_claim,
+        rating_claim=None,
+        reported_checks=reported_checks,
+        requested_rating_claim=rating_claim,
     )
 
 

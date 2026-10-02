@@ -1,0 +1,11 @@
+{
+  "clientWidth": 305,
+  "expanded": true,
+  "focus": "optHookBanner",
+  "hookBanner": true,
+  "outline": "rgb(255, 220, 138) solid 2.66667px",
+  "overflowing": [],
+  "preset": "split",
+  "scrollWidth": 305,
+  "width": 320
+}

@@ -1,0 +1,238 @@
+F......................................................F                 [100%]
+================================== FAILURES ===================================
+__________ test_studio_server_refuses_nonlocal_binding_before_listen __________
+
+    def test_studio_server_refuses_nonlocal_binding_before_listen() -> None:
+        from hawedit.web import run_web_server
+    
+        with pytest.raises(ValueError, match="loopback"):
+>           run_web_server(port=0, host="https://attacker.invalid")
+
+tests\test_studio_artifacts.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\hawedit\web.py:1534: in run_web_server
+    with ThreadingTCPServer(server_address, HawEditWebHandler) as httpd:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\socketserver.py:457: in __init__
+    self.server_bind()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <hawedit.web.ThreadingTCPServer object at 0x000001D4035938C0>
+
+    def server_bind(self):
+        """Called by constructor to bind the socket.
+    
+        May be overridden.
+    
+        """
+        if self.allow_reuse_address and hasattr(socket, "SO_REUSEADDR"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Since Linux 6.12.9, SO_REUSEPORT is not allowed
+        # on other address families than AF_INET/AF_INET6.
+        if (
+            self.allow_reuse_port and hasattr(socket, "SO_REUSEPORT")
+            and self.address_family in (socket.AF_INET, socket.AF_INET6)
+        ):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+>       self.socket.bind(self.server_address)
+E       socket.gaierror: [Errno 11001] getaddrinfo failed
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\socketserver.py:478: gaierror
+_________ test_studio_preview_large_decoded_snapshot_cleans_disk_copy _________
+
+video_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7004/test_studio_preview_large_deco0/jobs/job-one/review/clip-one/clip-one.mp4')
+ffmpeg = WindowsPath('C:/Users/Wareen/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1.1-full_build/bin/ffmpeg.EXE')
+audio_info = {'codec_name': 'none', 'sample_rate': 0, 'channels': 0, 'duration': '3.000000'}
+total_duration_ms = 3000
+
+    def probe_audio_dynamics(
+        video_path: Path,
+        ffmpeg: Path,
+        audio_info: dict[str, Any],
+        total_duration_ms: int,
+    ) -> AudioMeasurement:
+        """Run ebur128 loudness analysis and silencedetect to measure audio dynamics."""
+        cmd = [
+            str(ffmpeg),
+            "-nostdin",
+            "-i",
+            str(video_path),
+            "-filter_complex",
+            "[0:a]ebur128=peak=true,silencedetect=noise=-30dB:d=0.25[outa]",
+            "-map",
+            "[outa]",
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+>           proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180.0)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src\hawedit\measure.py:401: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+input = None, capture_output = True, timeout = 180.0, check = True
+popenargs = (['C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\...ew\\clip-one\\clip-one.mp4', '-filter_complex', '[0:a]ebur128=peak=true,silencedetect=noise=-30dB:d=0.25[outa]', ...],)
+kwargs = {'text': True, 'stdout': -1, 'stderr': -1}
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout (seconds) is given and the process takes too long,
+         a TimeoutExpired exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin\\ffmpeg.EXE', '-nostdin', '-i', 'C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7004\\test_studio_preview_large_deco0\\jobs\\job-one\\review\\clip-one\\clip-one.mp4', '-filter_complex', '[0:a]ebur128=peak=true,silencedetect=noise=-30dB:d=0.25[outa]', '-map', '[outa]', '-f', 'null', '-']' returned non-zero exit status 4294967274.
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\subprocess.py:571: CalledProcessError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7004/test_studio_preview_large_deco0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D434D43E30>
+measured_fixture = {'schema': 1, 'file': {'path': 'C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4', 'sha2...ps_ratio': '25/1', ...}, 'audio': {'codec': 'aac', 'sample_rate': 22050, 'channels': 1, 'duration_ms': 4120, ...}, ...}
+
+    def test_studio_preview_large_decoded_snapshot_cleans_disk_copy(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, measured_fixture: dict[str, Any]
+    ) -> None:
+        from hawedit.captions import find_ffmpeg
+    
+        job, media, _ = install_preview(tmp_path, monkeypatch, measured_fixture)
+        ffmpeg = find_ffmpeg()
+        assert ffmpeg is not None
+        subprocess.run(
+            [
+                str(ffmpeg),
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=640x360:rate=25",
+                "-vf",
+                "noise=alls=100:allf=t",
+                "-t",
+                "3",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-qp",
+                "0",
+                "-threads",
+                "1",
+                str(media),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        assert media.stat().st_size > 8 * 1024**2
+>       measurement = measure_clip(media)
+                      ^^^^^^^^^^^^^^^^^^^
+
+tests\test_studio_artifacts.py:393: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\hawedit\measure.py:944: in measure_clip
+    audio_meas = probe_audio_dynamics(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+video_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7004/test_studio_preview_large_deco0/jobs/job-one/review/clip-one/clip-one.mp4')
+ffmpeg = WindowsPath('C:/Users/Wareen/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1.1-full_build/bin/ffmpeg.EXE')
+audio_info = {'codec_name': 'none', 'sample_rate': 0, 'channels': 0, 'duration': '3.000000'}
+total_duration_ms = 3000
+
+    def probe_audio_dynamics(
+        video_path: Path,
+        ffmpeg: Path,
+        audio_info: dict[str, Any],
+        total_duration_ms: int,
+    ) -> AudioMeasurement:
+        """Run ebur128 loudness analysis and silencedetect to measure audio dynamics."""
+        cmd = [
+            str(ffmpeg),
+            "-nostdin",
+            "-i",
+            str(video_path),
+            "-filter_complex",
+            "[0:a]ebur128=peak=true,silencedetect=noise=-30dB:d=0.25[outa]",
+            "-map",
+            "[outa]",
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180.0)
+            stderr = proc.stderr
+        except Exception as exc:
+>           raise MeasureError(f"ffmpeg audio analysis failed on {video_path}: {exc}") from exc
+E           hawedit.measure.MeasureError: ffmpeg audio analysis failed on C:\Users\Wareen\AppData\Local\Temp\pytest-of-Wareen\pytest-7004\test_studio_preview_large_deco0\jobs\job-one\review\clip-one\clip-one.mp4: Command '['C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin\\ffmpeg.EXE', '-nostdin', '-i', 'C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7004\\test_studio_preview_large_deco0\\jobs\\job-one\\review\\clip-one\\clip-one.mp4', '-filter_complex', '[0:a]ebur128=peak=true,silencedetect=noise=-30dB:d=0.25[outa]', '-map', '[outa]', '-f', 'null', '-']' returned non-zero exit status 4294967274.
+
+src\hawedit\measure.py:404: MeasureError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_artifacts.py::test_studio_server_refuses_nonlocal_binding_before_listen
+FAILED tests/test_studio_artifacts.py::test_studio_preview_large_decoded_snapshot_cleans_disk_copy
