@@ -101,9 +101,7 @@ os._exit(19)
     reopened = PrivateSqlitePath(private.path)
     assert wal.read_bytes() == retained
     with sqlite3.connect(reopened.path) as db:
-        assert db.execute("SELECT value FROM retained").fetchall() == [
-            ("committed before crash",)
-        ]
+        assert db.execute("SELECT value FROM retained").fetchall() == [("committed before crash",)]
     reopened.verify()
     observations.append({"case": "real committed WAL crash/reopen", "result": "passed"})
 

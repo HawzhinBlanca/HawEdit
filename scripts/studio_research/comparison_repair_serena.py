@@ -18,12 +18,25 @@ def main() -> None:
     agent = agent_module.SerenaAgent(project=str(root), serena_config=config)
     targets = {
         "src/hawedit/comparison_kit.py": [
-            "wilson_score_interval", "OptionRating", "OptionRating/__post_init__",
-            "OptionRating/to_dict", "PairRating", "PairRating/__post_init__", "PairRating/from_options", "PairRating/schema",
-            "PairRating/to_dict", "RaterSubmission", "RaterSubmission/__post_init__", "RaterSubmission/to_dict",
-            "StudyMetrics", "StudyMetrics/to_dict", "validate_ratings",
-            "generate_kurdish_rating_form", "format_kurdish_form_markdown",
-            "analyze_study", "export_to_qc_records",
+            "wilson_score_interval",
+            "OptionRating",
+            "OptionRating/__post_init__",
+            "OptionRating/to_dict",
+            "PairRating",
+            "PairRating/__post_init__",
+            "PairRating/from_options",
+            "PairRating/schema",
+            "PairRating/to_dict",
+            "RaterSubmission",
+            "RaterSubmission/__post_init__",
+            "RaterSubmission/to_dict",
+            "StudyMetrics",
+            "StudyMetrics/to_dict",
+            "validate_ratings",
+            "generate_kurdish_rating_form",
+            "format_kurdish_form_markdown",
+            "analyze_study",
+            "export_to_qc_records",
         ],
         "src/hawedit/visual_scorecard.py": ["compute_visual_scorecard"],
         "tests/test_comparison_kit.py": [
@@ -48,13 +61,17 @@ def main() -> None:
                     callers = agent.execute_task(
                         lambda n=name, p=path: references.apply(n, relative_path=p)
                     )
-                records.append({"file": path, "symbol": name,
-                                "definition": definition, "references": callers})
+                records.append(
+                    {"file": path, "symbol": name, "definition": definition, "references": callers}
+                )
         destination = root / "specs/evidence-based-studio" / sys.argv[1]
         if destination.exists():
             raise RuntimeError("Refusing to overwrite earlier actual mapping")
         destination.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
-        print(f"Captured {len(records)} fresh paired-contract definition/reference records", flush=True)
+        print(
+            f"Captured {len(records)} fresh paired-contract definition/reference records",
+            flush=True,
+        )
     finally:
         agent.on_shutdown()
 

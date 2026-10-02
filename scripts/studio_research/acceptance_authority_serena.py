@@ -16,12 +16,18 @@ def main() -> None:
     config.language_backend = configuration.LanguageBackend.LSP
     agent = agent_module.SerenaAgent(project=str(root), serena_config=config)
     targets = [
-        "_verify_signature", "_freeze_study_items", "_review_packet",
-        "prepare_editorial_study", "evaluate_editorial_study",
-        "compute_acceptance_scorecard", "evaluate_scoped_acceptance",
-        "ScopedAcceptanceReport/assert_accepted", "evaluate_sustained_acceptance",
+        "_verify_signature",
+        "_freeze_study_items",
+        "_review_packet",
+        "prepare_editorial_study",
+        "evaluate_editorial_study",
+        "compute_acceptance_scorecard",
+        "evaluate_scoped_acceptance",
+        "ScopedAcceptanceReport/assert_accepted",
+        "evaluate_sustained_acceptance",
         "SustainedAcceptanceReport/assert_sustained",
-        "validate_acceptance_split", "partition_episode_disjoint",
+        "validate_acceptance_split",
+        "partition_episode_disjoint",
     ]
     records = []
     try:
@@ -30,11 +36,15 @@ def main() -> None:
         for name in targets:
             with finder.symbol_dict_grouper.disabled_context():
                 definition = agent.execute_task(
-                    lambda n=name: finder.apply(n, relative_path="src/hawedit/editorial_acceptance.py", depth=1)
+                    lambda n=name: finder.apply(
+                        n, relative_path="src/hawedit/editorial_acceptance.py", depth=1
+                    )
                 )
             with references.symbol_dict_grouper.disabled_context():
                 callers = agent.execute_task(
-                    lambda n=name: references.apply(n, relative_path="src/hawedit/editorial_acceptance.py")
+                    lambda n=name: references.apply(
+                        n, relative_path="src/hawedit/editorial_acceptance.py"
+                    )
                 )
             records.append({"symbol": name, "definition": definition, "references": callers})
         destination = root / "specs/evidence-based-studio/serena-T8-authority-research-map.json"

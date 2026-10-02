@@ -21,13 +21,22 @@ def main() -> None:
     agent = agent_module.SerenaAgent(project=str(root), serena_config=config)
     targets = {
         "src/hawedit/editorial_acceptance.py": (
-            "AcceptanceScorecard", "AcceptanceScorecard/to_dict", "compute_acceptance_scorecard",
-            "ScopedAcceptanceReport", "ScopedAcceptanceReport/to_dict", "ScopedAcceptanceReport/assert_accepted",
-            "evaluate_scoped_acceptance", "SustainedAcceptanceReport", "SustainedAcceptanceReport/to_dict",
-            "SustainedAcceptanceReport/assert_sustained", "evaluate_sustained_acceptance",
+            "AcceptanceScorecard",
+            "AcceptanceScorecard/to_dict",
+            "compute_acceptance_scorecard",
+            "ScopedAcceptanceReport",
+            "ScopedAcceptanceReport/to_dict",
+            "ScopedAcceptanceReport/assert_accepted",
+            "evaluate_scoped_acceptance",
+            "SustainedAcceptanceReport",
+            "SustainedAcceptanceReport/to_dict",
+            "SustainedAcceptanceReport/assert_sustained",
+            "evaluate_sustained_acceptance",
         ),
         "src/hawedit/visual_scorecard.py": (
-            "VisualScorecard", "VisualScorecard/is_release_eligible", "VisualScorecard/evaluate_leadership_claim",
+            "VisualScorecard",
+            "VisualScorecard/is_release_eligible",
+            "VisualScorecard/evaluate_leadership_claim",
             "VisualScorecard/to_dict",
         ),
         "tests/test_editorial_acceptance.py": (
@@ -52,8 +61,17 @@ def main() -> None:
                     callers = agent.execute_task(
                         lambda p=path, n=symbol: references.apply(n, relative_path=p)
                     )
-                records.append({"path": path, "symbol": symbol, "definition": definition, "references": callers})
-        destination = root / f"specs/evidence-based-studio/serena-T8-authority-{args.phase}-map.json"
+                records.append(
+                    {
+                        "path": path,
+                        "symbol": symbol,
+                        "definition": definition,
+                        "references": callers,
+                    }
+                )
+        destination = (
+            root / f"specs/evidence-based-studio/serena-T8-authority-{args.phase}-map.json"
+        )
         if destination.exists():
             raise RuntimeError("Refusing to overwrite actual authority mapping")
         destination.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")

@@ -17,21 +17,28 @@ def main() -> None:
     agent = agent_module.SerenaAgent(project=str(root), serena_config=config)
     targets = {
         "src/hawedit/studio_private.py": [
-            "_private", "PrivateSqlitePath/__init__", "PrivateSqlitePath/_verify_binding",
+            "_private",
+            "PrivateSqlitePath/__init__",
+            "PrivateSqlitePath/_verify_binding",
             "PrivateSqlitePath/verify",
         ],
         "src/hawedit/studio_billing.py": [
-            "GuardedGeminiTransport/__init__", "GuardedGeminiTransport/path",
-            "GuardedGeminiTransport/_connection", "GuardedGeminiTransport/_send",
+            "GuardedGeminiTransport/__init__",
+            "GuardedGeminiTransport/path",
+            "GuardedGeminiTransport/_connection",
+            "GuardedGeminiTransport/_send",
             "GuardedGeminiTransport/_call",
         ],
         "tests/test_studio_private.py": [
-            "directory_alias", "test_studio_private_new_journal_is_owner_private",
+            "directory_alias",
+            "test_studio_private_new_journal_is_owner_private",
             "test_studio_private_parent_normalization_refused",
             "test_studio_private_real_wal_crash_recovers_without_deleting_evidence",
         ],
         "tests/test_studio_billing.py": [
-            "private_billing_path", "seed_private_file", "guard",
+            "private_billing_path",
+            "seed_private_file",
+            "guard",
             "test_studio_billing_private_root_required_before_any_egress",
             "test_studio_billing_linked_database_refused",
             "test_studio_billing_database_replacement_during_count_refuses_generation",
@@ -53,10 +60,14 @@ def main() -> None:
                     callers = agent.execute_task(
                         lambda n=name, p=path: references.apply(n, relative_path=p)
                     )
-                evidence.append({
-                    "file": path, "symbol": name,
-                    "definition": definition, "references": callers,
-                })
+                evidence.append(
+                    {
+                        "file": path,
+                        "symbol": name,
+                        "definition": definition,
+                        "references": callers,
+                    }
+                )
         destination = root / "specs/evidence-based-studio/serena-T3-private-final-map.json"
         destination.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
         print(f"Captured {len(evidence)} fresh Serena symbol/caller records", flush=True)

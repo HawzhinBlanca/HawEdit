@@ -16,18 +16,30 @@ def main() -> None:
     targets = {
         "src/hawedit/studio_private.py": ["PrivateSqlitePath", "PrivateSqlitePath/__init__"],
         "src/hawedit/studio_submissions.py": [
-            "StudioStorageError", "SubmissionStore", "SubmissionStore/__init__",
-            "SubmissionStore/_connection", "SubmissionStore/work_dir",
+            "StudioStorageError",
+            "SubmissionStore",
+            "SubmissionStore/__init__",
+            "SubmissionStore/_connection",
+            "SubmissionStore/work_dir",
         ],
         "src/hawedit/studio_uploads.py": [
-            "UploadStore", "UploadStore/__init__", "UploadStore/_record",
-            "UploadStore/_write", "UploadStore/_reserved", "UploadStore/begin",
-            "UploadStore/receive", "UploadStore/status", "UploadStore/describe",
-            "UploadStore/source", "UploadStore/_validated_source",
+            "UploadStore",
+            "UploadStore/__init__",
+            "UploadStore/_record",
+            "UploadStore/_write",
+            "UploadStore/_reserved",
+            "UploadStore/begin",
+            "UploadStore/receive",
+            "UploadStore/status",
+            "UploadStore/describe",
+            "UploadStore/source",
+            "UploadStore/_validated_source",
         ],
         "src/hawedit/web.py": [
-            "HawEditWebHandler/do_POST", "HawEditWebHandler/do_PUT",
-            "HawEditWebHandler/do_GET", "run_web_server",
+            "HawEditWebHandler/do_POST",
+            "HawEditWebHandler/do_PUT",
+            "HawEditWebHandler/do_GET",
+            "run_web_server",
         ],
         "tests/test_studio_uploads.py": [
             "test_upload_status_recovers_committed_media_after_ticket_failure",
@@ -47,16 +59,18 @@ def main() -> None:
             for name in names:
                 with finder.symbol_dict_grouper.disabled_context():
                     definition = agent.execute_task(
-                        lambda n=name,p=path: finder.apply(n,relative_path=p,depth=1)
+                        lambda n=name, p=path: finder.apply(n, relative_path=p, depth=1)
                     )
                 with references.symbol_dict_grouper.disabled_context():
                     callers = agent.execute_task(
-                        lambda n=name,p=path: references.apply(n,relative_path=p)
+                        lambda n=name, p=path: references.apply(n, relative_path=p)
                     )
-                evidence.append({"file":path,"symbol":name,"definition":definition,"references":callers})
+                evidence.append(
+                    {"file": path, "symbol": name, "definition": definition, "references": callers}
+                )
         destination = root / "specs/evidence-based-studio/serena-T3-storage-before-map.json"
-        destination.write_text(json.dumps(evidence,indent=2)+"\n",encoding="utf-8")
-        print(f"Captured {len(evidence)} fresh symbol/caller records",flush=True)
+        destination.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        print(f"Captured {len(evidence)} fresh symbol/caller records", flush=True)
     finally:
         agent.on_shutdown()
 

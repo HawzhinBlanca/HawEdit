@@ -18,25 +18,47 @@ def main() -> None:
     agent = agent_module.SerenaAgent(project=str(root), serena_config=config)
     targets = {
         "src/hawedit/studio_private.py": [
-            "StudioStorageError", "PrivateDirectory", "PrivateDirectory/__init__",
-            "PrivateDirectory/verify", "PrivateDirectory/child", "PrivateDirectory/check_file",
-            "PrivateDirectory/member_identity", "PrivateDirectory/open_new_file",
-            "PrivateDirectory/remove_owned", "PrivateDirectory/sync", "write_text_atomic",
-            "PrivateSqlitePath", "PrivateSqlitePath/__init__",
+            "StudioStorageError",
+            "PrivateDirectory",
+            "PrivateDirectory/__init__",
+            "PrivateDirectory/verify",
+            "PrivateDirectory/child",
+            "PrivateDirectory/check_file",
+            "PrivateDirectory/member_identity",
+            "PrivateDirectory/open_new_file",
+            "PrivateDirectory/remove_owned",
+            "PrivateDirectory/sync",
+            "write_text_atomic",
+            "PrivateSqlitePath",
+            "PrivateSqlitePath/__init__",
         ],
         "src/hawedit/studio_submissions.py": [
-            "SubmissionStore", "SubmissionStore/__init__", "SubmissionStore/_connection",
+            "SubmissionStore",
+            "SubmissionStore/__init__",
+            "SubmissionStore/_connection",
             "SubmissionStore/work_dir",
         ],
         "src/hawedit/studio_uploads.py": [
-            "_probe", "UploadStore", "UploadStore/__init__", "UploadStore/_verify",
-            "UploadStore/_record", "UploadStore/_write", "UploadStore/_reserved",
-            "UploadStore/begin", "UploadStore/receive", "UploadStore/status",
-            "UploadStore/describe", "UploadStore/source", "UploadStore/_validated_source",
+            "_probe",
+            "UploadStore",
+            "UploadStore/__init__",
+            "UploadStore/_verify",
+            "UploadStore/_record",
+            "UploadStore/_write",
+            "UploadStore/_reserved",
+            "UploadStore/begin",
+            "UploadStore/receive",
+            "UploadStore/status",
+            "UploadStore/describe",
+            "UploadStore/source",
+            "UploadStore/_validated_source",
         ],
         "src/hawedit/web.py": [
-            "_upload_store", "HawEditWebHandler/do_POST", "HawEditWebHandler/do_PUT",
-            "HawEditWebHandler/do_GET", "run_web_server",
+            "_upload_store",
+            "HawEditWebHandler/do_POST",
+            "HawEditWebHandler/do_PUT",
+            "HawEditWebHandler/do_GET",
+            "run_web_server",
         ],
         "tests/test_studio_storage.py": [
             "test_studio_upload_accepts_actual_supported_containers",
@@ -45,7 +67,9 @@ def main() -> None:
             "test_studio_http_lost_upload_root_refuses_without_recreation",
         ],
         "tests/studio_test_storage.py": [
-            "create_private_test_root", "make_private_directory", "seed_private_file",
+            "create_private_test_root",
+            "make_private_directory",
+            "seed_private_file",
         ],
     }
     evidence = []
@@ -62,8 +86,9 @@ def main() -> None:
                     callers = agent.execute_task(
                         lambda n=name, p=path: references.apply(n, relative_path=p)
                     )
-                evidence.append({"file": path, "symbol": name,
-                                 "definition": definition, "references": callers})
+                evidence.append(
+                    {"file": path, "symbol": name, "definition": definition, "references": callers}
+                )
         destination = root / "specs/evidence-based-studio" / sys.argv[1]
         if destination.exists():
             raise RuntimeError("Refusing to overwrite earlier Serena evidence")

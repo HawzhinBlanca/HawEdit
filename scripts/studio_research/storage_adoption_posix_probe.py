@@ -72,7 +72,9 @@ def main() -> None:
     stage.path.symlink_to(shared, target_is_directory=True)
     refused(lambda: stage.remove_owned("source.mp4", identity), "changed staging cleanup")
     assert owner.read_bytes() == b"original owner bytes"
-    assert (retained / "source.mp4").read_bytes() == b"owned transfer evidence, not a media-quality fixture"
+    assert (
+        retained / "source.mp4"
+    ).read_bytes() == b"owned transfer evidence, not a media-quality fixture"
 
     store = SubmissionStore(root / "outbox" / "requests.sqlite3")
     assert store.pending() == []
@@ -85,17 +87,25 @@ def main() -> None:
 
     filesystem = subprocess.run(
         ["stat", "-f", "-c", "%T", str(root)],
-        capture_output=True, text=True, check=True, timeout=10,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
     ).stdout.strip()
     package = Path(__file__).resolve().parents[2] / "src" / "hawedit"
     result = {
         "schema": 1,
         "scope": "Bounded POSIX observations, not a canonical Linux gate or mount certificate",
-        "python": platform.python_version(), "sqlite": sqlite3.sqlite_version,
-        "platform": platform.platform(), "executable": sys.executable,
-        "filesystem": filesystem, "temporary_root": str(root),
-        "source_package_sha256": package_digest(package), "observations": observations,
-        "provider_calls": 0, "model_inference": False,
+        "python": platform.python_version(),
+        "sqlite": sqlite3.sqlite_version,
+        "platform": platform.platform(),
+        "executable": sys.executable,
+        "filesystem": filesystem,
+        "temporary_root": str(root),
+        "source_package_sha256": package_digest(package),
+        "observations": observations,
+        "provider_calls": 0,
+        "model_inference": False,
     }
     destination = Path(sys.argv[1])
     if destination.exists():

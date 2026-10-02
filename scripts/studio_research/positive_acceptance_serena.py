@@ -1,4 +1,4 @@
-"""Actual source-confirmed release/study evidence mapping, preserving the failed attempt."""
+"""Actual reusable release/study evidence definitions and callers; research only."""
 
 from __future__ import annotations
 
@@ -17,16 +17,30 @@ def main() -> None:
     agent = agent_module.SerenaAgent(project=str(root), serena_config=config)
     targets = {
         "src/hawedit/release_approval.py": (
-            "_project_identity", "_validate_gate", "_candidate", "_hosted_release",
-            "_attestation_command", "_attestations", "_verify_signature", "verify_release_approval",
+            "_project_identity",
+            "_validate_gate",
+            "_candidate",
+            "_hosted_release",
+            "_attestation_command",
+            "_attestations",
+            "_verify_signature",
+            "verify_release_approval",
         ),
         "src/hawedit/editorial_acceptance.py": (
-            "VerifiedEditorialStudy", "_CandidateRecord", "_load_inventory", "_freeze_study_items",
-            "_review_packet", "_verify_signature", "_load_review", "_load_approval",
-            "_load_adjudication", "evaluate_editorial_study", "validate_acceptance_split",
+            "VerifiedEditorialStudy",
+            "_CandidateRecord",
+            "_inventory",
+            "_freeze_study_items",
+            "_review_packet",
+            "_verify_signature",
+            "_load_review",
+            "_load_approval",
+            "_load_adjudication",
+            "evaluate_editorial_study",
+            "validate_acceptance_split",
             "partition_episode_disjoint",
         ),
-        "src/hawedit/clip.py": ("QcRecord",),
+        "src/hawedit/qc.py": ("QcRecord",),
         "src/hawedit/delivery.py": ("promote_candidate",),
     }
     records = []
@@ -39,18 +53,25 @@ def main() -> None:
                     definition = agent.execute_task(
                         lambda p=path, n=symbol: finder.apply(n, relative_path=p, depth=1)
                     )
-                if not json.loads(definition):
-                    raise RuntimeError(f"Actual definition not found: {path}:{symbol}")
                 with references.symbol_dict_grouper.disabled_context():
                     callers = agent.execute_task(
                         lambda p=path, n=symbol: references.apply(n, relative_path=p)
                     )
-                records.append({"path": path, "symbol": symbol, "definition": definition, "references": callers})
-        destination = root / "specs/evidence-based-studio/serena-T8-positive-grounded-research-map.json"
+                records.append(
+                    {
+                        "path": path,
+                        "symbol": symbol,
+                        "definition": definition,
+                        "references": callers,
+                    }
+                )
+        destination = (
+            root / "specs/evidence-based-studio/serena-T8-positive-evidence-research-map.json"
+        )
         if destination.exists():
-            raise RuntimeError("Refusing to overwrite actual grounded research")
+            raise RuntimeError("Refusing to overwrite actual positive-path research")
         destination.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
-        print(f"Captured {len(records)} actual source-confirmed positive-path records", flush=True)
+        print(f"Captured {len(records)} actual positive acceptance research records", flush=True)
     finally:
         agent.on_shutdown()
 

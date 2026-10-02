@@ -17,14 +17,25 @@ def main() -> None:
     agent = agent_module.SerenaAgent(project=str(root), serena_config=config)
     targets = {
         "src/hawedit/visual_scorecard.py": [
-            "ProvenanceRecord", "DatasetSplit", "EvaluationProposalRecord",
-            "VisualScorecardConfig", "VisualScorecard", "VisualScorecard/is_release_eligible",
-            "VisualScorecard/evaluate_leadership_claim", "compute_visual_scorecard",
-            "assert_no_holdout_leakage", "compute_cluster_variance",
+            "ProvenanceRecord",
+            "DatasetSplit",
+            "EvaluationProposalRecord",
+            "VisualScorecardConfig",
+            "VisualScorecard",
+            "VisualScorecard/is_release_eligible",
+            "VisualScorecard/evaluate_leadership_claim",
+            "compute_visual_scorecard",
+            "assert_no_holdout_leakage",
+            "compute_cluster_variance",
         ],
         "src/hawedit/comparison_kit.py": [
-            "PairRating", "RaterSubmission", "BlindedStudy", "prepare_blind_study",
-            "analyze_study", "export_to_qc_records", "wilson_score_interval",
+            "PairRating",
+            "RaterSubmission",
+            "BlindedStudy",
+            "prepare_blind_study",
+            "analyze_study",
+            "export_to_qc_records",
+            "wilson_score_interval",
         ],
     }
     evidence = []
@@ -41,8 +52,9 @@ def main() -> None:
                     callers = agent.execute_task(
                         lambda n=name, p=path: references.apply(n, relative_path=p)
                     )
-                evidence.append({"file": path, "symbol": name,
-                                 "definition": definition, "references": callers})
+                evidence.append(
+                    {"file": path, "symbol": name, "definition": definition, "references": callers}
+                )
         destination = root / "specs/evidence-based-studio/serena-T8-current-map.json"
         if destination.exists():
             raise RuntimeError("Refusing to overwrite earlier acceptance research")
