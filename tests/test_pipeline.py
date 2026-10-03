@@ -3614,6 +3614,39 @@ def test_the_cli_refuses_a_combination_that_cannot_work(
     assert not (tmp_path / "work").exists(), f"{label}: the run had already started"
 
 
+# These guards depend on Python injection, not argv; execute them separately while keeping
+# the exhaustive source-to-case checks below intact.
+_TRANSPORT_PREFLIGHT_CASES: tuple[tuple[str, list[str], str], ...] = tuple(
+    (
+        kind,
+        ["--omni-asr", "--gemini", "--auto-select", "--screener", kind],
+        "Guarded generation requires a separately authorized screener transport",
+    )
+    for kind in ("gemini-flash", "jev")
+)
+
+
+@pytest.mark.parametrize(("label", "argv", "expected"), _TRANSPORT_PREFLIGHT_CASES)
+def test_injected_transport_preflight_refuses_before_any_input_work(
+    tmp_path: Path, label: str, argv: list[str], expected: str
+) -> None:
+    from hawedit.pipeline import build_and_run, build_parser
+
+    calls: list[str] = []
+
+    def forbidden(url: str, body: bytes | None, headers: object) -> tuple[int, str]:
+        calls.append(url)
+        raise AssertionError(f"{label}: guard permitted an upstream request")
+
+    args = build_parser().parse_args(
+        [str(tmp_path / "absent.mp4"), "--work-dir", str(tmp_path / "work"), *argv]
+    )
+    with pytest.raises(ValueError, match=expected):
+        build_and_run(args, judge_transport=forbidden)
+    assert calls == []
+    assert not (tmp_path / "work").exists()
+
+
 def test_every_refusal_in_the_source_has_a_case(tmp_path: Path) -> None:
     """Bidirectional, so the set stays a description of the block rather than a snapshot.
 
@@ -3622,7 +3655,9 @@ def test_every_refusal_in_the_source_has_a_case(tmp_path: Path) -> None:
     twelve of these fourteen were before D-149.
     """
     refusals = _argv_refusals()
-    covered = {expected for _label, _argv, expected in _REFUSAL_CASES}
+    covered = {
+        expected for _label, _argv, expected in (*_REFUSAL_CASES, *_TRANSPORT_PREFLIGHT_CASES)
+    }
     pre_empted = {message for message, _by in _PRE_EMPTED_REFUSALS}
 
     unmatched = [
@@ -5422,7 +5457,10 @@ def _preflight_value_error_messages() -> tuple[str, ...]:
 def test_the_case_table_is_bound_bidirectionally_to_every_preflight_refusal() -> None:
     """A new guard needs a case; a removed guard cannot leave a decorative stale case."""
     messages = _preflight_value_error_messages()
-    fragments = {expected for _label, _flags, expected in _CLI_PREFLIGHT_CASES}
+    fragments = {
+        expected
+        for _label, _flags, expected in (*_CLI_PREFLIGHT_CASES, *_TRANSPORT_PREFLIGHT_CASES)
+    }
     matches = {
         message: sorted(fragment for fragment in fragments if fragment in message)
         for message in messages

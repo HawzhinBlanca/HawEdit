@@ -1,26 +1,111 @@
 """Fast Candidate Screener Funnel (D-275).
 
-Evaluates Stage 3 candidate spans in sub-second time using cheap/fast System One decision
-models (Gemini 2.5 Flash / Flash-Lite or TypeSafe Jev), pruning large candidate pools down
-to the top survivors before dispatching to Stage 4 Gemini 2.5 Pro for full Sorani Kurdish
-editorial copywriting.
+Ranks Stage 3 spans before full Stage 4 editorial judging. Predictions are not calibrated
+quality, publication authority or a latency guarantee. Jev's legacy diagnostic wire codec
+does not establish compatibility with the current typed TypeSafe API (D-276).
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Protocol
+from typing import Any, Final, NoReturn, Protocol
 
 from hawedit.credentials import CredentialError
 from hawedit.discovery import MergedCandidate
 
 TYPESAFE_API_KEY_ENV: Final[str] = "TYPESAFE_API_KEY"
 TYPESAFE_API_URL: Final[str] = "https://api.typesafe.ai/v1/systemone"
+_MAX_RESPONSE_BYTES: Final[int] = 2 * 1024**2
+ScreenerTransport = Callable[[urllib.request.Request], bytes]
+
+
+def _identifier(value: object, field: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value) > 256
+        or any(ord(char) < 32 for char in value)
+    ):
+        raise ValueError(f"{field} must be bounded nonempty text without controls")
+    return value
+
+
+def _number(value: object, field: str, ceiling: float = 1.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{field} must be in [0.0, {ceiling}] as a real numeric value")
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{field} exceeds numeric bounds") from exc
+    if not math.isfinite(number) or not 0 <= number <= ceiling:
+        raise ValueError(f"{field} must be in [0.0, {ceiling}] as a finite numeric value")
+    return number
+
+
+def _boolean(value: object) -> bool:
+    if type(value) is not bool:
+        raise ValueError("is_self_contained must be an actual Boolean, not coerced text")
+    return value
+
+
+def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("Screener JSON repeats a field")
+        result[name] = value
+    return result
+
+
+def _constant(value: str) -> NoReturn:
+    raise ValueError("Screener JSON contains a nonfinite value")
+
+
+def _object(value: object, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"Screener {label} must be an object")
+    return value
+
+
+def _response(data: bytes) -> dict[str, Any]:
+    if not isinstance(data, bytes) or len(data) > _MAX_RESPONSE_BYTES:
+        raise ValueError("Screener response exceeds its byte bound")
+    try:
+        return _object(
+            json.loads(data.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_constant),
+            "response",
+        )
+    except (UnicodeError, RecursionError) as exc:
+        raise ValueError("Screener response encoding or nesting was refused") from exc
+
+
+def _http_response(request: urllib.request.Request) -> bytes:
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data: bytes = response.read(_MAX_RESPONSE_BYTES + 1)
+    if len(data) > _MAX_RESPONSE_BYTES:
+        raise ValueError("Screener HTTP response exceeds its byte bound")
+    return data
+
+
+def _inputs(candidates: Sequence[tuple[MergedCandidate, str]], top_k: int) -> set[str]:
+    if type(top_k) is not int or top_k < 1:
+        raise ValueError("top_k must be a positive integer")
+    identities: set[str] = set()
+    for candidate, transcript in candidates:
+        identifier = _identifier(candidate.candidate_id, "candidate_id")
+        if identifier in identities:
+            raise ValueError("Screener input repeats a candidate identity")
+        if not isinstance(transcript, str) or not transcript.strip():
+            raise ValueError("Screener input requires actual nonempty transcript text")
+        identities.add(identifier)
+    return identities
+
 
 SCREENER_SCHEMA: Final[dict[str, Any]] = {
     "type": "OBJECT",
@@ -97,14 +182,11 @@ class ScreenedCandidate:
     raw: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        if not (0.0 <= self.hook_score <= 1.0):
-            raise ValueError(f"hook_score must be in [0.0, 1.0], got {self.hook_score}")
-        if not (0.0 <= self.payoff_score <= 1.0):
-            raise ValueError(f"payoff_score must be in [0.0, 1.0], got {self.payoff_score}")
-        if not (0.0 <= self.misleading_risk <= 1.0):
-            raise ValueError(f"misleading_risk must be in [0.0, 1.0], got {self.misleading_risk}")
-        if not (0.0 <= self.composite_score <= 1.0):
-            raise ValueError(f"composite_score must be in [0.0, 1.0], got {self.composite_score}")
+        _identifier(self.candidate_id, "candidate_id")
+        _identifier(self.screener, "screener")
+        _boolean(self.is_self_contained)
+        for field in ("hook_score", "payoff_score", "misleading_risk", "composite_score"):
+            _number(getattr(self, field), field)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -163,9 +245,7 @@ class GeminiFlashScreener:
 
     @staticmethod
     def _default_transport(req: urllib.request.Request) -> bytes:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data: bytes = resp.read()
-            return data
+        return _http_response(req)
 
     def screen(
         self,
@@ -173,10 +253,9 @@ class GeminiFlashScreener:
         *,
         top_k: int = 5,
     ) -> tuple[ScreenedCandidate, ...]:
+        expected = _inputs(candidates, top_k)
         if not candidates:
             return ()
-        if top_k < 1:
-            raise ValueError(f"top_k must be at least 1, got {top_k}")
 
         items = [
             {"candidate_id": cand.candidate_id, "transcript_ckb": text} for cand, text in candidates
@@ -211,23 +290,45 @@ class GeminiFlashScreener:
         )
 
         raw_bytes = self._transport(req)
-        response_json = json.loads(raw_bytes.decode("utf-8"))
-        text_content = (
-            response_json.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "{}")
-        )
-        parsed = json.loads(text_content)
-        raw_list = parsed.get("candidates", [])
+        response_json = _response(raw_bytes)
+        choices = response_json.get("candidates")
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise ValueError("Screener response lacks exactly one structured completion")
+        choice = _object(choices[0], "completion")
+        if choice.get("finishReason", "STOP") != "STOP":
+            raise ValueError("Screener completion was refused or incomplete")
+        parts = _object(choice.get("content"), "completion content").get("parts")
+        if not isinstance(parts, list) or not parts:
+            raise ValueError("Screener completion lacks actual text parts")
+        texts: list[str] = []
+        for raw_part in parts:
+            part = _object(raw_part, "completion part")
+            if "thought" in part and type(part["thought"]) is not bool:
+                raise ValueError("Screener thought marker is not a Boolean")
+            if part.get("thought") is True:
+                continue
+            if not isinstance(part.get("text"), str):
+                raise ValueError("Screener completion part lacks text")
+            texts.append(part["text"])
+        parsed = _response("".join(texts).encode("utf-8"))
+        raw_list = parsed.get("candidates")
+        if set(parsed) != {"candidates"} or not isinstance(raw_list, list):
+            raise ValueError("Screener structured batch has unsupported fields")
 
         results: list[ScreenedCandidate] = []
-        for entry in raw_list:
-            cid = str(entry.get("candidate_id", ""))
-            hook = float(entry.get("hook_score", 0.0))
-            payoff = float(entry.get("payoff_score", 0.0))
-            self_contained = bool(entry.get("is_self_contained", False))
-            risk = float(entry.get("misleading_risk", 0.0))
+        seen: set[str] = set()
+        for raw_entry in raw_list:
+            entry = _object(raw_entry, "candidate measurement")
+            if set(entry) != set(SCREENER_SCHEMA["properties"]["candidates"]["items"]["required"]):
+                raise ValueError("Screener candidate lacks the exact measured fields")
+            cid = _identifier(entry["candidate_id"], "candidate_id")
+            if cid not in expected or cid in seen:
+                raise ValueError("Screener returned a foreign or repeated candidate identity")
+            seen.add(cid)
+            hook = _number(entry["hook_score"], "hook_score")
+            payoff = _number(entry["payoff_score"], "payoff_score")
+            self_contained = _boolean(entry["is_self_contained"])
+            risk = _number(entry["misleading_risk"], "misleading_risk")
             comp = calculate_screener_score(
                 hook_score=hook,
                 payoff_score=payoff,
@@ -247,7 +348,9 @@ class GeminiFlashScreener:
                 )
             )
 
-        # Sort descending by composite score, then hook score
+        if seen != expected:
+            raise ValueError("Screener omitted requested candidates; comparative ranking refused")
+        # Rank only after validating the whole requested batch, including rows below top_k.
         results.sort(key=lambda s: (s.composite_score, s.hook_score), reverse=True)
         return tuple(results[:top_k])
 
@@ -282,12 +385,13 @@ class JevScreener:
 
     @staticmethod
     def _default_transport(req: urllib.request.Request) -> bytes:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data: bytes = resp.read()
-            return data
+        return _http_response(req)
 
     def screen_one(self, candidate_id: str, transcript: str) -> ScreenedCandidate:
         """Screen a single candidate span via TypeSafe Jev."""
+        _identifier(candidate_id, "candidate_id")
+        if not isinstance(transcript, str) or not transcript.strip():
+            raise ValueError("Screener input requires actual nonempty transcript text")
         payload = {
             "state": transcript,
             "questions": {
@@ -337,18 +441,23 @@ class JevScreener:
         )
 
         raw_bytes = self._transport(req)
-        resp_json = json.loads(raw_bytes.decode("utf-8"))
-        questions = resp_json.get("questions", {})
-
-        self_contained_q = questions.get("is_self_contained", {})
-        self_contained = bool(self_contained_q.get("answer", False))
-        hook_raw = float(questions.get("hook_score", {}).get("answer", 0.0)) / 100.0
-        payoff_raw = float(questions.get("payoff_score", {}).get("answer", 0.0)) / 100.0
-        risk_raw = float(questions.get("misleading_risk", {}).get("probability", 0.0))
-
-        hook = max(0.0, min(1.0, hook_raw))
-        payoff = max(0.0, min(1.0, payoff_raw))
-        risk = max(0.0, min(1.0, risk_raw))
+        resp_json = _response(raw_bytes)
+        if "answers" in resp_json:
+            raise ValueError(
+                "Current TypeSafe typed answers require the current-wire/model-policy repair; "
+                "this legacy codec cannot measure that response"
+            )
+        questions = _object(resp_json.get("questions"), "legacy questions")
+        if set(questions) != set(payload["questions"]):
+            raise ValueError("Jev legacy response lacks the exact requested measurements")
+        contained = _object(questions["is_self_contained"], "self-containment measurement")
+        hook_q = _object(questions["hook_score"], "hook measurement")
+        payoff_q = _object(questions["payoff_score"], "payoff measurement")
+        risk_q = _object(questions["misleading_risk"], "risk measurement")
+        self_contained = _boolean(contained.get("answer"))
+        hook = _number(hook_q.get("answer"), "hook_score", 100.0) / 100.0
+        payoff = _number(payoff_q.get("answer"), "payoff_score", 100.0) / 100.0
+        risk = _number(risk_q.get("probability"), "misleading_risk")
 
         comp = calculate_screener_score(
             hook_score=hook,
@@ -374,10 +483,9 @@ class JevScreener:
         *,
         top_k: int = 5,
     ) -> tuple[ScreenedCandidate, ...]:
+        _inputs(candidates, top_k)
         if not candidates:
             return ()
-        if top_k < 1:
-            raise ValueError(f"top_k must be at least 1, got {top_k}")
 
         results: list[ScreenedCandidate] = []
         for candidate, transcript in candidates:
@@ -393,15 +501,16 @@ def get_screener(
     *,
     gemini_key: str | None = None,
     typesafe_key: str | None = None,
+    transport: ScreenerTransport | None = None,
 ) -> CandidateScreener | None:
     """Factory function to resolve candidate screener with fail-stop validation."""
     if not name or name.lower() in ("none", "false", "off"):
         return None
     normalized = name.lower().strip()
     if normalized in ("gemini", "gemini-flash", "flash", "flash-lite"):
-        return GeminiFlashScreener(api_key=gemini_key)
+        return GeminiFlashScreener(api_key=gemini_key, transport=transport)
     if normalized in ("jev", "typesafe", "typesafe-jev"):
-        return JevScreener(api_key=typesafe_key)
+        return JevScreener(api_key=typesafe_key, transport=transport)
     raise ValueError(
         f"Unknown screener name: {name!r}; valid choices are 'none', 'gemini-flash', 'jev'"
     )

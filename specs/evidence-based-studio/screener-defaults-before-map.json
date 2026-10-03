@@ -1,0 +1,17 @@
+[
+  {
+    "symbol": "JevScreener/screen",
+    "definition": "[{\"name_path\": \"JevScreener/screen\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/screener.py\", \"body_location\": {\"start_line\": 370, \"end_line\": 387}}]",
+    "references": "[{\"name_path\": \"test_jev_screener_success/results\", \"kind\": \"Variable\", \"relative_path\": \"tests\\\\test_screener.py\", \"body_location\": {\"start_line\": 147, \"end_line\": 147}, \"content_around_reference\": \"... 146:    screener = JevScreener(api_key=\\\"test_jev_key\\\", transport=mock_transport)\\n  > 147:    results = screener.screen([(c1, \\\"Kurdish transcript text\\\")], top_k=1)\\n... 148:\"}]"
+  },
+  {
+    "symbol": "GeminiFlashScreener/_default_transport",
+    "definition": "[{\"name_path\": \"GeminiFlashScreener/_default_transport\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/screener.py\", \"body_location\": {\"start_line\": 163, \"end_line\": 167}}]",
+    "references": "[{\"name_path\": \"GeminiFlashScreener/_transport\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\screener.py\", \"body_location\": {\"start_line\": 157, \"end_line\": 157}, \"content_around_reference\": \"... 156:        self.api_key = resolved_key\\n  > 157:        self._transport = transport or self._default_transport\\n... 158:\"}]"
+  },
+  {
+    "symbol": "JevScreener/_default_transport",
+    "definition": "[{\"name_path\": \"JevScreener/_default_transport\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/screener.py\", \"body_location\": {\"start_line\": 282, \"end_line\": 286}}]",
+    "references": "[{\"name_path\": \"JevScreener/_transport\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\screener.py\", \"body_location\": {\"start_line\": 276, \"end_line\": 276}, \"content_around_reference\": \"... 275:        self.api_key = resolved_key\\n  > 276:        self._transport = transport or self._default_transport\\n... 277:\"}]"
+  }
+]

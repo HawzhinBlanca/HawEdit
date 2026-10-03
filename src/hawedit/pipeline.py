@@ -198,7 +198,7 @@ from hawedit.render import (
     shot_spans,
     vertical_crop_size,
 )
-from hawedit.screener import CandidateScreener, get_screener
+from hawedit.screener import CandidateScreener, ScreenerTransport, get_screener
 from hawedit.sentences import (
     Sentence,
     UndeliverableOrder,
@@ -5085,6 +5085,7 @@ def _build_and_run(
     on_event: EventSink = discard,
     *,
     judge_transport: Transport | None = None,
+    screener_transport: ScreenerTransport | None = None,
 ) -> PipelineRun:
     """Validate `args`, build every §3 producer they name, and run the pipeline.
 
@@ -5095,6 +5096,9 @@ def _build_and_run(
     durable sink and it needs the same exceptions this raises (`_run_from_args` still catches
     them; nothing about what is raised or when changed here, only where the try/except now
     sits). D-A2.
+
+    Injected judge and screener transports are separate routes. Guarded judging refuses
+    implicit screening egress; supplying callbacks does not itself authenticate spending.
 
     The body is `main`'s, not this branch's: `main` kept editing this logic in place while this
     branch had moved it, so the merge took `main`'s newer validation wholesale and re-added only
@@ -5201,6 +5205,15 @@ def _build_and_run(
         raise ValueError(
             "--screener requires --auto-select; with --sentences the span is already chosen"
         )
+    if (
+        judge_transport is not None
+        and getattr(args, "screener", "none") != "none"
+        and screener_transport is None
+    ):
+        raise ValueError(
+            "Guarded generation requires a separately authorized screener transport; "
+            "the judge policy does not authorize an independent Flash or TypeSafe route"
+        )
 
     if args.min_clip_seconds is not None and args.min_clip_seconds <= 0:
         raise ValueError("--min-clip-seconds must be greater than 0")
@@ -5231,6 +5244,11 @@ def _build_and_run(
     ):
         raise ValueError("governance flags apply only with a Gemini or Vertex route")
 
+    screener = (
+        get_screener(getattr(args, "screener", None), transport=screener_transport)
+        if screener_transport is not None
+        else getattr(args, "screener", None)
+    )
     transcript = (
         RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
         if args.transcript
@@ -5446,7 +5464,7 @@ def _build_and_run(
         min_separation_ms=getattr(args, "min_separation_ms", DEFAULT_MIN_SEPARATION_MS),
         max_text_similarity=getattr(args, "max_text_similarity", DEFAULT_MAX_TEXT_SIMILARITY),
         episode_id=getattr(args, "episode_id", None),
-        screener=getattr(args, "screener", None),
+        screener=screener,
         b_roll=getattr(args, "b_roll", None),
     )
 

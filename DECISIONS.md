@@ -14287,6 +14287,31 @@ No model inference, throughput, paid worker enablement, new dependency or releas
 follows from filesystem/protocol regressions. Research and actual Serena caller maps are in
 specs/evidence-based-studio/adapter-identity-*. Protected worker and full acceptance remain.
 
+**Screener integrity prerequisite (2026-10-03).** Extend the shared builder/factory with
+optional screener_transport. Guarded judging with selected screening refuses before input/
+model/credential work unless that independent route has an explicit transport; a callback
+is not owner authorization. Existing canonical Pro authority does not authorize Flash or
+TypeSafe, and authenticated per-route policy/shared allocation remains required before the
+protected worker can adopt them. Ordinary CLI/no-screener/durable signatures remain compatible.
+
+Refuse missing/coerced/nonfinite/out-of-range measurements, invalid input IDs/top_k,
+duplicate JSON fields and oversized bodies. Validate the whole requested Gemini batch,
+including rows below top_k, before ranking. Preserve real zeros/false decisions, composite
+weights and valid diagnostic controls. Bound both default HTTP response reads; this is not
+an absolute wall-clock deadline, calibration or sub-second guarantee.
+
+> [!WARNING] Contradiction
+> D-275's legacy TypeSafe request/test shape does not establish current API compatibility.
+> Official current model/criteria/typed answers differ from the existing codec. This unit
+> removes fabricated legacy values and refuses unsupported typed replies; it does not
+> silently select a new model/rubric/threshold or certify live Jev support. Current-wire
+> repair requires separate model-policy/development evidence and governance before adoption.
+
+Actual research, seventeen pre-edit Serena queries, caller impact, EARS SG1-SG8 and diagnostic
+limits are in specs/evidence-based-studio/screener-adoption-*. Exhaustive CLI refusal checks
+also include separately executed Python-transport cases without dropping their bidirectional
+assertions. No new dependency, paid/model run, authenticated worker/publication or acceptance.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**

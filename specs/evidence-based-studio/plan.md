@@ -134,6 +134,19 @@ a provenance repair within the parent approval, not model replacement or spendin
 approval. Existing adapted verify-to-load security and runtime/owner/session adoption remain
 open. Test first, exact frozen clean-commit gate next; no ledger promotion without same-SHA CI.
 
+### Approved T3 Screener Integrity Prerequisite
+
+Before protected-worker adoption, close the actual independent-screening egress and invented
+measurement defects mapped in screener-adoption-research.md and seventeen actual pre-edit
+Serena queries. Follow screener-adoption-plan.md/spec.md/impact-map.md: explicit factory/
+builder request transport, early guarded-path refusal, whole-batch identity and strict real
+fields/bounded JSON. Preserve canonical model/composite/default policies and original CLI/
+durable callers. Current TypeSafe wire/model-policy repair is a separate required unit, not
+a silently chosen model/rubric or live compatibility claim. Callbacks are not owner authority.
+Preserve every exhaustive refusal assertion with separately executed transport cases.
+Freeze the reviewed local commit for the exact full gate; no promotion without same-SHA CI.
+All protected worker/runtime/attempt/session/revision/export and acceptance obligations remain.
+
 ## Frozen Proposed Release Thresholds
 
 - Creator study: at least 11/12 native-Sorani creators finish the whole workflow without
