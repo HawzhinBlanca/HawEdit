@@ -1,0 +1,82 @@
+F......................................F                                 [100%]
+================================== FAILURES ===================================
+__________ test_real_openssh_review_approves_bound_decoded_candidate __________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7057/test_real_openssh_review_...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+
+    def test_real_openssh_review_approves_bound_decoded_candidate(case: ReviewCase) -> None:
+        original = (case.candidate / "c-1.json").read_bytes()
+        envelope = case.prepare()
+        assert envelope == case.packet / "review.json"
+        case.sign()
+        frozen = {p.name: p.read_bytes() for p in case.packet.iterdir()}
+>       evidence = case.verify()
+                   ^^^^^^^^^^^^^
+
+tests\test_candidate_review.py:229: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:163: in verify
+    return verify_candidate_review(**arguments)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:603: in verify_candidate_review
+    signature = _signature(packet, authority, envelope, record.reviewer, ssh_keygen)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+packet = <hawedit.studio_private.PrivateDirectory object at 0x0000024691BA09B0>
+authority = _Authority(directory=<hawedit.studio_private.PrivateDirectory object at 0x0000024691BA3650>, policy_bytes=b'{"allowed_...1NTE5AAAAIO+Mqph9G/AZlEAzUT95aExRrNR8IIhMHugjQlgNMvUC wareen@HawaPC01\r\n', principals=('editor-test',), max_age=86400)
+envelope = b'{"artifacts":{"ass":{"sha256":"f19ff48836e4e3c0d67fe8d0374f1a897cddf3807a2b7f1e93cebe5ef01f34e6","size_bytes":49},"e...schema":1,"source":{"sha256":"cb21482c941982b5ec86c5435b62db68146af6c0bec0926dee955d813439e75a","size_bytes":31013}}\n'
+principal = 'editor-test'
+ssh_keygen = 'C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'
+
+    def _signature(
+        packet: PrivateDirectory,
+        authority: _Authority,
+        envelope: bytes,
+        principal: str,
+        ssh_keygen: str,
+    ) -> bytes:
+        signature = _read(packet, "review.sig")
+        if (
+            re.fullmatch(
+                rb"-----BEGIN SSH SIGNATURE-----\n(?:[A-Za-z0-9+/=]+\n)+-----END SSH SIGNATURE-----\n",
+                signature,
+            )
+            is None
+        ):
+>           raise CandidateReviewError("Review proof must be canonical detached OpenSSH armor")
+E           hawedit.candidate_review.CandidateReviewError: Review proof must be canonical detached OpenSSH armor
+
+src\hawedit\candidate_review.py:478: CandidateReviewError
+__________________ test_signed_review_expires_at_consumption __________________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7057/test_signed_review_expire...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+
+    def test_signed_review_expires_at_consumption(case: ReviewCase) -> None:
+        case.prepare()
+        case.sign()
+        policy_path = case.authority / "policy.json"
+        policy = json.loads(policy_path.read_bytes())
+        policy["max_review_age_seconds"] = 1
+        policy_path.write_bytes(_json(policy))
+        # Resign a now-expired assertion with the actual trusted key: crypto alone is insufficient.
+        envelope_path = case.packet / "review.json"
+        envelope = json.loads(envelope_path.read_bytes())
+        envelope["authority_policy_sha256"] = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        envelope["reviewer_claims"]["reviewed_at"] = (
+            datetime.now(UTC) - timedelta(seconds=5)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        envelope_path.write_bytes(_json(envelope))
+        (case.packet / "review.sig").unlink()
+        case.sign()
+>       with pytest.raises(CandidateReviewError, match="review time"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'review time'
+E         Actual message: 'Review time is future or stale under configured policy'
+
+tests\test_candidate_review.py:404: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_candidate_review.py::test_real_openssh_review_approves_bound_decoded_candidate
+FAILED tests/test_candidate_review.py::test_signed_review_expires_at_consumption
+2 failed, 38 passed in 20.81s

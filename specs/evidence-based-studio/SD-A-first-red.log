@@ -1,0 +1,16 @@
+
+=================================== ERRORS ====================================
+_______________ ERROR collecting tests/test_candidate_review.py _______________
+ImportError while importing test module 'C:\Users\Wareen\Desktop\HawEdit\tests\test_candidate_review.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_candidate_review.py:23: in <module>
+    from hawedit.candidate_review import (
+E   ModuleNotFoundError: No module named 'hawedit.candidate_review'
+=========================== short test summary info ===========================
+ERROR tests/test_candidate_review.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 1.80s

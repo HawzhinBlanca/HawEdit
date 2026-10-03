@@ -1,0 +1,4 @@
+Could not find containing symbol for tests\test_candidate_review.py:23:4. Returning file symbol instead
+Could not find containing symbol for tests\test_candidate_review.py:24:4. Returning file symbol instead
+Could not find containing symbol for tests\test_candidate_review.py:25:4. Returning file symbol instead
+Actual mapped records: 41

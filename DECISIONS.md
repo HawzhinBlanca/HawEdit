@@ -14244,3 +14244,50 @@ judge-label study/release approval verifiers retain their limited contracts; nei
 promoted into full acceptance by this guard. No human study, publication, accepted task,
 spending, trust configuration or 10/10 follows from Boolean claims or this implementation.
 
+## D-277 - Authenticated candidate review and exact proof-bearing delivery
+
+**Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
+Extends BLUEPRINT sections 2-5 and D-263/D-274/D-276. No new runtime dependency.
+The seven-phase product objective, production reconciliation and independent acceptance
+obligations remain unchanged. This approval does not configure trusted reviewers or permit
+spending, licences, VEX signing, release, publication or a 10/10 verdict.
+
+Freeze proposed final editing JSON, including QC metadata, before a human signs it. Bind
+the original editing JSON too. Review packets bind candidate/revision, source bytes,
+authoritative effective configuration, producer package, all six D-263 files and edit plan
+with SHA256 and size. Verify detached OpenSSH signatures in the dedicated
+`hawedit-candidate-review` namespace against a host-configured owner-private policy and
+allowed-signers file. Do not reuse release/editorial signature namespaces or accept client
+trust files. A descriptive verification receipt, QcRecord, name or Boolean cannot grant
+publication authority. Reopen raw proof, trust and current bindings at consumption.
+
+Version 1 authority policy names trusted principals, namespace, allowed-signers digest and
+maximum review age (1 second to 30 days). UTC review time must be real, not future and
+within this policy when consumed. Review assertions are authenticated claims, not measured
+watching, reviewer independence/expertise, speaker association or semantic fidelity.
+Canonical envelopes refuse duplicate/unknown keys, coercion, nonfinite numbers and
+unbounded documents. Credentials are not part of the resolved configuration evidence.
+Detached armor accepts consistent LF or consistent CRLF as emitted by native OpenSSH;
+mixed line endings refuse. Never normalize or rewrite the signed envelope or frozen proof.
+
+Use owner-private, identity-bound storage, bounded streaming for media and exact membership.
+Incomplete packets remain private and refuse consumption; originals are never rewritten,
+unsafe existing storage is not repaired and prior packets are not overwritten. Record tool
+versions and actual commands in evidence, not invented fields. OS file-descriptor and path
+timestamps are compared within their own views when the platform exposes different ctime
+semantics; cross-view identity/size/mtime/link checks remain required.
+
+Implementation is sequential: SD-A provides preparation/authentication mechanics only;
+SD-B must independently inspect/decode/measure and reconcile the same bytes and wire every
+promotion/direct single-clip/episode publication route. SD-C must bind job/revision/export
+and reopen proof later. Preserve legacy seven-file packaging as private/diagnostic, not
+authenticated public delivery. The proof-bearing public variant must have a fixed versioned
+file set and copy every reviewed byte unchanged, including final editing JSON and proof.
+Burned-in revisions remain a separate mandatory immutable render/review unit; canonical ASR
+is not edited. No SD-A test authorizes existing unsigned publication routes.
+
+Research: specs/evidence-based-studio/signed-delivery-{research,impact-map,spec,plan}.md.
+Actual 22-record Serena map and unmocked 30-byte unsigned-promotion counterexample are
+preserved with hashes in the research. All ledger rows remain WIP pending canonical gate
+and applicable same-SHA CI. BLOCKED #1/#3/#4/#21/#24/#25 and complete acceptance remain.
+
