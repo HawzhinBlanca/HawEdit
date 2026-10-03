@@ -76,3 +76,31 @@ Actual all-surface raw DBOS admission, owned private engine/lifetime lease/boots
 guarded ID-only worker with attempt/runtime/billing/session, then immutable render revision,
 authenticated review/reconciliation/export and all independent/sustained thresholds remain.
 Generation still refuses studio_runner_unavailable; parent goal and scope remain intact.
+
+## Oversized Integer Deadline Correction
+
+The localb85ed735d238c8f061e575da900359fd8ce459d2 exact full gate was interrupted after
+new genuine invalid-input evidence, not completed or claimed green. Verified pytest child
+PID66032 only was stopped2026-10-03T18:02:01.4716495Z using Stop-Process, without a console
+event. No live descendants were listed. Wrapper exit127; original log/interruption/exit
+records remain in its external studio-commit directory. No fresh complete JUnit is claimed,
+and the terminal recorder was not used to relabel the old canonical report as this run.
+
+Fresh actual Serena _bounded_read definition1/references2 precedes the correction;
+bounded-intake-deadline-map.json preserves pending/recovery_snapshot caller context. BI3
+regressions add positive/negative10**1000 on the real private fixture. On oldec31dca...:
+33 cases,31 passes,2 expected failures,zero errors/skips,26.477s,exit1. Both failures are
+math.isfinite OverflowError before the upper-bound check. Red external XMLSHA256:
+0350b4bf9e86f76a941d7ee2caf7e50ed44bf0421502dc74074ba133de821964.
+
+Only the range/finiteness check ordering changed; no limit, assertion, fixture or caller
+contract was weakened. Corrected producerSHA256
+691e77160ee1548216a052c574578dca93a5b9237eabf53845219b05e7de3b1e.
+Complete caller modules plus claims:184 passes,zero failures/errors/skips,83.437s,exit0.
+XML bounded-intake-large-deadline-final-20261003.xmlSHA256
+a89d08a3e0050f5b23ab3b283da6bc31b57997135f1aca4efcf007af5e64ad00.
+Native CPython3.12.10/SQLite3.49.1/pytest9.1.1/DBOS2.29.0 on recorded HAWAPC01 Windows26200;
+timing remains diagnostic, not product-performance evidence. Final exact --fast exit0
+and format check311 passed. All source/test/doc inputs were frozen during these runs.
+Replacement reviewed local commit and clean frozen full gate/current qualified VEX and
+same-SHA CI remain required. M9.55 is still WIP; all broader adoption/acceptance stays open.

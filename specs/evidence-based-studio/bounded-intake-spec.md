@@ -18,3 +18,6 @@ Extends parent T3, BLUEPRINT sections2-5 and D-276; does not certify execution a
 Budgets apply to returned record count and encoded persisted text, not Python object/RSS
 or whole SQLite native I/O. Progress callbacks bound observed VM work/deadline checks, not
 an absolute wall-clock deadline while native I/O is blocked. No generation/publication claim.
+
+BI3 includes integer deadlines too large for float conversion: reject with the existing
+ValueError diagnostic before querying, not an incidental OverflowError from math.isfinite.

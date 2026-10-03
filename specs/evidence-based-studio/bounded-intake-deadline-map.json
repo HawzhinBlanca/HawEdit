@@ -1,0 +1,6 @@
+{
+  "path": "src/hawedit/studio_submissions.py",
+  "symbol": "SubmissionStore/_bounded_read",
+  "definition": "[{\"name_path\": \"SubmissionStore/_bounded_read\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_submissions.py\", \"body_location\": {\"start_line\": 317, \"end_line\": 382}}]",
+  "references": "[{\"name_path\": \"SubmissionStore/pending\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_submissions.py\", \"body_location\": {\"start_line\": 384, \"end_line\": 396}, \"content_around_reference\": \"... 388:        return list(\\n  > 389:            self._bounded_read(\\n... 390:                \\\" WHERE dispatch_state='pending'\\\",\"}, {\"name_path\": \"SubmissionStore/recovery_snapshot/records\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_submissions.py\", \"body_location\": {\"start_line\": 422, \"end_line\": 422}, \"content_around_reference\": \"... 421:        )\\n  > 422:        records = self._bounded_read(\\n... 423:            condition,\"}]"
+}

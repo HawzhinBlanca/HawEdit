@@ -42,3 +42,13 @@ malformed record before repairing the new byte arithmetic. No schema migration o
 [SQLite primary-key documentation](https://www.sqlite.org/lang_createtable.html#the_primary_key),
 [Python3.12 native SQLite progress callback](https://docs.python.org/3.12/library/sqlite3.html#sqlite3.Connection.set_progress_handler),
 retrieved2026-10-03. Actual native counterexamples remain stronger than API descriptions.
+
+Before accepting localb85ed735, a genuine validator probe found that max_seconds=10**1000
+raises OverflowError in math.isfinite before the upper-bound check. The probe calls actual
+pending/_bounded_read before any storage operation; no model/provider or DBOS work occurs.
+Fresh actual Serena finds _bounded_read once with2 callers: pending and recovery_snapshot.
+Retain the interrupted b85 full run (exact pytest child PID66032 stopped without a console
+event; wrapper exit127, no fresh complete JUnit claim). Under approved parent BI3, add large
+positive/negative integer regressions on the real private-store fixture, then check numeric
+range before float-converting finiteness. No original assertion or allowed bound changes.
+All caller diagnostics and a newly committed clean full gate are required after correction.

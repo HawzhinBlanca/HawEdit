@@ -116,6 +116,8 @@ def test_pending_byte_overflow_refuses_before_decode(store: SubmissionStore) -> 
         {"max_seconds": float("nan")},
         {"max_seconds": float("inf")},
         {"max_seconds": 11},
+        {"max_seconds": 10**1000},
+        {"max_seconds": -(10**1000)},
     ],
 )
 def test_invalid_intake_limits_are_refused(store: SubmissionStore, limits: dict[str, Any]) -> None:

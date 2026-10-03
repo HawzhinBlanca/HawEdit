@@ -16,3 +16,8 @@ in requested ID order and refuses duplicate/missing IDs rather than silently omi
 No DBOS getter/deserializer, producer, billing or HTTP execution is called by these reads.
 Complete test_studio_intake.py,test_studio_submissions.py,test_studio_storage.py,
 test_studio_queue.py,test_studio_generation.py are required, then the exact clean full gate.
+
+2026-10-03 b85 deadline correction: fresh bounded-intake-deadline-map.json records actual
+_bounded_read definition1/references2: pending and recovery_snapshot. Preserve both public
+contracts; change only invalid-limit check ordering. Complete existing caller modules and
+new positive/negative oversized-integer cases remain required. No engine/HTTP/CLI adoption.

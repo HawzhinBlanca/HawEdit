@@ -330,8 +330,8 @@ class SubmissionStore:
             raise ValueError("Recovery byte limit must be an integer from 1 to 256 MiB")
         if (
             type(max_seconds) not in (int, float)
-            or not math.isfinite(max_seconds)
             or not 0 < max_seconds <= 10
+            or not math.isfinite(max_seconds)
         ):
             raise ValueError(
                 "Recovery query deadline must be finite, positive and at most 10 seconds"

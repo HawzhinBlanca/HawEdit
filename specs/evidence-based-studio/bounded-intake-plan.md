@@ -14,6 +14,10 @@ private supervisor and bounded recovery intake. No model/licence/spending/trust 
 5. Reviewed local-only commit, clean frozen exact bash scripts/verify.sh. Retain current
    VEX refusal; no policy rebind, ledger promotion or push without permitted evidence.
 
+BI3 correction remains within this approved task: reject oversized positive/negative integer
+deadlines before float-converting math.isfinite. Test first using the actual private store;
+retain b85 interrupted-run evidence, diagnostics and replacement exact clean committed gate.
+
 Next actual adoption is all-surface raw DBOS admission/owned private engine/lifetime lease/
 bootstrap barrier and guarded ID-only worker with durable attempt/runtime/billing/session,
 then immutable revision/signed export and every independent/sustained acceptance threshold.
