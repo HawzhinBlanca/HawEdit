@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import time
@@ -384,16 +385,7 @@ def _validate(
     return tuple(ids)
 
 
-def inspect_studio_journal(
-    storage: PrivateSqlitePath,
-    submissions: SubmissionStore,
-    policy: JournalPolicy,
-    *,
-    max_rows: int = 1000,
-    max_bytes: int = 16 * 1024 * 1024,
-    max_seconds: float = 5.0,
-) -> JournalSnapshot:
-    """Inspect without ORM/getters/launch, repair, pickle or execution-authority tokens."""
+def _inspection_budget(max_rows: int, max_bytes: int, max_seconds: float) -> _Budget:
     if type(max_rows) is not int or not 1 <= max_rows <= 10000:
         raise ValueError("Raw journal row limit must be an integer1..10000")
     if type(max_bytes) is not int or not 1 <= max_bytes <= 256 * 1024 * 1024:
@@ -404,8 +396,66 @@ def inspect_studio_journal(
         or not math.isfinite(max_seconds)
     ):
         raise ValueError("Raw journal deadline must be finite, positive and at most10 seconds")
+    return _Budget(max_rows, max_bytes, time.perf_counter() + max_seconds)
+
+
+def inspect_studio_connection(
+    connection: sqlite3.Connection,
+    storage: PrivateSqlitePath,
+    submissions: SubmissionStore,
+    policy: JournalPolicy,
+    *,
+    max_rows: int = 1000,
+    max_bytes: int = 16 * 1024 * 1024,
+    max_seconds: float = 5.0,
+) -> JournalSnapshot:
+    """Inspect the caller's transaction, without ending it or changing its VM handler."""
+    budget = _inspection_budget(max_rows, max_bytes, max_seconds)
     _policy(policy)
-    budget = _Budget(max_rows, max_bytes, time.perf_counter() + max_seconds)
+    storage.verify()
+    try:
+        if (
+            type(connection) is not sqlite3.Connection
+            or connection.text_factory is not str
+            or (connection.row_factory is not None and connection.row_factory is not sqlite3.Row)
+            or not connection.in_transaction
+        ):
+            raise StudioStorageError("Raw connection inspection requires an owned transaction")
+        databases = connection.execute("PRAGMA database_list").fetchmany(3)
+        main = [row for row in databases if row[1] == "main"]
+        if (
+            len(databases) > 2
+            or len(main) != 1
+            or os.path.normcase(os.path.abspath(main[0][2])) != os.path.normcase(str(storage.path))
+            or any(row[1] not in ("main", "temp") for row in databases)
+            or any(row[1] == "temp" and row[2] for row in databases)
+            or connection.execute("SELECT 1 FROM sqlite_temp_schema LIMIT 1").fetchone()
+        ):
+            raise StudioStorageError(
+                "Raw connection is not the bound main database without shadows"
+            )
+        digest, tables = _raw(connection, budget)
+        ids = _validate(tables, submissions, policy, budget)
+        storage.verify()
+        return JournalSnapshot(ids, digest, budget.used_rows, budget.used_bytes)
+    except sqlite3.Error as exc:
+        raise StudioStorageError("Raw connection inspection refused; work preserved") from exc
+    finally:
+        storage.verify()
+
+
+def inspect_studio_journal(
+    storage: PrivateSqlitePath,
+    submissions: SubmissionStore,
+    policy: JournalPolicy,
+    *,
+    max_rows: int = 1000,
+    max_bytes: int = 16 * 1024 * 1024,
+    max_seconds: float = 5.0,
+) -> JournalSnapshot:
+    """Inspect without ORM/getters/launch, repair, pickle or execution-authority tokens."""
+    budget = _inspection_budget(max_rows, max_bytes, max_seconds)
+    _policy(policy)
     storage.verify()
     connection: sqlite3.Connection | None = None
     try:

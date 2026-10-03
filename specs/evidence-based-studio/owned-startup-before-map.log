@@ -1,0 +1,27 @@
+Could not find containing symbol for tests\test_studio_admission.py:22:52. Returning file symbol instead
+{"symbol": "inspect_studio_journal", "definitions": 1, "references": 26}
+{"symbol": "_raw", "definitions": 1, "references": 1}
+{"symbol": "_validate", "definitions": 1, "references": 1}
+{"symbol": "_policy", "definitions": 1, "references": 1}
+{"symbol": "_Budget", "definitions": 1, "references": 4}
+{"symbol": "_identity", "definitions": 2, "references": 10}
+{"symbol": "PrivateDirectory/verify", "definitions": 1, "references": 25}
+{"symbol": "PrivateDirectory/member_identity", "definitions": 1, "references": 17}
+{"symbol": "PrivateDirectory/open_new_file", "definitions": 1, "references": 5}
+{"symbol": "PrivateSqlitePath/verify", "definitions": 1, "references": 26}
+{"symbol": "SubmissionStore/recovery_snapshot", "definitions": 1, "references": 7}
+Could not find containing symbol for src\hawedit\studio_queue.py:21:5. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_queue.py:30:4. Returning file symbol instead
+{"symbol": "configure_studio_queue", "definitions": 1, "references": 5}
+Could not find containing symbol for src\hawedit\studio_queue.py:22:5. Returning file symbol instead
+{"symbol": "reconcile_studio_submission", "definitions": 1, "references": 2}
+Could not find containing symbol for src\hawedit\durable_workflow.py:94:5. Returning file symbol instead
+Could not find containing symbol for tests\test_agent.py:41:37. Returning file symbol instead
+Could not find containing symbol for tests\test_durable.py:49:4. Returning file symbol instead
+Could not find containing symbol for tests\test_prompt_injection.py:45:37. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_queue.py:20:37. Returning file symbol instead
+Could not find containing symbol for tests\test_workflow_agent.py:17:37. Returning file symbol instead
+Could not find containing symbol for tests\test_workflow_control.py:202:37. Returning file symbol instead
+{"symbol": "configure_dbos", "definitions": 1, "references": 22}
+Could not find containing symbol for src\hawedit\web.py:872:4. Returning file symbol instead
+{"symbol": "run_web_server", "definitions": 1, "references": 3}

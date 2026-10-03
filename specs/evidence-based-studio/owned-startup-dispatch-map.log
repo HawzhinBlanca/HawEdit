@@ -1,0 +1,5 @@
+Could not find containing symbol for src\hawedit\studio_queue.py:22:5. Returning file symbol instead
+{"symbol": "reconcile_studio_submission", "definitions": 1, "references": 2}
+{"symbol": "SubmissionStore/note_dispatch_error", "definitions": 1, "references": 5}
+{"symbol": "OwnedStudioRuntime/verify", "definitions": 1, "references": 0}
+{"symbol": "OwnedStudioRuntime/__init__", "definitions": 1, "references": 0}

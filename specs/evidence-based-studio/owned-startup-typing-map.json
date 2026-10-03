@@ -1,0 +1,44 @@
+[
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "StudioLease/__init__",
+    "definition": "[{\"name_path\": \"StudioLease/__init__\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 60, \"end_line\": 95}}]",
+    "references": "[]"
+  },
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "StudioLease/release",
+    "definition": "[{\"name_path\": \"StudioLease/release\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 118, \"end_line\": 137}}]",
+    "references": "[{\"name_path\": \"StudioLease/__init__\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 60, \"end_line\": 95}, \"content_around_reference\": \"...  91:        except (OSError, ValueError, StudioStorageError) as exc:\\n  >  92:            self.release()\\n...  93:            raise StudioStorageError(\"}, {\"name_path\": \"OwnedStudioRuntime/close\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 565, \"end_line\": 630}, \"content_around_reference\": \"... 628:        if self._lease is not None:\\n  > 629:            self._lease.release()\\n... 630:        self._state = \\\"closed\\\"\"}, {\"name_path\": \"test_native_lease_contends_across_processes_and_releases_after_exit\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_runtime.py\", \"body_location\": {\"start_line\": 327, \"end_line\": 355}, \"content_around_reference\": \"... 344:    finally:\\n  > 345:        lease.release()\\n... 346:    exited = subprocess.run([sys.executable, \\\"-c\\\", script, str(root)], timeout=15)\"}, {\"name_path\": \"test_native_lease_contends_across_processes_and_releases_after_exit\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_runtime.py\", \"body_location\": {\"start_line\": 327, \"end_line\": 355}, \"content_around_reference\": \"... 354:    final = StudioLease(PrivateDirectory(root, create=False))\\n  > 355:    final.release()\\n... 356:\"}, {\"name_path\": \"test_lease_refuses_changed_binding_and_preserves_members\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_runtime.py\", \"body_location\": {\"start_line\": 358, \"end_line\": 369}, \"content_around_reference\": \"... 367:    finally:\\n  > 368:        lease.release()\\n... 369:    assert (root / \\\"studio-supervisor.lock\\\").read_bytes() == b\\\"\\\\x00\\\\x00unsafe\\\"\"}]"
+  },
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "_OwnedEngine/_begin",
+    "definition": "[{\"name_path\": \"_OwnedEngine/_begin\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 220, \"end_line\": 232}}]",
+    "references": "[{\"name_path\": \"_OwnedEngine/__init__\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 141, \"end_line\": 171}, \"content_around_reference\": \"... 167:        event.listen(self.engine, \\\"close\\\", self._close_connection)\\n  > 168:        event.listen(self.engine, \\\"begin\\\", self._begin)\\n... 169:        event.listen(self.engine, \\\"before_cursor_execute\\\", self._before_statement)\"}]"
+  },
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "_OwnedEngine/_commit",
+    "definition": "[{\"name_path\": \"_OwnedEngine/_commit\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 259, \"end_line\": 262}}]",
+    "references": "[{\"name_path\": \"_OwnedEngine/__init__\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 141, \"end_line\": 171}, \"content_around_reference\": \"... 169:        event.listen(self.engine, \\\"before_cursor_execute\\\", self._before_statement)\\n  > 170:        event.listen(self.engine, \\\"commit\\\", self._commit)\\n... 171:        event.listen(self.engine, \\\"handle_error\\\", self._handle_error)\"}]"
+  },
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "_OwnedEngine/verify",
+    "definition": "[{\"name_path\": \"_OwnedEngine/verify\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 301, \"end_line\": 305}}]",
+    "references": "[{\"name_path\": \"OwnedStudioRuntime/launch\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 496, \"end_line\": 557}, \"content_around_reference\": \"... 551:            self._verify_owner()\\n  > 552:            self._owned_engine.verify()\\n... 553:            self._state = \\\"active\\\"\"}, {\"name_path\": \"OwnedStudioRuntime/verify\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 559, \"end_line\": 563}, \"content_around_reference\": \"... 562:        self._verify_owner()\\n  > 563:        self._owned_engine.verify()\\n... 564:\"}]"
+  },
+  {
+    "path": "tests/test_studio_runtime.py",
+    "symbol": "test_same_connection_refuses_custom_decoders_before_queries",
+    "definition": "[{\"name_path\": \"test_same_connection_refuses_custom_decoders_before_queries\", \"kind\": \"Function\", \"relative_path\": \"tests/test_studio_runtime.py\", \"body_location\": {\"start_line\": 629, \"end_line\": 645}}]",
+    "references": "[]"
+  },
+  {
+    "path": "tests/test_studio_runtime.py",
+    "symbol": "test_same_connection_inspection_preserves_vm_handler_and_connection_policy",
+    "definition": "[{\"name_path\": \"test_same_connection_inspection_preserves_vm_handler_and_connection_policy\", \"kind\": \"Function\", \"relative_path\": \"tests/test_studio_runtime.py\", \"body_location\": {\"start_line\": 648, \"end_line\": 663}}]",
+    "references": "[]"
+  }
+]

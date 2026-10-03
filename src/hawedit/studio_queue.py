@@ -92,7 +92,18 @@ def reconcile_studio_submission(
         store.confirm_dispatch(job.job_id)
         return store.get(job.job_id)
     except StudioStorageError:
-        # Reserve was committed first. Even an acknowledgement-write failure retains its ID.
+        # Preserve the refusal when the independent outbox can still record its diagnostic.
+        try:
+            store.note_dispatch_error(
+                job.job_id,
+                "Dispatch refused or acknowledgement storage unavailable; "
+                "reconcile this job with the same client token.",
+            )
+        except StudioStorageError as diagnostic_error:
+            raise StudioStorageError(
+                "Dispatch storage and diagnostic persistence unavailable; "
+                "reconcile the same job identity."
+            ) from diagnostic_error
         raise
     except Exception as exc:
         message = (

@@ -14436,6 +14436,41 @@ count/byte/query budgets and caller signatures stay intact. No authority or broa
 atomicity guarantee is inferred. See nul-projection-* research/spec/maps/plan; parent T3
 approval, BLUEPRINT sections2-5, D-276. Current gate/CI and every broader obligation remain.
 
+### Owned Runtime Startup And Lifetime - 2026-10-03
+
+Adopt the raw inspector in the actual DBOS2.29.0 startup path, not a separate snapshot
+treated as launch permission. Own one private native cross-process lease, actual custom
+SQLite engine and its lifecycle; explicit BEGIN IMMEDIATE makes bootstrap DDL and runtime
+reads transactional. Bootstrap only verified empty journals with the actual pinned publisher;
+existing nonempty journals are admitted before migrations/recovery/getters. Keep generic CLI
+configure_dbos unchanged. Use rw URI, private/descriptor binding, NullPool, foreign keys,
+trusted_schema OFF and full durability; the custom engine cannot rely on DBOS's skipped
+default engine listeners. Inspect same-connection raw data before DBOS statements/commit;
+standalone inspector remains read-only and its existing budgets/contract are preserved.
+
+Refuse foreign singleton/registry/config/cloud/pollers without destroying or overwriting them.
+Serial studio1/1, source-bound application version, explicit portable serializer and disabled
+admin/OTLP precede launch. Only exact captured workflow/step functions and known DBOS internal
+additions may inhabit the owned registry; raw internal/temporary jobs remain refused.
+DBOS destroy uses executor wait=False, so shutdown must separately stop scheduling and prove
+actual executor/event-loop/background/connection quiescence. Retain lease/engine under bounded
+draining refusal; never claim closed while work remains. Permanent empty lock is not deleted.
+This is cooperative native exclusion and pathname/descriptor checks, not hostile-same-owner
+isolation or absolute I/O/RSS deadlines. Actual protected ID-only producer/readiness/billing/
+signed authority/replay/session and review/revision/export adoption remain mandatory. See
+owned-startup-* research/maps/spec/plan, approved parent T3, BLUEPRINT sections2-5 and
+BLOCKED1/3/4/21/24/25. No spending/licence/trust-root approval or quality/10claim.
+
+Native decoder identity is proved before any same-connection query. Constructor-time
+foreign singleton races are refused before recording ownership, listening or cleanup.
+The pinned internal queue deliberately replaces its object; only its exact idle policy is
+accepted while the studio queue remains identity-bound. Owned busy timeout is5000ms,
+not the generic factory's30000ms; native operational failures are surfaced without DBOS's
+unbounded lock-phrase retry. Draining dispatch retains identity and an independently stored
+diagnostic; diagnostic storage failure is also visible. This does not grant exactly-once
+coarse-step effects or change the generic CLI. See preserved real counterexamples and
+owned-startup-verification.md; POSIX locking is not claimed tested on Windows.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
