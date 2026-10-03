@@ -112,7 +112,6 @@ from hawedit.delivery import (
     build_edl,
     build_effective_source_cuts,
     build_srt,
-    promote_candidate,
     reconcile_delivery,
 )
 from hawedit.diarization import turn_bounds_for_anchors
@@ -1847,7 +1846,8 @@ def _render_episode_single_clip(
     fps: float,
     config: EffectiveConfiguration,
 ) -> tuple[EpisodeClipSummary, Clip, RenderResult]:
-    """Render, sidecar, measure, reconcile and publish one clip in an episode run (AC-19)."""
+    """Render and reconcile a private episode review candidate (AC-19 / D-277)."""
+    is_review_render = True
     assert transcript is not None, "transcript required for clip render"
     (
         clip_select_sentences,
@@ -1994,7 +1994,7 @@ def _render_episode_single_clip(
     clip.assert_renderable(for_review=is_review_render)
 
     bundle_root = work_dir / "review" if is_review_render else work_dir
-    bundle = ArtifactBundle.create(bundle_root, clip.clip_id)
+    bundle = ArtifactBundle.create(bundle_root, clip.clip_id, private=True)
     ass_path = bundle.staged_path("ass")
     render_path = bundle.staged_path("mp4")
 
@@ -2378,7 +2378,8 @@ def _run_episode_delivery(
     log: RunEventLog,
     b_roll: Sequence[BRollItem] = (),
 ) -> PipelineRun:
-    """Orchestrate multi-clip episode delivery with shared preprocessing (AC-19)."""
+    """Orchestrate private multi-clip review candidates with shared preprocessing."""
+    is_review_render = True
     episode_config = EpisodePlanConfig(
         max_clips=max_clips,
         min_separation_ms=min_separation_ms,
@@ -3932,112 +3933,10 @@ def run_pipeline(
         final_plan,
     ) = _delivery_artifact_paths(work_dir, clip.clip_id)
 
-    # Check if this clip was already rendered as a review candidate and we now have approved QC:
+    # Legacy QC is metadata, never authority. Signed promotion is a separate consumption
+    # operation after review; generation can only freeze private candidates (D-277).
     review_candidate_dir = work_dir / "review" / clip.clip_id
-    if (
-        review_candidate_dir.is_dir()
-        and qc is not None
-        and qc.human_reviewed
-        and qc.reviewed_sha256
-    ):
-        candidate_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
-        if candidate_mp4.is_file():
-            cand_sha = hashlib.sha256(candidate_mp4.read_bytes()).hexdigest().lower()
-            if cand_sha == qc.reviewed_sha256.lower():
-                _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
-                _assert_source_unchanged(source, ingested.source_sha256, "candidate promotion")
-                qc_record = QcRecord(
-                    reviewer=qc.reviewed_by or "reviewer",
-                    reviewed_at=qc.reviewed_at or "2026-09-02T19:00:00Z",
-                    mp4_sha256=qc.reviewed_sha256,
-                    seconds_watched=max(1.0, (clip.out_ms - clip.in_ms) / 1000.0),
-                    verdict="approved",
-                )
-                source_fps = frame_rate(source, ffmpeg)
-                cand_cut_pts = cut_points_ms(
-                    tuple(word for sentence in selected for word in sentence.words),
-                    clip.in_ms,
-                )
-                cand_source_cuts = [
-                    cut_ms - clip.in_ms
-                    for cut_ms in ingested.shot_cuts_ms
-                    if clip.in_ms <= cut_ms <= clip.out_ms
-                ]
-                if config.punch_in_cadence_ms == 0:
-                    cand_planned_punch_ins: tuple[tuple[int, float], ...] = ()
-                    cand_reconcile_punch_ins: tuple[tuple[int, float], ...] = ()
-                elif eased_push or profile == "deliverable" or config.eased_push:
-                    spans = shot_spans(
-                        cand_cut_pts,
-                        clip.out_ms - clip.in_ms,
-                        source_cuts_ms=cand_source_cuts,
-                        min_shot_ms=config.punch_in_cadence_ms,
-                    )
-                    cand_planned_punch_ins = eased_push_schedule(spans)
-                    cand_reconcile_punch_ins = ()
-                else:
-                    cand_planned_punch_ins = punch_in_schedule(
-                        cand_cut_pts,
-                        clip.out_ms - clip.in_ms,
-                        avoid_ms=cand_source_cuts,
-                        min_shot_ms=config.punch_in_cadence_ms,
-                    )
-                    cand_reconcile_punch_ins = cand_planned_punch_ins
-                promote_candidate(
-                    work_dir=work_dir,
-                    candidate_id=clip.clip_id,
-                    qc_record=qc_record,
-                    source=source,
-                    ffmpeg=ffmpeg,
-                    planned_punch_ins=cand_reconcile_punch_ins,
-                    source_shot_cuts_ms=ingested.shot_cuts_ms,
-                    fps=source_fps,
-                    min_face_share=min_face_share,
-                )
-                log.finished("render", "promoted from review candidate without re-rendering")
-                log.finished("delivery")
-                measured_json = review_candidate_dir / f"{clip.clip_id}.measured.json"
-                cand_meas = (
-                    ClipMeasurement.from_json(measured_json.read_text(encoding="utf-8"))
-                    if measured_json.is_file()
-                    else None
-                )
-                rendered = RenderResult(
-                    clip_id=clip.clip_id,
-                    path=str(final_render),
-                    width=cand_meas.video.width if cand_meas else 1080,
-                    height=cand_meas.video.height if cand_meas else 1920,
-                    requested_duration_ms=clip.out_ms - clip.in_ms,
-                    measured_duration_ms=(
-                        cand_meas.video.duration_ms if cand_meas else (clip.out_ms - clip.in_ms)
-                    ),
-                    reframe=reframe_mode or Reframe.STATIC_CENTRE,
-                    encoder=Encoder.X264,
-                    captions_burned_in=True,
-                    ffmpeg_version=(
-                        cand_meas.tool_metadata.get("ffmpeg_version", "unknown")
-                        if cand_meas
-                        else "unknown"
-                    ),
-                    brand_kit=brand_kit,
-                )
-                return replace(
-                    run,
-                    clip=replace(clip, qc=qc),
-                    render=rendered,
-                    delivery=Delivery(
-                        srt_path=str(final_srt),
-                        edl_path=str(final_edl),
-                        editing_json_path=str(final_json),
-                        measured_path=str(final_measured),
-                        edit_plan_path=str(
-                            work_dir / clip.clip_id / f"{clip.clip_id}.edit_plan.json"
-                        ),
-                    ),
-                    billed_calls=tuple(billed_calls),
-                )
-
-    is_review_render = qc is None or not qc.human_reviewed
+    is_review_render = True
     if is_review_render and review_candidate_dir.is_dir():
         cand_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
         if cand_mp4.is_file():
@@ -4100,7 +3999,7 @@ def run_pipeline(
 
     bundle_root = work_dir / "review" if is_review_render else work_dir
     try:
-        bundle = ArtifactBundle.create(bundle_root, clip.clip_id)
+        bundle = ArtifactBundle.create(bundle_root, clip.clip_id, private=True)
     except BundleError as exc:
         return replace(
             run,

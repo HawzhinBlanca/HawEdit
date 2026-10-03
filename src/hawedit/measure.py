@@ -636,6 +636,28 @@ def probe_face_tracking(
     )
 
 
+def _caption_stroke_contrast(band: Any, mask: Any) -> float | None:
+    """Observe detected stroke pixels against their immediate surround in linear RGB."""
+    import cv2
+    import numpy as np
+
+    foreground = mask.astype(bool)
+    surround = cv2.dilate(mask.astype(np.uint8), np.ones((5, 5), dtype=np.uint8)).astype(bool)
+    surround &= ~foreground
+    if not np.any(foreground) or not np.any(surround):
+        return None
+
+    def luminance(selected: Any) -> float:
+        pixels = band[selected]
+        if len(band.shape) == 2:
+            value = int(round(float(np.median(pixels))))
+            return relative_luminance(value, value, value)
+        b, g, r = np.median(pixels, axis=0)
+        return relative_luminance(int(round(r)), int(round(g)), int(round(b)))
+
+    return round(contrast_ratio(luminance(foreground), luminance(surround)), 2)
+
+
 def detect_caption_ink_in_band(
     frame: Any,
     band_top: int,
@@ -661,10 +683,6 @@ def detect_caption_ink_in_band(
         return False, None
 
     gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY) if len(band.shape) == 3 else band
-    float_gray = np.asarray(gray, dtype=float)
-    p95 = float(np.percentile(float_gray, 95))
-    p10 = max(1.0, float(np.percentile(float_gray, 10)))
-    contrast = round((p95 + 0.05) / (p10 + 0.05), 2)
 
     # Differential observation if source_frame is available
     if (
@@ -683,7 +701,7 @@ def detect_caption_ink_in_band(
         diff_count = int(np.sum(diff_high))
         min_diff_pixels = max(10, int(50 * scale_y * scale_y))
         if diff_count >= min_diff_pixels:
-            return True, contrast
+            return True, _caption_stroke_contrast(band, diff_high)
         if float(np.mean(diff)) < 3.0:
             return False, None
 
@@ -695,6 +713,7 @@ def detect_caption_ink_in_band(
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bright)
     text_pixels = 0
     text_comps = 0
+    text_mask = np.zeros(gray.shape, dtype=np.uint8)
     min_comp_h = max(4, int(10 * scale_y))
     max_comp_h = max(20, int(120 * scale_y))
     min_comp_w = max(2, int(4 * scale_y))
@@ -716,6 +735,7 @@ def detect_caption_ink_in_band(
             if int(np.sum(comp_outline)) >= min_outline_overlap or float(np.mean(gray)) < 70:
                 text_pixels += area
                 text_comps += 1
+                text_mask |= comp_mask
 
     row_bright = np.sum(bright, axis=1)
     max_row = float(np.max(row_bright)) if len(row_bright) > 0 else 0.0
@@ -728,13 +748,14 @@ def detect_caption_ink_in_band(
         and text_pixels >= min_text_pixels
         and (peak_ratio >= 1.3 or text_pixels >= min_text_pixels * 3)
     ):
-        return True, contrast
+        return True, _caption_stroke_contrast(band, text_mask)
 
     # Dark text / plate on bright background:
     if float(np.mean(gray)) > 165:
-        num_dark_labels, _, dark_stats, _ = cv2.connectedComponentsWithStats(dark)
+        num_dark_labels, dark_labels, dark_stats, _ = cv2.connectedComponentsWithStats(dark)
         dark_text_comps = 0
         dark_pixels = 0
+        dark_mask = np.zeros(gray.shape, dtype=np.uint8)
         for i in range(1, num_dark_labels):
             w = dark_stats[i, cv2.CC_STAT_WIDTH]
             h_c = dark_stats[i, cv2.CC_STAT_HEIGHT]
@@ -746,8 +767,9 @@ def detect_caption_ink_in_band(
             ):
                 dark_text_comps += 1
                 dark_pixels += area
+                dark_mask |= (dark_labels == i).astype(np.uint8)
         if dark_text_comps >= 1 and dark_pixels >= min_text_pixels:
-            return True, contrast
+            return True, _caption_stroke_contrast(band, dark_mask)
 
     return False, None
 

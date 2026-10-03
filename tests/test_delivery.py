@@ -24,7 +24,6 @@ rate. 29.97 is where that becomes a refusal rather than a rounding.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 from dataclasses import replace
@@ -33,8 +32,9 @@ from typing import Final
 
 import pytest
 
+import test_candidate_publication as publication_fixtures
 from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, build_ass, find_ffmpeg
-from hawedit.clip import Clip, Provenance, QcRecord
+from hawedit.clip import Clip, Provenance
 from hawedit.delivery import (
     CandidateState,
     DeliveryError,
@@ -51,6 +51,11 @@ from hawedit.delivery import (
 from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.transcripts import Word
+from test_candidate_review import ReviewCase
+
+publication = publication_fixtures.publication
+case = publication_fixtures.case
+tools = publication_fixtures.tools
 
 needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
 
@@ -1242,249 +1247,70 @@ def test_delivery_refuses_production_profile_without_human_review() -> None:
     assert exc_info.value.reason == "production_profile_unreviewed"
 
 
-def test_approved_candidate_promotes_identical_bytes_without_render(tmp_path: Path) -> None:
-    """AC-02: Approved candidate promotes the exact reviewed bytes without rerendering."""
-    clip, measurement = _make_valid_reconciliation_pair()
-    candidate_id = clip.clip_id
-
-    review_dir = tmp_path / "review" / candidate_id
-    review_dir.mkdir(parents=True)
-
-    fake_mp4_bytes = b"PROMOTED_EXACT_MP4_BYTES_12345"
-    mp4_sha = hashlib.sha256(fake_mp4_bytes).hexdigest()
-
-    (review_dir / f"{candidate_id}.mp4").write_bytes(fake_mp4_bytes)
-    (review_dir / f"{candidate_id}.ass").write_text(
-        "[Script Info]\nTitle: Test\n", encoding="utf-8"
-    )
-    (review_dir / f"{candidate_id}.srt").write_text(
-        "1\n00:00:00,000 --> 00:00:01,000\nTest\n", encoding="utf-8"
-    )
-    (review_dir / f"{candidate_id}.edl").write_text(
-        "TITLE: Test\n001  AX       V     C        "
-        "00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\n",
-        encoding="utf-8",
-    )
-
-    source_file = tmp_path / "source.mp4"
-    source_file.write_bytes(b"SOURCE_MEDIA_BYTES")
-    source_sha = hashlib.sha256(source_file.read_bytes()).hexdigest()
-
-    candidate_clip = replace(
-        clip,
-        media_sha256=source_sha,
-        qc=None,
-        provenance=Provenance.current(),
-    )
-    (review_dir / f"{candidate_id}.json").write_text(
-        json.dumps(candidate_clip.to_dict(), indent=2),
-        encoding="utf-8",
-    )
-
-    meas = replace(
-        measurement,
-        file=replace(measurement.file, sha256=mp4_sha),
-        scenes={"cuts_ms": []},
-    )
-    (review_dir / f"{candidate_id}.measured.json").write_text(
-        meas.to_json(),
-        encoding="utf-8",
-    )
-    (review_dir / f"{candidate_id}.edit_plan.json").write_text(
-        '{"version": 1}',
-        encoding="utf-8",
-    )
-
-    qc_record = QcRecord(
-        reviewer="Hawa",
-        reviewed_at="2026-09-02T19:00:00Z",
-        mp4_sha256=mp4_sha,
-        seconds_watched=57.0,
-        verdict="approved",
-    )
-
+def test_approved_candidate_promotes_identical_bytes_without_render(
+    publication: ReviewCase,
+) -> None:
+    """AC-02 / D-277: real signed, decoded media preserves every frozen byte."""
+    context = publication_fixtures._approve(publication)
+    rejected = replace(publication.record, verdict="rejected")
+    with pytest.raises(DeliveryRefused, match="unapproved_qc_record"):
+        promote_candidate(
+            publication.root, "c-1", rejected, source=publication.source, approval=context
+        )
+    mismatched = replace(publication.record, mp4_sha256="1" * 64)
+    with pytest.raises(DeliveryRefused, match="qc_claims_mismatch"):
+        promote_candidate(
+            publication.root,
+            "c-1",
+            mismatched,
+            source=publication.source,
+            ffmpeg=find_ffmpeg(),
+            approval=context,
+        )
     published = promote_candidate(
-        work_dir=tmp_path,
-        candidate_id=candidate_id,
-        qc_record=qc_record,
-        source=source_file,
+        publication.root,
+        "c-1",
+        publication.record,
+        source=publication.source,
+        ffmpeg=find_ffmpeg(),
+        approval=context,
     )
-    assert len(published) == 7
-
-    # Verify public delivery directory exists with identical bytes
-    public_dir = tmp_path / candidate_id
-    assert public_dir.is_dir()
-    promoted_mp4 = public_dir / f"{candidate_id}.mp4"
-    assert promoted_mp4.is_file()
-    assert promoted_mp4.read_bytes() == fake_mp4_bytes
-    assert (public_dir / f"{candidate_id}.ass").is_file()
-    assert (public_dir / f"{candidate_id}.srt").is_file()
-    assert (public_dir / f"{candidate_id}.edl").is_file()
-    assert (public_dir / f"{candidate_id}.measured.json").is_file()
-    assert (public_dir / f"{candidate_id}.edit_plan.json").is_file()
-
-    # Verify JSON has approved QC record bound
+    assert len(published) == 9
+    assert {p.name: p.read_bytes() for p in published} == {
+        p.name: p.read_bytes() for p in publication.packet.iterdir()
+    }
     published_clip = Clip.from_dict(
-        json.loads((public_dir / f"{candidate_id}.json").read_text(encoding="utf-8"))
+        json.loads((publication.root / "c-1" / "c-1.json").read_bytes())
     )
     assert published_clip.qc is not None
     assert published_clip.qc.human_reviewed is True
-    assert published_clip.qc.reviewed_sha256 == mp4_sha
-
-    # Refusal on SHA mismatch
-    mismatched_record = replace(qc_record, mp4_sha256="1" * 64)
-    with pytest.raises(DeliveryRefused, match="qc_sha256_mismatch"):
-        promote_candidate(
-            work_dir=tmp_path,
-            candidate_id=candidate_id,
-            qc_record=mismatched_record,
-            source=source_file,
-        )
-
-    # Refusal on unapproved verdict
-    rejected_record = replace(qc_record, verdict="rejected")
-    with pytest.raises(DeliveryRefused, match="unapproved_qc_record"):
-        promote_candidate(
-            work_dir=tmp_path,
-            candidate_id=candidate_id,
-            qc_record=rejected_record,
-            source=source_file,
-        )
-
+    assert published_clip.qc.reviewed_sha256 == publication.record.mp4_sha256
     assert CandidateState.APPROVED.value == "approved"
     assert CandidateState.RENDERED_FOR_REVIEW.value == "rendered_for_review"
 
 
-def test_promotion_rejects_changed_sidecar_or_plan_binding(tmp_path: Path) -> None:
-    """VE-00 / F03: Promotion refuses when any sidecar (ASS, SRT, EDL) or plan binding
-    is altered.
-    """
-    clip, measurement = _make_valid_reconciliation_pair()
-    candidate_id = clip.clip_id
-
-    review_dir = tmp_path / "review" / candidate_id
-    review_dir.mkdir(parents=True)
-
-    fake_mp4_bytes = b"PROMOTED_EXACT_MP4_BYTES_12345"
-    mp4_sha = hashlib.sha256(fake_mp4_bytes).hexdigest()
-
-    (review_dir / f"{candidate_id}.mp4").write_bytes(fake_mp4_bytes)
-    (review_dir / f"{candidate_id}.ass").write_text(
-        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n"
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        "Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,سڵاو لە هەمووان\n",
-        encoding="utf-8",
-    )
-    (review_dir / f"{candidate_id}.srt").write_text(
-        "1\n00:00:00,000 --> 00:00:02,000\nسڵاو لە هەمووان\n", encoding="utf-8"
-    )
-    (review_dir / f"{candidate_id}.edl").write_text(
-        "TITLE: Test\n001  AX       V     C        "
-        "00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\n",
-        encoding="utf-8",
-    )
-
-    source_file = tmp_path / "source.mp4"
-    source_file.write_bytes(b"SOURCE_MEDIA_BYTES")
-    source_sha = hashlib.sha256(source_file.read_bytes()).hexdigest()
-
-    candidate_clip = replace(
-        clip,
-        media_sha256=source_sha,
-        qc=None,
-        provenance=Provenance.current(),
-    )
-    (review_dir / f"{candidate_id}.json").write_text(
-        json.dumps(candidate_clip.to_dict(), indent=2),
-        encoding="utf-8",
-    )
-
-    meas = replace(
-        measurement,
-        file=replace(measurement.file, sha256=mp4_sha),
-        scenes={"cuts_ms": []},
-    )
-    (review_dir / f"{candidate_id}.measured.json").write_text(
-        meas.to_json(),
-        encoding="utf-8",
-    )
-
-    qc_record = QcRecord(
-        reviewer="Hawa",
-        reviewed_at="2026-09-02T19:00:00Z",
-        mp4_sha256=mp4_sha,
-        seconds_watched=57.0,
-        verdict="approved",
-    )
-
-    # 1. Tampering with ASS sidecar (corrupted glyph / broken joining)
-    broken_ass = review_dir / f"{candidate_id}.ass"
-    broken_ass.write_text(
-        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n"
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        "Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,\ufe8e\ufe8f\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(DeliveryRefused, match="caption_integrity_failed"):
-        promote_candidate(
-            work_dir=tmp_path,
-            candidate_id=candidate_id,
-            qc_record=qc_record,
-            source=source_file,
-        )
-
-    # Restore valid ASS
-    broken_ass.write_text(
-        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n"
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        "Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,سڵاو لە هەمووان\n",
-        encoding="utf-8",
-    )
-
-    # 2. Tampering with SRT sidecar (corrupt format)
-    corrupt_srt = review_dir / f"{candidate_id}.srt"
-    corrupt_srt.write_text("not a valid srt file\n", encoding="utf-8")
-    with pytest.raises(DeliveryRefused, match="corrupt_srt_sidecar"):
-        promote_candidate(
-            work_dir=tmp_path,
-            candidate_id=candidate_id,
-            qc_record=qc_record,
-            source=source_file,
-        )
-
-    # Restore valid SRT
-    corrupt_srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nسڵاو لە هەمووان\n", encoding="utf-8")
-
-    # 3. Tampering with EDL sidecar (invalid header)
-    corrupt_edl = review_dir / f"{candidate_id}.edl"
-    corrupt_edl.write_text("CORRUPT EDL NO TITLE\n", encoding="utf-8")
-    with pytest.raises(DeliveryRefused, match="invalid_edl_sidecar"):
-        promote_candidate(
-            work_dir=tmp_path,
-            candidate_id=candidate_id,
-            qc_record=qc_record,
-            source=source_file,
-        )
-
-    # Restore valid EDL
-    corrupt_edl.write_text(
-        "TITLE: Test\n"
-        "001  AX       V     C        00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00\n",
-        encoding="utf-8",
-    )
-
-    # 4. Tampering with candidate JSON (boundary invariant violation)
-    corrupt_json = review_dir / f"{candidate_id}.json"
-    tampered_clip_dict = candidate_clip.to_dict()
-    tampered_clip_dict["boundary"]["sentence_complete"] = False
-    corrupt_json.write_text(json.dumps(tampered_clip_dict), encoding="utf-8")
-    with pytest.raises(DeliveryRefused, match="plan_binding_invariant_violation"):
-        promote_candidate(
-            work_dir=tmp_path,
-            candidate_id=candidate_id,
-            qc_record=qc_record,
-            source=source_file,
-        )
+def test_promotion_rejects_changed_sidecar_or_plan_binding(
+    publication: ReviewCase,
+) -> None:
+    """VE-00 / D-277: actual valid publication precedes every tampered candidate check."""
+    context = publication_fixtures._approve(publication)
+    publication_fixtures._assert_publishable(publication, context)
+    for suffix in ("ass", "srt", "edl", "json"):
+        path = publication.candidate / f"c-1.{suffix}"
+        original = path.read_bytes()
+        path.write_bytes(original + b"altered")
+        with pytest.raises(DeliveryRefused, match="authenticated_delivery_refused"):
+            promote_candidate(
+                publication.root,
+                "c-1",
+                publication.record,
+                source=publication.source,
+                ffmpeg=find_ffmpeg(),
+                approval=context,
+            )
+        assert not (publication.root / "c-1").exists()
+        assert not list(publication.root.glob("*.staging"))
+        path.write_bytes(original)
 
 
 def test_build_effective_source_cuts(tmp_path: Path) -> None:

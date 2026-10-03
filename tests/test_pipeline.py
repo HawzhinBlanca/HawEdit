@@ -36,6 +36,7 @@ from typing import Any
 
 import pytest
 
+import test_candidate_review as candidate_review_fixtures
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.brand import (
     BrandKit,
@@ -88,8 +89,11 @@ from hawedit.transcripts import (
     Word,
 )
 from hawedit.visual_index import MAX_FRAMES_PER_WINDOW
+from signed_pipeline_test_review import private_test_source, review_sidecars, signed_test_delivery
 
 ROOT = Path(__file__).resolve().parents[1]
+
+review_tools = candidate_review_fixtures.tools
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -286,13 +290,16 @@ def test_stage_5_fuses_the_speaker_turn_containing_the_selected_anchor(tmp_path:
 
 
 @pytest.fixture(scope="module")
-def full_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
-    """Six §3 stages against the real fixture, in one call. Rendered once."""
+def full_run(
+    tmp_path_factory: pytest.TempPathFactory, review_tools: candidate_review_fixtures.Tools
+) -> PipelineRun:
+    """Real private generation, then actual signed/freshly measured test publication."""
     if find_ffmpeg() is None:
         pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
-    work = tmp_path_factory.mktemp("pipeline")
-    return run_pipeline(
-        FIXTURE,
+    work = tmp_path_factory.mktemp("pipeline") / "private"
+    source = private_test_source(work, FIXTURE)
+    run = run_pipeline(
+        source,
         work,
         media_id="fixture",
         transcript=a_transcript(),
@@ -300,6 +307,7 @@ def full_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         qc=_test_qc(True),
         verdict=a_verdict(100, 4_100),
     )
+    return signed_test_delivery(run, review_tools)
 
 
 @needs_ffmpeg
@@ -1263,16 +1271,21 @@ def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: P
     assert Path(second.render.path) != first_path
     assert first_path.read_bytes() == first_bytes
 
-    with pytest.raises(FileExistsError, match="refusing to overwrite"):
-        run_pipeline(
-            FIXTURE,
-            work,
-            media_id="variants",
-            transcript=a_transcript("variants"),
-            select_sentences=(0,),
-            qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
-            verdict=a_verdict(100, 1_700),
-        )
+    prior = {p.name: p.read_bytes() for p in review_sidecars(first).values()}
+    repeated = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="variants",
+        transcript=a_transcript("variants"),
+        select_sentences=(0,),
+        qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
+        verdict=a_verdict(100, 1_700),
+    )
+
+    assert repeated.render is not None and not isinstance(repeated.render, StageSkipped)
+    assert Path(repeated.render.path) == first_path
+    assert {p.name: p.read_bytes() for p in review_sidecars(repeated).values()} == prior
+    review_sidecars(second)
 
 
 # --- composed model stages -----------------------------------------------------------------
@@ -1680,7 +1693,7 @@ def test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe(
     assert run.clip.output.crop_target == "speaker_face"
     assert run.render is not None and not isinstance(run.render, StageSkipped)
     assert run.render.reframe is Reframe.SPEAKER_TRACKED
-    assert run.delivery is not None and not isinstance(run.delivery, StageSkipped)
+    review_sidecars(run)
 
 
 def test_requested_speaker_tracking_refuses_missing_diarization_without_calling_provider(
@@ -2062,6 +2075,7 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
     """
     if find_ffmpeg() is None:
         pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
+    from hawedit.artifact_bundle import ArtifactBundle, BundleAlreadyExists
     from hawedit.pipeline import _clip_id, _delivery_artifact_paths
 
     work = tmp_path / "work"
@@ -2075,10 +2089,14 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
         verdict=a_verdict(100, 1_700),
     )
     assert run.render is not None and not isinstance(run.render, StageSkipped), run.render
-    guarded = set(_delivery_artifact_paths(work, _clip_id("paths", (0,))))
+    guarded = set(_delivery_artifact_paths(work / "review", _clip_id("paths", (0,))))
     assert Path(run.render.path) in guarded, (
         f"the run wrote {run.render.path}, which the overwrite guard does not check"
     )
+    before = {p.name: p.read_bytes() for p in review_sidecars(run).values()}
+    with pytest.raises(BundleAlreadyExists, match="refusing to overwrite"):
+        ArtifactBundle.create(work / "review", _clip_id("paths", (0,)), private=True)
+    assert {p.name: p.read_bytes() for p in review_sidecars(run).values()} == before
 
 
 def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> None:
@@ -2088,7 +2106,7 @@ def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> N
     """
     if find_ffmpeg() is None:
         pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
-    from hawedit.pipeline import Delivery, _clip_id
+    from hawedit.pipeline import _clip_id
 
     work = tmp_path / "work"
     clip_id = _clip_id("unreviewed", (0,))
@@ -2117,7 +2135,7 @@ def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> N
     assert run.delivery.reason == "awaiting human review"
     assert "human QC review" in run.delivery.blocked_by
 
-    # Now approve unchanged candidate and verify promotion without re-rendering
+    # Legacy metadata cannot authorize promotion, even when it matches the MP4 hash.
     cand_bytes = (review_dir / f"{clip_id}.mp4").read_bytes()
     cand_sha = hashlib.sha256(cand_bytes).hexdigest()
     run_approved = run_pipeline(
@@ -2130,11 +2148,12 @@ def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> N
         qc=_test_qc(True, reviewed_sha256=cand_sha),
     )
     assert run_approved.render is not None and not isinstance(run_approved.render, StageSkipped)
-    assert public_dir.is_dir(), "public delivery directory must now exist"
-    promoted_mp4 = public_dir / f"{clip_id}.mp4"
+    assert not public_dir.exists(), "unsigned QC cannot authorize public delivery"
+    promoted_mp4 = review_dir / f"{clip_id}.mp4"
     assert promoted_mp4.is_file()
     assert promoted_mp4.read_bytes() == cand_bytes
-    assert isinstance(run_approved.delivery, Delivery)
+    review_sidecars(run_approved)
+    assert run_approved.complete is False
 
 
 # =========================================================================================
@@ -2160,11 +2179,15 @@ def _ntsc_copy(source: Path, dest: Path, rate: str = "30000/1001") -> Path:
 
 
 def _sidecars_on_disk(work: Path, clip_id: str) -> list[str]:
-    """The exact sidecars in one atomically published delivery bundle."""
-    bundle = work / clip_id
-    if not bundle.is_dir():
-        return []
-    return sorted(path.name for path in bundle.iterdir() if path.suffix in _SIDECARS)
+    """Inspect both actual namespaces so private leftovers cannot hide behind a wrong path."""
+    directories = (work / clip_id, work / "review" / clip_id)
+    return sorted(
+        path.name
+        for directory in directories
+        if directory.is_dir()
+        for path in directory.iterdir()
+        if path.suffix in _SIDECARS
+    )
 
 
 @needs_ffmpeg
@@ -2181,7 +2204,7 @@ def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) 
         qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
         verdict=a_verdict(100, 1_700),
     )
-    assert not isinstance(run.delivery, StageSkipped), run.delivery
+    review_sidecars(run)
     assert _sidecars_on_disk(work, "safe-s0-0") == [
         "safe-s0-0.edit_plan.json",
         "safe-s0-0.edl",
@@ -2919,7 +2942,9 @@ def test_a_judge_that_does_not_want_keyframes_is_sent_none(tmp_path: Path) -> No
 
 
 @pytest.fixture(scope="module")
-def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
+def whole_run(
+    tmp_path_factory: pytest.TempPathFactory, review_tools: candidate_review_fixtures.Tools
+) -> PipelineRun:
     """A run where **every** §3 stage produced something — the first in this suite.
 
     `complete` is what the CLI's exit code derives from (`return 0 if run.complete else 1`), and
@@ -2960,9 +2985,11 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
                 candidate_id=request.candidate_id,
             )
 
-    return run_pipeline(
-        FIXTURE,
-        tmp_path_factory.mktemp("whole"),
+    work = tmp_path_factory.mktemp("whole") / "private"
+    source = private_test_source(work, FIXTURE)
+    run = run_pipeline(
+        source,
+        work,
         media_id="whole",
         transcript=a_transcript("whole"),
         diarizer=_MeasuredDiarizer(),
@@ -2973,6 +3000,7 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         judge=Judge(),
         visual_query="گرنگ",
     )
+    return signed_test_delivery(run, review_tools)
 
 
 @needs_ffmpeg
@@ -5103,7 +5131,7 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
         ),
         verdict=a_verdict(100, 1_700),
     )
-    assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
+    sidecars = review_sidecars(run)
     assert _sidecars_on_disk(work, f"{media_id}-s0-0") == [
         f"{media_id}-s0-0.edit_plan.json",
         f"{media_id}-s0-0.edl",
@@ -5111,7 +5139,7 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
         f"{media_id}-s0-0.measured.json",
         f"{media_id}-s0-0.srt",
     ]
-    edl = Path(run.delivery.edl_path).read_text(encoding="utf-8")
+    edl = sidecars["edl"].read_text(encoding="utf-8")
     assert "FCM: DROP FRAME" in edl
     assert ";" in next(line for line in edl.splitlines() if line.startswith("001"))
 
@@ -6466,7 +6494,6 @@ def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -
 
     The runner must never claim speaker tracking (speaker_face) without validated turns.
     """
-    from hawedit.pipeline import Delivery
     from hawedit.pyannote_adapter import PyannoteDiarizer
 
     result = run_pipeline(
@@ -6480,8 +6507,8 @@ def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -
     )
 
     assert result.render is not None
-    assert isinstance(result.delivery, Delivery)
-    contract = json.loads(Path(result.delivery.editing_json_path).read_text(encoding="utf-8"))
+    sidecars = review_sidecars(result)
+    contract = json.loads(sidecars["json"].read_text(encoding="utf-8"))
     assert contract["output"]["crop_target"] in {"face_tracked", "static_centre"}
     assert contract["output"]["crop_target"] != "speaker_face"
     assert result.clip is not None
@@ -6681,9 +6708,13 @@ def test_the_production_profile_cannot_deliver_with_a_skipped_stage(
         profile="production",
     )
     assert isinstance(run.delivery, StageSkipped)
-    assert "production_profile_skipped_stage" in run.delivery.reason
+    assert run.delivery.reason == "awaiting human review"
+    assert run.complete is False
+    assert run.ingest is not None and not isinstance(run.ingest, StageSkipped)
+    assert run.ingest.diarization is None
     # Delivery bundle must not be published
-    assert not (work / "delivery" / "fixture-clip-0.mp4").exists()
+    assert run.clip is not None
+    assert not (work / run.clip.clip_id).exists()
 
 
 @needs_ffmpeg
@@ -6962,17 +6993,16 @@ def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_pat
     assert run.clip.output is not None
     assert run.clip.output.silence_removed_ms == 220
     assert not isinstance(run.render, StageSkipped)
-    assert not isinstance(run.delivery, StageSkipped)
-    assert run.delivery is not None
+    sidecars = review_sidecars(run)
 
     # Verify delivery bundle files
-    assert Path(run.delivery.srt_path).is_file()
-    assert Path(run.delivery.edl_path).is_file()
-    assert Path(run.delivery.editing_json_path).is_file()
-    assert Path(run.delivery.measured_path).is_file()
+    assert sidecars["srt"].is_file()
+    assert sidecars["edl"].is_file()
+    assert sidecars["json"].is_file()
+    assert sidecars["measured.json"].is_file()
 
     # Verify measured duration
-    measured = json.loads(Path(run.delivery.measured_path).read_text(encoding="utf-8"))
+    measured = json.loads(sidecars["measured.json"].read_text(encoding="utf-8"))
     # Fixture span is 4162 ms; tightened is 4162 - 220 = 3942 ms (within 40ms tolerance)
     assert abs(measured["video"]["duration_ms"] - (4162 - 220)) <= 40
     assert abs(measured["audio"]["duration_ms"] - (4162 - 220)) <= 40
@@ -7018,7 +7048,7 @@ def test_run_pipeline_with_filler_excision(tmp_path: Path) -> None:
     assert "یەعنی" not in [w.w for w in run.clip.transcript.words]
     assert "یەعنی" not in run.clip.transcript.raw_ckb
     assert not isinstance(run.render, StageSkipped)
-    assert not isinstance(run.delivery, StageSkipped)
+    review_sidecars(run)
 
 
 def test_pipeline_parser_two_person_split_options() -> None:

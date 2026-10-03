@@ -1,6 +1,66 @@
 # Signed Delivery Caller Impact
 
+## SD-B Consumption Map (2026-10-03)
+
+Fresh actual Serena definitions/references are captured sequentially in
+SD-B-before-map.json and SD-B-before-serena.log before existing source edits. Promotion
+has the pipeline and two delivery-test callers. Direct single-clip and episode renders
+must remain private even when legacy Qc says human_reviewed. Remove the fabricated date/
+watched-seconds promotion reconstruction; host-selected raw proof is the only promotion
+input. Generic seven-member packaging remains available for private/diagnostic bundles.
+The approved fixed proof-bearing variant adds only review.json and review.sig, with
+private staging and existing atomic no-overwrite semantics. Existing bundle methods and
+their delivery/pipeline/recovery callers are mapped before editing them.
+
+New candidate_publication APIs will consume raw proof, not a verified receipt; freeze the
+configuration, require the current producer package and actual FFmpeg/ffprobe hashes,
+decode/measure the exact private staged media within bounded subprocesses, validate the
+source/output clock and edit-plan-derived sidecars, reconcile with production policy, and
+reopen proof/context at consumption. Cached measurements are never authority; compare
+their claims to fresh observations without altering the reviewed measurement sidecar.
+Labelled speaker identity remains unavailable: speaker_face publication must refuse rather
+than infer identity from a face or turn label. No fixture-only production exception.
+
+Tests will cover unsigned metadata refusal, actual signed publication preserving all nine
+members, signed invalid bytes despite cached measurements, changed proof/context/member,
+no-overwrite and interrupted staging. Source and original candidates remain unchanged.
+SD-C still owns studio job/revision/export binding and complete browser acceptance. These
+are implementation requirements, not recorded passes or acceptance.
+
+Fresh contrast map: SD-B-before-contrast-map.json captures detect_caption_ink_in_band
+and references (probe_caption_ink, measure tests), plus new publication helper callers
+before their fixes. White-on-black signed synthetic media exposed a 0.05 "contrast ratio":
+whole-band 95th/10th percentiles missed sparse glyphs and used non-linear pixel units.
+Real pixel regressions precede correction. Compute detected stroke versus adjacent surround
+using the existing relative_luminance/contrast_ratio functions; do not lower 4.5 or fabricate
+stored measurements. This corrects the observation shared by measurement callers, not
+caption text, layout, golden references, fixtures or canonical ASR. Existing textured-
+background/no-ink tests and actual decoded publication must still pass.
+
+Private-staging adoption: SD-B-before-private-map.json records actual _flush_bound_artifact,
+create/_validate and both render caller definitions/references before edits. Fresh review
+roots and exclusive staging leaves are owner-private on Windows/POSIX; unsafe existing
+roots refuse without repair. POSIX file modes may be set only on descriptor-bound, freshly
+created renderer members in this exclusive leaf, never original candidate/source/trust.
+Generic diagnostic seven-file packaging stays unchanged; proof-bearing publication remains
+the fixed nine-file version. Tests/test_private_review_bundle.py precedes this correction.
+Existing delivery promotion tests now use actual signatures/decoded media and assert all
+nine unchanged files, or refuse every changed candidate member after a valid real baseline.
+The new explicit unsigned/signed 30-byte regressions preserve the earlier counterexample.
+
 ## SD-A Implementation Map (2026-10-03)
+
+SD-B portability follow-up: SD-B-type-portability-map.json re-resolves the descriptor-bound
+flush helper and its ArtifactBundle._validate caller plus both changed delivery tests before
+the Windows typing corrections. Runtime private-storage policy is unchanged. The existing
+episode test definition/references are also recorded in SD-B-review-test-helper-map.json;
+its unsigned test claim supplies schema-required reviewer fields, never a signature.
+
+Subsequent SD-C boundary research: SD-C-before-map.json maps web POST/server setup,
+prepared configuration/result projection, submission reserve/work directory, serial dispatch/
+reconciliation, guarded billing, coarse worker/DBOS setup, manifest preview, source access
+and raw-proof publication. HTTP generation is still refused until the protected worker is
+connected; no job/revision/export integration pass is implied by this map.
 
 New candidate_review.py initially has no engine callers. Before its first fixes, actual
 Serena definition/reference queries mapped _stamp, _snapshot, _record, _bindings,

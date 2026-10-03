@@ -1,0 +1,692 @@
+.......................................................FF..........F.... [ 15%]
+.....FFF........................F....................................... [ 30%]
+.............................................................FF......... [ 46%]
+.....................................................................F.. [ 61%]
+...F............FF.................................F.................... [ 77%]
+........................................................................ [ 92%]
+....FF.............................                                      [100%]
+================================== FAILURES ===================================
+______________ test_the_run_writes_section_2s_whole_delivery_set ______________
+
+full_run = PipelineRun(media_id='fixture', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None)
+
+    @needs_ffmpeg
+    def test_the_run_writes_section_2s_whole_delivery_set(full_run: PipelineRun) -> None:
+        """�2's diagram ends with `MP4 � SRT/ASS � editing JSON � EDL`. All four, on disk.
+    
+        Two of them did not exist until M3.6, so a run could produce an MP4 and an ASS and be two
+        deliverables short of what �2 says this system delivers, with nothing reporting it.
+        """
+        from hawedit.delivery import parse_srt_times
+        from hawedit.pipeline import Delivery
+    
+>       assert isinstance(full_run.delivery, Delivery), full_run.delivery
+E       AssertionError: StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',))
+E       assert False
+E        +  where False = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), <class 'hawedit.pipeline.Delivery'>)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='fixture', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:1216: AssertionError
+______ test_distinct_selections_do_not_overwrite_each_others_deliveries _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_distinct_selections_do_no0')
+
+    @needs_ffmpeg
+    def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: Path) -> None:
+        work = tmp_path / "work"
+        first = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="variants",
+            transcript=a_transcript("variants"),
+            select_sentences=(0,),
+            qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
+            verdict=a_verdict(100, 1_700),
+        )
+        assert first.render is not None and not isinstance(first.render, StageSkipped)
+        first_path = Path(first.render.path)
+        first_bytes = first_path.read_bytes()
+    
+        second = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="variants",
+            transcript=a_transcript("variants"),
+            select_sentences=(0, 1),
+            qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_1_SHA256),
+            verdict=a_verdict(100, 4_100),
+        )
+        assert second.render is not None and not isinstance(second.render, StageSkipped)
+        assert Path(second.render.path) != first_path
+        assert first_path.read_bytes() == first_bytes
+    
+>       with pytest.raises(FileExistsError, match="refusing to overwrite"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE FileExistsError
+
+tests\test_pipeline.py:1266: Failed
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_ test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe __
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_pipeline_integrates_motio0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021CBD526C30>
+
+    @needs_ffmpeg
+    def test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task T2.1: run_pipeline with MotionSpeakerTracker reframes in SPEAKER_TRACKED mode."""
+        import cv2
+    
+        from hawedit.reframe import MotionSpeakerTracker
+        from hawedit.render import Reframe
+    
+        class _MockClassifier:
+            def empty(self) -> bool:
+                return False
+    
+            def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+                return [(200, 100, 80, 80)]
+    
+        monkeypatch.setattr(cv2, "CascadeClassifier", lambda p: _MockClassifier())
+    
+        run = run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="motion-speaker-tracked",
+            transcript=a_transcript("motion-speaker-tracked"),
+            diarizer=_MeasuredDiarizer(),
+            select_sentences=(0,),
+            verdict=replace(a_verdict(100, 1_700), candidate_id="motion-speaker-tracked-0"),
+            qc=_test_qc(True, reviewed_sha256=MOTION_SPEAKER_TRACKED_RENDER_SHA256),
+            speaker_tracker=MotionSpeakerTracker(sample_fps=5.0),
+        )
+        assert run.clip is not None and run.clip.output is not None
+        assert run.clip.output.crop_target == "speaker_face"
+        assert run.render is not None and not isinstance(run.render, StageSkipped)
+        assert run.render.reframe is Reframe.SPEAKER_TRACKED
+>       assert run.delivery is not None and not isinstance(run.delivery, StageSkipped)
+E       AssertionError: assert (StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) is not None and not True)
+E        +  where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='motion-speaker-tracked', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-s...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+E        +  and   True = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), StageSkipped)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='motion-speaker-tracked', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-s...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:1683: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+___________ test_the_guard_checks_the_paths_the_run_actually_writes ___________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_the_guard_checks_the_path0')
+
+    def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> None:
+        """The guard and the writer must derive names from one place, or the guard can miss.
+    
+        Asserted against the rendered artifact rather than against the helper: whatever the run
+        puts on disk has to be a file the guard would have refused on a second run.
+        """
+        if find_ffmpeg() is None:
+            pytest.skip("no ffmpeg � set HAWEDIT_FFMPEG")
+        from hawedit.pipeline import _clip_id, _delivery_artifact_paths
+    
+        work = tmp_path / "work"
+        run = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="paths",
+            transcript=a_transcript("paths"),
+            select_sentences=(0,),
+            qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
+            verdict=a_verdict(100, 1_700),
+        )
+        assert run.render is not None and not isinstance(run.render, StageSkipped), run.render
+        guarded = set(_delivery_artifact_paths(work, _clip_id("paths", (0,))))
+>       assert Path(run.render.path) in guarded, (
+            f"the run wrote {run.render.path}, which the overwrite guard does not check"
+        )
+E       AssertionError: the run wrote C:\Users\Wareen\AppData\Local\Temp\pytest-of-Wareen\pytest-7069\test_the_guard_checks_the_path0\work\review\paths-s0-0\paths-s0-0.mp4, which the overwrite guard does not check
+E       assert WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_the_guard_checks_the_path0/work/review/paths-s0-0/paths-s0-0.mp4') in {WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_the_guard_checks_the_path0/work/pat.../AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_the_guard_checks_the_path0/work/paths-s0-0/paths-s0-0.mp4'), ...}
+E        +  where WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_the_guard_checks_the_path0/work/review/paths-s0-0/paths-s0-0.mp4') = Path('C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_the_guard_checks_the_path0\\work\\review\\paths-s0-0\\paths-s0-0.mp4')
+E        +    where 'C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_the_guard_checks_the_path0\\work\\review\\paths-s0-0\\paths-s0-0.mp4' = RenderResult(clip_id='paths-s0-0', path='C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_...-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers', loudness_pass1=None, loudness_pass2=None, brand_kit=None).path
+E        +      where RenderResult(clip_id='paths-s0-0', path='C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_...-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers', loudness_pass1=None, loudness_pass2=None, brand_kit=None) = PipelineRun(media_id='paths', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4',...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).render
+
+tests\test_pipeline.py:2079: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+___________ test_unreviewed_render_is_retained_privately_for_review ___________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_unreviewed_render_is_reta0')
+
+    def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> None:
+        """AC-01: When render has no human QC approval, retain review candidate privately.
+    
+        Withhold public delivery until approval is provided.
+        """
+        if find_ffmpeg() is None:
+            pytest.skip("no ffmpeg � set HAWEDIT_FFMPEG")
+        from hawedit.pipeline import Delivery, _clip_id
+    
+        work = tmp_path / "work"
+        clip_id = _clip_id("unreviewed", (0,))
+        run = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="unreviewed",
+            transcript=a_transcript("unreviewed"),
+            select_sentences=(0,),
+            verdict=a_verdict(100, 1_700),
+        )
+        assert run.render is not None and not isinstance(run.render, StageSkipped), run.render
+        review_dir = work / "review" / clip_id
+        assert review_dir.is_dir(), "review candidate directory must exist"
+        assert Path(run.render.path) == review_dir / f"{clip_id}.mp4"
+        assert (review_dir / f"{clip_id}.mp4").is_file()
+        assert (review_dir / f"{clip_id}.ass").is_file()
+        assert (review_dir / f"{clip_id}.srt").is_file()
+        assert (review_dir / f"{clip_id}.edl").is_file()
+        assert (review_dir / f"{clip_id}.json").is_file()
+        assert (review_dir / f"{clip_id}.measured.json").is_file()
+    
+        public_dir = work / clip_id
+        assert not public_dir.exists(), "public delivery directory must not exist"
+        assert isinstance(run.delivery, StageSkipped)
+        assert run.delivery.reason == "awaiting human review"
+        assert "human QC review" in run.delivery.blocked_by
+    
+        # Now approve unchanged candidate and verify promotion without re-rendering
+        cand_bytes = (review_dir / f"{clip_id}.mp4").read_bytes()
+        cand_sha = hashlib.sha256(cand_bytes).hexdigest()
+        run_approved = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="unreviewed",
+            transcript=a_transcript("unreviewed"),
+            select_sentences=(0,),
+            verdict=a_verdict(100, 1_700),
+            qc=_test_qc(True, reviewed_sha256=cand_sha),
+        )
+        assert run_approved.render is not None and not isinstance(run_approved.render, StageSkipped)
+>       assert public_dir.is_dir(), "public delivery directory must now exist"
+E       AssertionError: public delivery directory must now exist
+E       assert False
+E        +  where False = is_dir()
+E        +    where is_dir = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_unreviewed_render_is_reta0/work/unreviewed-s0-0').is_dir
+
+tests\test_pipeline.py:2133: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_________ test_an_edl_safe_source_still_writes_the_whole_delivery_set _________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_an_edl_safe_source_still_0')
+
+    @needs_ffmpeg
+    def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) -> None:
+        """The control. Cleaning up unconditionally, or never building the set, passes the test
+        above and fails this one � the fixture is 25 fps and must deliver all three sidecars."""
+        work = tmp_path / "work"
+        run = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="safe",
+            transcript=a_transcript("safe"),
+            select_sentences=(0,),
+            qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
+            verdict=a_verdict(100, 1_700),
+        )
+>       assert not isinstance(run.delivery, StageSkipped), run.delivery
+E       AssertionError: StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',))
+E       assert not True
+E        +  where True = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), StageSkipped)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='safe', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4', ...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:2184: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_________ test_a_run_where_every_stage_produced_something_is_complete _________
+
+whole_run = PipelineRun(media_id='whole', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4',...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None)
+
+    @needs_ffmpeg
+    def test_a_run_where_every_stage_produced_something_is_complete(whole_run: PipelineRun) -> None:
+        """The control every test below rests on. Without a run that *is* complete, removing a
+        requirement proves nothing � which is exactly why three conjuncts were revertible."""
+>       assert whole_run.skipped() == ()
+E       AssertionError: assert (('delivery',... review',))),) == ()
+E         
+E         Left contains one more item: ('delivery', StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)))
+E         Use -v to get more diff
+
+tests\test_pipeline.py:2982: AssertionError
+----------------------------- Captured log setup ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_ test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set[30000/1001-ntsc30] _
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_an_ntsc_source_writes_a_c0')
+rate = '30000/1001', media_id = 'ntsc30'
+
+    @needs_ffmpeg
+    @pytest.mark.parametrize(
+        ("rate", "media_id"),
+        [("30000/1001", "ntsc30"), ("60000/1001", "ntsc60")],
+    )
+    def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
+        tmp_path: Path, rate: str, media_id: str
+    ) -> None:
+        ntsc = _ntsc_copy(FIXTURE, tmp_path / f"{media_id}.mp4", rate)
+        from hawedit.render import frame_rate
+    
+        assert frame_rate(ntsc) != int(frame_rate(ntsc)), "the transcode must be a non-integer rate"
+    
+        work = tmp_path / "work"
+        run = run_pipeline(
+            ntsc,
+            work,
+            media_id=media_id,
+            transcript=a_transcript(
+                media_id, media_sha256=hashlib.sha256(ntsc.read_bytes()).hexdigest()
+            ),
+            select_sentences=(0,),
+            qc=_test_qc(
+                True,
+                reviewed_sha256=NTSC30_RENDER_SHA256 if "30" in media_id else NTSC60_RENDER_SHA256,
+            ),
+            verdict=a_verdict(100, 1_700),
+        )
+>       assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
+E       AssertionError: StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',))
+E       assert (StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) is not None and not True)
+E        +  where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='ntsc30', source='C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_an...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+E        +  and   True = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), StageSkipped)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='ntsc30', source='C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_an...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:5106: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_ test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set[60000/1001-ntsc60] _
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_an_ntsc_source_writes_a_c1')
+rate = '60000/1001', media_id = 'ntsc60'
+
+    @needs_ffmpeg
+    @pytest.mark.parametrize(
+        ("rate", "media_id"),
+        [("30000/1001", "ntsc30"), ("60000/1001", "ntsc60")],
+    )
+    def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
+        tmp_path: Path, rate: str, media_id: str
+    ) -> None:
+        ntsc = _ntsc_copy(FIXTURE, tmp_path / f"{media_id}.mp4", rate)
+        from hawedit.render import frame_rate
+    
+        assert frame_rate(ntsc) != int(frame_rate(ntsc)), "the transcode must be a non-integer rate"
+    
+        work = tmp_path / "work"
+        run = run_pipeline(
+            ntsc,
+            work,
+            media_id=media_id,
+            transcript=a_transcript(
+                media_id, media_sha256=hashlib.sha256(ntsc.read_bytes()).hexdigest()
+            ),
+            select_sentences=(0,),
+            qc=_test_qc(
+                True,
+                reviewed_sha256=NTSC30_RENDER_SHA256 if "30" in media_id else NTSC60_RENDER_SHA256,
+            ),
+            verdict=a_verdict(100, 1_700),
+        )
+>       assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
+E       AssertionError: StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',))
+E       assert (StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) is not None and not True)
+E        +  where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='ntsc60', source='C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_an...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+E        +  and   True = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), StageSkipped)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='ntsc60', source='C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7069\\test_an...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:5106: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_________ test_an_unavailable_diarizer_never_claims_speaker_tracking __________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_an_unavailable_diarizer_n0')
+
+    def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -> None:
+        """pro-edit T7 / AC-9: When diarizer is unavailable, reframe stays face-tracked.
+    
+        The runner must never claim speaker tracking (speaker_face) without validated turns.
+        """
+        from hawedit.pipeline import Delivery
+        from hawedit.pyannote_adapter import PyannoteDiarizer
+    
+        result = run_pipeline(
+            FIXTURE,
+            transcript=a_transcript(FIXTURE.stem),
+            verdict=a_verdict(100, 1_700),
+            qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
+            work_dir=tmp_path / "work",
+            select_sentences=(0,),
+            diarizer=PyannoteDiarizer(),
+        )
+    
+        assert result.render is not None
+>       assert isinstance(result.delivery, Delivery)
+E       AssertionError: assert False
+E        +  where False = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), <class 'hawedit.pipeline.Delivery'>)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='kurdish-speech-3cuts', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-spe...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:6483: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_______ test_the_production_profile_cannot_deliver_with_a_skipped_stage _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_the_production_profile_ca0')
+
+    @needs_ffmpeg
+    def test_the_production_profile_cannot_deliver_with_a_skipped_stage(
+        tmp_path: Path,
+    ) -> None:
+        """Task T1.9: A run in production profile refuses delivery if any stage is StageSkipped."""
+        work = tmp_path / "work"
+        # Run pipeline with profile="production"
+        # Stage 0 (diarizer) is omitted, so diarization is skipped.
+        run = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="fixture",
+            transcript=a_transcript(),
+            select_sentences=(0, 1),
+            qc=_test_qc(True),
+            verdict=a_verdict(100, 4_100),
+            profile="production",
+        )
+        assert isinstance(run.delivery, StageSkipped)
+>       assert "production_profile_skipped_stage" in run.delivery.reason
+E       AssertionError: assert 'production_profile_skipped_stage' in 'awaiting human review'
+E        +  where 'awaiting human review' = StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)).reason
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='fixture', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts.mp4...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:6684: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+____ test_run_pipeline_applies_silence_tightening_and_reconciles_delivery _____
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_run_pipeline_applies_sile0')
+
+    @needs_ffmpeg
+    def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_path: Path) -> None:
+        """Task T3.3: run_pipeline excises dead air, resyncs timeline, and reconciles delivery."""
+        work = tmp_path / "silence_pipeline_work"
+        transcript = a_transcript("silence_test")
+        verdict = a_verdict(100, 4_100)
+    
+        # Words have gap: 1700..2000 = 300 ms.
+        # With threshold=200, target_gap=80: excess pause = 300 - 80 = 220 ms.
+        run = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="silence_test",
+            transcript=transcript,
+            select_sentences=(0, 1),
+            verdict=verdict,
+            qc=_test_qc(
+                reviewed_sha256="a2d14db869a95936122a81f44d65e021141d7fcfb49ba65f72ede7fa76479280"
+            ),
+            silence_threshold_ms=200,
+            silence_target_gap_ms=80,
+        )
+        assert run.clip is not None
+        assert run.clip.output is not None
+        assert run.clip.output.silence_removed_ms == 220
+        assert not isinstance(run.render, StageSkipped)
+>       assert not isinstance(run.delivery, StageSkipped)
+E       AssertionError: assert not True
+E        +  where True = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), StageSkipped)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='silence_test', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cut...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:6965: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+___________________ test_run_pipeline_with_filler_excision ____________________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_run_pipeline_with_filler_0')
+
+    @needs_ffmpeg
+    def test_run_pipeline_with_filler_excision(tmp_path: Path) -> None:
+        """Task: run_pipeline excises Kurdish filler tokens when excise_fillers=True."""
+        work = tmp_path / "filler_pipeline_work"
+        words = (
+            Word(w="\u0695\u06c6\u0698\u0646\u0627\u0645\u06d5\u0648\u0627\u0646\u06cc", start_ms=100, end_ms=800, conf=0.95),
+            Word(w="\u06a9\u0648\u0631\u062f\u06cc.", start_ms=800, end_ms=1_700, conf=0.94),
+            Word(w="\u06cc\u06d5\u0639\u0646\u06cc", start_ms=1_740, end_ms=1_960, conf=0.94),  # Kurdish filler
+            Word(w="\u0644\u06d5", start_ms=2_000, end_ms=2_400, conf=0.93),
+            Word(w="\u0647\u06d5\u0648\u0644\u06ce\u0631.", start_ms=2_400, end_ms=4_100, conf=0.92),
+        )
+        transcript = RawTranscript(
+            media_id="filler_test",
+            text_ckb="\u0695\u06c6\u0698\u0646\u0627\u0645\u06d5\u0648\u0627\u0646\u06cc \u06a9\u0648\u0631\u062f\u06cc. \u06cc\u06d5\u0639\u0646\u06cc \u0644\u06d5 \u0647\u06d5\u0648\u0644\u06ce\u0631.",
+            words=words,
+            asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+            media_sha256=FIXTURE_SHA256,
+        )
+        verdict = a_verdict(100, 4_100)
+        run = run_pipeline(
+            FIXTURE,
+            work,
+            media_id="filler_test",
+            transcript=transcript,
+            select_sentences=(0, 1),
+            verdict=verdict,
+            qc=_test_qc(
+                reviewed_sha256="920513041aad05408b539b4ebc1cc40fd8cec3396bf58f76b41da7e8461a4f81"
+            ),
+            silence_threshold_ms=200,
+            silence_target_gap_ms=80,
+            excise_fillers=True,
+        )
+        assert run.clip is not None
+        assert run.clip.output is not None
+        assert run.clip.output.silence_removed_ms > 0
+        # "\u06cc\u06d5\u0639\u0646\u06cc" must not be present in surviving transcript words
+        assert "\u06cc\u06d5\u0639\u0646\u06cc" not in [w.w for w in run.clip.transcript.words]
+        assert "\u06cc\u06d5\u0639\u0646\u06cc" not in run.clip.transcript.raw_ckb
+        assert not isinstance(run.render, StageSkipped)
+>       assert not isinstance(run.delivery, StageSkipped)
+E       AssertionError: assert not True
+E        +  where True = isinstance(StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)), StageSkipped)
+E        +    where StageSkipped(stage='delivery', reason='awaiting human review', blocked_by=('human QC review',)) = PipelineRun(media_id='filler_test', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-speech-3cuts...ult'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'explicit'))), episode_manifest=None).delivery
+
+tests\test_pipeline.py:7021: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+____________ test_a_full_run_reports_every_stage_through_delivery _____________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_a_full_run_reports_every_0')
+
+    @needs_ffmpeg
+    def test_a_full_run_reports_every_stage_through_delivery(tmp_path: Path) -> None:
+        events: list[RunEvent] = []
+        run = run_pipeline(
+            FIXTURE,
+            tmp_path / "work",
+            media_id="fixture",
+            transcript=a_transcript(),
+            select_sentences=(0, 1),
+            qc=Qc(
+                auto_pass=True,
+                flags=(),
+                human_reviewed=True,
+                reviewed_by="Hawa",
+                reviewed_at="2026-09-02T19:00:00Z",
+                reviewed_sha256="f4c4ba3c8bb540762eaa182cecb319e52267c8ce4e1b7743647efb3de11492e0",
+            ),
+            verdict=a_verdict(100, 4_100),
+            on_event=events.append,
+        )
+        assert run.clip is not None and not isinstance(run.render, StageSkipped)
+        completed = [event.stage for event in events if event.state is RunState.COMPLETED]
+>       assert completed == [
+            "ingest",
+            "visual_windows",
+            "transcript",
+            "sentences",
+            "index",
+            "editorial",
+            "boundary",
+            "render",
+            "delivery",
+        ], completed
+E       AssertionError: ['ingest', 'visual_windows', 'transcript', 'sentences', 'index', 'editorial', ...]
+E       assert ['ingest', 'v...itorial', ...] == ['ingest', 'v...itorial', ...]
+E         
+E         Right contains one more item: 'delivery'
+E         Use -v to get more diff
+
+tests\test_events.py:306: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_______ test_approved_candidate_promotes_identical_bytes_without_render _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_approved_candidate_promot0')
+
+    
+    
+    def test_approved_candidate_promotes_identical_bytes_without_render(
+        publication: publication_fixtures.review_fixtures.ReviewCase,
+    ) -> None:
+        """AC-02 / D-277: real signed, decoded media preserves every frozen byte."""
+        context = publication_fixtures._approve(publication)
+        rejected = replace(publication.record, verdict="rejected")
+        with pytest.raises(DeliveryRefused, match="unapproved_qc_record"):
+            promote_candidate(
+                publication.root, "c-1", rejected, source=publication.source, approval=context
+            )
+        mismatched = replace(publication.record, mp4_sha256="1" * 64)
+        with pytest.raises(DeliveryRefused, match="qc_claims_mismatch"):
+            promote_candidate(
+                publication.root, "c-1", mismatched, source=publication.source,
+                ffmpeg=find_ffmpeg(), approval=context,
+            )
+        published = promote_candidate(
+            publication.root, "c-1", publication.record, source=publication.source,
+            ffmpeg=find_ffmpeg(), approval=context,
+        )
+        assert len(published) == 9
+        assert {p.name: p.read_bytes() for p in published} == {
+            p.name: p.read_bytes() for p in publication.packet.iterdir()
+        }
+        published_clip = Clip.from_dict(
+            json.loads((publication.root / "c-1" / "c-1.json").read_bytes())
+        )
+        assert published_clip.qc is not None
+        assert published_clip.qc.human_reviewed is True
+        assert published_clip.qc.reviewed_sha256 == publication.record.mp4_sha256
+        assert CandidateState.APPROVED.value == "approved"
+        assert CandidateState.RENDERED_FOR_REVIEW.value == "rendered_for_review"
+    
+    
+    def test_promotion_rejects_changed_sidecar_or_plan_binding(
+        publication: publication_fixtures.review_fixtures.ReviewCase,
+    ) -> None:
+        """VE-00 / D-277: actual valid publication precedes every tampered candidate check."""
+        context = publication_fixtures._approve(publication)
+        publication_fixtures._assert_publishable(publication, context)
+        for suffix in ("ass", "srt", "edl", "json"):
+            path = publication.candidate / f"c-1.{suffix}"
+            original = path.read_bytes()
+            path.write_bytes(original + b"altered")
+            with pytest.raises(DeliveryRefused, match="authenticated_delivery_refused"):
+                promote_candidate(
+                    publication.root, "c-1", publication.record, source=publication.source,
+                    ffmpeg=find_ffmpeg(), approval=context,
+                )
+            assert not (publication.root / "c-1").exists()
+            assert not list(publication.root.glob("*.staging"))
+            path.write_bytes(original)
+    
+    
+    def test_build_effective_source_cuts(tmp_path: Path) -> None:
+        ass_file = tmp_path / "test.ass"
+        ass_file.write_text(
+            "[Script Info]\nScriptType: v4.00+\n\n"
+            "[Events]\n"
+>           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+            "Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,Word1\n"
+            "Dialogue: 0,0:00:03.00,0:00:04.00,Default,,0,0,0,,Word2\n",
+            encoding="utf-8",
+        )
+
+tests\test_delivery.py:1306: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+work_dir = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_approved_candidate_promot0')
+candidate_id = 'test-reconcile-clip'
+qc_record = QcRecord(reviewer='Hawa', reviewed_at='2026-09-02T19:00:00Z', mp4_sha256='2fd46cf6752223b78f261e00a8afcbe5dab52f680af00ad69e41298b8814d2fe', seconds_watched=57.0, verdict='approved', notes='')
+source = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_approved_candidate_promot0/source.mp4')
+approval = None, ffmpeg = None, captions_burned_in = None
+planned_punch_ins = (), source_shot_cuts_ms = (), fps = 25.0
+delivery_lufs = -14.0, target_true_peak_db = -0.7, shot_cut_guard_ms = 1500
+lufs_tolerance = None, min_face_share = None, speaker_turns = ()
+
+    def promote_candidate(
+        work_dir: Path,
+        candidate_id: str,
+        qc_record: QcRecord,
+        *,
+        source: Path | None = None,
+        approval: ApprovalContext | None = None,
+        ffmpeg: Path | None = None,
+        captions_burned_in: bool | None = None,
+        planned_punch_ins: Sequence[tuple[int, float]] = (),
+        source_shot_cuts_ms: Sequence[int] = (),
+        fps: float = 25.0,
+        delivery_lufs: float = -14.0,
+        target_true_peak_db: float = -0.7,
+        shot_cut_guard_ms: int = 1500,
+        lufs_tolerance: float | None = None,
+        min_face_share: float | None = None,
+        speaker_turns: Sequence[tuple[int, int, str]] = (),
+    ) -> tuple[Path, ...]:
+        """Promote only authenticated, freshly inspected, unchanged review bytes (D-277).
+    
+        QcRecord is optional descriptive metadata at the signed publication boundary, never
+        authority. The host supplies raw proof and private trust; legacy callers fail closed.
+        """
+        if not qc_record.is_approved:
+            raise DeliveryRefused(
+                "unapproved_qc_record", "explicit approved verdict", qc_record.verdict
+            )
+        if approval is None:
+>           raise DeliveryRefused(
+                "authenticated_review_required",
+                "host-configured detached OpenSSH review proof",
+                "unsigned QC metadata is not publication authority",
+            )
+E           hawedit.delivery.DeliveryRefused: authenticated_review_required: expected 'host-configured detached OpenSSH review proof', measured 'unsigned QC metadata is not publication authority'
+
+src\hawedit\delivery.py:775: DeliveryRefused
+___________ test_promotion_rejects_changed_sidecar_or_plan_binding ____________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7069/test_promotion_rejects_changed0')
+
+>   ???
+E   AssertionError: Regex pattern did not match.
+E     Expected regex: 'caption_integrity_failed'
+E     Actual message: "authenticated_review_required: expected 'host-configured detached OpenSSH review proof', measured 'unsigned QC metadata is not publication authority'"
+
+tests\test_delivery.py:1428: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_pipeline.py::test_the_run_writes_section_2s_whole_delivery_set
+FAILED tests/test_pipeline.py::test_distinct_selections_do_not_overwrite_each_others_deliveries
+FAILED tests/test_pipeline.py::test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe
+FAILED tests/test_pipeline.py::test_the_guard_checks_the_paths_the_run_actually_writes
+FAILED tests/test_pipeline.py::test_unreviewed_render_is_retained_privately_for_review
+FAILED tests/test_pipeline.py::test_an_edl_safe_source_still_writes_the_whole_delivery_set
+FAILED tests/test_pipeline.py::test_a_run_where_every_stage_produced_something_is_complete
+FAILED tests/test_pipeline.py::test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set[30000/1001-ntsc30]
+FAILED tests/test_pipeline.py::test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set[60000/1001-ntsc60]
+FAILED tests/test_pipeline.py::test_an_unavailable_diarizer_never_claims_speaker_tracking
+FAILED tests/test_pipeline.py::test_the_production_profile_cannot_deliver_with_a_skipped_stage
+FAILED tests/test_pipeline.py::test_run_pipeline_applies_silence_tightening_and_reconciles_delivery
+FAILED tests/test_pipeline.py::test_run_pipeline_with_filler_excision - Asser...
+FAILED tests/test_events.py::test_a_full_run_reports_every_stage_through_delivery
+FAILED tests/test_delivery.py::test_approved_candidate_promotes_identical_bytes_without_render
+FAILED tests/test_delivery.py::test_promotion_rejects_changed_sidecar_or_plan_binding

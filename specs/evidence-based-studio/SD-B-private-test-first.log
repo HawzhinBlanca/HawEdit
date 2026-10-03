@@ -1,0 +1,34 @@
+FF                                                                       [100%]
+================================== FAILURES ===================================
+_ test_private_review_bundle_is_owner_private_before_and_after_atomic_freeze __
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7071/test_private_review_bundle_is_0')
+
+    def test_private_review_bundle_is_owner_private_before_and_after_atomic_freeze(
+        tmp_path: Path,
+    ) -> None:
+>       bundle = ArtifactBundle.create(tmp_path / "review", "c-1", private=True)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: ArtifactBundle.create() got an unexpected keyword argument 'private'
+
+tests\test_private_review_bundle.py:17: TypeError
+___ test_private_review_bundle_refuses_existing_unsafe_root_without_repair ____
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7071/test_private_review_bundle_ref0')
+
+    def test_private_review_bundle_refuses_existing_unsafe_root_without_repair(
+        tmp_path: Path,
+    ) -> None:
+        root = tmp_path / "existing"
+        root.mkdir(mode=0o755)
+        sentinel = root / "sentinel.txt"
+        sentinel.write_bytes(b"owner data")
+        before = root.stat().st_mode
+        with pytest.raises(BundleError, match="private|unsafe|nonprivate|unavailable"):
+>           ArtifactBundle.create(root, "c-1", private=True)
+E           TypeError: ArtifactBundle.create() got an unexpected keyword argument 'private'
+
+tests\test_private_review_bundle.py:38: TypeError
+=========================== short test summary info ===========================
+FAILED tests/test_private_review_bundle.py::test_private_review_bundle_is_owner_private_before_and_after_atomic_freeze
+FAILED tests/test_private_review_bundle.py::test_private_review_bundle_refuses_existing_unsafe_root_without_repair

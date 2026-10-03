@@ -312,8 +312,12 @@ def test_a_full_run_reports_every_stage_through_delivery(tmp_path: Path) -> None
         "editorial",
         "boundary",
         "render",
-        "delivery",
     ], completed
+    assert isinstance(run.delivery, StageSkipped)
+    assert run.delivery.reason == "awaiting human review"
+    assert events[-1].stage == "delivery"
+    assert events[-1].state is RunState.SKIPPED
+    assert events[-1].reason == "awaiting human review"
     assert [event.sequence for event in events] == list(range(1, len(events) + 1))
 
 

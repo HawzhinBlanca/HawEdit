@@ -1,0 +1,16 @@
+==> lint
+All checks passed!
+==> typecheck
+src\hawedit\candidate_publication.py:254: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Path"  [arg-type]
+src\hawedit\candidate_publication.py:254: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "str"  [arg-type]
+src\hawedit\candidate_publication.py:254: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Mapping[str, object]"  [arg-type]
+src\hawedit\candidate_publication.py:274: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Path"  [arg-type]
+src\hawedit\candidate_publication.py:274: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "str"  [arg-type]
+src\hawedit\candidate_publication.py:274: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Mapping[str, object]"  [arg-type]
+src\hawedit\candidate_publication.py:278: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Path"  [arg-type]
+src\hawedit\candidate_publication.py:278: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "str"  [arg-type]
+src\hawedit\candidate_publication.py:278: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Mapping[str, object]"  [arg-type]
+src\hawedit\candidate_publication.py:279: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Path"  [arg-type]
+src\hawedit\candidate_publication.py:279: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "str"  [arg-type]
+src\hawedit\candidate_publication.py:279: error: Argument 2 to "verify_candidate_review" has incompatible type "**dict[str, object]"; expected "Mapping[str, object]"  [arg-type]
+Found 12 errors in 1 file (checked 301 source files)

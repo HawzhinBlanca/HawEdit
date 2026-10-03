@@ -1,0 +1,27 @@
+Could not find containing symbol for src\hawedit\delivery.py:68:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\pipeline.py:114:4. Returning file symbol instead
+Could not find containing symbol for tests\test_delivery.py:47:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\delivery.py:71:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\pipeline.py:115:4. Returning file symbol instead
+Could not find containing symbol for tests\test_cover.py:15:71. Returning file symbol instead
+Could not find containing symbol for tests\test_delivery.py:48:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\pipeline.py:259:5. Returning file symbol instead
+Could not find containing symbol for tests\test_checkpoint.py:23:43. Returning file symbol instead
+Could not find containing symbol for tests\test_episode.py:27:43. Returning file symbol instead
+Could not find containing symbol for tests\test_events.py:25:56. Returning file symbol instead
+Could not find containing symbol for tests\test_pipeline.py:79:4. Returning file symbol instead
+Could not find containing symbol for tests\test_render_boundary_revision.py:24:42. Returning file symbol instead
+Could not find containing symbol for tests\test_render_caption_revision.py:21:56. Returning file symbol instead
+Could not find containing symbol for tests\test_run_cost.py:24:44. Returning file symbol instead
+Could not find containing symbol for tests\test_screener.py:16:29. Returning file symbol instead
+Could not find containing symbol for src\hawedit\delivery.py:45:36. Returning file symbol instead
+Could not find containing symbol for src\hawedit\pipeline.py:53:36. Returning file symbol instead
+Could not find containing symbol for tests\test_artifact_bundle.py:12:36. Returning file symbol instead
+Could not find containing symbol for tests\test_robustness_audit.py:15:36. Returning file symbol instead
+Could not find containing symbol for src\hawedit\measure.py:43:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\pipeline.py:169:45. Returning file symbol instead
+Could not find containing symbol for tests\test_measure.py:15:4. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_artifacts.py:19:28. Returning file symbol instead
+Could not find containing symbol for tests\test_studio_generation.py:12:28. Returning file symbol instead
+Could not find containing symbol for tests\media\test_real_media_tier.py:18:50. Returning file symbol instead
+Mapped 18 actual Serena definition/reference records

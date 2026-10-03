@@ -33,28 +33,25 @@ alignment (D-151).
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import math
 import re
 from collections.abc import Sequence
-from dataclasses import replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
-from hawedit.artifact_bundle import ArtifactBundle, BundleError
-from hawedit.boundary import BoundaryInvariantViolated, assert_boundary_invariant
 from hawedit.captions import (
     DEFAULT_MAX_CHARS_PER_LINE,
-    CaptionVerificationError,
-    verify_caption_integrity,
     wrap_caption_lines,
 )
-from hawedit.clip import Clip, Qc, QcRecord
+from hawedit.clip import Clip, QcRecord
 from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.timeline import build_episode_otio_timeline, build_otio_timeline, serialize_otio
+
+if TYPE_CHECKING:
+    from hawedit.candidate_publication import ApprovalContext
 
 __all__ = [
     "CandidateState",
@@ -752,6 +749,7 @@ def promote_candidate(
     qc_record: QcRecord,
     *,
     source: Path | None = None,
+    approval: ApprovalContext | None = None,
     ffmpeg: Path | None = None,
     captions_burned_in: bool | None = None,
     planned_punch_ins: Sequence[tuple[int, float]] = (),
@@ -764,227 +762,53 @@ def promote_candidate(
     min_face_share: float | None = None,
     speaker_turns: Sequence[tuple[int, int, str]] = (),
 ) -> tuple[Path, ...]:
-    """Verify and promote an unchanged review candidate to public delivery (AC-02).
+    """Promote only authenticated, freshly inspected, unchanged review bytes (D-277).
 
-    Validates:
-    - qc_record is approved.
-    - review candidate directory exists under work_dir / "review" / candidate_id.
-    - candidate MP4 exists and SHA-256 matches qc_record.mp4_sha256.
-    - candidate sidecars exist (ass, srt, edl, json, measured.json).
-    - candidate editing JSON loads, clip_id matches candidate_id, and assert_renderable()
-      holds when bound to approved QC.
-    - candidate measured.json loads and matches the MP4 SHA-256.
-    - if source is provided, verifies source file exists and matches clip.media_sha256.
-    - reconciles delivery against measured truth.
-    - atomically publishes the exact candidate files into public work_dir / candidate_id
-      using ArtifactBundle without re-rendering.
-
-    Returns:
-        tuple[Path, ...]: published artifact paths in work_dir / candidate_id.
+    QcRecord is optional descriptive metadata at the signed publication boundary, never
+    authority. The host supplies raw proof and private trust; legacy callers fail closed.
     """
     if not qc_record.is_approved:
         raise DeliveryRefused(
-            "unapproved_qc_record",
-            expected="approved verdict (one of pass, approved, accept, passed)",
-            measured=qc_record.verdict,
+            "unapproved_qc_record", "explicit approved verdict", qc_record.verdict
         )
-
-    review_dir = work_dir / "review" / candidate_id
-    if not review_dir.is_dir():
-        raise DeliveryError(f"review candidate directory not found: {review_dir}")
-
-    candidate_mp4 = review_dir / f"{candidate_id}.mp4"
-    candidate_ass = review_dir / f"{candidate_id}.ass"
-    candidate_srt = review_dir / f"{candidate_id}.srt"
-    candidate_edl = review_dir / f"{candidate_id}.edl"
-    candidate_json = review_dir / f"{candidate_id}.json"
-    candidate_measured = review_dir / f"{candidate_id}.measured.json"
-
-    for path in (
-        candidate_mp4,
-        candidate_ass,
-        candidate_srt,
-        candidate_edl,
-        candidate_json,
-        candidate_measured,
+    if approval is None:
+        raise DeliveryRefused(
+            "authenticated_review_required",
+            "host-configured detached OpenSSH review proof",
+            "unsigned QC metadata is not publication authority",
+        )
+    if source is None:
+        raise DeliveryRefused("review_source_required", "bound source media", "missing")
+    if (
+        captions_burned_in is False
+        or planned_punch_ins
+        or source_shot_cuts_ms
+        or speaker_turns
+        or delivery_lufs != -14.0
+        or target_true_peak_db != -0.7
+        or shot_cut_guard_ms != 1500
+        or lufs_tolerance is not None
+        or min_face_share is not None
     ):
-        if not path.is_file():
-            raise DeliveryError(f"review candidate is missing required artifact: {path.name}")
-
-    mp4_bytes = candidate_mp4.read_bytes()
-    candidate_sha = hashlib.sha256(mp4_bytes).hexdigest().lower()
-    if candidate_sha != qc_record.mp4_sha256.lower():
         raise DeliveryRefused(
-            "qc_sha256_mismatch",
-            expected=qc_record.mp4_sha256.lower(),
-            measured=candidate_sha,
+            "unbound_delivery_override",
+            "signed edit plan and unchanged production reconciliation policy",
+            "legacy overrides cannot alter publication checks",
         )
+    policy = approval.effective_configuration.get("delivery")
+    if not isinstance(policy, dict) or policy.get("fps") != fps:
+        raise DeliveryRefused("delivery_policy_binding", "signed output frame rate", fps)
+    from hawedit.candidate_publication import publish_reviewed_candidate
+    from hawedit.captions import find_ffmpeg
 
-    try:
-        clip_data = json.loads(candidate_json.read_text(encoding="utf-8"))
-        clip = Clip.from_dict(clip_data)
-    except Exception as exc:
-        raise DeliveryError(f"invalid candidate editing JSON: {exc}") from exc
-
-    if clip.clip_id != candidate_id:
-        raise DeliveryRefused(
-            "candidate_id_mismatch",
-            expected=candidate_id,
-            measured=clip.clip_id,
-        )
-
-    if source is not None:
-        if not source.is_file():
-            raise DeliveryError(f"source media file not found: {source}")
-        if clip.media_sha256 is not None:
-            source_sha = hashlib.sha256(source.read_bytes()).hexdigest().lower()
-            if source_sha != clip.media_sha256.lower():
-                raise DeliveryRefused(
-                    "source_identity_mismatch",
-                    expected=clip.media_sha256.lower(),
-                    measured=source_sha,
-                )
-
-    qc = Qc.from_record(qc_record)
-    approved_clip = replace(clip, qc=qc)
-    try:
-        approved_clip.assert_renderable()
-    except (BoundaryInvariantViolated, ValueError) as exc:
-        raise DeliveryRefused(
-            "plan_binding_invariant_violation",
-            expected="valid renderable approved clip with boundary invariants",
-            measured=str(exc),
-        ) from exc
-
-    try:
-        measurement = ClipMeasurement.from_json(candidate_measured.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise DeliveryError(f"invalid candidate measurement JSON: {exc}") from exc
-
-    if measurement.file.sha256.lower() != candidate_sha:
-        raise DeliveryRefused(
-            "measurement_sha256_mismatch",
-            expected=candidate_sha,
-            measured=measurement.file.sha256.lower(),
-        )
-
-    try:
-        assert_boundary_invariant(approved_clip.boundary)
-    except Exception as exc:
-        raise DeliveryRefused(
-            "plan_binding_invariant_violation",
-            expected="valid boundary invariant",
-            measured=str(exc),
-        ) from exc
-
-    try:
-        verify_caption_integrity(
-            candidate_ass,
-            expected_text=(
-                approved_clip.transcript.raw_ckb
-                if (approved_clip.transcript and approved_clip.transcript.words)
-                else None
-            ),
-        )
-    except CaptionVerificationError as exc:
-        raise DeliveryRefused(
-            "caption_integrity_failed",
-            expected="valid caption integrity (text, glyphs, geometry)",
-            measured=str(exc),
-        ) from exc
-
-    srt_text = candidate_srt.read_text(encoding="utf-8")
-    if not srt_text.strip():
-        raise DeliveryRefused(
-            "empty_sidecar",
-            expected="non-empty srt sidecar",
-            measured="empty",
-        )
-    try:
-        parse_srt_times(srt_text)
-    except DeliveryError as exc:
-        raise DeliveryRefused(
-            "corrupt_srt_sidecar",
-            expected="valid parseable srt cues",
-            measured=str(exc),
-        ) from exc
-
-    edl_text = candidate_edl.read_text(encoding="utf-8").strip()
-    if not edl_text or not edl_text.startswith("TITLE:"):
-        raise DeliveryRefused(
-            "invalid_edl_sidecar",
-            expected="valid edl starting with TITLE:",
-            measured=edl_text[:40] if edl_text else "empty",
-        )
-
-    effective_captions_burned = (
-        captions_burned_in
-        if captions_burned_in is not None
-        else bool(approved_clip.output and approved_clip.output.caption_style != "none")
+    resolved = ffmpeg or find_ffmpeg()
+    if resolved is None:
+        raise DeliveryRefused("ffmpeg_required", "recorded FFmpeg toolchain", "unavailable")
+    return publish_reviewed_candidate(
+        work_dir=work_dir,
+        candidate_id=candidate_id,
+        source=source,
+        ffmpeg=resolved,
+        approval=approval,
+        qc_record=qc_record,
     )
-
-    candidate_edit_plan = review_dir / f"{candidate_id}.edit_plan.json"
-    if not candidate_edit_plan.is_file():
-        candidate_edit_plan = review_dir / "edit_plan.json"
-
-    edit_plan_cuts: list[int] = []
-    silence_cuts: list[int] = []
-    if candidate_edit_plan.is_file() and candidate_edit_plan.stat().st_size > 0:
-        try:
-            plan_data = json.loads(candidate_edit_plan.read_text(encoding="utf-8"))
-            edit_plan_cuts.extend(int(pc) for pc in plan_data.get("shot_cuts_ms", []))
-            retained = plan_data.get("time_mapping", {}).get("retained_intervals_ms", [])
-            accum_ms = 0
-            for start_ms, end_ms in retained:
-                accum_ms += end_ms - start_ms
-                silence_cuts.append(accum_ms)
-        except Exception:
-            pass
-
-    effective_source_cuts = build_effective_source_cuts(
-        approved_clip.in_ms,
-        source_shot_cuts_ms,
-        edit_plan_cuts=edit_plan_cuts,
-        silence_cuts=silence_cuts,
-        ass_path=candidate_ass if candidate_ass.is_file() else None,
-    )
-
-    reconcile_delivery(
-        clip=approved_clip,
-        measurement=measurement,
-        captions_burned_in=effective_captions_burned,
-        planned_punch_ins=planned_punch_ins,
-        source_shot_cuts_ms=effective_source_cuts,
-        fps=fps,
-        delivery_lufs=delivery_lufs,
-        target_true_peak_db=target_true_peak_db,
-        shot_cut_guard_ms=shot_cut_guard_ms,
-        lufs_tolerance=lufs_tolerance,
-        min_face_share=min_face_share,
-        for_review=False,
-        speaker_turns=speaker_turns,
-    )
-
-    bundle = ArtifactBundle.create(work_dir, candidate_id)
-    try:
-        if not candidate_edit_plan.is_file() or candidate_edit_plan.stat().st_size == 0:
-            raise DeliveryRefused(
-                "missing_edit_plan",
-                expected="non-empty edit_plan.json in candidate review bundle",
-                measured=f"absent or empty at {candidate_edit_plan}",
-            )
-        bundle.staged_path("edit_plan.json").write_bytes(candidate_edit_plan.read_bytes())
-        bundle.staged_path("mp4").write_bytes(mp4_bytes)
-        bundle.staged_path("ass").write_bytes(candidate_ass.read_bytes())
-        bundle.staged_path("srt").write_bytes(candidate_srt.read_bytes())
-        bundle.staged_path("edl").write_bytes(candidate_edl.read_bytes())
-        bundle.staged_path("measured.json").write_bytes(candidate_measured.read_bytes())
-        bundle.write_text(
-            "json",
-            json.dumps(approved_clip.to_dict(), ensure_ascii=False, indent=2),
-        )
-        return bundle.publish()
-    except Exception:
-        with contextlib.suppress(BundleError):
-            bundle.discard()
-        raise

@@ -1,0 +1,3 @@
+Could not find containing symbol for src\hawedit\measure.py:41:5. Returning file symbol instead
+Could not find containing symbol for tests\test_measure.py:12:4. Returning file symbol instead
+Mapped 6 actual symbols

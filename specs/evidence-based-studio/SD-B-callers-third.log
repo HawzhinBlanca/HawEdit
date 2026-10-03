@@ -1,0 +1,116 @@
+........................................................................ [ 14%]
+........................................................................ [ 29%]
+........................................................................ [ 44%]
+........................................................................ [ 59%]
+...................................F.................................... [ 73%]
+........................................................................ [ 88%]
+.......................................................                  [100%]
+================================== FAILURES ===================================
+_____ test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest _____
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7075/test_episode_cli_renders_disti0')
+
+    @pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg � set HAWEDIT_FFMPEG")
+    def test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest(tmp_path: Path) -> None:
+        """AC-19: Episode pipeline delivers up to N distinct clips with shared preprocessing."""
+        # 1. Assert CLI surface parses episode arguments accurately
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                str(FIXTURE),
+                "--max-clips",
+                "2",
+                "--min-separation-ms",
+                "100",
+                "--max-text-similarity",
+                "0.7",
+                "--episode-id",
+                "ep-custom-123",
+            ]
+        )
+        assert args.max_clips == 2
+        assert args.min_separation_ms == 100
+        assert args.max_text_similarity == 0.7
+        assert args.episode_id == "ep-custom-123"
+    
+        # 2. Run pipeline with max_clips=2 over FIXTURE with 3 candidates
+        cand1 = Candidate("c1", "fixture", 100, 1_500, DiscoveryPath.VERBAL, rank=1, score=0.95)
+        cand2 = Candidate("c2", "fixture", 2_000, 4_100, DiscoveryPath.VERBAL, rank=2, score=0.90)
+        cand3 = Candidate("c3", "fixture", 100, 4_100, DiscoveryPath.VERBAL, rank=3, score=0.85)
+    
+        class MultiJudge:
+            model_id = "gemini-2.5-pro"
+    
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+    
+            def judge(self, request: JudgeRequest) -> JudgeVerdict:
+                self.calls.append(request.candidate_id)
+                score = (
+                    0.95
+                    if request.candidate_id == "c1"
+                    else (0.90 if request.candidate_id == "c2" else 0.85)
+                )
+                return JudgeVerdict(
+                    candidate_id=request.candidate_id,
+                    clip_in_ms=request.clip_in_ms,
+                    clip_out_ms=request.clip_out_ms,
+                    hook_score=score,
+                    self_contained=True,
+                    payoff_at_ms=(request.clip_in_ms + request.clip_out_ms) // 2,
+                    meaning_fidelity=0.92,
+                    misleading_edit_risk=0.03,
+                    cultural_landing=0.85,
+                    narrative_role="payoff",
+                    title_ckb=f"\u0633\u06d5\u0631\u062f\u06ce\u0695\u06cc {request.candidate_id}",
+                    description_ckb="\u0648\u06d5\u0633\u0641\u06cc \u06a9\u0648\u0631\u062a\u06cc \u06af\u0631\u062a\u06d5\u06a9\u06d5",
+                    hashtags_ckb=("#\u06a9\u0648\u0631\u062f\u0633\u062a\u0627\u0646",),
+                    judge="gemini-2.5-pro",
+                    payoff_strength=0.85,
+                    ends_on_a_beat=True,
+                    reason_ckb="\u0634\u06cc\u0627\u0648\u06d5 \u0628\u06c6 \u0628\u06b5\u0627\u0648\u06a9\u0631\u062f\u0646\u06d5\u0648\u06d5",
+                    title_variants_ckb=(f"\u0633\u06d5\u0631\u062f\u06ce\u0695\u06cc {request.candidate_id}", "\u067e\u0631\u0633\u06cc\u0627\u0631", "\u0648\u06d5\u06b5\u0627\u0645"),
+                )
+    
+        work_dir = tmp_path / "work"
+        judge = MultiJudge()
+        run = run_pipeline(
+            FIXTURE,
+            work_dir,
+            media_id="fixture",
+            transcript=_a_transcript("fixture"),
+            discover=lambda _n: [cand1, cand2, cand3],
+            judge=judge,
+            auto_select=True,
+            judge_top_n=3,
+            min_clip_ms=1_000,
+            max_clips=2,
+            min_separation_ms=100,
+            episode_id="ep-custom-123",
+>           qc=Qc(auto_pass=True, flags=(), human_reviewed=True),
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+tests\test_episode.py:373: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<string>:9: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = Qc(auto_pass=True, flags=(), human_reviewed=True, reviewed_by=None, reviewed_at=None, reviewed_sha256=None)
+
+    def __post_init__(self) -> None:
+        _strict_bool(self.auto_pass, "qc.auto_pass")
+        _strict_bool(self.human_reviewed, "qc.human_reviewed")
+        if not isinstance(self.flags, tuple) or any(
+            not isinstance(flag, str) or not flag.strip() for flag in self.flags
+        ):
+            raise ValueError("qc.flags must be a tuple of non-empty strings")
+        if self.human_reviewed:
+            if not isinstance(self.reviewed_by, str) or not self.reviewed_by.strip():
+>               raise ValueError("qc.human_reviewed requires a non-empty reviewed_by string")
+E               ValueError: qc.human_reviewed requires a non-empty reviewed_by string
+
+src\hawedit\clip.py:777: ValueError
+=========================== short test summary info ===========================
+FAILED tests/test_episode.py::test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest
