@@ -12,7 +12,7 @@ import math
 import re
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -231,10 +231,13 @@ class SubmissionStore:
     @staticmethod
     def _select() -> str:
         return (
-            "SELECT job_id,substr(snapshot_json,1,131073) AS snapshot_json,"
+            "SELECT substr(job_id,1,72) AS job_id,length(CAST(job_id AS BLOB)) AS job_id_bytes,"
+            "substr(snapshot_json,1,131073) AS snapshot_json,"
             "length(CAST(snapshot_json AS BLOB)) AS snapshot_bytes,"
-            "dispatch_state,substr(last_error,1,513) AS last_error,"
-            "length(CAST(last_error AS BLOB)) AS error_bytes,created_at FROM submissions"
+            "substr(dispatch_state,1,10) AS dispatch_state,substr(last_error,1,513) AS last_error,"
+            "length(CAST(last_error AS BLOB)) AS error_bytes,"
+            "CASE WHEN typeof(created_at) IN ('integer','real') THEN created_at "
+            "ELSE NULL END AS created_at FROM submissions"
         )
 
     def _get(self, connection: sqlite3.Connection, job_id: str) -> StoredSubmission:
@@ -312,14 +315,124 @@ class SubmissionStore:
         with self._connection() as connection:
             return self._get(connection, job_id)
 
-    def pending(self) -> list[StoredSubmission]:
+    def _bounded_read(
+        self,
+        condition: str,
+        parameters: tuple[str, ...],
+        *,
+        max_jobs: int,
+        max_bytes: int,
+        max_seconds: float,
+    ) -> tuple[StoredSubmission, ...]:
+        if type(max_jobs) is not int or not 1 <= max_jobs <= 10000:
+            raise ValueError("Recovery job limit must be an integer from 1 to 10000")
+        if type(max_bytes) is not int or not 1 <= max_bytes <= 256 * 1024 * 1024:
+            raise ValueError("Recovery byte limit must be an integer from 1 to 256 MiB")
+        if (
+            type(max_seconds) not in (int, float)
+            or not math.isfinite(max_seconds)
+            or not 0 < max_seconds <= 10
+        ):
+            raise ValueError(
+                "Recovery query deadline must be finite, positive and at most 10 seconds"
+            )
         with self._connection() as connection:
-            return [
-                self._decode(row)
-                for row in connection.execute(
-                    self._select() + " WHERE dispatch_state='pending' ORDER BY created_at,job_id"
+            started = time.perf_counter()
+            interrupted = False
+
+            def progress() -> int:
+                nonlocal interrupted
+                interrupted = time.perf_counter() - started >= max_seconds
+                return int(interrupted)
+
+            connection.set_progress_handler(progress, 1000)
+            rows: list[sqlite3.Row] = []
+            size = 0
+            try:
+                cursor = connection.execute(
+                    self._select() + condition + " ORDER BY created_at,job_id LIMIT ?",
+                    (*parameters, max_jobs + 1),
                 )
-            ]
+                for row in cursor:
+                    if len(rows) >= max_jobs:
+                        raise StudioStorageError(
+                            "Recovery intake exceeds the job limit; no work was omitted"
+                        )
+                    size += (
+                        (row["job_id_bytes"] or 0)
+                        + (row["snapshot_bytes"] or 0)
+                        + (row["error_bytes"] or 0)
+                    )
+                    if size > max_bytes:
+                        raise StudioStorageError(
+                            "Recovery intake exceeds the byte limit; no work was omitted"
+                        )
+                    rows.append(row)
+            except sqlite3.Error as exc:
+                if interrupted:
+                    raise StudioStorageError(
+                        "Recovery intake query budget exceeded; all work is preserved"
+                    ) from exc
+                raise
+            finally:
+                connection.set_progress_handler(None, 0)
+            if time.perf_counter() - started >= max_seconds:
+                raise StudioStorageError(
+                    "Recovery intake query budget exceeded; all work is preserved"
+                )
+            return tuple(self._decode(row) for row in rows)
+
+    def pending(
+        self, *, max_jobs: int = 1000, max_bytes: int = 16 * 1024 * 1024, max_seconds: float = 5.0
+    ) -> list[StoredSubmission]:
+        """Refuse oversized intake before decoding; never silently truncate pending work."""
+        return list(
+            self._bounded_read(
+                " WHERE dispatch_state='pending'",
+                (),
+                max_jobs=max_jobs,
+                max_bytes=max_bytes,
+                max_seconds=max_seconds,
+            )
+        )
+
+    def recovery_snapshot(
+        self,
+        job_ids: Sequence[str],
+        *,
+        max_jobs: int = 1000,
+        max_bytes: int = 16 * 1024 * 1024,
+        max_seconds: float = 5.0,
+    ) -> tuple[StoredSubmission, ...]:
+        """Read precisely requested outbox IDs; this grants no recovery/execution authority."""
+        if not isinstance(job_ids, list | tuple):
+            raise ValueError("Recovery IDs must be a bounded list or tuple")
+        if type(max_jobs) is not int or not 1 <= max_jobs <= 10000:
+            raise ValueError("Recovery job limit must be an integer from 1 to 10000")
+        if len(job_ids) > max_jobs:
+            raise StudioStorageError("Recovery intake exceeds the job limit; no work was omitted")
+        for job_id in job_ids:
+            if not isinstance(job_id, str):
+                raise ValueError("Invalid studio job ID")
+            _job_id(job_id)
+        if len(set(job_ids)) != len(job_ids):
+            raise ValueError("Recovery IDs contain a duplicate")
+        condition = (
+            " WHERE job_id IN (" + ",".join("?" for _ in job_ids) + ")" if job_ids else " WHERE 0"
+        )
+        records = self._bounded_read(
+            condition,
+            tuple(job_ids),
+            max_jobs=max_jobs,
+            max_bytes=max_bytes,
+            max_seconds=max_seconds,
+        )
+        by_id = {record.job_id: record for record in records}
+        if set(by_id) != set(job_ids) or len(by_id) != len(records):
+            raise StudioStorageError(
+                "Requested recovery job is missing or duplicated; work preserved"
+            )
+        return tuple(by_id[job_id] for job_id in job_ids)
 
     def work_dir(self, job_id: str) -> Path:
         _job_id(job_id)

@@ -14366,6 +14366,33 @@ billing/session/revision/export and independent/sustained program remain unfulfi
 Research/maps/spec/plan:specs/evidence-based-studio/diarizer-wire-*. Parent scope is not
 redefined around this producer prerequisite. No licence/trust/spending/publishing approval.
 
+### Bounded immutable submission intake
+
+2026-10-03, parent-approved T3 private supervisor/recovery prerequisite, BLUEPRINT sections2-5.
+Keep existing no-argument pending list behavior within budget, but refuse rather than
+silently truncate overflow. Add exact-ID recovery snapshots including confirmed dispatch;
+duplicate, missing and malformed IDs refuse. Defaults:1000 jobs,16 MiB persisted encoded
+record text,5-second SQLite VM progress deadline; reviewed local maxima:10000 jobs,256 MiB,
+10 seconds. These are operational read bounds, not runtime/model/billing authority.
+
+Collect one projected row at a time; check count/encoded text before accumulation and defer
+JSON decoding until the accepted batch is complete. Preserve invalid identifiers/states/
+timestamps as refusals, never repair through truncation/coercion. A null TEXT primary key
+remains malformed original evidence. Use the actual monotonic high-resolution performance
+counter:Windows CPython3.12.10 GetTickCount64 resolution0.015625s missed the short deadline,
+while QueryPerformanceCounter resolution1e-7s supports the native interrupt counterexample.
+Always restore the native SQLite progress handler. No schema rewrite or new dependency.
+
+Seven actual Serena queries, BI1-BI10 and native private SQLite/isolated child tests precede
+corrections. Preserve the original failures, including bulk-prefetch Python heap4,859,458
+bytes on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1. This is not SQLite native
+memory/RSS or an absolute blocked-I/O deadline. Bounds do not admit DBOS serialization,
+authenticate configuration/runtime or authorize replay/worker/model/provider/publication.
+Actual raw all-surface admission/engine/lease/bootstrap/worker/attempt/runtime/billing/session/
+revision/export and independent/sustained acceptance remain mandatory. BLOCKED1/3/4/21/24/25
+remain; no VEX hash/date rebind, ledger promotion, push or resource/trust/licence acceptance.
+Research, actual maps, EARS, approved plan and diagnostics:bounded-intake-* in the parent spec.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
