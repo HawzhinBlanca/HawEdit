@@ -14346,6 +14346,26 @@ limits are in specs/evidence-based-studio/screener-adoption-*. Exhaustive CLI re
 also include separately executed Python-transport cases without dropping their bidirectional
 assertions. No new dependency, paid/model run, authenticated worker/publication or acceptance.
 
+### Pinned exclusive-diarization output repair
+
+2026-10-03, approved parent T3 producer-parity scope; BLUEPRINT section3 Stage0/section7,
+D-252 library pin and D-243 exclusivity remain unchanged. Exact pyannote.audio4.0.7
+publisher source returns a wrapper with distinct ordinary and exclusive annotations. The
+production adapter must select explicit exclusive_speaker_diarization and refuse absent,
+legacy or noncallable annotation shapes. No ordinary-output/model/version fallback.
+Keep the public direct Annotation converter, rounding and attachment overlap/media-clock
+refusals, selected path/device/revision and canonical ASR unchanged. No new dependency.
+
+Five fresh actual Serena queries and EARS DW1-DW8 precede the source edit. Test-first wire
+controls fail11/11 against the old selector; the actual adapter/factory/attachment run
+against labelled dependency doubles, not a mocked adapter or real gated model. Positive
+attachment preserves immutable base ingest. Full caller modules and exact clean gate/CI
+are required; tests do not prove model weights/loading/rights, GPU readiness, speech/speaker
+accuracy or authenticated delivery. BLOCKED#1/#3/#4/#21/#24/#25 and the full worker/runtime/
+billing/session/revision/export and independent/sustained program remain unfulfilled.
+Research/maps/spec/plan:specs/evidence-based-studio/diarizer-wire-*. Parent scope is not
+redefined around this producer prerequisite. No licence/trust/spending/publishing approval.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**

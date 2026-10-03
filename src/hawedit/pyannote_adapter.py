@@ -116,11 +116,17 @@ class PyannoteDiarizer(Diarizer):
             pipeline = pipeline_cls.from_pretrained(resolved_dir or self.model_id)
             if self.device != "cpu":
                 pipeline.to(torch.device(self.device))
-            annotation = pipeline(str(audio_path))
+            output = pipeline(str(audio_path))
         except Exception as exc:
             raise DiarizationUnavailable(f"pyannote diarization failed: {exc}") from exc
 
-        return convert_annotation_to_segments(annotation)
+        exclusive = getattr(output, "exclusive_speaker_diarization", None)
+        if exclusive is None or not callable(getattr(exclusive, "itertracks", None)):
+            raise DiarizationInvalidOutput(
+                "Community-1 requires an exclusive_speaker_diarization Annotation from the "
+                "pinned pyannote.audio 4.0.7 output; ordinary or legacy output is not a fallback"
+            )
+        return convert_annotation_to_segments(exclusive)
 
 
 def create_diarizer(
