@@ -29,6 +29,14 @@ to the original nested credential/depth/nonfinite tests. The first full gate was
 stopped after discovering this bug, not graded as a pass; its partial log and exit127 are
 retained outside the checkout under studio-commit-98dc257... with gate-interruption.md.
 
+Documentation callers: existing tests.test_claims.test_the_module_map_covers_every_module
+and test_the_ledger_accounts_for_every_module compare all runtime files to README/PROGRESS
+table rows. Reproduced 2 failures/65 passes before adding the new module's README map and
+M9.48 WIP entry. No existing row status, test or assertion is modified. The second partial
+canonical run is also explicitly preserved as incomplete exit127 under studio-commit-6555d1f...
+with its frozen manifest, original partial log and gate-interruption.md. Complete gate evidence
+must be captured on the later clean documentation checkpoint, not inferred from either run.
+
 Actual 22-record Serena map at 85b01f101a3bd81922fb53b3c8a8999b88c74a2e. Every row below
 is grounded in definitions/references, not a guessed API. New proposed APIs have no callers
 yet. Revalidate definitions/references immediately before later edits if source changes.

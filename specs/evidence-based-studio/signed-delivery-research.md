@@ -55,6 +55,21 @@ passed, 0 failed/skipped, 55.96 seconds on the same native toolchain. Details an
 are in SD-A-final-native-mechanics.json. Earlier failed/native-58 observations are historical,
 not rewritten. A fresh clean committed full gate is required for this corrected source.
 
+### Documentation Scope Correction
+
+The next local checkpoint 6555d1f96707cf269431792d9387726589ab6c8b had a clean exact-gate
+attempt, but was stopped after finding omitted module accounting in README/PROGRESS.
+Existing unchanged test_claims.py reproduced 2 failures/65 passes (SD-A-docs-red.log).
+Add only a truthful new map entry and M9.48 WIP row, not a DONE mark or altered old status.
+Both partial gate attempts retain original frozen manifests/logs/exit127 and explicit
+interruption notes outside the checkout. Neither has a claimed terminal JUnit or gate pass.
+Final complete verification must use the subsequent clean committed source. Runtime package
+remains bfa271788a1b341793038e07266e38ffd725004747206a516a7f67c26b1d54e2.
+
+After adding the truthful module accounting, all 67 unchanged claims regressions pass in
+11.59 seconds on the recorded native host (SD-A-docs-regressions.log). No existing status
+was flipped and no assertion softened. This focused doc check is not a canonical gate.
+
 ## Reproduced Refusal Gap
 
 The existing unmocked test_approved_candidate_promotes_identical_bytes_without_render
