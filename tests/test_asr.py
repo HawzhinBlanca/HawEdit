@@ -1307,6 +1307,8 @@ def _capture_wsl_request(
     tmp_path: Path,
     stage1: Path,
     adapter: Path | None,
+    *,
+    fault: str | None = None,
 ) -> dict[str, Any]:
     """Run the producer with the worker faked, and return the request it wrote.
 
@@ -1333,11 +1335,19 @@ def _capture_wsl_request(
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
         if "hawedit.asr_worker" in args:
             seen.append(json.loads((stage1 / "omni-asr-request.json").read_text(encoding="utf-8")))
+            if fault == "drift":
+                assert adapter is not None
+                (adapter / "tokenizer.model").write_bytes(b"changed-during-worker")
+            returned_identity = (
+                "lora:" + "0" * 64 if fault == "foreign" else seen[-1].get("model_identity")
+            )
             published = RawTranscript(
                 media_id="zar38",
                 text_ckb="کوردی.",
                 words=(Word(w="کوردی.", start_ms=1_050, end_ms=1_500, conf=0.9),),
-                asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+                asr=AsrProvenance(
+                    canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi", adapter=returned_identity
+                ),
             )
             (stage1 / "omni-asr-worker-output.json").write_text(
                 published.to_json() + "\n", encoding="utf-8"
@@ -1522,3 +1532,79 @@ def test_the_environment_override_wins_over_the_defaults(tmp_path: Path) -> None
         env={CHAMPION_ADAPTER_ENV: str(bundle)},
     )
     assert found == bundle
+
+
+@pytest.mark.parametrize("adapted", [False, True])
+def test_host_refuses_foreign_worker_adapter_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, adapted: bool
+) -> None:
+    adapter = _adapter_bundle(tmp_path / "adapter") if adapted else None
+    with pytest.raises(RuntimeError, match="adapter identity"):
+        _capture_wsl_request(monkeypatch, tmp_path, tmp_path / "stage1", adapter, fault="foreign")
+    assert (tmp_path / "stage1" / "omni-asr-worker-output.json").is_file()
+
+
+def test_host_refuses_tokenizer_drift_during_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    adapter = _adapter_bundle(tmp_path / "adapter")
+    with pytest.raises(RuntimeError, match="adapter identity"):
+        _capture_wsl_request(monkeypatch, tmp_path, tmp_path / "stage1", adapter, fault="drift")
+    assert (adapter / "tokenizer.model").read_bytes() == b"changed-during-worker"
+
+
+def test_changed_adapter_resume_preserves_prior_request_and_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    adapter = _adapter_bundle(tmp_path / "adapter")
+    stage1 = tmp_path / "stage1"
+    _capture_wsl_request(monkeypatch, tmp_path, stage1, adapter)
+    request = stage1 / "omni-asr-request.json"
+    output = stage1 / "omni-asr-worker-output.json"
+    before = (request.read_bytes(), output.read_bytes())
+    (adapter / "tokenizer.model").write_bytes(b"new-tokenizer-revision")
+    with pytest.raises(RuntimeError, match="different Stage 1 request") as refused:
+        _capture_wsl_request(monkeypatch, tmp_path, stage1, adapter)
+    message = str(refused.value)
+    assert "adapter" in message
+    assert "Preserve" in message
+    assert "new work directory" in message
+    assert "Delete" not in message
+    assert (request.read_bytes(), output.read_bytes()) == before
+
+
+@pytest.mark.parametrize("route", ["native", "worker"])
+def test_producer_refuses_identity_drift_during_inference(tmp_path: Path, route: str) -> None:
+    class ChangedBackend(FakeOmniBackend):
+        adapter_name: str | None = None
+
+        def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+            result = super().transcribe_segment(audio_path, duration_s)
+            self.adapter_name = "lora:" + "a" * 64
+            return result
+
+    audio = tmp_path / "speech.wav"
+    _write_pcm(audio)
+    output = tmp_path / "output.json"
+    backend = ChangedBackend()
+    if route == "native":
+        with pytest.raises(RuntimeError, match="identity changed"):
+            OmniAsrProducer(backend).transcribe(
+                "probe", audio, (SimpleNamespace(start_ms=0, end_ms=1000),), tmp_path / "native"
+            )
+    else:
+        request = tmp_path / "request.json"
+        request.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "media_id": "probe",
+                    "validator_model_dir": "unused-before-identity-refusal",
+                    "segments": [{"path": audio.name, "start_ms": 0, "end_ms": 1000}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="identity changed"):
+            run_request(request, output, backend=backend)
+    assert not output.exists()

@@ -122,6 +122,18 @@ signed review/revision/export and all independent acceptance obligations remain 
 Test first, map reused symbols with actual Serena, run the exact full gate on a frozen clean
 local commit and preserve any VEX failure. No ledger promotion without gate plus same-SHA CI.
 
+### Approved T3 Adapter Identity Prerequisite
+
+The protected-worker model-identity obligation already approved above requires fixing the
+current three-input champion contract before adoption. Follow adapter-identity-research.md,
+adapter-identity-impact-map.md and adapter-identity-spec.md after actual Serena mapping.
+Bind the unique tokenizer as well as config/weights with full versioned SHA256; validate
+host/worker/result identity before/after inference and reject changed cached backends. Keep
+stock behavior, canonical alignment, model recipe and original artifacts unchanged. This is
+a provenance repair within the parent approval, not model replacement or spending/licence
+approval. Existing adapted verify-to-load security and runtime/owner/session adoption remain
+open. Test first, exact frozen clean-commit gate next; no ledger promotion without same-SHA CI.
+
 ## Frozen Proposed Release Thresholds
 
 - Creator study: at least 11/12 native-Sorani creators finish the whole workflow without

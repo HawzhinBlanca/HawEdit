@@ -27,11 +27,13 @@ import hashlib
 import json
 import math
 import os
+import stat
 import subprocess
 import time
 import wave
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final, Protocol, runtime_checkable
@@ -258,23 +260,110 @@ def resolve_champion_adapter(
 
 
 def adapter_fingerprint(adapter_dir: Path) -> str:
-    """Stable identity of a PEFT adapter bundle, for the reuse key and the artifact's claim.
+    """Versioned config/weights/tokenizer identity, not licence or loader authorization."""
+    root = adapter_dir.absolute()
+    root_info = root.lstat()
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
-    Two files decide what the adapter *does*: the weights, and the config that says where they
-    attach. Both are hashed, so retraining the same rank onto the same modules still yields a
-    different identity and a re-transcription rather than yesterday's words.
-    """
-    config = adapter_dir / "adapter_config.json"
-    weights = adapter_dir / "adapter_model.safetensors"
-    for required in (config, weights):
-        if not required.is_file():
-            raise FileNotFoundError(
-                f"{adapter_dir} is not a PEFT adapter bundle: {required.name} is missing"
+    def identity(info: os.stat_result) -> tuple[int, ...]:
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            info.st_nlink,
+        )
+
+    def plain(info: os.stat_result, *, directory: bool = False) -> None:
+        regular = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+        if (
+            not regular
+            or getattr(info, "st_file_attributes", 0) & reparse
+            or (not directory and info.st_nlink != 1)
+        ):
+            raise RuntimeError("Adapter identity requires non-linked regular bundle inputs")
+
+    plain(root_info, directory=True)
+    for name in ("adapter_config.json", "adapter_model.safetensors"):
+        plain((root / name).lstat())
+
+    def tokenizer_name() -> str:
+        names = []
+        for index, path in enumerate(root.iterdir()):
+            if index >= 4096:
+                raise RuntimeError("Adapter identity directory exceeds the entry bound")
+            if path.match("*.model"):
+                names.append(path.name)
+                if len(names) > 1:
+                    raise RuntimeError("Adapter identity requires exactly one tokenizer (*.model)")
+        if len(names) != 1:
+            raise RuntimeError("Adapter identity requires exactly one tokenizer (*.model)")
+        return names[0]
+
+    tokenizer = tokenizer_name()
+    members = (
+        ("configuration", "adapter_config.json", 4 * 1024**2),
+        ("weights", "adapter_model.safetensors", 32 * 1024**3),
+        ("tokenizer", tokenizer, 16 * 1024**2),
+    )
+    records = []
+    deadline = time.monotonic() + 120
+    # Keep all input descriptors open until the complete set has been rechecked.
+    with ExitStack() as stack:
+        opened_members = []
+        for role, name, ceiling in members:
+            path = root / name
+            before = path.lstat()
+            plain(before)
+            if not 0 < before.st_size <= ceiling:
+                raise RuntimeError("Adapter identity input exceeds its size bounds")
+            descriptor = os.open(
+                path,
+                os.O_RDONLY
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
             )
-    digest = hashlib.sha256()
-    for path in (config, weights):
-        digest.update(path.read_bytes())
-    return digest.hexdigest()[:16]
+            try:
+                stream = os.fdopen(descriptor, "rb")
+            except BaseException:
+                os.close(descriptor)
+                raise
+            stack.enter_context(stream)
+            opened = os.fstat(stream.fileno())
+            plain(opened)
+            # Windows CRT/path ctime meanings differ; compare ctime only within each source.
+            if identity(before)[:5] + (before.st_nlink,) != identity(opened)[:5] + (
+                opened.st_nlink,
+            ):
+                raise RuntimeError("Adapter identity input changed while opening")
+            opened_members.append((role, name, path, before, opened, stream))
+        for role, name, _path, _before, opened, stream in opened_members:
+            digest = hashlib.sha256()
+            count = 0
+            while chunk := stream.read(1024**2):
+                count += len(chunk)
+                if count > opened.st_size or time.monotonic() > deadline:
+                    raise RuntimeError("Adapter identity input exceeds hashing bounds")
+                digest.update(chunk)
+            if count != opened.st_size:
+                raise RuntimeError("Adapter identity input changed while hashing")
+            records.append(
+                {"role": role, "name": name, "size_bytes": count, "sha256": digest.hexdigest()}
+            )
+        for _role, _name, path, before, opened, stream in opened_members:
+            if identity(os.fstat(stream.fileno())) != identity(opened) or identity(
+                path.lstat()
+            ) != identity(before):
+                raise RuntimeError("Adapter identity input changed while hashing")
+        if tokenizer_name() != tokenizer or identity(root.lstat()) != identity(root_info):
+            raise RuntimeError("Adapter identity bundle changed while hashing")
+    manifest = {"schema": 2, "kind": "hawedit-peft-bundle", "files": records}
+    return hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 class QwenSoraniValidator:
@@ -384,6 +473,7 @@ class OmniAsrBackend:
         self.ctc_card = ctc_card
         self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
         self._pipelines: tuple[Any, Any] | None = None
+        self._loaded_adapter_identity: str | None = None
 
     @property
     def adapter_name(self) -> str | None:
@@ -396,39 +486,33 @@ class OmniAsrBackend:
         does not make. `asr.py`'s rule is that a measurement carries the adapter that produced
         it; this is where it carries it.
         """
-        if self.lora_adapter is None:
-            return None
-        return f"lora:{adapter_fingerprint(self.lora_adapter)}"
+        current = (
+            None if self.lora_adapter is None else f"lora:{adapter_fingerprint(self.lora_adapter)}"
+        )
+        if self._pipelines is not None and current != self._loaded_adapter_identity:
+            raise RuntimeError("Cached ASR adapter identity changed after model construction")
+        return current
 
     def _load(self) -> tuple[Any, Any]:
+        expected_identity = self.adapter_name
         if self._pipelines is None:
             if self.lora_adapter is not None:
-                # The adapted path is kept whole rather than fused into the verified
-                # loader below. `_load_adapted_llm` builds the model through fairseq2's
-                # asset store and hands the pipeline a pre-adapted model; the verified
-                # path builds its own and passes `model=`/`tokenizer=`. Fusing them means
-                # applying PEFT to a model loaded under a held descriptor - the right end
-                # state, and not reachable from this machine: there is no adapter bundle
-                # here to run it against, and an untested guess is worse than a stated gap.
-                #
-                # NARROWING, named so it is a decision and not an accident: an adapted run
-                # does not yet carry the verify-to-load binding. Only --omni-asr-adapter
-                # reaches this branch; the default path in the else below is verified.
+                # Bundle identity checks do not close the adapted loader's held-descriptor
+                # verify-to-load gap (#24). The champion is the default, not just an opt-in.
                 try:
                     from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
                 except ImportError as exc:
                     raise RuntimeError(
                         "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
                     ) from exc
-                llm = (
-                    ASRInferencePipeline(model_card=self.llm_card, device=self.llm_device)
-                    if self.lora_adapter is None
-                    else self._load_adapted_llm(self.lora_adapter)
-                )
-                self._pipelines = (
-                    llm,
+                pipelines = (
+                    self._load_adapted_llm(self.lora_adapter),
                     ASRInferencePipeline(model_card=self.ctc_card, device=self.ctc_device),
                 )
+                if self.adapter_name != expected_identity:
+                    raise RuntimeError("ASR adapter identity changed during model construction")
+                self._loaded_adapter_identity = expected_identity
+                self._pipelines = pipelines
             else:
                 # fairseq2 trusts an existing URL-keyed cache entry and model-card ``@user``
                 # fields can override the official URI. Hash the three canonical files before
@@ -710,6 +794,7 @@ class OmniAsrBackend:
         )
 
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+        expected_identity = self.adapter_name
         llm, ctc = self._load()
         # The two model forwards are independent and live on different GPUs. CTC does not need
         # the LLM text until the cheap Viterbi projection after both complete.
@@ -727,15 +812,20 @@ class OmniAsrBackend:
             raise RuntimeError("OmniASR LLM returned no transcription for one speech segment")
         text = str(texts[0])
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
+        if self.adapter_name != expected_identity:
+            raise RuntimeError("ASR adapter identity changed during segment inference")
         return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
 
     def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
         """Align a validator correction with a fresh CTC pass on the same bounded audio."""
         if not text.strip():
             raise ValueError("cannot align an empty validator transcription")
+        expected_identity = self.adapter_name
         _, ctc = self._load()
         log_probs, frame_count, ctc_text = self._ctc_emissions(ctc, audio_path)
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
+        if self.adapter_name != expected_identity:
+            raise RuntimeError("ASR adapter identity changed during validator realignment")
         return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
 
 
@@ -829,16 +919,19 @@ class OmniAsrProducer:
         work_dir: Path,
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
+        expected_identity = self.model_identity
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         initial, unaligned = transcribe_prepared_segments(self.backend, prepared)
         results, validated_by, rejected_corrections = _validate_hard_segments(
             initial, self.backend, self._validator
         )
+        if self.model_identity != expected_identity:
+            raise RuntimeError("Native ASR adapter identity changed during inference")
         return _assemble_canonical_transcript(
             media_id,
             results,
             unaligned,
-            adapter=getattr(self.backend, "adapter_name", None),
+            adapter=expected_identity,
             validated_by=validated_by,
             rejected_validator_corrections=rejected_corrections,
         )
@@ -1204,6 +1297,7 @@ class WslOmniAsrProducer:
         work_dir: Path,
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
+        expected_identity = self.model_identity
         interpreter, wsl_source = self._runtime()
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         if self.validator_model_dir is not None:
@@ -1250,7 +1344,7 @@ class WslOmniAsrProducer:
                 # merge, which rebuilt this request for the validator and carried no
                 # adapter field at all.
                 request["lora_adapter"] = self._wsl_path(self.lora_adapter)
-                request["model_identity"] = self.model_identity
+                request["model_identity"] = expected_identity
             payload = json.dumps(request, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
             try:
                 with request_path.open("x", encoding="utf-8", newline="\n") as stream:
@@ -1270,8 +1364,9 @@ class WslOmniAsrProducer:
                     raise RuntimeError(
                         f"{request_path} already describes a different Stage 1 request "
                         f"({len(json.loads(existing).get('segments', ()))} segments, this run has "
-                        f"{len(prepared)}). Another run is using this work directory, or Stage 0's "
-                        f"speech regions changed. Delete that file to re-transcribe from scratch."
+                        f"{len(prepared)}). Source, speech regions, validator or adapter inputs "
+                        f"changed, or another run uses this directory. Preserve existing Stage 1 "
+                        f"artifacts and use a new work directory after recovery reconciliation."
                     ) from None
 
             wsl_request = self._wsl_path(request_path)
@@ -1285,6 +1380,8 @@ class WslOmniAsrProducer:
                 val = os.environ.get(var)
                 if val:
                     env_args.append(f"{var}={val}")
+            if self.model_identity != expected_identity:
+                raise RuntimeError("Host ASR adapter identity changed before worker execution")
             result = subprocess.run(
                 [
                     *self._prefix(),
@@ -1312,6 +1409,11 @@ class WslOmniAsrProducer:
                 raise RuntimeError(
                     f"WSL OmniASR returned media_id {transcript.media_id!r} for {media_id!r}"
                 )
+            if (
+                transcript.asr.adapter != expected_identity
+                or self.model_identity != expected_identity
+            ):
+                raise RuntimeError("WSL ASR returned foreign or changed adapter identity")
             return transcript
 
 
@@ -1322,7 +1424,7 @@ def create_omni_asr_producer(
     if runtime not in {"auto", "local", "wsl"}:
         raise ValueError("OmniASR runtime must be one of: auto, local, wsl")
     if lora_adapter is not None:
-        # Fingerprinting reads both files, so a path that is not an adapter bundle fails here —
+        # Fingerprinting includes all three inputs, so an incomplete bundle fails here —
         # before Stage 0's regions are cut — rather than 1,547 s later inside WSL.
         adapter_fingerprint(Path(lora_adapter))
     use_wsl = runtime == "wsl" or (runtime == "auto" and os.name == "nt")

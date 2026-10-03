@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -97,7 +98,20 @@ def run_request(
             "ASR worker request names a LoRA adapter but a backend was supplied; the adapter "
             "would be ignored and its transcript filed under the adapter's name anyway"
         )
+    claimed_identity = payload.get("model_identity")
+    if adapter is not None:
+        if (
+            not adapter.strip()
+            or not isinstance(claimed_identity, str)
+            or re.fullmatch(r"lora:[a-f0-9]{64}", claimed_identity) is None
+        ):
+            raise ValueError("ASR worker requires a current complete adapter identity")
+    elif claimed_identity is not None:
+        raise ValueError("ASR worker stock request cannot claim an adapter identity")
     model = backend or OmniAsrBackend(lora_adapter=Path(adapter) if adapter is not None else None)
+    expected_identity = getattr(model, "adapter_name", None)
+    if claimed_identity != expected_identity:
+        raise ValueError("ASR worker adapter identity differs from the host request")
     # The shared helper, not a second generator expression: one unalignable region used to
     # discard every other region's inference. D-103.
     initial, unaligned = transcribe_prepared_segments(model, prepared)
@@ -115,11 +129,13 @@ def run_request(
     results, validated_by, rejected_corrections = _validate_hard_segments(
         initial, model, validator_factory
     )
+    if getattr(model, "adapter_name", None) != expected_identity:
+        raise ValueError("ASR worker adapter identity changed during inference")
     transcript = _assemble_canonical_transcript(
         media_id,
         results,
         unaligned,
-        adapter=getattr(model, "adapter_name", None),
+        adapter=expected_identity,
         validated_by=validated_by,
         rejected_validator_corrections=rejected_corrections,
     )

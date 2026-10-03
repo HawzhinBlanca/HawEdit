@@ -14268,6 +14268,25 @@ HTTP identity, complete runtime/governance/screener adoption, job recovery and S
 immutable revision/export remain mandatory. Local ephemeral signing/SQLite probes are
 mechanics only; current VEX, exact gate/CI and independent/sustained acceptance remain open.
 
+**ASR identity prerequisite (2026-10-03).** Bind the actual champion config, safetensors and
+unique bundle tokenizer with a schema-2 role/name/size/hash manifest and full SHA256. This
+repairs omitted tokenizer bytes and ambiguous concatenated inputs without changing the
+canonical model, vocabulary recipe, timing or licence policy (D-181/D-260; sections 2/3/7).
+Stream bounded inputs, retain all descriptors through whole-set checks, refuse linked,
+nonregular, missing, ambiguous or observed changing files. These are identity observations,
+not an atomic loader snapshot, licence authentication or closure of the adapted held-load
+gap (#24). The deadline is checked between reads, not an uninterruptible I/O guarantee.
+
+Native and WSL producers capture identity before inference and verify it afterward. The
+worker requires the host's full adapted identity before inference; host checks returned
+provenance too. Cached backends bind their constructed pipeline identity and refuse changed
+or removed adapter selection. Stock identity/request fields remain unchanged. Old sixteen-
+digit keys are invalidated, never rewritten or silently adopted. Conflicting old requests
+preserve prior request/output bytes and recommend a fresh work directory after reconciliation.
+No model inference, throughput, paid worker enablement, new dependency or release acceptance
+follows from filesystem/protocol regressions. Research and actual Serena caller maps are in
+specs/evidence-based-studio/adapter-identity-*. Protected worker and full acceptance remain.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
