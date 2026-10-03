@@ -106,6 +106,22 @@ to declared supported containers and exercise successful decoded media for all s
 Freeze source and tested module/ledger documentation before full canonical collection.
 This unit cannot enable a paid worker or imply complete protected studio adoption.
 
+### T3 Signed Execution Authority Prerequisite
+
+Within the already approved protected-worker/governance adoption scope, implement the
+execution-authority-spec.md protocol before connecting the worker. Human approval of this
+plan authorizes code/preparation, not enrollment of keys, approval of contracts or spending.
+Use configured owner-private raw OpenSSH proof in a separate execution purpose; bind the
+current producer and supervisor-computed runtime/model/governance context, explicit actions,
+dated references and exact bounded billing policy. Reopen proof before replay as well as
+before/after each upstream count/generate operation. Compose the real private journal,
+preserving uncertainty, pool arithmetic and existing caller behavior. No paid request or
+HTTP execution is enabled by this prerequisite. Actual worker/runtime/session adoption,
+signed review/revision/export and all independent acceptance obligations remain required.
+
+Test first, map reused symbols with actual Serena, run the exact full gate on a frozen clean
+local commit and preserve any VEX failure. No ledger promotion without gate plus same-SHA CI.
+
 ## Frozen Proposed Release Thresholds
 
 - Creator study: at least 11/12 native-Sorani creators finish the whole workflow without

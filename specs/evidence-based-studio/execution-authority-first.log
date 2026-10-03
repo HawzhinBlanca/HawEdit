@@ -1,0 +1,80 @@
+.....................F.................................................. [ 91%]
+.......                                                                  [100%]
+================================== FAILURES ===================================
+______ test_signed_studio_transport_replays_under_current_raw_authority _______
+
+authorization_case = AuthorizationCase(root=<hawedit.studio_private.PrivateDirectory object at 0x0000028993417050>, authority=<hawedit.stud...ign'), public=b'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICgvSkt+bYCHKSm0mq3kuN2geK6groblGsIQCGNm8CzC wareen@HawaPC01\r\n'))
+
+    @pytest.mark.parametrize(
+        "damage", ["foreign-key", "other-purpose", "duplicate-key", "noncanonical"]
+    )
+    def test_signed_studio_authorization_refuses_wrong_key_or_namespace(
+        authorization_case: AuthorizationCase, damage: str
+    ) -> None:
+        case = authorization_case
+        assert load_studio_authorization(case.context).principal == "studio-owner"
+        if damage == "foreign-key":
+>           case.sign(key=case.tools.foreign_key)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_studio_authorization.py:289: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_studio_authorization.py:198: in _generate
+    "candidates": [{"content": {"parts": [{"text": "protocol-result"}]}}],
+src\hawedit\studio_authorization.py:298: in __call__
+    or _read(scratch, "allowed_signers", limit=1024 * 1024) != raw.signers
+    ^^^^^^^^^^^^^
+src\hawedit\studio_authorization.py:287: in _check
+    str(scratch.path / "proof.sig"),
+src\hawedit\studio_authorization.py:252: in load_studio_authorization
+    if (
+         
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+raw = _RawAuthorization(packet=<hawedit.studio_private.PrivateDirectory object at 0x0000028993416A80>, authority=<hawedit.st...1NTE5AAAAICgvSkt+bYCHKSm0mq3kuN2geK6groblGsIQCGNm8CzC wareen@HawaPC01\r\n', max_age=3600, principals=('studio-owner',))
+context = AuthorizationContext(packet_dir=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7078/test_sign...dddddddddddddddddddddddddddddddddddddddddddddddddddddddd', ssh_keygen='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE')
+
+            raise StudioAuthorizationError("Unique configured execution-owner principals are required")
+        max_age = policy["max_authorization_age_seconds"]
+        if type(max_age) is not int or not 1 <= max_age <= 30 * 86400:
+            raise StudioAuthorizationError("Execution authorization freshness must be bounded")
+        signers = _read(authority, "allowed_signers", limit=1024 * 1024)
+        if not signers or _digest(policy["allowed_signers_sha256"]) != _sha(signers):
+            raise StudioAuthorizationError("Configured execution allowed-signers binding changed")
+        return _RawAuthorization(
+            packet,
+            authority,
+            _read(packet, "authorization.json", limit=65536),
+            _read(packet, "authorization.sig", limit=65536),
+            policy_bytes,
+            signers,
+            max_age,
+            tuple(principals),
+        )
+    
+    
+    def _document(
+        raw: _RawAuthorization, context: AuthorizationContext
+    ) -> tuple[dict[str, Any], BillingPolicy]:
+        document = _json(raw.document)
+>       _fields(
+            ^^^^^
+            document,
+            {
+                "schema",
+                "namespace",
+                "principal",
+                "issued_at",
+                "expires_at",
+                "pipeline_source_sha256",
+                "execution_binding_sha256",
+                "actions",
+                "governance",
+                "billing",
+            },
+        )
+E       hawedit.studio_authorization.StudioAuthorizationError: Signed execution producer package is not current
+
+src\hawedit\studio_authorization.py:169: StudioAuthorizationError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_authorization.py::test_signed_studio_transport_replays_under_current_raw_authority

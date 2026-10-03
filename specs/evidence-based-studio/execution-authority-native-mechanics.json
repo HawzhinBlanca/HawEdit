@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "status": "unaccepted-uncommitted-engineering-diagnostic",
+  "baseline_sha": "2598e8ee7284dba572f790e22226ff5301f4c01c",
+  "command": ".venv/Scripts/python.exe -m pytest tests/test_studio_authorization.py tests/test_studio_billing.py --junitxml=specs/evidence-based-studio/execution-authority-frozen.xml -q",
+  "source_package_sha256_before": "8dc4fe8550ec6e54a1abf02b51faee8284fdc11d4992f6f6ed4110fa97b66a1b",
+  "source_package_sha256_after": "8dc4fe8550ec6e54a1abf02b51faee8284fdc11d4992f6f6ed4110fa97b66a1b",
+  "source_frozen": true,
+  "suites": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "89",
+      "time": "103.484",
+      "timestamp": "2026-10-03T14:18:10.596921+03:00",
+      "hostname": "HawaPC01"
+    }
+  ],
+  "hardware_host": "HawaPC01",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "packages": {
+    "dbos": "2.29.0",
+    "pytest": "9.1.1",
+    "ruff": "0.9.6",
+    "mypy": "1.15.0"
+  },
+  "first_run": {
+    "status": "invalidated-source-formatting-overlapped-live-signed-tests",
+    "passed": 78,
+    "failed": 1,
+    "skipped": 0,
+    "elapsed_seconds": 88.965,
+    "claims_authorized": false
+  },
+  "files": {
+    "execution-authority-red.log": {
+      "path": "specs\\evidence-based-studio\\execution-authority-red.log",
+      "sha256": "d9c74736594c8463c4f93c4bf7cc10d1bc0122fbd6dee6d5418e154fd8a5dca0"
+    },
+    "execution-authority-first.log": {
+      "path": "specs\\evidence-based-studio\\execution-authority-first.log",
+      "sha256": "c1ac2c9d66bcbb28135340a2e103fa26587d1bff00c275be55293ee46b807c7b"
+    },
+    "execution-authority-first.xml": {
+      "path": "specs\\evidence-based-studio\\execution-authority-first.xml",
+      "sha256": "0dce5e1ddd67affd23bbcc867841df894904e781ffd855590831b50c9ea3946f"
+    },
+    "execution-authority-frozen.log": {
+      "path": "specs\\evidence-based-studio\\execution-authority-frozen.log",
+      "sha256": "9d2ae3ded04360ffc106f93a140d744e62f14c45a8fcac7ca31e5df9aa8ef6a9"
+    },
+    "execution-authority-frozen.xml": {
+      "path": "specs\\evidence-based-studio\\execution-authority-frozen.xml",
+      "sha256": "4deff8d9923d1c98e0c343fc85d3947f1e8800bb590111997cf7bac8a1b8dee3"
+    },
+    "execution-authority-before-map.json": {
+      "path": "specs\\evidence-based-studio\\execution-authority-before-map.json",
+      "sha256": "89c2a16ef327e0773d1115b9cee371dfb9b1a3142e417985b883d0345117d91c"
+    }
+  },
+  "limitations": [
+    "ephemeral test keys only; no production owner enrollment",
+    "synthetic context is not runtime/model/cloud readiness",
+    "deterministic provider protocol boundary; no provider call, price, invoice or model claim",
+    "exact canonical gate and same-SHA hosted CI not accepted",
+    "HTTP worker and owner session still unconnected"
+  ]
+}

@@ -14244,6 +14244,30 @@ judge-label study/release approval verifiers retain their limited contracts; nei
 promoted into full acceptance by this guard. No human study, publication, accepted task,
 spending, trust configuration or 10/10 follows from Boolean claims or this implementation.
 
+**Signed execution authority prerequisite (2026-10-03).** Before protected worker adoption,
+separate owner execution authority from reviewer/release namespaces. Configured host-private
+owner policy and allowed signers verify canonical detached proof in the dedicated
+hawedit-studio-execution-v1 purpose. Bind current producer package, supervisor-computed
+execution context, explicit count/generate actions, issue/expiry, attributed governance
+references and exact route/caps/price/reservation pool. The raw document digest identifies
+the journal authorization pool and must also bind the immutable submission context.
+
+Compose the existing private billed transport; reopen raw authority before construction,
+before cached replay, before/after every upstream operation and before returning. Changed
+or revoked documents/signatures/trust refuse instead of adopting a new policy into an old
+job. Generation uncertainty retains its existing reservation; restoration of authority does
+not make uncertain intent safe to replay. Use actual private snapshots, bounded OpenSSH
+subprocesses and existing strict JSON/storage behavior, without new dependencies or changes
+to candidate/Vertex approval semantics.
+
+Signed governance references are authenticated owner assertions, not live retention/model/
+licence/price verification or measured invoices. A caller-supplied execution binding is not
+runtime readiness; the future ID-only worker must derive it from current bound observations.
+No keys are enrolled or paid HTTP execution enabled by this prerequisite. Owner-bound local
+HTTP identity, complete runtime/governance/screener adoption, job recovery and SD-C review/
+immutable revision/export remain mandatory. Local ephemeral signing/SQLite probes are
+mechanics only; current VEX, exact gate/CI and independent/sustained acceptance remain open.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
