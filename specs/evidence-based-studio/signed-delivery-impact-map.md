@@ -20,6 +20,15 @@ verify_candidate_review; changed pytest functions have no source callers. Both A
 remain test-only. Negative packet/context/trust/schema tests now verify the intact packet
 successfully before altering it, preventing a blanket refusal from masquerading as coverage.
 
+Token-budget follow-up: the same actual _configuration definition/references in the 41-record
+map were reopened before editing its unchanged guard. Callers are only preparation and
+verification. Existing studio_billing.BillingPolicy has max_input_tokens/max_output_tokens;
+substring "token" cannot classify those limits or tokenizer_revision as credentials. New
+configuration regressions cover legitimate bindings and named credential refusal, in addition
+to the original nested credential/depth/nonfinite tests. The first full gate was explicitly
+stopped after discovering this bug, not graded as a pass; its partial log and exit127 are
+retained outside the checkout under studio-commit-98dc257... with gate-interruption.md.
+
 Actual 22-record Serena map at 85b01f101a3bd81922fb53b3c8a8999b88c74a2e. Every row below
 is grounded in definitions/references, not a guessed API. New proposed APIs have no callers
 yet. Revalidate definitions/references immediately before later edits if source changes.

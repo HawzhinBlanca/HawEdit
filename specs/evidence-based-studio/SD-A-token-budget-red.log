@@ -1,0 +1,131 @@
+FFF                                                                      [100%]
+================================== FAILURES ===================================
+_ test_review_configuration_accepts_noncredential_token_limits[max_output_tokens-16384] _
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7061/test_review_configuration...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+field = 'max_output_tokens', value = 16384
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("max_output_tokens", 16384), ("max_input_tokens", 200000), ("tokenizer_revision", "c" * 64)],
+    )
+    def test_review_configuration_accepts_noncredential_token_limits(
+        case: ReviewCase, field: str, value: object
+    ) -> None:
+        context = replace(case, configuration={**case.configuration, field: value})
+>       context.prepare()
+
+tests\test_candidate_review_configuration.py:23: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:130: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:405: in prepare_candidate_review
+    configuration = _configuration(effective_configuration)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:151: in _configuration
+    check(result)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+value = {'clips': 3, 'max_output_tokens': 16384, 'preset': 'balanced'}
+depth = 0
+
+    def check(value: object, depth: int = 0) -> None:
+        if depth > 8:
+            raise CandidateReviewError("Effective configuration exceeds its depth bound")
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if re.search(r"secret|password|credential|authorization|api.?key|token", key, re.I):
+>                   raise CandidateReviewError(
+                        "Effective configuration must not contain credentials"
+                    )
+E                   hawedit.candidate_review.CandidateReviewError: Effective configuration must not contain credentials
+
+src\hawedit\candidate_review.py:143: CandidateReviewError
+_ test_review_configuration_accepts_noncredential_token_limits[max_input_tokens-200000] _
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7061/test_review_configuration...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+field = 'max_input_tokens', value = 200000
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("max_output_tokens", 16384), ("max_input_tokens", 200000), ("tokenizer_revision", "c" * 64)],
+    )
+    def test_review_configuration_accepts_noncredential_token_limits(
+        case: ReviewCase, field: str, value: object
+    ) -> None:
+        context = replace(case, configuration={**case.configuration, field: value})
+>       context.prepare()
+
+tests\test_candidate_review_configuration.py:23: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:130: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:405: in prepare_candidate_review
+    configuration = _configuration(effective_configuration)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:151: in _configuration
+    check(result)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+value = {'clips': 3, 'max_input_tokens': 200000, 'preset': 'balanced'}
+depth = 0
+
+    def check(value: object, depth: int = 0) -> None:
+        if depth > 8:
+            raise CandidateReviewError("Effective configuration exceeds its depth bound")
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if re.search(r"secret|password|credential|authorization|api.?key|token", key, re.I):
+>                   raise CandidateReviewError(
+                        "Effective configuration must not contain credentials"
+                    )
+E                   hawedit.candidate_review.CandidateReviewError: Effective configuration must not contain credentials
+
+src\hawedit\candidate_review.py:143: CandidateReviewError
+_ test_review_configuration_accepts_noncredential_token_limits[tokenizer_revision-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc] _
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7061/test_review_configuration...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+field = 'tokenizer_revision'
+value = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("max_output_tokens", 16384), ("max_input_tokens", 200000), ("tokenizer_revision", "c" * 64)],
+    )
+    def test_review_configuration_accepts_noncredential_token_limits(
+        case: ReviewCase, field: str, value: object
+    ) -> None:
+        context = replace(case, configuration={**case.configuration, field: value})
+>       context.prepare()
+
+tests\test_candidate_review_configuration.py:23: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:130: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:405: in prepare_candidate_review
+    configuration = _configuration(effective_configuration)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:151: in _configuration
+    check(result)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+value = {'clips': 3, 'preset': 'balanced', 'tokenizer_revision': 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'}
+depth = 0
+
+    def check(value: object, depth: int = 0) -> None:
+        if depth > 8:
+            raise CandidateReviewError("Effective configuration exceeds its depth bound")
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if re.search(r"secret|password|credential|authorization|api.?key|token", key, re.I):
+>                   raise CandidateReviewError(
+                        "Effective configuration must not contain credentials"
+                    )
+E                   hawedit.candidate_review.CandidateReviewError: Effective configuration must not contain credentials
+
+src\hawedit\candidate_review.py:143: CandidateReviewError
+=========================== short test summary info ===========================
+FAILED tests/test_candidate_review_configuration.py::test_review_configuration_accepts_noncredential_token_limits[max_output_tokens-16384]
+FAILED tests/test_candidate_review_configuration.py::test_review_configuration_accepts_noncredential_token_limits[max_input_tokens-200000]
+FAILED tests/test_candidate_review_configuration.py::test_review_configuration_accepts_noncredential_token_limits[tokenizer_revision-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc]
+3 failed in 2.98s

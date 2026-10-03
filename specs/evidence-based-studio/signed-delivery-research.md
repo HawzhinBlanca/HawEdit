@@ -38,6 +38,23 @@ Every new engine API is test-only at this checkpoint. Existing unsigned promotio
 publication routes are NOT fixed by this unit. Full gate, same-SHA CI, SD-B/SD-C and the rest
 of the seven-phase plan remain required. No ledger row is accepted or product verdict granted.
 
+### Token-Budget Correction
+
+Local checkpoint 98dc257cc8fb1b6a49a5ec7c0f4e8ce46a0fbc7b was made without push. The exact
+full gate started on that clean frozen source, passed lint/types/format, but was stopped
+after read-only review exposed an overbroad credential filter: genuine producer token
+limits/tokenizer revisions were refused. Three new regressions failed before correction.
+The exact native pytest child identity was verified before PID-only cancellation; no console
+control event or app-server cancellation. Preserve its original partial gate.log, actual
+exit127, frozen source manifest and gate-interruption.md in external studio-commit-98dc257...
+storage. No terminal JUnit or full-gate pass is claimed for that interrupted run.
+
+Guard correction preserves strict credential/depth/nonfinite refusal and accepts numeric
+token limits/tokenizer identity. Both APIs remain test-only. Corrected focused run: 68
+passed, 0 failed/skipped, 55.96 seconds on the same native toolchain. Details and actual hashes
+are in SD-A-final-native-mechanics.json. Earlier failed/native-58 observations are historical,
+not rewritten. A fresh clean committed full gate is required for this corrected source.
+
 ## Reproduced Refusal Gap
 
 The existing unmocked test_approved_candidate_promotes_identical_bytes_without_render

@@ -139,7 +139,27 @@ def _configuration(configuration: Mapping[str, object]) -> dict[str, object]:
             raise CandidateReviewError("Effective configuration exceeds its depth bound")
         if isinstance(value, dict):
             for key, child in value.items():
-                if re.search(r"secret|password|credential|authorization|api.?key|token", key, re.I):
+                name = re.sub(r"[^a-z0-9]", "", key.lower())
+                if (
+                    any(
+                        term in name
+                        for term in ("secret", "password", "credential", "authorization", "apikey")
+                    )
+                    or name.endswith("token")
+                    or name.startswith(
+                        (
+                            "tokenfile",
+                            "tokenpath",
+                            "accesstoken",
+                            "refreshtoken",
+                            "hftoken",
+                            "bearertoken",
+                            "authtoken",
+                            "apitoken",
+                            "clienttoken",
+                        )
+                    )
+                ):
                     raise CandidateReviewError(
                         "Effective configuration must not contain credentials"
                     )

@@ -65,6 +65,10 @@ Do not claim real publication quality or 10/10 from passing cryptographic mechan
 lint/types green (297 files). These are not canonical gate/CI acceptance. Existing engine
 publication remains unwired; SD-B/SD-C remain mandatory. See SD-A-native-mechanics.json.
 
+Subsequent token-budget guard correction has 68 focused passes. Preserve the first interrupted
+full gate as incomplete; rerun the exact gate on the corrected clean commit. See
+SD-A-final-native-mechanics.json. No ledger acceptance is inferred from these focused results.
+
 - [ ] SD-A - SD2/SD3/SD6/SD9; full gate and applicable same-SHA CI required.
 - [ ] SD-B - SD1/SD4/SD5/SD7/SD8; full gate and applicable same-SHA CI required.
 - [ ] SD-C - SD10 and actual complete journey; full gate and applicable same-SHA CI required.

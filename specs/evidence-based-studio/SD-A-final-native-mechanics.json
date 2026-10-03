@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "status": "unaccepted-corrected-engineering-mechanics",
+  "observed_date": "2026-10-03",
+  "base_head_sha": "98dc257cc8fb1b6a49a5ec7c0f4e8ce46a0fbc7b",
+  "working_source_package_sha256": "bfa271788a1b341793038e07266e38ffd725004747206a516a7f67c26b1d54e2",
+  "candidate_review_py_sha256": "99751d04ea04043452ad8ba026c1d62883b5584c66f00eb2694d31614b3d60a4",
+  "configuration_test_py_sha256": "a6ca112180966f5b267fb2c847077fd4f20892dffa9e44173a57647b1ac6c36d",
+  "runtime_provenance": "SD-A-native-mechanics.json; same native HawaPC01/CPython 3.12.10/OpenSSH 9.5p2/Gyan FFmpeg 8.1.1; not pinned media or product performance acceptance",
+  "command": ".venv/Scripts/python.exe -m pytest tests/test_candidate_review.py tests/test_candidate_review_configuration.py",
+  "exit_code": 0,
+  "passed": 68,
+  "failed": 0,
+  "skipped": 0,
+  "elapsed_test_seconds": 55.96,
+  "log": "SD-A-final-focused.log",
+  "log_sha256": "bc8fb37719d3b58d13f7d44f6f5f708102fe1bbaf1f398bbb5c8ac46603ef2b1",
+  "test_first_configuration": "SD-A-token-budget-red.log: all three legitimate budget/tokenizer cases failed before guard correction",
+  "first_canonical_gate": "Interrupted, exit 127, no terminal JUnit/acceptance; original external studio-commit-98dc257.../gate.log, gate-exit.json and gate-interruption.md preserved",
+  "provider_calls": 0,
+  "limits": "Preparation/authentication tests only. Publication, actual reconciliation, job/export, canonical gate/CI and full product acceptance remain mandatory. No trust, spending or 10/10 authority."
+}
