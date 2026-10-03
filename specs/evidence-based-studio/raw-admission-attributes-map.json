@@ -1,0 +1,8 @@
+[
+  {
+    "path": "src/hawedit/studio_admission.py",
+    "symbol": "_validate",
+    "definition": "[{\"name_path\": \"_validate\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/studio_admission.py\", \"body_location\": {\"start_line\": 242, \"end_line\": 379}}]",
+    "references": "[{\"name_path\": \"inspect_studio_journal/ids\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_admission.py\", \"body_location\": {\"start_line\": 414, \"end_line\": 414}, \"content_around_reference\": \"... 413:        digest, tables = _raw(connection, budget)\\n  > 414:        ids = _validate(tables, submissions, policy, budget)\\n... 415:        storage.verify()\"}]"
+  }
+]

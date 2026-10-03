@@ -14393,6 +14393,34 @@ revision/export and independent/sustained acceptance remain mandatory. BLOCKED1/
 remain; no VEX hash/date rebind, ledger promotion, push or resource/trust/licence acceptance.
 Research, actual maps, EARS, approved plan and diagnostics:bounded-intake-* in the parent spec.
 
+### Raw Prelaunch Journal Inspection - 2026-10-03
+
+Approved parent T3 continues with a raw read-only SQLite inspector, before any DBOS/ORM
+getter, deserializer or launch. No new dependency. Exact full publisher DBOS2.29.0 schema
+fingerprints include indexes, legacy request and migration bookkeeping; both published
+timestamp branches are reviewed, not semantically normalized. Migration row must be40.
+Unknown schema/encoding, unsafe types/tags, foreign jobs/queues, unsupported persisted
+surfaces and malformed or inconsistent state/results refuse without repair or truncation.
+Every workflow, including terminal records, must match the exact immutable outbox and host
+identity policy. Genuine canonical DBOS UUID4 execution ownership is data, not permission;
+the local empty application ID is matched explicitly. Cancelled/recovery-exhausted records
+may have the null queue DBOS actually writes. Internal queue records cannot carry work.
+Roles/attributes stay empty until separately authenticated adoption. The actual pinned ORM
+writes JSON null for absent attributes; this exact absence is accepted, not a supplied grant.
+Host-listed portable
+step output is shape-safe data only, never authenticated replay or semantic truth.
+
+Use the passed private path binding, readonly URI, query_only/trusted_schema OFF and one
+read transaction. Global DBOS record/schema byte limits and record count precede JSON;
+the outbox has its own same-ceiling bounded reader. Native VM/elapsed budget is not an
+absolute blocked-I/O deadline. No absolute RSS, cross-database atomic snapshot, atomic
+descriptor binding or hostile-same-owner protection is claimed. Inspector is descriptive,
+not an authority token or a startup substitute. Mandatory next adoption owns the private
+engine/lifetime lease/bootstrap, then guards actual ID-only worker/attempt/runtime/source/
+configuration/billing/replay/session. HTTP remains studio_runner_unavailable. References:
+raw-admission-* specs, BLUEPRINT sections2-5, BLOCKED1/3/4/21/24/25. No gate/CI promotion,
+security-policy rebinding, trust/spending/licence acceptance or10/10 verdict.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
