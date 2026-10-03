@@ -3,7 +3,7 @@
 | ID | Requirement | Named regression |
 |---|---|---|
 | SG1 | WHEN guarded judging and a screener are selected without an explicit screener transport, THE shared builder SHALL refuse before source/model/credential work. | test_shared_builder_refuses_unguarded_screening_before_inputs |
-| SG2 | WHEN an explicit request transport is supplied, THE factory/shared builder SHALL route the selected screener through it without changing the ordinary unguarded CLI or no-screener path. | test_screener_factory_routes_explicit_transport, test_shared_builder_routes_screening_through_explicit_transport |
+| SG2 | WHEN an explicit request transport is supplied, even a false-valued callable, THE factory/shared builder SHALL preserve and route the selected screener through it without changing the ordinary unguarded CLI or no-screener path. | test_screener_factory_routes_explicit_transport, test_shared_builder_routes_screening_through_explicit_transport, test_explicit_false_valued_screener_transport_never_falls_back |
 | SG3 | WHEN Gemini fields are missing, coerced, nonfinite or outside bounds, THE screener SHALL refuse rather than invent scores or Booleans. | test_flash_refuses_unmeasured_or_coerced_scores |
 | SG4 | WHEN batch IDs are duplicate, foreign or incomplete, THE screener SHALL refuse instead of claiming comparative ranking for different candidates. | test_flash_refuses_foreign_duplicate_or_incomplete_batch |
 | SG5 | WHEN input IDs or top_k are invalid, THE screener SHALL refuse before egress. | test_screeners_refuse_invalid_input_before_egress |

@@ -54,3 +54,35 @@ Next: exact bash scripts/verify.sh on the reviewed clean frozen local commit; pr
 current VEX refusal, terminal XML and unchanged-source evidence externally. No row/SG1-SG8
 promotion without gate0 and required same-SHA CI. Current Jev wire, authenticated route/pool,
 protected runtime/worker/attempt/session/revision/export and full acceptance remain mandatory.
+
+## Frozen879 Terminal Gate And SG2 Counterexample
+
+Exact bash scripts/verify.sh ran against clean frozen commit
+879b02f45e12fc8d3f1513fc8ecb7067f2c6c3df and producer e5465b5498b659958da8859bbb2ff9bec30a5ff062dc5be9d8a53900dc245682.
+Native runtime matches the diagnostic above. Terminal exit1:4505 cases,4504 passed,one
+failure,zero errors/skips; pytest1535.14s. Lint, strict typecheck and format passed. The sole
+failure is test_checked_in_policy_binds_current_lock_and_assets_and_closes_report:
+the checked-in reviewed VEX source81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba
+does not match this producer. No policy rebinding, ledger promotion or same-SHA CI claim.
+Actual launcher/child absence confirmed; terminal recorder validates clean source and copies
+fresh XML into the immutable external studio-commit-879b02f45e12fc8d3f1513fc8ecb7067f2c6c3df directory.
+
+A read-only probe during that frozen run separately found both constructors replace an
+explicit false-valued callable with their default network transport. No egress occurred.
+Four actual supplemental Serena queries and caller impact precede the correction. The new
+two-backend test_explicit_false_valued_screener_transport_never_falls_back fails at identity
+before dispatch on both original constructors. Actual red XML/log are preserved externally
+as screener-transport-identity-red-20261003.xml/log. Change only the fallback to None identity,
+then collect fresh focused and exact frozen gate evidence;879 remains the earlier candidate,
+not retroactively verified. Neither callback plumbing nor this correction grants authority.
+
+## Explicit-Route Correction Diagnostic
+
+Same complete focused command above, with both new false-valued cases included: exit0,
+73 cases,73 passes,zero failures/errors/skips,21.883s. Source/tests unchanged through the
+run; producer3ea1304dd140d89ab756d68647ea7d309e9a4b3ed4e5a22257690b9ce965335c.
+Native runtime unchanged. Subsequent exact --fast: lint and strict typecheck307 files pass;
+not a full gate. External screener-transport-identity-focused-20261003.xml SHA256
+714c458e48216e54a2c29f79ff728369080f7d86da39d8fe334e93b496e5d5c8;
+log SHA2560237e95c8abf29d38dbd0cdb6c372bcf4b63b8711a9ef4161b4235dccce9bf81.
+Next freeze a reviewed clean local correction commit and run the exact full gate anew.

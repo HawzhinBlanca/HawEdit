@@ -14294,6 +14294,12 @@ is not owner authorization. Existing canonical Pro authority does not authorize 
 TypeSafe, and authenticated per-route policy/shared allocation remains required before the
 protected worker can adopt them. Ordinary CLI/no-screener/durable signatures remain compatible.
 
+Constructor fallback is by None identity, never transport truthiness. A read-only probe at
+879b02f45e12fc8d3f1513fc8ecb7067f2c6c3df found both constructors discarded false-valued
+explicit callables; two test-first actual-factory regressions now preserve identity and
+dispatch through them without remote egress. Four supplemental actual Serena queries cover
+both constructors and their dynamic class callers. No route authority follows from this fix.
+
 Refuse missing/coerced/nonfinite/out-of-range measurements, invalid input IDs/top_k,
 duplicate JSON fields and oversized bodies. Validate the whole requested Gemini batch,
 including rows below top_k, before ranking. Preserve real zeros/false decisions, composite

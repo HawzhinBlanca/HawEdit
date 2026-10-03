@@ -32,3 +32,15 @@ is their dynamic caller. Raw pre-edit record: screener-refusal-cases-before-map.
 Add a separately executed transport case table to both exhaustive sets; preserve every
 existing assertion and CLI case, bidirectional matching, and no-input-work assertions.
 Do not classify a reachable Python guard as unreachable or hide its AST raise.
+
+## SG2 Constructor Correction
+
+Actual supplemental LSP mapping at879b02f45e12fc8d3f1513fc8ecb7067f2c6c3df is preserved
+in screener-transport-identity-before-map.json. Both __init__ definitions are found with
+zero direct references: invocation through the class is dynamic. GeminiFlashScreener has17
+class references and JevScreener10, including the unchanged get_screener constructor calls
+and direct controls in both screener test modules. Existing factory/valid/empty/missing-key
+tests cover None and ordinary callable paths. Add an actual factory identity and decoding
+test for a false-valued callable for each backend; assert identity before execution so the
+red regression cannot accidentally reach remote HTTP. Change only the two constructor
+fallback expressions. No model, request, score, builder or durable signature changes.

@@ -71,6 +71,33 @@ def test_screener_factory_routes_explicit_transport(kind: str) -> None:
 
 
 @pytest.mark.parametrize("kind", ["gemini-flash", "jev"])
+def test_explicit_false_valued_screener_transport_never_falls_back(kind: str) -> None:
+    body = flash_body([row()]) if kind == "gemini-flash" else json.dumps(legacy_body()).encode()
+
+    class FalseValuedTransport:
+        def __init__(self) -> None:
+            self.calls: list[urllib.request.Request] = []
+
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self, request: urllib.request.Request) -> bytes:
+            self.calls.append(request)
+            return body
+
+    transport = FalseValuedTransport()
+    selected = get_screener(
+        kind, gemini_key="diagnostic-key", typesafe_key="diagnostic-key", transport=transport
+    )
+    assert isinstance(selected, GeminiFlashScreener | JevScreener)
+    assert selected._transport is transport
+    result = selected.screen([(candidate(), "diagnostic transcript")])
+    assert len(transport.calls) == 1 and len(result) == 1
+    assert result[0].candidate_id == "candidate-1"
+    assert transport.calls[0].method == "POST"
+
+
+@pytest.mark.parametrize("kind", ["gemini-flash", "jev"])
 def test_shared_builder_refuses_unguarded_screening_before_inputs(
     monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:

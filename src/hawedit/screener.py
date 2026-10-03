@@ -237,7 +237,7 @@ class GeminiFlashScreener:
                 "run python -m hawedit.credentials"
             )
         self.api_key = resolved_key
-        self._transport = transport or self._default_transport
+        self._transport = self._default_transport if transport is None else transport
 
     @property
     def name(self) -> str:
@@ -377,7 +377,7 @@ class JevScreener:
                 "environment or run python -m hawedit.credentials typesafe"
             )
         self.api_key = resolved_key
-        self._transport = transport or self._default_transport
+        self._transport = self._default_transport if transport is None else transport
 
     @property
     def name(self) -> str:

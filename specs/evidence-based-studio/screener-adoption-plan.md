@@ -14,6 +14,12 @@ producer and truthful measurement repair, not new model/rubric or spending appro
 5. Review and commit locally, freeze source/tested living docs, exact bash scripts/verify.sh.
    Preserve VEX failure if present; no bypass, ledger promotion or same-SHA CI inference.
 
+6. SG2 verification exposed false-valued callable replacement in both constructors. After
+   preserving879's terminal gate, map both actual constructors/class callers, add the
+   two-backend test-first identity/dispatch regression, and use an explicit None fallback.
+   Repeat focused coverage and the exact gate on a fresh frozen local correction commit.
+   Preserve the earlier counterexample and gate; do not retroactively relabel879 verified.
+
 Exit is engineering evidence for this prerequisite, not an accepted protected worker or
 10/10. Current TypeSafe wire repair, authenticated screener policy/shared pool, actual full
 GPU runtime and persistent worker/attempt/session/revision/export adoption remain required.

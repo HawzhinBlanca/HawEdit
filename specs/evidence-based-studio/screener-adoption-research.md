@@ -63,3 +63,19 @@ definition/reference records and caller impact before implementation. Test first
 the exact gate on a reviewed frozen clean local commit. No task/ledger promotion until current
 gate and required same-SHA CI. Protected worker, attempt/recovery, HTTP identity, revisions,
 signed review/export and every independent/sustained acceptance threshold remain mandatory.
+
+## Explicit Transport Identity Counterexample
+
+After freezing879b02f45e12fc8d3f1513fc8ecb7067f2c6c3df, a read-only probe supplied a
+callable with __bool__ returning False through the actual factory. Both selected screeners
+discarded it because their constructors used transport or self._default_transport. No
+request was issued. This contradicts SG2 and can bypass an explicitly supplied guarded
+wrapper. The default is appropriate only for None, not a false-valued callable.
+
+Four additional actual Serena LSP queries at that frozen SHA mapped both classes and both
+constructors: GeminiFlashScreener17 class references, JevScreener10, both constructor
+definitions found with zero direct references (Python constructor dispatch is dynamic).
+Raw record: screener-transport-identity-before-map.json. Factory and direct test callers
+need coverage. Preserve signatures and ordinary None fallback, add a real false-valued
+callable regression first, then change exactly the two fallback selections. This correction
+is within the approved parent T3 and SG2 scope; no spending or policy approval is implied.
