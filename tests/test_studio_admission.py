@@ -543,3 +543,73 @@ def test_raw_absent_orm_attributes_accept_without_authority(
     before = _digest(journal)
     assert inspect_studio_journal(journal[0], journal[1], POLICY).workflow_ids == (journal[2],)
     assert _digest(journal) == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("serialization", "portable_json\0foreign"),
+        ("name", POLICY.workflow_name + "\0foreign"),
+        ("queue_name", "hawedit-studio-v1\0foreign"),
+        ("inputs", "VALID_INPUT"),
+        ("attributes", "{}\0foreign"),
+        ("authenticated_roles", "[]\0foreign"),
+    ],
+)
+def test_raw_nul_prefix_refuses_without_repair(
+    journal: tuple[PrivateSqlitePath, SubmissionStore, str],
+    field: str,
+    value: str,
+) -> None:
+    if value == "VALID_INPUT":
+        value = json.dumps({"positionalArgs": [journal[2]], "namedArgs": {}}) + "\0foreign"
+    _set(journal, "workflow_status", field, value)
+    before = _digest(journal)
+    with pytest.raises(StudioStorageError, match="projection"):
+        inspect_studio_journal(journal[0], journal[1], POLICY)
+    assert _digest(journal) == before
+
+
+@pytest.mark.parametrize("field", ["snapshot_json", "dispatch_state", "last_error"])
+@pytest.mark.parametrize("reader", ["get", "pending", "recovery_snapshot"])
+def test_outbox_nul_prefix_refuses(
+    journal: tuple[PrivateSqlitePath, SubmissionStore, str],
+    field: str,
+    reader: str,
+) -> None:
+    with closing(sqlite3.connect(journal[1].path)) as connection, connection:
+        # Exercise damaged persisted rows, not the normal writer's CHECK constraint.
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute(
+            f'UPDATE submissions SET "{field}"=coalesce("{field}",\'visible\')'
+            "||char(0)||'foreign'"
+        )
+    before = _digest(journal)
+    with pytest.raises(StudioStorageError, match="projection"):
+        if reader == "get":
+            journal[1].get(journal[2])
+        elif reader == "pending":
+            journal[1].pending()
+        else:
+            journal[1].recovery_snapshot([journal[2]])
+    assert _digest(journal) == before
+
+
+def test_outbox_hidden_job_id_refuses(
+    journal: tuple[PrivateSqlitePath, SubmissionStore, str],
+) -> None:
+    with closing(sqlite3.connect(journal[1].path)) as connection, connection:
+        connection.execute("UPDATE submissions SET job_id=job_id||char(0)||'foreign'")
+    before = _digest(journal)
+    with pytest.raises(StudioStorageError, match="projection"):
+        journal[1].pending()
+    assert _digest(journal) == before
+
+
+def test_outbox_nul_diagnostic_is_not_written(
+    journal: tuple[PrivateSqlitePath, SubmissionStore, str],
+) -> None:
+    before = _digest(journal)
+    with pytest.raises(ValueError):
+        journal[1].note_dispatch_error(journal[2], "visible\0foreign")
+    assert _digest(journal) == before

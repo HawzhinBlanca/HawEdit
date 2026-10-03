@@ -200,6 +200,17 @@ class SubmissionStore:
             raw = row["snapshot_json"]
             if not isinstance(raw, str) or row["snapshot_bytes"] > _MAX_SNAPSHOT_BYTES:
                 raise ValueError("Submission snapshot exceeds the record limit")
+            for field, size_field in (
+                ("job_id", "job_id_bytes"),
+                ("snapshot_json", "snapshot_bytes"),
+                ("dispatch_state", "dispatch_bytes"),
+                ("last_error", "error_bytes"),
+            ):
+                value = row[field]
+                if field == "last_error" and value is None:
+                    continue
+                if not isinstance(value, str) or len(value.encode("utf-8")) != row[size_field]:
+                    raise ValueError(f"Submission text projection differs: {field}")
             snapshot = json.loads(raw)
             if not isinstance(snapshot, dict) or _identity(snapshot) != row["job_id"]:
                 raise ValueError("Submission snapshot identity mismatch")
@@ -234,7 +245,9 @@ class SubmissionStore:
             "SELECT substr(job_id,1,72) AS job_id,length(CAST(job_id AS BLOB)) AS job_id_bytes,"
             "substr(snapshot_json,1,131073) AS snapshot_json,"
             "length(CAST(snapshot_json AS BLOB)) AS snapshot_bytes,"
-            "substr(dispatch_state,1,10) AS dispatch_state,substr(last_error,1,513) AS last_error,"
+            "substr(dispatch_state,1,10) AS dispatch_state,"
+            "length(CAST(dispatch_state AS BLOB)) AS dispatch_bytes,"
+            "substr(last_error,1,513) AS last_error,"
             "length(CAST(last_error AS BLOB)) AS error_bytes,"
             "CASE WHEN typeof(created_at) IN ('integer','real') THEN created_at "
             "ELSE NULL END AS created_at FROM submissions"
@@ -388,7 +401,8 @@ class SubmissionStore:
         """Refuse oversized intake before decoding; never silently truncate pending work."""
         return list(
             self._bounded_read(
-                " WHERE dispatch_state='pending'",
+                " WHERE dispatch_state='pending' OR dispatch_state IS NULL "
+                "OR dispatch_state NOT IN ('pending','confirmed')",
                 (),
                 max_jobs=max_jobs,
                 max_bytes=max_bytes,
@@ -447,7 +461,7 @@ class SubmissionStore:
         self._update_dispatch(job_id, "confirmed", None)
 
     def note_dispatch_error(self, job_id: str, message: str) -> None:
-        if not isinstance(message, str) or not message or len(message) > 512:
+        if not isinstance(message, str) or not message or len(message) > 512 or "\0" in message:
             raise ValueError("Submission diagnostic must be bounded nonempty text")
         self._update_dispatch(job_id, "pending", message)
 

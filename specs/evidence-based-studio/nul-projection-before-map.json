@@ -1,0 +1,20 @@
+[
+  {
+    "path": "src/hawedit/studio_admission.py",
+    "symbol": "_read",
+    "definition": "[{\"name_path\": \"_read\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/studio_admission.py\", \"body_location\": {\"start_line\": 166, \"end_line\": 205}}]",
+    "references": "[{\"name_path\": \"_raw/schema\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_admission.py\", \"body_location\": {\"start_line\": 219, \"end_line\": 219}, \"content_around_reference\": \"... 218:    ]\\n  > 219:    schema = _read(connection, \\\"sqlite_schema\\\", columns, budget, schema=True)\\n... 220:    encoded = json.dumps(\"}, {\"name_path\": \"_raw\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_admission.py\", \"body_location\": {\"start_line\": 208, \"end_line\": 239}, \"content_around_reference\": \"... 236:        fields = [(column[1], column[2], bool(column[3])) for column in info]\\n  > 237:        tables[table] = _read(connection, table, fields, budget)\\n... 238:    budget.check()\"}]"
+  },
+  {
+    "path": "src/hawedit/studio_submissions.py",
+    "symbol": "SubmissionStore/_decode",
+    "definition": "[{\"name_path\": \"SubmissionStore/_decode\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_submissions.py\", \"body_location\": {\"start_line\": 196, \"end_line\": 228}}]",
+    "references": "[{\"name_path\": \"SubmissionStore/_get\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_submissions.py\", \"body_location\": {\"start_line\": 242, \"end_line\": 246}, \"content_around_reference\": \"... 245:            raise KeyError(f\\\"Studio submission {job_id} not found\\\")\\n  > 246:        return self._decode(row)\\n... 247:\"}, {\"name_path\": \"SubmissionStore/_bounded_read\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_submissions.py\", \"body_location\": {\"start_line\": 317, \"end_line\": 382}, \"content_around_reference\": \"... 381:                )\\n  > 382:            return tuple(self._decode(row) for row in rows)\\n... 383:\"}]"
+  },
+  {
+    "path": "src/hawedit/studio_submissions.py",
+    "symbol": "SubmissionStore/_select",
+    "definition": "[{\"name_path\": \"SubmissionStore/_select\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_submissions.py\", \"body_location\": {\"start_line\": 230, \"end_line\": 240}}]",
+    "references": "[{\"name_path\": \"SubmissionStore/_get/row\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_submissions.py\", \"body_location\": {\"start_line\": 243, \"end_line\": 243}, \"content_around_reference\": \"... 242:    def _get(self, connection: sqlite3.Connection, job_id: str) -> StoredSubmission:\\n  > 243:        row = connection.execute(self._select() + \\\" WHERE job_id=?\\\", (job_id,)).fetchone()\\n... 244:        if row is None:\"}, {\"name_path\": \"SubmissionStore/_bounded_read\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_submissions.py\", \"body_location\": {\"start_line\": 317, \"end_line\": 382}, \"content_around_reference\": \"... 351:                cursor = connection.execute(\\n  > 352:                    self._select() + condition + \\\" ORDER BY created_at,job_id LIMIT ?\\\",\\n... 353:                    (*parameters, max_jobs + 1),\"}]"
+  }
+]

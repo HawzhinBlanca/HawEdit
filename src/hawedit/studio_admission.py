@@ -199,6 +199,8 @@ def _read(
                 raise StudioStorageError(f"Raw journal field type refused: {table}.{name}")
             if size > cap:
                 raise StudioStorageError(f"Raw journal field limit refused: {table}.{name}")
+            if kind == "text" and len(value.encode("utf-8")) != size:
+                raise StudioStorageError(f"Raw journal text projection differs: {table}.{name}")
             if isinstance(value, float) and not math.isfinite(value):
                 raise StudioStorageError(f"Raw journal nonfinite field refused: {table}.{name}")
             record[name] = value

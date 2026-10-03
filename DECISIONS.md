@@ -14421,6 +14421,21 @@ configuration/billing/replay/session. HTTP remains studio_runner_unavailable. Re
 raw-admission-* specs, BLUEPRINT sections2-5, BLOCKED1/3/4/21/24/25. No gate/CI promotion,
 security-policy rebinding, trust/spending/licence acceptance or10/10 verdict.
 
+### Exact Encoded Projection Correction - 2026-10-03
+
+Native SQLite3.49.1 counterexamples on copied private journals show substr stops at NUL:
+an unknown tag was admitted as portable_json; outbox snapshot1549 stored bytes became1541
+projected bytes. Originals and interrupted3d9 gate are preserved; no deserialization occurred.
+Compare original UTF8 encoded lengths with bounded projected text before interpretation,
+including outbox ID/snapshot/state/diagnostic and all raw journal fields. Refuse mismatch,
+never normalize or repair. Add state length metadata without altering database schema or
+the existing outbox byte-budget fields. Pending selection includes malformed/null states
+for refusal; healthy confirmed records remain excluded. Reject newly supplied NUL diagnostics
+before writing. Other physical encodings are not implicitly adopted. Existing Unicode,
+count/byte/query budgets and caller signatures stay intact. No authority or broader memory/
+atomicity guarantee is inferred. See nul-projection-* research/spec/maps/plan; parent T3
+approval, BLUEPRINT sections2-5, D-276. Current gate/CI and every broader obligation remain.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
