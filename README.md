@@ -575,6 +575,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `captions.py` | §4.3 | RTL captions: `shaping=complex`, stack check, ASS-family-to-font coverage binding, our own line breaks. |
 | `ffmpeg_setup.py` | §4.3, §7 | Installed-wheel FFmpeg verification and Linux per-user provisioning through the authenticated pinned transaction; Windows/macOS return package-manager remediation. |
 | `ingest.py` | §3 Stage 0 | 16 kHz mono audio, 1 fps proxy, shot cuts from the **source**, VAD under the ASR ceiling. |
+| `ingest_cache.py` | §3 Stage 0, D-276 | Observed source/producer/tool/model and output-byte bindings for reuse; preserves invalidated evidence before regeneration. WIP: not authenticated review, an atomic loader, or protected studio-worker adoption. |
 | `path_a.py` | §3 Stage 3 Path A | The Kurdish judge over the **whole** transcript. Refuses to send a subset, and refuses to split one. |
 | `path_b.py` | §3 Stage 3 Path B | `VideoChat3-4B` over scenes. Inputs are packed into ≤256-frame calls; every SV6D label must cite a time **inside the scene it describes**. |
 | `video_reader.py` | §3 Stage 3 Path B | `MCG-NJU/VideoChat3-4B` and the SV6D prompt. The model is shown one scene starting at zero, so every time it cites is moved onto the media's clock here — the invariant alone accepts an unshifted one whenever it happens to land in range. |
