@@ -14300,6 +14300,34 @@ explicit callables; two test-first actual-factory regressions now preserve ident
 dispatch through them without remote egress. Four supplemental actual Serena queries cover
 both constructors and their dynamic class callers. No route authority follows from this fix.
 
+**Bound ingest reuse (2026-10-03).** The actual silent-but-valid WAV counterexample proves
+source hash and decodability cannot authenticate cached derived bytes or old VAD measurements.
+Stage0 now requires versioned metadata/audio/proxy hashes plus current source/media, producer,
+installed VAD model, library and FFmpeg/ffprobe identity. This is observed internal identity,
+not qualified review, loader/exec binding, independent quality or a power-loss guarantee.
+Stage0 completion events follow persistence, not merely a successful media subprocess.
+
+Unverified legacy or altered caches are copied into a new no-replace recovery bundle before
+normal regeneration. Copy only known cache files, never move an original directory that may
+contain unrelated owner media. Preserve partial recovery attempts, canonical ASR and review
+artifacts. Storage/link/observed drift failures refuse before ASR; no silent destruction or
+stale reuse. Existing valid reuse and malformed-metadata fresh-ingest contracts stay intact.
+Other checkpoints and pipeline signatures remain unchanged. No new dependency/model choice.
+Recovery includes both extraction provenance sidecars. After retaining original bytes,
+invalidate those sidecars so the nested extractor cannot reuse output from a changed tool
+or producer context. Extraction schema2 binds actual output SHA-256, not just byte count;
+size-only legacy records regenerate. Existing format/truncation/interrupted-publication
+assertions remain. Separate full held/path stat baselines retain Windows ctime/mode drift
+checks without incorrectly comparing CRT semantics with path semantics.
+
+Base ingest remains diarization=None: the current Diarizer protocol has no held weight
+identity for turn reuse. Run the selected producer and retain its validated turns in the
+existing run report without changing bound base JSON. No fake weight identity or discarded
+configured diarization; authenticated turn checkpoints remain required for protected work.
+Research, actual eleven-query Serena maps, EARS IC1-IC11 and caller scope are recorded in
+specs/evidence-based-studio/ingest-cache-*. Protected worker/runtime/attempt/billing/session
+and signed revision/review/export plus current VEX/CI and full acceptance still remain.
+
 Refuse missing/coerced/nonfinite/out-of-range measurements, invalid input IDs/top_k,
 duplicate JSON fields and oversized bodies. Validate the whole requested Gemini batch,
 including rows below top_k, before ranking. Preserve real zeros/false decisions, composite

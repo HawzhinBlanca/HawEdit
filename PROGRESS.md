@@ -32,6 +32,19 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Where this stops, and why
 
+**Current local studio checkpoint 2026-10-03 (WIP):** frozen45e3726's exact gate has
+4,506 passes/one VEX source-binding failure, zero errors/skips,1544.64s; clean source and
+raw terminal evidence retained externally. Its shared screener repairs grant no provider
+authority. The next bound-ingest repair has79 focused passes/no failures/errors/skips
+at producer4ba71b63f68ece3a83199c2a1cfa32867cd8528fd2e604cf4ab83f259873c672,
+not a full gate. Research, actual eleven-query caller map and diagnostic history are in
+specs/evidence-based-studio/ingest-cache-*. Stage0 and nested extraction caches bind actual
+bytes/context, retain damaged or legacy evidence before rebuilding, and keep current
+diarization out of unbound base-cache reuse. Pending clean-commit full gate and same-SHA CI;
+no ledger row is promoted. Actual protected startup/worker/billing/session/revision/export,
+current security/owner resources and independent sustained acceptance remain unfulfilled.
+The generation API still refuses studio_runner_unavailable. No release or10/10 claim.
+
 **Current-source correction 2026-10-02:** the historical completion summary below is not
 current acceptance. The dashboard audit found filename-only submission, bypassed producers,
 fabricated quality/duration/completion, ambiguous media/history and inaccessible/mobile

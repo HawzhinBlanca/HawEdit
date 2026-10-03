@@ -80,7 +80,6 @@ from hawedit.captions import (
     verify_caption_integrity,
 )
 from hawedit.checkpoint import (
-    is_stage_complete,
     save_stage_checkpoint,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
@@ -154,6 +153,7 @@ from hawedit.ingest import (
     ingest,
     probe_stream,
 )
+from hawedit.ingest_cache import IngestCache
 from hawedit.judge import (
     MAX_PERSISTED_VERDICT_BYTES,
     BilledCall,
@@ -2753,43 +2753,26 @@ def run_pipeline(
     # --- §3 Stage 0 ----------------------------------------------------------------------
     log.started("ingest")
     source_sha = _file_digest(source)
-    stage0_json = work_dir / "stage0" / "ingest.json"
-    ingested: IngestResult | None = None
-    if (
-        is_stage_complete(work_dir, "stage0_ingest", {"source_sha256": source_sha})
-        and stage0_json.is_file()
-    ):
-        try:
-            saved_data = json.loads(stage0_json.read_text(encoding="utf-8"))
-            saved_ingest = IngestResult.from_dict(saved_data)
-            audio_p = Path(saved_ingest.audio_path)
-            proxy_p = Path(saved_ingest.proxy_path)
-            if (
-                audio_p.is_file()
-                and proxy_p.is_file()
-                and audio_p.stat().st_size > 0
-                and proxy_p.stat().st_size > 0
-            ):
-                probe_stream(proxy_p, "stream=index", ffmpeg=ffmpeg, video_only=True)
-                probe_stream(audio_p, "stream=index", ffmpeg=ffmpeg)
-                ingested = saved_ingest
-                log.finished("ingest", "resumed from checkpoint")
-        except Exception:
-            ingested = None
-
-    if ingested is None:
-        try:
-            ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
-        except (IngestError, OSError) as exc:
-            return _ingest_failure_run(identifier, source, work_dir, exc)
-        log.finished("ingest")
-        stage0_json.write_text(ingested.to_json(), encoding="utf-8")
-        save_stage_checkpoint(
-            work_dir,
-            "stage0_ingest",
-            {"source_sha256": ingested.source_sha256},
-            metadata={"audio_path": str(ingested.audio_path)},
-        )
+    try:
+        cache = IngestCache(source, work_dir, identifier, source_sha, ffmpeg)
+        ingested = cache.load()
+        if ingested is None:
+            if cache.reason is not None:
+                log.started("ingest_cache_reuse")
+                retained = cache.preserve()
+                cache.invalidate_extractions()
+                log.finished(
+                    "ingest_cache_reuse",
+                    f"{cache.reason}; preserved at {retained.relative_to(cache.work_dir)}; "
+                    "fresh ingest required",
+                )
+            ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=cache.ffmpeg)
+            cache.save(ingested)
+            log.finished("ingest")
+        else:
+            log.finished("ingest", "resumed from checkpoint")
+    except (IngestError, OSError) as exc:
+        return _ingest_failure_run(identifier, source, work_dir, exc)
 
     if transcript is not None:
         if transcript.media_sha256 is None:
@@ -2817,7 +2800,7 @@ def run_pipeline(
                 )
             else:
                 diarization_stage = None
-                stage0_json.write_text(ingested.to_json(), encoding="utf-8")
+                # The base cache has no diarizer weight binding; keep current turns in the run.
 
     asr_failure: StageSkipped | None = None
     audio_digest: str | None = None

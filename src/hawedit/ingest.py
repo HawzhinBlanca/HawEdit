@@ -41,7 +41,7 @@ import tempfile
 import threading
 import time
 import wave
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -338,7 +338,13 @@ def _atomic_json(path: Path, document: dict[str, object]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
+def _extract_once(
+    source: Path,
+    dest: Path,
+    command: Sequence[str],
+    *,
+    validate_cached: Callable[[Path], None] | None = None,
+) -> Path:
     """Reuse exact verified output, otherwise encode privately and publish atomically (D-162)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     sidecar = dest.with_suffix(dest.suffix + ".provenance.json")
@@ -360,13 +366,18 @@ def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
                 previous, intact = None, False
             if (
                 isinstance(previous, dict)
-                and set(previous) == {"schema", "source_sha256", "command", "output_bytes"}
-                and previous.get("schema") == 1
+                and set(previous)
+                == {"schema", "source_sha256", "command", "output_bytes", "output_sha256"}
+                and type(previous.get("schema")) is int
+                and previous.get("schema") == 2
                 and previous.get("source_sha256") == digest
                 and previous.get("command") == command_key
                 and intact
             ):
-                return dest
+                if validate_cached is not None:
+                    validate_cached(dest)
+                if previous["output_sha256"] == _source_digest(dest):
+                    return dest
 
         staging: Path | None = None
         try:
@@ -381,15 +392,17 @@ def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
             if _source_digest(source) != digest:
                 raise IngestError(f"Stage 0 source changed while extracting {dest.name}")
             output_bytes = staging.stat().st_size
+            output_sha256 = _source_digest(staging)
             os.replace(staging, dest)
             staging = None
             _atomic_json(
                 sidecar,
                 {
-                    "schema": 1,
+                    "schema": 2,
                     "source_sha256": digest,
                     "command": command_key,
                     "output_bytes": output_bytes,
+                    "output_sha256": output_sha256,
                 },
             )
         except OSError as exc:
@@ -431,6 +444,7 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-y",
             str(dest),
         ],
+        validate_cached=_assert_audio_format,
     )
     _assert_audio_format(dest)
     return dest
