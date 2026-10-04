@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
+from hawedit.asr import SpeechSegment
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import Qc
 from hawedit.events import RunEvent, RunEventLog, RunState, discard
@@ -185,6 +187,71 @@ def test_the_default_sink_discards() -> None:
 
 
 # --- against a real run --------------------------------------------------------------------
+
+
+class _EventTestProducer:
+    """Explicit observer-boundary double, never real-model quality evidence."""
+
+    def __init__(self, events: list[RunEvent], *, refuse: bool = False) -> None:
+        self.events = events
+        self.refuse = refuse
+        self.calls = 0
+        self.observed: tuple[RunEvent, ...] = ()
+
+    def transcribe(
+        self,
+        media_id: str,
+        audio_path: Path,
+        speech_segments: Sequence[SpeechSegment],
+        work_dir: Path,
+        ffmpeg: Path | None = None,
+    ) -> RawTranscript:
+        assert audio_path.is_file(), "the event test must decode real input media"
+        assert speech_segments
+        self.calls += 1
+        self.observed = tuple(self.events)
+        if self.refuse:
+            raise RuntimeError("event test ASR unavailable")
+        return a_transcript(media_id)
+
+
+def test_pipeline_transcript_start_precedes_asr_call(tmp_path: Path) -> None:
+    assert find_ffmpeg() is not None
+    events: list[RunEvent] = []
+    producer = _EventTestProducer(events)
+    run_pipeline(FIXTURE, tmp_path / "work", asr=producer, on_event=events.append)
+    observed = [event for event in producer.observed if event.stage == "transcript"]
+    assert [event.state for event in observed] == [RunState.STARTED]
+    transcript = [event.state for event in events if event.stage == "transcript"]
+    assert transcript == [RunState.STARTED, RunState.COMPLETED]
+
+
+def test_pipeline_asr_refusal_ends_started_transcript(tmp_path: Path) -> None:
+    assert find_ffmpeg() is not None
+    events: list[RunEvent] = []
+    producer = _EventTestProducer(events, refuse=True)
+    run = run_pipeline(FIXTURE, tmp_path / "work", asr=producer, on_event=events.append)
+    assert isinstance(run.transcript, StageSkipped)
+    transcript = [event for event in events if event.stage == "transcript"]
+    assert [event.state for event in transcript] == [RunState.STARTED, RunState.SKIPPED]
+    assert transcript[-1].reason == run.transcript.reason
+    assert not run.complete
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+
+
+def test_pipeline_cached_transcript_preserves_stage_events(tmp_path: Path) -> None:
+    assert find_ffmpeg() is not None
+    events: list[RunEvent] = []
+    producer = _EventTestProducer(events)
+    work = tmp_path / "work"
+    first = run_pipeline(FIXTURE, work, asr=producer, on_event=events.append)
+    events.clear()
+    resumed = run_pipeline(FIXTURE, work, asr=producer, on_event=events.append)
+    assert producer.calls == 1
+    assert resumed.transcript == first.transcript
+    transcript = [event.state for event in events if event.stage == "transcript"]
+    assert transcript == [RunState.STARTED, RunState.COMPLETED]
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
 
 
 @needs_ffmpeg

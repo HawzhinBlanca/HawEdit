@@ -2802,6 +2802,7 @@ def run_pipeline(
                 diarization_stage = None
                 # The base cache has no diarizer weight binding; keep current turns in the run.
 
+    log.started("transcript")
     asr_failure: StageSkipped | None = None
     audio_digest: str | None = None
     producer_id: str | None = None
@@ -2888,8 +2889,8 @@ def run_pipeline(
         config=config,
     )
     if asr_failure is not None:
+        log.finished("transcript", asr_failure.reason)
         return replace(run, transcript=asr_failure)
-    log.started("transcript")
     if transcript is None:
         log.finished("transcript", _STAGE_1_ASR.reason)
         return run

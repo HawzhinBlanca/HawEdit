@@ -394,3 +394,32 @@ new replay output receives new filenames/source identities. Add README/PROGRESS 
 for test_acceptance_authority.py before canonical collection. No protected harness, fixture,
 golden, model, dependency, paid route or immutable blueprint change. Positive authenticated
 admission and the full original plan remain required subsequent work.
+
+## T2 Transcript Start Placement
+
+Baseline actual LSP maps: transcript-events-before-map.json (five definition/reference
+queries) and transcript-alias-before-map.json (public builder alias), bound to clean fdfe25.
+File-symbol fallback warnings remain explicit in private original logs.
+
+- run_pipeline: 186 references across pipeline.py, web.py, test_checkpoint, test_episode,
+  test_events, test_ingest_cache, test_pipeline, test_render_boundary_revision,
+  test_render_caption_revision, test_review_findings, test_run_cost and test_screener.
+- _build_and_run: 13 references in pipeline.py, test_content_type, test_durable and
+  test_pipeline. Public build_and_run alias: eleven references across durable_workflow,
+  test_pipeline, test_screener_integrity and test_studio_billing. Builder signatures stay
+  unchanged; durable_workflow's secondary alias is not changed by this unit.
+- RunEventLog: twelve references in events.py, pipeline.py, test_events and test_run_cost;
+  started: sixteen references; finished: thirty-four. Their implementation/signatures stay.
+
+Changes: pipeline.py start/operational-skip placement and additive native-media event tests.
+Preserve completed order, enum/sequence/skip reason, raw immutability, config and cache keys.
+Run all listed caller test modules, not a selected green subset; exact full gate remains
+required. No real-model accuracy, progress percentage, cloud execution or publication claim.
+
+Actual post-edit transcript-events-after-map.json completed at 13:46:18 UTC: six queries,
+dirty source bound by unchanged file hashes. run_pipeline now has 190 references, the four
+new integration calls in test_events; affected files are unchanged. _EventTestProducer has
+three constructor references there. Method/test entrypoint reference queries are empty;
+pytest discovery, not an invented symbol caller, executes the named regressions. Complete
+fifteen-module caller run passed 575 tests, no failures/errors/skips. Exact full gate and
+applicable same-SHA CI remain independent requirements; this is not task completion.

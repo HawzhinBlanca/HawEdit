@@ -18,6 +18,18 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Milestones (§9)
 
+Transcript stage reporting checkpoint 2026-10-04 (T2 remains WIP): after actual ZAR38
+ASR terminal evidence, move the existing start event before producer/cache work and report
+its operational refusal as a skip. Three additive native-media observer regressions:
+test-first 19 cases/two failures, then 19 passes/zero errors/skips; native fast lint/types
+(315 files) and two-file format check pass. Complete caller diagnostics pass 575 cases,
+zero failures/errors/skips (786.543 JUnit seconds), with source hashes unchanged.
+Reviewed local commit, exact full gate and same-SHA CI remain pending. Observer doubles are not model
+quality evidence. Actual ZAR38 has three unaligned regions and two rejected corrections;
+no production continuation, publication, ledger promotion or 10/10. Details and versions:
+evidence/transcript-start-checkpoint-2026-10-04.md and specs/evidence-based-studio/
+transcript-start-{research,spec,plan}.md. Prior model artifacts retain their original SHA.
+
 Owned startup correction checkpoint2026-10-04 (M9.58 remains WIP): actual shared-pool
 foreign engine bypass reproduced, four new native resource regressions initially failed.
 Capture exact proven DBOS database/OptionEngine and refuse drift before shutdown flags.
