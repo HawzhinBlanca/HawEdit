@@ -272,6 +272,72 @@ else:
             except StudioStorageError:
                 result={"refused":True}
             runtime._instance._serializer=original
+        elif mode=="resource-drift":
+            import sqlite3,sqlalchemy as sa
+            from dbos._sys_db import SystemDatabase
+            instance=runtime._instance
+            original=instance._sys_db_field
+            original_engine=original.engine
+            foreign_database=None
+            scenario=sys.argv[4]
+            if scenario=="engine":
+                with closing(sqlite3.connect(storage.path)) as native,native:
+                    native.execute("CREATE TABLE unsupported_probe (value TEXT)")
+                    native.execute("INSERT INTO unsupported_probe VALUES ('preserve me')")
+                try:
+                    DBOS.get_workflow_status("missing")
+                    raise AssertionError("owned engine failed its raw refusal control")
+                except StudioStorageError:
+                    pass
+                foreign=sa.create_engine(runtime._owned_engine.url,
+                                         pool=runtime._owned_engine.engine.pool)
+                original.engine=foreign.execution_options(
+                    **dict(original_engine.get_execution_options()))
+            elif scenario=="proxy":
+                original.engine=runtime._owned_engine.engine.execution_options(
+                    **dict(original_engine.get_execution_options()))
+            elif scenario=="database":
+                foreign_database=SystemDatabase.create(runtime._owned_engine.url,{},
+                    runtime._owned_engine.engine,None,runtime._serializer,policy.executor_id)
+                instance._sys_db_field=foreign_database
+            elif scenario=="missing":
+                instance._sys_db_field=None
+            else: raise AssertionError("unknown resource scenario")
+            try:
+                refusals=0
+                try:
+                    runtime._verify_owner()
+                except StudioStorageError:
+                    refusals+=1
+                try:
+                    runtime.close(timeout_seconds=0.05)
+                except StudioStorageError:
+                    refusals+=1
+                assert refusals==2,"resource identity or pre-drain refusal missing"
+                assert original._run_background_processes
+                if foreign_database is not None:
+                    assert foreign_database._run_background_processes
+                from hawedit.studio_runtime import StudioLease
+                try:
+                    StudioLease(PrivateDirectory(root,create=False))
+                    raise AssertionError("foreign resource refusal released lease")
+                except StudioStorageError:
+                    pass
+                if scenario=="engine":
+                    try:
+                        DBOS.get_workflow_status("missing")
+                        raise AssertionError("foreign engine bypassed raw read fence")
+                    except StudioStorageError:
+                        pass
+                    with closing(sqlite3.connect(storage.path)) as native:
+                        assert native.execute("SELECT value FROM unsupported_probe").fetchall()==[
+                            ("preserve me",)]
+                result={"refused":True,"pre_drain_preserved":True}
+            finally:
+                instance._sys_db_field=original
+                original.engine=original_engine
+                if foreign_database is not None:
+                    foreign_database.destroy()
         elif mode=="contention":
             import sqlite3
             native=sqlite3.connect(storage.path)
@@ -720,3 +786,16 @@ def test_owned_runtime_refuses_real_foreign_constructor_race_without_mutation(
 ) -> None:
     result = _run(owned_job[0].root, "constructor-race")
     assert result == {"preserved": True}
+
+
+@pytest.mark.parametrize("resource", ["engine", "proxy", "database", "missing"])
+def test_owned_runtime_refuses_unowned_database_resources(
+    owned_job: tuple[PrivateSqlitePath, SubmissionStore, str, JournalPolicy], resource: str
+) -> None:
+    result = _run(owned_job[0].root, "resource-drift", "", resource)
+    assert result == {
+        "refused": True,
+        "pre_drain_preserved": True,
+        "closed": True,
+        "instance_absent": True,
+    }

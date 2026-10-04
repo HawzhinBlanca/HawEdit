@@ -18,6 +18,18 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Milestones (§9)
 
+Owned startup correction checkpoint2026-10-04 (M9.58 remains WIP): actual shared-pool
+foreign engine bypass reproduced, four new native resource regressions initially failed.
+Capture exact proven DBOS database/OptionEngine and refuse drift before shutdown flags.
+Complete caller diagnostic386passes/zero failures/errors/skips,376.88s at producer
+ab4803f763eaa5b0c1cdb25d00ab11e2ae1f3b5feec7c28f6ea6ee7c359aa3ef on HAWAPC01,
+Windows26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/SQLAlchemy2.0.52/pytest9.1.1;
+owned-resource-verification.md preserves original red and corrected XML hashes. Prior7da
+full gate4728passes/one expired VEX binding failure/zero errors/skips,2190.28s,exit1;
+same-SHA Actions zero runs. Corrected committed gate/current CI remain required. Billing
+projection repair, actual protected producer and all independent/sustained obligations remain;
+no ledger promotion, VEX rebind, push, verified candidate or10/10.
+
 | Milestone | Deliverable | Blocks | Status |
 |---|---|---|---|
 | **M0** | ASR benchmark harness + labelled Sorani audio set | Everything | **harness and canonical adapter built and gated; real Sorani measurements remain blocked by the absent labelled corpus** |

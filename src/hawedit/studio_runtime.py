@@ -27,6 +27,7 @@ from dbos._serialization import DBOSPortableJSONSerializer
 from dbos._sys_db import SystemDatabase
 from dbos._utils import INTERNAL_QUEUE_NAME, GlobalParams
 from sqlalchemy import event
+from sqlalchemy.engine.base import OptionEngine
 from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.dml import Insert
 from sqlalchemy.sql.elements import TextClause
@@ -344,6 +345,8 @@ class OwnedStudioRuntime:
         self._lease: StudioLease | None = None
         self._owned_engine: _OwnedEngine | None = None
         self._instance: Any = None
+        self._database: Any = None
+        self._database_engine: Any = None
         self._registry: Any = None
         self._functions: dict[str, Any] = {}
         self._types: dict[str, str] = {}
@@ -493,12 +496,25 @@ class OwnedStudioRuntime:
         ):
             raise StudioStorageError("Owned studio actual runtime configuration changed")
         database = instance._sys_db_field
-        if database is not None and (
-            database.engine.pool is not self._owned_engine.engine.pool
+        if database is None:
+            if self._database is not None:
+                raise StudioStorageError("Owned studio actual database resource disappeared")
+            return
+        engine = database.engine
+        if (
+            type(engine) is not OptionEngine
+            or engine._proxied is not self._owned_engine.engine
+            or engine.pool is not self._owned_engine.engine.pool
             or database.created_engine
             or database.serializer is not self._serializer
         ):
             raise StudioStorageError("Owned studio actual database engine or serializer changed")
+        if self._database is None:
+            # Pinned DBOS creates this exact proxy once from the supplied owned engine.
+            self._database = database
+            self._database_engine = engine
+        elif database is not self._database or engine is not self._database_engine:
+            raise StudioStorageError("Owned studio actual database resource identity changed")
 
     def launch(self) -> None:
         self._main_thread()
@@ -588,6 +604,7 @@ class OwnedStudioRuntime:
             module = importlib.import_module("dbos._dbos")
             if module._dbos_global_instance is not instance:
                 raise StudioStorageError("Foreign DBOS instance present; owned lease retained")
+            self._verify_owner()
             for stop in instance.poller_stop_events + instance.background_thread_stop_events:
                 stop.set()
             database = instance._sys_db_field

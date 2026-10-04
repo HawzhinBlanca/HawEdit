@@ -62,3 +62,10 @@ ledger promotion, push, hosted dispatch, spending or publication. Same-SHA CI re
 POSIX locking is unmeasured on this host. Coarse crash re-entry is not exactly-once billing
 or publication. Actual protected producer/attempt/runtime/model/auth/billing/replay/session,
 signed review/revision/export and all independent/sustained thresholds remain required.
+
+Terminal frozen7da gate:4728passes/one VEX producer-binding failure,zero errors/skips,
+2190.28s,exit1. Lint/types/format315files pass; immutable external candidate report SHA256
+87080b00b1d8460d0139aa622fffa1b31833ffa6e516f4f42ff661118dd09021.
+Read-only same-SHA Actions listing:zero runs. See owned-resource-verification.md for the
+subsequently discovered actual same-pool engine bypass and approved test-first correction.
+Neither prior caller pass nor this red full gate accepts OS5 or a product milestone.

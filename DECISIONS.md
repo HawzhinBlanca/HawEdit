@@ -14471,6 +14471,14 @@ diagnostic; diagnostic storage failure is also visible. This does not grant exac
 coarse-step effects or change the generic CLI. See preserved real counterexamples and
 owned-startup-verification.md; POSIX locking is not claimed tested on Windows.
 
+Owned resource correction2026-10-04: actual same-pool foreign engine bypassed the owned
+statement fences, so pool identity alone is insufficient. Pinned SQLAlchemy2.0.52
+OptionEngine must directly proxy the supplied owned engine; capture exact SystemDatabase
+and OptionEngine identities once, refuse replacement/loss before shutdown flags are touched,
+retain the lease and preserve foreign state. Existing dependency, no new architecture.
+Actual native four-case regression and original red evidence: owned-resource-plan.md and
+owned-resource-verification.md. This corrects WIP ownership, not a passed release claim.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**

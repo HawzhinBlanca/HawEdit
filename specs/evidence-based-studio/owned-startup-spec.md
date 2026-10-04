@@ -18,6 +18,13 @@ projection, bounded budgets, unsupported serialized surfaces, actual publisher/i
 controls and original data preservation. Canonical gate plus same-SHA CI precede ledger
 promotion. Browser/creator/model/revision/export and sustained acceptance are separate.
 
+OS5/OS6 resource correction: the actual pinned database and OptionEngine must be captured
+after direct owned-base proxy proof, not pool equality. Replacement/loss refuses before
+shutdown flags change and retains the lease. Named native regression:
+test_owned_runtime_refuses_unowned_database_resources (engine/proxy/database/missing).
+Research, actual caller map and red/green diagnostics are in owned-resource-plan.md and
+owned-resource-verification.md; no production authority follows from these mechanics.
+
 Additional named OS2/4/6 evidence: test_owned_runtime_refuses_real_foreign_constructor_race_without_mutation;
 test_same_connection_refuses_custom_decoders_before_queries;
 test_same_connection_inspection_preserves_vm_handler_and_connection_policy;

@@ -1,0 +1,4 @@
+{"symbol": "OwnedStudioRuntime/__init__", "definitions": 1, "references": 0}
+{"symbol": "OwnedStudioRuntime/_verify_owner", "definitions": 1, "references": 5}
+{"symbol": "OwnedStudioRuntime/close", "definitions": 1, "references": 1}
+{"symbol": "_RUNTIME", "definitions": 1, "references": 2}
