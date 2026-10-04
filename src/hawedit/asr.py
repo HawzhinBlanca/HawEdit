@@ -74,6 +74,7 @@ __all__ = [
     "LONG_AUDIO_THRESHOLD_S",
     "ASRAdapter",
     "ASRResult",
+    "AsrProductionFailure",
     "CanonicalTranscriptProducer",
     "ChampionUnavailable",
     "Hardware",
@@ -921,9 +922,11 @@ class OmniAsrProducer:
     ) -> RawTranscript:
         expected_identity = self.model_identity
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
-        initial, unaligned = transcribe_prepared_segments(self.backend, prepared)
+        initial, unaligned = transcribe_prepared_segments(
+            self.backend, prepared, stop_on_failure=True
+        )
         results, validated_by, rejected_corrections = _validate_hard_segments(
-            initial, self.backend, self._validator
+            initial, self.backend, self._validator, stop_on_failure=True
         )
         if self.model_identity != expected_identity:
             raise RuntimeError("Native ASR adapter identity changed during inference")
@@ -946,6 +949,30 @@ class _PreparedSpeechSegment:
     @property
     def duration_s(self) -> float:
         return (self.end_ms - self.start_ms) / 1_000
+
+
+class AsrProductionFailure(RuntimeError):
+    """A production halt with original in-memory diagnostic input, not completed ASR."""
+
+    def __init__(
+        self,
+        stage: str,
+        diagnostic_results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
+        *,
+        unaligned: Sequence[UnalignedSpeech] = (),
+        rejected_validator_corrections: Sequence[RejectedValidatorCorrection] = (),
+    ) -> None:
+        if len(unaligned) + len(rejected_validator_corrections) != 1:
+            raise ValueError("a production ASR halt must name exactly its first failure")
+        self.stage = stage
+        self.diagnostic_results = tuple(diagnostic_results)
+        self.unaligned = tuple(unaligned)
+        self.rejected_validator_corrections = tuple(rejected_validator_corrections)
+        failure = self.unaligned[0] if self.unaligned else self.rejected_validator_corrections[0]
+        super().__init__(
+            f"production ASR halted during {stage} at {failure.start_ms}..{failure.end_ms} ms: "
+            f"{failure.reason}"
+        )
 
 
 def _cut_speech_regions(
@@ -1041,11 +1068,13 @@ def _pcm_duration_ms(path: Path) -> int:
 def transcribe_prepared_segments(
     backend: OmniSegmentBackend,
     prepared: Sequence[_PreparedSpeechSegment],
+    *,
+    stop_on_failure: bool = False,
 ) -> tuple[
     tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
     tuple[UnalignedSpeech, ...],
 ]:
-    """Transcribe every Stage 0 region, recording the ones that fail instead of aborting.
+    """Account for diagnostic failures, or halt at the first in production (D-278).
 
     Both producers built this list with a generator expression, so the first raise discarded a
     finished Stage 0 and every other region's inference. Measured 2026-08-09 on a real 38-minute
@@ -1062,14 +1091,17 @@ def transcribe_prepared_segments(
     for segment in prepared:
         try:
             item = backend.transcribe_segment(segment.path, segment.duration_s)
-        except Exception as exc:  # broad on purpose: the failure IS part of the transcript
-            failures.append(
-                UnalignedSpeech(
-                    start_ms=segment.start_ms,
-                    end_ms=segment.end_ms,
-                    reason=_failure_reason(exc),
-                )
+        except Exception as exc:
+            failure = UnalignedSpeech(
+                start_ms=segment.start_ms,
+                end_ms=segment.end_ms,
+                reason=_failure_reason(exc),
             )
+            if stop_on_failure:
+                raise AsrProductionFailure(
+                    "draft/alignment", results, unaligned=(failure,)
+                ) from exc
+            failures.append(failure)
             continue
         results.append((segment, item))
     return tuple(results), tuple(failures)
@@ -1155,6 +1187,8 @@ def _validate_hard_segments(
     results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
     backend: OmniSegmentBackend,
     validator_factory: Callable[[], SoraniValidator],
+    *,
+    stop_on_failure: bool = False,
 ) -> tuple[
     tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
     str | None,
@@ -1184,21 +1218,26 @@ def _validate_hard_segments(
         if not decision.escalate:
             routed.append((segment, item))
             continue
+        failed_stage = "validator transcription"
         try:
             corrected = validator.transcribe_segment(segment.path, segment.duration_s)
+            failed_stage = "validator alignment"
             aligned = backend.align_segment(segment.path, segment.duration_s, corrected)
         except Exception as exc:
+            failure = RejectedValidatorCorrection(
+                start_ms=segment.start_ms,
+                end_ms=segment.end_ms,
+                validator=validator.model_id,
+                reason=_failure_reason(exc),
+            )
+            if stop_on_failure:
+                raise AsrProductionFailure(
+                    failed_stage, results, rejected_validator_corrections=(failure,)
+                ) from exc
             # A rejected correction cannot erase an already admissible canonical alignment.
             # Preserve that alignment and make the failed escalation explicit in the artifact.
             routed.append((segment, item))
-            rejected.append(
-                RejectedValidatorCorrection(
-                    start_ms=segment.start_ms,
-                    end_ms=segment.end_ms,
-                    validator=validator.model_id,
-                    reason=_failure_reason(exc),
-                )
-            )
+            rejected.append(failure)
             continue
         accepted_correction = True
         routed.append((segment, aligned))

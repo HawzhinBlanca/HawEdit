@@ -14541,3 +14541,36 @@ Actual 22-record Serena map and unmocked 30-byte unsigned-promotion counterexamp
 preserved with hashes in the research. All ledger rows remain WIP pending canonical gate
 and applicable same-SHA CI. BLOCKED #1/#3/#4/#21/#24/#25 and complete acceptance remain.
 
+## D-278 - Diagnostic ASR failure accounting is not production admission
+
+**Status:** Owner-approved policy resolution, 2026-10-04; implementation/gate/CI acceptance
+are separate. Wareen explicitly approved the scoped first-failure proposal with
+"approved, go bck work". No new dependency, model/decoder change, spending or publication.
+
+The owner's FINAL Champion Supremacy canon dated 2026-08-11 requires an immediate halt
+on the first drafting, refinement, alignment or decode failure. D-135's collection of
+failed regions and D-223's retention of a canonical alignment after a rejected correction
+remain valid diagnostic evidence; their earlier production continuation is superseded.
+Historical source/raw and ADR records are not rewritten. A rejected correction is still
+not missing speech: aligned canonical words survive as diagnostic input, not permission
+to publish or finish remaining production work.
+
+Native production and the WSL worker explicitly enable first-failure behavior in the
+shared regional/validation helpers. Failures carry bounded stage/region/cause plus the
+original diagnostic input and separate failure collections; no later region/correction
+or successful worker output follows. Diagnostic helpers retain their original accounting
+mode for measurements. An exception's in-memory prefix is not a durable cross-process
+ASR checkpoint; this decision makes no partial-recovery guarantee.
+
+Supplied, returned or reused raw with unresolved regional/correction failures must be
+refused before normalization, Stage 1 completion checkpoint and downstream work. Preserve
+raw byte identity, original failure collections and visible reason; emit a refused/skipped
+transcription event rather than completion. Existing raw schema, source/producer/adapter
+binding and native/WSL request contracts stay unchanged. Do not silently erase failures,
+infer intended words, trim repeated digits, guess clocks or substitute another decoder.
+
+Grounding: BLUEPRINT sections 3, 4.2, 5, 8.1; D-135/D-223; Canon/Champion Supremacy.md;
+specs/evidence-based-studio/asr-stop-{research,impact-map,spec,plan}.md. This safety repair
+does not repair ZAR38's model output or establish speech accuracy, native review, performance,
+qualified current-source VEX, same-SHA CI or 10/10. BLOCKED #24/#25 remain explicit.
+

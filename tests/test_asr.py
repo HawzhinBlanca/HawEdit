@@ -32,6 +32,7 @@ import pytest
 from hawedit.asr import (
     CHAMPION_ADAPTER_ENV,
     LONG_AUDIO_THRESHOLD_S,
+    AsrProductionFailure,
     ASRResult,
     ChampionUnavailable,
     Hardware,
@@ -61,6 +62,7 @@ from hawedit.transcripts import (
     AsrProvenance,
     RawTranscript,
     RejectedValidatorCorrection,
+    TranscriptStore,
     Word,
 )
 
@@ -801,7 +803,7 @@ def test_wsl_worker_applies_the_same_validator_routing_contract(tmp_path: Path) 
 def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_infeasible(
     tmp_path: Path,
 ) -> None:
-    """One rejected correction must not discard a finished 547-region episode."""
+    """D-278 halts production; D-223's original aligned input remains diagnostic evidence."""
 
     class RefusingCorrectionAlignment(RoutingBackend):
         def align_segment(
@@ -826,7 +828,17 @@ def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_inf
     backend = RefusingCorrectionAlignment((-0.1,), disagree_at=0)
     validator = FakeValidator()
 
-    transcript = run_request(request, tmp_path / "output.json", backend, validator)
+    output = tmp_path / "output.json"
+    with pytest.raises(AsrProductionFailure) as caught:
+        run_request(request, output, backend, validator)
+    assert not output.exists(), "a rejected correction must not publish production output"
+    assert caught.value.stage == "validator alignment"
+    transcript = _assemble_canonical_transcript(
+        "episode",
+        caught.value.diagnostic_results,
+        caught.value.unaligned,
+        rejected_validator_corrections=caught.value.rejected_validator_corrections,
+    )
 
     assert transcript.words[0].start_ms == 2_000, "the original canonical alignment was lost"
     assert transcript.asr.validated_by is None, "a rejected correction did not produce text"
@@ -839,7 +851,9 @@ def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_inf
             reason="AlignmentInfeasible: 15 frames cannot emit 21 validator tokens",
         ),
     )
-    persisted = RawTranscript.from_json((tmp_path / "output.json").read_text(encoding="utf-8"))
+    diagnostic_store = TranscriptStore(tmp_path / "explicit-diagnostic")
+    diagnostic_store.write_raw(transcript)
+    persisted = diagnostic_store.read_raw("episode")
     assert persisted == transcript
 
 

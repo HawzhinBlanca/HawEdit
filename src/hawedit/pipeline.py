@@ -2531,6 +2531,26 @@ def _run_episode_delivery(
     return updated_run
 
 
+def _unresolved_transcript_failure(transcript: RawTranscript) -> StageSkipped | None:
+    if not transcript.unaligned and not transcript.rejected_validator_corrections:
+        return None
+    first = (
+        transcript.unaligned[0]
+        if transcript.unaligned
+        else transcript.rejected_validator_corrections[0]
+    )
+    return StageSkipped(
+        stage="transcript",
+        reason=_safe_exception_text(
+            f"canonical ASR refused: {len(transcript.unaligned)} unaligned speech regions, "
+            f"{len(transcript.rejected_validator_corrections)} rejected validator corrections; "
+            f"first recorded failure at {first.start_ms}..{first.end_ms} ms: {first.reason}",
+            budget=1_024,
+        ),
+        blocked_by=("complete canonical ASR and successful selected corrections",),
+    )
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
@@ -2856,20 +2876,25 @@ def run_pipeline(
     # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
     # embedding". The segmenting is arithmetic over the cuts Stage 0 just found on this video,
     # so it runs now and is real; only the embedding itself waits on the model.
-    log.started("visual_windows")
-    effective_visual_fps = (
-        visual_fps
-        if visual_fps is not None
-        else (DECLARED_SAMPLING_FPS if visual_composer is not None else REFERENCE_FPS)
+    known_transcript_failure = (
+        _unresolved_transcript_failure(transcript) if transcript is not None else None
     )
-    windows = plan_scene_windows(
-        identifier,
-        ingested.duration_ms,
-        ingested.shot_cuts_ms,
-        fps=effective_visual_fps,
-        max_frames=visual_max_frames,
-    )
-    log.finished("visual_windows")
+    windows: tuple[SceneWindow, ...] = ()
+    if asr_failure is None and known_transcript_failure is None:
+        log.started("visual_windows")
+        effective_visual_fps = (
+            visual_fps
+            if visual_fps is not None
+            else (DECLARED_SAMPLING_FPS if visual_composer is not None else REFERENCE_FPS)
+        )
+        windows = plan_scene_windows(
+            identifier,
+            ingested.duration_ms,
+            ingested.shot_cuts_ms,
+            fps=effective_visual_fps,
+            max_frames=visual_max_frames,
+        )
+        log.finished("visual_windows")
 
     run = PipelineRun(
         media_id=identifier,
@@ -2934,6 +2959,9 @@ def run_pipeline(
         rejected_validator_corrections=transcript.rejected_validator_corrections,
         escalation=select_for_validation(scores_from_transcript(transcript)),
     )
+    if known_transcript_failure is not None:
+        log.finished("transcript", known_transcript_failure.reason)
+        return replace(run, transcript=known_transcript_failure)
     # Stamp the norm with the digest of the raw *file* — the same value `verify_raw_integrity`
     # checked one line above — so the link survives a later release adding a transcript field.
     normalized = normalize_transcript(transcript, source_sha256=store.raw_digest(identifier))

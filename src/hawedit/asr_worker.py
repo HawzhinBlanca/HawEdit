@@ -112,9 +112,8 @@ def run_request(
     expected_identity = getattr(model, "adapter_name", None)
     if claimed_identity != expected_identity:
         raise ValueError("ASR worker adapter identity differs from the host request")
-    # The shared helper, not a second generator expression: one unalignable region used to
-    # discard every other region's inference. D-103.
-    initial, unaligned = transcribe_prepared_segments(model, prepared)
+    # D-278: diagnostic accounting must not authorise production continuation.
+    initial, unaligned = transcribe_prepared_segments(model, prepared, stop_on_failure=True)
     selected_validator = validator
 
     def validator_factory() -> SoraniValidator:
@@ -127,7 +126,7 @@ def run_request(
         return selected_validator
 
     results, validated_by, rejected_corrections = _validate_hard_segments(
-        initial, model, validator_factory
+        initial, model, validator_factory, stop_on_failure=True
     )
     if getattr(model, "adapter_name", None) != expected_identity:
         raise ValueError("ASR worker adapter identity changed during inference")
