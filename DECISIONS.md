@@ -14479,6 +14479,21 @@ retain the lease and preserve foreign state. Existing dependency, no new archite
 Actual native four-case regression and original red evidence: owned-resource-plan.md and
 owned-resource-verification.md. This corrects WIP ownership, not a passed release claim.
 
+### Whole-Journal Billing Admission - 2026-10-04
+
+Approved parent T3 repair, no new dependency or trust authority. Before adopting, filtering,
+replaying, counting, generating or confirming, inspect a consistent native SQLite snapshot:
+exact original version-one schema, complete bounded UTF-8 bytes/native types, all policy/call
+rows and responses under their owning policy. Refuse foreign schema, hidden suffixes, broken
+identity/arithmetic, invalid evidence and exhaustion; do not rewrite or delete damaged history.
+Retain uncertain intents, exact occurrence replay and transactional shared-pool reservation.
+Recheck immediately before/after HTTP and within confirmation; no SQLite lock spans HTTP.
+Admission ceilings are 10,000 aggregate policy/call rows, 256 MiB aggregate field bytes and
+ten seconds checked with the host's high-resolution monotonic counter/SQLite progress handler.
+These are cooperative inspection bounds, not absolute OS I/O/RSS deadlines or benchmarks.
+See billing-admission research/EARS/plan/maps. Local protocol tests do not prove paid invoices,
+source-bound worker/session authority, native editorial quality, current VEX or publication.
+
 ## D-277 - Authenticated candidate review and exact proof-bearing delivery
 
 **Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**

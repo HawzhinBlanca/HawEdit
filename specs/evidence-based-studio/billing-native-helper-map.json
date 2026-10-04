@@ -1,0 +1,55 @@
+{
+  "started_utc": "2026-10-04T15:19:39.286298+00:00",
+  "pid": 69204,
+  "git_sha": "0dd96f541e9815af09792af72d65a2d6714486fd",
+  "status_before": " M specs/evidence-based-studio/impact-map.md\n M src/hawedit/studio_billing.py\n M tests/test_studio_billing.py\n?? specs/evidence-based-studio/billing-admission-before-map.json\n?? specs/evidence-based-studio/billing-admission-plan.md\n?? specs/evidence-based-studio/billing-admission-research.md\n?? specs/evidence-based-studio/billing-admission-spec.md\n",
+  "source_sha_before": "61501b37dfbdaa823630deba57d6cf7c52c9e0a10def3e07b17b41ee5458fc3e",
+  "scope": "New native billing helpers before adoption into existing production methods; actual LSP, no spending.",
+  "records": [
+    {
+      "file": "src/hawedit/studio_billing.py",
+      "symbol": "_validate_usage",
+      "definition": "[{\"name_path\": \"_validate_usage\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/studio_billing.py\", \"body_location\": {\"start_line\": 143, \"end_line\": 164}}]",
+      "references": "[{\"name_path\": \"_inspect_journal\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 258, \"end_line\": 377}, \"content_around_reference\": \"... 366:                raise StudioStorageError(\\\"Billed response evidence changed or missing\\\")\\n  > 367:            _validate_usage(body, tokens, owner)\\n... 368:        else:\"}]"
+    },
+    {
+      "file": "src/hawedit/studio_billing.py",
+      "symbol": "_JournalBudget",
+      "definition": "[{\"name_path\": \"_JournalBudget\", \"kind\": \"Class\", \"relative_path\": \"src/hawedit/studio_billing.py\", \"body_location\": {\"start_line\": 167, \"end_line\": 186}}]",
+      "references": "[{\"name_path\": \"_native_rows/budget\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 207, \"end_line\": 207}, \"content_around_reference\": \"... 206:    fields: tuple[tuple[str, int | None, bool], ...],\\n  > 207:    budget: _JournalBudget,\\n... 208:    limit: int,\"}, {\"name_path\": \"_inspect_journal/db\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 259, \"end_line\": 259}, \"content_around_reference\": \"... 258:def _inspect_journal(\\n  > 259:    db: sqlite3.Connection, job_id: str, policy: BillingPolicy, budget: _JournalBudget\\n... 260:) -> _BillingSnapshot:\"}, {\"name_path\": \"GuardedGeminiTransport/_inspect/budget\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 419, \"end_line\": 419}, \"content_around_reference\": \"... 418:    ) -> _BillingSnapshot:\\n  > 419:        budget = _JournalBudget(max_rows, max_bytes, time.monotonic() + max_seconds)\\n... 420:        owns_snapshot = not db.in_transaction\"}]"
+    },
+    {
+      "file": "src/hawedit/studio_billing.py",
+      "symbol": "_native_rows",
+      "definition": "[{\"name_path\": \"_native_rows\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/studio_billing.py\", \"body_location\": {\"start_line\": 203, \"end_line\": 255}}]",
+      "references": "[{\"name_path\": \"_inspect_journal\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 258, \"end_line\": 377}, \"content_around_reference\": \"... 263:    schema = set(\\n  > 264:        _native_rows(\\n... 265:            db,\"}, {\"name_path\": \"_inspect_journal/identity\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 283, \"end_line\": 283}, \"content_around_reference\": \"... 282:    policies: dict[str, BillingPolicy] = {}\\n  > 283:    for identity, raw in _native_rows(\\n... 284:        db, \\\"policies\\\", ((\\\"id\\\", 64, False), (\\\"policy_json\\\", 4096, False)), budget, budget.max_rows\"}, {\"name_path\": \"_inspect_journal/row\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 322, \"end_line\": 322}, \"content_around_reference\": \"... 321:    )\\n  > 322:    for row in _native_rows(db, \\\"calls\\\", fields, budget, budget.max_rows):\\n... 323:        identity, pool, job, request, occurrence, tokens, reservation, state, body, digest = row\"}]"
+    },
+    {
+      "file": "src/hawedit/studio_billing.py",
+      "symbol": "_inspect_journal",
+      "definition": "[{\"name_path\": \"_inspect_journal\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/studio_billing.py\", \"body_location\": {\"start_line\": 258, \"end_line\": 377}}]",
+      "references": "[{\"name_path\": \"GuardedGeminiTransport/_inspect\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 411, \"end_line\": 434}, \"content_around_reference\": \"... 425:                db.execute(\\\"BEGIN\\\")\\n  > 426:            return _inspect_journal(db, self.job_id, self.policy, budget)\\n... 427:        except (sqlite3.Error, ValueError, TypeError, UnicodeError, RecursionError) as exc:\"}]"
+    },
+    {
+      "file": "src/hawedit/studio_billing.py",
+      "symbol": "_StoredCall",
+      "definition": "[{\"name_path\": \"_StoredCall\", \"kind\": \"Class\", \"relative_path\": \"src/hawedit/studio_billing.py\", \"body_location\": {\"start_line\": 189, \"end_line\": 193}}]",
+      "references": "[{\"name_path\": \"_BillingSnapshot/calls\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 199, \"end_line\": 199}, \"content_around_reference\": \"... 198:    policies: dict[str, BillingPolicy]\\n  > 199:    calls: dict[tuple[str, int], _StoredCall]\\n... 200:    used: dict[str, int]\"}, {\"name_path\": \"_inspect_journal/calls\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 307, \"end_line\": 307}, \"content_around_reference\": \"... 306:        )\\n  > 307:    calls: dict[tuple[str, int], _StoredCall] = {}\\n... 308:    used: dict[str, int] = {}\"}, {\"name_path\": \"_inspect_journal\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 258, \"end_line\": 377}, \"content_around_reference\": \"... 374:            assert isinstance(state, str) and (body is None or isinstance(body, str))\\n  > 375:            calls[key] = _StoredCall(identity, state, body)\\n... 376:        budget.check()\"}]"
+    },
+    {
+      "file": "src/hawedit/studio_billing.py",
+      "symbol": "_BillingSnapshot",
+      "definition": "[{\"name_path\": \"_BillingSnapshot\", \"kind\": \"Class\", \"relative_path\": \"src/hawedit/studio_billing.py\", \"body_location\": {\"start_line\": 196, \"end_line\": 200}}]",
+      "references": "[{\"name_path\": \"_inspect_journal\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 258, \"end_line\": 377}, \"content_around_reference\": \"... 259:    db: sqlite3.Connection, job_id: str, policy: BillingPolicy, budget: _JournalBudget\\n  > 260:) -> _BillingSnapshot:\\n... 261:    budget.check()\"}, {\"name_path\": \"_inspect_journal\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 258, \"end_line\": 377}, \"content_around_reference\": \"... 278:    if version == 0 and not schema:\\n  > 279:        return _BillingSnapshot({}, {}, {})\\n... 280:    if version != 1 or schema != _SCHEMA:\"}, {\"name_path\": \"_inspect_journal\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 258, \"end_line\": 377}, \"content_around_reference\": \"... 376:        budget.check()\\n  > 377:    return _BillingSnapshot(policies, calls, used)\\n... 378:\"}, {\"name_path\": \"GuardedGeminiTransport/_inspect\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_billing.py\", \"body_location\": {\"start_line\": 411, \"end_line\": 434}, \"content_around_reference\": \"... 417:        max_seconds: float = 10.0,\\n  > 418:    ) -> _BillingSnapshot:\\n... 419:        budget = _JournalBudget(max_rows, max_bytes, time.monotonic() + max_seconds)\"}]"
+    },
+    {
+      "file": "src/hawedit/studio_billing.py",
+      "symbol": "GuardedGeminiTransport/_inspect",
+      "definition": "[{\"name_path\": \"GuardedGeminiTransport/_inspect\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_billing.py\", \"body_location\": {\"start_line\": 411, \"end_line\": 434}}]",
+      "references": "[{\"name_path\": \"test_studio_billing_whole_journal_limits_preserve_evidence\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_billing.py\", \"body_location\": {\"start_line\": 992, \"end_line\": 1010}, \"content_around_reference\": \"...1004:        if limit == \\\"rows\\\":\\n  >1005:            guarded._inspect(db, max_rows=1)\\n...1006:        elif limit == \\\"bytes\\\":\"}, {\"name_path\": \"test_studio_billing_whole_journal_limits_preserve_evidence\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_billing.py\", \"body_location\": {\"start_line\": 992, \"end_line\": 1010}, \"content_around_reference\": \"...1006:        elif limit == \\\"bytes\\\":\\n  >1007:            guarded._inspect(db, max_bytes=1)\\n...1008:        else:\"}, {\"name_path\": \"test_studio_billing_whole_journal_limits_preserve_evidence\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_billing.py\", \"body_location\": {\"start_line\": 992, \"end_line\": 1010}, \"content_around_reference\": \"...1008:        else:\\n  >1009:            guarded._inspect(db, max_seconds=1e-9)\\n...1010:    assert api.calls == [] and _billing_bytes(guarded.path) == before\"}]"
+    }
+  ],
+  "finished_utc": "2026-10-04T15:19:49.472352+00:00",
+  "source_sha_after": "61501b37dfbdaa823630deba57d6cf7c52c9e0a10def3e07b17b41ee5458fc3e",
+  "source_unchanged": true
+}

@@ -222,11 +222,20 @@ def test_studio_billing_storage_failures_are_atomic(
 ) -> None:
     p = policy()
     guarded = guard(tmp_path, api, p)
-    with sqlite3.connect(private_billing_path(tmp_path)) as db:
-        db.execute(
-            f"CREATE TRIGGER outage BEFORE {operation} ON calls "
-            "BEGIN SELECT RAISE(ABORT, 'actual storage outage'); END"
-        )
+
+    def inject_outage(document: dict[str, Any]) -> str:
+        with sqlite3.connect(private_billing_path(tmp_path)) as db:
+            db.execute(
+                f"CREATE TRIGGER outage BEFORE {operation} ON calls "
+                "BEGIN SELECT RAISE(ABORT, 'actual storage outage'); END"
+            )
+        return ""
+
+    if operation == "INSERT":
+        inject_outage({})
+    else:
+        # Keep an actual response-time storage failure after one native HTTP generation.
+        api.response = inject_outage
     expected = StudioStorageError if operation == "INSERT" else ExternalReconciliationError
     with pytest.raises(expected):
         guarded(BASE + ":generateContent", payload(), {})
@@ -700,3 +709,303 @@ def test_studio_billing_policy_fields_are_strict(field: str, value: object) -> N
     fields[field] = value
     with pytest.raises(ValueError):
         BillingPolicy(**fields)
+
+
+def _billing_bytes(path: Path) -> tuple[object, ...]:
+    with sqlite3.connect(path) as db:
+        records: list[object] = [
+            db.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
+            ).fetchall()
+        ]
+        for table, columns in (
+            ("policies", ("id", "policy_json")),
+            (
+                "calls",
+                (
+                    "id",
+                    "policy_id",
+                    "job_id",
+                    "request_sha256",
+                    "occurrence",
+                    "input_tokens",
+                    "reservation_microusd",
+                    "state",
+                    "response_json",
+                    "response_sha256",
+                ),
+            ),
+        ):
+            projection = ",".join(f"typeof({column}),CAST({column} AS BLOB)" for column in columns)
+            records.append(
+                db.execute(f"SELECT {projection} FROM {table} ORDER BY rowid").fetchall()
+            )
+        return tuple(records)
+
+
+def _count_payload() -> bytes:
+    return json.dumps({"contents": [{"parts": [{"text": "local count"}]}]}).encode()
+
+
+@pytest.mark.parametrize("route", ["adopt", "countTokens", "generateContent"])
+def test_studio_billing_policy_projection_suffix_refused(
+    tmp_path: Path, api: LocalProtocol, route: str
+) -> None:
+    p = policy()
+    guarded = guard(tmp_path, api, p)
+    with sqlite3.connect(guarded.path) as db:
+        db.execute("UPDATE policies SET policy_json=policy_json||char(0)||'hidden'")
+    before = _billing_bytes(guarded.path)
+    with pytest.raises(StudioStorageError):
+        if route == "adopt":
+            guard(tmp_path, api, p)
+        else:
+            guarded(
+                BASE + ":" + route, _count_payload() if route == "countTokens" else payload(), {}
+            )
+    assert api.calls == []
+    assert _billing_bytes(guarded.path) == before
+
+
+@pytest.mark.parametrize("field", ["id", "policy_id", "job_id", "request_sha256", "state"])
+@pytest.mark.parametrize("route", ["countTokens", "generateContent"])
+def test_studio_billing_hidden_intent_cannot_escape_admission(
+    tmp_path: Path, api: LocalProtocol, field: str, route: str
+) -> None:
+    guarded = guard(tmp_path, api)
+    api.drop = True
+    with pytest.raises(ExternalReconciliationError):
+        guarded(BASE + ":generateContent", payload(), {})
+    api.drop = False
+    with sqlite3.connect(guarded.path) as db:
+        db.execute("PRAGMA ignore_check_constraints=ON")
+        db.execute(f"UPDATE calls SET {field}={field}||char(0)||'hidden'")
+    before = _billing_bytes(guarded.path)
+    requests = len(api.calls)
+    with pytest.raises(StudioStorageError):
+        guarded(
+            BASE + ":" + route,
+            _count_payload() if route == "countTokens" else payload("changed request"),
+            {},
+        )
+    assert api.generated == 1 and len(api.calls) == requests
+    assert _billing_bytes(guarded.path) == before
+
+
+@pytest.mark.parametrize("route", ["adopt", "countTokens", "generateContent"])
+def test_studio_billing_response_projection_suffix_refused(
+    tmp_path: Path, api: LocalProtocol, route: str
+) -> None:
+    p = policy()
+    guard(tmp_path, api, p)(BASE + ":generateContent", payload(), {})
+    replay = guard(tmp_path, api, p)
+    with sqlite3.connect(replay.path) as db:
+        db.execute("UPDATE calls SET response_json=response_json||char(0)||'hidden'")
+    before = _billing_bytes(replay.path)
+    requests = len(api.calls)
+    with pytest.raises(StudioStorageError):
+        if route == "adopt":
+            guard(tmp_path, api, p)
+        else:
+            replay(
+                BASE + ":" + route, _count_payload() if route == "countTokens" else payload(), {}
+            )
+    assert len(api.calls) == requests and api.generated == 1
+    assert _billing_bytes(replay.path) == before
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "view",
+        "index",
+        "column",
+        "null-key",
+        "blob-policy",
+        "invalid-utf8",
+        "oversize",
+        "scalar-type",
+    ],
+)
+@pytest.mark.parametrize("route", ["adopt", "countTokens"])
+def test_studio_billing_native_admission_refuses_foreign_storage(
+    tmp_path: Path, api: LocalProtocol, damage: str, route: str
+) -> None:
+    p = policy()
+    guarded = guard(tmp_path, api, p)
+    if damage == "scalar-type":
+        guarded(BASE + ":generateContent", payload(), {})
+    with sqlite3.connect(guarded.path) as db:
+        statements = {
+            "view": "CREATE VIEW foreign_view AS SELECT 1",
+            "index": "CREATE INDEX foreign_index ON policies(policy_json)",
+            "column": "ALTER TABLE policies ADD COLUMN foreign_value TEXT",
+            "null-key": "INSERT INTO policies SELECT NULL,policy_json FROM policies LIMIT 1",
+            "blob-policy": "UPDATE policies SET policy_json=CAST(policy_json AS BLOB)",
+            "invalid-utf8": "UPDATE policies SET policy_json=CAST(x'fffe' AS TEXT)",
+            "oversize": "UPDATE policies SET policy_json=policy_json||zeroblob(4097)",
+            "scalar-type": "UPDATE calls SET occurrence='not-an-integer'",
+        }
+        db.execute(statements[damage])
+    before = _billing_bytes(guarded.path)
+    requests = len(api.calls)
+    with pytest.raises(StudioStorageError):
+        if route == "adopt":
+            guard(tmp_path, api, p)
+        else:
+            guarded(BASE + ":countTokens", _count_payload(), {})
+    assert len(api.calls) == requests
+    assert _billing_bytes(guarded.path) == before
+
+
+@pytest.mark.parametrize("damage", ["policy", "response"])
+@pytest.mark.parametrize("route", ["countTokens", "generateContent"])
+def test_studio_billing_admission_audits_foreign_pool_rows(
+    tmp_path: Path, api: LocalProtocol, damage: str, route: str
+) -> None:
+    p = policy()
+    guard(tmp_path, api, p)(BASE + ":generateContent", payload(), {})
+    current = guard(tmp_path, api, p)
+    other = replace(p, authorization_sha256="c" * 64, max_output_tokens=8)
+    guard(tmp_path, api, other, "studio-" + "d" * 64)(BASE + ":generateContent", payload(), {})
+    with sqlite3.connect(current.path) as db:
+        if damage == "policy":
+            db.execute(
+                "UPDATE policies SET policy_json=policy_json||char(0)||'hidden' WHERE id=?",
+                (other.authorization_sha256,),
+            )
+        else:
+            raw = db.execute(
+                "SELECT response_json FROM calls WHERE policy_id=?", (other.authorization_sha256,)
+            ).fetchone()[0]
+            document = json.loads(raw)
+            document["usageMetadata"].update(candidatesTokenCount=64, totalTokenCount=78)
+            changed = json.dumps(document)
+            db.execute(
+                "UPDATE calls SET response_json=?,response_sha256=? WHERE policy_id=?",
+                (changed, hashlib.sha256(changed.encode()).hexdigest(), other.authorization_sha256),
+            )
+    before = _billing_bytes(current.path)
+    requests = len(api.calls)
+    with pytest.raises(StudioStorageError):
+        current(BASE + ":" + route, _count_payload() if route == "countTokens" else payload(), {})
+    assert len(api.calls) == requests and api.generated == 2
+    assert _billing_bytes(current.path) == before
+
+
+def test_studio_billing_journal_drift_during_count_prevents_generation(
+    tmp_path: Path, api: LocalProtocol
+) -> None:
+    path = private_billing_path(tmp_path)
+
+    def change_after_count(
+        url: str, body: bytes | None, headers: Mapping[str, str]
+    ) -> tuple[int, str]:
+        response = api.transport(url, body, headers)
+        if url.endswith(":countTokens"):
+            with sqlite3.connect(path) as db:
+                db.execute("UPDATE policies SET policy_json=policy_json||char(0)||'hidden'")
+        return response
+
+    guarded = GuardedGeminiTransport(path, JOB, policy(), change_after_count)
+    with pytest.raises(ExternalReconciliationError, match="count"):
+        guarded(BASE + ":generateContent", payload(), {})
+    assert [route for route, _ in api.calls] == ["/countTokens"]
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT count(*) FROM calls").fetchone()[0] == 0
+        assert (
+            b"\x00hidden"
+            in db.execute("SELECT CAST(policy_json AS BLOB) FROM policies").fetchone()[0]
+        )
+
+
+@pytest.mark.parametrize("damage", ["policy", "view"])
+def test_studio_billing_direct_count_refuses_invalid_journal(
+    tmp_path: Path, api: LocalProtocol, damage: str
+) -> None:
+    guarded = guard(tmp_path, api)
+    with sqlite3.connect(guarded.path) as db:
+        db.execute(
+            "UPDATE policies SET policy_json='{}'"
+            if damage == "policy"
+            else "CREATE VIEW foreign_view AS SELECT 1"
+        )
+    before = _billing_bytes(guarded.path)
+    with pytest.raises(StudioStorageError):
+        guarded(BASE + ":countTokens", _count_payload(), {})
+    assert api.calls == [] and _billing_bytes(guarded.path) == before
+
+
+def test_studio_billing_confirmation_drift_stays_uncertain(
+    tmp_path: Path, api: LocalProtocol
+) -> None:
+    path = private_billing_path(tmp_path)
+    changed: list[tuple[object, ...]] = []
+
+    def change_after_generation(
+        url: str, body: bytes | None, headers: Mapping[str, str]
+    ) -> tuple[int, str]:
+        response = api.transport(url, body, headers)
+        if url.endswith(":generateContent"):
+            with sqlite3.connect(path) as db:
+                db.execute("UPDATE calls SET job_id=job_id||char(0)||'hidden'")
+            changed.append(_billing_bytes(path))
+        return response
+
+    guarded = GuardedGeminiTransport(path, JOB, policy(), change_after_generation)
+    with pytest.raises(ExternalReconciliationError, match="uncertain"):
+        guarded(BASE + ":generateContent", payload(), {})
+    assert api.generated == 1 and _billing_bytes(path) == changed[0]
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT state,response_json FROM calls").fetchall() == [("intent", None)]
+    requests = len(api.calls)
+    with pytest.raises(StudioStorageError):
+        guarded(BASE + ":generateContent", payload("changed"), {})
+    assert api.generated == 1 and len(api.calls) == requests
+
+
+def test_studio_billing_valid_multiple_pools_remain_usable(
+    tmp_path: Path, api: LocalProtocol
+) -> None:
+    first = policy()
+    second = replace(
+        first, authorization_sha256="c" * 64, max_output_tokens=8, max_billed_thinking_tokens=128
+    )
+    responses = []
+    for p, job in ((first, JOB), (second, "studio-" + "d" * 64)):
+        responses.append(guard(tmp_path, api, p, job)(BASE + ":generateContent", payload(), {}))
+    requests = len(api.calls)
+    for index, (p, job) in enumerate(((first, JOB), (second, "studio-" + "d" * 64))):
+        assert (
+            guard(tmp_path, api, p, job)(BASE + ":generateContent", payload(), {})
+            == responses[index]
+        )
+    assert api.generated == 2 and len(api.calls) == requests
+    with sqlite3.connect(private_billing_path(tmp_path)) as db:
+        assert db.execute(
+            "SELECT policy_id,reservation_microusd FROM calls ORDER BY policy_id"
+        ).fetchall() == [
+            (first.authorization_sha256, first.reservation(10)),
+            (second.authorization_sha256, second.reservation(10)),
+        ]
+
+
+@pytest.mark.parametrize("limit", ["rows", "bytes", "deadline"])
+def test_studio_billing_whole_journal_limits_preserve_evidence(
+    tmp_path: Path, api: LocalProtocol, limit: str
+) -> None:
+    p = policy()
+    guarded = guard(tmp_path, api, p)
+    guard(tmp_path, api, replace(p, authorization_sha256="c" * 64), "studio-" + "d" * 64)
+    before = _billing_bytes(guarded.path)
+    with (
+        sqlite3.connect(guarded.path) as db,
+        pytest.raises(StudioStorageError, match="limit|budget"),
+    ):
+        if limit == "rows":
+            guarded._inspect(db, max_rows=1)
+        elif limit == "bytes":
+            guarded._inspect(db, max_bytes=1)
+        else:
+            guarded._inspect(db, max_seconds=1e-9)
+    assert api.calls == [] and _billing_bytes(guarded.path) == before

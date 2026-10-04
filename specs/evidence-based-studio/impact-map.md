@@ -423,3 +423,45 @@ three constructor references there. Method/test entrypoint reference queries are
 pytest discovery, not an invented symbol caller, executes the named regressions. Complete
 fifteen-module caller run passed 575 tests, no failures/errors/skips. Exact full gate and
 applicable same-SHA CI remain independent requirements; this is not task completion.
+
+## T3 Whole-Journal Billing Admission
+
+Actual billing-admission-before-map.json: eleven definition/reference queries, clean ff3411b;
+billing file hash is unchanged at the later 0dd96f5 baseline. Original LSP fallback warnings
+are preserved privately. GuardedGeminiTransport has thirteen references, including
+SignedStudioTransport._journal and native test constructors; BillingPolicy twelve.
+_existing has two, _pool_used two, _send three, _call one and _validate_response two.
+Constructor-method references are empty; class references close that mapping gap.
+guard and LocalProtocol each have 32 references across billing and screener-integrity tests.
+The existing storage-outage test has no symbol callers; pytest discovery executes it.
+
+Change only studio_billing's native evidence/admission boundary and its actual native tests.
+Preserve SignedStudioTransport/public policy/build_and_run signatures and existing alias maps.
+The UPDATE outage moves to a real upstream response callback, retaining one local generation,
+an uncertain intent, failed persistence and refused replay rather than weakening the test.
+Complete billing/authorization/private-storage/screener-integrity and shared-builder callers
+are required. This is not authenticated protected-worker adoption, invoice evidence or VEX.
+
+New helper admission map completed 15:19:49 UTC before adoption into existing methods:
+seven actual LSP definition/reference queries in billing-native-helper-map.json. _native_rows
+has three references in _inspect_journal; _validate_usage one; _inspect_journal one in
+_inspect; _inspect has three native host-budget test calls. Stored-call/snapshot/budget
+references are within this same module. Source hash was unchanged during the map.
+
+The complete first implementation run exposed the deadline case on native Windows.
+billing-deadline-before-map.json completed 15:23:57 UTC before correction: check nine
+references, interrupted one, _inspect twelve, _inspect_journal one, _send three. Native
+CPython 3.12.10 monotonic uses GetTickCount64 at 15.625 ms resolution; perf_counter uses
+monotonic QueryPerformanceCounter at 100 ns advertised resolution. Preserve the failed
+deadline test and use the latter for elapsed-time admission, without mocking the clock.
+Only existing _send callers receive its optional private intent identity; public callable,
+SignedStudioTransport, BillingPolicy and shared-builder signatures remain unchanged.
+
+Final billing-admission-after-map.json completed 15:27:07 UTC: nineteen actual LSP queries,
+source/test hashes unchanged. GuardedGeminiTransport fifteen references; BillingPolicy
+seventeen; _existing two; _pool_used one; _send three; _call one; _validate_response one;
+_inspect twelve; _validate_usage two; _native_rows three; _inspect_journal one; budget check
+nine and progress callback one. guard forty-eight and LocalProtocol forty-two references
+remain in billing/screener-integrity callers; _billing_bytes sixteen native test references.
+Test entrypoint and constructor-method references remain empty with discovery/class mapping
+explicit. Original imported/file fallback warnings are retained, not counted as assurance.
