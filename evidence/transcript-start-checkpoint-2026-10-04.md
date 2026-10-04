@@ -1,8 +1,18 @@
 # Transcript Stage Reporting Checkpoint
 
+```yaml
+commit: ff3411bb31d4d87759f1904ce6e6f0afa0532a6c
+media_sha256: ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15
+host: HawaPC01 Windows 11 build 26200; CPython 3.12.10; SQLite 3.49.1
+command: C:/Program Files/Git/bin/bash.exe scripts/verify.sh
+source_state: clean for the full gate; earlier diagnostics used explicitly hash-bound dirty source
+```
+
 Status: WIP; no task/feature completion or candidate verdict. Date: 2026-10-04 UTC.
-Baseline HEAD fdfe25e8c80a58d95f312cbb0258808638f66552; tests run on explicitly dirty
-source, not claimed as evidence from a committed candidate. Private evidence root:
+The header names the actually executed full-gate commit and decoded integration fixture,
+not a new real-model quality result. Baseline HEAD fdfe25e8c80a58d95f312cbb0258808638f66552;
+earlier focused/caller diagnostics used explicitly dirty source bound by the hashes below.
+Private evidence root:
 C:/Users/Wareen/AppData/Local/HawEditEvidence/zar38-recovery-fdfe25-20261004/.
 
 ## Scope And Test-First Evidence
@@ -64,3 +74,28 @@ The real first-gap reproduction emitted a 266-digit final token and reproduced f
 infeasibility. Those private evidence records retain original source/model/runtime binding.
 This unit does not fix canonical quality, validate native meaning, authenticate publication,
 authorize spending or clear the independent billing-admission P1. No useful-reel acceptance.
+
+## First Exact Full Gate
+
+Native Git Bash scripts/verify.sh ran on clean ff3411bb31d4d87759f1904ce6e6f0afa0532a6c
+from 13:47:49 to 14:23:13 UTC. Lint, strict types and all-file format passed. Pytest:
+4736 cases, 4734 passes, two failures, zero errors/skips. JUnit 2115.470 s; wrapper
+2123.1160 s. Private copied report SHA256:
+a1d1475cb3e3d8cffbee517acb91a34c9977cb5f09c9b30b6f3eb39d64169e35.
+Source SHA and clean status unchanged; exact native children absent before session 4626 closed.
+
+Failures: test_new_evidence_names_its_commit_media_and_host found this note's missing
+required YAML metadata block; test_checked_in_policy_binds_current_lock_and_assets_and_closes_report
+found checked-in VEX producer 81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba
+versus current package 2601eebe3275bd9dc2a7e316982f4981e56c63b14011e1ac74a568825b24cef9.
+The first is this unit's documentation defect; the added header records actual evidence,
+without changing the validator/test. The second remains a qualified review requirement;
+no VEX hash/date/expiry is altered. Exact full-gate revalidation and same-SHA CI remain
+required after the metadata repair. No count-floor edit, ledger promotion or accepted verdict.
+
+The unchanged complete test_claims module passed after metadata repair: 67 cases, zero
+failures/errors/skips, JUnit 11.648 s on the same native host/library environment. Report
+transcript-metadata-repair.xml SHA256:
+e7cdc8dc599325a24bad0e4f68e1993f336962ab7e9a1e73b08055fe7bb11efb.
+This is a dirty documentation-only diagnostic, not the required re-run of the full gate.
+No source symbol, test, validator, fixture, VEX record, model or dependency changed.

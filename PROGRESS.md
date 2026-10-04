@@ -24,8 +24,10 @@ its operational refusal as a skip. Three additive native-media observer regressi
 test-first 19 cases/two failures, then 19 passes/zero errors/skips; native fast lint/types
 (315 files) and two-file format check pass. Complete caller diagnostics pass 575 cases,
 zero failures/errors/skips (786.543 JUnit seconds), with source hashes unchanged.
-Reviewed local commit, exact full gate and same-SHA CI remain pending. Observer doubles are not model
-quality evidence. Actual ZAR38 has three unaligned regions and two rejected corrections;
+Local-only ff3411b exact gate: 4734 passes/two failures/zero errors/skips, JUnit 2115.470 s;
+missing evidence-header metadata (this unit) and the independent qualified VEX binding.
+Metadata repair passes all 67 claim checks; corrected committed full gate and same-SHA CI
+remain required. Observer doubles are not model quality evidence. Actual ZAR38 has three unaligned regions and two rejected corrections;
 no production continuation, publication, ledger promotion or 10/10. Details and versions:
 evidence/transcript-start-checkpoint-2026-10-04.md and specs/evidence-based-studio/
 transcript-start-{research,spec,plan}.md. Prior model artifacts retain their original SHA.
