@@ -70,3 +70,23 @@ failures. Canonical model/decoder policy and all original media/raw are retained
 Other corpus, model-rights, reviewer and spending prerequisites remain explicit
 in the owner packet. No ledger row is promoted, and no push or publication is
 authorized by this local verification work.
+
+## Committed terminal evidence
+
+Reviewed local-only commit: `3ac37381a71a0c43c5692f75b369b5c876058e88`.
+Its clean exact full gate exited 1: 4,827 passed of 4,828, zero errors/skips,
+one retained warning; lint/types/format passed. Only failed testcase is the
+checked-in VEX policy's stale source binding. JUnit time 2,240.855 seconds;
+wrapper wall time 2,248.886 seconds on the recorded shared HawaPC01 environment.
+SHA and clean status stayed unchanged. Gate XML SHA-256:
+`e9f6774c912f385b552126843cd4a614bcaeceda66511cb22719719f32941d05`.
+All 29 new camera cases passed, but this is still a red gate, not CI or completion.
+
+The fresh full-source ZAR38 attempt completed Stage 0 then refused a missing
+source-current receipt. Official setup reused the existing complete environment
+and succeeded in 205.817 seconds. The follow-up supported production-ASR retry
+then halted at 905634..917022 ms: 569 frames cannot emit 401 tokens. It exited 1
+after 830.968 seconds, without new raw or reel. Source, old raw, Stage 0 hashes
+and SHA were unchanged. This early refusal is not a performance comparison with
+the earlier complete diagnostic run. All required sessions were confirmed ended
+before closure. Terminal records remain in the private evidence root.

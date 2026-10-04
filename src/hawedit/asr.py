@@ -1438,10 +1438,11 @@ class WslOmniAsrProducer:
                 timeout=max(300.0, 60.0 + 4.0 * len(prepared) * 30.0),
             )
             if result.returncode != 0 or not output_path.is_file():
-                stderr = result.stderr.decode("utf-8", "replace")[-1_200:]
+                # Keep the final cause inside the pipeline's 1,024-character detail budget.
+                stderr = result.stderr.decode("utf-8", "replace")[-900:]
                 raise RuntimeError(
-                    "canonical OmniASR failed in WSL2. Run hawedit-asr-setup first; "
-                    f"worker said: {stderr or 'no transcript was returned'}"
+                    f"canonical OmniASR failed in WSL2 (exit {result.returncode}); "
+                    f"worker diagnostic tail: {stderr or 'no transcript was returned'}"
                 )
             transcript = RawTranscript.from_json(output_path.read_text(encoding="utf-8"))
             if transcript.media_id != media_id:

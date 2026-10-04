@@ -14606,3 +14606,23 @@ admission and route parity, not labelled speaker accuracy, native speech/meaning
 semantic editing, the unresolved ZAR38 ASR failures, VEX review, CI or sustained acceptance.
 BLOCKED #1/#4/#21/#24/#25 remain visible. No 10/10 or completed ledger follows from this ADR.
 
+## D-280 - Preserve worker failure causes without prescribing unrelated setup
+
+**Status:** Scoped refinement of the owner-approved T2 actionable-refusal obligation.
+The actual ZAR38 production-ASR retry at 3ac3738 refused alignment after supported
+runtime setup had succeeded. Its worker error nevertheless prescribed setup, and
+the producer's 1,200-character stderr tail plus prefix exceeded the shared report's
+1,024-character detail limit, hiding the end of the concrete cause.
+
+Keep the shared sanitizer and cap unchanged. Bound this producer's diagnostic tail
+to 900 characters, include the observed exit code, and remove unconditional setup
+advice only from unsuccessful-worker results. Missing-receipt errors retain their
+actual setup prerequisite. Preserve refusal, source/model identity, checkpoint lease,
+worker arguments, timeout, schema, decoder and canonical raw behavior unchanged.
+No new dependency, model, licence, cloud spending, reviewer or publication authority.
+
+Grounding: BLUEPRINT section 3 Stage 1 and section 8.1; D-278;
+specs/evidence-based-studio/asr-diagnostics-{research,impact-map,spec,plan}.md.
+Diagnostic clarity is not correction of speech, qualified VEX review, same-SHA CI,
+editorial acceptance or 10/10. BLOCKED #24 and native-reference prerequisites remain.
+
