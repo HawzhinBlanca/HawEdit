@@ -47,6 +47,7 @@ import sys
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, fields, replace
+from inspect import Parameter, signature
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO, TypeVar, cast, overload
@@ -113,7 +114,7 @@ from hawedit.delivery import (
     build_srt,
     reconcile_delivery,
 )
-from hawedit.diarization import turn_bounds_for_anchors
+from hawedit.diarization import Segment, turn_bounds_for_anchors
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.edit_plan import (
     CURRENT_PLAN_VERSION,
@@ -172,7 +173,6 @@ from hawedit.path_b import VideoUnderstanding
 from hawedit.qwen_visual import EmbedderUnavailable
 from hawedit.reframe import (
     FocusPoint,
-    SpeakerAssociationError,
     SpeakerFocusPoint,
     SpeakerSubjectTracker,
     SubjectTracker,
@@ -1680,6 +1680,194 @@ def _steady_camera(
     )
 
 
+@dataclass(frozen=True)
+class _CameraResolution:
+    mode: Reframe = Reframe.STATIC_CENTRE
+    focus_points: tuple[FocusPoint, ...] = ()
+    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
+    source_dimensions: tuple[int, int] | None = None
+    face_center_y: int | None = None
+    face_height: int | None = None
+    speaker_turns: tuple[Segment, ...] = ()
+
+
+def _accepts_shot_cuts(method: Callable[..., object]) -> bool:
+    parameters = signature(method).parameters
+    parameter = parameters.get("shot_cuts_ms")
+    return (parameter is not None and parameter.kind is not Parameter.POSITIONAL_ONLY) or any(
+        p.kind is Parameter.VAR_KEYWORD for p in parameters.values()
+    )
+
+
+def _resolve_camera(
+    source: Path,
+    ingested: IngestResult,
+    boundary: Boundary,
+    *,
+    speaker_tracker: SpeakerSubjectTracker | None,
+    subject_tracker: SubjectTracker | None,
+    two_person_split: str,
+    profile: str,
+    ffmpeg: Path | None,
+) -> _CameraResolution | StageSkipped:
+    turns = tuple(
+        turn
+        for turn in ingested.diarization or ()
+        if turn.start_ms < boundary.final_out_ms and turn.end_ms > boundary.final_in_ms
+    )
+    if two_person_split == "always" and speaker_tracker is None:
+        return StageSkipped(
+            stage="render",
+            reason="requested two-person split needs measured speaker/face association",
+            blocked_by=("measured speaker/face association",),
+        )
+    if speaker_tracker is not None:
+        if ingested.diarization is None:
+            return StageSkipped(
+                stage="render",
+                reason=(
+                    "requested speaker/face association needs measured diarization for "
+                    "the final clip; no validated Stage 0 turns are available"
+                ),
+                blocked_by=("Stage 0 measured diarization",),
+            )
+        if not turns:
+            return StageSkipped(
+                stage="render",
+                reason=(
+                    "requested speaker/face association has no measured diarization turn "
+                    f"overlapping the final clip {boundary.final_in_ms}.."
+                    f"{boundary.final_out_ms} ms"
+                ),
+                blocked_by=("overlapping measured diarization",),
+            )
+        _assert_source_unchanged(source, ingested.source_sha256, "speaker/face association")
+        try:
+            # Select the compatible signature before invoking: an internal TypeError is a
+            # failed association, not permission to run the provider a second time.
+            points: tuple[SpeakerFocusPoint, ...]
+            if _accepts_shot_cuts(speaker_tracker.track_speakers):
+                points = cast(Any, speaker_tracker).track_speakers(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    turns,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+            else:
+                points = speaker_tracker.track_speakers(
+                    source, boundary.final_in_ms, boundary.final_out_ms, turns
+                )
+            focus = validate_speaker_focus_points(
+                points, turns, boundary.final_in_ms, boundary.final_out_ms
+            )
+        except Exception as exc:
+            return _operational_failure("render", "speaker/face association", exc)
+        finally:
+            _assert_source_unchanged(
+                source, ingested.source_sha256, "speaker/face association completion"
+            )
+        if not focus and (profile in ("production", "deliverable") or two_person_split == "always"):
+            return _operational_failure(
+                "render",
+                "speaker/face association",
+                RuntimeError("requested association returned no usable speaker evidence"),
+            )
+        if focus:
+            dimensions = proxy_dimensions(source, ffmpeg)
+            centers: dict[str, list[int]] = {}
+            for point in points:
+                centers.setdefault(point.speaker, []).append(point.center_x)
+            if two_person_split == "always" and len(centers) < 2:
+                raise ValueError(
+                    "two-person split screen was requested with --two-person-split=always, "
+                    f"but only {len(centers)} distinct speaker(s) were tracked"
+                )
+            if two_person_split == "always" and len(centers) > 2:
+                return _operational_failure(
+                    "render",
+                    "speaker/face association",
+                    RuntimeError(
+                        "two-person split requires exactly two tracked speakers; "
+                        f"found {len(centers)}"
+                    ),
+                )
+            rapid = len(centers) >= 2 and detect_rapid_speaker_exchange(
+                turns, boundary.final_in_ms, boundary.final_out_ms
+            )
+            split = len(centers) == 2 and (
+                two_person_split == "always" or (two_person_split == "auto" and rapid)
+            )
+            if split:
+                keys = sorted(centers)
+                c1 = sorted(centers[keys[0]])[len(centers[keys[0]]) // 2]
+                c2 = sorted(centers[keys[1]])[len(centers[keys[1]]) // 2]
+                return _CameraResolution(
+                    mode=Reframe.TWO_PERSON_SPLIT,
+                    split_crops=compute_two_person_split_crops(
+                        *dimensions, min(c1, c2), max(c1, c2)
+                    ),
+                    source_dimensions=dimensions,
+                    speaker_turns=turns,
+                )
+            crop_w, _ = vertical_crop_size(*dimensions)
+            return _CameraResolution(
+                mode=Reframe.SPEAKER_TRACKED,
+                focus_points=layout_policy(
+                    points,
+                    turns,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    dead_zone_px=max(1, crop_w // 10),
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                    max_pan_px=max(1, int(crop_w * 0.6)),
+                    cut_on_max_pan=True,
+                ),
+                source_dimensions=dimensions,
+                speaker_turns=turns,
+            )
+    if subject_tracker is not None:
+        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
+        try:
+            if _accepts_shot_cuts(subject_tracker.track):
+                raw_focus = subject_tracker.track(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+            else:
+                raw_focus = subject_tracker.track(
+                    source, boundary.final_in_ms, boundary.final_out_ms
+                )
+            if raw_focus:
+                face_center_y, face_height = median_face_box(raw_focus)
+                dimensions = proxy_dimensions(source, ffmpeg)
+                return _CameraResolution(
+                    mode=Reframe.FACE_TRACKED,
+                    focus_points=_steady_camera(
+                        raw_focus,
+                        source,
+                        ffmpeg,
+                        dimensions,
+                        shot_cuts_ms=ingested.shot_cuts_ms,
+                    ),
+                    source_dimensions=dimensions,
+                    face_center_y=face_center_y,
+                    face_height=face_height,
+                    speaker_turns=turns,
+                )
+            if profile in ("production", "deliverable"):
+                raise RuntimeError(
+                    f"zero faces detected in {ingested.source} for production profile"
+                )
+        except Exception as exc:
+            return _operational_failure("render", "requested subject tracking", exc)
+        finally:
+            _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
+    return _CameraResolution(speaker_turns=turns)
+
+
 def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
     """The clip's id, derived in exactly one place.
 
@@ -1919,44 +2107,26 @@ def _render_episode_single_clip(
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
-    focus_points: tuple[FocusPoint, ...] = ()
-    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
-    face_center_y: int | None = None
-    face_height: int | None = None
-    reframe_mode = Reframe.STATIC_CENTRE
-
-    if subject_tracker is not None:
-        try:
-            try:
-                raw_focus = subject_tracker.track(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-            except TypeError:
-                raw_focus = subject_tracker.track(
-                    source, boundary.final_in_ms, boundary.final_out_ms
-                )
-            if raw_focus:
-                face_center_y, face_height = median_face_box(raw_focus)
-                src_dims = proxy_dimensions(source, ffmpeg)
-                focus_points = _steady_camera(
-                    raw_focus,
-                    source,
-                    ffmpeg,
-                    src_dims,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-                reframe_mode = Reframe.FACE_TRACKED
-            elif profile in ("production", "deliverable"):
-                raise RuntimeError(
-                    f"Subject tracking requested but detected zero faces for clip "
-                    f"{candidate.candidate_id}"
-                )
-        except Exception:
-            if profile in ("production", "deliverable"):
-                raise
+    camera = _resolve_camera(
+        source,
+        ingested,
+        boundary,
+        speaker_tracker=speaker_tracker,
+        subject_tracker=subject_tracker,
+        two_person_split=two_person_split,
+        profile=profile,
+        ffmpeg=ffmpeg,
+    )
+    if isinstance(camera, StageSkipped):
+        raise RenderError(camera.reason)
+    focus_points = camera.focus_points
+    split_crops = camera.split_crops
+    face_center_y = camera.face_center_y
+    face_height = camera.face_height
+    reframe_mode = camera.mode
+    measured_speaker_turns = tuple(
+        (turn.start_ms, turn.end_ms, turn.speaker) for turn in camera.speaker_turns
+    )
 
     crop_target = {
         Reframe.STATIC_CENTRE: "static_centre",
@@ -2116,7 +2286,7 @@ def _render_episode_single_clip(
         silence_target_gap_ms=silence_target_gap_ms,
         punch_in_cadence_ms=config.punch_in_cadence_ms,
         eased_push=eased_push or config.eased_push,
-        two_person_split="auto",
+        two_person_split=two_person_split,
         keyword_emphasis=keyword_emphasis,
         fps=fps,
     )
@@ -2140,7 +2310,7 @@ def _render_episode_single_clip(
         time_mapping=time_mapping,
         shot_cuts_ms=tuple(source_cuts),
         punch_in_ms=tuple(p[0] for p in planned_punch_ins),
-        speaker_turns=(),
+        speaker_turns=measured_speaker_turns,
         sentences=tuple(selected),
         relation_ids=(),
     )
@@ -2275,7 +2445,7 @@ def _render_episode_single_clip(
             source_shot_cuts_ms=reconcile_source_cuts,
             fps=fps,
             for_review=is_review_render,
-            speaker_turns=(),
+            speaker_turns=measured_speaker_turns,
             min_face_share=effective_min_face_share,
         )
 
@@ -2651,8 +2821,9 @@ def run_pipeline(
             working, not a limitation to route around.
         speaker_tracker: an active-speaker/face associator. It receives only exclusive turns
             overlapping the final clip. A non-empty validated result is labelled speaker
-            tracked; an explicitly empty result may fall back to face-only tracking, while a
-            missing diarization input or invalid/failed association is refused visibly.
+            tracked. Empty association refuses production/deliverable rendering; diagnostic
+            profiles may explicitly retain the legacy face-only ambiguity path. Missing
+            diarization or invalid/failed association is refused visibly in every profile.
 
     Raises:
         FileNotFoundError: `source` does not exist.
@@ -3692,178 +3863,24 @@ def run_pipeline(
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
-    focus_points: tuple[FocusPoint, ...] = ()
-    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
-    source_dimensions: tuple[int, int] | None = None
-    # The clip's single vertical placement, measured before `_steady_camera` replaces the track
-    # with keyframes that carry no face box. `None` means unmeasured, and the crop then sits
-    # where it always sat.
-    face_center_y: int | None = None
-    face_height: int | None = None
-    reframe_mode = Reframe.STATIC_CENTRE
-    if speaker_tracker is not None:
-        if ingested.diarization is None:
-            return replace(
-                run,
-                boundary=boundary,
-                render=StageSkipped(
-                    stage="render",
-                    reason=(
-                        "requested speaker/face association needs measured diarization for "
-                        "the final clip; no validated Stage 0 turns are available"
-                    ),
-                    blocked_by=("Stage 0 measured diarization",),
-                ),
-            )
-        overlapping_turns = tuple(
-            turn
-            for turn in ingested.diarization
-            if turn.start_ms < boundary.final_out_ms and turn.end_ms > boundary.final_in_ms
-        )
-        if not overlapping_turns:
-            return replace(
-                run,
-                boundary=boundary,
-                render=StageSkipped(
-                    stage="render",
-                    reason=(
-                        "requested speaker/face association has no measured diarization turn "
-                        f"overlapping the final clip {boundary.final_in_ms}.."
-                        f"{boundary.final_out_ms} ms"
-                    ),
-                    blocked_by=("overlapping measured diarization",),
-                ),
-            )
-        try:
-            _assert_source_unchanged(source, ingested.source_sha256, "speaker/face association")
-            try:
-                speaker_points: tuple[SpeakerFocusPoint, ...] = cast(
-                    Any, speaker_tracker
-                ).track_speakers(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    overlapping_turns,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-            except TypeError:
-                speaker_points = speaker_tracker.track_speakers(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    overlapping_turns,
-                )
-        except RuntimeError as exc:
-            return replace(
-                run,
-                boundary=boundary,
-                render=_operational_failure("render", "speaker/face association", exc),
-            )
-        _assert_source_unchanged(
-            source, ingested.source_sha256, "speaker/face association completion"
-        )
-        try:
-            focus_points = validate_speaker_focus_points(
-                speaker_points,
-                overlapping_turns,
-                boundary.final_in_ms,
-                boundary.final_out_ms,
-            )
-        except (SpeakerAssociationError, TypeError, ValueError) as exc:
-            return replace(
-                run,
-                boundary=boundary,
-                render=_operational_failure("render", "speaker/face association", exc),
-            )
-        if focus_points:
-            source_dimensions = proxy_dimensions(source, ffmpeg)
-            speaker_centers: dict[str, list[int]] = {}
-            for pt in speaker_points:
-                speaker_centers.setdefault(pt.speaker, []).append(pt.center_x)
-
-            if two_person_split == "always" and len(speaker_centers) < 2:
-                raise ValueError(
-                    "two-person split screen was requested with --two-person-split=always, "
-                    f"but only {len(speaker_centers)} distinct speaker(s) were tracked"
-                )
-
-            is_rapid = (
-                detect_rapid_speaker_exchange(
-                    overlapping_turns, boundary.final_in_ms, boundary.final_out_ms
-                )
-                if len(speaker_centers) >= 2
-                else False
-            )
-            should_split = (
-                two_person_split == "always" or (two_person_split == "auto" and is_rapid)
-            ) and len(speaker_centers) >= 2
-
-            if should_split:
-                spk_keys = sorted(speaker_centers.keys())
-                c1 = sorted(speaker_centers[spk_keys[0]])[len(speaker_centers[spk_keys[0]]) // 2]
-                c2 = sorted(speaker_centers[spk_keys[1]])[len(speaker_centers[spk_keys[1]]) // 2]
-                top_c, bot_c = (c1, c2) if c1 <= c2 else (c2, c1)
-                width, height = source_dimensions
-                split_crops = compute_two_person_split_crops(width, height, top_c, bot_c)
-                reframe_mode = Reframe.TWO_PERSON_SPLIT
-                focus_points = ()
-            else:
-                width, height = source_dimensions
-                crop_w, _ = vertical_crop_size(width, height)
-                focus_points = layout_policy(
-                    speaker_points,
-                    overlapping_turns,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    dead_zone_px=max(1, crop_w // 10),
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                    max_pan_px=max(1, int(crop_w * 0.6)),
-                    cut_on_max_pan=True,
-                )
-                reframe_mode = Reframe.SPEAKER_TRACKED
-
-    if not focus_points and subject_tracker is not None:
-        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
-        try:
-            try:
-                focus_points = subject_tracker.track(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-            except TypeError:
-                focus_points = subject_tracker.track(
-                    source, boundary.final_in_ms, boundary.final_out_ms
-                )
-        except RuntimeError as exc:
-            return replace(
-                run,
-                boundary=boundary,
-                render=_operational_failure("render", "requested subject tracking", exc),
-            )
-        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
-        if focus_points:
-            face_center_y, face_height = median_face_box(focus_points)
-            source_dimensions = proxy_dimensions(source, ffmpeg)
-            focus_points = _steady_camera(
-                focus_points,
-                source,
-                ffmpeg,
-                source_dimensions,
-                shot_cuts_ms=ingested.shot_cuts_ms,
-            )
-            reframe_mode = Reframe.FACE_TRACKED
-        elif profile in ("production", "deliverable"):
-            return replace(
-                run,
-                boundary=boundary,
-                render=_operational_failure(
-                    "render",
-                    "requested subject tracking",
-                    RuntimeError(f"zero faces detected in {media_id} for production profile"),
-                ),
-            )
+    camera = _resolve_camera(
+        source,
+        ingested,
+        boundary,
+        speaker_tracker=speaker_tracker,
+        subject_tracker=subject_tracker,
+        two_person_split=two_person_split,
+        profile=profile,
+        ffmpeg=ffmpeg,
+    )
+    if isinstance(camera, StageSkipped):
+        return replace(run, boundary=boundary, render=camera)
+    focus_points = camera.focus_points
+    split_crops = camera.split_crops
+    source_dimensions = camera.source_dimensions
+    face_center_y = camera.face_center_y
+    face_height = camera.face_height
+    reframe_mode = camera.mode
 
     crop_target = {
         Reframe.STATIC_CENTRE: "static_centre",
@@ -4246,7 +4263,7 @@ def run_pipeline(
             silence_target_gap_ms=silence_target_gap_ms,
             punch_in_cadence_ms=config.punch_in_cadence_ms,
             eased_push=eased_push or config.eased_push,
-            two_person_split="auto",
+            two_person_split=two_person_split,
             keyword_emphasis=keyword_emphasis,
             fps=fps,
         )
@@ -4260,10 +4277,8 @@ def run_pipeline(
         else:
             time_mapping = SourceTimeMapping.continuous(clip.in_ms, clip.out_ms)
 
-        spk_turns = (
-            tuple((turn.start_ms, turn.end_ms, turn.speaker) for turn in ingested.diarization)
-            if ingested.diarization is not None
-            else ()
+        spk_turns = tuple(
+            (turn.start_ms, turn.end_ms, turn.speaker) for turn in camera.speaker_turns
         )
         visual_edit_plan = VisualEditPlan(
             version=CURRENT_PLAN_VERSION,

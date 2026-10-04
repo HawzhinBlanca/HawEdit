@@ -14574,3 +14574,35 @@ specs/evidence-based-studio/asr-stop-{research,impact-map,spec,plan}.md. This sa
 does not repair ZAR38's model output or establish speech accuracy, native review, performance,
 qualified current-source VEX, same-SHA CI or 10/10. BLOCKED #24/#25 remain explicit.
 
+## D-279 - Execute the same camera policy for single and episode candidates
+
+**Status:** Owner-approved scoped repair, 2026-10-04, "fix all and do rel test again".
+Verification and CI acceptance are separate. No dependency, model, licence, cloud
+spending, trusted reviewer identity or publication authority is added.
+
+Fresh decoded-fixture probes at 7fa7d3a established that episode rendering accepted
+a speaker tracker without invoking it and wrote split mode auto despite an explicit
+always request. Both default and production profiles reproduced the bypass. Synthetic
+transcript/discovery/judge inputs establish admission behavior, not editorial quality.
+
+One shared camera-resolution path now governs both render routes. Requested association
+requires validated overlapping diarization; invalid or failed association is refused.
+An empty association refuses production/deliverable rendering rather than becoming a
+face or centre crop. Legacy diagnostic profiles may retain their explicitly unlabelled
+face-only ambiguity behavior; this is not a production speaker-accuracy claim. This
+qualifies the earlier single-path empty-result allowance rather than erasing its history.
+
+Resolve optional shot-cut support before invoking a tracker: an internal TypeError
+is a failure, not permission to invoke it twice. Check source identity before and after
+requested tracking, including failed calls. Once a split is chosen it cannot be overwritten
+because its continuous focus-point list is empty. Split mode always needs exactly two
+tracked subjects; automatic mode must not silently crop away a third tracked speaker.
+Save the executed policy and measured overlapping turns in each private edit plan and
+reconciliation input. Preserve canonical text, immutable source, timing and review binding.
+
+Grounding: BLUEPRINT sections 2-5; D-263/D-274/D-276/D-277;
+specs/candidate-framing-parity/{research,impact-map,spec,plan}.md. This repairs camera
+admission and route parity, not labelled speaker accuracy, native speech/meaning,
+semantic editing, the unresolved ZAR38 ASR failures, VEX review, CI or sustained acceptance.
+BLOCKED #1/#4/#21/#24/#25 remain visible. No 10/10 or completed ledger follows from this ADR.
+
