@@ -14658,3 +14658,30 @@ it is not authenticated reviewer evidence. No new dependency, licence acceptance
 model/default change, spending, trust enrollment or release authorization. Required
 gate, current-source real retest, same-SHA CI and independent acceptance remain open.
 
+## D-282 - Distinguish unavailable ASR diagnostics from recorded zero
+
+**Status:** Owner-approved ordinary reporting repair, 2026-10-05,
+"approve all and fix them". BLUEPRINT sections 3, 5 and 8.1; D-145 and D-281.
+
+The actual full-source ZAR38 run at fd1468a halted before returning a raw
+transcript, but its JSON presented empty/zero coverage, corrections and routing.
+Unknown evidence must not look like measured absence of defects.
+
+Retain the existing integrity-checked raw transcript on PipelineRun and derive
+recorded diagnostics from it. Preserve failure records even when production
+refuses that transcript. Without raw evidence, preserve any partial records but
+leave complete missing-speech duration unknown. Empty collections alone cannot
+prove that diagnostic collection ran.
+
+JSON adds asr_diagnostics_status: recorded, partial or unavailable. Diagnostic
+fields use null when unavailable; consumers must not coerce null to zero. Known
+raw diagnostics retain their previous values, including genuine zeros. Partial
+routing counts describe only recorded decisions, not all source segments. The
+durable result remains JSON-safe and uses its existing persistence path.
+
+Recorded means diagnostic availability, not verified native fidelity, complete
+speech coverage, security clearance or approval. Supplied transcripts remain a
+separate trust route. No canonical ASR/model/default/schema, billing, dependency,
+signature or publication policy change. No claimed remedy for the actual ZAR38
+decode failure. See specs/asr-diagnostic-availability/.
+

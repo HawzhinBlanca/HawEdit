@@ -2500,6 +2500,108 @@ def test_the_default_run_still_plans_at_section_3s_ceiling(tmp_path: Path) -> No
 # --- D-110: the report was silent about speech the transcript does not contain ----------------
 
 
+@pytest.mark.parametrize("refused", [False, True])
+def test_missing_asr_evidence_reports_unknown_not_zero(refused: bool) -> None:
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        transcript=(
+            StageSkipped(stage="transcript", reason="incomplete decoding", blocked_by=())
+            if refused
+            else None
+        ),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "unavailable"
+    for key in (
+        "transcript_gaps",
+        "speech_without_transcription_ms",
+        "rejected_validator_corrections",
+        "escalation",
+    ):
+        assert payload[key] is None
+    assert payload["complete"] is False
+    assert json.loads(json.dumps(payload)) == payload
+
+
+def test_partial_asr_diagnostics_do_not_claim_complete_coverage() -> None:
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        transcript_gaps=(UnalignedSpeech(start_ms=100, end_ms=200, reason="failed"),),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "partial"
+    assert payload["transcript_gaps"] == [
+        {"start_ms": 100, "end_ms": 200, "duration_ms": 100, "reason": "failed"}
+    ]
+    assert payload["speech_without_transcription_ms"] is None
+    assert payload["rejected_validator_corrections"] is None
+    assert payload["escalation"] is None
+
+
+@pytest.mark.parametrize("kind", ["correction", "routing"])
+def test_partial_asr_correction_and_routing_records_remain_visible(kind: str) -> None:
+    from hawedit.asr import VALIDATOR_MODEL_ID
+    from hawedit.escalation import EscalationDecision
+    from hawedit.transcripts import RejectedValidatorCorrection
+
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        rejected_validator_corrections=(
+            RejectedValidatorCorrection(100, 200, VALIDATOR_MODEL_ID, "failed"),
+        )
+        if kind == "correction"
+        else (),
+        escalation=(EscalationDecision("100-200", True, "models disagree"),)
+        if kind == "routing"
+        else (),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "partial"
+    assert payload["speech_without_transcription_ms"] is None
+    assert payload["transcript_gaps"] is None
+    if kind == "correction":
+        assert payload["rejected_validator_corrections"] == [
+            {
+                "start_ms": 100,
+                "end_ms": 200,
+                "duration_ms": 100,
+                "validator": VALIDATOR_MODEL_ID,
+                "reason": "failed",
+            }
+        ]
+        assert payload["escalation"] is None
+    else:
+        assert payload["rejected_validator_corrections"] is None
+        assert payload["escalation"]["scored_segments"] == 1
+        assert payload["escalation"]["escalated"] == 1
+        assert payload["escalation"]["segments"] == [
+            {"segment_id": "100-200", "escalate": True, "reason": "models disagree"}
+        ]
+
+
+def test_raw_diagnostics_are_the_reporting_source() -> None:
+    raw = a_transcript()
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        raw_diagnostics=raw,
+        transcript_gaps=(UnalignedSpeech(start_ms=100, end_ms=200, reason="unbound"),),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "recorded"
+    assert payload["transcript_gaps"] == []
+    assert payload["speech_without_transcription_ms"] == 0
+    assert payload["rejected_validator_corrections"] == []
+    assert isinstance(payload["escalation"], dict)
+
+
 @needs_ffmpeg
 def test_the_report_says_which_speech_has_no_transcription(tmp_path: Path) -> None:
     """D-103 put the gaps in `transcript.raw.json`; the report shows the *normalized* transcript,

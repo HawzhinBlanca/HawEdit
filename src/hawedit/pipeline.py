@@ -349,8 +349,7 @@ class PipelineRun:
     # Validator corrections that were rejected while the canonical timed segment was retained.
     # They are not speech gaps, but they are still material Stage 1 fallback evidence.
     rejected_validator_corrections: tuple[RejectedValidatorCorrection, ...] = ()
-    # §3 Stage 1's validator-routing decision per segment. Empty means the routing rule ran and
-    # found no scored segments, not that the rule disappeared from the composed runner.
+    # §3 Stage 1's validator-routing decision per segment. Empty alone proves no measurement.
     escalation: tuple[EscalationDecision, ...] = ()
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
@@ -386,6 +385,8 @@ class PipelineRun:
     delivery: Delivery | StageSkipped | None = None
     config: EffectiveConfiguration | None = None
     episode_manifest: EpisodeManifest | None = None
+    # Retained after raw integrity verification, including refused raw transcripts. D-282.
+    raw_diagnostics: RawTranscript | None = None
 
     def _rejected_by_path(self) -> dict[str, int]:
         """How many candidates each discovery path lost, which is what §8.2 partitions on.
@@ -530,6 +531,24 @@ class PipelineRun:
             to_dict = getattr(value, "to_dict", None)
             return to_dict() if callable(to_dict) else str(value)
 
+        raw = self.raw_diagnostics
+        gaps = raw.unaligned if raw is not None else self.transcript_gaps
+        corrections = (
+            raw.rejected_validator_corrections
+            if raw is not None
+            else self.rejected_validator_corrections
+        )
+        decisions = (
+            select_for_validation(scores_from_transcript(raw))
+            if raw is not None
+            else self.escalation
+        )
+        diagnostics_status = (
+            "recorded"
+            if raw is not None
+            else ("partial" if gaps or corrections or decisions else "unavailable")
+        )
+
         return {
             "media_id": self.media_id,
             "source": self.source,
@@ -538,6 +557,7 @@ class PipelineRun:
             "skipped": [name for name, _ in self.skipped()],
             "ingest": encode(self.ingest),
             "diarization": encode(self.diarization) or self._diarization_ran(),
+            "asr_diagnostics_status": diagnostics_status,
             "transcript_gaps": [
                 {
                     "start_ms": gap.start_ms,
@@ -545,10 +565,12 @@ class PipelineRun:
                     "duration_ms": gap.end_ms - gap.start_ms,
                     "reason": gap.reason,
                 }
-                for gap in self.transcript_gaps
-            ],
-            "speech_without_transcription_ms": sum(
-                gap.end_ms - gap.start_ms for gap in self.transcript_gaps
+                for gap in gaps
+            ]
+            if raw is not None or gaps
+            else None,
+            "speech_without_transcription_ms": (
+                sum(gap.end_ms - gap.start_ms for gap in gaps) if raw is not None else None
             ),
             "rejected_validator_corrections": [
                 {
@@ -558,28 +580,30 @@ class PipelineRun:
                     "validator": item.validator,
                     "reason": item.reason,
                 }
-                for item in self.rejected_validator_corrections
-            ],
+                for item in corrections
+            ]
+            if raw is not None or corrections
+            else None,
             "escalation": {
-                "scored_segments": len(self.escalation),
-                "escalated": sum(1 for decision in self.escalation if decision.escalate),
+                "scored_segments": len(decisions),
+                "escalated": sum(1 for decision in decisions if decision.escalate),
                 "disagreement_threshold_cer": DEFAULT_DISAGREEMENT_CER,
                 "by_trigger": {
                     "quartile_only": sum(
                         1
-                        for decision in self.escalation
+                        for decision in decisions
                         if decision.escalate and "disagree" not in decision.reason
                     ),
                     "disagreement_only": sum(
                         1
-                        for decision in self.escalation
+                        for decision in decisions
                         if decision.escalate
                         and "disagree" in decision.reason
                         and "quartile" not in decision.reason
                     ),
                     "both": sum(
                         1
-                        for decision in self.escalation
+                        for decision in decisions
                         if decision.escalate
                         and "disagree" in decision.reason
                         and "quartile" in decision.reason
@@ -591,10 +615,12 @@ class PipelineRun:
                         "escalate": decision.escalate,
                         "reason": decision.reason,
                     }
-                    for decision in self.escalation
+                    for decision in decisions
                     if decision.escalate
                 ],
-            },
+            }
+            if raw is not None or decisions
+            else None,
             "transcript": (
                 self.transcript.to_dict()
                 if isinstance(self.transcript, StageSkipped)
@@ -3140,6 +3166,7 @@ def run_pipeline(
         transcript_gaps=transcript.unaligned,
         rejected_validator_corrections=transcript.rejected_validator_corrections,
         escalation=select_for_validation(scores_from_transcript(transcript)),
+        raw_diagnostics=transcript,
     )
     if known_transcript_failure is not None:
         log.finished("transcript", known_transcript_failure.reason)
