@@ -1193,13 +1193,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         save('upload', null);
         message('sourceIdentity', '');
         message('sourceError', '');
+        message('uploadMessage', '');
+        $('uploadProgress').hidden = true;
+        $('uploadProgress').removeAttribute('value');
         message(
           'fileInfo',
           state.file
-            ? state.file.name +
-                ' · ' +
-                (state.file.size / 1024 ** 2).toFixed(1) +
-                ' MiB'
+            ? state.file.name + ' · ' + state.file.size + ' bytes'
             : 'هیچ فایلێک هەڵنەبژێردراوە.',
         );
         controls();
