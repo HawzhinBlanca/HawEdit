@@ -426,6 +426,12 @@ def test_llm_and_ctc_forwards_start_in_parallel() -> None:
         def _load(self) -> tuple[object, object]:
             return Llm(), object()
 
+        def _transcribe_llm(self, pipeline: object, audio_path: Path) -> list[str]:
+            # This test isolates forward scheduling; real completion admission is
+            # covered by its own contracts and the actual-model probe.
+            assert isinstance(pipeline, Llm)
+            return pipeline.transcribe([str(audio_path)], lang=[self.language], batch_size=1)
+
         def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int, str]:
             ctc_started.set()
             assert llm_started.wait(1), "LLM did not start while CTC was running"

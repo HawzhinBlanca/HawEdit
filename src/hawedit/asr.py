@@ -38,6 +38,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final, Protocol, runtime_checkable
 
+from hawedit.asr_completion import COMPLETION_POLICY_ID, transcribe_completed
 from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
 from hawedit.escalation import SegmentScore, select_for_validation
@@ -794,6 +795,9 @@ class OmniAsrBackend:
             blank_id=compact_id[blank],
         )
 
+    def _transcribe_llm(self, pipeline: Any, audio_path: Path) -> Any:
+        return transcribe_completed(pipeline, audio_path, self.language)
+
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
         expected_identity = self.adapter_name
         llm, ctc = self._load()
@@ -801,10 +805,9 @@ class OmniAsrBackend:
         # the LLM text until the cheap Viterbi projection after both complete.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="omniasr") as executor:
             text_future = executor.submit(
-                llm.transcribe,
-                [str(audio_path)],
-                lang=[self.language],
-                batch_size=1,
+                self._transcribe_llm,
+                llm,
+                audio_path,
             )
             emissions_future = executor.submit(self._ctc_emissions, ctc, audio_path)
             texts = text_future.result()
@@ -902,6 +905,11 @@ class OmniAsrProducer:
         transcript - the same hole D-136 closed for test doubles, one axis over.
         """
         return getattr(self.backend, "adapter_name", None)
+
+    @property
+    def admission_policy(self) -> str | None:
+        """Cache binding for the real canonical backend, not a fidelity attestation."""
+        return COMPLETION_POLICY_ID if type(self.backend) is OmniAsrBackend else None
 
     def _validator(self) -> SoraniValidator:
         if self.validator is not None:
@@ -1283,6 +1291,11 @@ class WslOmniAsrProducer:
         if self.lora_adapter is None:
             return None
         return f"lora:{adapter_fingerprint(self.lora_adapter)}"
+
+    @property
+    def admission_policy(self) -> str:
+        """The source-bound worker uses the same canonical completion contract."""
+        return COMPLETION_POLICY_ID
 
     def _prefix(self) -> list[str]:
         selected_distro = self._receipt_distro or self.distro

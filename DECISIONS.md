@@ -14626,3 +14626,35 @@ specs/evidence-based-studio/asr-diagnostics-{research,impact-map,spec,plan}.md.
 Diagnostic clarity is not correction of speech, qualified VEX review, same-SHA CI,
 editorial acceptance or 10/10. BLOCKED #24 and native-reference prerequisites remain.
 
+## D-281 - Admit canonical decoder completion before alignment and cache reuse
+
+**Status:** Owner-approved ordinary safety repair, 2026-10-05, "approve all and fix them".
+BLUEPRINT sections 3, 4.1, 4.2 and 8.1; D-278, Model Lock and Champion Supremacy.
+Actual frozen 6df0998 trials show compression-stopped text can still align. Alignment
+is therefore insufficient admission evidence. Four actual-model prototype trials
+refused both incomplete risk inputs before alignment while preserving exact text and
+alignment for both natural controls. Details/hashes/limitations are in
+specs/decoder-completion/research.md and its immutable external evidence.
+
+Keep the actual installed decoder algorithm, champion, tokenizer, default one beam,
+source segmentation and CTC unchanged. Validate upstream package/classes/source
+bytes, serialize observation, delegate model embedding unchanged, and require a
+sampled natural EOS in every segment generation. Refuse unsupported or changed
+contracts and restore temporary model/method bindings on all paths. No global
+tracing hook, duplicated decoder, repeated-token trimming, guessed words/times,
+fallback or continuing failed production batches. Retain parallel CTC forward.
+
+Bind automatic cache reuse separately to the completion admission policy, not to
+an invented weight identity or accuracy claim. Old/malformed/mismatched immutable
+raw records and orphan publication evidence refuse before expensive inference;
+preserve their bytes and explain the fresh-work-directory/media-ID remedy. New
+policy records require audio and producer provenance. Optional keyword parameters
+preserve unrelated callers. Injected native fake backends do not claim this policy.
+Explicit supplied transcripts remain a separate trust route, not newly verified ASR.
+
+Natural EOS is necessary completion evidence, not native fidelity, security approval,
+speaker accuracy, meaning, publication or 10/10. A policy label binds cache reuse;
+it is not authenticated reviewer evidence. No new dependency, licence acceptance,
+model/default change, spending, trust enrollment or release authorization. Required
+gate, current-source real retest, same-SHA CI and independent acceptance remain open.
+

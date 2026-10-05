@@ -961,7 +961,13 @@ class TranscriptStore:
         return self.root / f"{self._safe(media_id)}.transcript.raw.provenance.json"
 
     def reusable_raw(
-        self, media_id: str, audio_sha256: str, producer: str, media_sha256: str
+        self,
+        media_id: str,
+        audio_sha256: str,
+        producer: str,
+        media_sha256: str,
+        *,
+        admission_policy: str | None = None,
     ) -> RawTranscript | None:
         """The stored canonical transcript, if this exact audio and producer made it.
 
@@ -986,12 +992,32 @@ class TranscriptStore:
         """
         path = self.raw_path(media_id)
         provenance = self._audio_provenance_path(media_id)
+        admission_error = RawTranscriptImmutable(
+            f"{path} lacks matching canonical admission provenance; "
+            "use a new work directory or media_id. Historical transcript bytes are preserved."
+        )
+        if admission_policy is not None and (
+            not isinstance(admission_policy, str) or not admission_policy.strip()
+        ):
+            raise ValueError("admission policy must be a nonempty string")
         if not path.is_file() or not provenance.is_file():
+            if admission_policy is not None and (
+                path.exists() or provenance.exists() or self._digest_path(media_id).exists()
+            ):
+                raise admission_error
             return None
         try:
             recorded = json.loads(provenance.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            recorded = None
+        if admission_policy is not None and (
+            not self._digest_path(media_id).is_file()
+            or not isinstance(recorded, dict)
+            or recorded.get("admission_policy") != admission_policy
+            or recorded.get("audio_sha256") != audio_sha256
+            or recorded.get("producer") != producer
+        ):
+            raise admission_error
         if not isinstance(recorded, dict):
             return None
         if recorded.get("audio_sha256") != audio_sha256 or recorded.get("producer") != producer:
@@ -1010,6 +1036,8 @@ class TranscriptStore:
         raw: RawTranscript,
         audio_sha256: str | None = None,
         producer: str | None = None,
+        *,
+        admission_policy: str | None = None,
     ) -> Path:
         """Publish the canonical transcript once.
 
@@ -1018,6 +1046,11 @@ class TranscriptStore:
         written inside the same lock that publishes the raw, so a killed publish cannot leave a
         reuse record pointing at a transcript that never appeared. D-136.
         """
+        if admission_policy is not None:
+            if not isinstance(admission_policy, str) or not admission_policy.strip():
+                raise ValueError("admission policy must be a nonempty string")
+            if audio_sha256 is None or producer is None:
+                raise ValueError("admission policy requires audio and producer provenance")
         self._assert_root_identity()
         lock = self.root / f".{self._safe(raw.media_id)}.transcript.raw.lock"
         with _exclusive_file_lock(lock):
@@ -1026,7 +1059,11 @@ class TranscriptStore:
             if audio_sha256 is not None and producer is not None:
                 self._audio_provenance_path(raw.media_id).write_text(
                     json.dumps(
-                        {"audio_sha256": audio_sha256, "producer": producer},
+                        {
+                            "audio_sha256": audio_sha256,
+                            "producer": producer,
+                            **({"admission_policy": admission_policy} if admission_policy else {}),
+                        },
                         indent=2,
                     )
                     + "\n",

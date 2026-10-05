@@ -2997,6 +2997,7 @@ def run_pipeline(
     asr_failure: StageSkipped | None = None
     audio_digest: str | None = None
     producer_id: str | None = None
+    admission_policy: str | None = None
     if transcript is None and asr is not None:
         # Before the 1,547 s, not after it. `TranscriptStore` was only consulted once Stage 1 had
         # already run, so a second run over the same work directory transcribed 545 segments
@@ -3015,8 +3016,13 @@ def run_pipeline(
         model_identity = getattr(asr, "model_identity", None)
         if model_identity:
             producer_id = f"{producer_id}+{model_identity}"
+        admission_policy = getattr(asr, "admission_policy", None)
         reused = TranscriptStore(work_dir / "transcripts").reusable_raw(
-            identifier, audio_digest, producer_id, ingested.source_sha256
+            identifier,
+            audio_digest,
+            producer_id,
+            ingested.source_sha256,
+            admission_policy=admission_policy,
         )
         transcript = reused
         if transcript is None:
@@ -3111,7 +3117,12 @@ def run_pipeline(
     # --- §3 Stage 1 (supplied) + §4.1 -----------------------------------------------------
     store = TranscriptStore(work_dir / "transcripts")
     try:
-        store.write_raw(transcript, audio_sha256=audio_digest, producer=producer_id)
+        store.write_raw(
+            transcript,
+            audio_sha256=audio_digest,
+            producer=producer_id,
+            admission_policy=admission_policy,
+        )
     except RawTranscriptImmutable:
         # Invariant #1: the canonical transcript is never rewritten. A second run over the
         # same work directory reads what is already there rather than overwriting it.
