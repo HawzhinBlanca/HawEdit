@@ -100,6 +100,11 @@ __all__ = [
 # and its failure rate is a property worth measuring rather than an accident.
 LONG_AUDIO_THRESHOLD_S: Final = 40.0
 VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
+_CONTEXT_MAX_GAP_MS: Final = 1_000
+_CONTEXT_MAX_SPAN_MS: Final = 38_000
+CONTEXT_GROUPING_POLICY_ID: Final = (
+    f"vad-context-v1-gap{_CONTEXT_MAX_GAP_MS}-span{_CONTEXT_MAX_SPAN_MS}"
+)
 
 
 class IncomparableHardware(ValueError):
@@ -884,7 +889,10 @@ class OmniAsrProducer:
         # positionally, so a `*` in front of it turns every one of them into a TypeError. The
         # adapter was keyword-only on this branch and stays that way, which costs nobody.
         lora_adapter: Path | None = None,
+        context_grouping: bool = False,
     ) -> None:
+        if type(context_grouping) is not bool:
+            raise ValueError("ASR context grouping must be a boolean")
         if backend is not None and lora_adapter is not None:
             raise ValueError(
                 "pass the adapter to the backend, not to both: a supplied backend already "
@@ -895,6 +903,7 @@ class OmniAsrProducer:
         self.backend = backend or OmniAsrBackend(lora_adapter=lora_adapter)
         self.validator = validator
         self.validator_model_dir = validator_model_dir
+        self.context_grouping = context_grouping
 
     @property
     def model_identity(self) -> str | None:
@@ -909,7 +918,14 @@ class OmniAsrProducer:
     @property
     def admission_policy(self) -> str | None:
         """Cache binding for the real canonical backend, not a fidelity attestation."""
-        return COMPLETION_POLICY_ID if type(self.backend) is OmniAsrBackend else None
+        completion = COMPLETION_POLICY_ID if type(self.backend) is OmniAsrBackend else None
+        if self.context_grouping:
+            return (
+                f"{completion}+{CONTEXT_GROUPING_POLICY_ID}"
+                if completion is not None
+                else CONTEXT_GROUPING_POLICY_ID
+            )
+        return completion
 
     def _validator(self) -> SoraniValidator:
         if self.validator is not None:
@@ -929,6 +945,9 @@ class OmniAsrProducer:
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
         expected_identity = self.model_identity
+        expected_policy = self.admission_policy
+        if self.context_grouping:
+            speech_segments = _contextual_speech_regions(speech_segments)
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         initial, unaligned = transcribe_prepared_segments(
             self.backend, prepared, stop_on_failure=True
@@ -938,6 +957,8 @@ class OmniAsrProducer:
         )
         if self.model_identity != expected_identity:
             raise RuntimeError("Native ASR adapter identity changed during inference")
+        if self.admission_policy != expected_policy:
+            raise RuntimeError("Native ASR context policy changed during inference")
         return _assemble_canonical_transcript(
             media_id,
             results,
@@ -957,6 +978,41 @@ class _PreparedSpeechSegment:
     @property
     def duration_s(self) -> float:
         return (self.end_ms - self.start_ms) / 1_000
+
+
+@dataclass(frozen=True, slots=True)
+class _ContextSpeechRegion:
+    start_ms: int
+    end_ms: int
+
+
+def _contextual_speech_regions(
+    speech_segments: Sequence[SpeechSegment],
+) -> tuple[_ContextSpeechRegion, ...]:
+    """Keep complete neighboring speech under the input budget, never trim a region."""
+    windows: list[_ContextSpeechRegion] = []
+    previous_end: int | None = None
+    for index, segment in enumerate(speech_segments):
+        start, end = segment.start_ms, segment.end_ms
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or not 0 <= start < end
+            or end - start > int(LONG_AUDIO_THRESHOLD_S * 1_000)
+        ):
+            raise ValueError(f"speech region {index} has invalid interval bounds")
+        if previous_end is not None and start < previous_end:
+            raise ValueError(f"speech region {index} overlaps or precedes the previous interval")
+        if (
+            windows
+            and start - windows[-1].end_ms <= _CONTEXT_MAX_GAP_MS
+            and end - windows[-1].start_ms <= _CONTEXT_MAX_SPAN_MS
+        ):
+            windows[-1] = _ContextSpeechRegion(windows[-1].start_ms, end)
+        else:
+            windows.append(_ContextSpeechRegion(start, end))
+        previous_end = end
+    return tuple(windows)
 
 
 class AsrProductionFailure(RuntimeError):
@@ -1272,12 +1328,16 @@ class WslOmniAsrProducer:
         wsl_executable: str = "wsl.exe",
         lora_adapter: Path | None = None,
         validator_model_dir: Path | None = None,
+        context_grouping: bool = False,
     ) -> None:
+        if type(context_grouping) is not bool:
+            raise ValueError("ASR context grouping must be a boolean")
         self.distro = distro
         self.interpreter = interpreter
         self.wsl_executable = wsl_executable
         self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
         self.validator_model_dir = validator_model_dir
+        self.context_grouping = context_grouping
         self._receipt_distro: str | None = None
 
     @property
@@ -1295,7 +1355,11 @@ class WslOmniAsrProducer:
     @property
     def admission_policy(self) -> str:
         """The source-bound worker uses the same canonical completion contract."""
-        return COMPLETION_POLICY_ID
+        return (
+            f"{COMPLETION_POLICY_ID}+{CONTEXT_GROUPING_POLICY_ID}"
+            if self.context_grouping
+            else COMPLETION_POLICY_ID
+        )
 
     def _prefix(self) -> list[str]:
         selected_distro = self._receipt_distro or self.distro
@@ -1350,7 +1414,10 @@ class WslOmniAsrProducer:
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
         expected_identity = self.model_identity
+        expected_policy = self.admission_policy
         interpreter, wsl_source = self._runtime()
+        if self.context_grouping:
+            speech_segments = _contextual_speech_regions(speech_segments)
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         if self.validator_model_dir is not None:
             validator_model_dir = self.validator_model_dir
@@ -1434,6 +1501,8 @@ class WslOmniAsrProducer:
                     env_args.append(f"{var}={val}")
             if self.model_identity != expected_identity:
                 raise RuntimeError("Host ASR adapter identity changed before worker execution")
+            if self.admission_policy != expected_policy:
+                raise RuntimeError("Host ASR context policy changed before worker execution")
             result = subprocess.run(
                 [
                     *self._prefix(),
@@ -1467,6 +1536,8 @@ class WslOmniAsrProducer:
                 or self.model_identity != expected_identity
             ):
                 raise RuntimeError("WSL ASR returned foreign or changed adapter identity")
+            if self.admission_policy != expected_policy:
+                raise RuntimeError("WSL ASR context policy changed during inference")
             return transcript
 
 
@@ -1482,9 +1553,9 @@ def create_omni_asr_producer(
         adapter_fingerprint(Path(lora_adapter))
     use_wsl = runtime == "wsl" or (runtime == "auto" and os.name == "nt")
     return (
-        WslOmniAsrProducer(distro=distro, lora_adapter=lora_adapter)
+        WslOmniAsrProducer(distro=distro, lora_adapter=lora_adapter, context_grouping=True)
         if use_wsl
-        else OmniAsrProducer(lora_adapter=lora_adapter)
+        else OmniAsrProducer(lora_adapter=lora_adapter, context_grouping=True)
     )
 
 

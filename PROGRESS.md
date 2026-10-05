@@ -18,6 +18,21 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Milestones (§9)
 
+ASR context grouping development checkpoint 2026-10-06 (T2 remains WIP): actual
+frozen-champion investigation reproduces the numeric repetition and supports a
+speech-boundary/context interaction. A conditional bounded grouping candidate is
+implemented only in the attached single-writer worktree; primary 899ab32 remains
+frozen for development comparison. All 50 wider-window invocations are now
+collected: original 22 aligned/three refused, grouped 23 aligned/two refused.
+The two new control regressions reject that prototype. A predeclared 25-invocation
+narrower-budget study is collecting on unchanged primary source; no activation.
+Test-first 24 failures retained; latest affected-file diagnostic 229 passes,
+zero failures/errors/skips; full-scope lint/types/format pass (323 files).
+These worktree checks are not the exact gate or CI. D-283 and
+evidence/asr-context-grouping-development-2026-10-06.md preserve versions, source
+hashes, failed diagnostics, scope and remaining gates. No native accuracy,
+publication, security closure, performance acceptance, ledger promotion or 10/10.
+
 Transcript stage reporting checkpoint 2026-10-04 (T2 remains WIP): after actual ZAR38
 ASR terminal evidence, move the existing start event before producer/cache work and report
 its operational refusal as a skip. Three additive native-media observer regressions:

@@ -14685,3 +14685,47 @@ separate trust route. No canonical ASR/model/default/schema, billing, dependency
 signature or publication policy change. No claimed remedy for the actual ZAR38
 decode failure. See specs/asr-diagnostic-availability/.
 
+## D-283 - Preserve nearby whole speech as canonical ASR input context
+
+**Status:** Owner-approved development candidate, 2026-10-06. Implementation
+authorization: "approve all and fix them" and "ok just fix it". Activation remains
+conditional on the fixed development comparison and a fresh producer retest.
+BLUEPRINT section 3 Stage 1 and sections 4.2, 5 and 8.1; D-181 and D-281 remain binding.
+
+On frozen ZAR38 input, 905634..917022 ms repeats numbers without natural EOS.
+The deployed champion's 560 adapter tensors match after actual dtype conversion;
+all 280 adapter layers are active and the model is in evaluation mode. Changing
+beams alone and adding only previous speech do not repair the observed failure.
+Four tested windows retaining the complete next speech region complete naturally
+with the unchanged greedy decoder. This is local boundary evidence, not native
+fidelity, corpus reliability or a new model-quality result.
+
+Group complete ordered Stage 0 speech intervals when the gap is at most 1000 ms
+and the union is at most 38000 ms. Preserve each original interval exactly once;
+never split, trim, duplicate or reorder one. Keep supported individual intervals
+up to the existing 40000-ms ceiling intact. Reject malformed, overlapping or
+unordered input. Stage 0 evidence stays unchanged. Timing comes from actual cut
+PCM and unchanged CTC/Viterbi, not guessed boundaries.
+
+Select the same input policy through the shared native/WSL canonical factory.
+Direct constructors retain the existing default for compatibility. Bind
+`vad-context-v1-gap1000-span38000` to transcript reuse in addition to unchanged
+completion admission. Refuse input-policy drift during inference. Old raw
+transcripts remain write-once and cannot become evidence of grouped inference.
+Studio workflow/journal/approval identities already bind package source bytes;
+do not add a competing identity mechanism.
+
+No dependency, model, adapter, tokenizer, beam/default stopping configuration,
+validator policy, source schema, paid route or signature policy change. Continue
+to halt production on its first failure. The fixed 25-row original/grouped
+development comparison retains every result and failure; repeated windows from
+one episode are not independent jobs. Native fidelity, full delivery, current
+qualified VEX review, gate/CI and sustained acceptance remain separate obligations.
+See specs/asr-context-grouping/ and the private evidence referenced there.
+
+**Development amendment:** the active comparison's dev-15 grouped arm regresses
+natural completion on a 34524-ms union. Do not activate the 38000-ms prototype.
+Predeclare and measure the narrower 18000-ms budget against all 25 fixed samples,
+retaining the original baseline and every failure. This revises development input,
+not acceptance thresholds, model policy or production first-failure stopping.
+
