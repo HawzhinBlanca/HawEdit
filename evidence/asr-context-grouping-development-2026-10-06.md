@@ -89,3 +89,46 @@ reviewed commit/integration, exact bash scripts/verify.sh at committed source,
 supported source-bound runtime and fresh full ZAR38 producer retest. Production
 still halts at its first failure. Required CI, current qualified VEX review and all
 independent/native/sustained acceptance obligations remain open; no ledger flip.
+
+## Narrower Component Revision
+
+After fresh actual Serena mapping at local rejected-prototype commit a94a075,
+the 18000-ms contract produced four expected failures in a 232-case affected-file
+red run. The final narrower affected-file run, narrow-green-v2, passes 233 tests
+with zero failures/errors/skips (JUnit 52.777 seconds; controller 56.789145 seconds).
+Static-narrow-v2 passes ruff check, mypy and format across src/tests/scripts,
+323 files (controller 11.639105 seconds). Watched source remains unchanged.
+These are component checks using worktree imports and read-only installed host
+dependencies, NOT the exact clean-build gate or CI. New tests also refuse old
+38000-ms cache policy without modifying historical raw bytes and preserve
+supported individual intervals up to 40000 ms.
+
+Private records: asr-context-unit-20261006/{narrow-red,narrow-green-v2,
+static-narrow-v2}. Revised ASR SHA256:
+d53f977b5f8353314e9146d7566059418c33d7b7455c41e4f779b354f1d91608;
+new test SHA256: 82f0cf93213cc565741a61ea5a715fc7dc342ffbebd7fc9f895ca02c5daab35b.
+The real-media study remains active; no production activation or native-fidelity
+claim follows from these component results alone.
+
+## Narrower Real-Media Collection Closed
+
+All 25 fixed risk/development samples complete with actual EOS and real CTC
+alignment, zero refusals, including both wider-policy control regressions.
+There are 24 unique selected windows in one episode, not independent jobs.
+All 158 grouping windows from the actual worktree helper match the study protocol.
+Post-collection checks revalidate every sample/ordinal, WAV hash, observed terminal
+token 2 and aligned-word clock range. No native accuracy, full validator pass,
+raw transcript, review video or publication is claimed.
+
+Study primary SHA remains 899ab32; package remains 7021258a988959da; all watched
+inputs/source are unchanged, git is clean. Controller elapsed 2267.639371 seconds
+is shared-host instrumented collection including loading, not performance acceptance.
+Owned Windows/Linux processes are verified absent before managed session closure.
+Root: asr-isolated-decoder-runtime-20261005/probe-groups-span18000.
+Stdout SHA256: c6681d0311c959a371ffd98b117029449c00893b6a316b975cad24995ffbb837;
+terminal SHA256: f076642e0ccccec348f944073b14dc779befe6661c5b0ed13f418e374aeb4592.
+The research records an initial audit-only PowerShell array-flattening diagnostic;
+correct structured serialization confirms the unchanged original terminal tokens.
+The selected 18000-ms candidate proceeds to local integration, the exact gate
+and fresh supported source-bound full ZAR38 producer diagnostics. No completed
+ledger row, qualified VEX closure, CI or release verdict follows from this study.

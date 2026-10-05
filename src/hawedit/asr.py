@@ -101,7 +101,7 @@ __all__ = [
 LONG_AUDIO_THRESHOLD_S: Final = 40.0
 VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 _CONTEXT_MAX_GAP_MS: Final = 1_000
-_CONTEXT_MAX_SPAN_MS: Final = 38_000
+_CONTEXT_MAX_SPAN_MS: Final = 18_000
 CONTEXT_GROUPING_POLICY_ID: Final = (
     f"vad-context-v1-gap{_CONTEXT_MAX_GAP_MS}-span{_CONTEXT_MAX_SPAN_MS}"
 )

@@ -1,10 +1,10 @@
 # ASR Context Grouping EARS
 
 1. WHEN canonical factory inputs contain nearby ordered VAD intervals, THE system
-   SHALL coalesce whole intervals only within the 1000-ms gap and 38000-ms union
+   SHALL coalesce whole intervals only within the 1000-ms gap and 18000-ms union
    limits, preserving every original interval exactly once.
    Tests: `test_context_grouping_preserves_complete_intervals_and_respects_limits`.
-2. WHEN an existing individual interval is between 38000 and 40000 ms, THE system
+2. WHEN an existing individual interval is between 18000 and 40000 ms, THE system
    SHALL retain it intact rather than trim it to the grouping budget.
    Test: `test_context_grouping_keeps_supported_long_single_region_intact`.
 3. WHEN input is malformed, overlapping or unordered, THE grouping system SHALL
@@ -31,3 +31,7 @@
    Existing tests: `test_native_production_stops_on_first_asr_failure`,
    `test_native_production_stops_on_first_validator_failure`,
    `test_alignable_repetition_stop_is_refused_before_alignment`.
+
+Development revision: the rejected 38000-ms prototype is retained at a94a075.
+This 18000-ms contract is test-first and remains conditional on complete real
+comparison and fresh producer/gate evidence. No release threshold is lowered.

@@ -141,3 +141,61 @@ b6bd75abf3c217ed87c431556410783f7b022df4efba44e3f1881710c023d6c1.
 Terminal JSON SHA256:
 25fb5a4787b928785f05278416791261988b48634434ae37604d1b72259f7007.
 The narrower study is still collecting; no passing default is selected yet.
+
+## Narrower Contract Checkpoint
+
+Actual Serena definition/reference mapping at rejected prototype a94a075 preceded
+the scalar-budget revision (see impact-map.md). The new 18000-ms contract first
+produced four expected failures among 232 affected-file cases; its immutable
+narrow-red record retains all failures. The implemented narrower budget and an
+additional rejection test for a legacy 38000-ms raw-cache binding then passed
+all 233 cases in narrow-green-v2, zero failures/errors/skips, JUnit 52.777 seconds.
+The complete affected files include native/WSL paths, completion, cache admission,
+worker diagnostics, adapter identity and WSL setup. Supported original individual
+regions of 18001, 19000, 38000 and 40000 ms remain intact. No canonical words are
+trimmed and no completion or CTC assertion is weakened.
+
+Static-narrow-v2 passes full-scope ruff check, mypy (323 files) and formatting;
+source is unchanged through these checks. These commands import the managed
+worktree using read-only primary dependencies. They are NOT the exact clean-build
+gate, same-SHA CI, native speech accuracy or publication evidence.
+
+Private records: asr-context-unit-20261006/{narrow-red,narrow-green-v2,
+static-narrow-v2}. ASR SHA256:
+d53f977b5f8353314e9146d7566059418c33d7b7455c41e4f779b354f1d91608;
+test SHA256: 82f0cf93213cc565741a61ea5a715fc7dc342ffbebd7fc9f895ca02c5daab35b.
+The predeclared narrower real-media study remains active; this component checkpoint
+does not select a production default or authorize a completed ledger row.
+
+A read-only native check imports this exact worktree ASR implementation, loads
+the frozen 547-region request and compares every resulting start/end pair with
+the active study's group-protocol record. All 158 windows match, not just the
+25 selected excerpt windows. The study has 24 unique selected groups, because
+two sample rows share a window; correlated sample counts cannot be treated as
+25 independent jobs. This parity check is not a new media-accuracy measurement.
+
+## Narrower Study Closed
+
+All 25 prescribed samples complete with actual natural EOS and real CTC/Viterbi
+alignment, zero refusals. The model/decoder remains fixed, including 560 matching
+loaded adapter tensors, 280 active layers and zero training modules. Both dev-15
+and dev-18 wider-policy regressions and all five risks complete. These are 24
+unique selected windows from ONE episode, not an independent reliability corpus,
+native accuracy result or publication-quality percentage.
+
+Controller closes exit 0 at unchanged primary 899ab32/package 7021258a988959da,
+clean git status, watched source/inputs unchanged; elapsed 2267.639371 seconds
+includes model load and shared-host instrumented work, not performance acceptance.
+Windows controller 58616 and WSL child 58132 plus Linux worker 1959720 are absent
+before the managed session is closed. Post-collection read-only checks independently
+recheck sample/ordinal order, all selected WAV hashes, actual terminal token 2,
+nonempty aligned words and clock range. An initial audit command flattened a nested
+array through a PowerShell pipeline; preserving its array via ConvertTo-Json
+-InputObject confirms the original [[2]] observations, without changing records.
+
+Sealed stdout SHA256:
+c6681d0311c959a371ffd98b117029449c00893b6a316b975cad24995ffbb837;
+terminal SHA256: f076642e0ccccec348f944073b14dc779befe6661c5b0ed13f418e374aeb4592.
+Select the 18000-ms candidate for local source-bound producer diagnostics only.
+Full validator/producer, exact gate, same-SHA CI, native fidelity and every
+independent/sustained acceptance obligation remain required. No ledger row flips.

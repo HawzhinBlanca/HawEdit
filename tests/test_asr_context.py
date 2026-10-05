@@ -30,9 +30,9 @@ def bounds(items: Any) -> list[tuple[int, int]]:
 
 
 def test_context_grouping_preserves_complete_intervals_and_respects_limits() -> None:
-    original = regions((0, 10_000), (11_000, 20_000), (21_001, 25_000), (26_000, 59_002))
+    original = regions((0, 8_000), (9_000, 14_000), (15_001, 17_000), (18_000, 33_002))
     grouped = asr._contextual_speech_regions(original)
-    assert bounds(grouped) == [(0, 20_000), (21_001, 25_000), (26_000, 59_002)]
+    assert bounds(grouped) == [(0, 14_000), (15_001, 17_000), (18_000, 33_002)]
     for interval in original:
         assert (
             sum(
@@ -41,20 +41,22 @@ def test_context_grouping_preserves_complete_intervals_and_respects_limits() -> 
             )
             == 1
         )
-    assert bounds(original) == [(0, 10_000), (11_000, 20_000), (21_001, 25_000), (26_000, 59_002)]
-    assert bounds(asr._contextual_speech_regions(regions((0, 37_000), (37_500, 38_000)))) == [
-        (0, 38_000)
+    assert bounds(original) == [(0, 8_000), (9_000, 14_000), (15_001, 17_000), (18_000, 33_002)]
+    assert bounds(asr._contextual_speech_regions(regions((0, 17_000), (17_500, 18_000)))) == [
+        (0, 18_000)
     ]
-    assert bounds(asr._contextual_speech_regions(regions((0, 37_000), (37_500, 38_001)))) == [
-        (0, 37_000),
-        (37_500, 38_001),
+    assert bounds(asr._contextual_speech_regions(regions((0, 17_000), (17_500, 18_001)))) == [
+        (0, 17_000),
+        (17_500, 18_001),
     ]
 
 
-def test_context_grouping_keeps_supported_long_single_region_intact() -> None:
-    assert bounds(asr._contextual_speech_regions(regions((0, 40_000), (40_100, 41_000)))) == [
-        (0, 40_000),
-        (40_100, 41_000),
+@pytest.mark.parametrize("duration_ms", [18_001, 19_000, 38_000, 40_000])
+def test_context_grouping_keeps_supported_long_single_region_intact(duration_ms: int) -> None:
+    original = regions((0, duration_ms), (duration_ms + 100, duration_ms + 1_000))
+    assert bounds(asr._contextual_speech_regions(original)) == [
+        (0, duration_ms),
+        (duration_ms + 100, duration_ms + 1_000),
     ]
     assert asr._contextual_speech_regions(()) == ()
 
@@ -86,6 +88,7 @@ def test_factory_native_and_wsl_share_context_and_completion_policy() -> None:
     assert native.context_grouping is True
     assert wsl.context_grouping is True
     assert native.admission_policy == wsl.admission_policy
+    assert asr.CONTEXT_GROUPING_POLICY_ID == "vad-context-v1-gap1000-span18000"
     assert native.admission_policy == COMPLETION_POLICY_ID + "+" + asr.CONTEXT_GROUPING_POLICY_ID
 
 
@@ -106,15 +109,16 @@ def test_context_configuration_requires_an_actual_boolean(bad: object, producer:
         producer(context_grouping=bad)
 
 
-def test_context_policy_cannot_reuse_legacy_raw_binding(tmp_path: Path) -> None:
-    legacy = asr.OmniAsrProducer()
+@pytest.mark.parametrize(
+    "legacy_policy",
+    [COMPLETION_POLICY_ID, COMPLETION_POLICY_ID + "+vad-context-v1-gap1000-span38000"],
+)
+def test_context_policy_cannot_reuse_legacy_raw_binding(tmp_path: Path, legacy_policy: str) -> None:
     grouped = asr.create_omni_asr_producer("local")
     assert isinstance(grouped, asr.OmniAsrProducer)
     store = TranscriptStore(tmp_path)
     raw = transcript_fixtures.a_raw()
-    store.write_raw(
-        raw, audio_sha256="audio", producer="producer", admission_policy=legacy.admission_policy
-    )
+    store.write_raw(raw, audio_sha256="audio", producer="producer", admission_policy=legacy_policy)
     before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
     with pytest.raises(RawTranscriptImmutable, match="admission"):
         store.reusable_raw(

@@ -14729,3 +14729,15 @@ Predeclare and measure the narrower 18000-ms budget against all 25 fixed samples
 retaining the original baseline and every failure. This revises development input,
 not acceptance thresholds, model policy or production first-failure stopping.
 
+**Closed development comparison:** the 38000-ms prototype is rejected and retained
+at local a94a075. The predeclared narrower study completes all 25 samples (24
+unique selected windows, one episode) with actual natural EOS and CTC alignment,
+including risk-01/02/03 and both wider-policy control regressions. Source and
+inputs remain unchanged, all prescribed rows are retained, and owned processes
+are closed. Select the 18000-ms union / 1000-ms gap policy for a fresh source-bound
+producer diagnostic, with effective reuse identity
+`vad-context-v1-gap1000-span18000`. The earlier 38000-ms paragraphs document the
+rejected prototype, not the effective candidate. Native speech/number fidelity,
+full validator/producer completion, delivery, gate/CI and acceptance remain
+unproved; this selection permits no publication or completed ledger row.
+

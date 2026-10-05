@@ -24,9 +24,13 @@ speech-boundary/context interaction. A conditional bounded grouping candidate is
 implemented only in the attached single-writer worktree; primary 899ab32 remains
 frozen for development comparison. All 50 wider-window invocations are now
 collected: original 22 aligned/three refused, grouped 23 aligned/two refused.
-The two new control regressions reject that prototype. A predeclared 25-invocation
-narrower-budget study is collecting on unchanged primary source; no activation.
-Test-first 24 failures retained; latest affected-file diagnostic 229 passes,
+The two new control regressions reject that prototype. The predeclared 25-invocation
+narrower-budget study on unchanged primary source closes all 25 samples
+(24 unique windows, one episode)
+with observed EOS and actual CTC alignment, zero refusals, unchanged inputs/source
+and owned process closure. Select it only for fresh source-bound producer testing;
+native fidelity and full producer completion are not measured by this collection.
+Test-first wider 24 and narrower four failures retained; latest diagnostic 233 passes,
 zero failures/errors/skips; full-scope lint/types/format pass (323 files).
 These worktree checks are not the exact gate or CI. D-283 and
 evidence/asr-context-grouping-development-2026-10-06.md preserve versions, source
