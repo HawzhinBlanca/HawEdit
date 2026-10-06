@@ -141,9 +141,10 @@ class OperationJournal:
         if _json(self._read("binding.json")) != _json(self.binding):
             raise RuntimeError("ASR checkpoint binding changed during the run")
         audio_sha256 = _file_digest(path)
+        resolved_path = str(path.resolve())
         audio_inputs = self.binding["inputs"].get("audio")
         if audio_inputs is not None:
-            matches = [item for item in audio_inputs if item["path"] == str(path.resolve())]
+            matches = [item for item in audio_inputs if item["path"] == resolved_path]
             if (
                 len(matches) != 1
                 or matches[0]["sha256"] != audio_sha256
@@ -154,7 +155,7 @@ class OperationJournal:
                 )
         return {
             "stage": stage,
-            "path": str(path.resolve()),
+            "path": resolved_path,
             "audio_sha256": audio_sha256,
             "duration_s": duration_s,
             "text": text,

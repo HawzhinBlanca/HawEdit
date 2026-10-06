@@ -18,3 +18,10 @@ them", renewed "ok just fix it"). No additional spending, licences or release ap
 No broad pipeline rewrite, no longer timeout, no fallback, forced EOS or upstream
 dependency edits. A cache is not authenticated publication evidence. Current
 qualified VEX review and native/independent quality acceptance remain separate.
+
+Follow-on within the approved recovery repair: test-first single pathname
+resolution, then complete affected files and the exact gate. Independently replay
+the actual retained operations as a labelled component compatibility check;
+production source binding still refuses changed packages. Earlier full-source
+ASR/recovery evidence remains explicitly at 0de4732, not relabelled as a new-SHA
+model run. No acceptance or isolated performance claim.

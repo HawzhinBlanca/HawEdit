@@ -20,3 +20,7 @@
   test_checkpoint_refuses_linked_storage, test_checkpoint_refuses_concurrent_writer.
 - WHEN only checkpoints exist, THE system SHALL NOT treat them as raw transcript,
   stage completion or published media. Test: test_checkpoint_failure_is_not_cached.
+- WHEN one operation validates a multi-window audio binding, THE journal SHALL
+  resolve the operation pathname once rather than once per bound window, while
+  preserving the operation key and all drift checks. Test:
+  test_checkpoint_resolves_operation_path_once.

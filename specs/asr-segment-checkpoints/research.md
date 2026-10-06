@@ -26,3 +26,20 @@ This does not close the adapted loader's separate held-descriptor gap.
 Retain BLUEPRINT sections 2/3/4.2/8.1, D-278 hard stop, D-281 natural EOS,
 D-283 whole-VAD grouping. No model, decoder, stopping, timeout or confidence-router
 change. No paid routes. Blocker #24 still requires qualified current VEX review.
+
+Closed source-bound recovery at 0de4732/package f10d40d: first bounded attempt
+times out (19187.652270 controller s); all 158 drafts and 47 validator/alignment
+pairs persist. Same-source restart finishes ASR/validation in 6706.024567 s,
+preserving all 252 earlier records and adding 58 for the remaining 29 pairs.
+Independent audits verify actual record/response/PCM hashes and clocks. Raw SHA256
+28fe5103a5c4d3ddee7e4f23af7eb2a296b235e135da32981578b06bd693cedf;
+5769 timed words, zero recorded unaligned/rejected corrections. Native accuracy
+unknown. CLI overall complete=false/exit 1 because downstream producers are not
+configured; no reel or paid calls. This is recovery evidence, not release acceptance.
+
+Read-only restart stacks show Path.resolve inside OperationJournal.operation.
+Source confirms it is evaluated once per manifest entry plus once for the key:
+159 resolutions for this 158-window request. Resolve once per operation and reuse
+that string; preserve request/audio/key checks. Actual Serena definitions/callers
+for operation and all three decorators: asr-lookup-map-0de-20261006/serena-map.json,
+four pairs, unchanged source. Do not claim an isolated time share from stack samples.

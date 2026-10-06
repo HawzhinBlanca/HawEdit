@@ -70,6 +70,41 @@ def test_checkpoint_survives_restart(tmp_path: Path) -> None:
     assert second.calls == []
 
 
+def test_checkpoint_resolves_operation_path_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, root = audio(tmp_path), private(tmp_path)
+    bound_path = str(path.resolve())
+    binding = {
+        "audio": [
+            {
+                "path": bound_path,
+                "start_ms": 0,
+                "end_ms": 1000,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        ]
+    }
+    binding["audio"].extend(
+        {"path": f"unused-{index}", "start_ms": 0, "end_ms": 1000, "sha256": "0" * 64}
+        for index in range(157)
+    )
+    original = Path.resolve
+    calls = 0
+
+    def counted(self: Path, strict: bool = False) -> Path:
+        nonlocal calls
+        if self == path:
+            calls += 1
+        return original(self, strict=strict)
+
+    with OperationJournal(root, binding) as journal:
+        monkeypatch.setattr(Path, "resolve", counted)
+        operation = journal.operation("draft", path, 1.0)
+    assert operation["path"] == bound_path
+    assert calls == 1
+
+
 def test_checkpoint_failure_is_not_cached(tmp_path: Path) -> None:
     path, root = audio(tmp_path), private(tmp_path)
     with (

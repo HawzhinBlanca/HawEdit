@@ -58,3 +58,46 @@ Current-SHA gate rerun and supported real retest remain pending. Earlier
 Qualified current security review, adapted-loader held-descriptor repair, native
 fidelity, isolated performance, full reel delivery, CI and sustained acceptance
 remain open. No ledger promotion, push, spending, publication or 10/10 claim.
+
+## Closed Real Recovery At 0de4732
+
+Exact rerun: 4933 passed / one VEX-binding failure, actual JUnit 2191.707 s,
+console 2192.26 s, controller 2212.999639 s; source/package unchanged. Archive
+JUnit SHA256 a9c72788d5bfcdfc7cb98d55d7e3b49a37dc72a3a0f5be9fc30fea97ee549a2a.
+Supported runtime setup exits 0 in 187.467057 controller s, unchanged source,
+same pinned WSL generation and two RTX 3090 Ti visible; no dependency/model upgrade.
+
+Fresh bounded test again times out during validation: controller 19187.652270 s.
+This failure is retained, not excluded. All 158 canonical draft/alignment windows
+and 47 validator/correction-alignment pairs persist. Same-source restart returns
+full raw/normalized transcript and index in 6706.024567 controller s. Actual
+before/after audits verify request/response/operation/decoded PCM hashes and clocks:
+all 252 previous records unchanged, 58 added for the remaining 29 pairs.
+Final actual records: 158 drafts, 76 validator responses, 76 correction alignments.
+This is recovery, not a successful first-attempt job or isolated speed benchmark.
+
+Published-to-local-transcript-store raw SHA256:
+28fe5103a5c4d3ddee7e4f23af7eb2a296b235e135da32981578b06bd693cedf.
+5769 timed words, zero recorded unaligned regions/rejected corrections; native
+CER/meaning/number fidelity remains unknown. Source binding exactly matches ZAR38
+bd004519e4ed0254f5c4f5197aa501acc56ce957829f62ac0bdc4d7190ec1dd2.
+No paid calls/cost, MP4, review or delivery. CLI overall complete=false/exit 1,
+because diarization/visual/discovery/editorial/boundary/render/delivery producers
+are not configured in this local ASR diagnostic. Do not call it a complete reel.
+All owned real-test processes close before source changes.
+
+## Lookup Follow-On
+
+Actual Serena map at 0de4732: four definition/caller pairs in
+asr-lookup-map-0de-20261006/serena-map.json. A real restart stack points into
+Path.resolve; source repeats resolution inside the 158-entry binding lookup.
+Test-first regression observes 159 resolutions for one operation, expected one.
+The repair resolves once and reuses the exact string; all key/input/drift checks
+remain. No decoder, model, numerical or stopping change.
+Complete seven-file component command (six ASR files plus test_claims) passes
+226 cases, zero failures/errors/skips, JUnit 54.186 s on the native versions above.
+JUnit SHA256 15a3dd96221ca13fa5f56e56dab6a6a71a3e218e72a07ec41e3b44085219ee2d;
+log d9a6eb4461ee65c689e523e8c772d6f2e0b12b45040a8f960107216d1463a984.
+All 325 fast lint/type targets and edited-source format pass; NOT the gate.
+The follow-on gate and real-record compatibility replay are pending. The full
+ASR run above remains explicitly at 0de4732, not relabelled as a new-source run.
