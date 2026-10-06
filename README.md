@@ -550,6 +550,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_completion.py` | §3 Stage 1, §8.1 | Validated single-beam natural-EOS admission before alignment, serialized observation and fail-stop cleanup. Completion is not native fidelity. D-281. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
+| `asr_resume.py` | §3 Stage 1, §6 | Bound private/fsynced per-operation ASR recovery; separate draft, validator and alignment records, no completion or publication inference (D-284). |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
 | `wsl_asr_locks.py` | §3 Stage 1, §6 | Hash-locked PyPI inputs and exact installed name/version identity for the isolated Linux/Python 3.12 ASR generation; KenLM/Sox remain explicitly disclosed native source builds, not binary reproducibility proof. |
 | `wsl_audit_locks.py` | §6, §7 | Complete wheel hashes and installed identity for the isolated pip-audit 2.10.1 scanner used by the WSL ASR security gate. |

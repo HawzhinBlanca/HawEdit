@@ -1,5 +1,12 @@
 # ASR Segment Recovery Engineering Checkpoint
 
+```yaml
+commit: f18a0d6bc54af959c841d7f33ba72a529f3ead32
+media_sha256: bd004519e4ed0254f5c4f5197aa501acc56ce957829f62ac0bdc4d7190ec1dd2
+host: HawaPC01
+command: .venv/Scripts/python.exe -B -m pytest tests/test_asr_resume.py tests/test_asr.py tests/test_asr_stop.py tests/test_asr_completion.py tests/test_adapter_identity.py tests/test_asr_worker_diagnostics.py --junitxml=C:/Users/Wareen/asr-resume-frozen-components.xml -q
+```
+
 Baseline 422a3be82b659c09f1d653c59458ee12aafa058b; D-284;
 specs/asr-segment-checkpoints. Owner-approved Phase 2 recovery repair, not acceptance.
 
@@ -42,7 +49,11 @@ type checks pass, 325 files. Fast-log SHA256:
 623bc3f86c8972034f7198a0c48a610595992593920da1712c5dc64b8cb0dfa7.
 Fast checks are NOT the full gate. Format and diff checks pass on edited source.
 
-The exact full gate and current-SHA supported real retest are pending. Earlier
+The first exact f18a0d6 full gate exits 1: 4930 passed / four failures, 2273.21 s.
+Three documentation omissions are corrected: this required evidence header,
+README module map and an explicit WIP module ledger row. The fourth remains
+the historical VEX binding. No harness/assertion change or status promotion.
+Current-SHA gate rerun and supported real retest remain pending. Earlier
 422a3be full gate had 4912 passed / one stale VEX binding failure (#24), not green.
 Qualified current security review, adapted-loader held-descriptor repair, native
 fidelity, isolated performance, full reel delivery, CI and sustained acceptance
