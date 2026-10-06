@@ -18,6 +18,22 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Milestones (§9)
 
+Champion held-input repair 2026-10-07 (WIP, D-285): default champion and canonical
+CTC now construct through held verified assets; direct AssetCard objects avoid
+global name-lookup overrides. At dd43dda, 240 affected native tests and eight
+actual Linux regressions pass without skips. The real champion/CTC constructor
+consumed held inputs; all 560 LoRA tensors matched, and one decoded ZAR38 window
+reproduced its historical draft's text/CTC/word values exactly. Inference was
+84.1581717 seconds for 16.476-second development audio on HawaPC01/2x RTX 3090 Ti,
+not a throughput or native fidelity pass. See evidence/champion-held-assets-2026-10-07.md
+for versions/hashes/commands. Current exact gate and applicable CI remain pending;
+qualified VEX, full studio delivery and sustained acceptance are not implied.
+
+The dated ASR entries below retain their historical state. Closed 36c2d01 evidence
+is in the vault incident and external asr-segment-recovery results-20261007.md:
+fresh full episode still times out, same-source recovery completes ASR only,
+and no rendered or published reel was produced. That is not a full-system pass.
+
 ASR segment recovery 2026-10-06 (WIP, D-284): the fresh 422a3be ZAR38 run
 times out during independent validation, 19201.437921 controller seconds on
 HawaPC01/shared 2x RTX 3090 Ti. No raw transcript or reel. A bound owner-private
@@ -251,6 +267,7 @@ review/revision/export and every independent/sustained threshold remain mandator
 | Task | Definition of Done | Status | Evidence |
 |---|---|---|---|
 | M9.59 | Source-bound per-operation ASR interruption recovery with current gate and same-SHA CI | WIP | `src/hawedit/asr_resume.py`, `src/hawedit/asr_worker.py`, `tests/test_asr_resume.py`; D-284, `evidence/asr-segment-recovery-2026-10-06.md`. Component storage/controlled-composition checks pass; first exact f18a0d6 gate has 4930 passes / four failures (three documentation omissions, historical VEX binding). Real producer recovery and current gate/CI remain unproved. No publication or quality claim. |
+| M9.60 | Default champion held-input loading with real consumers, current gate and same-SHA CI | WIP | D-285; `specs/champion-held-assets`, `tests/test_champion_held_assets.py`, `evidence/champion-held-assets-2026-10-07.md`. Native/Linux regressions and real champion/CTC development-window verification recorded; full gate, qualified review and CI not accepted. No model quality or completed-delivery claim. |
 | M9.58 | Owned guarded DBOS startup/lifetime adopted by the protected producer with current gate and same-SHA CI | WIP | `src/hawedit/studio_runtime.py`, `src/hawedit/studio_admission.py`, `src/hawedit/studio_queue.py`, `tests/test_studio_runtime.py`; D-276, OS1-OS7, actual Serena baseline/correction maps. Actual native lease, publisher/DDL rollback, same-transaction refusal, singleton race, crash/restart, completed duplicate, bounded contention and live shutdown tests; inert mechanism only. Corrected complete caller diagnostic:382 passes/zero failures/errors/skips,347.93s at producer `e8e37994285622371f269862c942664451bfc5f2805e3709c89ad78da98f3eaa` on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/pytest9.1.1. Original unsafe controls and first380-pass/two missing-documentation failures preserved in owned-startup-verification.md. Exact committed gate/current CI remain required; no VEX rebind or task promotion. Actual ID-only producer/source/model/authorization/billing/attempt/replay/session, signed review/revisions/export and every independent/sustained threshold remain unproved. |
 | M9.57 | Exact original-byte projections and malformed-state refusal adopted across protected recovery with current gate and same-SHA CI | WIP | `src/hawedit/studio_admission.py`, `src/hawedit/studio_submissions.py`, `tests/test_studio_admission.py`; D-276, NP1-NP3, five fresh actual Serena queries. Complete callers plus claims diagnostic:316 passes,zero failures/errors/skips,201.12s at producer `49c71aa17cab05876d03299a9ff984f3ce2874bb7c4996e97a9c3aad9841d356` on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/pytest9.1.1. Real NUL prefix counterexamples, original data, fourteen genuine refusals and three setup failures, corrected test setup and interrupted3d9 gate are distinguished in nul-projection-verification.md. No schema/CHECK/assertion weakening or VEX rebind. Exact corrected committed gate/current CI, protected startup/worker/replay and every independent/sustained threshold remain required. |
 | M9.56 | Raw DBOS admission adopted before protected startup and later guarded reads, with current gate and same-SHA CI | WIP | `src/hawedit/studio_admission.py`, `tests/test_studio_admission.py`; D-276, RA1-RA7 and eleven actual Serena queries. Complete callers plus claims diagnostic:299 passes,zero failures/errors/skips,192.71s at producer `46479aef802e28ee129018a9d44c61452f1d36f437230943a603485559fffaa8` on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/pytest9.1.1. Real private publisher migrations, preserved unsafe rows, inert DBOS output and original failure evidence; not model/creator/AA acceptance. Inspector grants no execution/replay/publication authority. Exact committed gate/current CI, owned engine/lease/bootstrap/worker/attempt/runtime/billing/session/revision/export and every independent/sustained threshold remain required; no VEX rebinding or task promotion. |

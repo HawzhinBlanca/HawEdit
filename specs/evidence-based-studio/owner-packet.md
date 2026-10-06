@@ -63,3 +63,12 @@ admission. Commissioned editor-cut comparison requires real option-media contrac
 genuinely disjoint final holdout, not the incumbent/shadow judge-label packet. Existing
 signatures are useful mechanisms, not proof of independent design or elapsed use. No new
 commissioning, trust acceptance or spending has been inferred from this code work.
+
+Engineering update 2026-10-07: D-285 implements the default champion held-input
+repair, with actual WSL consumers/tensors/development-audio evidence in
+`evidence/champion-held-assets-2026-10-07.md`. The previous description of that
+code gap as unimplemented is historical. Qualified current VEX review remains
+required and must cover this actual default route, not only stock. No dates,
+dispositions, spending cap, trusted human identities or release approval were
+inferred from owner implementation permission. Current independent quality,
+throughput, full delivery and applicable CI obligations remain outstanding.

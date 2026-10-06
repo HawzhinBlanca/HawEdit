@@ -3,6 +3,23 @@
 Prepared 2026-10-02. Status: engineering evidence, NOT a security approval.
 Qualified-reviewer: pending. Owner release approval: pending.
 
+## Engineering Update 2026-10-07
+
+The October 2 observations below are historical, not current source acceptance.
+D-285 repairs the default champion's held-input gap at dd43dda: shared canonical
+held descriptors, retained adapter inputs, direct adapted AssetCard objects and
+no original pathname resolution. Actual pinned WSL construction consumed these
+aliases; 560 LoRA tensors match, with unchanged text/CTC/words on one decoded
+ZAR38 development window. Native 240-test and Linux eight-test checks pass.
+See `evidence/champion-held-assets-2026-10-07.md` for complete provenance and limits.
+Package: `c1397cc2a7910e4ddfcf8aac539c7dadf1de0b4b260fb4911362351107376db8`.
+
+This replaces the older assertion that the code repair is unimplemented; it does
+not close qualified review. The VEX's reviewed source, August 9 review date and
+September 8 expiry are untouched. Reassess actual default/stock/validator routes,
+remaining scanner findings, hostile-media bounds and privileged/same-UID writers.
+No CVE disposition, signature, release authority or current-SHA CI is fabricated.
+
 ## Identity And Observed Boundary
 
 HEAD: `372a16645d7a8558bc6cedcff34a9fbfa13f712f`, with uncommitted upload work.
