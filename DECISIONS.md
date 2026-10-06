@@ -14741,3 +14741,34 @@ rejected prototype, not the effective candidate. Native speech/number fidelity,
 full validator/producer completion, delivery, gate/CI and acceptance remain
 unproved; this selection permits no publication or completed ledger row.
 
+## D-284 - Persist admitted ASR operations before whole-pass completion
+
+2026-10-06; approved evidence-based-studio Phase 2 recovery scope. BLUEPRINT
+sections 2/3/4.2/8.1; D-278, D-281 and D-283 remain unchanged.
+
+The fresh source-bound ZAR38 run at 422a3be reaches independent validation, then
+the bridge's existing 19020-second timeout. Controller 19201.437921 seconds;
+no output/raw transcript/video. Its worker only writes after both complete passes,
+so an interruption discards hours of successful draft/alignment and validation.
+This is a reliability/performance failure, not a reason to extend the timeout.
+
+Use owner-private native Linux operation checkpoints and a nonblocking writer
+lease. DrvFS presents mode 777: never bypass private-storage checks. Reuse the
+existing fsynced private writer. Bind the exact request/work identity, source
+package, all cut PCM and clocks, current verified canonical assets/champion,
+validator pinned revision, runtime versions/decoder source bytes and effective
+devices. Bind each operation separately to its PCM and correction text; validate
+stored result fields/hashes. Refuse changed bindings, damaged/linked storage,
+concurrent writers and any persistence or inference failure. Preserve records.
+
+Draft, validator hypothesis and correction alignment remain separate. The same
+global confidence/disagreement router is recomputed from all original drafts;
+only identical completed operations are reused. No confidence, model, decoder,
+stopping, timeout, transcript schema, dependency, spending or publication change.
+Checkpoints are NOT authenticated publication evidence or stage completion.
+Current qualified VEX review, adapted-loader held-descriptor gap (#24), native
+fidelity, isolated performance, full delivery and release acceptance remain open.
+
+See specs/asr-segment-checkpoints; tests use real decoded PCM/storage with
+controlled model responses and cannot support a model-quality claim.
+

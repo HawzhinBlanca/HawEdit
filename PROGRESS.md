@@ -18,6 +18,14 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Milestones (§9)
 
+ASR segment recovery 2026-10-06 (WIP, D-284): the fresh 422a3be ZAR38 run
+times out during independent validation, 19201.437921 controller seconds on
+HawaPC01/shared 2x RTX 3090 Ti. No raw transcript or reel. A bound owner-private
+operation journal is being integrated to avoid redrafting successful segments
+after interruption. Exact 422a3be gate: 4912 passed / one historical VEX-binding
+failure. No gate/CI, editorial-quality, publication, performance or 10/10 pass.
+See specs/asr-segment-checkpoints and the external full-source terminal record.
+
 ASR context grouping development checkpoint 2026-10-06 (T2 remains WIP): actual
 frozen-champion investigation reproduces the numeric repetition and supports a
 speech-boundary/context interaction. A conditional bounded grouping candidate is

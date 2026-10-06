@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from hawedit.asr import (
     _validate_hard_segments,
     transcribe_prepared_segments,
 )
+from hawedit.asr_resume import ResumableBackend, ResumableValidator, worker_journal
 from hawedit.transcripts import RawTranscript
 
 
@@ -53,6 +55,8 @@ def run_request(
     output_path: Path,
     backend: OmniSegmentBackend | None = None,
     validator: SoraniValidator | None = None,
+    *,
+    checkpoint_root: Path | None = None,
 ) -> RawTranscript:
     """Execute one strict bridge request; primarily separated for deterministic tests."""
     payload: Any = json.loads(request_path.read_text(encoding="utf-8"))
@@ -112,37 +116,54 @@ def run_request(
     expected_identity = getattr(model, "adapter_name", None)
     if claimed_identity != expected_identity:
         raise ValueError("ASR worker adapter identity differs from the host request")
-    # D-278: diagnostic accounting must not authorise production continuation.
-    initial, unaligned = transcribe_prepared_segments(model, prepared, stop_on_failure=True)
-    selected_validator = validator
+    with ExitStack() as leases:
+        journal = (
+            leases.enter_context(
+                worker_journal(
+                    checkpoint_root, request_path, prepared, Path(validator_path), expected_identity
+                )
+            )
+            if checkpoint_root is not None
+            else None
+        )
+        active_model: OmniSegmentBackend = ResumableBackend(model, journal) if journal else model
+        # D-278: checkpoints preserve successes, never authorise failure continuation.
+        initial, unaligned = transcribe_prepared_segments(
+            active_model, prepared, stop_on_failure=True
+        )
+        selected_validator = validator
 
-    def validator_factory() -> SoraniValidator:
-        nonlocal selected_validator
-        if selected_validator is None:
-            model_dir = Path(validator_path)
-            if not model_dir.is_dir():
-                raise FileNotFoundError(f"ASR worker validator weights are missing: {model_dir}")
-            selected_validator = QwenSoraniValidator(model_dir)
-        return selected_validator
+        def validator_factory() -> SoraniValidator:
+            nonlocal selected_validator
+            if selected_validator is None:
+                model_dir = Path(validator_path)
+                if not model_dir.is_dir():
+                    raise FileNotFoundError(
+                        f"ASR worker validator weights are missing: {model_dir}"
+                    )
+                selected_validator = QwenSoraniValidator(model_dir)
+            return (
+                ResumableValidator(selected_validator, journal) if journal else selected_validator
+            )
 
-    results, validated_by, rejected_corrections = _validate_hard_segments(
-        initial, model, validator_factory, stop_on_failure=True
-    )
-    if getattr(model, "adapter_name", None) != expected_identity:
-        raise ValueError("ASR worker adapter identity changed during inference")
-    transcript = _assemble_canonical_transcript(
-        media_id,
-        results,
-        unaligned,
-        adapter=expected_identity,
-        validated_by=validated_by,
-        rejected_validator_corrections=rejected_corrections,
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("x", encoding="utf-8", newline="\n") as stream:
-        stream.write(transcript.to_json())
-        stream.write("\n")
-    return transcript
+        results, validated_by, rejected_corrections = _validate_hard_segments(
+            initial, active_model, validator_factory, stop_on_failure=True
+        )
+        if getattr(model, "adapter_name", None) != expected_identity:
+            raise ValueError("ASR worker adapter identity changed during inference")
+        transcript = _assemble_canonical_transcript(
+            media_id,
+            results,
+            unaligned,
+            adapter=expected_identity,
+            validated_by=validated_by,
+            rejected_validator_corrections=rejected_corrections,
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("x", encoding="utf-8", newline="\n") as stream:
+            stream.write(transcript.to_json())
+            stream.write("\n")
+        return transcript
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,7 +171,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    run_request(args.request, args.output)
+    # Native Linux storage enforces owner-private permissions; DrvFS does not.
+    run_request(args.request, args.output, checkpoint_root=Path.home() / ".hawedit-asr-checkpoints")
     return 0
 
 
