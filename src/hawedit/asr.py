@@ -27,16 +27,18 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import stat
 import subprocess
+import tempfile
 import time
 import wave
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Final, Protocol, runtime_checkable
+from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 
 from hawedit.asr_completion import COMPLETION_POLICY_ID, transcribe_completed
 from hawedit.captions import find_ffmpeg
@@ -268,6 +270,13 @@ def resolve_champion_adapter(
 
 def adapter_fingerprint(adapter_dir: Path) -> str:
     """Versioned config/weights/tokenizer identity, not licence or loader authorization."""
+    with _open_adapter_bundle(adapter_dir) as (fingerprint, _streams):
+        return fingerprint
+
+
+@contextmanager
+def _open_adapter_bundle(adapter_dir: Path) -> Iterator[tuple[str, dict[str, BinaryIO]]]:
+    """Retain the exact hashed inputs until consumption and drift checks finish."""
     root = adapter_dir.absolute()
     root_info = root.lstat()
     reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -360,17 +369,48 @@ def adapter_fingerprint(adapter_dir: Path) -> str:
             records.append(
                 {"role": role, "name": name, "size_bytes": count, "sha256": digest.hexdigest()}
             )
-        for _role, _name, path, before, opened, stream in opened_members:
-            if identity(os.fstat(stream.fileno())) != identity(opened) or identity(
-                path.lstat()
-            ) != identity(before):
-                raise RuntimeError("Adapter identity input changed while hashing")
-        if tokenizer_name() != tokenizer or identity(root.lstat()) != identity(root_info):
-            raise RuntimeError("Adapter identity bundle changed while hashing")
-    manifest = {"schema": 2, "kind": "hawedit-peft-bundle", "files": records}
-    return hashlib.sha256(
-        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+            stream.seek(0)
+
+        def assert_unchanged() -> None:
+            for _role, _name, path, before, opened, stream in opened_members:
+                if identity(os.fstat(stream.fileno())) != identity(opened) or identity(
+                    path.lstat()
+                ) != identity(before):
+                    raise RuntimeError("Adapter identity input changed during verified access")
+            if tokenizer_name() != tokenizer or identity(root.lstat()) != identity(root_info):
+                raise RuntimeError("Adapter identity bundle changed during verified access")
+
+        assert_unchanged()
+        manifest = {"schema": 2, "kind": "hawedit-peft-bundle", "files": records}
+        fingerprint = hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        yield (
+            fingerprint,
+            {name: stream for _role, name, _path, _before, _opened, stream in opened_members},
+        )
+        assert_unchanged()
+
+
+@contextmanager
+def _verified_adapter_aliases(adapter_dir: Path) -> Iterator[tuple[Path, str]]:
+    """PEFT-compatible names pointing only at held original descriptors (D-285)."""
+    fd_root = next((Path(p) for p in ("/proc/self/fd", "/dev/fd") if Path(p).is_dir()), None)
+    if fd_root is None:
+        raise RuntimeError(
+            "Verified champion descriptor aliases need Linux; use the WSL ASR runtime"
+        )
+    with _open_adapter_bundle(adapter_dir) as (fingerprint, streams):
+        aliases = Path(tempfile.mkdtemp(prefix="hawedit-champion-"))
+        try:
+            aliases.chmod(0o700)
+            for name, stream in streams.items():
+                (aliases / name).symlink_to(fd_root / str(stream.fileno()))
+            aliases.chmod(0o500)
+            yield aliases, fingerprint
+        finally:
+            aliases.chmod(0o700)
+            shutil.rmtree(aliases)
 
 
 class QwenSoraniValidator:
@@ -503,51 +543,46 @@ class OmniAsrBackend:
     def _load(self) -> tuple[Any, Any]:
         expected_identity = self.adapter_name
         if self._pipelines is None:
-            if self.lora_adapter is not None:
-                # Bundle identity checks do not close the adapted loader's held-descriptor
-                # verify-to-load gap (#24). The champion is the default, not just an opt-in.
+            # Both default champion and explicit stock routes consume held canonical files,
+            # never a freshly reopened URL-cache pathname or environment-overridden card.
+            with ExitStack() as stack:
+                opened_assets = stack.enter_context(open_verified_omni_assets())
+                adapter_aliases = None
+                if self.lora_adapter is not None:
+                    adapter_aliases, fingerprint = stack.enter_context(
+                        _verified_adapter_aliases(self.lora_adapter)
+                    )
+                    if f"lora:{fingerprint}" != expected_identity:
+                        raise RuntimeError("ASR adapter identity changed before model construction")
+                assert_omni_card_integrity()
+                freeze_fairseq2_asset_overrides()
                 try:
+                    import torch
+                    from fairseq2.assets import AssetCard, get_asset_store
+                    from fairseq2.data.tokenizers.hub import load_tokenizer
+                    from fairseq2.models.hub import load_model
                     from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
                 except ImportError as exc:
                     raise RuntimeError(
                         "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
                     ) from exc
-                pipelines = (
-                    self._load_adapted_llm(self.lora_adapter),
-                    ASRInferencePipeline(model_card=self.ctc_card, device=self.ctc_device),
+                assert_effective_omni_cards(get_asset_store())
+                by_name = {opened.asset.filename: opened for opened in opened_assets}
+                tokenizer_card = AssetCard(
+                    "hawedit_omniASR_tokenizer_written_v2",
+                    {
+                        "tokenizer_family": "char_tokenizer",
+                        "tokenizer": by_name["omniASR_tokenizer_written_v2.model"].file_uri,
+                    },
                 )
-                if self.adapter_name != expected_identity:
-                    raise RuntimeError("ASR adapter identity changed during model construction")
-                self._loaded_adapter_identity = expected_identity
-                self._pipelines = pipelines
-            else:
-                # fairseq2 trusts an existing URL-keyed cache entry and model-card ``@user``
-                # fields can override the official URI. Hash the three canonical files before
-                # importing a pipeline that can deserialize either model, and use the trailing
-                # ``@`` card names above to disable environment lookup.
-                with open_verified_omni_assets() as opened_assets:
-                    assert_omni_card_integrity()
-                    freeze_fairseq2_asset_overrides()
-                    try:
-                        import torch
-                        from fairseq2.assets import AssetCard, get_asset_store
-                        from fairseq2.data.tokenizers.hub import load_tokenizer
-                        from fairseq2.models.hub import load_model
-                        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
-                    except ImportError as exc:
-                        raise RuntimeError(
-                            "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
-                        ) from exc
-                    assert_effective_omni_cards(get_asset_store())
-                    by_name = {opened.asset.filename: opened for opened in opened_assets}
-                    tokenizer_card = AssetCard(
-                        "hawedit_omniASR_tokenizer_written_v2",
-                        {
-                            "tokenizer_family": "char_tokenizer",
-                            "tokenizer": by_name["omniASR_tokenizer_written_v2.model"].file_uri,
-                        },
+                tokenizer = load_tokenizer(tokenizer_card)
+                llm_pipeline = None
+                if adapter_aliases is not None:
+                    llm_pipeline = self._load_adapted_llm(
+                        adapter_aliases,
+                        checkpoint_uri=by_name["omniASR-LLM-7B-v2.pt"].file_uri,
                     )
-                    tokenizer = load_tokenizer(tokenizer_card)
+                else:
                     llm_model = load_model(
                         AssetCard(
                             "hawedit_omniASR_LLM_7B_v2",
@@ -560,35 +595,42 @@ class OmniAsrBackend:
                         device=torch.device(self.llm_device),
                         dtype=torch.bfloat16,
                     )
-                    ctc_model = load_model(
-                        AssetCard(
-                            "hawedit_omniASR_CTC_3B_v2",
-                            {
-                                "model_family": "wav2vec2_asr",
-                                "model_arch": "3b_v2",
-                                "checkpoint": by_name["omniASR-CTC-3B-v2.pt"].file_uri,
-                            },
-                        ),
-                        device=torch.device(self.ctc_device),
-                        dtype=torch.bfloat16,
+                ctc_model = load_model(
+                    AssetCard(
+                        "hawedit_omniASR_CTC_3B_v2",
+                        {
+                            "model_family": "wav2vec2_asr",
+                            "model_arch": "3b_v2",
+                            "checkpoint": by_name["omniASR-CTC-3B-v2.pt"].file_uri,
+                        },
+                    ),
+                    device=torch.device(self.ctc_device),
+                    dtype=torch.bfloat16,
+                )
+                if llm_pipeline is None:
+                    llm_pipeline = ASRInferencePipeline(
+                        model_card=None,
+                        model=llm_model,
+                        tokenizer=tokenizer,
+                        device=self.llm_device,
                     )
-                    self._pipelines = (
-                        ASRInferencePipeline(
-                            model_card=None,
-                            model=llm_model,
-                            tokenizer=tokenizer,
-                            device=self.llm_device,
-                        ),
-                        ASRInferencePipeline(
-                            model_card=None,
-                            model=ctc_model,
-                            tokenizer=tokenizer,
-                            device=self.ctc_device,
-                        ),
-                    )
+                pipelines = (
+                    llm_pipeline,
+                    ASRInferencePipeline(
+                        model_card=None,
+                        model=ctc_model,
+                        tokenizer=tokenizer,
+                        device=self.ctc_device,
+                    ),
+                )
+            # A context-exit drift/cleanup failure must not leave an admitted cache.
+            if self.adapter_name != expected_identity:
+                raise RuntimeError("ASR adapter identity changed during model construction")
+            self._loaded_adapter_identity = expected_identity
+            self._pipelines = pipelines
         return self._pipelines
 
-    def _load_adapted_llm(self, adapter_dir: Path) -> Any:
+    def _load_adapted_llm(self, adapter_dir: Path, *, checkpoint_uri: str) -> Any:
         """Base checkpoint + PEFT adapter, assembled the way the trainer serves it.
 
         fairseq2 does not accept an adapter through `ASRInferencePipeline(model_card=…)`, so the
@@ -601,7 +643,7 @@ class OmniAsrBackend:
           down as a constant. Measured on this machine: the champion bundle's tokenizer reports
           **10288**, exactly the literal its trainer's server hardcodes, so the number is
           derivable and a hardcoded one would only be a guess for the next adapter;
-        * **the base checkpoint** — resolved from the same asset store the unadapted path uses.
+        * **the base checkpoint** — supplied by the held verified canonical asset boundary.
 
         The `Linear` shim and the `LoraConfig` registration are PEFT/fairseq2 glue: PEFT looks
         for `in_features`/`out_features`, fairseq2's projection names them `input_dim`/
@@ -637,14 +679,6 @@ class OmniAsrBackend:
                 f"{adapter_dir} must hold exactly one tokenizer (*.model) so the adapter is "
                 f"decoded with the tokenizer it was trained against; found {len(tokenizers)}"
             )
-        # The official card's own checkpoint value, not a path this module went looking for.
-        # It is a URL (`https://dl.fbaipublicfiles.com/mms/omniASR-LLM-7B-v2.pt`, measured
-        # 2026-08-12), so handing it straight back to fairseq2 reuses whatever that already has
-        # cached and downloads only if it does not — where a hardcoded `~/.cache/...` path, which
-        # is what the trainer's own server uses, is a guess about someone else's disk layout.
-        official = get_asset_store().retrieve_card(self.llm_card)
-        checkpoint = official.field("checkpoint").as_(str)
-
         Fairseq2Linear.in_features = property(lambda self: self.input_dim)
         Fairseq2Linear.out_features = property(lambda self: self.output_dim)
         original_post_init = LoraConfig.__post_init__
@@ -678,7 +712,7 @@ class OmniAsrBackend:
                     {
                         "name": tokenizer_card,
                         "tokenizer_family": "char_tokenizer",
-                        "tokenizer": str(tokenizers[0].resolve()),
+                        "tokenizer": tokenizers[0].absolute().as_uri(),
                     },
                     {
                         "name": card,
@@ -688,7 +722,7 @@ class OmniAsrBackend:
                         # only valid against the module shapes it was trained on and that recipe
                         # is the one measured to produce it. D-181 records the discrepancy.
                         "model_arch": "7b",
-                        "checkpoint": checkpoint,
+                        "checkpoint": checkpoint_uri,
                         "tokenizer_ref": tokenizer_card,
                     },
                 ],

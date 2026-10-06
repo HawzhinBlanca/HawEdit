@@ -14772,3 +14772,29 @@ fidelity, isolated performance, full delivery and release acceptance remain open
 See specs/asr-segment-checkpoints; tests use real decoded PCM/storage with
 controlled model responses and cannot support a model-quality claim.
 
+## D-285 - Bind default champion construction to held verified inputs
+
+2026-10-07; approved evidence-based-studio execution repair. BLUEPRINT sections
+3/7; D-181 trainer architecture, D-260 champion selection, D-281 completion and
+D-284 recovery binding remain unchanged. BLOCKED #24 distinguishes this code
+repair from qualified current security review.
+
+The default champion loader reopened the original PEFT/tokenizer paths and the
+base/CTC URL caches after identity checks. Reuse the stock canonical held-asset
+boundary for both routes. Extract the existing schema-2 adapter fingerprint into
+a held three-file context; expose only config, safetensors and the unique trained
+tokenizer through a private Linux descriptor-alias directory. Never resolve those
+aliases back to original input paths. Check original descriptor/path/directory
+identity before and after consumption. Publish the backend cache only after all
+guards exit successfully. Unsupported runtimes refuse and name WSL; no fallback.
+
+Keep PEFT registration, trainer 7b configuration, tokenizer-derived vocabulary,
+canonical 3b_v2 timing/tokenizer, dtype/devices, decoding and first-failure halt.
+No dependencies or protected model files change. Descriptor binding is not trust
+authorization, licence approval or a defense against privileged/same-UID in-place
+mutation. Qualified VEX assessment and current-source evidence remain required;
+old source-bound runtime/journal receipts are not silently made compatible.
+
+See specs/champion-held-assets. Synthetic API composition tests are not inference
+quality evidence; real WSL consumers and decoded development audio are required.
+
