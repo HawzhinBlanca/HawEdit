@@ -652,7 +652,7 @@ class OmniAsrBackend:
         import copy
 
         import torch
-        from fairseq2.assets import get_asset_store, load_in_memory_asset_metadata
+        from fairseq2.assets import AssetCard
         from fairseq2.data.tokenizers import load_tokenizer
         from fairseq2.models.hub import load_model
         from fairseq2.nn.projection import Linear as Fairseq2Linear
@@ -689,54 +689,28 @@ class OmniAsrBackend:
 
         LoraConfig.__post_init__ = register_fairseq2_linear
 
-        # Derived names are new names, so they carry no environment tag. `CANONICAL_LLM_CARD`
-        # ends in `@` — fairseq2's marker for "no environment look-up" — and concatenating onto
-        # it put that `@` in the middle: `hawedit_adapted_omniASR_LLM_7B_v2@_tokenizer` parses as
-        # card `hawedit_adapted_omniASR_LLM_7B_v2`, environment `_tokenizer`. That is the *model*
-        # card, whose `tokenizer_ref` is the same string, so `resolve_tokenizer_reference` handed
-        # itself back forever. Measured 2026-08-29 by dumping the spinning frame: `ref_card` was
-        # the identical object to `card`, and the worker burned 3 h 20 m before it was killed.
+        # Direct cards bypass existing metadata/environment providers. Keep derived names free
+        # of the canonical trailing @, which previously produced a self-referencing tokenizer.
         base_name = self.llm_card.split("@", 1)[0]
-        card = f"hawedit_adapted_{base_name}"
-        tokenizer_card = f"{card}_tokenizer"
-        store = get_asset_store()
-        store._metadata_providers = [
-            provider
-            for provider in store._metadata_providers
-            if getattr(provider, "_source", "") != "hawedit_adapted"
-        ]
-        store._metadata_providers.append(
-            load_in_memory_asset_metadata(
-                "hawedit_adapted",
-                [
-                    {
-                        "name": tokenizer_card,
-                        "tokenizer_family": "char_tokenizer",
-                        "tokenizer": tokenizers[0].absolute().as_uri(),
-                    },
-                    {
-                        "name": card,
-                        "model_family": "wav2vec2_llama",
-                        # `7b`, though the official card declares `7b_v2`. This follows the
-                        # recipe the adapter's own trainer serves it with, because an adapter is
-                        # only valid against the module shapes it was trained on and that recipe
-                        # is the one measured to produce it. D-181 records the discrepancy.
-                        "model_arch": "7b",
-                        "checkpoint": checkpoint_uri,
-                        "tokenizer_ref": tokenizer_card,
-                    },
-                ],
-            )
+        card_name = f"hawedit_adapted_{base_name}"
+        tokenizer_card = AssetCard(
+            f"{card_name}_tokenizer",
+            {
+                "tokenizer_family": "char_tokenizer",
+                "tokenizer": tokenizers[0].absolute().as_uri(),
+            },
         )
-
-        # The *tokenizer* card, not the model card. `load_tokenizer` runs
-        # `resolve_tokenizer_reference`, a `while True` that follows `tokenizer_ref` until a card
-        # has none — and handed the model card it never terminated. Measured 2026-08-29: the
-        # worker spun for 3 h 20 m at 99% of one core inside `deepcopy` in fairseq2's asset
-        # metadata provider, having read 418 MB of a 31.2 GB checkpoint and loaded no model at
-        # all. Asking for the tokenizer by name skips the indirection entirely: that card carries
-        # no `tokenizer_ref`, so the loop exits on its first test. The model card keeps its
-        # `tokenizer_ref` because `load_model` below still resolves through it.
+        card = AssetCard(
+            card_name,
+            {
+                "model_family": "wav2vec2_llama",
+                # Preserve the measured trainer recipe, not the official 7b_v2 shape (D-181).
+                "model_arch": "7b",
+                "checkpoint": checkpoint_uri,
+                "tokenizer_ref": tokenizer_card.name,
+            },
+        )
+        # The tokenizer card has no tokenizer_ref, so it cannot recurse through the model card.
         tokenizer = load_tokenizer(tokenizer_card)
         vocab_size = int(tokenizer.vocab_info.size)
         config = copy.deepcopy(get_config(get_dependency_resolver(), Wav2Vec2LlamaConfig, "7b"))

@@ -15,3 +15,8 @@ pipeline/build configuration selects WslOmniAsrProducer. Source-bound WSL runtim
 receipts and operation journals must be regenerated/revalidated, never admitted as
 compatible solely because output is expected unchanged. Prior raw transcripts stay
 historical evidence. Existing default/explicit-stock selection semantics remain.
+
+Supplemental map at 2e44930 confirms `_load_adapted_llm` callers are `_load` and
+`test_champion_consumers_receive_held_assets`. No public signature change for the
+direct-card correction. Extend the latter to reject global name lookup while
+retaining all existing architecture/vocabulary/registration assertions.

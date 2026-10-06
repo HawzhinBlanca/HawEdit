@@ -14795,6 +14795,12 @@ authorization, licence approval or a defense against privileged/same-UID in-plac
 mutation. Qualified VEX assessment and current-source evidence remain required;
 old source-bound runtime/journal receipts are not silently made compatible.
 
+Use direct AssetCard objects for the adapted checkpoint and tokenizer too, not
+derived name lookup or mutation of the global provider list. An already-loaded
+provider could otherwise override the held URI even after directories are frozen.
+Pinned fairseq2 0.6 accepts these direct cards; vocabulary, 7b configuration and
+PEFT inputs remain the same. Do not hand the model card to the tokenizer resolver.
+
 See specs/champion-held-assets. Synthetic API composition tests are not inference
 quality evidence; real WSL consumers and decoded development audio are required.
 

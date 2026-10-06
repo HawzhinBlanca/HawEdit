@@ -135,22 +135,25 @@ def test_champion_consumers_receive_held_assets(
         wav2vec2_asr_config=SimpleNamespace(target_vocab_size=1),
     )
 
-    def read_metadata(source: str, rows: list[dict[str, Any]]) -> object:
-        assert source == "hawedit_adapted"
-        metadata.update({row["name"]: row for row in rows})
-        return SimpleNamespace(_source=source)
+    class DirectCard:
+        def __init__(self, name: str, row: dict[str, Any]) -> None:
+            self.name = name
+            self.metadata = row
+            metadata[name] = row
 
-    def load_tokenizer(name: str) -> object:
+    def load_tokenizer(card: DirectCard) -> object:
         events.append("tokenizer")
-        uri = metadata[name]["tokenizer"]
+        assert isinstance(card, DirectCard), "tokenizer must bypass global name lookup"
+        uri = card.metadata["tokenizer"]
         assert uri == (root / "tokenizer.model").absolute().as_uri()
         return SimpleNamespace(vocab_info=SimpleNamespace(size=10288))
 
     base = object()
 
-    def load_model(name: str, **kwargs: Any) -> object:
+    def load_model(card: DirectCard, **kwargs: Any) -> object:
         events.append("base")
-        row = metadata[name]
+        assert isinstance(card, DirectCard), "checkpoint must bypass global name lookup"
+        row = card.metadata
         assert row["model_arch"] == "7b"
         assert row["checkpoint"] == checkpoint
         assert row["tokenizer_ref"] == "hawedit_adapted_omniASR_LLM_7B_v2_tokenizer"
@@ -196,11 +199,12 @@ def test_champion_consumers_receive_held_assets(
         events.append("pipeline")
         return kwargs
 
-    store = SimpleNamespace(_metadata_providers=[])
     modules = {
         "torch": SimpleNamespace(device=lambda value: value, bfloat16="bf16"),
         "fairseq2.assets": SimpleNamespace(
-            get_asset_store=lambda: store, load_in_memory_asset_metadata=read_metadata
+            AssetCard=DirectCard,
+            get_asset_store=lambda: pytest.fail("adapted assembly consulted global card overrides"),
+            load_in_memory_asset_metadata=lambda *_args: pytest.fail("global provider mutation"),
         ),
         "fairseq2.data.tokenizers": SimpleNamespace(load_tokenizer=load_tokenizer),
         "fairseq2.models.hub": SimpleNamespace(load_model=load_model),

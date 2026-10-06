@@ -30,3 +30,13 @@ completion policy, validator routing and stop behavior unchanged. No new depende
 Descriptor binding protects pathname replacement; it does not authorize untrusted
 weights or defend against privileged/same-UID in-place writers. Qualified current
 VEX review, model/input provenance and release checks remain separate obligations.
+
+Supplemental actual Serena map before the next correction:
+`C:/Users/Wareen/AppData/Local/HawEditEvidence/champion-card-map-2e44930-20261007/serena-map.json`
+at `2e449302b8144eb5d5c615ea34cf76fbe62f038d`, unchanged source. The private adapted
+assembler now also has the new composition test as a caller. Read pinned fairseq2
+`assets/store.py`: name lookup searches existing providers and applies environment
+metadata. Freezing directories does not remove already-loaded provider metadata.
+`models/hub.py::GlobalModelLoader.load` and tokenizer hub accept AssetCard objects,
+bypassing name resolution. Use those same direct-card APIs already used by stock;
+do not mutate the global metadata provider list or trust a derived name lookup.

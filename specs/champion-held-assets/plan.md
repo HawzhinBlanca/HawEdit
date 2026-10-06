@@ -5,6 +5,11 @@ Approved-by: Wareen - parent explicit implementation approval and renewed
 This is the approved execution-repair scope, not spending, model substitution,
 trust enrollment, security sign-off, publication or release approval.
 
+Within this same loading unit, pass direct AssetCard objects to both adapted
+consumers instead of registering and resolving derived global names. Pinned APIs
+support this; preserve the card metadata and trainer recipe, add red evidence for
+the forbidden store lookup, and revalidate the source-bound runtime after editing.
+
 1. Add named regressions first and record the real red result.
 2. Extract the existing three-file stable-open/hash boundary into a held context,
    preserving the fingerprint contract; add private Linux descriptor aliases.
