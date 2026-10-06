@@ -442,3 +442,16 @@ statistics/blinding/QC escalation before evaluation. Preserve every independent/
 threshold, genuine owner/editor signatures and current qualified source review; test flags,
 test keys or old receipts cannot grant authority. No new spending, licence, release or row
 completion is authorized by this unit.
+
+## Current ASR Lifecycle Review Input - 2026-10-07
+
+D-286 at 12145f3050a1776e2753c002bb42e9ceb49afe72, package 305913efd16fd3d541d3f526967bfcb0f0a1e4b6db26054ba57604a2fff64af9,
+adds a separately admitted held-verified CTC cache and drops only draft references
+after all canonical drafts succeed, before validation. Both cache forms retain
+adapter guards; source/journal compatibility and first-failure behavior are unchanged.
+No new deserialization dependency, model recipe, dtype, decoder or protected inputs.
+324 complete affected tests pass. Real champion/CTC/validator development evidence
+and process-local memory/clock preservation are in evidence/asr-model-lifecycle-2026-10-07.md.
+These are engineering inputs for a qualified reviewer, not review authorization.
+The old VEX source binding/date/expiry remain untouched; current policy and CI
+still need genuine current-source review. Cold performance remains poor.
