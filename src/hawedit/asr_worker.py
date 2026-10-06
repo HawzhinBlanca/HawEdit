@@ -131,6 +131,8 @@ def run_request(
         initial, unaligned = transcribe_prepared_segments(
             active_model, prepared, stop_on_failure=True
         )
+        if type(model) is OmniAsrBackend:
+            model.release_draft_model()
         selected_validator = validator
 
         def validator_factory() -> SoraniValidator:

@@ -23,6 +23,7 @@ claims still require the package-managed assets and labelled Sorani audio.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
@@ -520,6 +521,7 @@ class OmniAsrBackend:
         self.ctc_card = ctc_card
         self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
         self._pipelines: tuple[Any, Any] | None = None
+        self._ctc_pipeline: Any | None = None
         self._loaded_adapter_identity: str | None = None
 
     @property
@@ -536,7 +538,9 @@ class OmniAsrBackend:
         current = (
             None if self.lora_adapter is None else f"lora:{adapter_fingerprint(self.lora_adapter)}"
         )
-        if self._pipelines is not None and current != self._loaded_adapter_identity:
+        if (
+            self._pipelines is not None or self._ctc_pipeline is not None
+        ) and current != self._loaded_adapter_identity:
             raise RuntimeError("Cached ASR adapter identity changed after model construction")
         return current
 
@@ -595,18 +599,11 @@ class OmniAsrBackend:
                         device=torch.device(self.llm_device),
                         dtype=torch.bfloat16,
                     )
-                ctc_model = load_model(
-                    AssetCard(
-                        "hawedit_omniASR_CTC_3B_v2",
-                        {
-                            "model_family": "wav2vec2_asr",
-                            "model_arch": "3b_v2",
-                            "checkpoint": by_name["omniASR-CTC-3B-v2.pt"].file_uri,
-                        },
-                    ),
-                    device=torch.device(self.ctc_device),
-                    dtype=torch.bfloat16,
-                )
+                ctc_pipeline = self._ctc_pipeline
+                if ctc_pipeline is None:
+                    ctc_pipeline = self._make_ctc_pipeline(
+                        tokenizer, by_name["omniASR-CTC-3B-v2.pt"].file_uri
+                    )
                 if llm_pipeline is None:
                     llm_pipeline = ASRInferencePipeline(
                         model_card=None,
@@ -614,21 +611,85 @@ class OmniAsrBackend:
                         tokenizer=tokenizer,
                         device=self.llm_device,
                     )
-                pipelines = (
-                    llm_pipeline,
-                    ASRInferencePipeline(
-                        model_card=None,
-                        model=ctc_model,
-                        tokenizer=tokenizer,
-                        device=self.ctc_device,
-                    ),
-                )
+                pipelines = (llm_pipeline, ctc_pipeline)
             # A context-exit drift/cleanup failure must not leave an admitted cache.
             if self.adapter_name != expected_identity:
                 raise RuntimeError("ASR adapter identity changed during model construction")
             self._loaded_adapter_identity = expected_identity
             self._pipelines = pipelines
+            self._ctc_pipeline = ctc_pipeline
         return self._pipelines
+
+    def _make_ctc_pipeline(self, tokenizer: Any, checkpoint_uri: str) -> Any:
+        import torch
+        from fairseq2.assets import AssetCard
+        from fairseq2.models.hub import load_model
+        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+
+        model = load_model(
+            AssetCard(
+                "hawedit_omniASR_CTC_3B_v2",
+                {
+                    "model_family": "wav2vec2_asr",
+                    "model_arch": "3b_v2",
+                    "checkpoint": checkpoint_uri,
+                },
+            ),
+            device=torch.device(self.ctc_device),
+            dtype=torch.bfloat16,
+        )
+        return ASRInferencePipeline(
+            model_card=None, model=model, tokenizer=tokenizer, device=self.ctc_device
+        )
+
+    def _load_ctc(self) -> Any:
+        expected_identity = self.adapter_name
+        if self._pipelines is not None:
+            return self._pipelines[1]
+        if self._ctc_pipeline is None:
+            with open_verified_omni_assets() as opened_assets:
+                assert_omni_card_integrity()
+                freeze_fairseq2_asset_overrides()
+                try:
+                    from fairseq2.assets import AssetCard, get_asset_store
+                    from fairseq2.data.tokenizers.hub import load_tokenizer
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
+                    ) from exc
+                assert_effective_omni_cards(get_asset_store())
+                by_name = {opened.asset.filename: opened for opened in opened_assets}
+                tokenizer = load_tokenizer(
+                    AssetCard(
+                        "hawedit_omniASR_tokenizer_written_v2",
+                        {
+                            "tokenizer_family": "char_tokenizer",
+                            "tokenizer": by_name["omniASR_tokenizer_written_v2.model"].file_uri,
+                        },
+                    )
+                )
+                ctc_pipeline = self._make_ctc_pipeline(
+                    tokenizer, by_name["omniASR-CTC-3B-v2.pt"].file_uri
+                )
+            if self.adapter_name != expected_identity:
+                raise RuntimeError("ASR adapter identity changed during CTC construction")
+            self._loaded_adapter_identity = expected_identity
+            self._ctc_pipeline = ctc_pipeline
+        return self._ctc_pipeline
+
+    def release_draft_model(self) -> None:
+        """D-286: called only after all draft forwards have joined, before validation."""
+        expected_identity = self.adapter_name
+        if self._pipelines is None:
+            return
+        self._ctc_pipeline = self._pipelines[1]
+        self._pipelines = None
+        gc.collect()
+        import torch
+
+        torch.cuda.empty_cache()
+        if self.adapter_name != expected_identity:
+            raise RuntimeError("ASR adapter identity changed during draft release")
 
     def _load_adapted_llm(self, adapter_dir: Path, *, checkpoint_uri: str) -> Any:
         """Base checkpoint + PEFT adapter, assembled the way the trainer serves it.
@@ -838,7 +899,7 @@ class OmniAsrBackend:
         if not text.strip():
             raise ValueError("cannot align an empty validator transcription")
         expected_identity = self.adapter_name
-        _, ctc = self._load()
+        ctc = self._load_ctc()
         log_probs, frame_count, ctc_text = self._ctc_emissions(ctc, audio_path)
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
         if self.adapter_name != expected_identity:
@@ -960,6 +1021,8 @@ class OmniAsrProducer:
         initial, unaligned = transcribe_prepared_segments(
             self.backend, prepared, stop_on_failure=True
         )
+        if type(self.backend) is OmniAsrBackend:
+            self.backend.release_draft_model()
         results, validated_by, rejected_corrections = _validate_hard_segments(
             initial, self.backend, self._validator, stop_on_failure=True
         )

@@ -1,5 +1,12 @@
 # Default Champion Held-Input Repair
 
+```yaml
+commit: dd43dda696f8c82cb3eae83f20f6dcef9a5e333c
+media_sha256: a09d4eef57cd8a88c92b24bb48860a3143a64fface86e1ad8fe9da179b30288c
+host: HawaPC01 - Windows 11 build 26200 / WSL Linux 6.18.40.1 / 2x RTX 3090 Ti
+command: .venv/Scripts/python.exe -B C:/Users/Wareen/run_hawedit_champion_held_20261007.py model
+```
+
 Engineering verification, not accepted release, qualified VEX or native accuracy.
 Implementation commits: `2e449302b8144eb5d5c615ea34cf76fbe62f038d` and
 `dd43dda696f8c82cb3eae83f20f6dcef9a5e333c`; D-285, BLUEPRINT sections 3/7,
@@ -85,9 +92,18 @@ throughput remains an engineering problem. No holdout or paid route was used.
 
 ## Remaining Verification
 
-The exact full `bash scripts/verify.sh` at the documentation candidate is pending
-when this record is written. The previous 36c2d01 gate was 4934 passed / one
-historical VEX source-binding failure; it is not acceptance for this package.
+The exact full `bash scripts/verify.sh` at 379c7c8 finished with exit 1:
+4941 passed / two failures / zero errors or skips, 4943 total. Source and tracked
+inputs stayed unchanged. JUnit 2282.529 seconds / controller 2290.5693804 seconds,
+same recorded native hardware/library inventory. JUnit SHA256
+`d9b4bae40f372765ed73c65b934c6e663130c48174c7fbcab9b5ff158fc0eeaa`;
+immutable `gate/terminal.json` and `gate/gate.xml` under the above base.
+All exact owned PIDs were absent before closing the controller session.
+Failures: this note lacked the required structured evidence header, now supplied
+with actual model-test provenance; the historical qualified VEX policy still
+binds an older source digest. The complete claims test file then passed in the
+295-test lifecycle/affected diagnostic (not a replacement gate).
+The previous 36c2d01 gate is historical, not acceptance for this package.
 The qualified review date/expiry and policy digest have not been rewritten.
 Required current-SHA CI, full studio generation/review/revision/export, real
 independent editorial and reliability/performance studies and sustained use remain

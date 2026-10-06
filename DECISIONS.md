@@ -14804,3 +14804,25 @@ PEFT inputs remain the same. Do not hand the model card to the tokenizer resolve
 See specs/champion-held-assets. Synthetic API composition tests are not inference
 quality evidence; real WSL consumers and decoded development audio are required.
 
+## D-286 - Retain CTC independently after completed canonical drafts
+
+2026-10-07; approved execution-repair scope. BLUEPRINT sections 3 Stage 1, 4.2,
+6, 7, 8.1; D-181/D-260 champion, D-278 halt, D-281 completion and D-284 journal
+binding remain unchanged. No model, decoder, threshold, timeout or dependency change.
+
+Correction alignment used the dual-model loader despite using only CTC. Separate
+its held-verified CTC cache from the draft pipeline and guard adapter identity for
+either cache. Share only CTC assembly. Cache admission still follows successful
+guard exit. Once every draft succeeds, native and worker exact-backend paths drop
+owned draft references, collect unreachable objects and release unused torch
+allocator memory before validation. Retain CTC tensors/tokenizer; do not offload,
+quantize, change timings, or invoke a different decoder. Custom backends remain
+untouched. Draft failures cannot reach this handoff or validation. Cleanup errors
+halt publication, and re-requested drafts reconstruct the same decoder with CTC reuse.
+
+This is a resource repair, not a speed, accuracy or complete-episode acceptance
+claim. Process-local allocated/reserved bytes and real decoded development audio
+must accompany measurements; owner training is not stopped for isolation. See
+specs/asr-model-lifecycle. Qualified VEX (#24), same-SHA CI and native editorial
+acceptance remain separate; no completed ledger or 10/10 verdict follows.
+
