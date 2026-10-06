@@ -38,7 +38,8 @@ test files including claims and canonical assets. 324 pass / zero failures/error
 skips. JUnit 52.422 seconds / controller 54.9010384 seconds. XML SHA256
 `827daf6ee4ae04ef9a2532f4a24765b9c5c917f35ce89be708e3216ab5576897`.
 Windows Python 3.12.10, pytest 9.1.1, ruff 0.9.6, mypy 1.15.0, DBOS 2.29.0.
-Full-scope lint/type/format diagnostics pass, but are not the exact full gate.
+Pre-final-fixture full-scope lint/type/format diagnostics passed, but are not the
+exact full gate; the subsequent fixture-only lint failure is recorded below.
 
 `prepare/terminal.json`: supported `python -B -m hawedit.wsl_setup`, exit 0,
 unchanged source, 146.7012187 seconds, existing pinned environment and refreshed
@@ -88,8 +89,14 @@ unacceptable; timings are neither a p50/p95 study nor a production first-clip re
 
 ## Remaining Acceptance
 
-Exact final committed `bash scripts/verify.sh` is pending at writing; preceding
-379c7c8 gate failures are retained in champion-held-assets-2026-10-07.md. Evidence
+Exact 70a3f52 `bash scripts/verify.sh` stopped at lint with B009 on the new fixture's
+constant getattr, before pytest; exit 1 / 2.2198345 seconds / unchanged source.
+The test now shares its generated asset descriptors directly instead of inspecting
+a non-exported module attribute. No assertion or production source was changed.
+Corrected lifecycle/assets/claims files: 113 pass / zero failures/errors/skips,
+12.529-second JUnit; XML at the evidence root's asr-lifecycle-fixture-correction-20261007.xml.
+Full-scope lint and format pass again. The next exact committed gate is pending.
+Preceding 379c7c8 gate failures are retained in champion-held-assets-2026-10-07.md. Evidence
 header repaired; qualified VEX date, expiry and old source digest untouched.
 Required CI, current qualified review, full-source studio workflow, native labelled
 ASR/editorial evaluation, reliability/performance corpus and sustained acceptance

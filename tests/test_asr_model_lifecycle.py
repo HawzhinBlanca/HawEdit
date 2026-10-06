@@ -23,6 +23,17 @@ class Handle:
     pass
 
 
+def opened_assets() -> tuple[SimpleNamespace, ...]:
+    return tuple(
+        SimpleNamespace(asset=SimpleNamespace(filename=name), file_uri="file:///held/" + name)
+        for name in (
+            "omniASR-LLM-7B-v2.pt",
+            "omniASR-CTC-3B-v2.pt",
+            "omniASR_tokenizer_written_v2.model",
+        )
+    )
+
+
 @pytest.fixture
 def consumers(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     events: list[str] = []
@@ -30,14 +41,7 @@ def consumers(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     @contextmanager
     def held() -> Any:
         events.append("held-open")
-        yield tuple(
-            SimpleNamespace(asset=SimpleNamespace(filename=name), file_uri="file:///held/" + name)
-            for name in (
-                "omniASR-LLM-7B-v2.pt",
-                "omniASR-CTC-3B-v2.pt",
-                "omniASR_tokenizer_written_v2.model",
-            )
-        )
+        yield opened_assets()
         events.append("held-close")
 
     class Card:
@@ -128,12 +132,9 @@ def test_alignment_verifies_before_import(monkeypatch: pytest.MonkeyPatch) -> No
 def test_ctc_guard_failure_does_not_admit_cache(
     consumers: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = getattr(asr, "open_verified_omni_assets")
-
     @contextmanager
     def failed_exit() -> Any:
-        with original() as opened:
-            yield opened
+        yield opened_assets()
         raise RuntimeError("exit guard sentinel")
 
     monkeypatch.setattr(asr, "open_verified_omni_assets", failed_exit)
