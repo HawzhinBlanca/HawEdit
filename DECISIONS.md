@@ -14929,3 +14929,23 @@ cases fail before guards; final53 native/parser tests pass without skips or mock
 the code under test. Exact full gate/current qualified VEX (#24)/same-SHA CI remain
 required. No authority, paid call, release or10/10 acceptance follows.
 
+## D-291 - Bind retained previews to their render request
+
+2026-10-07; approved evidence-based-studio repair and renewed full-fix instruction.
+BLUEPRINT sections 2-5 and 7.6; D-263/D-277/D-289. No dependency or model change.
+Source/candidate/clock equality plus real remeasurement does not establish that a
+retained MP4 implements the requested headline, captions, camera, pacing or assets.
+
+An optional strict `render_request_sha256` in the existing editing JSON Provenance
+binds structured effective inputs, current package/model metadata and actual font,
+tool and external asset bytes. Existing signed review already binds this JSON;
+the seven packet members and signature namespace do not change. Legacy records
+remain readable, but missing/mismatched request bindings refuse automatic reuse.
+Recheck inputs after native rendering/reinspection and before private freeze.
+Never overwrite/re-sign old media to repair a mismatch: use an immutable revision.
+
+This digest is nonauthorizing provenance, not a human review, quality score,
+complete runtime/dependency attestation, or production-worker readiness. Private
+candidates remain awaiting review. Full gate, current qualified VEX, same-SHA CI,
+protected worker and independent/sustained acceptance remain required.
+

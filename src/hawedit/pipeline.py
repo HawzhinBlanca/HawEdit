@@ -78,6 +78,7 @@ from hawedit.captions import (
     CaptionVerificationError,
     HookBannerConfig,
     build_ass,
+    find_ffmpeg,
     verify_caption_integrity,
 )
 from hawedit.checkpoint import (
@@ -198,6 +199,7 @@ from hawedit.render import (
     shot_spans,
     vertical_crop_size,
 )
+from hawedit.render_identity import render_input_digest
 from hawedit.review_candidate_cache import CandidateCacheError, inspect_existing_review_candidate
 from hawedit.screener import CandidateScreener, ScreenerTransport, get_screener
 from hawedit.sentences import (
@@ -4005,6 +4007,63 @@ def run_pipeline(
     # operation after review; generation can only freeze private candidates (D-277).
     review_candidate_dir = work_dir / "review" / clip.clip_id
     is_review_render = True
+
+    def current_render_request() -> str:
+        binary = ffmpeg or find_ffmpeg()
+        if binary is None:
+            raise ValueError("render request requires the actual FFmpeg executable")
+        clip_inputs = clip.to_dict()
+        clip_inputs.pop("provenance")
+        return render_input_digest(
+            {
+                "clip": clip_inputs,
+                "configuration": config,
+                "camera": camera,
+                "sentences": sentences,
+                "selected": selected,
+                "shot_cuts_ms": ingested.shot_cuts_ms,
+                "diarization": ingested.diarization,
+                "assembly_spans": assembly_spans,
+                "profile": profile,
+                "caption_style": resolved_caption_style,
+                "hook_banner": hook_banner,
+                "hook_text": hook_text,
+                "keyword_emphasis": keyword_emphasis,
+                "silence_threshold_ms": silence_threshold_ms,
+                "silence_target_gap_ms": silence_target_gap_ms,
+                "excise_fillers": excise_fillers,
+                "filler_tokens": frozenset(filler_tokens) if filler_tokens is not None else None,
+                "eased_push": eased_push,
+                "two_person_split": two_person_split,
+                "brand_kit": brand_kit,
+                "music_bed": Path(music_bed_path) if music_bed_path else None,
+                "music_ducking_volume": music_ducking_volume,
+                "b_roll": resolved_b_roll,
+                "first_frame_gate": first_frame_gate,
+                "min_face_share": min_face_share,
+                "fonts": FONTS_DIR,
+                "ffmpeg": binary,
+            }
+        )
+
+    try:
+        render_request_sha256 = current_render_request()
+        if clip.provenance is None:
+            raise ValueError("render request requires clip provenance")
+        clip = replace(
+            clip,
+            provenance=replace(clip.provenance, render_request_sha256=render_request_sha256),
+        )
+        run = replace(run, clip=clip)
+    except (OSError, ValueError, TypeError) as exc:
+        reason = "render request identity refused: " + _safe_exception_text(str(exc), budget=768)
+        log.finished("render", reason)
+        return replace(
+            run,
+            render=StageSkipped(
+                stage="render", reason=reason, blocked_by=("render request identity",)
+            ),
+        )
     if is_review_render and os.path.lexists(review_candidate_dir):
         cand_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
         try:
@@ -4015,6 +4074,8 @@ def run_pipeline(
             cand_meas = inspect_existing_review_candidate(
                 review_candidate_dir, clip=clip, ffmpeg=ffmpeg
             )
+            if current_render_request() != render_request_sha256:
+                raise CandidateCacheError("render request changed during retained media inspection")
             _assert_source_unchanged(
                 source, ingested.source_sha256, "retained candidate completion"
             )
@@ -4386,6 +4447,8 @@ def run_pipeline(
             plan=visual_edit_plan,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
+        if current_render_request() != render_request_sha256:
+            raise RenderError("render request changed during native rendering")
     except (IngestError, RenderError, BundleError, OSError, ValueError, BrandKitError) as exc:
         try:
             bundle.discard()
@@ -4522,6 +4585,8 @@ def run_pipeline(
             )
 
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
+        if current_render_request() != render_request_sha256:
+            raise DeliveryError("render request changed before private candidate freeze")
         bundle.publish()
     except (
         DeliveryError,

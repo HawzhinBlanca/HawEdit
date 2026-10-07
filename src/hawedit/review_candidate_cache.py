@@ -30,8 +30,9 @@ def inspect_existing_review_candidate(
 ) -> ClipMeasurement:
     """Reopen all members and measure current bytes without repairing prior evidence.
 
-    This checks media and source/clock identity, not complete render-input equivalence
-    or signed approval. Publication must still independently consume raw review proof.
+    This checks media, source/clock identity and the expected render request. It does
+    not grant signed approval or attest all native runtime dependencies. Publication
+    must still independently consume raw review proof.
     """
     try:
         directory = PrivateDirectory(candidate_dir, create=False)
@@ -49,6 +50,13 @@ def inspect_existing_review_candidate(
 
         stored_doc = _json(documents["json"])
         stored_clip = Clip.from_dict(stored_doc)
+        if (
+            clip.provenance is None
+            or not clip.provenance.render_request_sha256
+            or stored_clip.provenance is None
+            or stored_clip.provenance.render_request_sha256 != clip.provenance.render_request_sha256
+        ):
+            raise CandidateCacheError("retained render request binding is missing or changed")
         plan_doc = _json(documents["edit_plan.json"])
         plan = VisualEditPlan.from_dict(plan_doc)
         measured_doc = _json(documents["measured.json"])
