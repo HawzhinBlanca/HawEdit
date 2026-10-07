@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
+import torch
 
 from hawedit.diarization import Segment
 from hawedit.ingest import DiarizationInvalidOutput, IngestResult, attach_diarization
@@ -46,7 +49,7 @@ class _Output:
 @dataclass
 class _Calls:
     checkpoints: list[Path | str] = field(default_factory=list)
-    audio: list[str] = field(default_factory=list)
+    audio: list[dict[str, Any]] = field(default_factory=list)
     devices: list[str] = field(default_factory=list)
 
 
@@ -71,7 +74,7 @@ def _wire(
         def to(self, selected: object) -> None:
             calls.devices.append(str(selected))
 
-        def __call__(self, selected: str) -> object:
+        def __call__(self, selected: dict[str, Any]) -> object:
             calls.audio.append(selected)
             return output
 
@@ -142,9 +145,15 @@ def test_configured_model_audio_and_device_reach_the_producer(
     adapter, audio, calls = _wire(
         tmp_path, monkeypatch, _Output(_Annotation([(0.0, 1.0, "SPEAKER_00")])), device="cuda:1"
     )
+    audio_hash = hashlib.sha256(audio.read_bytes()).hexdigest()
     assert adapter.diarize(audio) == (Segment(0, 1000, "SPEAKER_00"),)
     assert calls.checkpoints == [tmp_path / "wire-only-checkpoint"]
-    assert calls.audio == [str(audio)]
+    assert len(calls.audio) == 1
+    assert calls.audio[0]["sample_rate"] == 16000
+    assert calls.audio[0]["waveform"].dtype == torch.float32
+    assert calls.audio[0]["waveform"].shape == (1, 80000)
+    assert torch.equal(calls.audio[0]["waveform"], torch.zeros((1, 80000)))
+    assert hashlib.sha256(audio.read_bytes()).hexdigest() == audio_hash
     assert calls.devices == ["cuda:1"]
     assert adapter.model_id == "pyannote/speaker-diarization-community-1"
 

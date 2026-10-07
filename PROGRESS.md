@@ -17,6 +17,21 @@ runtime/decoder/telemetry observations, full gate/current CI, qualified security
 protected worker and independent/sustained acceptance remain required. No task
 promotion or claim that generation is enabled.
 
+## Diarizer PCM And Privacy Controls (M9.75, WIP)
+
+D-298 / approved phase1 / specs/diarizer-runtime. Real WAV parsing and exact
+in-memory samples remove this adapter's file-decoder dependency. Held local SDK
+import refusals, process metrics off, malformed/partial-frame audio refusals and
+guard cleanup have named tests. Initial source21 cases:18 test-first failures;
+additional partial-frame22-case run:one failure. Whole608 callers pass before the
+last tightening, final161 model/adapter cases pass after it; zero skips/errors.
+Actual native studio Python3.11.15/cu130/Pyannote4.0.7 decoded8-second ZAR API
+roundtrip passes. No pretrained neural, DER, full-source/reel, native-egress or
+10/10 claim. The previous committed644643c full gate had5284/5285 passes, solely
+stale qualified VEX binding; this candidate still requires its exact gate/current
+CI. Actual worker/review/revision/export adoption and independent/sustained
+acceptance remain open. No ledger row is promoted.
+
 ## Status legend
 
 | Mark | Meaning |

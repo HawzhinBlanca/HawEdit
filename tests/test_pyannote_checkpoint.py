@@ -7,12 +7,15 @@ import importlib
 import json
 import subprocess
 import sys
+import wave
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
+import torch
 
 import hawedit.models as models
 from hawedit.diarization import Segment
@@ -72,9 +75,12 @@ def _dependency(monkeypatch: pytest.MonkeyPatch, stage: Callable[[str], None]) -
             stage("device")
             assert str(device) == "cuda:1"
 
-        def __call__(self, audio: str) -> object:
+        def __call__(self, audio: dict[str, Any]) -> object:
             stage("inference")
-            assert Path(audio).read_bytes() == b"test-only audio"
+            assert audio["sample_rate"] == 16000
+            assert audio["waveform"].dtype == torch.float32
+            assert audio["waveform"].shape == (1, 16000)
+            assert torch.equal(audio["waveform"], torch.full((1, 16000), 0.5))
             return SimpleNamespace(exclusive_speaker_diarization=Annotation())
 
     class Annotation:
@@ -127,7 +133,11 @@ def _lock_state(checkpoint: Path) -> str:
 
 def _audio(root: Path) -> Path:
     audio = root / "test-only.wav"
-    audio.write_bytes(b"test-only audio")
+    with wave.open(str(audio), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\x00\x40" * 16000)
     return audio
 
 

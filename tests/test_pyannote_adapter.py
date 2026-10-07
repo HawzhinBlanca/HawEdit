@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -131,7 +132,11 @@ def test_missing_pyannote_is_reported_as_a_missing_extra(
 ) -> None:
     """AC-8: Missing pyannote.audio surfaces as DiarizationUnavailable naming the extra."""
     fake_audio = tmp_path / "test.wav"
-    fake_audio.write_bytes(b"RIFFdummy")
+    with wave.open(str(fake_audio), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\0" * 32000)
     model_dir = provision_checkpoint(tmp_path, monkeypatch)
 
     diarizer = PyannoteDiarizer(model_dir=model_dir)

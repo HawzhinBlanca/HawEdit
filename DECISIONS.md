@@ -15101,3 +15101,35 @@ actual runtime observations, protected model metadata permission, current VEX/CI
 and worker adoption remain required. No spending, signature, publication or
 acceptance authority follows from this ADR. See specs/studio-host-profile.
 
+## D-298 - Consume canonical PCM with held local diarizer import controls
+
+2026-10-08. Approved phase1 runtime repair; BLUEPRINT sections3 Stage0,6,7,8.1;
+D-252/D-296/D-297. Stage0 already supplies mono16kHz16-bit PCM WAV. Validate its
+actual frames with the standard WAV parser before model loading and pass exact
+float32 normalized samples to the pinned Pyannote in-memory API. No alternate
+decoder/model/dependency or canonical transcript/timing change. Refuse malformed,
+empty, truncated, partial-frame or incompatible PCM without repairing it.
+
+Disable process metrics before vendor import/load. A scoped standard import finder
+refuses SDK module execution during load/device/inference/exclusive conversion;
+preloaded SDKs refuse, and caught import failures remain refusals. Preserve unrelated
+finders and modules; remove only the owned guard even on errors. Serialize this
+process-wide policy across local consumers. This cannot undo prior egress and is
+not complete native network isolation. Hold the existing verified checkpoint access
+across every consumer stage and retain the live-model exception/reload contract.
+
+Real canonical WAV/checkpoint bytes, OS reader locks and Python SDK-shaped fixture
+execution controls are tested, with model inference explicitly doubled. Whole608
+callers pass before the additional partial-frame correction; final161 model/adapter
+cases pass afterward. Actual supported-runtime decoded8-second ZAR roundtrip passes
+through production input/import helpers and pinned upstream Audio, not pretrained
+inference, DER/editorial quality, full-source throughput or complete no-egress proof.
+The original research probe's whole-import-list equality refused a legitimate vendor
+finder addition; preserve that failure and inspect owned-guard removal plus original
+finder retention instead. No caller integrity/output/locking assertions weakened.
+
+Exact full gate and same-SHA required CI remain mandatory. Current qualified VEX,
+protected model metadata permission, bounded cloud authority, actual protected
+worker/review/revisions/export and independent/sustained acceptance are separate.
+See specs/diarizer-runtime. No task is promoted by this ADR.
+
