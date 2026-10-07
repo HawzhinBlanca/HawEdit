@@ -1,4 +1,18 @@
+---
+status: local-regressions-not-accepted
+date: 2026-10-07
+commit: 140d06da68342accd75637342fde122ab838b6b4
+media_sha256: n/a - owned temporary metadata and CPU shards; no delivered media
+host: HawaPC01 / Windows11 build26300 / Threadripper3990X / CPython3.12.10
+command: .venv/Scripts/python.exe -B -m pytest tests/test_model_shards.py tests/test_models.py tests/test_asr.py tests/test_qwen_visual.py
+---
+
 # Checkpoint Shard Metadata Repair, WIP
+
+Header commit identifies the clean parent of the direct test-first/implementation
+diagnostics, not an accepted candidate. Those diagnostics ran with the scoped
+uncommitted repair. Subsequent immutable controllers bind their actual committed
+SHA, package digest, complete watched file hashes and source-freeze result.
 
 2026-10-07, baseline clean140d06da68342accd75637342fde122ab838b6b4.
 HawaPC01/Windows11 build26300/Threadripper3990X/native Python3.12.10,
@@ -44,3 +58,22 @@ controller2715.7224895s/source unchanged. This does not validate the new repair.
 Full retained live report:141dependencies/21raw entries/15deduplicated findings;
 3 newly undispositioned; old review expired and source/lock drifted. No accepted
 security report, no row flipped, no CI/push/release or full ZAR reel rerun claimed.
+
+Frozen local candidate6822a0fb826101ada92e942078bf244ac12dbba4/source
+a8013206de403c9f8526b87608f7a0beff24e5ec1087bf77881b5ac42e3fea4d:
+the complete five-module caller/claims check ran324tests with1failure,0errors/skips,
+JUnit23.560s. test_new_evidence_names_its_commit_media_and_host correctly refused
+this record's missing YAML header. This metadata repair preserves that test.
+The concurrent exact full gate was deliberately interrupted by stopping only its
+verified native pytest child, without a console cancellation event. Its controller
+recorded exit127 with source unchanged; it did not produce a fresh full JUnit report
+and cannot count as a completed gate. Official isolated runtime setup completed
+exit0 with the same source unchanged. Raw roots under native HawEditEvidence:
+model-shard-candidate-20261007/{regressions,gate,runtime}. A fresh clean committed
+retry and genuine Linux/model compatibility checks remain required.
+The first header correction retry also failed the same assertion because this
+repository's header reader preserves YAML quotes literally (324tests/1failure,
+0errors/skips/JUnit20.818s). Use its existing plain scalar convention; no test or
+provenance claim is altered. Raw model-shard-header-candidate-20261007/regressions.
+Plain-header retry: complete324tests passed,0fail/errors/skips/JUnit20.668s,
+model-shard-header-plain-retry-20261007.xml. This local diagnostic is not a gate.
