@@ -49,6 +49,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       button,
       select,
       input[type='file'],
+      input[type='search'],
       input[type='file']::file-selector-button,
       summary,
       .action {
@@ -180,6 +181,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         background: var(--accent);
       }
       select,
+      input[type='search'],
       textarea {
         inline-size: 100%;
         color: var(--text);
@@ -302,8 +304,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       dd {
         margin: 0;
       }
+      #historyDiagnostics,
       #stageList {
-        padding-inline-start: 24px;
+        margin: 0;
+        padding: 0;
+        list-style-position: inside;
       }
       #stageList li {
         padding-block: 4px;
@@ -465,6 +470,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <section class="stack" aria-labelledby="historyHeading">
           <h2 id="historyHeading">کارەکان</h2>
           <div class="field">
+            <label for="historySearch">گەڕان لە کارەکان</label>
+            <input
+              id="historySearch"
+              type="search"
+              dir="auto"
+              aria-controls="jobSelect"
+              autocomplete="off"
+              disabled
+            />
+          </div>
+          <div class="field">
             <label for="jobSelect">کاری هەڵبژێردراو</label>
             <div class="toolbar">
               <select id="jobSelect">
@@ -473,7 +489,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
               <button id="refreshBtn" type="button">نوێکردنەوە</button>
             </div>
           </div>
-          <p id="historyMessage" class="muted">پشکنینی مێژووی کارەکان…</p>
+          <p id="historyMessage" role="status" aria-live="polite" class="muted">
+            پشکنینی مێژووی کارەکان…
+          </p>
+          <p id="historySelectionWarning" aria-live="polite" class="warning" hidden></p>
           <ul id="historyDiagnostics" class="error" hidden></ul>
           <div id="jobContext" class="stack" hidden>
             <h3 id="jobTitle"></h3>
@@ -572,6 +591,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         selectionEpoch: 0,
         previewEpoch: 0,
         historyEpoch: 0,
+        historyJobs: [],
+        historySelected: '',
+        historyLoaded: false,
+        historyTruncated: false,
         readinessEpoch: 0,
         previewController: null,
       };
@@ -1001,7 +1024,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           $('jobContext').hidden = false;
           $('jobTitle').textContent = job.source || job.headline || jobId;
           $('jobIdentity').textContent =
-            jobId + ' · ' + new Date(job.created_at * 1000).toLocaleString('ckb');
+            jobId + ' · ' + recordedDate(job.created_at);
           let label = statusLabels[job.status] || unknown;
           if (job.status === 'completed' && job.publication_verified !== true)
             label = statusLabels['unverified-historical'];
@@ -1097,7 +1120,58 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           clearTimeout(timer);
         }
       }
-      async function refreshHistory(selected = $('jobSelect').value) {
+      function recordedDate(value) {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+          return unknown;
+        const date = new Date(value * 1000);
+        if (!Number.isFinite(date.getTime())) return unknown;
+        return date.toLocaleString('ckb');
+      }
+      function renderHistory(selected = state.historySelected) {
+        const normalize = (value) => value.normalize('NFKC').toLocaleLowerCase('ckb');
+        const query = normalize($('historySearch').value.trim());
+        const matched = state.historyJobs.filter((job) =>
+          normalize(job.job_id + ' ' + (job.source || '')).includes(query),
+        );
+        const matches = new Set(matched.map((job) => job.job_id));
+        const selectedOutside = Boolean(selected) && !matches.has(selected) &&
+          state.historyJobs.some((job) => job.job_id === selected);
+        const select = $('jobSelect');
+        select.replaceChildren();
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = 'کارێک هەڵبژێرە';
+        select.append(empty);
+        const isolate = (value) => '\u2068' + value + '\u2069';
+        for (const job of state.historyJobs) {
+          if (!matches.has(job.job_id) && job.job_id !== selected) continue;
+          const item = document.createElement('option');
+          item.value = job.job_id;
+          item.dir = 'auto';
+          let label = statusLabels[job.status] || unknown;
+          if (job.status === 'completed' && job.publication_verified !== true)
+            label = statusLabels['unverified-historical'];
+          item.textContent = [
+            job.job_id,
+            recordedDate(job.created_at),
+            job.source || unknown,
+            label,
+          ].map(isolate).join(' · ');
+          select.append(item);
+        }
+        state.historySelected = selected;
+        select.value = selected;
+        $('historySearch').disabled = !state.historyLoaded;
+        message('historySelectionWarning', selectedOutside
+          ? 'کاری هەڵبژێردراو لە ئەنجامی گەڕاندا نییە؛ هەڵبژاردنەکە پارێزراوە.'
+          : '');
+        message('historyMessage', state.historyLoaded
+          ? '\u2066' + matched.length + ' / ' + state.historyJobs.length + '\u2069' +
+            ' کار؛ هیچ بڵاوکردنەوەیەک پشتڕاست نەکراوەتەوە.' +
+            (state.historyTruncated ? ' هەموو مێژوو نیشان نەدراوە.' : '')
+          : 'مێژووی کارەکان ئامادە نییە؛ لیستی بەتاڵ ئەنجامی پشتڕاستکراو نییە.');
+      }
+      async function refreshHistory(selected = state.historySelected) {
         const epoch = ++state.historyEpoch;
         const selectionEpoch = state.selectionEpoch;
         $('refreshBtn').disabled = true;
@@ -1107,29 +1181,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           if (selectionEpoch !== state.selectionEpoch) selected = $('jobSelect').value;
           if (history.schema !== 1 || !Array.isArray(history.jobs))
             throw new Error('تۆماری مێژوو نادروستە.');
+          state.historyJobs = history.jobs;
+          state.historyLoaded = true;
+          state.historyTruncated = history.truncated === true;
+          renderHistory(selected);
           const select = $('jobSelect');
-          select.replaceChildren();
-          const empty = document.createElement('option');
-          empty.value = '';
-          empty.textContent = 'کارێک هەڵبژێرە';
-          select.append(empty);
-          for (const job of history.jobs) {
-            const item = document.createElement('option');
-            item.value = job.job_id;
-            item.textContent =
-              (job.source || job.job_id) +
-              ' · ' +
-              (statusLabels[job.status] || unknown);
-            select.append(item);
-          }
           diagnostics('historyDiagnostics', history.diagnostics);
-          message(
-            'historyMessage',
-            history.truncated
-              ? 'مێژوو بەشێکی دیارە؛ هەموو کارەکان نیشان نەدراون.'
-              : history.jobs.length +
-                  ' کاری کۆن؛ هیچ بڵاوکردنەوەیەک پشتڕاست نەکراوەتەوە.',
-          );
           if (selected) {
             select.value = selected;
             if (select.value !== selected) {
@@ -1143,6 +1200,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           }
         } catch (error) {
           if (epoch !== state.historyEpoch) return;
+          state.historyJobs = [];
+          state.historyLoaded = false;
+          renderHistory(state.historySelected);
           if (selectionEpoch === state.selectionEpoch) {
             ++state.selectionEpoch;
             clearJob();
@@ -1210,7 +1270,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       $('settingsFields').addEventListener('change', () => {
         save('options', options()); controls();
       });
-      $('jobSelect').addEventListener('change', () => selectJob($('jobSelect').value));
+      $('historySearch').addEventListener('input', () => renderHistory());
+      $('jobSelect').addEventListener('change', () => {
+        state.historySelected = $('jobSelect').value;
+        renderHistory();
+        selectJob(state.historySelected);
+      });
       $('refreshBtn').addEventListener('click', async () => {
         await readiness();
         await refreshHistory();
