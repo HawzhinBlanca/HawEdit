@@ -4014,6 +4014,8 @@ def run_pipeline(
             raise ValueError("render request requires the actual FFmpeg executable")
         clip_inputs = clip.to_dict()
         clip_inputs.pop("provenance")
+        # QC gates consumption separately; it does not change encoded pixels.
+        clip_inputs.pop("qc")
         return render_input_digest(
             {
                 "clip": clip_inputs,
@@ -4071,7 +4073,7 @@ def run_pipeline(
                 source, ingested.source_sha256, "retained candidate inspection"
             )
             clip.assert_renderable(for_review=True)
-            cand_meas = inspect_existing_review_candidate(
+            retained_candidate = inspect_existing_review_candidate(
                 review_candidate_dir, clip=clip, ffmpeg=ffmpeg
             )
             if current_render_request() != render_request_sha256:
@@ -4105,19 +4107,19 @@ def run_pipeline(
             rendered = RenderResult(
                 clip_id=clip.clip_id,
                 path=str(cand_mp4),
-                width=cand_meas.video.width,
-                height=cand_meas.video.height,
-                requested_duration_ms=clip.out_ms - clip.in_ms,
-                measured_duration_ms=cand_meas.video.duration_ms,
+                width=retained_candidate.measurement.video.width,
+                height=retained_candidate.measurement.video.height,
+                requested_duration_ms=retained_candidate.edit_plan.time_mapping.output_duration_ms,
+                measured_duration_ms=retained_candidate.measurement.video.duration_ms,
                 reframe=reframe_mode or Reframe.STATIC_CENTRE,
                 encoder=Encoder.X264,
                 captions_burned_in=True,
-                ffmpeg_version=cand_meas.tool_metadata["ffmpeg_version"],
+                ffmpeg_version=retained_candidate.measurement.tool_metadata["ffmpeg_version"],
                 brand_kit=brand_kit,
             )
             return replace(
                 run,
-                clip=clip,
+                clip=retained_candidate.clip,
                 render=rendered,
                 delivery=StageSkipped(
                     stage="delivery",

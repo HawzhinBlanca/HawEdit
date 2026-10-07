@@ -19,3 +19,20 @@ changed-render invalidation and immutable revision behavior.
 
 This unit does not enable the unconfigured protected HTTP worker, claim complete
 render runtime attestation, or implement the full studio revision UI.
+
+## T2: Retained Reporting And Nonvisual QC
+
+Approved-by: Wareen, same approved private recovery/revision scope and renewed
+"continue the fix full fix"; no additional authority or spending inferred.
+
+1. Record the actual current Serena map, native295ms reporting counterexample,
+   corrected external test-first failures, and full-gate QC identity regression.
+2. Add named real-media tests for exact retained editing metadata, edit-plan
+   output duration, and unchanged private reuse after unsigned QC metadata changes.
+3. Return the stored Clip/edit plan plus fresh measurement as one typed record.
+   Use its Clip and precise output duration without rewriting old evidence.
+   Exclude nonvisual QC from request hashing while retaining renderability and
+   authenticated-publication checks. Do not change the silence algorithm.
+4. Run affected full modules and native checks, review/commit locally, then run
+   the exact frozen clean-commit gate again. Record every failure; do not weaken
+   the VEX/source test or promote WIP rows without gate plus required same-SHA CI.

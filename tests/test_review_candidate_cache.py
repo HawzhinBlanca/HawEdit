@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import pytest
 import hawedit.pipeline as pipeline_module
 import test_pipeline as pipeline_fixtures
 from hawedit.captions import find_ffmpeg
+from hawedit.edit_plan import VisualEditPlan
 from hawedit.pipeline import PipelineRun, StageSkipped, run_pipeline
 from hawedit.render import RenderResult, render_clip
 from studio_test_storage import make_private_directory, seed_private_file
@@ -308,3 +310,92 @@ def test_pipeline_refuses_asset_changed_after_real_render(
     assert "render request changed during native rendering" in result.render.reason
     assert not result.complete
     assert not (work / "review" / "cache-integrity-s0-0").exists()
+
+
+@pytest.fixture(scope="module")
+def tightened_replay(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[PipelineRun, PipelineRun, dict[str, Any], VisualEditPlan]:
+    work = tmp_path_factory.mktemp("real-tightened-cache") / "work"
+
+    def run() -> PipelineRun:
+        return run_pipeline(
+            pipeline_fixtures.FIXTURE,
+            work,
+            media_id="cache-tightened",
+            transcript=pipeline_fixtures.a_transcript("cache-tightened"),
+            select_sentences=(0, 1),
+            qc=pipeline_fixtures._test_qc(
+                False, reviewed_sha256=pipeline_fixtures.FIXTURE_RENDER_S0_SHA256
+            ),
+            verdict=pipeline_fixtures.a_verdict(100, 4100),
+            silence_threshold_ms=25,
+            silence_target_gap_ms=5,
+        )
+
+    first = run()
+    assert isinstance(first.render, RenderResult), first.render
+    packet = Path(first.render.path).parent
+    before = _bytes(packet)
+    canonical = _bytes(work / "transcripts")
+    stored = json.loads((packet / f"{packet.name}.json").read_text(encoding="utf-8"))
+    plan = VisualEditPlan.from_dict(
+        json.loads((packet / f"{packet.name}.edit_plan.json").read_text(encoding="utf-8"))
+    )
+    assert stored["output"]["silence_removed_ms"] == 295
+    repeated = run()
+    assert isinstance(repeated.render, RenderResult), repeated.render
+    assert _bytes(packet) == before
+    assert _bytes(work / "transcripts") == canonical
+    assert not first.complete and not repeated.complete
+    assert isinstance(repeated.delivery, StageSkipped)
+    assert repeated.delivery.reason == "awaiting human review"
+    assert not (work / packet.name).exists()
+    return first, repeated, stored, plan
+
+
+def test_private_cache_returns_retained_editing_metadata(
+    tightened_replay: tuple[PipelineRun, PipelineRun, dict[str, Any], VisualEditPlan],
+) -> None:
+    _, repeated, stored, _ = tightened_replay
+    assert repeated.clip is not None and not isinstance(repeated.clip, StageSkipped)
+    assert repeated.clip.to_dict() == stored
+
+
+def test_private_cache_returns_retained_output_duration(
+    tightened_replay: tuple[PipelineRun, PipelineRun, dict[str, Any], VisualEditPlan],
+) -> None:
+    first, repeated, _, plan = tightened_replay
+    assert isinstance(first.render, RenderResult)
+    assert isinstance(repeated.render, RenderResult)
+    assert repeated.render.requested_duration_ms == plan.time_mapping.output_duration_ms
+    assert repeated.render.requested_duration_ms == first.render.requested_duration_ms
+    assert repeated.render.measured_duration_ms == first.render.measured_duration_ms
+
+
+def test_private_cache_retains_preview_without_unsigned_qc_promotion(
+    candidate: tuple[Path, Path],
+) -> None:
+    work, packet = candidate
+    before = _bytes(packet)
+    stored = json.loads(before[f"{packet.name}.json"])
+    source_transcripts = _bytes(work / "transcripts")
+    mp4_sha = hashlib.sha256(before[f"{packet.name}.mp4"]).hexdigest()
+    repeated = run_pipeline(
+        pipeline_fixtures.FIXTURE,
+        work,
+        media_id="cache-integrity",
+        transcript=pipeline_fixtures.a_transcript("cache-integrity"),
+        select_sentences=(0,),
+        verdict=pipeline_fixtures.a_verdict(100, 1700),
+        qc=pipeline_fixtures._test_qc(True, reviewed_sha256=mp4_sha),
+    )
+    assert isinstance(repeated.render, RenderResult), repeated.render
+    assert repeated.clip is not None and not isinstance(repeated.clip, StageSkipped)
+    assert repeated.clip.to_dict() == stored, "Unsigned QC must not rewrite retained metadata"
+    assert _bytes(packet) == before
+    assert _bytes(work / "transcripts") == source_transcripts
+    assert isinstance(repeated.delivery, StageSkipped)
+    assert repeated.delivery.reason == "awaiting human review"
+    assert not repeated.complete
+    assert not (work / packet.name).exists()

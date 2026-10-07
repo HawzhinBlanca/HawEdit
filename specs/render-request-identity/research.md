@@ -44,3 +44,38 @@ time). Existing ingest_cache._open already handles separate full baselines and
 common opened identity, bounded reads/deadlines and before/after checks. Map and
 reuse that helper unchanged rather than weakening mutation detection or sleeping
 away the counterexample. No permissions, fixture or assertion relaxation.
+
+## Retained Metadata Follow-Up
+
+Clean candidate774e5639b1ecf6e290d70299dcd1b3875eb57695 completed the exact
+gate:5111 cases,5109 passed,2 failed, zero errors/skips; source unchanged.
+One regression is test_unreviewed_render_is_retained_privately_for_review:
+legacy unsigned QC metadata was incorrectly included in pixel request identity.
+QC is separately checked by assert_renderable and authenticated publication;
+it must not alter equivalent pixel requests or promote retained private bytes.
+The other failure is current-source VEX qualification (#24), not silently rebound.
+
+An actual decoded two-utterance fixture with silence threshold25ms/target5ms
+records295ms removed in its editing JSON. Identical replay returns0ms and
+unretimed words; requested duration4162ms differs from retained plan3867ms.
+Inspector validates stored Clip/VisualEditPlan but returns only measurement,
+so the caller loses the actual metadata. Single-utterance negative control has
+no trim and exact agreement. Original packet/transcripts are byte-identical.
+External corrected test-first module fails both exact metadata and duration
+assertions; initial erroneous serialized-key test is preserved, not counted as
+a product-duration counterexample. No neural/editorial/publication claim.
+
+Actual Serena map retained-metadata-map-20261007/serena-map.json completed
+10:12:19UTC on unchanged current source: run_pipeline, cache inspector and
+tighten_clip. Return a typed nonauthorizing retained Clip/edit plan/fresh physical
+measurement record, keep every inspection guard, and use the retained plan's
+precise output duration. Exclude only post-render QC from pixel identity; QC
+refusals and raw signature/publication checks remain. No silence algorithm edit,
+canonical ASR edit, sidecar rewrite, approval, dependency or HTTP readiness change.
+
+Repository test-first: complete retained-cache module44 cases,41 passed,
+3 failed,0 errors/skips, JUnit168.672s. Correct failures are exact retained
+metadata, precise retained output duration, and unchanged private reuse with
+unsigned QC metadata. Controller178.2106299s confirms frozen watched source/
+HEAD/package/status. Raw retained-reporting-candidate-20261007/test-first/
+terminal.json, XML a5ec89eeef10a69d949805eb45f1921b7a4a022f0b3b87de44268035c93b17e3.

@@ -14949,3 +14949,11 @@ complete runtime/dependency attestation, or production-worker readiness. Private
 candidates remain awaiting review. Full gate, current qualified VEX, same-SHA CI,
 protected worker and independent/sustained acceptance remain required.
 
+T2 reporting clarification: post-render unsigned QC metadata is excluded from
+pixel request identity, while renderability and authenticated-publication checks
+remain separate. Retained-media inspection returns the original typed Clip and
+visual edit plan alongside freshly decoded measurements. Replay reports exact
+stored editing metadata and precise plan output duration, never a reconstructed
+pre-trim record or today's substituted render provenance. No sidecars, canonical
+ASR, signature namespace or prior bytes are rewritten; no approval is inferred.
+

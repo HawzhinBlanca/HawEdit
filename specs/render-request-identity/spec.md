@@ -24,3 +24,14 @@
 - RI6: WHEN reading a legacy Provenance block, THE contract SHALL preserve
   readability without attributing a render-request binding; malformed bindings
   SHALL be refused. Test: `test_render_identity_provenance_is_optional_and_strict`.
+- RI7: WHEN unchanged retained media with an internal silence trim is replayed,
+  THE pipeline SHALL return its exact stored editing metadata and plan-derived
+  requested output duration, preserving original packet and canonical transcript
+  bytes. Tests: `test_private_cache_returns_retained_editing_metadata`,
+  `test_private_cache_returns_retained_output_duration`.
+- RI8: WHEN unsigned legacy QC metadata changes without a pixel-input change,
+  THE pipeline SHALL retain unchanged renderable private media without treating
+  that metadata as approval or authorizing publication. Tests:
+  `test_private_cache_retains_preview_without_unsigned_qc_promotion`, existing
+  `test_unreviewed_render_is_retained_privately_for_review` and signed review/
+  publication suites. Renderability refusals remain separately enforced.

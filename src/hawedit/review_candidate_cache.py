@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from hawedit.candidate_publication import _inspect_media, _measurement_claims
@@ -25,9 +26,18 @@ class CandidateCacheError(RuntimeError):
     """Existing private media cannot be safely reported as a retained candidate."""
 
 
+@dataclass(frozen=True, slots=True)
+class RetainedReviewCandidate:
+    """Stored editing metadata and fresh physical evidence, not approval."""
+
+    clip: Clip
+    edit_plan: VisualEditPlan
+    measurement: ClipMeasurement
+
+
 def inspect_existing_review_candidate(
     candidate_dir: Path, *, clip: Clip, ffmpeg: Path | None = None
-) -> ClipMeasurement:
+) -> RetainedReviewCandidate:
     """Reopen all members and measure current bytes without repairing prior evidence.
 
     This checks media, source/clock identity and the expected render request. It does
@@ -113,7 +123,7 @@ def inspect_existing_review_candidate(
             if after != before:
                 raise CandidateCacheError("retained packet changed during inspection")
         directory.verify()
-        return fresh
+        return RetainedReviewCandidate(stored_clip, plan, fresh)
     except CandidateCacheError:
         raise
     except (

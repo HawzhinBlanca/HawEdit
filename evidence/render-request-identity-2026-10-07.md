@@ -63,3 +63,15 @@ check found two failures: the new module was absent from README's module map and
 the PROGRESS ledger. Add truthful module descriptions and a new WIP row; do not
 promote any row or alter the coverage assertions. The full clean-commit gate must
 verify this correction and the test's exported-renderer typing repair.
+
+Exact frozen gate on local774e5639b1ecf6e290d70299dcd1b3875eb57695 finished
+2026-10-07T10:37:06UTC: exit1,5111 cases,5109 passed,2 failures,0 errors/skips.
+Lint/type/format pass334 files; controller2490.6105061s, JUnit2465.643s,
+all watched files/HEAD/package/status unchanged. JUnit SHA
+e7fc704b440ed48a5b9c1c8f07272847fcb3a2193dea3204c20835d905e0a402.
+Failures: test_unreviewed_render_is_retained_privately_for_review (unsigned QC
+was incorrectly part of pixel identity), and current-source VEX qualification.
+Raw render-identity-candidate-20261007/gate/terminal.json. All exact owned gate
+children exited before the managed session was closed. T1 remains WIP; next
+bounded T2 repair must resolve the real cache regression without changing the
+existing assertion or granting unsigned publication. VEX is not auto-rebound.
