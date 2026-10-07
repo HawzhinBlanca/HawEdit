@@ -15060,3 +15060,12 @@ download verification and runtime tests. Current VEX/CI and full protected worke
 adoption remain prerequisites, not facts inferred from unit tests. See
 specs/diarizer-checkpoint-consumer. No task is promoted by this ADR.
 
+2026-10-08 same-unit integration repair: the full f083a896 gate exposed stale
+imported exception identities after legitimate hawedit.models reloads. Bind the
+existing access context and its exception classes through the live models module,
+not copied class objects. Preserve exact byte/lock/output/refusal policy and all
+existing reload tests. The new independent subprocess regression failed before
+production repair; all139 whole model/adapter cases then pass on the recorded
+native host. Whole gate/current CI remain required. This restores the existing
+consumer contract; it adds no dependency, model permission or security disposition.
+

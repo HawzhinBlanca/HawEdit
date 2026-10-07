@@ -172,6 +172,35 @@ def test_diarizer_rejects_unverified_explicit_checkpoint_before_loading(
     assert calls == []
 
 
+def test_diarizer_refusal_survives_model_module_reload(tmp_path: Path) -> None:
+    audio = _audio(tmp_path)
+    probe = """
+import importlib, sys
+from pathlib import Path
+import hawedit.models as models
+from hawedit.ingest import DiarizationUnavailable
+from hawedit.pyannote_adapter import PyannoteDiarizer
+original = models.CheckpointIntegrityError
+importlib.reload(models)
+assert models.CheckpointIntegrityError is not original
+try:
+    PyannoteDiarizer(model_dir=Path(sys.argv[2])).diarize(Path(sys.argv[1]))
+except DiarizationUnavailable as exc:
+    assert 'BLOCKED.md #4' in str(exc)
+else:
+    raise AssertionError('Missing checkpoint was not refused')
+assert 'pyannote.audio' not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", probe, str(audio), str(tmp_path / "missing-checkpoint")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("explicit", [True, False])
 def test_diarizer_holds_real_checkpoint_lock_through_all_consumer_stages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool

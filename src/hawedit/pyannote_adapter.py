@@ -13,15 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import hawedit.models as model_contract
 from hawedit.diarization import Segment
 from hawedit.diarization_acceptance import COMMUNITY_MODEL_ID, COMMUNITY_REVISION
 from hawedit.ingest import DiarizationInvalidOutput, DiarizationUnavailable, Diarizer
-from hawedit.models import (
-    CheckpointIntegrityError,
-    RevisionNotPinned,
-    SourceNotConfigured,
-    verified_checkpoint_access,
-)
 
 __all__ = [
     "COMMUNITY_MODEL_ID",
@@ -100,7 +95,9 @@ class PyannoteDiarizer(Diarizer):
             )
 
         try:
-            with verified_checkpoint_access(self.model_id, self.model_dir) as resolved_dir:
+            with model_contract.verified_checkpoint_access(
+                self.model_id, self.model_dir
+            ) as resolved_dir:
                 try:
                     import importlib
 
@@ -130,7 +127,12 @@ class PyannoteDiarizer(Diarizer):
                         "is not a fallback"
                     )
                 return convert_annotation_to_segments(exclusive)
-        except (CheckpointIntegrityError, RevisionNotPinned, SourceNotConfigured, OSError) as exc:
+        except (
+            model_contract.CheckpointIntegrityError,
+            model_contract.RevisionNotPinned,
+            model_contract.SourceNotConfigured,
+            OSError,
+        ) as exc:
             raise DiarizationUnavailable(
                 f"pyannote model {self.model_id!r} is not available (BLOCKED.md #4): {exc}"
             ) from exc

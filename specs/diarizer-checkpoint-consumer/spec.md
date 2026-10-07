@@ -20,3 +20,8 @@
   name hawedit[diarization]; exclusive-output and attachment invariants SHALL
   remain unchanged. Tests: test_missing_pyannote_is_reported_as_a_missing_extra,
   existing test_pyannote_wire and test_ingest modules.
+- DC7: WHEN the model module is reloaded before a checkpoint refusal, THE adapter
+  SHALL retain its named unavailable refusal before dependency import rather
+  than let a stale exception-class identity escape. Test:
+  test_diarizer_refusal_survives_model_module_reload; existing model/adapter/
+  pipeline refusal regressions SHALL remain unchanged.
