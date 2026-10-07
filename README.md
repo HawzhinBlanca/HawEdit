@@ -653,7 +653,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `windows_security.py` | §7 | Native protected-DACL creation and inspection for Windows checkpoint staging. |
 | `vex.py` | §6/§7 | Identity-bound WSL-ASR vulnerability disposition gate over pip-audit output and runtime receipts. |
 | `repurposing.py` | §8.2 | Per-path Recall@K, temporal IoU, misleading-edit rate, cost per source hour. |
-| `measure.py` | Phase 1 | Independent ground-truth Level B measurement of delivered MP4/ASS media artifacts, extracting ffprobe container properties, EBU R128 loudness dynamics, silencedetect pause intervals, scene cuts, 5 fps OpenCV face tracking statistics, and caption band ink energy / contrast with zero imports of render or pipeline. |
+| `measure.py` | Phase 1; D-290 WIP | Independent MP4/ASS measurement: container, loudness, pauses, scene cuts, face presence and caption ink/contrast, with zero imports of render or pipeline. Explicit-reference optional VMAF checks compatible complete decoded clocks and bounded native observations; missing/invalid evidence remains unknown, never static95. Undefined global PSNR, speaker identity and editorial fidelity are not inferred. |
 | `timeline.py` | Editorial | Schema-compliant OpenTimelineIO (`.otio`) timeline and marker generator for DaVinci Resolve Studio handoff with colored editorial markers for Hook, Payoff, Punch-Ins, and Speaker turns. |
 | `resolve.py` | Editorial | DaVinci Resolve Studio live editorial integration bridge conforming 9:16 vertical timelines, EDL cuts, and editorial markers. |
 | `content_type.py` | Editorial | Content-type profiles (podcast, interview, news, social) driving editorial durations, caption styling, and camera pacing (Task T4.5, ADR D-265). |

@@ -10,12 +10,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from fractions import Fraction
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Final
 
 from hawedit.captions import (
@@ -27,6 +30,7 @@ from hawedit.captions import (
     parse_ass_colour,
     relative_luminance,
 )
+from hawedit.studio_private import PrivateDirectory, StudioStorageError
 
 __all__ = [
     "AudioMeasurement",
@@ -915,36 +919,219 @@ def measure_caption_events_contrast(
     return records
 
 
+def _read_vmaf_json(path: Path, *, limit: int) -> object:
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if not data or len(data) > limit:
+        raise ValueError("native comparison report is empty or oversized")
+
+    def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("native comparison report contains a duplicate key")
+            result[key] = value
+        return result
+
+    def constant(value: str) -> object:
+        raise ValueError("native comparison report contains a nonfinite constant: " + value)
+
+    return json.loads(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+
+
+def _vmaf_observation_score(document: object, expected_frames: int) -> float:
+    if (
+        not isinstance(document, dict)
+        or not isinstance(document.get("version"), str)
+        or not document["version"].strip()
+        or len(document["version"]) > 128
+    ):
+        raise ValueError("native VMAF report must have a versioned object")
+    frames = document.get("frames")
+    if not isinstance(frames, list) or len(frames) != expected_frames or not frames:
+        raise ValueError("native VMAF report does not cover the complete frame sequence")
+
+    def score(value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("native VMAF score must be numeric")
+        result = float(value)
+        if not math.isfinite(result) or not 0 <= result <= 100:
+            raise ValueError("native VMAF score must be finite and within 0..100")
+        return result
+
+    scores: list[float] = []
+    for index, frame in enumerate(frames):
+        if (
+            not isinstance(frame, dict)
+            or type(frame.get("frameNum")) is not int
+            or frame["frameNum"] != index
+            or not isinstance(frame.get("metrics"), dict)
+        ):
+            raise ValueError("native VMAF frame indices or metrics are invalid")
+        scores.append(score(frame["metrics"].get("vmaf")))
+    pooled = document.get("pooled_metrics")
+    if not isinstance(pooled, dict) or not isinstance(pooled.get("vmaf"), dict):
+        raise ValueError("native VMAF report has no pooled observations")
+    mean = score(pooled["vmaf"].get("mean"))
+    for field, expected in (
+        ("mean", math.fsum(scores) / len(scores)),
+        ("min", min(scores)),
+        ("max", max(scores)),
+    ):
+        if not math.isclose(
+            score(pooled["vmaf"].get(field)), expected, rel_tol=0, abs_tol=0.000002
+        ):
+            raise ValueError("native VMAF pooled observations disagree with the frames")
+    return mean
+
+
+def _parse_vmaf_timeline(document: object) -> list[tuple[Fraction, Fraction, int, int, str]]:
+    if not isinstance(document, dict) or not isinstance(document.get("frames"), list):
+        raise ValueError("native comparison timeline must contain decoded frames")
+    result: list[tuple[Fraction, Fraction, int, int, str]] = []
+    origin: Fraction | None = None
+    previous: Fraction | None = None
+    for frame in document["frames"]:
+        if not isinstance(frame, dict):
+            raise ValueError("native comparison frame must be an object")
+        timestamp = frame.get("best_effort_timestamp_time")
+        duration = frame.get("duration_time", frame.get("pkt_duration_time"))
+        width, height, pixel_format = frame.get("width"), frame.get("height"), frame.get("pix_fmt")
+        if (
+            not isinstance(timestamp, str)
+            or not isinstance(duration, str)
+            or type(width) is not int
+            or type(height) is not int
+            or not isinstance(pixel_format, str)
+            or not pixel_format
+        ):
+            raise ValueError("native comparison frame has missing clock or geometry")
+        try:
+            time_, length = Fraction(timestamp), Fraction(duration)
+        except (ValueError, ArithmeticError) as exc:
+            raise ValueError("native comparison frame clocks must be finite numbers") from exc
+        if length <= 0 or width <= 0 or height <= 0 or (previous is not None and time_ <= previous):
+            raise ValueError("native comparison frame clocks or geometry are invalid")
+        if origin is None:
+            origin = time_
+        result.append((time_ - origin, length, width, height, pixel_format))
+        previous = time_
+    if not result:
+        raise ValueError("native comparison timeline has no decoded frames")
+    return result
+
+
+def _vmaf_input_binding(path: Path) -> tuple[int, str]:
+    size = path.stat().st_size
+    if not path.is_file() or not 0 < size <= 32 * 1024**3:
+        raise ValueError("native comparison input must be a bounded nonempty file")
+    digest = hashlib.sha256()
+    remaining = size
+    with path.open("rb") as stream:
+        while remaining:
+            chunk = stream.read(min(65536, remaining))
+            if not chunk:
+                raise ValueError("native comparison input shortened while reading")
+            remaining -= len(chunk)
+            digest.update(chunk)
+        if stream.read(1):
+            raise ValueError("native comparison input grew while reading")
+    return size, digest.hexdigest()
+
+
 def probe_vmaf(
     video_path: Path,
     mezzanine_path: Path,
     ffmpeg: Path,
 ) -> VmafMeasurement | None:
-    """Run VMAF and PSNR comparison against a reference mezzanine."""
-    if not mezzanine_path.is_file():
-        return None
+    """Observe optional VMAF on complete compatible frames; refusal is unknown.
 
-    cmd = [
-        str(ffmpeg),
-        "-nostdin",
-        "-i",
-        str(video_path),
-        "-i",
-        str(mezzanine_path),
-        "-lavfi",
-        "[0:v][1:v]libvmaf=log_fmt=json:psnr=1",
-        "-f",
-        "null",
-        "-",
-    ]
+    Channel PSNR is not the legacy global-average psnr_db, so it stays unknown.
+    These pixel observations are neither editorial fidelity nor publication authority.
+    """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=240.0)
-        vmaf_m = re.search(r'"VMAF score":\s*([\d.]+)', proc.stderr)
-        psnr_m = re.search(r"average:([\d.]+)", proc.stderr)
-        vmaf_score = float(vmaf_m.group(1)) if vmaf_m else 95.0
-        psnr_score = float(psnr_m.group(1)) if psnr_m else None
-        return VmafMeasurement(vmaf_score=round(vmaf_score, 2), psnr_db=psnr_score)
-    except Exception:
+        video, reference, binary = video_path.resolve(), mezzanine_path.resolve(), ffmpeg.resolve()
+        ffprobe = ffprobe_for(binary)
+        bindings = {path: _vmaf_input_binding(path) for path in (video, reference, binary, ffprobe)}
+        with TemporaryDirectory(prefix="hawedit-vmaf-") as temporary:
+            private = PrivateDirectory(Path(temporary) / "observations", exclusive=True)
+            directory = private.path
+            timelines = []
+            for index, media in enumerate((video, reference)):
+                report = directory / f"timeline-{index}.json"
+                with private.open_new_file(report.name) as output:
+                    subprocess.run(
+                        [
+                            str(ffprobe),
+                            "-v",
+                            "error",
+                            "-select_streams",
+                            "v:0",
+                            "-show_entries",
+                            "frame=best_effort_timestamp_time,duration_time,"
+                            "pkt_duration_time,width,height,pix_fmt",
+                            "-of",
+                            "json",
+                            str(media),
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=output,
+                        stderr=subprocess.DEVNULL,
+                        check=True,
+                        timeout=240,
+                    )
+                private.check_file(report.name)
+                timelines.append(_parse_vmaf_timeline(_read_vmaf_json(report, limit=16 * 1024**2)))
+            if timelines[0] != timelines[1]:
+                raise ValueError("decoded reference clocks or geometry are incompatible")
+            with private.open_new_file("observations.json"):
+                pass
+            subprocess.run(
+                [
+                    str(binary),
+                    "-hide_banner",
+                    "-nostdin",
+                    "-xerror",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(video),
+                    "-i",
+                    str(reference),
+                    "-lavfi",
+                    "[0:v]settb=AVTB,setpts=PTS-STARTPTS[main];"
+                    "[1:v]settb=AVTB,setpts=PTS-STARTPTS[ref];"
+                    "[main][ref]libvmaf=log_fmt=json:log_path=observations.json:"
+                    "pool=mean:n_subsample=1:shortest=1:repeatlast=0:eof_action=endall",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                cwd=directory,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=240,
+            )
+            private.check_file("observations.json")
+            mean = _vmaf_observation_score(
+                _read_vmaf_json(directory / "observations.json", limit=64 * 1024**2),
+                len(timelines[0]),
+            )
+            if any(_vmaf_input_binding(path) != before for path, before in bindings.items()):
+                raise ValueError("native comparison inputs changed during observation")
+            private.verify()
+            return VmafMeasurement(vmaf_score=round(mean, 2), psnr_db=None)
+    except (
+        OSError,
+        StudioStorageError,
+        subprocess.SubprocessError,
+        ValueError,
+        TypeError,
+        ArithmeticError,
+        RecursionError,
+    ):
         return None
 
 

@@ -68,6 +68,19 @@ logs, command/runtime/source hashes and process closure determine the actual out
 No result is claimed before that terminal exists. Do not rewrite current VEX policy
 bindings/dates, promote a ledger row or imply same-SHA CI from a local diagnostic.
 
+Closed exact gate at clean ada9621a68a7a2e84645e4c20fcb4760c664da87:
+lint/type/format331 files pass; pytest5033 total,5032 pass/one failure,zero errors/skips,
+JUnit2397.715s/controller2411.568147700047s. Exit1, watched source/controller/all
+tracked files unchanged and Git status clean. Sole failure is
+tests.test_vex::test_checked_in_policy_binds_current_lock_and_assets_and_closes_report:
+old reviewed package81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba
+does not bind current fba26cb5fc2cefac943b15b6ae987eebdb14aa2d950add1d85e7e4d704784c7b.
+Full terminal and copied gate.xml under review-cache-integrity-final-20261007/gate;
+XML69e7713586aaa6389cd0ccc4a7cdd088512ccadf806dd0e0a2b3d1a85b4c6788.
+Owned52668/48376/63744/63724/67620/42960 and descendants absent before session61972
+closure. No policy binding/date rewrite, ledger promotion, paid call, publication,
+required CI or release acceptance follows. M9.64/T1/T2 remain WIP.
+
 The new boundary preserves exact private bytes, checks required member presence,
 typed source/clock and measured byte binding, fully decodes current audio/video,
 independently measures physical claims and fences member changes during inspection.

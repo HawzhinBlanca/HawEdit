@@ -14898,3 +14898,34 @@ still consumes raw configured detached signatures and fresh reconciliation at it
 separate serving boundary. Full gate, qualified current VEX (#24), same-SHA CI,
 protected worker/revision/export and independent/sustained acceptance remain required.
 
+## D-290 - Optional VMAF observes native complete compatible frames
+
+2026-10-07; approved parent repair plan and renewed continue-hard request.
+BLUEPRINT §§2,3 Stage6,4.3,5,8.3; D-263. No new dependency, model policy,
+measurement schema, renderer or publication threshold. Both the current native
+Windows build and exact project-pinned Linux archive reject libvmaf psnr=1;
+independent native JSON gives real observations on103 decoded fixture frames.
+The existing static95 parser fallback is removed, not treated as measured quality.
+
+Read bounded native JSON instead of guessing from stderr. Before comparison,
+require complete compatible decoded per-frame relative clocks/durations/geometry/
+pixel formats, not guessed FPS/frame counts. Normalize both start PTS, disable
+repeat-last/EOF-repeat, use every frame, fail on native decode errors and require
+complete indexed finite0..100 observations with consistent mean/min/max. Bound
+input reads/native children/JSON and recheck all input/tool byte bindings. Reuse
+existing private new-directory/file primitives for scratch reports; never repair
+prior owner permissions or artifacts. Missing/failed/invalid evidence is unknown.
+
+Keep legacy psnr_db unknown: channel/luma PSNR is not the intended global average.
+Proper global PSNR/reference provenance is separate work, not a relabelled metric.
+VMAF is optional only with an explicit mezzanine; normal generation omits one.
+Pixels do not prove Sorani speech accuracy, meaning, readable captions, speaker
+identity, faithful editing or authenticated review. The real test fixture's identical
+pixels yield97.428299 under the recorded providers, not an assumed100.
+
+specs/vmaf-observation records actual Serena callers, test-first native and malformed
+evidence, conservative scope and provenance. First50 tests pass; two later malformed
+cases fail before guards; final53 native/parser tests pass without skips or mocks of
+the code under test. Exact full gate/current qualified VEX (#24)/same-SHA CI remain
+required. No authority, paid call, release or10/10 acceptance follows.
+

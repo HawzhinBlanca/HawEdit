@@ -3,6 +3,12 @@
 Code approval: Wareen, 2026-10-02. The following resources/approvals are separate and not
 implicitly granted by the implementation request. Exhaust reachable engineering first.
 
+Current correction2026-10-07: the table's original #21 licence request is historical.
+Owner-supplied source/champion rights are FINAL/closed in vault canon and are not
+reopened. Remaining #21 work is hash-bound runtime/model provenance, not another
+licence grant. Corpus work requests independent labels/separation and additional
+third-party rights where applicable, not re-clearance of owner-provided recordings.
+
 | Blocker / action | Concrete requested evidence | Acceptance use |
 |---|---|---|
 | #1 Licensed corpus | Rights-cleared human-reference Sorani audio, dialect/condition slices, identity-labelled turns, episode/speaker/media-disjoint development and sealed holdout manifests | §8.1 CER/entities/code-switch/alignment/DER; real media reliability |
