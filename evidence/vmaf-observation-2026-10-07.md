@@ -1,5 +1,19 @@
 # Optional Native VMAF Observation Repair
 
+```yaml
+commit: e8050d74f5a575cd4c074dbdeef207e63eead6c0
+media_sha256: ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15
+host: HawaPC01 / Windows11 build26200 / Threadripper3990X / CPython3.12.10
+command: .venv/Scripts/python.exe -B C:/Users/Wareen/run_hawedit_vmaf_candidate_20261007.py regressions
+```
+
+Committed component check at this SHA: 130 cases, 129 passed, one failed because
+this evidence document lacked the structured provenance header above. XML SHA
+2c155d2cb222106c2ba3f29e7c9da4c78494bffbade99c77330e2e43c02e3fc4;
+JUnit36.474s/controller38.83168469998054s. Source/controller unchanged, clean
+checkout; owned native70228/70964 absent. This header correction does not alter
+the measurement implementation or weaken the evidence validation assertion.
+
 2026-10-07, HawaPC01/Windows11 build26200/Threadripper3990X64physical128logical,
 CPython3.12.10, pytest9.1.1, ruff0.9.6, mypy1.15.0, DBOS2.29.0.
 Working-source baseline HEADada9621a68a7a2e84645e4c20fcb4760c664da87;
