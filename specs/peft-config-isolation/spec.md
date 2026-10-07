@@ -10,8 +10,10 @@
    Test: test_champion_config_failure_does_not_change_shared_constructor.
 3. WHEN the pinned real champion is loaded, THE backend SHALL preserve the saved
    LoRA parameters at the existing dtype conversion and decode the same real
-   development audio without changing model policy. Evidence: source-current
-   real tensor/development check, separate from accuracy and holdout acceptance.
+   development audio without changing model policy.
+   Test: test_champion_consumers_receive_held_assets (assembly arguments);
+   additionally require the source-current real tensor/development check,
+   separate from accuracy and holdout acceptance.
 
 BLUEPRINT sections 4.1/7; D-181, D-285, D-286. No human fidelity, speed,
 publication or qualified security approval is implied by loader correctness.
