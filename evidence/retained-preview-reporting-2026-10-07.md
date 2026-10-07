@@ -69,3 +69,14 @@ Current-package WSL ASR readiness receipt is missing, canonical diarization
 weights are absent, and that child environment reports no Gemini credentials.
 Retained older receipts must not be relabelled for changed code. Current-source
 VEX human live-runtime qualification (#24) also remains outstanding.
+
+Exact full frozen gate finished2026-10-07T11:36:46UTC on clean local
+d9428978bde82c26cb184bb46d00d21a21844765:5114 cases,5113 passed,1 failure,
+0 errors/skips; exit1. Lint/type/format334 files pass. The original unchanged
+pipeline private-reuse regression now passes. Remaining failure is
+test_checked_in_policy_binds_current_lock_and_assets_and_closes_report: historical
+VEX source81f6f606... differs from current40b302a5...; no automatic re-review.
+All watched source/HEAD/package/status unchanged; controller2517.5844858s,
+JUnit2501.979s; XML5ea9de7342522ed8a571865b071c19f087e81e273ff8d5290ff5e201e53bbd26.
+Raw retained-reporting-candidate-20261007/gate/terminal.json. Exact owned children
+exited before session closure. No ledger promotion, same-SHA CI or acceptance.

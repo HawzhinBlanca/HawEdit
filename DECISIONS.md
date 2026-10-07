@@ -14957,3 +14957,18 @@ stored editing metadata and precise plan output duration, never a reconstructed
 pre-trim record or today's substituted render provenance. No sidecars, canonical
 ASR, signature namespace or prior bytes are rewritten; no approval is inferred.
 
+## D-292 - Resource preflight owns only its exclusive temporary probe
+
+2026-10-07; approved recovery repair. BLUEPRINT sections2,7.5,8.3; VE-14.
+Actual fixed-name write/unlink destroys pre-existing regular/hardlinked evidence,
+and cleanup at an existing directory masks the primary write failure. A generic
+resource check is not permission to overwrite an arbitrary work-directory member.
+
+Use standard-library TemporaryFile with exclusive allocation and handle cleanup,
+unbuffered actual byte write/read plus fsync. Validate non-negative integer
+budgets before touching storage; wrap genuine OSError with its original cause.
+Existing evidence is never deleted by name. No dependency, signed authority,
+protected-path policy, model or pipeline/worker adoption change. This repair
+does not certify the legacy general cleanup/publication helpers or end-to-end
+durable recovery. Those and current qualified VEX, exact gate and CI remain required.
+

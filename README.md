@@ -669,7 +669,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `render_critic.py` | Visual Editor | Post-render sequence critique inspecting temporal output and source context, reporting grounded defects, and refusing unsupported all-clear claims. |
 | `visual_repair.py` | Visual Editor | Bounded iterative defect repair enforcing stop rules (non-improvement, oscillation, budgets) without changing speech text or self-approving. |
 | `episode_package.py` | Visual Editor | Multi-clip episode packaging sharing preprocessing, filtering semantic duplicates, and reporting truthful per-clip states without forcing filler outputs. |
-| `workflow_recovery.py` | Visual Editor | Workflow recovery preserving verified evidence across crashes, cleaning scratch resources, reconciling billed calls, and publishing packages idempotently. |
+| `workflow_recovery.py` | Visual Editor / recovery WIP | Recovery/checkpoint, billing reconciliation and legacy package helpers. D-292 resource preflight validates capacity, uses an exclusively owned synchronized temporary probe, and preserves pre-existing evidence. Generic cleanup/publication helpers are not protected-worker authority; complete adoption and acceptance remain separate. |
 | `visual_scorecard.py` | Visual Editor | Descriptive proposal/refusal accounting and contamination checks; current bounds are diagnostic, not preregistered episode/reviewer inference. Supplied metrics or sign-off names cannot authorize release, superiority or 10/10. `tests/test_acceptance_authority.py` covers the authority boundary. |
 
 
