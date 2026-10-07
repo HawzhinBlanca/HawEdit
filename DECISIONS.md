@@ -15020,3 +15020,23 @@ caller modules, actual hostile loader checks, current snapshot compatibility,
 exact gate and same-SHA CI remain required. Evidence and WIP stay distinct from
 release/security/editorial acceptance.
 
+## D-295 - Preserve initial studio attempts in a distinct private journal
+
+2026-10-07. Approved parent studio phase2/T3, BLUEPRINT sections2-5,
+D-274/D-276/D-288. The immutable submission outbox and pinned DBOS journal
+cannot alone distinguish producer invocations or reconcile their external effects.
+Add a distinct colocated private SQLite attempt journal using existing private
+storage controls. Bind initial attempt1 to the current actual submission's source,
+request/configuration and execution binding; persist contiguous run-scoped events
+and their cursor in one synchronous-FULL transaction. Bound record, stream,
+database/sidecar, schema and inspection budgets; refuse damaged evidence visibly.
+
+Retained attempts block automatic relaunch. A running record after process exit
+is uncertain, not proof that a WSL child stopped or a billed request never happened.
+No automatic retry/cleanup/reconciliation is introduced. Terminal outcomes are
+private observations, never completed publication. Authenticated review and exact
+reconciliation remain separate. The protected worker must adopt this journal with
+genuine host/runtime/model/owner/billing/process controls before web enablement.
+No new runtime dependency or change to existing journal schemas, canonical ASR,
+CLI or source rights. See specs/studio-attempt-journal; local/CI gates remain required.
+
