@@ -125,6 +125,19 @@ def test_verified_adapter_cleanup_on_consumer_failure(tmp_path: Path) -> None:
 def test_champion_consumers_receive_held_assets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _exercise_champion_consumers(tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize("failure_stage", ["config", "peft", "pipeline"])
+def test_champion_config_failure_does_not_change_shared_constructor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str
+) -> None:
+    _exercise_champion_consumers(tmp_path, monkeypatch, failure_stage=failure_stage)
+
+
+def _exercise_champion_consumers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, failure_stage: str | None = None
+) -> None:
     """Exercise the actual adapter assembly against external API doubles, not inference."""
     root = _bundle(tmp_path / "held-bundle")
     checkpoint = "file:///held/omniASR-LLM-7B-v2.pt"
@@ -163,12 +176,26 @@ def test_champion_consumers_receive_held_assets(
         return base
 
     class LoraConfig:
+        def __init__(self) -> None:
+            self.mapping: dict[type, type] = {}
+            self.__post_init__()
+
         def __post_init__(self) -> None:
             events.append("lora-config")
 
+        @classmethod
+        def from_pretrained(cls, path: str) -> LoraConfig:
+            assert path == str(root), "config must use the held bundle"
+            if failure_stage == "config":
+                raise ValueError("config sentinel")
+            return cls()
+
         def _register_custom_module(self, mapping: dict[type, type]) -> None:
             assert mapping == {FairseqLinear: LoraLinear}
+            self.mapping.update(mapping)
             events.append("linear-registration")
+
+    original_post_init = LoraConfig.__post_init__
 
     class FairseqLinear:
         input_dim = 8
@@ -181,14 +208,15 @@ def test_champion_consumers_receive_held_assets(
 
     class PeftModel:
         @staticmethod
-        def from_pretrained(model: object, path: str) -> object:
+        def from_pretrained(model: object, path: str, *, config: LoraConfig) -> object:
             assert model is base
             assert path == str(root)
-            cfg = LoraConfig()
-            cfg.__post_init__()
+            assert config.mapping == {FairseqLinear: LoraLinear}
             assert FairseqLinear().in_features == 8  # type: ignore[attr-defined]
             assert FairseqLinear().out_features == 16  # type: ignore[attr-defined]
             events.append("peft")
+            if failure_stage == "peft":
+                raise ValueError("peft sentinel")
             return SimpleNamespace(base_model=SimpleNamespace(model=adapted_model))
 
     def pipeline(**kwargs: object) -> object:
@@ -197,6 +225,8 @@ def test_champion_consumers_receive_held_assets(
         assert kwargs["device"] == "cuda:0"
         assert kwargs["dtype"] == "bf16"
         events.append("pipeline")
+        if failure_stage == "pipeline":
+            raise ValueError("pipeline sentinel")
         return kwargs
 
     modules = {
@@ -220,7 +250,22 @@ def test_champion_consumers_receive_held_assets(
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
-    result = asr.OmniAsrBackend()._load_adapted_llm(root, checkpoint_uri=checkpoint)
-    assert result
-    assert events == ["tokenizer", "base", "lora-config", "linear-registration", "peft", "pipeline"]
+    try:
+        if failure_stage:
+            with pytest.raises(ValueError, match=f"{failure_stage} sentinel"):
+                asr.OmniAsrBackend()._load_adapted_llm(root, checkpoint_uri=checkpoint)
+        else:
+            result = asr.OmniAsrBackend()._load_adapted_llm(root, checkpoint_uri=checkpoint)
+            assert result
+            assert events == [
+                "tokenizer",
+                "base",
+                "lora-config",
+                "linear-registration",
+                "peft",
+                "pipeline",
+            ]
+    finally:
+        assert LoraConfig.__post_init__ is original_post_init
+        assert LoraConfig().mapping == {}, "a later unrelated configuration must stay untouched"
     assert config.llama_config.vocab_size == 1, "trainer config registry must stay unchanged"

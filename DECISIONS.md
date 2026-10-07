@@ -14826,3 +14826,24 @@ must accompany measurements; owner training is not stopped for isolation. See
 specs/asr-model-lifecycle. Qualified VEX (#24), same-SHA CI and native editorial
 acceptance remain separate; no completed ledger or 10/10 verdict follows.
 
+## D-287 - Scope Fairseq2 PEFT registration to the adapter configuration
+
+2026-10-07; approved execution-repair scope. BLUEPRINT sections 4.1 and 7;
+D-181 trainer recipe, D-285 held inputs and D-286 resource lifecycle remain.
+The champion assembler replaced LoraConfig.__post_init__ permanently. An actual
+consumer-composition counterexample shows later unrelated config construction
+inherits the wrapper. Repeated wrapper growth is a static risk, not a measured race.
+
+Load the same JSON through LoraConfig.from_pretrained from the held alias bundle,
+register the same Fairseq2 Linear / LoRA Linear mapping on that instance, and
+pass it explicitly to PeftModel.from_pretrained. Pinned PEFT 0.19.1 supports this
+documented recipe (https://huggingface.co/docs/peft/developer_guides/custom_models).
+Keep the separate Linear feature compatibility properties and all canonical
+model/vocabulary/dtype/device/decoder behavior. No dependency or model change.
+
+Tests exercise actual private assembly through external API consumers, including
+success, config failure, PEFT failure and pipeline failure. Those tests are not
+real weight or accuracy evidence; require source-current saved-tensor and decoded
+development-audio checks, exact full gate, qualified VEX and same-SHA CI. See
+specs/peft-config-isolation. No ledger promotion or publication authorization.
+

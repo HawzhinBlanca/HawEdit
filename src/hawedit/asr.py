@@ -742,13 +742,6 @@ class OmniAsrBackend:
             )
         Fairseq2Linear.in_features = property(lambda self: self.input_dim)
         Fairseq2Linear.out_features = property(lambda self: self.output_dim)
-        original_post_init = LoraConfig.__post_init__
-
-        def register_fairseq2_linear(config: Any) -> None:
-            original_post_init(config)
-            config._register_custom_module({Fairseq2Linear: LoraLinear})
-
-        LoraConfig.__post_init__ = register_fairseq2_linear
 
         # Direct cards bypass existing metadata/environment providers. Keep derived names free
         # of the canonical trailing @, which previously produced a self-referencing tokenizer.
@@ -780,7 +773,9 @@ class OmniAsrBackend:
 
         device = torch.device(self.llm_device)
         base = load_model(card, device=device, dtype=torch.bfloat16, config=config)
-        adapted = PeftModel.from_pretrained(base, str(adapter_dir))
+        adapter_config = LoraConfig.from_pretrained(str(adapter_dir))
+        adapter_config._register_custom_module({Fairseq2Linear: LoraLinear})
+        adapted = PeftModel.from_pretrained(base, str(adapter_dir), config=adapter_config)
         return ASRInferencePipeline(
             model_card=None,
             model=adapted.base_model.model,
