@@ -10,6 +10,11 @@ upstream sdist-only projects.
 The hashes bind downloaded wheels/sdists and the receipt binds the complete installed
 name/version set. They do not make a mutable venv immutable, attest locally compiled bytes,
 or bind the WSL compiler, system headers, uv executable, or Python patch-level installer.
+
+D-293, 2026-10-07: replace only urllib3 and Werkzeug with verified upstream
+security-patch wheels (2.8.0 and 3.1.9). All other resolved requirements retain
+their previous bytes. This targeted amendment is not a new full resolve or a
+qualified security approval; original and candidate generations remain separate.
 """
 
 from __future__ import annotations
@@ -295,12 +300,12 @@ typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
 typing-inspection==0.4.2 \
     --hash=sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7
-urllib3==2.7.0 \
-    --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
+urllib3==2.8.0 \
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
 uvicorn==0.52.1 \
     --hash=sha256:e4403f9d93188cf9d1088e9f40e3acd12630e2df8675316704379a7fc20fff6a
-werkzeug==3.1.8 \
-    --hash=sha256:63a77fb8892bf28ebc3178683445222aa500e48ebad5ec77b0ad80f8726b1f50
+werkzeug==3.1.9 \
+    --hash=sha256:6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab
 xxhash==3.8.1 \
     --hash=sha256:82c0cedd280eab2e8291270e6c04894dbc096f8159a39dcf1807429f026ca3cc
 zipp==4.1.0 \

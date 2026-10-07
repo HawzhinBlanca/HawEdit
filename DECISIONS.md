@@ -14972,3 +14972,24 @@ protected-path policy, model or pipeline/worker adoption change. This repair
 does not certify the legacy general cleanup/publication helpers or end-to-end
 durable recovery. Those and current qualified VEX, exact gate and CI remain required.
 
+## D-293 - Isolate verified HTTP utility security patches from model migration
+
+2026-10-07; owner "do all" approves the proposed isolated runtime migration.
+BLUEPRINT sections2,3,6,7,8.1; blocker#24 remains open. The current locked live
+scan reported seven findings, expired review and source drift. Successful runtime
+provisioning is not a qualified risk disposition or permission to publish.
+
+Patch the WSL urllib3 pin to2.8.0 (MIT) and Werkzeug to3.1.9 (BSD-3-Clause),
+using independently downloaded upstream wheels whose actual SHA-256 matches
+PyPI release metadata. Retain every other requirement byte. Their maintainer
+advisories identify these patched releases; no new license family or model
+policy is selected. Existing environment identity generates a distinct candidate;
+official provisioning uses an explicit isolated root and preserves the old one.
+
+The Qwen validator's exact Transformers/Accelerate constraints make that upgrade
+a separate measured compatibility decision, not an automatic version jump or
+quiet validator removal. Host utility locks also require truthful targeted
+regeneration. Keep all these gaps visible; do not rebind the old VEX source,
+lock hashes, expiry or reviewer decisions. Exact gate, actual neural comparisons,
+qualified review, rollback and same-SHA CI remain required before admission.
+

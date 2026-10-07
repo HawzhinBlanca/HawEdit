@@ -552,7 +552,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `asr_resume.py` | §3 Stage 1, §6 | Bound private/fsynced per-operation ASR recovery; separate draft, validator and alignment records, no completion or publication inference (D-284). |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |
-| `wsl_asr_locks.py` | §3 Stage 1, §6 | Hash-locked PyPI inputs and exact installed name/version identity for the isolated Linux/Python 3.12 ASR generation; KenLM/Sox remain explicitly disclosed native source builds, not binary reproducibility proof. |
+| `wsl_asr_locks.py` | §3 Stage 1, §6 | Hash-locked PyPI inputs and exact installed name/version identity for the isolated Linux/Python 3.12 ASR generation; D-293 isolates verified urllib3/Werkzeug security-patch wheels without changing model pins. Qualified security and neural compatibility remain separate; KenLM/Sox are disclosed native source builds, not binary reproducibility proof. |
 | `wsl_audit_locks.py` | §6, §7 | Complete wheel hashes and installed identity for the isolated pip-audit 2.10.1 scanner used by the WSL ASR security gate. |
 | `wsl_vex_gate.py` | §6, §7 | Live, source-bound WSL receipt and asset verification, hash-locked OSV scan, VEX evaluation, and write-once evidence publication. |
 | `omni_assets.py` | §3 Stage 1, §7 | Exact OmniASR model/tokenizer/card identities, atomic verified provisioning, frozen card sources and pre-load byte enforcement. |
