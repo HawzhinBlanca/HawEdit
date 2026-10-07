@@ -96,3 +96,41 @@ this new source. No VEX binding/date change or task/feature promotion.
 Global PSNR/reference provenance, full render-input cache equivalence, protected
 worker/revisions/export, qualified current VEX/CI, native editorial/development/
 holdout studies and30-day sustained sign-off remain. VMAF does not prove those.
+
+## Final Committed Local Verification
+
+Header-only correction commit2c2a4ca8d950a5d11c64153280de40851cad9ed7 retains
+the same c554be788fe7506a7a5a5c0331e18a87a7121bae1af0889bf1786a9e4b197b24
+product bytes. Complete committed three-module check130passed/zero failures,
+errors or skips; JUnit39.968s/controller42.70087380000041s, XML
+428921ebe71b1014f9cb74b582f8abdf1701e4475f02b5082df2502b5927d7da.
+Raw root: vmaf-observation-header-candidate-20261007/regressions. Watched source/
+controller unchanged, clean; native56420/48044 absent before session closure.
+
+Exact command bash scripts/verify.sh then ran on the same clean committed2c2a4ca:
+lint/type/format332files pass;5086tests,5085pass/1failure/zeroerrors/skips,
+one existing pydantic_graph event-loop deprecation warning. JUnit2388.445s,
+console2388.93s/controller2463.0863664000026s,11:29:04-12:10:07 Baghdad.
+XML16f26bcae15dc1dadef6a199000c38454ff795a3cec0794f1e851aa2ed06642f.
+Raw root: vmaf-observation-header-candidate-20261007/gate, immutable terminal,
+logs and copied JUnit. All tracked source/test/controller hashes, package,HEAD
+and clean status unchanged. Native29572/20620 absent, no matching owned native
+Python/Bash/FFmpeg/pytest process remained before managed session88900 closure.
+
+Only failure: test_checked_in_policy_binds_current_lock_and_assets_and_closes_report,
+tests/test_vex.py:131. Checked-in qualified policy binds source81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba,
+not currentc554be788fe7506a7a5a5c0331e18a87a7121bae1af0889bf1786a9e4b197b24.
+No policy hash/date/assertion rewrite. Gate exit1; no grading/ledger/CI acceptance.
+
+Current committed rerun/gate records explicitly report Windows11build26300,
+CPython3.12.10/pytest9.1.1/ruff0.9.6/mypy1.15.0/DBOS2.29.0,HawaPC01.
+Read-only Win32_OperatingSystem/Processor confirm10.0.26300,Threadripper3990X,
+64physical/128logical. Earlier final-working-source/e8050d7 component records
+actually report26200; those earlier observations remain historical, not metadata
+to copy onto this run. None of these durations is a product throughput benchmark.
+
+Fresh current-studio screenshot audit on2c2a4ca, real isolated ZAR byte upload,
+reload recovery, actual read-only history, invalid-file refusal, bounded keyboard/
+responsive samples and explicit unavailable generation/revision/export are in:
+C:/Users/Wareen/AppData/Local/HawEditEvidence/design-audit-current-20261007/report.md.
+No complete studio/AA/native-editor/verified candidate/10/10 or publication verdict.
