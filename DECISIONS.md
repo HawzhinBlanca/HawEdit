@@ -14872,3 +14872,29 @@ authenticated review and reconciliation. Tests use real decoded fixture uploads,
 native private storage and actual parser/builder/outbox, not inference or paid
 providers. Qualified VEX (#24), exact full gate and same-SHA CI remain required.
 
+## D-289 - Independently inspect retained private review media
+
+2026-10-07; owner-approved repair plan and renewed continue-hard request.
+BLUEPRINT §§2, 3 Stage 6, 4.3, 5 and 8.3; D-263/D-277. No new dependency or
+packet/signature/checkpoint schema. The native single-clip recovery shortcut
+accepted replaced MP4 bytes and invented dimensions/duration when measured.json
+was absent. Raw decoded-fixture counterexample and test-first failures are retained
+in specs/review-cache-integrity and external immutable evidence.
+
+Reopen all seven required private packet members through existing bounded native
+storage snapshots. Require exact typed JSON, clip/plan candidate/source/clock
+binding and measured MP4 hash/size. Reuse existing bounded full audio/video decode,
+independent child measurement and physical-claim comparison, ignoring only path
+and observation time. Require unchanged member snapshots through inspection.
+Return current physical observations, never fallback dimensions/duration. Missing,
+malformed, stale, nonprivate or linked evidence visibly refuses recovery without
+overwriting prior artifacts. Valid unchanged candidates remain byte-identical and
+await human review; they are not completed or approved deliverables.
+
+This integrity unit does not establish full render-input equivalence or authenticate
+sidecars/reviewers. Request-inferred encoder/reframe/brand metadata and effective
+hook/music/B-roll/tracking equivalence remain explicit subsequent work. Publication
+still consumes raw configured detached signatures and fresh reconciliation at its
+separate serving boundary. Full gate, qualified current VEX (#24), same-SHA CI,
+protected worker/revision/export and independent/sustained acceptance remain required.
+

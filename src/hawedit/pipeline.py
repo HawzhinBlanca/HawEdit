@@ -167,7 +167,7 @@ from hawedit.judge import (
     tournament_score,
 )
 from hawedit.keyframes import KeyframeError, extract_judge_frames
-from hawedit.measure import ClipMeasurement, measure_clip
+from hawedit.measure import measure_clip
 from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
 from hawedit.qwen_visual import EmbedderUnavailable
@@ -198,6 +198,7 @@ from hawedit.render import (
     shot_spans,
     vertical_crop_size,
 )
+from hawedit.review_candidate_cache import CandidateCacheError, inspect_existing_review_candidate
 from hawedit.screener import CandidateScreener, ScreenerTransport, get_screener
 from hawedit.sentences import (
     Sentence,
@@ -4004,34 +4005,53 @@ def run_pipeline(
     # operation after review; generation can only freeze private candidates (D-277).
     review_candidate_dir = work_dir / "review" / clip.clip_id
     is_review_render = True
-    if is_review_render and review_candidate_dir.is_dir():
+    if is_review_render and os.path.lexists(review_candidate_dir):
         cand_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
-        if cand_mp4.is_file():
-            log.finished("render", "retained existing review candidate")
-            log.finished("delivery", "awaiting human review")
-            measured_json = review_candidate_dir / f"{clip.clip_id}.measured.json"
-            cand_meas = (
-                ClipMeasurement.from_json(measured_json.read_text(encoding="utf-8"))
-                if measured_json.is_file()
-                else None
+        try:
+            _assert_source_unchanged(
+                source, ingested.source_sha256, "retained candidate inspection"
             )
+            clip.assert_renderable(for_review=True)
+            cand_meas = inspect_existing_review_candidate(
+                review_candidate_dir, clip=clip, ffmpeg=ffmpeg
+            )
+            _assert_source_unchanged(
+                source, ingested.source_sha256, "retained candidate completion"
+            )
+        except (CandidateCacheError, ValueError, OSError) as exc:
+            reason = (
+                "existing private candidate refused: "
+                + _safe_exception_text(str(exc), budget=768)
+                + "; evidence preserved; use a new revision or work directory"
+            )
+            log.finished("render", reason)
+            log.started("delivery")
+            log.finished("delivery", reason)
+            return replace(
+                run,
+                render=StageSkipped(
+                    stage="render", reason=reason, blocked_by=("private candidate integrity",)
+                ),
+                delivery=StageSkipped(
+                    stage="delivery", reason=reason, blocked_by=("private candidate integrity",)
+                ),
+                billed_calls=tuple(billed_calls),
+            )
+        else:
+            log.finished("render", "rechecked existing private review candidate")
+            log.started("delivery")
+            log.finished("delivery", "awaiting human review")
             rendered = RenderResult(
                 clip_id=clip.clip_id,
                 path=str(cand_mp4),
-                width=cand_meas.video.width if cand_meas else 1080,
-                height=cand_meas.video.height if cand_meas else 1920,
+                width=cand_meas.video.width,
+                height=cand_meas.video.height,
                 requested_duration_ms=clip.out_ms - clip.in_ms,
-                measured_duration_ms=(
-                    cand_meas.video.duration_ms if cand_meas else (clip.out_ms - clip.in_ms)
-                ),
+                measured_duration_ms=cand_meas.video.duration_ms,
                 reframe=reframe_mode or Reframe.STATIC_CENTRE,
                 encoder=Encoder.X264,
                 captions_burned_in=True,
-                ffmpeg_version=(
-                    cand_meas.tool_metadata.get("ffmpeg_version", "unknown")
-                    if cand_meas
-                    else "unknown"
-                ),
+                ffmpeg_version=cand_meas.tool_metadata["ffmpeg_version"],
                 brand_kit=brand_kit,
             )
             return replace(
