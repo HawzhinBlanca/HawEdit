@@ -21,6 +21,7 @@ from hawedit.pyannote_adapter import (
     PyannoteDiarizer,
     convert_annotation_to_segments,
 )
+from test_pyannote_checkpoint import provision_checkpoint
 
 
 @dataclass
@@ -125,12 +126,13 @@ def test_a_checkpoint_revision_the_acceptance_kit_did_not_pin_is_refused() -> No
         PyannoteDiarizer(revision="unpinned_revision_123")
 
 
-def test_missing_pyannote_is_reported_as_a_missing_extra(tmp_path: Path) -> None:
+def test_missing_pyannote_is_reported_as_a_missing_extra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC-8: Missing pyannote.audio surfaces as DiarizationUnavailable naming the extra."""
     fake_audio = tmp_path / "test.wav"
     fake_audio.write_bytes(b"RIFFdummy")
-    model_dir = tmp_path / "model_weights"
-    model_dir.mkdir()
+    model_dir = provision_checkpoint(tmp_path, monkeypatch)
 
     diarizer = PyannoteDiarizer(model_dir=model_dir)
 

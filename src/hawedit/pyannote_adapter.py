@@ -16,7 +16,12 @@ from typing import Any
 from hawedit.diarization import Segment
 from hawedit.diarization_acceptance import COMMUNITY_MODEL_ID, COMMUNITY_REVISION
 from hawedit.ingest import DiarizationInvalidOutput, DiarizationUnavailable, Diarizer
-from hawedit.models import ModelNotProvisioned, ModelStore
+from hawedit.models import (
+    CheckpointIntegrityError,
+    RevisionNotPinned,
+    SourceNotConfigured,
+    verified_checkpoint_access,
+)
 
 __all__ = [
     "COMMUNITY_MODEL_ID",
@@ -74,6 +79,8 @@ class PyannoteDiarizer(Diarizer):
     model_dir: Path | None = None
 
     def __post_init__(self) -> None:
+        if self.model_id != COMMUNITY_MODEL_ID:
+            raise ValueError(f"Community-1 model must be {COMMUNITY_MODEL_ID!r}")
         if self.revision != COMMUNITY_REVISION:
             raise ValueError(
                 f"Community-1 run must use pinned revision {COMMUNITY_REVISION}, "
@@ -93,40 +100,40 @@ class PyannoteDiarizer(Diarizer):
             )
 
         try:
-            resolved_dir = self.model_dir or ModelStore().assert_available(self.model_id)
-        except (ModelNotProvisioned, RuntimeError) as exc:
+            with verified_checkpoint_access(self.model_id, self.model_dir) as resolved_dir:
+                try:
+                    import importlib
+
+                    pyannote_audio = importlib.import_module("pyannote.audio")
+                    pipeline_cls = pyannote_audio.Pipeline
+                except (ImportError, AttributeError) as exc:
+                    raise DiarizationUnavailable(
+                        f"pyannote.audio is not installed ({exc}). "
+                        "Install hawedit[diarization] to enable speaker diarization."
+                    ) from exc
+
+                try:
+                    import torch
+
+                    pipeline = pipeline_cls.from_pretrained(resolved_dir)
+                    if self.device != "cpu":
+                        pipeline.to(torch.device(self.device))
+                    output = pipeline(str(audio_path))
+                except Exception as exc:
+                    raise DiarizationUnavailable(f"pyannote diarization failed: {exc}") from exc
+
+                exclusive = getattr(output, "exclusive_speaker_diarization", None)
+                if exclusive is None or not callable(getattr(exclusive, "itertracks", None)):
+                    raise DiarizationInvalidOutput(
+                        "Community-1 requires an exclusive_speaker_diarization Annotation from the "
+                        "pinned pyannote.audio 4.0.7 output; ordinary or legacy output "
+                        "is not a fallback"
+                    )
+                return convert_annotation_to_segments(exclusive)
+        except (CheckpointIntegrityError, RevisionNotPinned, SourceNotConfigured, OSError) as exc:
             raise DiarizationUnavailable(
                 f"pyannote model {self.model_id!r} is not available (BLOCKED.md #4): {exc}"
             ) from exc
-
-        try:
-            import importlib
-
-            pyannote_audio = importlib.import_module("pyannote.audio")
-            pipeline_cls = pyannote_audio.Pipeline
-        except (ImportError, AttributeError) as exc:
-            raise DiarizationUnavailable(
-                f"pyannote.audio is not installed ({exc}). "
-                "Install hawedit[diarization] to enable speaker diarization."
-            ) from exc
-
-        try:
-            import torch
-
-            pipeline = pipeline_cls.from_pretrained(resolved_dir or self.model_id)
-            if self.device != "cpu":
-                pipeline.to(torch.device(self.device))
-            output = pipeline(str(audio_path))
-        except Exception as exc:
-            raise DiarizationUnavailable(f"pyannote diarization failed: {exc}") from exc
-
-        exclusive = getattr(output, "exclusive_speaker_diarization", None)
-        if exclusive is None or not callable(getattr(exclusive, "itertracks", None)):
-            raise DiarizationInvalidOutput(
-                "Community-1 requires an exclusive_speaker_diarization Annotation from the "
-                "pinned pyannote.audio 4.0.7 output; ordinary or legacy output is not a fallback"
-            )
-        return convert_annotation_to_segments(exclusive)
 
 
 def create_diarizer(

@@ -13,6 +13,7 @@ import pytest
 from hawedit.diarization import Segment
 from hawedit.ingest import DiarizationInvalidOutput, IngestResult, attach_diarization
 from hawedit.pyannote_adapter import PyannoteDiarizer, create_diarizer
+from test_pyannote_checkpoint import provision_checkpoint
 
 
 @dataclass(frozen=True)
@@ -58,8 +59,7 @@ def _wire(
         stream.setsampwidth(2)
         stream.setframerate(16000)
         stream.writeframes(b"\0" * (16000 * 5 * 2))
-    checkpoint = tmp_path / "wire-only-checkpoint"
-    checkpoint.mkdir()
+    checkpoint = provision_checkpoint(tmp_path, monkeypatch)
     calls = _Calls()
 
     class _Pipeline:

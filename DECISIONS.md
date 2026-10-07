@@ -15040,3 +15040,23 @@ genuine host/runtime/model/owner/billing/process controls before web enablement.
 No new runtime dependency or change to existing journal schemas, canonical ASR,
 CLI or source rights. See specs/studio-attempt-journal; local/CI gates remain required.
 
+## D-296 - Hold Community-1 checkpoint identity throughout consumption
+
+2026-10-07. Approved studio phase1 and diarization adapter repair; BLUEPRINT
+sections3 Stage0,7,8.1; D-252/D-276/D-294. An explicit model_dir must not bypass
+snapshot verification, and a prior availability check is not a held consumer
+boundary. Bind PyannoteDiarizer to the canonical Community-1 model identity and
+use existing verified_checkpoint_access for explicit and default paths before
+dependency import through load, placement, inference and exclusive conversion.
+Keep named integrity/availability and output refusals, revision, rounding and
+attachment rules. No new dependency or protected checkpoint metadata change.
+
+Actual temporary files and hashes plus independent process OS-lock probes test
+this boundary; inference dependency doubles are not neural, SDK-runtime/egress,
+DER or editorial evidence. The shared lock coordinates HawEdit's publisher, not
+arbitrary administrator mutation. Community-1 provisioning still requires the
+tracked manifest correction under an explicit protected-file exception, real
+download verification and runtime tests. Current VEX/CI and full protected worker
+adoption remain prerequisites, not facts inferred from unit tests. See
+specs/diarizer-checkpoint-consumer. No task is promoted by this ADR.
+
