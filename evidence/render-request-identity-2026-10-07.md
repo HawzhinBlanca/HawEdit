@@ -43,6 +43,9 @@ pytest9.1.1, ruff0.9.6, mypy1.15.0, DBOS2.29.0; Threadripper3990X.
 Fixture is real decoded Kurdish speech, not independent neural/editorial evidence;
 SHA ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15.
 The controller records exact commands/tool versions/source hashes/media hash.
+Native FFmpeg8.1.1-full_build-www.gyan.dev, executable SHA
+09948d4cdd0650da6ff5a87577469f2a218dc2615ae379f8f734d24c49de0f73;
+resolved/probed again after the focused run. Local assets/fonts only.
 
 Windows path-stat creation time differs from handle change time after a write;
 reuse unchanged ingest_cache._open with separate full baselines and bounded,
@@ -54,3 +57,9 @@ Exact full gate on a clean local commit is the next verification. Current VEX
 still qualifies an older source; it is not silently rebound. No ledger promotion,
 same-SHA CI or 10/10 verdict. This request digest is provenance only, not complete
 runtime attestation, human editorial review or publication authority.
+
+Source repair committed locally as 4f6c183 (no push). The subsequent documentation
+check found two failures: the new module was absent from README's module map and
+the PROGRESS ledger. Add truthful module descriptions and a new WIP row; do not
+promote any row or alter the coverage assertions. The full clean-commit gate must
+verify this correction and the test's exported-renderer typing repair.
