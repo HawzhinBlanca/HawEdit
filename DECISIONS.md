@@ -15069,3 +15069,35 @@ production repair; all139 whole model/adapter cases then pass on the recorded
 native host. Whole gate/current CI remain required. This restores the existing
 consumer contract; it adds no dependency, model permission or security disposition.
 
+## D-297 - Lock the existing native producers as one studio profile
+
+2026-10-08. Approved evidence-based studio phase1; BLUEPRINT sections3,6,7,8.1;
+D-252/D-276/D-296. The separately installed gate/GPU/model-fetch graphs do not
+provide the existing six production extras together. Actual pinned uv0.11.26
+resolution exposed NumPy2.2.1 versus pyannote-metrics'2.2.2 minimum. Change only
+native media NumPy to2.2.2, preserving canonical WSL ASR/model pins and the existing
+resolver cutoff. Existing five affected target graphs change only NumPy's exact
+version; base/model-fetch graphs remain byte-identical.
+
+Add the Windows x86-64/CPython3.11/cu130 studio profile for media,gpu,models,
+diarization,agentic,cloud. Regenerate and package its actual133-wheel lock through
+the existing maintainer, bind its bytes to the trusted hash table and validate all
+four CUDA wheel identities. Unmeasured studio host targets refuse. Add the exact
+official download.pytorch.org origin required by TorchCodec; require HTTPS, an
+allowed origin, no URL credentials and standard TLS port before the first request
+and every redirect. Require lowercase hexadecimal SHA-256, not merely64 characters.
+Existing bounded actual-byte hashing remains mandatory when upstream omits a hash.
+
+Actual133 publisher metadata records and10 selected/hash-verified wheel licence
+files were inspected. Pyannoteai SDK0.4's selected wheel contains MIT terms; D-252's
+accepted inert inclusion still does not permit importing or calling the SDK.
+Bundled NumPy/SciPy notices are preserved, not silently classified by keyword.
+This is provenance research, not qualified legal/security approval.
+
+The whole new regression module failed22/24 before production edits and passes24
+afterward. These are contract/refusal tests, not installed GPU, neural, decoder,
+telemetry-egress or diarization-quality proof. Supported isolated installation,
+actual runtime observations, protected model metadata permission, current VEX/CI
+and worker adoption remain required. No spending, signature, publication or
+acceptance authority follows from this ADR. See specs/studio-host-profile.
+

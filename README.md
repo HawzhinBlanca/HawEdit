@@ -367,6 +367,33 @@ VideoChat3-4B still reads at most eight frames on one card while the frozen blue
 64-frame unit. See `evidence/gpu-dependency-lock.md`, `evidence/gpu-stack.md`, and
 `BLOCKED.md` #17.
 
+### Native Studio Dependencies (D-297, WIP)
+
+The combined production dependency profile is Windows x86-64 / CPython 3.11
+only. It includes media, CUDA visual tooling, model fetching, diarization, DBOS
+and cloud transport in one authenticated 133-wheel graph:
+
+```bash
+PY311=/absolute/path/to/cpython-3.11/python.exe
+"$PY311" -m venv .studio
+bash scripts/install-host.sh .studio/Scripts/python.exe studio
+```
+
+Use a short environment path on Windows. A long redirected LocalAppData prefix
+failed on Torch's bundled licence path; the fresh short user prefix installed
+the unchanged graph successfully. Preserve failed environments for diagnosis.
+
+The installer validates the local contract before network access, uses exact
+wheel hashes without source builds, audits installed records and runs the GPU
+probe. Other studio targets refuse. NumPy 2.2.2 satisfies the existing diarization
+dependency floor; canonical WSL ASR pins are unchanged. An installed wheel also
+ships this lock (`python -I -m hawedit.environment --show-lock studio`).
+
+Installation is not a successful studio pipeline run. Checkpoint provisioning,
+decoder availability, process-level telemetry controls, actual no-SDK imports,
+current security review and protected worker adoption remain separate requirements.
+Do not enable generation or infer editorial quality from dependency readiness.
+
 ## Gemini access (§3 Stage 4)
 
 ```bash

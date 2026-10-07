@@ -30,7 +30,7 @@ media = [
     "silero-vad==5.1.2",    # MIT — §7 VAD; ships its own ONNX weights in the wheel
     "onnxruntime==1.20.1",  # MIT — silero-vad's ONNX backend
     "torch==2.13.0",        # BSD-3-Clause — silero-vad's tensor interface
-    "numpy==2.2.1",         # BSD-3-Clause — WAV frames to tensor without torchaudio
+    "numpy==2.2.2",         # BSD-3-Clause — minimum compatible pyannote-metrics patch (D-297)
 ]
 # §3 Stages 2, 3 Path B and 5 — the models that need a GPU. Split from `media` because Stage 0
 # runs on CPU by design (§6) and nothing in §4.1/§4.2/§4.3/§8.1 needs any of this.
@@ -72,8 +72,8 @@ gpu = [
 # by registry.attribution_notices().
 #
 # READ D-252 BEFORE WIDENING THIS. pyannote.audio 4.x hard-depends on `pyannoteai-sdk`, a cloud
-# SDK that uploads audio to dashboard.pyannote.ai and publishes no licence anywhere this project
-# could find. It is inert unless a client is constructed, and nothing here constructs one.
+# SDK that uploads audio to dashboard.pyannote.ai. D-252 accepted inert inclusion; D-297
+# verifies MIT in the selected 0.4.0 wheel. The adapter must never touch that SDK.
 diarization = [
     # PINNED, not a floor. §3 Stage 0 names the 4.x family (BLUEPRINT.md:108) and an open floor
     # would let the diarization runtime move underneath any DER number recorded against it.
@@ -149,6 +149,7 @@ where = ["src"]
     "requirements/host-models-windows-py311.txt",
     "requirements/host-models-windows-py312.txt",
     "requirements/host-gpu-windows-py311.txt",
+    "requirements/host-studio-windows-py311.txt",
 ]
 "share/hawedit/security" = ["security/wsl-asr-vex.json"]
 "share/hawedit/scripts" = ["scripts/fetch-ffmpeg.sh"]

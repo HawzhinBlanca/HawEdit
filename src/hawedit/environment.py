@@ -99,6 +99,7 @@ _PROFILE_EXTRAS: Final = {
     "gate": ("dev", "media", "agentic"),
     "models": ("models",),
     "gpu": ("media", "gpu"),
+    "studio": ("media", "gpu", "models", "diarization", "agentic", "cloud"),
 }
 
 
@@ -285,15 +286,16 @@ def validate_host_lock(
             f"unsupported host lock version {headers['hawedit-lock-version']!r}"
         )
     scope = headers["scope"]
-    expected_options = _GPU_LOCK_OPTIONS if scope == "gpu" else _CPU_LOCK_OPTIONS
+    uses_cuda = scope in {"gpu", "studio"}
+    expected_options = _GPU_LOCK_OPTIONS if uses_cuda else _CPU_LOCK_OPTIONS
     if options != expected_options:
         raise EnvironmentAuditError(
             f"host lock {resolved} has unsafe or incomplete installer options: {sorted(options)}"
         )
     torch_backend = headers.get("torch-backend")
-    if scope == "gpu" and torch_backend != "cu130":
+    if uses_cuda and torch_backend != "cu130":
         raise EnvironmentAuditError("GPU host lock does not declare torch-backend cu130")
-    if scope != "gpu" and torch_backend is not None:
+    if not uses_cuda and torch_backend is not None:
         raise EnvironmentAuditError(f"non-GPU host lock declares torch backend {torch_backend!r}")
     if not requirements:
         raise EnvironmentAuditError(f"host lock {resolved} contains no requirements")
@@ -309,6 +311,13 @@ def validate_host_lock(
             f"host lock targets Python {headers['target-python']}, current interpreter is "
             f"Python {requested_python}"
         )
+    if scope == "studio":
+        if target != "windows" or python_version != (3, 11):
+            raise EnvironmentAuditError("studio profile supports only Windows CPython 3.11")
+        for name in ("torch", "torchaudio", "torchvision", "torchcodec"):
+            wheel = requirements.get(name)
+            if wheel is None or not wheel[0].endswith("+cu130"):
+                raise EnvironmentAuditError(f"studio host lock requires a cu130 wheel for {name}")
     locked_extras = () if headers["extras"] == "-" else tuple(headers["extras"].split(","))
     if locked_extras != tuple(extras):
         raise EnvironmentAuditError(
@@ -725,6 +734,8 @@ def _host_lock_name(profile: str) -> str:
     version = (sys.version_info.major, sys.version_info.minor)
     if version not in {(3, 11), (3, 12)}:
         raise EnvironmentAuditError(f"no installed host lock for Python {version[0]}.{version[1]}")
+    if profile == "studio" and (target != "windows" or version != (3, 11)):
+        raise EnvironmentAuditError("studio profile supports only Windows CPython 3.11")
     return f"host-{profile}-{target}-py{version[0]}{version[1]}.txt"
 
 

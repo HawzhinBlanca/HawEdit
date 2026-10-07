@@ -132,6 +132,7 @@ def _release_source(root: Path) -> Path:
         "host-models-windows-py311.txt",
         "host-models-windows-py312.txt",
         "host-gpu-windows-py311.txt",
+        "host-studio-windows-py311.txt",
     ):
         (project / "requirements" / target).write_text("# fixture lock\n", encoding="utf-8")
     (project / "security").mkdir()
@@ -179,6 +180,7 @@ where = ["src"]
     "requirements/host-models-windows-py311.txt",
     "requirements/host-models-windows-py312.txt",
     "requirements/host-gpu-windows-py311.txt",
+    "requirements/host-studio-windows-py311.txt",
 ]
 "share/hawedit/security" = ["security/wsl-asr-vex.json"]
 "share/hawedit/scripts" = ["scripts/fetch-ffmpeg.sh"]

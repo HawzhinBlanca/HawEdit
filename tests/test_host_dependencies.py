@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from hawedit.environment import dependency_contract_digest, validate_host_lock
 
@@ -65,6 +66,17 @@ def test_all_supported_host_targets_have_valid_semantically_bound_locks() -> Non
         platform_name="windows",
     )
     assert gpu.contract_sha256 == dependency_contract_digest(ROOT, ("media", "gpu"))
+    studio_path = _lock("studio", "windows", "3.11")
+    found.add(studio_path)
+    studio_extras = ("media", "gpu", "models", "diarization", "agentic", "cloud")
+    studio = validate_host_lock(
+        studio_path,
+        project_root=ROOT,
+        extras=studio_extras,
+        python_version=(3, 11),
+        platform_name="windows",
+    )
+    assert studio.contract_sha256 == dependency_contract_digest(ROOT, studio_extras)
     assert found == set(LOCKS.glob("host-*.txt"))
 
 
@@ -82,7 +94,9 @@ def test_each_lock_selects_one_binary_hash_per_exact_package() -> None:
             names.add(match.group(1))
         assert len(requirements) == len(names)
         assert all(
-            "files.pythonhosted.org/" in line or "download-r2.pytorch.org/" in line
+            urlsplit(line.removeprefix("# selected wheel ")).scheme == "https"
+            and urlsplit(line.removeprefix("# selected wheel ")).hostname
+            in {"files.pythonhosted.org", "download-r2.pytorch.org", "download.pytorch.org"}
             for line in selected_wheels
         )
         assert not any(".tar.gz" in line or ".zip" in line for line in selected_wheels)

@@ -64,6 +64,7 @@ _REQUIRED_WHEEL_MEMBERS: Final = (
     "share/hawedit/requirements/host-models-windows-py311.txt",
     "share/hawedit/requirements/host-models-windows-py312.txt",
     "share/hawedit/requirements/host-gpu-windows-py311.txt",
+    "share/hawedit/requirements/host-studio-windows-py311.txt",
     "share/hawedit/security/wsl-asr-vex.json",
     "share/hawedit/scripts/fetch-ffmpeg.sh",
 )

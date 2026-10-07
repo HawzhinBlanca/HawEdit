@@ -6,6 +6,17 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Native Studio Profile (M9.74, WIP)
+
+D-297 / approved phase1 / specs/studio-host-profile. Actual pinned maintainer
+generated14 target locks: eight base/model-fetch locks unchanged, five gate/GPU
+graphs change only NumPy2.2.1 to2.2.2, one new133-wheel Windows3.11/cu130 studio
+graph. Whole new24-case module passes after22 test-first failures; strict types
+and lint pass on HawaPC01/Windows26300/CPython3.12.10. Actual isolated installation,
+runtime/decoder/telemetry observations, full gate/current CI, qualified security,
+protected worker and independent/sustained acceptance remain required. No task
+promotion or claim that generation is enabled.
+
 ## Status legend
 
 | Mark | Meaning |

@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import subprocess
 import sys
 import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, cast
+from typing import Any, Final, cast
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -31,7 +32,9 @@ UV_VERSION: Final = "0.11.26"
 # Four days, not "today", because every target in TARGETS re-resolves against this and a
 # larger jump moves more transitive versions than the change actually requires. D-A26.
 EXCLUDE_NEWER: Final = "2026-08-13T00:00:00Z"
-ALLOWED_WHEEL_HOSTS: Final = frozenset({"files.pythonhosted.org", "download-r2.pytorch.org"})
+ALLOWED_WHEEL_HOSTS: Final = frozenset(
+    {"files.pythonhosted.org", "download-r2.pytorch.org", "download.pytorch.org"}
+)
 HASH_MODULE: Final = ROOT / "src" / "hawedit" / "host_lock_hashes.py"
 MAX_HASH_DOWNLOAD_BYTES: Final = 1024**3
 
@@ -71,6 +74,14 @@ TARGETS: Final = (
         "x86_64-pc-windows-msvc",
         "3.11",
         ("media", "gpu"),
+        "cu130",
+    ),
+    Target(
+        "studio",
+        "windows",
+        "x86_64-pc-windows-msvc",
+        "3.11",
+        ("media", "gpu", "models", "diarization", "agentic", "cloud"),
         "cu130",
     ),
 )
@@ -128,15 +139,41 @@ def _project_version() -> str:
     return cast(str, project["version"])
 
 
+def _validate_wheel_url(url: str) -> None:
+    try:
+        parsed = urlsplit(url)
+        permitted = (
+            parsed.scheme == "https"
+            and parsed.hostname in ALLOWED_WHEEL_HOSTS
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and parsed.password is None
+        )
+    except ValueError as exc:
+        raise SystemExit(f"untrusted wheel URL: {url!r}") from exc
+    if not permitted:
+        raise SystemExit(f"untrusted wheel URL; official HTTPS origin required: {url!r}")
+
+
+class _OfficialWheelRedirects(HTTPRedirectHandler):
+    def redirect_request(
+        self, req: Request, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> Request | None:
+        _validate_wheel_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _download_wheel_sha256(url: str) -> str:
+    _validate_wheel_url(url)
     request = Request(url, headers={"User-Agent": "HawEdit-host-lock/1"})
     digest = hashlib.sha256()
     size = 0
     try:
-        with urlopen(request, timeout=60) as response:
+        with build_opener(_OfficialWheelRedirects()).open(request, timeout=60) as response:
             resolved = urlsplit(response.geturl())
             if resolved.scheme != "https" or resolved.hostname not in ALLOWED_WHEEL_HOSTS:
                 raise SystemExit(f"wheel download redirected to untrusted URL: {response.geturl()}")
+            _validate_wheel_url(response.geturl())
             declared_size = response.headers.get("Content-Length")
             if declared_size is not None and int(declared_size) > MAX_HASH_DOWNLOAD_BYTES:
                 raise SystemExit(f"wheel is too large to hash safely: {url}")
@@ -203,6 +240,7 @@ def _render(target: Target, pylock: Path) -> str:
         hashes = wheel.get("hashes")
         if not isinstance(url, str) or urlsplit(url).scheme != "https":
             raise SystemExit(f"non-HTTPS wheel URL for {name}=={version}: {url!r}")
+        _validate_wheel_url(url)
         if urlsplit(url).hostname not in ALLOWED_WHEEL_HOSTS:
             raise SystemExit(f"untrusted wheel host for {name}=={version}: {url!r}")
         if not urlsplit(url).path.casefold().endswith(".whl"):
@@ -210,14 +248,14 @@ def _render(target: Target, pylock: Path) -> str:
         if not isinstance(hashes, dict) or set(hashes) not in (set(), {"sha256"}):
             raise SystemExit(f"wheel has unsupported hashes for {name}=={version}")
         if not hashes:
-            if urlsplit(url).hostname != "download-r2.pytorch.org":
+            if urlsplit(url).hostname not in {"download-r2.pytorch.org", "download.pytorch.org"}:
                 raise SystemExit(
                     f"non-PyTorch wheel lacks repository SHA-256 for {name}=={version}"
                 )
             digest = _download_wheel_sha256(url)
         else:
             digest = hashes["sha256"]
-        if not isinstance(digest, str) or len(digest) != 64:
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise SystemExit(f"invalid wheel SHA-256 for {name}=={version}")
         lines.extend((f"# selected wheel {url}", f"{name}=={version} --hash=sha256:{digest}"))
     return "\n".join(lines) + "\n"
