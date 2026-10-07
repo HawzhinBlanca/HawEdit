@@ -36,3 +36,21 @@ Qualified current VEX and same-SHA CI remain required; task/PROGRESS stay WIP.
 
 Next protected worker adoption must consume this real journal, not describe it
 as proof of model readiness, signatures, budget settlement or child quiescence.
+
+## Documentation Regression Correction
+
+First exact gate on clean ef067e1dd400155c5ed86cd770e33ca6c858185c passed
+lint/types/format341files but encountered two documentation failures. Stopped
+only the verified owned native pytest leaf PID42204 (no children), from a separate
+non-PTY command, no control characters or console-wide event. Every owned
+descendant/controller was confirmed absent before source edits/session closure.
+Controller exit127, elapsed766.217714300001s, source/HEAD/watch unchanged. No
+fresh JUnit or full-suite result was produced; this is an interrupted RED attempt,
+not a completed full gate or passing count. Raw gate/stdout/terminal are retained
+under studio-attempt-journal-20261007/gate in nativeHawEditEvidence.
+
+Then the entire test_claims.py module reproduced the missing README module-map
+entry and missing explicit PROGRESS evidence-cell module path. Assertions/tests
+are unchanged. Add the truthful WIP row and module-map description, not a ledger
+promotion. A new clean local documentation commit must rerun the exact full gate
+from the beginning. No failing test is excluded and no original record is deleted.
