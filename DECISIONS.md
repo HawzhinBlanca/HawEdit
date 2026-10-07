@@ -14847,3 +14847,28 @@ real weight or accuracy evidence; require source-current saved-tensor and decode
 development-audio checks, exact full gate, qualified VEX and same-SHA CI. See
 specs/peft-config-isolation. No ledger promotion or publication authorization.
 
+## D-288 - Reconstruct ID-only studio inputs before producer adoption
+
+2026-10-07; parent-approved protected-worker scope and renewed continue request.
+BLUEPRINT sections 3, 5, 6, 8; D-276/D-277. No new dependency or schema change.
+The outbox is intentionally a descriptive hash-bound snapshot, not semantic
+execution authority. Never execute its argv verbatim. Reopen actual private
+outbox/upload state, decode only studio option values with the shared parser,
+rebuild through GenerationRequest/prepare_generation and the host producer
+selection, and require exact immutable arguments, source/request digests and
+canonical current configuration. Extra CLI capabilities, duplicate switches,
+malformed option groups, stale configuration and wrong host binding are refused
+before creating a job work directory. Literal option values remain literal.
+
+Return a separate immutable execution-input record with no client token or
+approval claim. A temporary validation token is never persisted/returned and
+does not participate in content identity. Work creation uses SubmissionStore's
+existing owner-private job boundary only after semantic checks.
+
+This is not complete worker/HTTP adoption. A worker still requires current actual
+runtime/model preflight, raw signed execution authority, guarded billing/replay,
+attempt/checkpoint supervision and owner-bound sessions. Publication still needs
+authenticated review and reconciliation. Tests use real decoded fixture uploads,
+native private storage and actual parser/builder/outbox, not inference or paid
+providers. Qualified VEX (#24), exact full gate and same-SHA CI remain required.
+
