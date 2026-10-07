@@ -29,3 +29,17 @@ Each implementation unit runs exact bash scripts/verify.sh. A refused security
 policy remains a gate failure, not something to skip. Rows stay WIP until green
 gate and required same-SHA CI; only update-ledger.sh may flip them. Local commits
 only; no push. No claim of finished studio, publishable reels or 10/10 here.
+
+## Concrete T2 Unit Within Approved Repair Scope
+
+Research shows no verified Accelerate wheel repair and incompatible exact Qwen
+pins. Before a major dependency migration, test-first extend the already-owned
+pre-load config guard with bounded, unambiguous shard-index validation: refuse
+escaping/Windows-special names, links, nonregular/missing members and malformed
+maps; retain valid sibling/nested shards and unsharded checkpoint behavior.
+Keep the existing integrity lock, model pins, checkpoint bytes and canonical ASR.
+Run full caller modules, real tiny-model attacks/valid controls and real installed
+index checks; commit locally, official source snapshot setup and exact full gate.
+Record D-294, visible WIP evidence and every failed run. This is a scoped loading
+mitigation, not a universal library patch or qualified security approval. The
+parent "do all" authorizes engineering repairs; human trust obligations remain.

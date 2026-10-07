@@ -18,3 +18,16 @@ LSP cannot resolve; a bounded text inspection supplements, never replaces, LSP.
 T1 only edits the two runtime requirement entries and truthful lock documentation.
 All model package pins, build locks, canonical assets, startup/receipt/ASR APIs,
 host locks, qualified VEX policy, reviewer trust and HTTP readiness remain intact.
+
+## T2 Narrow Checkpoint Metadata Mitigation
+
+Actual model-security-consumers-map-20261007, clean140d06d before edit:
+assert_transformers_config_safe -> QwenSoraniValidator._load (asr.py),
+load_processor_and_model (qwen_visual.py), official validator contract test in
+test_asr.py and all existing model-config guard cases in test_models.py.
+The returned type and existing failures stay unchanged. New shard helper has
+no prior callers; only this already-mapped guard invokes it, inside the existing
+verified read lock. No producer, integrity verifier, signature or runtime API edit.
+Complete test_models/test_asr/test_qwen_visual caller modules plus new named shard
+regressions, actual tiny-model attack refusal and real index compatibility required.
+No claim of whole-model visual quality, library-wide fix or approved VEX.

@@ -14993,3 +14993,30 @@ regeneration. Keep all these gaps visible; do not rebind the old VEX source,
 lock hashes, expiry or reviewer decisions. Exact gate, actual neural comparisons,
 qualified review, rollback and same-SHA CI remain required before admission.
 
+## D-294 - Contain shard indexes before owned model loading
+
+2026-10-07; approved isolated repair sequence, BLUEPRINT sections2,3,7,8.1;
+blocker#24 remains open. Actual Accelerate1.12.0 loaded owned temporary payloads
+outside a checkpoint through relative/absolute shard index values. The existing
+configuration guard accepted those paths. This does not claim the complete
+pinned integrity boundary admitted an untrusted or altered checkpoint.
+
+Accelerate1.15.0 retains the unchecked join; the complete path/nonregular fix
+proposal was closed without merging. Qwen-ASR0.0.6 still exact-pins the older
+model dependencies. Extend the already-owned pre-load config guard rather than
+claim an unverified wheel upgrade, remove the validator or substitute ASR.
+Bound index reads to1MiB, reject duplicate/nonfinite/malformed JSON and bad maps,
+refuse escaping/Windows-special names, links, hardlinks, missing and nonregular
+members. Validate each unique shard once. Preserve regular sibling/nested shards
+and unsharded checkpoints. The existing verified checkpoint read lock surrounds
+all metadata validation and subsequent loader calls; no signature or trust API
+change, new dependency, model asset/pin change or canonical text correction.
+
+This mitigates HawEdit-owned loading paths, not every invocation of Accelerate
+or arbitrary filesystem mutation by an administrator. No agent VEX disposition
+or expiry/source rebind follows from it. All15 deduplicated live findings need
+current qualified review. Test-first negatives/real filesystem controls, complete
+caller modules, actual hostile loader checks, current snapshot compatibility,
+exact gate and same-SHA CI remain required. Evidence and WIP stay distinct from
+release/security/editorial acceptance.
+

@@ -45,3 +45,45 @@ hand-edit or full unconstrained dependency resolve.
 Scope: BLUEPRINT sections 2, 3, 6, 7 and 8.1; D-064, D-261, D-285 and D-293.
 No corpus license, gated diarizer, paid cloud, reviewer trust or publication
 permission is inferred. Owner/editor/reliability/CI obligations remain.
+
+## T2 Checkpoint Boundary, 2026-10-07
+
+Actual source-unchanged Serena definitions/references on clean140d06d:
+`C:/Users/Wareen/AppData/Local/HawEditEvidence/model-security-consumers-map-20261007/serena-map.json`.
+Mapped QwenSoraniValidator._load, assert_transformers_config_safe,
+verified_checkpoint_access, _WEIGHTS_RUNTIMES and worker_journal. The existing
+config guard runs inside verified checkpoint access before Qwen/visual imports.
+Integrity verification rejects changed/unmanifested bytes, links and nonregular
+members, but config validation does not check shard index target semantics.
+
+A real one-weight CPU model on the isolated candidate's Accelerate1.12.0 loaded
+owned temporary payloads outside its checkpoint via relative/absolute index
+paths after the existing config guard accepted them. Contained control passed.
+This does not claim untrusted models passed the full manifest-integrity boundary.
+Raw probe: Codex MSIX canonical HawEditEvidence/checkpoint-boundary-probe-20261007.
+Original launch failed missing snapshot PYTHONPATH; corrected launch succeeded;
+both recorded, no model assets modified. Current installed TimeLens/VideoChat
+indexes are64836/75369bytes and use sibling regular safetensors shards.
+
+Actual Accelerate1.15.0 source still joins index values unchecked:
+https://raw.githubusercontent.com/huggingface/accelerate/v1.15.0/src/accelerate/utils/modeling.py
+Complete path/nonregular fix proposal closed without merging:
+https://github.com/huggingface/accelerate/pull/4214
+Thus a new version number is not a demonstrated repair. Prefer a narrowly scoped
+pre-load index guard without breaking Qwen's exact dependency constraints. This
+mitigates owned loading boundaries only, not the installed library universally.
+Qualified review and possible later compatible upstream migration remain open.
+
+Full raw live scanner retained by an observer forwarding the real scanner return
+unchanged, no mocked evaluation; actual admission still refuses.141 dependencies,
+21 raw vulnerability entries/15 alias-deduplicated findings;3 new undispositioned.
+All15 need current review because the old policy expired and source/lock drifted.
+Raw canonical HawEditEvidence/refused-audit-full-report-v2-20261007/audit.json SHA
+445307f6029974363e2a98e17093a20b5e969fe6ad17030e0149fe32ab50bf7f.
+
+T1 exact gate:5130pass/1historical VEX binding failure/0errors/skips on clean140d06d,
+source unchanged. No row accepted. Real560 adapter tensors and development text/
+CTC/word comparisons pass, not CER or reel quality. The genuine validator phase
+diagnostic is retained in HawEditEvidence/validator-phase-timing-20261007; slow
+verification/loading/inference are separate, concurrent-gate diagnostic evidence,
+not controlled acceptance throughput. Do not remove integrity checking for speed.

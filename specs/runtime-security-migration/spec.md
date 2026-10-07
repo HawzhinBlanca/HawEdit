@@ -10,3 +10,22 @@
 Real installation, hostile-input behavior, actual neural equivalence and rollback
 need separate immutable evidence; lock-only regressions do not prove them.
 RM4 maps the existing current-policy obligation; do not weaken it to make it pass.
+
+## Checkpoint Metadata Extension
+
+- SH1: WHEN a shard map names an absolute, traversing or Windows-special path,
+  THE pre-load guard SHALL refuse before a model loader opens any shard.
+  Tests: test_model_shard_unsafe_paths_are_refused.
+- SH2: WHEN an index or shard is nonregular, linked or missing, THE pre-load guard
+  SHALL refuse without following it or blocking on a special file.
+  Tests: test_model_shard_nonregular_members_are_refused,
+  test_model_shard_hardlinked_members_are_refused,
+  test_model_shard_parent_link_is_refused, test_model_shard_missing_member_is_refused.
+- SH3: WHEN an index is malformed, ambiguous or exceeds1MiB, THE pre-load guard
+  SHALL refuse boundedly before model-stack parsing.
+  Tests: test_model_shard_invalid_indexes_are_refused, test_model_shard_invalid_json_is_refused,
+  test_model_shard_duplicate_keys_are_refused, test_model_shard_oversized_index_is_refused,
+  test_model_shard_nonfinite_json_is_refused.
+- SH4: WHEN an index lists contained regular sibling/nested shards or a checkpoint
+  has no index, THE existing guard SHALL preserve compatible loading behavior.
+  Tests: test_model_shard_valid_indexes_are_accepted, test_builtin_transformers_implementations_are_accepted.

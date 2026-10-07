@@ -40,7 +40,7 @@ import time
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final, cast
 
 from hawedit.atomic_fs import rename_directory_noreplace
@@ -166,7 +166,8 @@ def assert_transformers_config_safe(model_dir: Path, allowed_model_types: Collec
 
     The walk is recursive because nested text/vision configs become ``PretrainedConfig`` objects
     too.  It runs before any processor, config, or model loader in every HawEdit-owned
-    Transformers path.
+    Transformers path. Shard indexes are also bounded and checked for contained,
+    regular targets before Accelerate or Transformers can interpret their paths.
     """
     allowed = frozenset(allowed_model_types)
     if not allowed:
@@ -238,6 +239,108 @@ def assert_transformers_config_safe(model_dir: Path, allowed_model_types: Collec
         raise UnsafeModelConfig(
             f"{config_path} declares no model_type; this adapter accepts only {sorted(allowed)}"
         )
+    _assert_checkpoint_shards_safe(model_dir)
+
+
+def _assert_checkpoint_shards_safe(model_dir: Path) -> None:
+    """Validate index targets while the caller retains verified checkpoint access.
+
+    Accelerate's unchecked weight_map join can escape the verified directory or
+    open a FIFO (CVE-2026-69112). This guards our loaders, not the entire library.
+    """
+    limit = 1_048_576
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    def refuse_nonfinite(value: str) -> None:
+        raise ValueError(f"nonfinite JSON constant {value!r}")
+
+    for index_path in sorted(model_dir.glob("*.index.json")):
+        try:
+            original = os.lstat(index_path)
+            if _path_is_reparse(index_path) or not stat.S_ISREG(original.st_mode):
+                raise UnsafeModelConfig(
+                    f"shard index must be a regular, non-linked file: {index_path}"
+                )
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            descriptor = os.open(index_path, flags)
+            try:
+                observed = os.fstat(descriptor)
+                if not stat.S_ISREG(observed.st_mode) or (observed.st_dev, observed.st_ino) != (
+                    original.st_dev,
+                    original.st_ino,
+                ):
+                    raise UnsafeModelConfig(f"shard index changed or is not regular: {index_path}")
+                if observed.st_nlink != 1:
+                    raise UnsafeModelConfig(
+                        f"shard index must have exactly one hard link: {index_path}"
+                    )
+                if observed.st_size > limit:
+                    raise UnsafeModelConfig(f"shard index exceeds {limit} bytes: {index_path}")
+                with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                    data = stream.read(limit + 1)
+                if len(data) > limit:
+                    raise UnsafeModelConfig(f"shard index exceeds {limit} bytes: {index_path}")
+            finally:
+                os.close(descriptor)
+            raw = json.loads(
+                data.decode("utf-8"),
+                object_pairs_hook=unique_object,
+                parse_constant=refuse_nonfinite,
+            )
+        except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+            raise UnsafeModelConfig(f"cannot safely read shard index {index_path}: {exc}") from exc
+        weight_map = raw.get("weight_map") if isinstance(raw, dict) else None
+        if not isinstance(weight_map, dict) or not weight_map:
+            raise UnsafeModelConfig(f"shard index requires a nonempty weight_map: {index_path}")
+        shards: set[str] = set()
+        for tensor_name, relative in weight_map.items():
+            if not isinstance(tensor_name, str) or not tensor_name or not isinstance(relative, str):
+                raise UnsafeModelConfig(
+                    f"shard index has an invalid weight_map entry: {index_path}"
+                )
+            shards.add(relative)
+        for relative in sorted(shards):
+            parts = relative.split("/")
+            if any(
+                not part
+                or part in {".", ".."}
+                or part.rstrip(" .") != part
+                or PureWindowsPath(part).is_reserved()
+                or any(
+                    ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF or char in '<>:"\\|?*'
+                    for char in part
+                )
+                for part in parts
+            ):
+                raise UnsafeModelConfig(f"unsafe shard name {relative!r} in {index_path}")
+            selected = model_dir
+            for position, part in enumerate(parts):
+                selected /= part
+                try:
+                    metadata = os.lstat(selected)
+                except OSError as exc:
+                    raise UnsafeModelConfig(
+                        f"cannot safely inspect shard {selected}: {exc}"
+                    ) from exc
+                if _path_is_reparse(selected):
+                    raise UnsafeModelConfig(f"shard traverses a link or reparse point: {selected}")
+                if position < len(parts) - 1:
+                    if not stat.S_ISDIR(metadata.st_mode):
+                        raise UnsafeModelConfig(
+                            f"shard parent must be a regular directory: {selected}"
+                        )
+                elif not stat.S_ISREG(metadata.st_mode):
+                    raise UnsafeModelConfig(f"shard must be a regular file: {selected}")
+                elif metadata.st_nlink != 1:
+                    raise UnsafeModelConfig(f"shard must have exactly one hard link: {selected}")
 
 
 def assert_fully_loaded(model_id: str, missing_keys: Iterable[str]) -> None:
