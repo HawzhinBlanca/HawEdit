@@ -94,3 +94,38 @@ Fresh report SHA2569179a87fabc904d40fdd7d800554cc35121c912511ca430f3e1cb61087787
 stdout3f4ed1ddbd68e6bb63d45a0e1059fa1705d251ac30131b932932f7700b0aa2c8,
 stderr empty. Owned controller/child absent before closing terminal handle.
 All new regressions pass; task remains WIP, not DONE or release accepted.
+
+## Actual Adoption And Real Consumer Retest
+
+2026-10-08: primary c163511 full-source ZAR ASR terminated unchanged after
+13288.4205875s:158 drafts,76 validators,76 alignments;5769 canonical timed words,
+zero recorded gaps/rejected corrections. Typed raw/integrity/source/provenance
+checks passed. Overall CLI exit1/incomplete: seven other stages omitted, no
+candidates, render, delivery or paid tokens. No native accuracy or isolated
+performance claim. Original media and canonical bytes preserved.
+
+After actual process quiescence, clean primary locally fast-forwarded90f5955.
+Supported named Ubuntu setup exited0/unchanged783.772345s, creating a separately
+named pinned generation rather than refreshing the old default namespace.
+Current receipt/package67805a85, runtime Python3.12.0/Qwen0.0.6/Torch2.8cu128/
+Transformers4.57.6/NumPy1.26.4,141 packages, two CUDA devices.
+
+Real predeclared speech-0000 (16.476s) uses exact263616 float32/16k samples;
+unchanged official SDK returned identical original validator text. Actual169
+generated tokens end151645 below512 cap; greedy1beam/no forcedEOS/BOS/SDPA.
+Actual2038052480parameters CUDA1/bfloat16, RTX3090Ti; peak allocated4218991104B.
+Load170.141447s, inference27.435791s; controller296.4266s/exit0/unchanged.
+One development observation is not accuracy, matched speedup, a production
+completion guard or EOS proof for the other75 historical validator results.
+ObservationSHA0dec1c2c9371c4f71d08e4d48644ed8572072ec4a3bd18ac51085bcd8b8dbefe.
+
+Actual new-root CLI canonical-cache replay rechecks current producer/policy and
+fresh source/audio hashes; raw bytes unchanged, no new Stage1 request, genuine
+Stage1/Stage2 checkpoints and68 indexed documents.155.809597s, exit1/incomplete,
+seven stages still omitted/no candidates or paid calls. Two external copy-reader
+failures retained; original ACLs and production/test controls unchanged.
+
+Full provenance: C:/Users/Wareen/HawEdit-ZAR-ASR-final-verdict-20261008.md and
+C:/Users/Wareen/HawEdit-real-validator-and-cache-retest-20261008.md. All required
+terminal/process sessions closed only after quiescence. Exact c5aab9f gate remains
+refused on qualified VEX; no current CI/ledger promotion/publication/10/10.

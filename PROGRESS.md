@@ -6,6 +6,34 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Real ZAR Retest And Repair Adoption (M9.81, WIP)
+
+2026-10-08, original c163511 ZAR actual offline ASR:158 drafts/76 validators/
+76 alignments,5769 canonical timed words, no recorded alignment gaps/rejected
+corrections. Original source/raw/provenance/integrity verified unchanged; CLI
+correctly incomplete because seven further stages were omitted. No full reel,
+native accuracy, paid calls or performance acceptance. Diagnostic13288.420588s
+on HawaPC01/Windows26300, native3.11.15/Torch2.13cu130 and pinned WSL3.12.0/
+Torch2.8cu128, two3090Ti, concurrent gate/PATH FFmpeg8.1.1 unqualified.
+
+After quiescence, clean primary locally adopted90f5955/D-302/D-303. Supported
+named WSL generation setup0/unchanged783.772345s. Genuine predeclared16.476s
+repaired Qwen consumer passes exact samples/identical original text,169 tokens
+endingEOS151645 below512; actual CUDA1 placement, load170.141447s/infer27.435791s.
+Not a production completion guard or proof of other historical validator outputs.
+Real new-root verified-canonical CLI replay155.809597s preserves raw, rechecks
+fresh audio/source/producer/policy, writes Stage1/Stage2 checkpoints, indexes68
+documents, correctly remains incomplete with no candidates/reels/paid calls.
+Two external diagnostic-copy refusals preserved, not hidden or counted successful.
+
+Evidence: specs/validator-startup/verification.md and external
+C:/Users/Wareen/HawEdit-real-validator-and-cache-retest-20261008.md. Original
+full verdict C:/Users/Wareen/HawEdit-ZAR-ASR-final-verdict-20261008.md. All owned
+required processes/sessions quiescent. Existing c5aab9f exact gate5399/5400pass,
+sole stale qualified-VEX binding,0errors/skips; no current CI or ledger promotion.
+Protected studio worker/HTTP/review/revisions/export and independent/sustained
+acceptance remain engineering/evidence work, not complete-system/10/10.
+
 ## Native Studio Profile (M9.74, WIP)
 
 D-297 / approved phase1 / specs/studio-host-profile. Actual pinned maintainer
