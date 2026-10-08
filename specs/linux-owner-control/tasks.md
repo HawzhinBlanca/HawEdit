@@ -10,4 +10,7 @@ Complete producer and actual creator/research acceptance remain the user goal.
 
 Evidence: evidence/linux-owner-control-20261009.md; final163native/control cases
 and full static checks pass. Earlier574case baseline is separately scoped.
-Exact committed full gate/same-SHA CI pending; T1 stays WIP, not completed.
+Exact clean committed49b2649 gate finished5701pass/3fail/0error/skip, unchanged:
+missing evidence header, missing README module row and stale qualified VEX.
+Documentation correction includes whole claims module; corrected committed
+gate and same-SHA CI remain required. T1 stays WIP, not completed.

@@ -67,3 +67,13 @@ SHA25668f869b7a87fe6cb02daac4481d173402ff709e27e92ff57bf87a3fb66fc0a14.
 _same_description serves constructor calibration and every _inspect caller.
 Windows typeshed lacks fcntl.fcntl; dynamic callable validation preserves the
 actual Linux syscall, with no mocked response or unsupported-host fallback.
+
+# Documentation Caller Impact
+
+No Python symbol changes in the corrective unit. README module-map row is read
+by test_the_module_map_covers_every_module and module-existence checks in the
+complete tests/test_claims.py module. New evidence header is validated by
+test_new_evidence_names_its_commit_media_and_host through unchanged
+validate_evidence_header. Missing header/map reds reproduced on49b2649.
+Include whole claims module for this and subsequent new-module/evidence units;
+preserve every existing assertion. Package source bytes remain unchanged.

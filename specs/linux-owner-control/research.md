@@ -57,3 +57,15 @@ because Python numeric thread identifiers can recycle after a creator exits.
 [kernel comparison](https://github.com/torvalds/linux/blob/master/fs/fcntl.c),
 [Python fcntl](https://docs.python.org/3.14/library/fcntl.html).
 This is still a trusted dedicated supervisor, not a hostile same-process sandbox.
+
+## Documentation Regression RCA
+
+The exact clean committed49b2649 gate finished5701pass/3fail/0error/skip;
+source/package/observer unchanged. Two failures were omitted documentation:
+new evidence lacked the required YAML commit/media/host/command header, and
+README omitted linux_control.py. Complete unchanged67-case claims replay
+reproduced precisely these two failures. Add both whole claims checks to the
+affected set for new modules/evidence. This is not a Python behavior repair.
+The third failure is stale independently reviewed VEX source binding, not
+permission to self-rebind its source, expiry or reviewer. See evidence for exact
+host, runtime, command and receipt hashes. No ledger or CI acceptance.

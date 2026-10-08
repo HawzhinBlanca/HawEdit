@@ -1,5 +1,16 @@
 # Linux Owner Protocol Unit
 
+```yaml
+commit: 49b2649106f04b232a5e22635ce3d1f9a0aaec7e
+media_sha256: n/a - CPU protocol tests, no model inference or rendered media
+host: HawaPC01, Windows11 build26300, Python3.12.10, pytest9.1.1, ruff0.9.6, mypy1.15.0, DBOS2.29.0
+command: .venv/Scripts/python.exe -m pytest tests/test_linux_control.py tests/test_native_control.py tests/test_native_io.py tests/test_native_process.py tests/test_native_capability_retention.py --junitxml=C:/Users/Wareen/HawEdit-linux-owner-final-native-v2-20261009.xml
+```
+
+The cited commit contains the final exact module bytes. The five-module test
+run preceded that commit on the effective package recorded below; it is not
+relabeled a clean committed run. The separate full gate did run at that commit.
+
 2026-10-09 Asia/Baghdad. Baseline ed2840cc039f673b0ac5f3413d5e2a23d64ecb18.
 Final effective package ec8097601c4f7bd3f331f0292930dff87cce08fdeaea56923afe489ae4295f86.
 D-313; parent-approved T3. Local engineering evidence only, WIP.
@@ -56,7 +67,28 @@ pipe cases, including Windows-native interoperability. Related cases are not
 independent reliability/editorial observations. All required commands finished.
 
 Current actual Serena maps/hashes and affected callers are in impact-map.md.
-Exact clean committed bash scripts/verify.sh remains next; same-SHA CI pending.
+Exact clean committed bash scripts/verify.sh at49b2649 finished with5701pass,
+3fail/0error/skip, JUnit2243.777s / observer2254.352706800011s on the host above.
+Source, package, observer and checkout status remained unchanged. Failures:
+the missing evidence header, missing README module-map row, and stale qualified
+VEX source binding. The two documentation regressions are being corrected;
+no test or security assertion is changed. The FFmpeg replacement fault from
+the previous gate did not reproduce here; this is not its root-cause repair.
+Terminal C:/Users/Wareen/AppData/Local/HawEditEvidence/linux-owner-clean-gate-20261009/terminal.json,
+SHA256dfc5b30b3ece841359cf6c426d90ea89159ff17aa2fe52264f5d795ce1f1da31;
+JUnitb531c9e084c2481f2eea18e9da2c64138a2c5ddc1ee69c1b97d868c3ed2e48d4.
+Whole unchanged claims replay:65pass/2same-documentation failures/0error/skip,
+11.068s JUnit /11.64s pytest, report
+C:/Users/Wareen/HawEdit-linux-owner-claims-red-20261009.xml,
+SHA2561f3d8ad32dbe7e4bb57d15b4575f6ede4f550da33e24e9e9fe74de826cd9c099.
+All original gate/claims processes exited before edits. Corrected clean
+committed full gate remains required; same-SHA CI pending.
+After the documentation repair, complete unchanged tests/test_claims.py has
+67pass/0failure/error/skip,10.977s JUnit /11.51s pytest, same host/runtime.
+Command: .venv/Scripts/python.exe -m pytest tests/test_claims.py
+--junitxml=C:/Users/Wareen/HawEdit-linux-owner-claims-fixed-20261009.xml.
+Report SHA256a065f4f7315d0c3a8717a5d346e6ece38e91ef6e6ecf15eee1532f01ac6acc3f.
+Documentation was uncommitted during this partial replay; package unchanged.
 No ledger promotion, qualified VEX rebind/signature, new canonical ASR/reel,
 GPU/provider drain, protected producer/HTTP generation or10/10 claim.
 

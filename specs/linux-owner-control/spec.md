@@ -49,3 +49,11 @@ test_linux_owner_same_inode_reopen_retained.
 Every criterion is protocol/descriptor scoped. Linux/GPU/provider quiescence,
 model/source/security admission, durable attempt release and publication require
 their own original evidence; no ready/completed/clear flags are added.
+
+WHEN unit evidence is added, THE documentation SHALL retain a valid header
+naming its real commit, media applicability, host and commands.
+test_new_evidence_names_its_commit_media_and_host.
+
+WHEN a source module is added, THE README SHALL map that module's actual scope
+without asserting unimplemented production callers.
+test_the_module_map_covers_every_module.
