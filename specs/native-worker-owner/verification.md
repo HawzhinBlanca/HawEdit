@@ -71,3 +71,17 @@ tests/test_claims.py tests/test_native_process.py -q
 RawSHA256cbc3d4599eb7c5175d7e84502fa74166c09f36ca4675e3b3fb60a0a4d8d3d6c8.
 Original command absent before session11966closed. Reviewed document-only local
 commit and fresh exact full gate follow; no source behavior or assertion changes.
+
+## Corrected Committed Gate Result
+
+Frozen clean 1400a204ca08ed0ae52ea993ff9a3908164ebafc exact gate exits 1:
+5557/5558 pass, zero errors/skips; sole stale qualified VEX source binding failure.
+All native/inventory regressions pass in the whole run. Source/observers/HEAD/
+producer/status unchanged. Original processes absent before session 43352 closure.
+AppData/Local/HawEditEvidence/native-owner-readme-full-gate-20261008/gate.xml
+SHA256 b1c4c4f51771143daedb02b6b22e45ecf2b8aa135515ca849acbf600214276b7;
+terminal d10168e695d3d11df6ed68f2859f033bca31fd6b50beb2e375cbb76f8c397e1d.
+JUnit 2307.563s/controller 2329.7697888s diagnostic on the host/versions above.
+No green required gate/CI, DONE or completed-system claim. Next private-evidence
+alias repair is independently scoped in specs/private-evidence-alias; bounded IO
+and complete native/Linux producer handshake remain required after that repair.

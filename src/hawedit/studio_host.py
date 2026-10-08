@@ -90,6 +90,27 @@ class AuthorizedStudioHost:
     execution_binding_sha256: str
 
 
+def _canonical_evidence_directory(
+    original: PrivateDirectory, *, expected: PrivateDirectory | None = None
+) -> PrivateDirectory:
+    """Resolve packaged aliases only inside a repeatedly verified private identity."""
+    original.verify()
+    canonical = PrivateDirectory(original.path.resolve(strict=True), create=False)
+    original.verify()
+    canonical.verify()
+    if (
+        canonical.identity != original.identity
+        or original.path.resolve(strict=True) != canonical.path
+    ):
+        raise StudioHostError("Studio evidence directory changed during canonicalization")
+    if expected is not None:
+        expected.verify()
+        if canonical.path != expected.path or canonical.identity != expected.identity:
+            raise StudioHostError("Studio evidence directory differs from original selection")
+    original.verify()
+    return canonical
+
+
 def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioDeployment:
     """Perform actual selected checks; never load a supplied accepted/ready receipt.
 
@@ -110,7 +131,8 @@ def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioD
         ):
             raise ValueError("Select explicit wsl and a named distribution for the protected host")
         args = build_parser().parse_args(["admission-only.mp4", *argv])
-        evidence_dir = PrivateDirectory(configuration.evidence_dir, create=False)
+        original_evidence_dir = PrivateDirectory(configuration.evidence_dir, create=False)
+        evidence_dir = _canonical_evidence_directory(original_evidence_dir)
         source = package_digest()
         policy_bytes = _read_bound(configuration.vex_path, limit=1_048_576, label="studio VEX")
         policy_digest = hashlib.sha256(policy_bytes).hexdigest()
@@ -151,12 +173,14 @@ def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioD
             }
         )
         stage = "security"
+        _canonical_evidence_directory(original_evidence_dir, expected=evidence_dir)
         evidence_path = evidence_dir.path / ("admission-" + uuid.uuid4().hex + ".json")
         evidence = run_live_gate(
             evidence_path=evidence_path,
             distro=producers.wsl_distro,
             vex_path=configuration.vex_path,
         )
+        _canonical_evidence_directory(original_evidence_dir, expected=evidence_dir)
         raw_evidence = _read(evidence_dir, evidence_path.name, limit=8 * 1024**2)
         observed_runtime = evidence.get("runtime")
         observed_policy = evidence.get("policy")
@@ -171,6 +195,7 @@ def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioD
             raise ValueError("Fresh security evidence differs from the selected observation")
 
         stage = "drift"
+        _canonical_evidence_directory(original_evidence_dir, expected=evidence_dir)
         repeated_store = ModelStore()
         if (
             repeated_store.root != store.root
@@ -184,6 +209,7 @@ def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioD
             or _read(evidence_dir, evidence_path.name, limit=8 * 1024**2) != raw_evidence
         ):
             raise ValueError("Studio admission inputs changed; reconciliation required")
+        _canonical_evidence_directory(original_evidence_dir, expected=evidence_dir)
         descriptor = {
             "schema": 1,
             "purpose": "hawedit-studio-deployment-v1",
@@ -228,7 +254,8 @@ def _check_deployment_bindings(
     configuration: StudioHostConfiguration, deployment: StudioDeployment
 ) -> None:
     descriptor = _json(deployment.canonical_json.encode("utf-8"))
-    evidence_dir = PrivateDirectory(configuration.evidence_dir, create=False)
+    original_evidence_dir = PrivateDirectory(configuration.evidence_dir, create=False)
+    evidence_dir = _canonical_evidence_directory(original_evidence_dir)
     if (
         _canonical(descriptor).decode("utf-8") != deployment.canonical_json
         or hashlib.sha256(deployment.canonical_json.encode("utf-8")).hexdigest()
@@ -248,6 +275,7 @@ def _check_deployment_bindings(
         raise StudioHostError(
             "Studio deployment source/VEX/producer/evidence drift after verification"
         )
+    _canonical_evidence_directory(original_evidence_dir, expected=evidence_dir)
 
 
 def load_studio_host_authorization(
