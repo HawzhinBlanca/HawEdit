@@ -134,8 +134,12 @@ def _install_success_mocks(
             return gate.ProcessOutput(0, b"uv 0.11.15 (x86_64-unknown-linux-gnu)\n", b"")
         if command[-1] == "--version":
             return gate.ProcessOutput(0, f"pip-audit {audit_version}\n".encode(), b"")
-        if "/usr/bin/mktemp" in command:
-            return gate.ProcessOutput(0, b"/tmp/hawedit-wsl-audit.A1b2C3d4E5\n", b"")
+        if gate.STORAGE_SCRIPT in command and command[-1] == "create":
+            return gate.ProcessOutput(
+                0,
+                b'{"path":"/tmp/hawedit-wsl-audit.A1b2C3d4E5","device":1,"inode":2,"uid":1000}\n',
+                b"",
+            )
         if gate._WRITE_EXCLUSIVE_SCRIPT in command:
             return gate.ProcessOutput(0, b"", b"")
         if "venv" in command or ("pip" in command and "install" in command):
@@ -149,7 +153,7 @@ def _install_success_mocks(
                 + b"\n",
                 b"",
             )
-        if "/usr/bin/rm" in command:
+        if gate.STORAGE_SCRIPT in command and "cleanup" in command:
             return gate.ProcessOutput(0, b"", b"")
         return gate.ProcessOutput(audit_returncode, report, b"Found reviewed vulnerabilities\n")
 
@@ -171,6 +175,8 @@ def test_live_gate_runs_exact_pinned_contract_and_publishes_bound_evidence(
     )
 
     assert len(commands) == 9
+    assert not any("/usr/bin/rm" in command for command in commands)
+    assert commands[-1][-5:] == ["cleanup", "/tmp/hawedit-wsl-audit.A1b2C3d4E5", "1", "2", "1000"]
     assert all(
         command[:4] == ["wsl.exe", "--distribution", "Ubuntu", "--exec"] for command in commands
     )
@@ -378,6 +384,77 @@ def test_audit_operational_failure_cannot_publish_evidence(
             runtime_root=runtime,
             package_source=source,
             vex_path=POLICY,
+        )
+    assert len(commands) == 9
+    assert not evidence.exists()
+
+
+def test_scanner_write_failure_still_cleans_owned_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(monkeypatch, tmp_path)
+    original_run = gate._run_bounded
+
+    def run(command: list[str], **kwargs: Any) -> gate.ProcessOutput:
+        if gate._WRITE_EXCLUSIVE_SCRIPT in command:
+            commands.append(command)
+            return gate.ProcessOutput(1, b"", b"storage full")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(gate, "_run_bounded", run)
+    evidence = tmp_path / "write-failed.json"
+    with pytest.raises(gate.LiveVexGateError, match="cannot materialize"):
+        gate.run_live_gate(
+            evidence_path=evidence, runtime_root=runtime, package_source=source, vex_path=POLICY
+        )
+    assert len(commands) == 4
+    assert commands[-1][-5:] == ["cleanup", "/tmp/hawedit-wsl-audit.A1b2C3d4E5", "1", "2", "1000"]
+    assert not any("/usr/bin/rm" in command for command in commands)
+    assert not evidence.exists()
+
+
+def test_scanner_cleanup_failure_preserves_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(
+        monkeypatch, tmp_path, audit_version="2.10.2"
+    )
+    original_run = gate._run_bounded
+
+    def run(command: list[str], **kwargs: Any) -> gate.ProcessOutput:
+        if "cleanup" in command:
+            commands.append(command)
+            return gate.ProcessOutput(1, b"", b"identity changed")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(gate, "_run_bounded", run)
+    evidence = tmp_path / "cleanup-and-version-failed.json"
+    with pytest.raises(gate.LiveVexGateError, match="version drifted") as error:
+        gate.run_live_gate(
+            evidence_path=evidence, runtime_root=runtime, package_source=source, vex_path=POLICY
+        )
+    assert any("cleanup also failed" in note for note in error.value.__notes__)
+    assert len(commands) == 8
+    assert not evidence.exists()
+
+
+def test_scanner_cleanup_failure_refuses_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(monkeypatch, tmp_path)
+    original_run = gate._run_bounded
+
+    def run(command: list[str], **kwargs: Any) -> gate.ProcessOutput:
+        if "cleanup" in command:
+            commands.append(command)
+            return gate.ProcessOutput(1, b"", b"identity changed")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(gate, "_run_bounded", run)
+    evidence = tmp_path / "cleanup-failed.json"
+    with pytest.raises(gate.LiveVexGateError, match="cannot remove ephemeral scanner"):
+        gate.run_live_gate(
+            evidence_path=evidence, runtime_root=runtime, package_source=source, vex_path=POLICY
         )
     assert len(commands) == 9
     assert not evidence.exists()

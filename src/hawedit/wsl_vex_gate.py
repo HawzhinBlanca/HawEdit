@@ -44,6 +44,8 @@ from hawedit.wsl_audit_locks import (
 from hawedit.wsl_audit_locks import (
     AUDIT_REQUIREMENTS as AUDIT_REQUIREMENTS,
 )
+from hawedit.wsl_scanner_storage import STORAGE_SCRIPT as STORAGE_SCRIPT
+from hawedit.wsl_scanner_storage import scanner_directory_identity
 from hawedit.wsl_setup import (
     WslRuntimeError,
     WslRuntimeReceipt,
@@ -64,7 +66,6 @@ _SMALL_OUTPUT_LIMIT: Final = 8_192
 _EVIDENCE_LIMIT: Final = 32_000_000
 _TOOL_VERSION = re.compile(r"pip-audit ([0-9]+\.[0-9]+\.[0-9]+)\r?\n?\Z")
 _UV_VERSION = re.compile(r"uv ([0-9]+\.[0-9]+\.[0-9]+)[^\r\n]*\r?\n?\Z")
-_WSL_TEMP = re.compile(r"/tmp/hawedit-wsl-audit\.[A-Za-z0-9]{10}\n\Z")
 
 _AUDIT_OPTIONS: Final = (
     "--strict",
@@ -280,46 +281,47 @@ def _run_hash_locked_audit(
     created = _run_bounded(
         [
             *prefix,
-            "/usr/bin/mktemp",
-            "--directory",
-            "--tmpdir=/tmp",
-            "hawedit-wsl-audit.XXXXXXXXXX",
+            runtime_python,
+            "-I",
+            "-c",
+            STORAGE_SCRIPT,
+            "create",
         ],
         timeout_seconds=min(timeout_seconds, 60),
         stdout_limit=_SMALL_OUTPUT_LIMIT,
         stderr_limit=_STDERR_LIMIT,
     )
     try:
-        temporary = created.stdout.decode("ascii")
-    except UnicodeError as exc:
-        raise LiveVexGateError("WSL mktemp emitted a non-ASCII path") from exc
-    if created.returncode != 0 or _WSL_TEMP.fullmatch(temporary) is None:
+        directory = scanner_directory_identity(created.stdout)
+    except ValueError as exc:
+        raise LiveVexGateError("cannot create a private WSL scanner directory identity") from exc
+    if created.returncode != 0:
         raise LiveVexGateError("cannot create a private WSL scanner directory")
-    temporary = temporary.rstrip("\n")
+    temporary = directory.path
     requirements = f"{temporary}/requirements.txt"
     scanner = f"{temporary}/scanner"
     scanner_python = f"{scanner}/bin/python"
     scanner_executable = f"{scanner}/bin/pip-audit"
-    write = _run_bounded(
-        [
-            *prefix,
-            runtime_python,
-            "-I",
-            "-c",
-            _WRITE_EXCLUSIVE_SCRIPT,
-            requirements,
-            (AUDIT_REQUIREMENTS + "\n").encode("utf-8").hex(),
-        ],
-        timeout_seconds=min(timeout_seconds, 60),
-        stdout_limit=_SMALL_OUTPUT_LIMIT,
-        stderr_limit=_STDERR_LIMIT,
-    )
-    if write.returncode != 0 or write.stdout:
-        raise LiveVexGateError(
-            "cannot materialize the reviewed scanner lock in private WSL storage"
-        )
     active_error: BaseException | None = None
     try:
+        write = _run_bounded(
+            [
+                *prefix,
+                runtime_python,
+                "-I",
+                "-c",
+                _WRITE_EXCLUSIVE_SCRIPT,
+                requirements,
+                (AUDIT_REQUIREMENTS + "\n").encode("utf-8").hex(),
+            ],
+            timeout_seconds=min(timeout_seconds, 60),
+            stdout_limit=_SMALL_OUTPUT_LIMIT,
+            stderr_limit=_STDERR_LIMIT,
+        )
+        if write.returncode != 0 or write.stdout:
+            raise LiveVexGateError(
+                "cannot materialize the reviewed scanner lock in private WSL storage"
+            )
         common_env = [
             "env",
             "UV_NO_CONFIG=1",
@@ -348,17 +350,26 @@ def _run_hash_locked_audit(
     finally:
         try:
             cleanup = _run_bounded(
-                [*prefix, "/usr/bin/rm", "-rf", "--", temporary],
+                [
+                    *prefix,
+                    runtime_python,
+                    "-I",
+                    "-c",
+                    STORAGE_SCRIPT,
+                    "cleanup",
+                    *directory.arguments(),
+                ],
                 timeout_seconds=min(timeout_seconds, 60),
                 stdout_limit=_SMALL_OUTPUT_LIMIT,
                 stderr_limit=_STDERR_LIMIT,
             )
-            if cleanup.returncode != 0 and active_error is None:
+            if cleanup.returncode != 0 or cleanup.stdout:
                 detail = cleanup.stderr.decode("utf-8", "replace")[-1_200:]
                 raise LiveVexGateError(f"cannot remove ephemeral scanner: {detail or 'no detail'}")
-        except LiveVexGateError:
+        except LiveVexGateError as cleanup_error:
             if active_error is None:
                 raise
+            active_error.add_note(f"scanner cleanup also failed: {cleanup_error}")
 
 
 def _execute_hash_locked_scanner(

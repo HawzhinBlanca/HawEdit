@@ -15249,3 +15249,24 @@ Actual seven-pair Serena map precedes edits; research, EARS, caller coverage and
 approved plan are in specs/validator-startup. No speed, fidelity, current VEX,
 CI, native-Linux runtime support, publication or 10/10 claim follows this ADR.
 
+## D-304 - Bind ephemeral scanner cleanup to the created directory identity
+
+2026-10-08; approved studio execution/security-admission prerequisite. Replace
+recursive shell deletion in the supported WSL VEX launcher with isolated stdlib
+operations through its pinned interpreter. Capture device/inode/UID in a strict
+creation receipt, require the exact generated /tmp name and private owned root,
+and hold no-follow directory descriptors through cleanup. Refuse foreign devices,
+owners, changed directories, excessive recursion/work and unsafe root paths.
+Symlinks are unlinked, never traversed. No new runtime dependency or scanner lock
+change; existing strict OSV options and VEX evaluator remain unchanged.
+
+Requirements materialization now shares the cleanup lifetime. Cleanup failure
+refuses otherwise successful work; when another failure is already active, retain
+it and attach the cleanup diagnostic rather than masking it. Interrupted creation
+without a valid receipt is not permission to delete an unverified path.
+
+This is temporary-storage hygiene, not a sandbox against a privileged adversary
+or a lifetime fence for all scanner descendants. Current qualified VEX (#24),
+complete protected worker integration, exact gate and same-SHA CI remain required.
+Research, actual five-pair Serena map, EARS and approved plan: specs/scanner-cleanup.
+
