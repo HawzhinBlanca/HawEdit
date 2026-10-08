@@ -24,7 +24,7 @@ from hawedit.studio_private import PrivateSqlitePath
 from hawedit.studio_submissions import StudioStorageError
 from hawedit.workflow_recovery import ExternalReconciliationError
 
-__all__ = ["BillingPolicy", "GuardedGeminiTransport"]
+__all__ = ["BilledEffect", "BillingEffects", "BillingPolicy", "GuardedGeminiTransport"]
 
 _MAX_REQUEST_BYTES = 16 << 20
 _MAX_RESPONSE_BYTES = 1 << 20
@@ -195,10 +195,36 @@ class _StoredCall:
 
 
 @dataclass(frozen=True, slots=True)
+class BilledEffect:
+    """Observed journal metadata, not a provider invoice or publication proof."""
+
+    call_id: str
+    job_id: str
+    state: str
+    reservation_microusd: int
+
+
+@dataclass(frozen=True, slots=True)
+class BillingEffects:
+    """Point-in-time pool observation; never authority to release or replay work."""
+
+    job_id: str
+    authorization_sha256: str
+    pool_limit_microusd: int
+    reserved_microusd: int
+    effects: tuple[BilledEffect, ...]
+
+    @property
+    def outstanding_intents(self) -> tuple[BilledEffect, ...]:
+        return tuple(effect for effect in self.effects if effect.state == "intent")
+
+
+@dataclass(frozen=True, slots=True)
 class _BillingSnapshot:
     policies: dict[str, BillingPolicy]
     calls: dict[tuple[str, int], _StoredCall]
     used: dict[str, int]
+    effects: tuple[BilledEffect, ...] = ()
 
 
 def _native_rows(
@@ -306,6 +332,7 @@ def _inspect_journal(
             "Existing authorization pool policy conflicts with supplied policy"
         )
     calls: dict[tuple[str, int], _StoredCall] = {}
+    effects: list[BilledEffect] = []
     used: dict[str, int] = {}
     job_policies: dict[str, str] = {}
     fields = (
@@ -365,6 +392,9 @@ def _inspect_journal(
             _validate_usage(body, tokens, owner)
         else:
             raise StudioStorageError("Billed call state evidence changed")
+        if pool == policy.authorization_sha256:
+            assert isinstance(state, str)
+            effects.append(BilledEffect(identity, job, state, reservation))
         if job == job_id:
             key = (request, occurrence)
             if key in calls:
@@ -372,7 +402,9 @@ def _inspect_journal(
             assert isinstance(state, str) and (body is None or isinstance(body, str))
             calls[key] = _StoredCall(identity, state, body)
         budget.check()
-    return _BillingSnapshot(policies, calls, used)
+    return _BillingSnapshot(
+        policies, calls, used, tuple(sorted(effects, key=lambda item: item.call_id))
+    )
 
 
 def _contents(document: dict[str, Any]) -> None:
@@ -419,6 +451,7 @@ class GuardedGeminiTransport:
         if (
             not _integer(max_rows, 1, 10_000)
             or not _integer(max_bytes, 1, 256 << 20)
+            or type(max_seconds) not in (int, float)
             or not 0 < max_seconds <= 10.0
         ):
             raise StudioStorageError("Invalid billing journal inspection limit")
@@ -482,6 +515,34 @@ class GuardedGeminiTransport:
     @property
     def path(self) -> Path:
         return self._storage.path
+
+    def inspect_effects(
+        self,
+        *,
+        max_rows: int = 10_000,
+        max_bytes: int = 256 << 20,
+        max_seconds: float = 10.0,
+    ) -> BillingEffects:
+        """Reopen and validate all rows before exposing selected-pool metadata.
+
+        No egress, response bodies, refunds or logical journal writes. Concurrent
+        effects can change after this snapshot; absence of intent is not quiescence.
+        """
+        with self._lock:
+            with self._connection() as db:
+                snapshot = self._inspect(
+                    db, max_rows=max_rows, max_bytes=max_bytes, max_seconds=max_seconds
+                )
+                if self.policy.authorization_sha256 not in snapshot.policies:
+                    raise StudioStorageError("Reservation pool policy evidence disappeared")
+                observed = BillingEffects(
+                    self.job_id,
+                    self.policy.authorization_sha256,
+                    self.policy.pool_microusd,
+                    snapshot.used.get(self.policy.authorization_sha256, 0),
+                    snapshot.effects,
+                )
+            return observed
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:

@@ -21,7 +21,7 @@ from typing import Any
 
 from hawedit.candidate_review import CandidateReviewError, _canonical, _json, _read, _write
 from hawedit.gemini import API_ROOT, Transport
-from hawedit.studio_billing import BillingPolicy, GuardedGeminiTransport
+from hawedit.studio_billing import BillingEffects, BillingPolicy, GuardedGeminiTransport
 from hawedit.studio_private import PrivateDirectory, StudioStorageError
 from hawedit.wsl_setup import package_digest
 
@@ -378,6 +378,14 @@ class SignedStudioTransport:
             raise StudioAuthorizationError(
                 "Configured execution authority changed; recovery reconciliation required"
             )
+
+    def inspect_effects(self) -> BillingEffects:
+        """Fresh descriptive journal read, fenced by actual raw owner proof."""
+        with self._lock:
+            self._check()
+            observed = self._journal.inspect_effects()
+            self._check()
+            return observed
 
     def _send(self, url: str, payload: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
         self._check()

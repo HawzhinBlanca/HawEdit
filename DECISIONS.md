@@ -15304,3 +15304,27 @@ ID-only owned worker, uncertain-effects/lifetime reconciliation, authenticated
 review/revision/export, independent evaluation and sustained acceptance remain.
 Research, actual Serena maps, EARS and inherited approval: specs/studio-host-admission.
 
+## D-306 - Descriptive billed effects are not reconciliation authority
+
+2026-10-08, approved evidence-based phases1-2/T3; bounded prerequisite for the
+owned worker. Extend D-276's existing whole-journal validator, not its schema,
+provider route, reservations, response replay or trust model. BLUEPRINT2-5 and
+8.1-8.3; D-263/D-274/D-305 apply. No new runtime dependency or licence acceptance.
+
+Expose a fresh immutable selected-pool view of validated call identity, job,
+state and upper reservation across ALL jobs. Validate foreign pools/rows before
+filtering; omit request/response text and credentials. Use actual consistent
+SQLite reads and existing private main/root/sidecar fences, with unchanged read
+ceilings and strict numeric time limits. No logical journal mutation or egress.
+Operational SQLite sidecars may change; do not claim raw byte stasis.
+
+Signed consumption reopens actual raw OpenSSH authority both before and after
+the read. Expired/revoked/changed authority refuses. Observations are point-in-time
+descriptions, not authenticated provider invoices, process quiescence, publication,
+refund/retry grants or permission to finish an uncertain attempt. Supplied objects
+or absence of intent cannot replace fresh journal and lifetime controls.
+
+Research/EARS/actual caller maps/approved plan: specs/studio-billing-effects.
+Required local gate and current CI remain unproved; worker/lifetime and HTTP/
+review/revision/export adoption and independent sustained acceptance remain.
+

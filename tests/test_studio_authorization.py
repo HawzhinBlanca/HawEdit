@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import time
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -220,6 +221,60 @@ def _generate(transport: SignedStudioTransport) -> tuple[int, str]:
         b'{"contents":[{"parts":[{"text":"protocol probe"}]}],"generationConfig":{}}',
         {"X-Probe": "local-only"},
     )
+
+
+def test_signed_studio_effects_is_descriptive_only(authorization_case: AuthorizationCase) -> None:
+    probe = ProtocolProbe(authorization_case)
+    client = _transport(authorization_case, probe)
+    observed = client.inspect_effects()
+    assert observed.authorization_sha256 == client.authorization_sha256
+    assert observed.effects == observed.outstanding_intents == ()
+    assert probe.requests == []
+    assert not hasattr(observed, "completed")
+    assert not hasattr(observed, "is_quiescent")
+
+
+def test_signed_studio_effects_reopens_raw_authority(authorization_case: AuthorizationCase) -> None:
+    probe = ProtocolProbe(authorization_case)
+    client = _transport(authorization_case, probe)
+    authorization_case.revoke()
+    with pytest.raises(StudioAuthorizationError):
+        client.inspect_effects()
+    assert probe.requests == []
+
+
+def test_signed_studio_effects_rechecks_after_actual_sqlite_read(
+    authorization_case: AuthorizationCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    probe = ProtocolProbe(authorization_case)
+    client = _transport(authorization_case, probe)
+    actual_connection = client._journal._connection
+    revoked = False
+
+    def native_authorizer(
+        action: int,
+        table: str | None,
+        column: str | None,
+        database: str | None,
+        trigger: str | None,
+    ) -> int:
+        nonlocal revoked
+        if action == sqlite3.SQLITE_READ and table == "calls" and not revoked:
+            revoked = True
+            authorization_case.revoke()
+        return sqlite3.SQLITE_OK
+
+    @contextmanager
+    def connection() -> Any:
+        with actual_connection() as db:
+            db.set_authorizer(native_authorizer)
+            yield db
+
+    monkeypatch.setattr(client._journal, "_connection", connection)
+    with pytest.raises(StudioAuthorizationError):
+        client.inspect_effects()
+    assert revoked
+    assert probe.requests == []
 
 
 def test_signed_studio_authorization_binds_real_proof_and_policy(

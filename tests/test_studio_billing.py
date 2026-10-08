@@ -14,7 +14,7 @@ import time
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import asdict, replace
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -158,6 +158,138 @@ def payload(text: str = "local protocol input") -> bytes:
             },
         }
     ).encode()
+
+
+def test_studio_effects_empty_observation_is_read_only(tmp_path: Path, api: LocalProtocol) -> None:
+    client = guard(tmp_path, api)
+    with sqlite3.connect(client.path) as db:
+        before = tuple(db.iterdump())
+    observed = client.inspect_effects()
+    assert observed.job_id == JOB
+    assert observed.authorization_sha256 == client.policy.authorization_sha256
+    assert observed.reserved_microusd == 0
+    assert observed.pool_limit_microusd == client.policy.pool_microusd
+    assert observed.effects == observed.outstanding_intents == ()
+    assert api.calls == []
+    with sqlite3.connect(client.path) as db:
+        assert tuple(db.iterdump()) == before
+
+
+def test_studio_effects_confirmed_metadata_is_not_response_or_invoice(
+    tmp_path: Path, api: LocalProtocol
+) -> None:
+    client = guard(tmp_path, api)
+    for _ in range(2):
+        client(BASE + ":generateContent", payload("private-never-returned-text"), {})
+    routes = tuple(api.calls)
+    observed = client.inspect_effects()
+    assert observed.reserved_microusd == 2 * client.policy.reservation(10)
+    assert len(observed.effects) == 2
+    assert len({effect.call_id for effect in observed.effects}) == 2
+    assert {effect.state for effect in observed.effects} == {"confirmed"}
+    assert {effect.job_id for effect in observed.effects} == {JOB}
+    assert observed.outstanding_intents == ()
+    raw = json.dumps(asdict(observed))
+    assert "private-never-returned-text" not in raw
+    assert "response_json" not in raw and "usageMetadata" not in raw
+    assert not hasattr(observed, "invoice_microusd")
+    assert not hasattr(observed, "publication_verified")
+    assert tuple(api.calls) == routes
+    assert client.inspect_effects() == observed
+
+
+def test_studio_effects_uncertainty_is_observed_without_replay(
+    tmp_path: Path, api: LocalProtocol
+) -> None:
+    client = guard(tmp_path, api)
+    api.drop = True
+    with pytest.raises(ExternalReconciliationError):
+        client(BASE + ":generateContent", payload(), {})
+    routes = tuple(api.calls)
+    with sqlite3.connect(client.path) as db:
+        before = tuple(db.iterdump())
+    observed = client.inspect_effects()
+    assert len(observed.effects) == len(observed.outstanding_intents) == 1
+    assert observed.outstanding_intents[0].state == "intent"
+    assert observed.reserved_microusd == client.policy.reservation(10)
+    assert client.inspect_effects() == observed
+    assert tuple(api.calls) == routes
+    with sqlite3.connect(client.path) as db:
+        assert tuple(db.iterdump()) == before
+
+
+def test_studio_effects_includes_other_job_uncertainty(tmp_path: Path, api: LocalProtocol) -> None:
+    p = policy()
+    original = guard(tmp_path, api, p)
+    api.drop = True
+    with pytest.raises(ExternalReconciliationError):
+        original(BASE + ":generateContent", payload(), {})
+    other = guard(tmp_path, api, p, "studio-" + "c" * 64)
+    routes = tuple(api.calls)
+    observed = other.inspect_effects()
+    assert observed.job_id == other.job_id
+    assert {effect.job_id for effect in observed.outstanding_intents} == {JOB}
+    assert observed.reserved_microusd == p.reservation(10)
+    assert tuple(api.calls) == routes
+
+
+def test_studio_effects_filters_only_after_validation(tmp_path: Path, api: LocalProtocol) -> None:
+    p = policy()
+    original = guard(tmp_path, api, p)
+    api.drop = True
+    with pytest.raises(ExternalReconciliationError):
+        original(BASE + ":generateContent", payload(), {})
+    separate = guard(tmp_path, api, replace(p, authorization_sha256="d" * 64), "studio-" + "e" * 64)
+    observed = separate.inspect_effects()
+    assert observed.effects == observed.outstanding_intents == ()
+    assert observed.reserved_microusd == 0
+    assert len(original.inspect_effects().outstanding_intents) == 1
+
+
+def test_studio_effects_refuses_corrupt_foreign_rows(tmp_path: Path, api: LocalProtocol) -> None:
+    p = policy()
+    original = guard(tmp_path, api, p)
+    original(BASE + ":generateContent", payload(), {})
+    separate = guard(tmp_path, api, replace(p, authorization_sha256="d" * 64), "studio-" + "e" * 64)
+    with sqlite3.connect(original.path) as db:
+        db.execute("UPDATE calls SET reservation_microusd=reservation_microusd+1")
+        db.commit()
+        before = tuple(db.iterdump())
+    routes = tuple(api.calls)
+    with pytest.raises(StudioStorageError, match="arithmetic"):
+        separate.inspect_effects()
+    assert tuple(api.calls) == routes
+    with sqlite3.connect(original.path) as db:
+        assert tuple(db.iterdump()) == before
+
+
+def test_studio_effects_refuses_changed_database_identity(
+    tmp_path: Path, api: LocalProtocol
+) -> None:
+    client = guard(tmp_path, api)
+    preserved = client.path.with_name("retained.sqlite3")
+    client.path.rename(preserved)
+    seed_private_file(client.path, b"replacement, not the original journal")
+    with pytest.raises(StudioStorageError, match="identity|binding"):
+        client.inspect_effects()
+    assert api.calls == []
+    assert client.path.read_bytes() == b"replacement, not the original journal"
+    assert preserved.is_file()
+
+
+def test_studio_effects_bounded_inspection_preserves_evidence(
+    tmp_path: Path, api: LocalProtocol
+) -> None:
+    client = guard(tmp_path, api)
+    client(BASE + ":generateContent", payload(), {})
+    with sqlite3.connect(client.path) as db:
+        before = tuple(db.iterdump())
+    routes = tuple(api.calls)
+    with pytest.raises(StudioStorageError, match="limit"):
+        client.inspect_effects(max_rows=1)
+    assert tuple(api.calls) == routes
+    with sqlite3.connect(client.path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_studio_billing_repeated_content_preserves_occurrences(
