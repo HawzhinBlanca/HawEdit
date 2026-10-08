@@ -15519,3 +15519,39 @@ specs/native-control-channel. Synthetic65536-nonce parser test is not native/Lin
 execution evidence. Full gate/same-SHA CI required; qualified current VEX#24
 remains external and may not be rebound by the implementing agent.
 
+## D-313 - Bounded Linux Owner Endpoint Is Not Worker Admission
+
+2026-10-09 local date. Approved native-worker-owner T3 / studio phases1-2;
+BLUEPRINT sections2/3/5 and D-312. No new dependency, model, provider or HTTP grant.
+
+Add the dedicated Linux supervisor counterpart, LinuxOwnerChannel. Original
+anonymous STD pipes only; one creator/request/process lifetime. Private
+non-inherited duplicates, finite exchange and overall deadlines, nonblocking
+select/read/write, exact HEI1 request, fresh HEC1 nonce and exact HER1 reply.
+HED1 requires a completed exchange and subsequent original owner EOF. Closing
+never emits terminal. Malformed/replayed/unsolicited/trailing/early-EOF/stalled
+IO refuses, with no retry/reset/background writer or ready/completed flags.
+
+Inode/proc-link equality is not open-file-description identity. Require actual
+Linux F_DUPFD_QUERY self/distinct calibration before adoption; use Linux UAPI
+1027 for supported Python3.11/3.12, which lack the named constant. Refuse an
+unavailable operation without inode-only fallback. Compare original STD and
+private duplicates before IO/cleanup. Actual same-inode reopen fault must not
+close its foreign replacement. Retain the creator Thread object as well as
+PID/identifier: an observed recycled numeric thread ID is not the creator.
+
+Restore shared original blocking modes only during verified cleanup. Preserve
+uncertain originals, strongly retain the lifetime and refuse automatic cleanup
+retry/new admission. This is trusted dedicated supervisor code, not protection
+against arbitrary same-process heap mutation. Fork copies close-on-exec FDs;
+the eventual admitted worker must have separate STD and controls closed before
+release. Kernel comparison/control framing alone does not prove original Linux
+namespace/member lifetime, GPU/service/provider drain, billing reconciliation,
+model/source/runtime byte admission, DBOS producer registration or publication.
+
+Actual Serena maps, EARS and real Linux/Windows-WSL regressions:
+specs/linux-owner-control. System Python3.14 CPU test compilation is a diagnostic,
+not an admitted HawEdit model runtime; required supported-runtime CI remains.
+The ZAR timing warning and qualified current VEX#24 are not repaired by this unit.
+Full exact gate and same-SHA CI still govern task acceptance.
+
