@@ -69,3 +69,28 @@ also passes retry and unlock, unchanged source,2.465672300008009s;
 root validator-startup-linux-crt-final-20261008, stdout SHA256
 86bb63c200d0ad0219afae7b872ba2d8ca660366b7ede96fdc118bb2da72e6af.
 No full Linux suite/current CI claim follows the bounded observation.
+
+## Exact Committed Full Gate
+
+Actual clean c5aab9f060338fdd8b305d9bccca10235492b826,
+package67805a850f62342eb616eca644fcb87d0f6967a27fd30dcc0635e71ea311f51d.
+Unmodified bash scripts/verify.sh started08:30:25.921586+03:00 and ended
+09:19:37.71267+03:00,2026-10-08. Native host/tool versions above; concurrent
+original ZAR inference means this is not isolated pipeline performance evidence.
+Lint, strict mypy and format349 pass; pytest5400 cases,5399pass,1failure,
+0errors/skips. JUnit2937.054s; printed2937.47s; controller2951.6728483000043s.
+One existing pydantic_graph no-current-event-loop deprecation warning.
+
+Only failure: tests/test_vex.py:131,
+test_checked_in_policy_binds_current_lock_and_assets_and_closes_report.
+Qualified policy binds81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba,
+not current67805a85. Expiry is independently known stale; this assertion stops
+before expiry evaluation, so do not invent a second executed failure. No policy
+hash/date alteration, test disabling, gate override, ledger promotion or CI claim.
+
+Actual exit1, source/controller/HEAD/status/package unchanged throughout.
+Root validator-startup-full-gate-final-20261008 under local HawEditEvidence.
+Fresh report SHA2569179a87fabc904d40fdd7d800554cc35121c912511ca430f3e1cb61087787c09;
+stdout3f4ed1ddbd68e6bb63d45a0e1059fa1705d251ac30131b932932f7700b0aa2c8,
+stderr empty. Owned controller/child absent before closing terminal handle.
+All new regressions pass; task remains WIP, not DONE or release accepted.

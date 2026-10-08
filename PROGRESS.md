@@ -110,6 +110,13 @@ Actual unsupported CLI refusal in0.4906003000069177s, not native-Linux runtime
 support. Exact committed gate/current CI and qualified review remain required;
 no ledger promotion, current primary ZAR inference change, accuracy or10/10.
 
+Exact clean c5aab9f full gate ended2026-10-08T09:19:37.71267+03:00:
+5399/5400 passes,1stale qualified VEX source-binding failure,0errors/skips,
+exit1, all watched inputs unchanged. ReportSHA256
+9179a87fabc904d40fdd7d800554cc35121c912511ca430f3e1cb61087787c09.
+New regressions pass; verification.md records runtime/commands/timing and the
+cancelled initial run separately. No current CI, security rebind or task promotion.
+
 ## Status legend
 
 | Mark | Meaning |
