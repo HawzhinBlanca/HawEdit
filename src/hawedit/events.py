@@ -27,6 +27,10 @@ at 1, and never repeats.
 events with a plain list; a durable workflow passes a function that writes a row. Neither
 needed a class here, so there is not one.
 
+**A failed write fences the same log.** Sink failure raises a distinct persistence error,
+not a media-ingest error. A recovered file or database does not prove whether the failed
+write committed: this log cannot retry or continue before separate reconciliation.
+
 **The JSONL ledger format lives here too, both halves.** `JsonlEventSink` writes it and
 `read_events` reads it back. They were originally in `durable_workflow.py`, which imports
 `dbos` at module level — so anything wanting to *read* a run's event ledger had to import a
@@ -50,6 +54,7 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "EventPersistenceError",
     "EventSink",
     "JsonlEventSink",
     "RunEvent",
@@ -163,6 +168,10 @@ class RunEvent:
 EventSink = Callable[[RunEvent], None]
 
 
+class EventPersistenceError(RuntimeError):
+    """An uncertain event write requires stopping and reconciling the attempt."""
+
+
 def discard(event: RunEvent) -> None:
     """The default sink: a run nobody is watching costs one call per stage."""
 
@@ -191,6 +200,18 @@ class RunEventLog:
         self._sink = sink
         self._clock = clock
         self._sequence = 0
+        self._failure: BaseException | None = None
+
+    def require_persistence(self) -> None:
+        """Refuse admission after any failed write; this does not verify the sink.
+
+        Protected callers must additionally adopt this fence before effects and
+        result acceptance. It is neither a reset nor billing reconciliation.
+        """
+        if self._failure is not None:
+            raise EventPersistenceError(
+                "Run event persistence is uncertain; stop and reconcile this attempt"
+            ) from self._failure
 
     def started(self, stage: str) -> RunEvent:
         return self._emit(stage, RunState.STARTED)
@@ -217,10 +238,10 @@ class RunEventLog:
         candidate_id: str | None = None,
     ) -> RunEvent:
         """Report a billed foundation model call."""
-        self._sequence += 1
+        self.require_persistence()
         event = RunEvent(
             run_id=self.run_id,
-            sequence=self._sequence,
+            sequence=self._sequence + 1,
             at_ms=int(self._clock() * 1000),
             stage=stage,
             state=RunState.BILLED,
@@ -229,20 +250,29 @@ class RunEventLog:
             cost_usd_estimate=cost_usd_estimate,
             candidate_id=candidate_id or "",
         )
-        self._sink(event)
-        return event
+        return self._publish(event)
 
     def _emit(self, stage: str, state: RunState, reason: str = "") -> RunEvent:
-        self._sequence += 1
+        self.require_persistence()
         event = RunEvent(
             run_id=self.run_id,
-            sequence=self._sequence,
+            sequence=self._sequence + 1,
             at_ms=int(self._clock() * 1000),
             stage=stage,
             state=state,
             reason=reason,
         )
-        self._sink(event)
+        return self._publish(event)
+
+    def _publish(self, event: RunEvent) -> RunEvent:
+        self._sequence = event.sequence
+        try:
+            self._sink(event)
+        except BaseException as exc:
+            self._failure = exc
+            if not isinstance(exc, Exception):
+                raise
+            self.require_persistence()
         return event
 
 

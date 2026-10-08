@@ -15424,3 +15424,30 @@ T3 must supply complete resource/admission/effects contracts. WSL/service-create
 processes and hostile equal-user code are not made safe by Windows Jobs/pipes.
 Research/EARS/actual caller maps and test-first failures: specs/native-worker-io.
 
+## D-310 - Event Write Failure Fences The Same Attempt Log
+
+2026-10-08, approved parent evidence-based-studio execution/recovery scope.
+BLUEPRINT sections 2-5 and 7.6; D-274/D-305/D-306. No runtime dependency,
+licence, model, cloud, qualified VEX, publication or release grant.
+
+Actual decoded-media fault demonstrated that an ingest-completed journal write
+raising OSError was returned as a media-ingest failure report. This was not a
+completed publication or an additional paid call. RunEventLog now distinguishes
+EventPersistenceError, retains the original cause, and permanently fences the
+same log after sink uncertainty. Physical file/database recovery cannot resolve
+whether a failed write committed; there is no automatic retry/reset/release.
+Invalid event validation occurs before consuming sequence or marking persistence
+uncertain. Fatal control exceptions preserve their original semantics while
+retaining the fence for any subsequent cleanup/result admission.
+
+require_persistence is a read-only failure admission check, NOT verification
+that a sink is durable, a provider is unbilled, or resources have drained. The
+protected producer must still adopt it before effects and result acceptance,
+with actual private attempt/billing persistence and authenticated reconciliation.
+Legacy JSONL still flushes without fsync; successful list/discard sinks remain
+observer conveniences, never protected-worker evidence. No HTTP adoption here.
+
+Research, current actual Serena caller maps, real file/SQLite/decoded-ingest
+test-first failures: specs/event-persistence-fence. Full gate/CI required;
+qualified source-bound VEX approval remains external BLOCKED #24.
+

@@ -58,6 +58,33 @@ def _event(sequence: int = 1, run_id: str = "episode-1") -> RunEvent:
     return RunEvent(run_id, sequence, 1234, "ingest", RunState.STARTED)
 
 
+def test_attempt_event_fence_retains_failure_after_real_sqlite_lock_recovery(
+    tmp_path: Path,
+) -> None:
+    from hawedit.events import RunEventLog
+    from hawedit.studio_private import StudioStorageError
+
+    attempts, _submissions, job_id = _state(tmp_path)
+    attempts.begin(job_id, "episode-1")
+    log = RunEventLog("episode-1", lambda event: attempts.append(job_id, event))
+    first = log.started("ingest")
+    with sqlite3.connect(attempts.path) as lock:
+        lock.execute("BEGIN IMMEDIATE")
+        with pytest.raises(RuntimeError, match="persistence") as failed:
+            log.finished("ingest")
+        assert type(failed.value).__name__ == "EventPersistenceError"
+        assert isinstance(failed.value.__cause__, StudioStorageError)
+        lock.rollback()
+    with pytest.raises(RuntimeError, match="persistence"):
+        log.started("transcript")
+    with pytest.raises(RuntimeError, match="persistence"):
+        log.require_persistence()
+    assert attempts.events(job_id) == (first,)
+    retained = attempts.get(job_id)
+    assert retained.state == "running"
+    assert retained.last_sequence == 1
+
+
 def test_attempt_binds_real_submission_and_preserves_outbox(tmp_path: Path) -> None:
     attempts, submissions, job_id = _state(tmp_path)
     before = submissions.get(job_id)
