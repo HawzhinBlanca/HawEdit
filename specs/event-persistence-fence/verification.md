@@ -1,5 +1,14 @@
 # Verification
 
+Corrected clean committed6fe060d/fd72110b full gate FINAL:5614pass/1stale-VEX
+source-binding failure/0error/skip, JUnit2225.022s, observer2238.164681s.
+All source/observer/HEAD/package/status unchanged and clean. Terminal
+fc8c3e6429edd23f305ec8a2fba9443106723762c6e1e383eab80faa778d15de;
+JUnit95a9c08b5d77c8b863282187e06249a4d64b076ca3c2b1ae695068d41e3966b2.
+Original required gate processes absent before next source edits. Checkpoint
+correction and unchanged FFmpeg replacement pass; prior denial still unexplained.
+No local-green/qualified-review/CI/ledger/release or completed-system promotion.
+
 HawaPC01/Windows26300/CPython3.12.10/pytest9.1.1/ruff0.9.6/mypy1.15.0/DBOS2.29.0.
 No provider/model inference, delivered reel, performance/reliability acceptance
 or same-SHA CI. Original source/canonical ASR not changed.

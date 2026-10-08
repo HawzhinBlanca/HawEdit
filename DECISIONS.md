@@ -15459,3 +15459,28 @@ An unrelated observed Windows refusal to replace a private test executable is
 preserved; unchanged whole ingest-cache replay passed16cases, cause unresolved.
 No security-policy edit, assertion weakening, exclusion or promotion follows.
 
+## D-311 - Retain Original Native Capabilities After Cleanup Refusal
+
+2026-10-08. BLUEPRINT sections 2-5/8.3; corrective unit under D-308/D-309,
+approved native-worker-owner and evidence-based-studio phases 1-2. No dependency.
+
+Actual Windows close-protection faults showed that close refused release but
+discarded still-open original handles and marked closed. Retaining that empty
+Python object in native IO cannot retain the discarded native capability. This
+was measured after native child quiescence, not a live Linux/GPU/billing leak.
+Member observation release failures additionally left snapshot finalization active.
+
+Keep each original handle until its own CloseHandle succeeds; retain remaining
+image access until complete native release. Do not clear all fields in finally.
+Strongly retain cleanup/stop uncertainty, detach snapshot finalization and refuse
+automatic retries or new create calls from that process. No public reset.
+When close observation fails, request termination through the original job before
+preserving uncertainty. Healthy exact-scope observation/cleanup remains unchanged.
+
+This latch is not independent Linux/GPU/provider drain or billing reconciliation.
+It does not revoke or stop every already admitted unrelated scope, certify native
+ephemeral members, authorize model/cloud execution, release a durable attempt or
+connect the protected HTTP producer. Those boundaries remain T3 and #24 remains
+qualified current security review. Research/caller maps and actual isolated
+fault tests: specs/native-capability-retention. Full gate and same-SHA CI required.
+

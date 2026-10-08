@@ -31,6 +31,7 @@ __all__ = ["NativeJob", "NativeProcessError"]
 
 _MAX_MEMBERS = 64
 _CLEANUP_SECONDS = 5.0
+_UNCERTAIN_SCOPES: list[object] = []
 
 
 class NativeProcessError(RuntimeError):
@@ -378,6 +379,8 @@ class NativeJob:
         stderr: BinaryIO,
     ) -> NativeJob:
         """Create assigned and suspended; no child code runs before explicit resume."""
+        if _UNCERTAIN_SCOPES:
+            raise NativeProcessError("Uncertain native scope retained; reconcile before launching")
         scope = cls()
         duplicates: list[int] = []
         attributes: Any = None
@@ -672,9 +675,18 @@ class NativeJob:
                     raise NativeProcessError("Native deadline expired; owned scope stopped")
             time.sleep(0.01)
 
+    def _retain_uncertainty(self) -> None:
+        if not any(scope is self for scope in _UNCERTAIN_SCOPES):
+            _UNCERTAIN_SCOPES.append(self)
+        self._state = "uncertain"
+        if self._finalizer is not None:
+            self._finalizer.detach()
+
     def stop(self) -> None:
         with self._lock:
             self._live()
+            if any(scope is self for scope in _UNCERTAIN_SCOPES):
+                raise NativeProcessError("Uncertain native scope retained; automatic retry refused")
             self._state = "stopped"
             try:
                 try:
@@ -691,7 +703,7 @@ class NativeJob:
                         )
                     time.sleep(0.01)
             except BaseException:
-                self._state = "uncertain"
+                self._retain_uncertainty()
                 raise
 
     def close(self) -> None:
@@ -700,10 +712,17 @@ class NativeJob:
                 return
             if os.getpid() != self._owner_pid:
                 raise NativeProcessError("Native scope belongs to another owner process")
+            if any(scope is self for scope in _UNCERTAIN_SCOPES):
+                raise NativeProcessError("Uncertain native scope retained; automatic retry refused")
             try:
                 if self._process:
                     if self._assigned:
-                        if not self._quiescent():
+                        try:
+                            quiescent = self._quiescent()
+                        except BaseException:
+                            self.stop()
+                            raise
+                        if not quiescent:
                             self.stop()
                     else:
                         _check(
@@ -712,23 +731,24 @@ class NativeJob:
                         )
                         if int(self._k.WaitForSingleObject(self._process, 5000)) != 0:
                             raise NativeProcessError("Unassigned native shutdown uncertain")
-            finally:
                 if self._finalizer is not None:
                     self._finalizer.detach()
-                failed = False
-                for handle in (self._job, self._thread, self._process, *self._observed.values()):
-                    if handle and not self._k.CloseHandle(handle):
-                        failed = True
-                self._job = self._thread = self._process = 0
-                self._observed.clear()
+                # Keep each capability until its own release is confirmed.
+                for name in ("_thread", "_process", "_job"):
+                    handle = getattr(self, name)
+                    if handle:
+                        _check(self._k.CloseHandle(handle), "Original native handle release")
+                        setattr(self, name, 0)
+                for pid, handle in tuple(self._observed.items()):
+                    _check(self._k.CloseHandle(handle), "Observed native handle release")
+                    del self._observed[pid]
                 if self._image is not None:
                     self._image.close()
                     self._image = None
                 self._state = "closed"
-                if failed:
-                    raise NativeProcessError(
-                        "Native handle release uncertain; retain durable exclusion"
-                    )
+            except BaseException:
+                self._retain_uncertainty()
+                raise
 
     def __enter__(self) -> NativeJob:
         self._live()
