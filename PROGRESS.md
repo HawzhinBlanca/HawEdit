@@ -94,6 +94,22 @@ abe5c8ef19d46c3d167df496b67cf709e012fe40a4127ee497196e0063fe1a25;
 see verification.md for exact runtime,command,times and limits. WIP unchanged,
 no current CI, qualified policy alteration, ledger promotion or DONE claim.
 
+## Validator Startup Repair (M9.80, WIP)
+
+D-303 / approved phases1/5/6 / specs/validator-startup. Actual seven-pair Serena
+map and real unsupported UNC errno22 probe preceded edits. Permanent locking
+errors now refuse without contention retries; historical contention/deadline
+and lock ownership preserved. Qwen's supported tuple API receives canonical
+bounded mono16kPCM16 through existing wave/NumPy, other inputs retain their
+original path route. No model/decoder/text/checkpoint policy change or dependency.
+Six test-first failures; whole177 affected cases pass,0errors/skips. One lint
+style failure retained and corrected without assertion changes; strict checks
+and format349 pass. All158 real ZAR samples equal independent decoded samples
+and installed Qwen normalization, including actual first string-path parity.
+Actual unsupported CLI refusal in0.4906003000069177s, not native-Linux runtime
+support. Exact committed gate/current CI and qualified review remain required;
+no ledger promotion, current primary ZAR inference change, accuracy or10/10.
+
 ## Status legend
 
 | Mark | Meaning |

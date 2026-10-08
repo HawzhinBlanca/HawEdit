@@ -10,6 +10,7 @@ does not duplicate the multi-gigabyte environment.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import importlib
 import json
@@ -851,6 +852,11 @@ def _windows_file_lock(stream: BinaryIO, lock_path: Path, msvcrt: object) -> Ite
             msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
             break
         except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EDEADLK):
+                raise WslRuntimeError(
+                    f"cannot acquire OmniASR setup lock {lock_path}: {exc}; "
+                    "choose a local runtime directory supporting file locks"
+                ) from exc
             if time.monotonic() >= deadline:
                 raise WslRuntimeError(
                     f"timed out waiting for OmniASR setup lock {lock_path}"

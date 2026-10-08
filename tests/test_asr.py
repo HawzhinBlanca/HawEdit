@@ -945,7 +945,16 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
         "device_map": "cuda:1",
         "max_inference_batch_size": 1,
     }
-    assert loaded["transcribe"] == {"audio": str(audio)}
+    import numpy as np
+
+    request = loaded["transcribe"]
+    assert isinstance(request, dict)
+    assert set(request) == {"audio"}
+    waveform, sample_rate = request["audio"]
+    assert sample_rate == 16_000
+    assert waveform.dtype == np.float32
+    assert waveform.shape == (16_000,)
+    np.testing.assert_array_equal(waveform, np.zeros(16_000, dtype=np.float32))
     assert integrity_calls == [(validator.model_id, model_dir)]
     assert not lock_active
 

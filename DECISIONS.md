@@ -15230,3 +15230,22 @@ Evidence and limits: specs/review-projection-binding. Protected worker adoption,
 authenticated studio review/revision/export, exact committed gate/current CI and
 independent/sustained acceptance remain required. No ledger promotion or10/10.
 
+## D-303 - Bound validator PCM decoding and refuse permanent setup-lock errors
+
+2026-10-08; approved BLUEPRINT section3 Stage1 / section8.1 startup repair.
+Qwen-ASR already accepts predecoded NumPy waveform/rate tuples. Adapt complete,
+bounded canonical mono 16 kHz PCM16 WAV with existing wave/NumPy, retaining path
+decoding for every other input. Avoid adding native soundfile, absent from the
+gate profile, or importing librosa's lazy optional modules for canonical PCM.
+Model verification/order, generation settings, validator selection, text,
+alignment and operation checkpoint bindings remain unchanged.
+
+Windows setup retries EACCES and historical EDEADLK contention only, keeping its
+existing deadline and ownership checks. Other errno values become actionable
+immediate refusals. A fresh UNC native probe returned EINVAL; do not turn this
+unsupported filesystem into an unlocked or falsely provisioned runtime.
+
+Actual seven-pair Serena map precedes edits; research, EARS, caller coverage and
+approved plan are in specs/validator-startup. No speed, fidelity, current VEX,
+CI, native-Linux runtime support, publication or 10/10 claim follows this ADR.
+

@@ -414,6 +414,30 @@ def _verified_adapter_aliases(adapter_dir: Path) -> Iterator[tuple[Path, str]]:
             shutil.rmtree(aliases)
 
 
+def _qwen_audio_input(audio_path: Path) -> str | tuple[Any, int]:
+    """Use Qwen's tuple API only for Stage 1's bounded canonical PCM (D-303)."""
+    try:
+        with wave.open(str(audio_path), "rb") as audio:
+            if (
+                audio.getnchannels(),
+                audio.getsampwidth(),
+                audio.getframerate(),
+                audio.getcomptype(),
+            ) != (1, 2, 16_000, "NONE"):
+                return str(audio_path)
+            frames = audio.getnframes()
+            if not 0 < frames <= LONG_AUDIO_THRESHOLD_S * 16_000:
+                return str(audio_path)
+            pcm = audio.readframes(frames)
+    except (OSError, EOFError, wave.Error):
+        return str(audio_path)
+    if len(pcm) != frames * 2:
+        return str(audio_path)
+    import numpy as np
+
+    return np.frombuffer(pcm, dtype="<i2").astype("float32") / 32768.0, 16_000
+
+
 class QwenSoraniValidator:
     """The official Qwen-ASR loader for §3's fine-tuned Sorani validator."""
 
@@ -483,7 +507,8 @@ class QwenSoraniValidator:
             raise ValueError(
                 f"validator segment is {duration_s:.3f}s; expected 0..{LONG_AUDIO_THRESHOLD_S:.0f}s"
             )
-        results = self._load().transcribe(audio=str(audio_path))
+        model = self._load()
+        results = model.transcribe(audio=_qwen_audio_input(audio_path))
         if len(results) != 1 or not str(results[0].text).strip():
             raise RuntimeError("Sorani validator returned no transcription for one speech segment")
         return str(results[0].text)
