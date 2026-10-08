@@ -15354,3 +15354,35 @@ preserving direct caller defaults and char-only/SRT/canonical behavior.
 Exact gate after each unit; same-SHA required CI before ledger promotion.
 Research/Serena/EARS/parent-scope approval: specs/caption-measurement.
 
+## D-308 - Retain native creation and observation handles before worker adoption
+
+2026-10-08, approved evidence-based-studio phases1-2; BLUEPRINT2-5/8.3,
+D-274/D-305/D-306. No new runtime dependency or model/licence/security grant.
+NativeJob is a narrow Windows64 lifetime component, not a general producer,
+hostile-code sandbox or terminal/publication authority. It requires explicit
+bounded arguments/environment, admitted local executable SHA, a held read lease,
+suspended creation and private non-inherited kill-on-close job assignment before
+one resume. Inherit only explicit nonconsole STD duplicates, never the job.
+
+Control only the original owned job/root creation handles. Native member PIDs
+are live diagnostics, not persisted authority. Open observation-only original
+handles only after current job membership/identity verification, retain them
+through shutdown, and refuse uncertain observation rather than report success.
+An actual regression observed zero members/accounting before a descendant's
+original handle became signaled. Root plus observed-member signaling and empty
+job observation are required; empty job accounting alone is insufficient.
+
+Every producer resource still needs the protected admission handshake: ephemeral
+unobserved native children, Linux/GPU scopes, bounded IO, model/source/loader
+admission, event failure and billed-effect reconciliation are NOT certified by
+this helper. No AttemptStore.finish, DBOS queue adoption or HTTP enablement in T1.
+Best-effort abandoned-scope finalization is not durable completion evidence.
+WSL/service/WMI-created processes are not universally contained by Windows Jobs.
+T2 must bound IO without blocking synchronous pipe peeks in threaded DBOS; T3
+must retain native/Linux capabilities and integrate the fixed ID-only producer.
+
+Research/EARS/actual caller maps/parent-scope approval: specs/native-worker-owner.
+39 real native tests and strict local checks pass; whole exact committed gate
+and same-SHA required CI remain required. Qualified VEX #24 remains independent;
+never rebind/redate old security evidence to accept a source change.
+
