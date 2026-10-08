@@ -75,6 +75,18 @@ This candidate still requires exact committed gate/current CI and qualified
 review. No ledger promotion, producer/HTTP activation, paid call, full ZAR reel
 or independent/sustained acceptance claim.
 
+## Review Candidate File Binding (M9.79, WIP)
+
+D-302 / approved phases1-3 / specs/review-projection-binding. Real decoded media,
+native hardlinks, malformed records and exact private candidate scope have named
+test-first cases. Generation projection now consumes existing preview file
+primitives and shared measurement validation; raw measurement is reopened after
+MP4 hashing. A restored-size/mtime mutation exposes why metadata alone is not
+enough on this host. The new race-test's initial Windows newline setup failure
+and failed whole caller run are retained separately. No publication, fresh media
+quality, complete worker/HTTP integration, same-SHA CI or ledger promotion claim.
+Original c163511 checkout remains frozen for real full-source ZAR local ASR.
+
 ## Status legend
 
 | Mark | Meaning |

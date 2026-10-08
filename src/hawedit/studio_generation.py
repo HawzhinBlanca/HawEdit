@@ -20,10 +20,9 @@ from typing import Any, Protocol, cast
 
 from hawedit.content_type import resolve_effective_configuration_from_args
 from hawedit.events import RunEvent, RunState
-from hawedit.measure import ClipMeasurement
 from hawedit.pipeline import build_parser
+from hawedit.studio_artifacts import ArtifactError, inspect_review_candidate
 from hawedit.studio_uploads import UploadError, UploadStore
-from hawedit.transcripts import validate_media_id
 from hawedit.wsl_setup import package_digest
 
 __all__ = [
@@ -272,14 +271,6 @@ def prepare_generation(
     )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _candidate_view(
     root: Path, clip_id: object, media_path: Path, metadata: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -296,23 +287,7 @@ def _candidate_view(
     try:
         if not isinstance(clip_id, str):
             raise GenerationError("Candidate lacks a clip ID")
-        validate_media_id(clip_id)
-        media = media_path.resolve()
-        measurement_path = media.with_name(f"{clip_id}.measured.json").resolve()
-        if not media.is_relative_to(root) or not measurement_path.is_relative_to(root):
-            raise GenerationError("Candidate artifact is outside its job")
-        with measurement_path.open("rb") as stream:
-            data = stream.read(2 * 1024**2 + 1)
-        if len(data) > 2 * 1024**2:
-            raise GenerationError("Candidate measurement exceeds the record limit")
-        measurement = ClipMeasurement.from_json(data.decode("utf-8"))
-        if (
-            media.stat().st_size != measurement.file.size_bytes
-            or _sha256(media) != measurement.file.sha256
-        ):
-            raise GenerationError("Candidate bytes do not match their measurement")
-        if type(measurement.video.duration_ms) is not int or measurement.video.duration_ms <= 0:
-            raise GenerationError("Candidate duration is not a valid measurement")
+        evidence = inspect_review_candidate(root, clip_id, media_path)
         score = metadata.get("hook_score")
         if (
             isinstance(score, int | float)
@@ -323,18 +298,18 @@ def _candidate_view(
             view["hook_score"] = score
         view.update(
             state="awaiting-review",
-            duration_s=measurement.video.duration_ms / 1000,
-            sha256=measurement.file.sha256,
-            artifact_path=media.relative_to(root).as_posix(),
+            duration_s=evidence.duration_ms / 1000,
+            sha256=evidence.sha256,
+            artifact_path=evidence.artifact_path,
         )
-    except (OSError, ValueError, TypeError, KeyError, OverflowError) as exc:
+    except (ArtifactError, OSError, ValueError, TypeError, KeyError, OverflowError) as exc:
         view["error"] = f"Candidate evidence refused: {exc}"
     return view
 
 
 def project_generation_result(report: Mapping[str, Any], work_dir: Path) -> dict[str, Any]:
     """Project review evidence only; a pipeline report cannot authenticate publication."""
-    root = work_dir.resolve()
+    root = work_dir.absolute()
     clips: list[dict[str, Any]] = []
     outcomes: list[dict[str, Any]] = []
     manifest = report.get("episode_manifest")

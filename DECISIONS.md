@@ -15206,3 +15206,27 @@ specs/count-refusal-diagnostics/verification.md. Required exact committed gate,
 qualified current VEX and same-SHA CI remain. No ledger promotion, host authority,
 HTTP activation, paid call, complete ZAR result or acceptance verdict follows.
 
+## D-302 - Review-ready projection uses the preview's stable file bindings
+
+2026-10-08; approved studio phases1-3, BLUEPRINT sections2-5;
+D-263/D-274/D-277. Generation projection must not resolve away links or accept
+malformed measurement records that preview serving refuses. Share bounded
+measurement validation and reuse studio_artifacts' existing no-follow native
+file/ancestor checks. Require exact review/clip-ID/clip-ID.mp4 scope, hash/size
+binding and unchanged raw measurement bytes after media hashing. File metadata
+alone does not detect a same-sized record edit with restored mtime on this host.
+Projection does not copy the MP4 or grant fresh decoding, quality or publication.
+
+Actual six-pair Serena map preceded edits. Native hardlinks and decoded fixture
+media reproduce eight test-first false-ready results; a real record mutation
+with restored size/mtime reproduces another. The observation delegates real hash
+operations unchanged. Initial race-test setup assumed LF byte size on Windows;
+that failed setup and its failed whole caller run are retained, not counted as
+the race reproduction. Corrected native newline accounting exposes the genuine
+failure before tightening. No existing assertion, fixture, golden, dependency,
+model policy, qualified VEX or enforcement surface changed.
+
+Evidence and limits: specs/review-projection-binding. Protected worker adoption,
+authenticated studio review/revision/export, exact committed gate/current CI and
+independent/sustained acceptance remain required. No ledger promotion or10/10.
+

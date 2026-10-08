@@ -53,6 +53,14 @@ class RecordSnapshot:
     size_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateArtifactEvidence:
+    size_bytes: int
+    sha256: str
+    duration_ms: int
+    artifact_path: str
+
+
 def _parts(value: object) -> tuple[str, ...]:
     if not isinstance(value, str) or len(value.encode("utf-8")) > 1024:
         raise ArtifactError("Artifact scope evidence is invalid")
@@ -193,6 +201,65 @@ def _clip_directory(report: dict[str, Any], clip_id: str) -> tuple[str, ...]:
     return selected
 
 
+def _measurement_evidence(record: dict[str, Any]) -> tuple[int, str, int]:
+    measurement = ClipMeasurement.from_dict(record)
+    size, digest = measurement.file.size_bytes, measurement.file.sha256
+    duration = measurement.video.duration_ms
+    if (
+        type(measurement.schema) is not int
+        or measurement.schema != 1
+        or type(size) is not int
+        or not 0 < size <= DEFAULT_MAX_BYTES
+        or not isinstance(digest, str)
+        or re.fullmatch("[0-9a-f]{64}", digest) is None
+        or type(duration) is not int
+        or duration <= 0
+    ):
+        raise ArtifactError("Candidate measurement evidence is invalid")
+    return size, digest, duration
+
+
+def inspect_review_candidate(
+    work_dir: Path, clip_id: str, media_path: Path
+) -> CandidateArtifactEvidence:
+    """Bind ready projection to stable private files; not fresh media or review approval."""
+    try:
+        validate_media_id(clip_id)
+        root = work_dir.absolute()
+        parts = ("review", clip_id, f"{clip_id}.mp4")
+        if media_path.absolute() != root.joinpath(*parts):
+            raise ArtifactError("Candidate artifact is outside its exact private review scope")
+        record, measurement_path, measurement_info = _record_snapshot(
+            root, ("review", clip_id, f"{clip_id}.measured.json")
+        )
+        size, digest, duration = _measurement_evidence(record.document)
+        hasher = hashlib.sha256()
+        copied = 0
+        deadline = time.monotonic() + 60
+        with _regular(root, parts) as (stream, _, info):
+            if info.st_size != size:
+                raise ArtifactError("Candidate bytes do not match measurement evidence")
+            while chunk := stream.read(min(1024**2, size - copied + 1)):
+                copied += len(chunk)
+                if copied > size or time.monotonic() > deadline:
+                    raise ArtifactError("Candidate evidence exceeds inspection bounds")
+                hasher.update(chunk)
+        if copied != size or hasher.hexdigest() != digest:
+            raise ArtifactError("Candidate bytes do not match measurement evidence")
+        repeated, _, current = _record_snapshot(
+            root, tuple(measurement_path.relative_to(root).parts)
+        )
+        if repeated.sha256 != record.sha256 or _metadata(current) != _metadata(measurement_info):
+            raise ArtifactError("Candidate measurement changed during inspection")
+        return CandidateArtifactEvidence(size, digest, duration, "/".join(parts))
+    except ArtifactError:
+        raise
+    except (ValueError, TypeError, KeyError, RecursionError, OverflowError, AttributeError) as exc:
+        raise ArtifactError("Candidate artifact evidence is invalid") from exc
+    except OSError as exc:
+        raise ArtifactError("Candidate evidence storage is unavailable") from exc
+
+
 @contextmanager
 def open_preview(jobs_root: Path, job_id: str, clip_id: str) -> Iterator[PreviewSnapshot]:
     """Copy/hash one declared private MP4 before serving any bytes; no filename search."""
@@ -208,20 +275,7 @@ def open_preview(jobs_root: Path, job_id: str, clip_id: str) -> Iterator[Preview
         record, measurement_path, measurement_info = _record(
             root, (*directory, f"{clip_id}.measured.json")
         )
-        measurement = ClipMeasurement.from_dict(record)
-        size, digest = measurement.file.size_bytes, measurement.file.sha256
-        duration = measurement.video.duration_ms
-        if (
-            type(measurement.schema) is not int
-            or measurement.schema != 1
-            or type(size) is not int
-            or not 0 < size <= DEFAULT_MAX_BYTES
-            or not isinstance(digest, str)
-            or re.fullmatch("[0-9a-f]{64}", digest) is None
-            or type(duration) is not int
-            or duration <= 0
-        ):
-            raise ArtifactError("Candidate measurement evidence is invalid")
+        size, digest, duration = _measurement_evidence(record)
         job_root = root / job_id
         if shutil.disk_usage(job_root).free < max(0, size - _MEMORY_LIMIT) + 16 * 1024**2:
             raise ArtifactError("Insufficient storage for a verified preview snapshot", status=503)
