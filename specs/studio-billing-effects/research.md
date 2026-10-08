@@ -30,3 +30,12 @@ Native SQLite inspection can change SQLite operational sidecars; promise no
 logical journal mutations, not byte-for-byte sidecar stasis. A result is a point-
 in-time observation only. Worker/process adoption remains required separately.
 BLOCKED #1/#3/#4/#24/#25 remain; #21 stays closed. No model/licence/spend/trust grant.
+
+Exact frozen fa09ab0 full gate exposed a documentation regression from the
+previous results-only commit: evidence/studio-host-admission-2026-10-08.md lacks
+the required provenance header. Actual test_claims data reader requires existing
+commit, media_sha256/n-a, host and exact command. Actual Serena two definition/
+reference pairs at fa09ab0, unchanged; raw evidence-header-map-fa09ab0-20261008
+SHA25695fe2c3a56eb4b5d8bd43ca800902259c21d2f7fee624588d7ef6a9a6c40b6ea.
+Repair only this evidence header from the original immutable controller/report;
+do not change its measured outcome, test, header validator or historical SHA.

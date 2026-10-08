@@ -15,3 +15,9 @@ trust enrollment, protected metadata, qualified VEX, publication, push or releas
    frozen bash scripts/verify.sh. Record every failure; require current CI for DONE.
 5. Update evidence/vault. Continue owned producer/lifetime and HTTP/review/revision/
    export adoption; this observation alone cannot release an uncertain attempt.
+
+Approved scope includes truthful evidence/provenance repair. Follow-up after the
+actual full gate: restore previous host-result note's missing required header
+using its measured code/host/command and n/a media; leave the validator untouched.
+Run complete claims module, then commit and repeat the exact frozen full gate.
+Preserve the initial two-failure report and all raw evidence; no ledger promotion.

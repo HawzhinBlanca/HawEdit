@@ -32,3 +32,8 @@
 No observation SHALL authorize process quiescence, new spending, refunds,
 automatic uncertain replay, terminal job state or publication. Current gate and
 same-SHA CI plus full acceptance remain required separately.
+
+- WHEN a new evidence note is retained, THE note SHALL carry the measured existing
+  commit, media hash or n/a, host and actual command in the required header
+  (test_new_evidence_names_its_commit_media_and_host). Historical report/claim
+  content and the validator remain unchanged when missing provenance is repaired.

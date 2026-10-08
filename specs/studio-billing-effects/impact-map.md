@@ -28,3 +28,9 @@ Actual Serena baseline/map in research.md, completed before source edits.
 Run complete test_studio_billing, test_studio_authorization, billing-admission,
 host, generation/execution/attempt callers, then exact frozen full gate. No
 test/golden/fixture/harness weakening or ledger promotion.
+
+Documentation follow-up: actual Serena validate_evidence_header and
+test_new_evidence_names_its_commit_media_and_host definitions/references mapped
+unchanged at fa09ab0 (hash in research.md). Only evidence markdown is repaired;
+tests/test_claims.py is an unchanged consumer, not edited. Full claims module
+and exact full gate must verify the restored provenance contract.

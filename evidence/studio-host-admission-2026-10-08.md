@@ -1,5 +1,12 @@
 # Studio Host Admission: Local Result
 
+```yaml
+commit: ddfac3580bd03643a12dec2e0da8d8a6377506d0
+media_sha256: n/a - no media inference in this admission unit
+host: HawaPC01 / Windows 11 build26300 / CPython3.12.10
+command: bash scripts/verify.sh
+```
+
 Code ddfac3580bd03643a12dec2e0da8d8a6377506d0 / D-305. Package
 657da7498b3735cc1f666bb257162d65544f0470aec07bbf79323480355314ad.
 2026-10-08, HawaPC01 Windows build26300. WIP, not accepted candidate/release.
