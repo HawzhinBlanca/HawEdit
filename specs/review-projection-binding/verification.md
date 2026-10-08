@@ -51,3 +51,28 @@ No gate override, dependency change, copied environment or manual protected edit
 
 Original c163511 real full-source ZAR ASR continues in its frozen checkout.
 No cloud calls, grants, completed reel, transcript accuracy or release verdict.
+
+## Exact Full Gate Final
+
+At committed ac04cc47b5e4e9b245d7dba5877600100d0a1c50/package
+4279ff739fa14e6e45ae7d87a4d62cda03880c9e3456ec4ab64b1dfa1614a6e3,
+exact bash scripts/verify.sh finished exit1, source/controller/HEAD/status/package
+unchanged. Ruff check, strict mypy and348-file format check pass.5385 pytest
+cases:5384 passes,1 failure,0errors/skips. New regressions and callers pass.
+Sole failure tests/test_vex.py131 is stale qualified VEX source binding:
+reviewed81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba
+differs from current4279ff73 package. Expiry is separately known; the executed
+assertion stops at binding. No qualified hash/date edit, CI or ledger promotion.
+One existing pydantic_graph event-loop deprecation warning retained.
+
+Started2026-10-08T07:20:50.523595+03:00,finished08:00:07.67993+03:00.
+Controller2357.042486800012s;JUnit2343.216s;printed2343.57s. Shared-host gate
+timing is not isolated media performance. Canonical worktree environment through
+samefile R: alias, no gate command overrides. Actual generated report.xml SHA256
+abe5c8ef19d46c3d167df496b67cf709e012fe40a4127ee497196e0063fe1a25;
+stdout1367c98c01a80228d46293ee98bc375905d39a11e6e926d9182f5c5b51c30180;
+stderr empty. Root Local/HawEditEvidence/review-projection-full-gate-20261008.
+Owned controller/child gone and quiet session closed. Full external verdict:
+C:/Users/Wareen/HawEdit-review-projection-gate-verdict-20261008.md.
+The earlier pending gate statement is historical. These later documentation
+updates do not transfer the actual committed-SHA gate result to a new SHA.

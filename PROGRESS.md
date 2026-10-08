@@ -87,6 +87,13 @@ and failed whole caller run are retained separately. No publication, fresh media
 quality, complete worker/HTTP integration, same-SHA CI or ledger promotion claim.
 Original c163511 checkout remains frozen for real full-source ZAR local ASR.
 
+Actual ac04cc47 full gate finished5384/5385 passes,0errors/skips,exit1;
+sole failure is stale qualified VEX source binding. New cases pass, source and
+controller unchanged throughout. ReportSHA256
+abe5c8ef19d46c3d167df496b67cf709e012fe40a4127ee497196e0063fe1a25;
+see verification.md for exact runtime,command,times and limits. WIP unchanged,
+no current CI, qualified policy alteration, ledger promotion or DONE claim.
+
 ## Status legend
 
 | Mark | Meaning |
