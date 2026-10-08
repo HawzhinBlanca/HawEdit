@@ -15386,3 +15386,30 @@ Research/EARS/actual caller maps/parent-scope approval: specs/native-worker-owne
 and same-SHA required CI remain required. Qualified VEX #24 remains independent;
 never rebind/redate old security evidence to accept a source change.
 
+## D-309 - Bound Native IO Without Releasing Pending Memory On Faith
+
+2026-10-08, approved evidence-based-studio phases1-2, native-worker-owner T2;
+BLUEPRINT sections2-5/8.3 and D-308. No new runtime dependency or admission grant.
+Use first-instance, remote-rejecting, generated named pipes with explicit
+owner/System protected ACLs, independently read back from held server/client
+handles. Validate own client process; only NativeJob's explicit STD duplicates
+reach suspended assigned children, with host client copies closed before resume.
+
+Fair overlapped input/stdout/stderr service uses retained4096-byte buffers,
+OVERLAPPED/events/handles. Immutable input and retained combined output each
+have16MiB ceilings; deadline is finite and at most12hours. Output capture can
+briefly hold an additional chunk and result-byte copies within fixed bounds.
+EOF never replaces original native wait. Cancellation requests are not completion:
+retain until actual GetOverlappedResult completion, including ERROR_OPERATION_ABORTED.
+Unknown completion/cleanup retains strong resources and refuses future launches
+in that process. One active executor bounds the production quarantine to at most
+three channels and one native job; no automatic guessed quarantine release.
+Cleanup adds bounded native stop/IO drain windows, not an exact wall-clock SLA.
+
+Raw exit code/bytes are not pipeline completion, source/model/runtime/qualified
+VEX admission, native/Linux producer-resource drain, billing reconciliation,
+editorial approval or publication. No HTTP/DBOS producer caller adopted in T2;
+T3 must supply complete resource/admission/effects contracts. WSL/service-created
+processes and hostile equal-user code are not made safe by Windows Jobs/pipes.
+Research/EARS/actual caller maps and test-first failures: specs/native-worker-io.
+
