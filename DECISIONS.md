@@ -15328,3 +15328,29 @@ Research/EARS/actual caller maps/approved plan: specs/studio-billing-effects.
 Required local gate and current CI remain unproved; worker/lifetime and HTTP/
 review/revision/export adoption and independent sustained acceptance remain.
 
+## D-307 - Caption ink widths must be decoded, not estimated
+
+2026-10-08, approved evidence-based-studio phases3/5; BLUEPRINT4.3/8.3.
+No new runtime dependency, model/ASR recipe, golden or licence change.
+Actual first ZAR word measured94px but missing-renderer fallback returned/cached
+108px; genuine source/renderer/fonts unchanged. Preserve that negative evidence.
+
+Failed or absent rendering and invalid decoded extent refuse with a caption
+measurement error. Empty text legitimately has zero ink. Limit canvas/parameters,
+font inventory and process-local cache; bind each entry to renderer, font/canvas
+context and observed resolved resource stat identity. Check resources before
+cache lookup and after decoding; protect cache bookkeeping from concurrent calls.
+Bind the actual requested ASS family to existing local Kurdish-covering fonts.
+
+Stat observations are not immutable asset leases and cannot defeat an equally
+privileged owner/process altering resources. Existing actual render provenance,
+decoded-media reconciliation and authenticated approval remain separate; no
+cached width is publication or acceptance authority. Do not hash100MB binaries
+per word, invent pixel success or quietly use another font/renderer on failure.
+
+T1 repairs genuine measurement/cache refusal first. T2 separately forwards the
+selected actual font/canvas through pixel-limited line/popup/RTL consumers,
+preserving direct caller defaults and char-only/SRT/canonical behavior.
+Exact gate after each unit; same-SHA required CI before ledger promotion.
+Research/Serena/EARS/parent-scope approval: specs/caption-measurement.
+

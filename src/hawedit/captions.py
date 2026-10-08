@@ -28,12 +28,14 @@ a viewer must see what was said, spelled as the speaker's transcript spells it.
 from __future__ import annotations
 
 import re
+import stat
+import threading
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from functools import lru_cache
-from itertools import pairwise
+from itertools import islice, pairwise
 from pathlib import Path
 from typing import Any, Final
 
@@ -893,7 +895,9 @@ def wrap_title_lines(title: str, max_chars: int = DEFAULT_MAX_CHARS_PER_LINE) ->
     return lines
 
 
-_WIDTH_CACHE: dict[tuple[str, str, int, int], int] = {}
+_WIDTH_CACHE: dict[tuple[object, ...], int] = {}
+_MAX_WIDTH_CACHE = 1024
+_WIDTH_LOCK = threading.Lock()
 
 
 def _default_fonts_dir() -> Path:
@@ -902,6 +906,47 @@ def _default_fonts_dir() -> Path:
     checkout = Path(__file__).resolve().parents[2] / "assets" / "fonts"
     installed = Path(sys.prefix) / "share" / "hawedit" / "assets" / "fonts"
     return checkout if checkout.is_dir() else installed
+
+
+def _measurement_stamp(path: Path, *, directory: bool = False) -> tuple[object, ...]:
+    info = path.stat()
+    expected = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+    if not expected:
+        raise CaptionVerificationError("caption width measurement requires regular local resources")
+    return (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _measurement_context(binary: Path, fonts: Path) -> tuple[Path, Path, tuple[object, ...]]:
+    resolved_binary = binary.resolve(strict=True)
+    resolved_fonts = fonts.resolve(strict=True)
+    binary_stamp = _measurement_stamp(resolved_binary)
+    directory_stamp = _measurement_stamp(resolved_fonts, directory=True)
+    entries = list(islice(resolved_fonts.iterdir(), 257))
+    if len(entries) > 256:
+        raise CaptionVerificationError("caption width measurement font inventory exceeds its bound")
+    font_stamps = tuple(
+        _measurement_stamp(path.resolve(strict=True))
+        for path in sorted(entries)
+        if path.suffix.lower() in {".ttf", ".otf", ".ttc"}
+    )
+    if not font_stamps:
+        raise CaptionVerificationError("caption width measurement requires local font files")
+    return resolved_binary, resolved_fonts, (binary_stamp, directory_stamp, font_stamps)
+
+
+def _decoded_ink_width(raw: bytes, *, width: int, height: int) -> int:
+    if len(raw) != width * height:
+        raise CaptionVerificationError(
+            "caption width measurement decoded extent differs from canvas"
+        )
+    min_x, max_x = width, -1
+    for row_start in range(0, len(raw), width):
+        row = raw[row_start : row_start + width]
+        if any(row):
+            first_x = next(i for i, value in enumerate(row) if value > 0)
+            last_x = width - 1 - next(i for i, value in enumerate(reversed(row)) if value > 0)
+            min_x, max_x = min(min_x, first_x), max(max_x, last_x)
+    return max_x - min_x + 1 if max_x >= min_x else 0
 
 
 def measure_rendered_caption_width(
@@ -917,23 +962,49 @@ def measure_rendered_caption_width(
     """Measure the horizontal ink extent in pixels of rendered Kurdish text at PlayRes.
 
     Renders the candidate string through libass via FFmpeg with `shaping=complex` onto a
-    blank background and measures the bounding width of non-zero pixels. Cached in-memory
-    to make incremental line-breaking checks near instantaneous.
+    blank background and measures the bounding width of non-zero pixels. A bounded
+    process-local cache binds the complete context to observed resource stat identities;
+    this is not an immutable resource lease or publication evidence. Failed measurements
+    refuse instead of returning character-count estimates.
     """
+    if (
+        not isinstance(text, str)
+        or len(text.encode("utf-8")) > 8192
+        or not isinstance(font_name, str)
+        or not font_name.strip()
+        or len(font_name) > 256
+        or any(char in font_name for char in "\r\n,")
+        or type(font_size) is not int
+        or not 1 <= font_size <= 512
+        or type(canvas_width) is not int
+        or not 1 <= canvas_width <= 8192
+        or type(canvas_height) is not int
+        or not 1 <= canvas_height <= 8192
+        or canvas_width * canvas_height > 8_388_608
+    ):
+        raise CaptionVerificationError("caption width measurement parameters exceed their bounds")
     cleaned = text.strip()
     if not cleaned:
         return 0
 
-    cache_key = (cleaned, font_name, font_size, canvas_width)
-    cached = _WIDTH_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
-        return int(len(cleaned) * font_size * 0.25)
+        raise CaptionVerificationError("caption width measurement requires a configured renderer")
 
     resolved_fonts = fonts_dir or _default_fonts_dir()
+    if not isinstance(binary, Path) or not isinstance(resolved_fonts, Path):
+        raise CaptionVerificationError("caption width measurement requires local resource paths")
+    try:
+        binary, resolved_fonts, context = _measurement_context(binary, resolved_fonts)
+    except OSError as exc:
+        raise CaptionVerificationError(
+            "caption width measurement resources are unavailable"
+        ) from exc
+    cache_key = (cleaned, font_name, font_size, canvas_width, canvas_height, context)
+    with _WIDTH_LOCK:
+        cached = _WIDTH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     import subprocess
     import tempfile
@@ -955,6 +1026,10 @@ def measure_rendered_caption_width(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         f"Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{escaped}\n"
     )
+    try:
+        assert_ass_fonts_cover_kurdish(ass_content, resolved_fonts)
+    except (OSError, FontCoverageError) as exc:
+        raise CaptionVerificationError("caption width measurement font binding refused") from exc
 
     with tempfile.TemporaryDirectory() as td:
         ass_path = Path(td) / "measure.ass"
@@ -981,25 +1056,18 @@ def measure_rendered_caption_width(
         ]
         try:
             res = subprocess.run(cmd, check=True, capture_output=True, timeout=30.0)
-            raw = res.stdout
-            min_x = canvas_width
-            max_x = -1
-            for row_start in range(0, len(raw), canvas_width):
-                row = raw[row_start : row_start + canvas_width]
-                if any(row):
-                    first_x = next(i for i, b in enumerate(row) if b > 0)
-                    last_x = (
-                        canvas_width - 1 - next(i for i, b in enumerate(reversed(row)) if b > 0)
-                    )
-                    if first_x < min_x:
-                        min_x = first_x
-                    if last_x > max_x:
-                        max_x = last_x
-            width = max_x - min_x + 1 if max_x >= min_x else 0
-        except (subprocess.CalledProcessError, ValueError, OSError):
-            width = int(len(cleaned) * font_size * 0.25)
+            width = _decoded_ink_width(res.stdout, width=canvas_width, height=canvas_height)
+            if width == 0:
+                raise CaptionVerificationError("caption width measurement decoded no visible ink")
+            if _measurement_context(binary, resolved_fonts)[2] != context:
+                raise CaptionVerificationError("caption width measurement resources changed")
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise CaptionVerificationError("caption width measurement renderer failed") from exc
 
-    _WIDTH_CACHE[cache_key] = width
+    with _WIDTH_LOCK:
+        if len(_WIDTH_CACHE) >= _MAX_WIDTH_CACHE:
+            _WIDTH_CACHE.pop(next(iter(_WIDTH_CACHE)))
+        _WIDTH_CACHE[cache_key] = width
     return width
 
 
