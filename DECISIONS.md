@@ -15484,3 +15484,38 @@ connect the protected HTTP producer. Those boundaries remain T3 and #24 remains
 qualified current security review. Research/caller maps and actual isolated
 fault tests: specs/native-capability-retention. Full gate and same-SHA CI required.
 
+## D-312 - Fixed Bounded Control Frames Do Not Certify Worker Completion
+
+2026-10-09 local date. Approved native-worker-owner T3, BLUEPRINT sections2/3/5;
+D-308 through D-311. No new dependency or model/HTTP/provider permission.
+
+The native executor's default request EOF cannot distinguish normal payload end
+from later Windows-owner death. Add an explicit exact-bool control_channel mode,
+not a new subprocess path, arbitrary callback or background heartbeat writer.
+Default absent/false preserves immutable binary transfer and EOF semantics.
+
+HEI1 plus network-order uint32 length frames the immutable payload; keep original
+stdin open. HEC1 plus16 nonce bytes receives an exact HER1 response. HED1 is
+terminal only after an original native response transfer completes. Reject
+malformed/truncated/unsolicited/replayed/premature/trailing frames, EOF without
+terminal, deadline and shared stdout/stderr overflow. Parser buffer20 bytes,
+distinct nonce ceiling65536, payload16MiB plus explicit8-byte header overhead.
+Overall native deadline and finite exchange bound both apply. No retry/reset.
+
+Observe the original pending write before classifying subsequent output. Neither
+stdout nor pipe EOF proves write completion, independent scope drain or billing.
+Terminal still requires original native job quiescence through the existing wait;
+all refusal cleanup uses original job/overlapped/arena uncertainty retention.
+
+Unpredictability and reply-consumption ordering belong to a separately byte-admitted
+supervisor. Parser checks are not a hostile-child sandbox. A supervised worker must
+not inherit control descriptors; Linux original namespace/pidfd/user/utility/model/
+GPU/resource/Windows-owner-death and effect reconciliation still need actual
+admission and evidence before protected producer or HTTP integration. A terminal
+frame is not durable attempt release, model security, reviewer approval or a reel.
+
+Research/EARS/current actual caller maps and real-child tests:
+specs/native-control-channel. Synthetic65536-nonce parser test is not native/Linux
+execution evidence. Full gate/same-SHA CI required; qualified current VEX#24
+remains external and may not be rebound by the implementing agent.
+

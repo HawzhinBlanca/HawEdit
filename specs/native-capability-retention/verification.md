@@ -25,3 +25,10 @@ Five actual faults additionally pass restored-fault close refusal, new-create
 refusal, exact original image/handle retention and GC survival. Parent fault
 owners remain isolated; no actual Linux/GPU/provider model calls certified.
 Local reviewed commit and exact frozen clean full gate follow; not CI acceptance.
+
+Exact clean committed7546659/4370162 full gate FINAL5619pass/1stale-qualified-VEX
+source-binding failure/0error/skip, JUnit2216.416s; all tracked source/observer/
+HEAD/package/status unchanged. Terminal17eebe92c4a39a1509160aff2922b52f578237f0b0eeb63af65dab4d9b964fab;
+JUnit1cad1cba5acbed2ea642d97ef32a5a5394103072f1fc9f0e6f35a68f50f81d97.
+All original commands absent before92995 closure. No policy rebind, green gate,
+CI/ledger/security/release promotion. Later control implementation is separate.

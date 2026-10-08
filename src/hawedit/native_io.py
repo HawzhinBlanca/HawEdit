@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import math
 import os
+import struct
 import threading
 import time
 import uuid
@@ -407,6 +408,80 @@ class _NativePipe:
             raise
 
 
+class _ControlExchange:
+    """Finite framing only; native completion and scope ownership stay external."""
+
+    def __init__(self, payload: bytes, timeout_seconds: float) -> None:
+        self.outgoing = b"HEI1" + struct.pack("!I", len(payload)) + payload
+        self.sent = 0
+        self.timeout_seconds = timeout_seconds
+        self.deadline = time.monotonic() + timeout_seconds
+        self.state = "request"
+        self.completed_replies = 0
+        self.frame = bytearray()
+        self.nonces: set[bytes] = set()
+
+    @property
+    def terminal(self) -> bool:
+        return self.state == "terminal"
+
+    def check_deadline(self) -> None:
+        if not self.terminal and time.monotonic() >= self.deadline:
+            raise NativeIOError("Native control exchange deadline expired")
+
+    def next_chunk(self) -> bytes:
+        return self.outgoing[self.sent : self.sent + _CHUNK]
+
+    def written(self, count: int) -> None:
+        self.check_deadline()
+        if (
+            self.state not in ("request", "reply")
+            or type(count) is not int
+            or not 0 < count <= len(self.next_chunk())
+        ):
+            raise NativeIOError("Native control original write completion refused")
+        self.sent += count
+        if self.sent == len(self.outgoing):
+            if self.state == "reply":
+                self.completed_replies += 1
+            self.outgoing = b""
+            self.sent = 0
+            self.state = "awaiting"
+            self.deadline = time.monotonic() + self.timeout_seconds
+
+    def receive(self, chunk: bytes) -> bool:
+        self.check_deadline()
+        if self.state != "awaiting" or not chunk:
+            raise NativeIOError("Native control frame before original transfer or after terminal")
+        if len(self.frame) + len(chunk) > 20:
+            raise NativeIOError("Native control unsolicited or oversized frame")
+        self.frame.extend(chunk)
+        if len(self.frame) < 4:
+            return False
+        header = self.frame[:4]
+        if header == b"HED1":
+            if len(self.frame) != 4 or not self.completed_replies:
+                raise NativeIOError("Native control premature or trailing terminal")
+            self.frame.clear()
+            self.state = "terminal"
+            return True
+        if header != b"HEC1":
+            raise NativeIOError("Native control frame header refused")
+        if len(self.frame) < 20:
+            return False
+        nonce = bytes(self.frame[4:])
+        if nonce in self.nonces:
+            raise NativeIOError("Native control replayed challenge refused")
+        if len(self.nonces) >= 65536:
+            raise NativeIOError("Native control exchange budget exhausted")
+        self.nonces.add(nonce)
+        self.frame.clear()
+        self.outgoing = b"HER1" + nonce
+        self.sent = 0
+        self.state = "reply"
+        return False
+
+
 def run_native(
     argv: Sequence[str],
     *,
@@ -416,6 +491,8 @@ def run_native(
     input_bytes: bytes,
     timeout_seconds: float,
     output_limit_bytes: int,
+    control_channel: bool = False,
+    control_timeout_seconds: float = 5.0,
 ) -> NativeIOResult:
     """Run one owned native scope; raw output does not certify a producer result."""
     if (
@@ -428,6 +505,14 @@ def run_native(
         raise NativeIOError("Native IO output limit must be positive and at most16MiB")
     if type(input_bytes) is not bytes or len(input_bytes) > _MAX_BYTES:
         raise NativeIOError("Native IO input must be immutable bytes and at most16MiB")
+    if type(control_channel) is not bool:
+        raise NativeIOError("Native control mode must be an exact bool")
+    if (
+        type(control_timeout_seconds) not in (int, float)
+        or not math.isfinite(control_timeout_seconds)
+        or not 0 < control_timeout_seconds <= 43200
+    ):
+        raise NativeIOError("Native control deadline must be finite, positive and bounded")
     if not _EXECUTION_LOCK.acquire(blocking=False):
         raise NativeIOError("Native IO executor already owns an active scope")
     pipes: list[_NativePipe] = []
@@ -453,14 +538,23 @@ def run_native(
         for pipe in pipes:
             pipe.close_child()
         job.resume()
+        control = (
+            _ControlExchange(input_bytes, control_timeout_seconds) if control_channel else None
+        )
         sent = 0
         captured = [bytearray(), bytearray()]
-        if not input_bytes:
+        if not input_bytes and control is None:
             incoming.close()
         while True:
             if time.monotonic() >= deadline:
                 raise NativeIOError("Native IO deadline expired")
-            if sent < len(input_bytes):
+            if control is not None:
+                control.check_deadline()
+                if control.outgoing:
+                    count = incoming.write(control.next_chunk())
+                    if count is not None:
+                        control.written(count)
+            elif sent < len(input_bytes):
                 count = incoming.write(input_bytes[sent : sent + _CHUNK])
                 if count is not None:
                     sent += count
@@ -472,7 +566,18 @@ def run_native(
                     if sum(len(data) for data in captured) + len(chunk) > output_limit_bytes:
                         raise NativeIOError("Native IO combined output limit exceeded")
                     captured[index].extend(chunk)
-            if sent == len(input_bytes) and out.eof and err.eof:
+                    if index == 0 and control is not None:
+                        # Poll the original submitted write, never infer it from stdout.
+                        if control.outgoing and incoming.pending:
+                            count = incoming.write(control.next_chunk())
+                            if count is not None:
+                                control.written(count)
+                        if control.receive(chunk):
+                            incoming.close()
+            if control is not None and out.eof and not control.terminal:
+                raise NativeIOError("Native control EOF before complete terminal")
+            delivered = control.terminal if control is not None else sent == len(input_bytes)
+            if delivered and out.eof and err.eof:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise NativeIOError("Native IO deadline expired")
