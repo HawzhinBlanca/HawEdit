@@ -6,6 +6,25 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Owned Scanner Cleanup (M9.82, WIP)
+
+D-304 local-only407de326f09ee8e57d630d55cfd6cc565d436600 replaces prohibited
+recursive shell cleanup with original-identity, descriptor-bound owned storage
+and closes requirements-write failure cleanup.189 complete affected/claims/CLI
+cases and seven actual pinned-Linux filesystem observations pass. Initial four
+full-gate failures are retained; corrected exact committed gate:5419/5420 passes,
+zero errors/skips, unchanged source, sole historical VEX source-binding refusal.
+No harness/assertion weakening, policy refresh, CI or ledger promotion.
+
+Supported Ubuntu source refresh succeeds. Actual repaired locked scanner audits
+141packages/21raw vulnerabilities/15alias groups and cleans its owned directory;
+actual VEX evaluation refuses expiry/source/lock drift and three missing
+dispositions. Every diagnostic setup/observer failure is distinguished in
+specs/scanner-cleanup/verification.md. No paid model call or transcript egress.
+Protected host/ID-only worker and HTTP/review/revision/export integration remain
+engineering work; qualified VEX, trusted signed authority and independent/sustained
+acceptance remain separate. Original ZAR media/canonical transcription unchanged.
+
 ## Real ZAR Retest And Repair Adoption (M9.81, WIP)
 
 2026-10-08, original c163511 ZAR actual offline ASR:158 drafts/76 validators/

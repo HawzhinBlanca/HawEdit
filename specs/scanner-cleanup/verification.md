@@ -73,3 +73,46 @@ Current full gate/current CI still pending; WIP row is not a completion promotio
 Stdlib descriptor semantics checked against primary Python3.12 documentation:
 https://docs.python.org/3.12/library/os.html#files-and-directories (2026-10-08).
 Positive evidence above comes from actual CPython3.12.0 execution, not the docs.
+
+## Corrected Full Gate And Actual Live Audit
+
+Frozen407de326f09ee8e57d630d55cfd6cc565d436600 / producer package
+3bb0c469e8574567ef0271faae01cbf6d9e2f0876c7f1b32cf24593a2b89e5e0:
+exact bash scripts/verify.sh exits1, source/HEAD/status/watched files unchanged.
+5420 tests,5419 passes,1 failure,0 errors/skips, pytest2255.018s/controller
+2277.5278087999905s. Lint/types/format351files pass on the recorded same native
+host/runtime. Sole remaining failure is the historical qualified-VEX source
+binding; all three repair omissions are corrected without assertion/harness changes.
+Raw gate.xml SHA25622eb3565a0c0e9524fd36250115fc06c6df48d8ba78b0762b29514c6979f6b5d;
+terminal.json SHA2569cd314bcea0d0a2f6a351dd9d1e077183b47e471a3eec36803dede961714282d.
+Root scanner-cleanup-full-gate-final-20261008 under Local/HawEditEvidence.
+
+Supported named Ubuntu source refresh exits0/unchanged158.61723470001016s.
+Original AppData evidence alias is refused before any scan. A subsequent
+diagnostic wrongly applied private-root requirements to the whole user profile;
+that refused before leaf creation, with no profile ACL alteration. Creating only
+the intended owned leaf corrects the scope. First physical-root scan captured
+genuine raw output and cleaned its directory, but the external observer unpacked
+the actual three-value parser result as two values and stopped before evaluation.
+These failed observations remain distinct from production failures and are retained.
+
+Final actual supported run_live_gate through the corrected transparent observer:
+112.28194060000533s audit diagnostic elapsed, source/controller unchanged;
+141 installed packages,21 raw vulnerabilities/15 alias groups. Strict reviewed
+scanner inventory/version/lock preserved. Actual descriptor cleanup code0,
+empty stdout/stderr; independent pinned-Linux lstat-based follow-up confirms
+/tmp/hawedit-wsl-audit.e0cb812677 absent, including dangling links, UID1000.
+No /usr/bin/rm command runs. No transcript or paid model call is sent.
+
+Actual VEX evaluation refuses expiry2026-09-08, source/runtime-lock drift and
+three missing applicable dispositions: accelerate1.12.0 CVE-2026-69112;
+transformers4.57.6 CVE-2026-80047 and CVE-2026-9856. No agent disposition,
+review date or accepted-security-evidence.json is supplied.
+Physical evidence root C:/Users/Wareen/HawEditScannerLiveV2-407de32-20261008;
+raw audit SHA256eaed8bd76182ed60942fbaad8a87888a86c952a5b1765db2a430ea1329e5376c;
+terminal SHA2569bb2ba658bb1ec60150afd53f8ec460fd2731b1bb41df671b6c80895879bf99f.
+Original alias-root and first physical-root records remain preserved separately.
+
+Controllers and all required sessions closed after actual process quiescence.
+Qualified review (#24), same-SHA CI, protected worker adoption and full studio/
+review/revision/export remain required. No ledger promotion or10/10 claim.
