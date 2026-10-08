@@ -45,7 +45,7 @@ def test_setup_noncontention_lock_error_refuses_without_sleep(
     assert calls == [LockDependency.LK_NBLCK]
 
 
-@pytest.mark.parametrize("error_number", [errno.EACCES, errno.EDEADLK])
+@pytest.mark.parametrize("error_number", [errno.EACCES, 36])
 def test_setup_contention_retries_and_releases(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error_number: int
 ) -> None:

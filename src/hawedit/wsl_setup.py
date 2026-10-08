@@ -852,7 +852,8 @@ def _windows_file_lock(stream: BinaryIO, lock_path: Path, msvcrt: object) -> Ite
             msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
             break
         except OSError as exc:
-            if exc.errno not in (errno.EACCES, errno.EDEADLK):
+            # The Windows CRT's EDEADLOCK is 36, unlike POSIX errno.EDEADLK.
+            if exc.errno not in (errno.EACCES, 36):
                 raise WslRuntimeError(
                     f"cannot acquire OmniASR setup lock {lock_path}: {exc}; "
                     "choose a local runtime directory supporting file locks"

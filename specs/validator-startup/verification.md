@@ -44,3 +44,28 @@ source unchanged, package079c8d173e373fa2c687e44c57c804429abb095de7a649d2fe7dc8c
 
 Exact clean committed full gate and same-SHA CI remain. Qualified VEX is already
 known stale; no agent rebinding, expiry extension, ledger promotion or10/10.
+
+Cross-platform correction before acceptance: actual Linux model-free call using
+Windows CRT errno36 exposed the native-POSIX enum mismatch in36b68149.
+Root validator-startup-linux-crt-red-36b6814-20261008, unchanged source,exit1;
+stderr bacf8afd02bc8ebd29c6f4c58a8722da62850b9a79912bc674d6bdac6a8afaf5.
+Native Windows EDEADLK36 differs from Linux35. Explicit Windows CRT36 preserves
+the existing simulated-Windows caller contract on every gate host.
+New test parameter also uses actual CRT36, not the host's POSIX enum.
+
+The initial exact36b68149 full gate was deliberately cancelled to repair this
+known portability bug: only verified owned pytest/build descendants stopped by
+exact PID, no console-wide event and no primary ASR interruption. Actual exit127,
+controller189.58411029999843s, unchanged source; no fresh JUnit, no full gate
+result. Root validator-startup-full-gate-36b6814-20261008;
+stdout969b4551a084beacb1f60469d8e1a23bda8ba88988e9ba7c08eca6d356080de6.
+Rerun whole affected modules, Linux CRT observation and exact frozen full gate.
+
+Corrected whole177 callers pass again,0failures/errors/skips; JUnit43.894s,
+controller52.96822580001026s, source unchanged. Final report SHA256
+8a5f3c57411aa7457d01912ed34fc5f45a9b1c6721fc02ad997ee4f6200d4a45;
+root validator-startup-callers-final-20261008. Actual Linux CRT36 observation
+also passes retry and unlock, unchanged source,2.465672300008009s;
+root validator-startup-linux-crt-final-20261008, stdout SHA256
+86bb63c200d0ad0219afae7b872ba2d8ca660366b7ede96fdc118bb2da72e6af.
+No full Linux suite/current CI claim follows the bounded observation.
