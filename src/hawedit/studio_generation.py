@@ -145,6 +145,10 @@ class ProducerSelection:
     vertex_project: str | None = None
     omni_asr_runtime: str = "auto"
     wsl_distro: str | None = None
+    vertex_location: str = "global"
+    confidential: bool = False
+    zero_data_retention: bool = False
+    zdr_confirmed_by: str = ""
 
     def argv(self) -> list[str]:
         if self.provider not in ("gemini", "vertex"):
@@ -153,6 +157,33 @@ class ProducerSelection:
             raise GenerationError("Vertex requires a configured project")
         if self.provider == "gemini" and self.vertex_project is not None:
             raise GenerationError("A Vertex project cannot silently use the Gemini route")
+        for name, flag in (
+            ("confidential", self.confidential),
+            ("zero_data_retention", self.zero_data_retention),
+        ):
+            if type(flag) is not bool:
+                raise GenerationError(f"{name} must be a boolean")
+        for name, text in (
+            ("vertex_location", self.vertex_location),
+            ("zdr_confirmed_by", self.zdr_confirmed_by),
+        ):
+            if not isinstance(text, str) or len(text) > 240 or any(ord(char) < 32 for char in text):
+                raise GenerationError(f"{name} must be bounded text without control characters")
+        if not self.vertex_location.strip():
+            raise GenerationError("vertex_location must be nonempty")
+        if self.provider == "gemini" and self.vertex_location != "global":
+            raise GenerationError("A Vertex location cannot silently use the Gemini route")
+
+        from hawedit.gemini import GeminiUnavailable, Governance
+
+        governance = Governance(self.confidential, self.zero_data_retention, self.zdr_confirmed_by)
+        try:
+            if self.provider == "vertex":
+                governance.assert_permits_vertex()
+            else:
+                governance.assert_permits_upload()
+        except GeminiUnavailable as exc:
+            raise GenerationError(str(exc)) from exc
         argv = [
             "--profile=production",
             "--auto-select",
@@ -167,6 +198,14 @@ class ProducerSelection:
         )
         if self.wsl_distro is not None:
             argv.append(f"--wsl-distro={self.wsl_distro}")
+        if self.vertex_location != "global":
+            argv.append(f"--vertex-location={self.vertex_location}")
+        if self.confidential:
+            argv.append("--confidential")
+        if self.zero_data_retention:
+            argv.append("--zero-data-retention")
+        if self.zdr_confirmed_by:
+            argv.append(f"--zdr-confirmed-by={self.zdr_confirmed_by}")
         return argv
 
 

@@ -15133,3 +15133,29 @@ protected model metadata permission, bounded cloud authority, actual protected
 worker/review/revisions/export and independent/sustained acceptance are separate.
 See specs/diarizer-runtime. No task is promoted by this ADR.
 
+## D-299 - Preserve trusted producer governance through studio reconstruction
+
+2026-10-08; approved phase1/2 repairs, BLUEPRINT sections2-5; D-276/D-288.
+The existing shared parser supports Vertex location and confidentiality/ZDR/
+confirmation attribution, but the studio host selection omitted them. Append
+these host fields without changing the original positional fields or default
+argv. Validate actual booleans and bounded text, refuse an ignored Vertex-only
+location on Developer API, and reuse Governance's existing route checks.
+No new runtime dependency, browser option, authority schema or policy fallback.
+
+Pass exact nondefault values literally through argv. Existing asdict configuration
+and source/content identity bind all fields; existing execution reconstruction
+must match exact immutable arguments/configuration before creating work. Changed
+or old job configuration is not silently rewritten or granted new authority.
+Host confirmation values are necessary configuration, not signed owner proof or
+verification of provider retention, rights or spending. Those controls remain
+independent prerequisites for the protected worker and actual upstream calls.
+
+Actual42-case test-first source run has33 failures before repair; final473 affected
+cases pass, no errors/skips, including real private uploads/outbox reopening and
+each independent host-policy drift. Strict types/lint/format pass345 files.
+See specs/trusted-producer-parity for actual Serena maps and raw evidence.
+Exact frozen local-commit gate/current CI and qualified VEX are still required.
+No worker/HTTP activation, model-policy/ASR change, signature, ledger promotion,
+publication, full ZAR result or independent/sustained acceptance follows.
+

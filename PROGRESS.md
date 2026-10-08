@@ -32,6 +32,20 @@ stale qualified VEX binding; this candidate still requires its exact gate/curren
 CI. Actual worker/review/revision/export adoption and independent/sustained
 acceptance remain open. No ledger row is promoted.
 
+## Trusted Producer Configuration (M9.76, WIP)
+
+D-299 / approved phase1/2 / specs/trusted-producer-parity. Host Vertex location
+and existing confidentiality/ZDR/attribution now pass through the shared parser
+and canonical job identity. Existing defaults/positional fields preserved;
+malformed values, incompatible routes and reopened-job drift refuse. Browser
+options cannot supply these host grants. Source42-case RED33 failures; final473
+whole affected cases pass without skips/errors. Lint/types/format pass345 files
+on HawaPC01/Windows26300/CPython3.12.10; no models/cloud calls. Exact new gate,
+same-SHA CI and qualified review remain required. Parent bbcc4c2 exact gate
+finished5306/5307 passes, sole stale VEX source binding; it is not green or current
+acceptance for this repair. Actual worker/review/revisions/export remain open.
+No ledger promotion, full ZAR/reel, authority or 10/10 claim.
+
 ## Status legend
 
 | Mark | Meaning |
