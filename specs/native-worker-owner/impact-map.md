@@ -32,3 +32,9 @@ HawEditNativeOwnerFinalizerMap-20261008/serena-map.json1pair, SHA256
 48e969c95ba2a4cb5c196cfab116a8b2d1f2ef2611e73923b1e8ebc9e1541097.
 These cover all modified launch/lifetime/native ctypes/environment/helper symbols
 and existing changed test callers. Exact raw maps are under C:/Users/Wareen.
+
+First exact gate identified README's inventory omission. Document-only correction
+does not alter library API or assertion. Actual unchanged named claims assertion
+definition/reference pair: HawEditNativeReadmeCallerMap-20261008/serena-map.json,
+SHA2567b7467a8478926bdd13377307339a0f3378051f9b6731d727fe6636df849bcfa.
+Run whole claims module and exact gate, preserving original2failure evidence.

@@ -682,6 +682,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `models.py` | §7 | Which §7 components this machine actually has, plus trusted source/revision/byte identities and reader/writer checkpoint binding. |
 | `model_fetch.py` | §7 | Installed-wheel checkpoint planning, private resume validation, exact byte verification and atomic no-replace publication. |
 | `windows_security.py` | §7 | Native protected-DACL creation and inspection for Windows checkpoint staging. |
+| `native_process.py` | Local studio, D-308, WIP | Held Windows creation/job/image handles, suspended assignment, explicit STD inheritance and root/observed-member shutdown. Not complete producer-resource, bounded IO, Linux, billing or publication authority; protected producer adoption remains required. |
 | `vex.py` | §6/§7 | Identity-bound WSL-ASR vulnerability disposition gate over pip-audit output and runtime receipts. |
 | `repurposing.py` | §8.2 | Per-path Recall@K, temporal IoU, misleading-edit rate, cost per source hour. |
 | `measure.py` | Phase 1; D-290 WIP | Independent MP4/ASS measurement: container, loudness, pauses, scene cuts, face presence and caption ink/contrast, with zero imports of render or pipeline. Explicit-reference optional VMAF checks compatible complete decoded clocks and bounded native observations; missing/invalid evidence remains unknown, never static95. Undefined global PSNR, speaker identity and editorial fidelity are not inferred. |

@@ -40,3 +40,34 @@ source/controller/HEAD/package/status unchanged. Raw frozen gate.xml SHA256
 eb0a13307453253bfb0641c35dc4001dfa748f2a298fdaaafbf9adb153ea0ba4 at
 C:/Users/Wareen/AppData/Local/HawEditEvidence/caption-context-full-gate-20261008.
 Earlier PROGRESS M9.85 "pending" wording is historical, not the latest result.
+
+## First Exact T1 Gate And Inventory Correction
+
+Clean f41b4f7153cc02d7ea1d1e572c5a9a8316274856, package
+978b43ba9e673516ae720662c1984321fa6f044722cba6f0227919cbdf400e60:
+exact bash scripts/verify.sh finishedexit1,5556/5558pass,2fail,0errors/skips.
+Whole lint/strict types/format358pass. One failure omitted native_process.py from
+README's complete module inventory; other is historical qualified VEX binding.
+All39native cases pass in the whole report. Every tracked/controller/HEAD/package/
+status unchanged and checkoutclean. JUnit2247.344s/controller2277.6902196s,
+concurrent diagnostic, not pipeline performance; same host/library versions above.
+Original controller40136/launcher47876 absent before session95069closed.
+
+Raw native-owner-full-gate-20261008 under AppData/Local/HawEditEvidence,
+gate.xml SHA256290616ba21e3a9a04d2c7451567637ecb5cff256111c3c3fdf905f772844f351,
+terminalSHA256bc661196a8f6bfb77ba1c175c20d48c4d2470e712849ced4157cb236ce4eb0d5.
+Preserve original failure, do not edit its tests/report or gate. Add the missing
+truthfully scoped WIP inventory row; no source behavior change. Fresh actual
+Serena definition/reference pair for the unchanged assertion, unchanged source/
+HEAD/status: C:/Users/Wareen/HawEditNativeReadmeCallerMap-20261008/serena-map.json
+SHA2567b7467a8478926bdd13377307339a0f3378051f9b6731d727fe6636df849bcfa.
+Whole claims module and exact corrected committed gate remain required; no DONE,
+qualified review, CI or publication inference from the inventory correction.
+
+Whole unchanged claims plus native modules after inventory correction:106pass,
+0fail/error/skip,15.125s diagnostic. Command .venv/Scripts/python.exe -m pytest
+tests/test_claims.py tests/test_native_process.py -q
+--junitxml=C:/Users/Wareen/HawEdit-native-owner-inventory-correction-20261008.xml.
+RawSHA256cbc3d4599eb7c5175d7e84502fa74166c09f36ca4675e3b3fb60a0a4d8d3d6c8.
+Original command absent before session11966closed. Reviewed document-only local
+commit and fresh exact full gate follow; no source behavior or assertion changes.
