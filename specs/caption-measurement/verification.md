@@ -50,3 +50,46 @@ forwarding remains unimplemented. No ledger promotion, completed-studio,
 verified-publication, Kurdish fidelity or 10/10 claim follows from these checks.
 The preceding frozen full gate at 79fc026 passed 5477/5478 tests and refused the
 qualified current VEX binding (BLOCKED #24); do not rebind historical sign-off.
+
+## T1 Exact Frozen Gate Result
+
+Local-only commit e1f07fec2e46b3cc01f17ff0a07c693018daa64a, package29e945b4c4f9c22cda86e43c0efedf534ffe288397cbbce49a731726eb3dd647.
+Exact bash scripts/verify.sh exited1:5489passed/5490tests,1failure,0errors/skips.
+Lint/strictmypy/format355pass. Caption measurement12,captions131,delivery98,
+claims67 all pass in the frozen report. Sole failure: historical qualified VEX
+source binding81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba
+differs from current package; BLOCKED #24, do not edit/rebind old sign-off.
+All tracked source/controller/HEAD/package/status unchanged and checkout clean.
+Actual controller/raw logs/report:
+C:/Users/Wareen/AppData/Local/HawEditEvidence/caption-measurement-full-gate-20261008.
+JUnitSHA256ed1f04e5e5b90498fef2dd95c08eee782dafdae1c2950b4708bfe3ca8baba151;
+terminal.jsonSHA2566dfa3ac445a4712a15b4d20fae9f7c7d93222f6a9a42c423827babe2a8f736dc.
+Finished2026-10-08T13:04:28.824654UTC, JUnit2313.924s/controller2321.9640109s,
+concurrent diagnostics, not isolated product performance. Native hardware/tool
+versions above; DBOS2.29.0. Exact children absent before session15617 closed.
+No successful gate grading, same-SHA CI, ledger promotion or release verdict.
+
+Genuine original aligned ZAR word retest at this commit, same renderer/fonts:
+absent-first/actual-first both refuse missing renderer and actually measure94px.
+Raw C:/Users/Wareen/HawEditCaptionWidthRetest-e1f07fe-20261008/terminal.json,
+SHA256120ec5fa13a37cf91d77b7573dc679ab8312c31a1793d3b791834a588bb4c3c1.
+Tracked source/observer/HEAD/package/raw/fonts/renderer unchanged, no new reel.
+
+## T2 Development Caller Verification
+
+Selected font name/size/directory and both canvas dimensions now reach all five
+chunk calls, the line wrapper and both explicit RTL position branches. Existing
+direct positional arguments/defaults and char-only/SRT semantics are preserved.
+tests/test_caption_context.py adds29 actual renderer regressions. After strict
+typing identified the existing dynamic invalid-limit dictionary, actual Serena
+mapping preceded spelling out its unchanged three zero-limit refusal assertions.
+No fixture, golden, harness, dependency, canonical transcript or model changes.
+
+Whole caption-context/measurement/captions/delivery/claims modules337pass,
+0failures/errors/skips, JUnit106.768s (diagnostic, not isolated performance),
+C:/Users/Wareen/HawEdit-caption-context-callers-repaired-20261008.xml SHA256
+b89d7eee6f60a8bb800331d35513fb0befc2f11083e474cbd827f2dea0ffcecf.
+Whole ruff check/strict mypy/ruff format --check pass356 source files.
+Reviewed local-only commit and fresh exact frozen full gate/ZAR consumer retest
+follow. Same-SHA required CI and qualified current VEX remain unproved. Both task
+rows stay WIP; no verified-publication, accepted reel or completed-system claim.

@@ -1327,9 +1327,12 @@ def test_a_word_wider_than_the_limit_gets_its_own_event_rather_than_being_droppe
 def test_chunking_refuses_input_it_cannot_split() -> None:
     with pytest.raises(ValueError, match="no words"):
         chunk_caption_events(())
-    for limit in ("max_words", "max_chars", "max_ms"):
-        with pytest.raises(ValueError, match="must be positive"):
-            chunk_caption_events(_popup_sentence().words, **{limit: 0})
+    with pytest.raises(ValueError, match="must be positive"):
+        chunk_caption_events(_popup_sentence().words, max_words=0)
+    with pytest.raises(ValueError, match="must be positive"):
+        chunk_caption_events(_popup_sentence().words, max_chars=0)
+    with pytest.raises(ValueError, match="must be positive"):
+        chunk_caption_events(_popup_sentence().words, max_ms=0)
     with pytest.raises(ValueError, match="must be non-negative"):
         chunk_caption_events(_popup_sentence().words, max_gap_ms=-1)
 

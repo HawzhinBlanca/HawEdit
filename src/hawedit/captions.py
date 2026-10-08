@@ -1076,6 +1076,11 @@ def wrap_caption_lines(
     max_chars: int = DEFAULT_MAX_CHARS_PER_LINE,
     *,
     max_width_px: int | None = None,
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = VIRAL_FONT_SIZE,
+    fonts_dir: Path | None = None,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
 ) -> tuple[tuple[Word, ...], ...]:
     """Break a caption into lines at word boundaries from the alignment.
 
@@ -1097,7 +1102,14 @@ def wrap_caption_lines(
                 current = [word]
                 continue
             candidate_text = " ".join(w.w for w in [*current, word])
-            cand_w = measure_rendered_caption_width(candidate_text)
+            cand_w = measure_rendered_caption_width(
+                candidate_text,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=canvas_width,
+                canvas_height=canvas_height,
+            )
             if cand_w > max_width_px:
                 lines.append(tuple(current))
                 current = [word]
@@ -1131,6 +1143,11 @@ def chunk_caption_events(
     max_width_px: int | None = None,
     max_ms: int = POPUP_MAX_MS,
     max_gap_ms: int = POPUP_MAX_GAP_MS,
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = VIRAL_FONT_SIZE,
+    fonts_dir: Path | None = None,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
 ) -> tuple[tuple[Word, ...], ...]:
     """Split one sentence into popup-sized groups, each of which is its own caption event.
 
@@ -1168,7 +1185,14 @@ def chunk_caption_events(
         if current:
             if max_width_px is not None:
                 candidate_text = " ".join(w.w for w in [*current, word])
-                cand_w = measure_rendered_caption_width(candidate_text)
+                cand_w = measure_rendered_caption_width(
+                    candidate_text,
+                    font_name=font_name,
+                    font_size=font_size,
+                    fonts_dir=fonts_dir,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
                 exceeds_width = cand_w > max_width_px
             else:
                 exceeds_width = width + addition > max_chars
@@ -1464,6 +1488,8 @@ def compute_rtl_word_positions(
     canvas_width: int = 1080,
     fonts_dir: Path | None = None,
     ffmpeg: Path | None = None,
+    *,
+    canvas_height: int = 1920,
 ) -> list[tuple[Word, int]]:
     """Calculate the horizontal center pixel (X coordinate) for each word in an RTL sentence.
 
@@ -1486,6 +1512,7 @@ def compute_rtl_word_positions(
         ffmpeg=ffmpeg,
         fonts_dir=fonts_dir,
         canvas_width=canvas_width,
+        canvas_height=canvas_height,
     )
 
     positions: list[tuple[Word, int]] = []
@@ -1498,6 +1525,7 @@ def compute_rtl_word_positions(
             ffmpeg=ffmpeg,
             fonts_dir=fonts_dir,
             canvas_width=canvas_width,
+            canvas_height=canvas_height,
         )
         w_word = measure_rendered_caption_width(
             _escape_ass_text(word.w),
@@ -1506,6 +1534,7 @@ def compute_rtl_word_positions(
             ffmpeg=ffmpeg,
             fonts_dir=fonts_dir,
             canvas_width=canvas_width,
+            canvas_height=canvas_height,
         )
         x_center = round((canvas_width + w_full) / 2 - w_prefix + (w_word / 2))
         positions.append((word, x_center))
@@ -1891,6 +1920,11 @@ def build_ass(
                 max_words=b_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
@@ -1927,6 +1961,11 @@ def build_ass(
                 max_words=k_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for chunk_idx, chunk in enumerate(chunks):
                 following = (
@@ -1954,6 +1993,7 @@ def build_ass(
                     font_size=font_size,
                     canvas_width=play_res_x,
                     fonts_dir=fonts_dir,
+                    canvas_height=play_res_y,
                 )
 
                 for w_idx, active_word in enumerate(chunk):
@@ -2000,6 +2040,11 @@ def build_ass(
                 max_words=v_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
@@ -2035,6 +2080,11 @@ def build_ass(
                 max_words=r_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
@@ -2057,6 +2107,7 @@ def build_ass(
                     font_size=font_size,
                     canvas_width=play_res_x,
                     fonts_dir=fonts_dir,
+                    canvas_height=play_res_y,
                 )
                 t_0 = chunk[0].start_ms
                 time_points = sorted(
@@ -2091,6 +2142,11 @@ def build_ass(
                 sentence.words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_line_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             style_name = choose_style(sentence.start_ms, sentence.end_ms)
             events.append(
@@ -2109,6 +2165,11 @@ def build_ass(
             max_words=max_words_per_event,
             max_chars=max_chars_per_line,
             max_width_px=max_popup_width_px,
+            font_name=font_name,
+            font_size=font_size,
+            fonts_dir=fonts_dir,
+            canvas_width=play_res_x,
+            canvas_height=play_res_y,
         )
         for index, chunk in enumerate(chunks):
             # Hold a popup until the next one starts when the hole between them is short: a

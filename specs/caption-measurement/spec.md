@@ -13,9 +13,16 @@
 4. WHEN pixel-limited lines/popups are built, THE caption system SHALL measure with
    the selected font name/size/directory and canvas in every applicable style branch.
    Tests: test_ass_pixel_wrapping_uses_selected_font_size,
-   test_ass_popup_width_uses_selected_font_context.
+   test_ass_popup_width_uses_selected_font_context,
+   test_ass_generic_popup_width_uses_selected_font_size,
+   test_ass_pixel_measurement_refuses_unavailable_selected_font,
+   test_ass_pixel_measurement_refuses_empty_selected_fonts,
+   test_ass_pixel_measurement_uses_selected_canvas_height,
+   test_direct_pixel_consumers_use_selected_font_size,
+   test_rtl_positions_measure_selected_canvas_height.
 5. WHEN char-only captions/SRT are built, THE caption system SHALL preserve original
    text/timing/order and unbroken long-word behavior. Existing whole caption/delivery
    modules and golden references remain unchanged.
+   Test: test_char_only_consumers_do_not_require_render_resources.
 
 Measurements do not authenticate editorial meaning, publication or release.

@@ -30,3 +30,36 @@ actual render asset/provenance/reconciliation remains separate. No repeated
 100MB executable hash per word, no new dependency, no claimed protected lease.
 Refuse absent/failed/invalid decoded measurements, never estimate measured ink.
 Preserve char-only/SRT semantics, canonical text/timing and committed goldens.
+
+## T2 Current Baseline
+
+After T1 exact gate, baseline e1f07fec2e46b3cc01f17ff0a07c693018daa64a.
+Actual fresh four-pair Serena map for wrap/chunk/RTL positions/build_ass:
+C:/Users/Wareen/HawEditCaptionConsumersMap-e1f07fe-20261008/serena-map.json,
+SHA2567355b82919ebcf94722236cdbafe66de04d8d12fba31086b309b3c01e956d185.
+Source/observer/HEAD/status unchanged during mapping. Actual original ZAR first
+heuristic-complete sentence65words322..29054ms; two initial words measure133px
+at64 versus224px at108, yet all six style branches retained identical groups at
+178px. No native-editor completeness or rendered-reel claim. Raw genuine ASS/
+width diagnostic C:/Users/Wareen/HawEditCaptionConsumers-e1f07fe-20261008/terminal.json,
+SHA256c4e6e2d5b6c6377b138d567ac0abcbff3f021714e6edaf1d7ee5d0555cb18919.
+
+26 external test-first negatives fail on this frozen baseline: six style sizing,
+two generic popup sizing, six missing font family, six empty selected font
+directory, six invalid selected canvas height. Typed synthetic timing/complete
+inputs are unit cases, not forged canonical media or editorial provenance.
+Raw reports C:/Users/Wareen/HawEdit-caption-consumers-draft-red-20261008.xml,
+SHA256ed967c4602401c64e476bbb53b7a1cfac4866458c6a0730fa58685af1866cbd1,
+and C:/Users/Wareen/HawEdit-caption-context-draft-red-20261008.xml,
+SHA2567e9212f655178837c8aded506ba9c2b1527cbe3aa0b3fdfad16ad1b03d1f650c.
+Actual selected context is forwarded without changing char-only/SRT semantics,
+defaults, canonical ASR or golden references. Font/canvas parity alone does not
+prove full themed/animated extent, unclipped words, or native semantic fidelity.
+
+Strict typing found an impacted existing invalid-limit regression after optional
+mixed-type context arguments were introduced. Actual Serena definition/reference
+pair found test_chunking_refuses_input_it_cannot_split at lines1326..1333 and no
+code references; source/test/observer/HEAD/dirty status unchanged while mapping.
+Raw C:/Users/Wareen/HawEditCaptionInvalidLimitsMap-20261008/serena-map.json.
+The three actual zero-limit calls are now explicit and retain the same exception
+type/message assertions. No ignore, cast, relaxed typing or weakened test.
