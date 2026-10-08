@@ -46,6 +46,21 @@ finished5306/5307 passes, sole stale VEX source binding; it is not green or curr
 acceptance for this repair. Actual worker/review/revisions/export remain open.
 No ledger promotion, full ZAR/reel, authority or 10/10 claim.
 
+## Studio Activation Fence (M9.77, WIP)
+
+D-300 / approved phase2 / specs/studio-activation-fence. Bounded callback startup
+wait retains active-only real verification; main-thread startup, timeout, failed
+startup, drain/close and runtime drift refuse. Genuine DBOS crash23/PENDING and
+controlled recovered callback ordering pass; inert workflow only. Source23-case
+RED23 failures; initial two setup errors retained/corrected via actual Serena.
+Final23 regressions and496 whole callers pass, no errors/skips, on
+HawaPC01/Windows26300/CPython3.12.10/DBOS2.29.0; strict checks346 files pass.
+Parent427c899 exact gate finished5348/5349 passes, sole stale qualified VEX binding.
+This candidate's exact committed gate/current CI and qualified review remain
+required. HTTP/actual producer/review/revisions/export and independent/sustained
+acceptance are still open; source-bound staging needs revalidation. No ledger
+promotion, full ZAR/reel, native preemption/child-death or10/10 claim.
+
 ## Status legend
 
 | Mark | Meaning |

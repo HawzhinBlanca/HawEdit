@@ -15159,3 +15159,29 @@ Exact frozen local-commit gate/current CI and qualified VEX are still required.
 No worker/HTTP activation, model-policy/ASR change, signature, ledger promotion,
 publication, full ZAR result or independent/sustained acceptance follows.
 
+## D-300 - Fence recovered studio callbacks until verified activation
+
+2026-10-08; approved phase2 continuation, BLUEPRINT sections3/6;
+D-276/D-288/D-295/D-297. Actual pinned DBOS2.29.0 recovery can enter while the
+owned main thread is still starting. Preserve verify's active-only refusal.
+Add one standard threading.Event plus await_activation with validated finite
+positive timeout at most10s (default5s). Only starting callbacks wait; the
+launching thread refuses instead of blocking itself. Unlaunched/closed/draining
+objects refuse immediately through existing actual verification.
+
+Publish the signal after existing registry/engine verification and active state;
+signal again when drain begins, before worker joins, so failed startup can wake
+and refuse. A signal never grants authority: every successful helper return
+requires unchanged verify, actual engine/storage/registry/PID/lease checks.
+No new dependency, model/spending/reviewer authority, registry relaxation, retry,
+automatic resource release, forced cancellation or generic producer rewrite.
+
+Actual6 pre-edit lifecycle Serena pairs and controlled real pending recovery
+observation;23 named test-first failures, final23 regressions and496 whole caller
+cases pass with no errors/skips. Initial two new setup failures are retained and
+corrected against actual SDK fields/observational timing, not hidden. Evidence
+and exact maps in specs/studio-activation-fence. Required exact committed gate,
+current qualified VEX and same-SHA CI remain; no ledger promotion or release.
+This does not connect the protected producer/HTTP or prove native GPU preemption,
+WSL child death, actual whole-source editorial quality or sustained acceptance.
+

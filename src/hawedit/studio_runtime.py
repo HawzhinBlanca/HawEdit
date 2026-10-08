@@ -354,6 +354,7 @@ class OwnedStudioRuntime:
         self._baseline_functions: dict[str, Any] = {}
         self._serializer = DBOSPortableJSONSerializer()
         self._owner_thread = threading.get_ident()
+        self._activation = threading.Event()
 
     @property
     def state(self) -> str:
@@ -574,6 +575,7 @@ class OwnedStudioRuntime:
             self._verify_owner()
             self._owned_engine.verify()
             self._state = "active"
+            self._activation.set()
         except BaseException:
             self.close(timeout_seconds=5.0)
             self._state = "refused"
@@ -584,6 +586,23 @@ class OwnedStudioRuntime:
             raise StudioStorageError("Owned studio runtime is not accepting work")
         self._verify_owner()
         self._owned_engine.verify()
+
+    def await_activation(self, *, timeout_seconds: float = 5.0) -> None:
+        """Fence recovered callbacks without treating a startup signal as authority."""
+        if (
+            type(timeout_seconds) not in (int, float)
+            or not 0 < timeout_seconds <= 10
+            or not math.isfinite(timeout_seconds)
+        ):
+            raise ValueError(
+                "Studio activation timeout must be finite, positive and at most 10 seconds"
+            )
+        if self._state == "starting":
+            if threading.get_ident() == self._owner_thread:
+                raise StudioStorageError("Studio launch thread cannot await its own activation")
+            if not self._activation.wait(timeout_seconds):
+                raise StudioStorageError("Owned studio activation timed out; work preserved")
+        self.verify()
 
     def close(self, *, timeout_seconds: float = 5.0) -> None:
         self._main_thread()
@@ -596,6 +615,7 @@ class OwnedStudioRuntime:
         if self._state == "closed":
             return
         self._state = "draining"
+        self._activation.set()
         if self._owned_engine is not None:
             self._owned_engine.draining = True
         deadline = time.monotonic() + timeout_seconds
