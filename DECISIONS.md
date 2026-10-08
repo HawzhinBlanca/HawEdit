@@ -15270,3 +15270,37 @@ or a lifetime fence for all scanner descendants. Current qualified VEX (#24),
 complete protected worker integration, exact gate and same-SHA CI remain required.
 Research, actual five-pair Serena map, EARS and approved plan: specs/scanner-cleanup.
 
+## D-305 - Separate stable studio deployment identity from raw owner proof
+
+2026-10-08. Approved scope: original phases 1-2 and renewed owner "continue finish
+the job"; local implementation only. BLUEPRINT sections 2-5, 6-7, 8.1-8.3;
+D-263/D-274/D-276; BLOCKED #1/#3/#4/#24/#25 remain independent, #21 stays closed.
+
+Compose installed studio-profile validation, six actual selected checkpoint
+verifications, current champion identity, explicit named WSL receipt/assets,
+shared device defaults and the fresh live security gate. Recheck selected model,
+champion, profile, source and VEX inputs after the security observation. Preserve
+refused evidence; never substitute a descriptive receipt or supplied ready flag.
+Existing loader-held descriptor fences remain mandatory at actual consumption.
+
+Signed owner authorization targets the deterministic deployment description.
+That description binds the current producer/package, selected runtime/model
+identities, VEX bytes and pinned audit contract, but excludes its own signature
+and the fresh audit timestamp/report digest. Retain the fresh raw audit observation
+separately. Job execution binding includes the owner document, detached signature,
+configured trust policy and allowed-signers hashes. This avoids a signature cycle
+and unstable duplicate-submission identity while still reopening actual authority.
+
+Require the signed canonical model URL and confidentiality to match the selected
+provider/project/location/governance. Use the existing Vertex constructor/route
+without credential acquisition. Construct the existing signed shared-global-pool
+billing transport only after actual admission and owner/job binding checks; proof
+and VEX drift around verification must refuse before any provider call.
+
+No new dependency, model fallback, integrity metadata exception, licence/spending
+grant, VEX disposition, media certification, DBOS launch, HTTP enabling or
+publication. This unit is not a complete runtime supervisor. Media tools/fonts,
+ID-only owned worker, uncertain-effects/lifetime reconciliation, authenticated
+review/revision/export, independent evaluation and sustained acceptance remain.
+Research, actual Serena maps, EARS and inherited approval: specs/studio-host-admission.
+
