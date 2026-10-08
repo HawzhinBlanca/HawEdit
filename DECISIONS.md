@@ -15451,3 +15451,11 @@ Research, current actual Serena caller maps, real file/SQLite/decoded-ingest
 test-first failures: specs/event-persistence-fence. Full gate/CI required;
 qualified source-bound VEX approval remains external BLOCKED #24.
 
+Caller correction: the existing seven-stage checkpoint simulation now requires
+EventPersistenceError AND the exact original SimulatedKillError/stage cause.
+All original stage/resume/MP4 hash assertions remain unchanged. This is callback
+fault/recovery coverage, not an actual OS-kill or neural/editorial-quality claim.
+An unrelated observed Windows refusal to replace a private test executable is
+preserved; unchanged whole ingest-cache replay passed16cases, cause unresolved.
+No security-policy edit, assertion weakening, exclusion or promotion follows.
+

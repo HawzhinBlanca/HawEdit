@@ -24,3 +24,8 @@ Test: test_invalid_event_does_not_consume_sequence_or_fence_healthy_sink.
 WHEN an actual closed legacy file sink rejects emission, THE log SHALL preserve
 that original write error and refuse silent continuation.
 Test: test_closed_jsonl_sink_latches_original_write_error.
+
+WHEN a checkpoint regression simulates a stage-completed callback interruption,
+THE test SHALL require distinct persistence refusal with its exact original
+cause/stage and retain all seven resumed MP4 byte-identity checks.
+Test: test_pipeline_resume_is_byte_identical_after_kill_at_every_stage.

@@ -18,7 +18,7 @@ from hawedit.checkpoint import (
 )
 from hawedit.clip import DiscoveryPath
 from hawedit.discovery import Candidate
-from hawedit.events import RunEvent, RunState
+from hawedit.events import EventPersistenceError, RunEvent, RunState
 from hawedit.ingest import IngestResult
 from hawedit.judge import JudgeRequest, JudgeVerdict
 from hawedit.pipeline import StageSkipped, run_pipeline
@@ -144,9 +144,9 @@ def test_pipeline_stage0_corrupted_json_falls_back_safely(tmp_path: Path) -> Non
 def test_pipeline_resume_is_byte_identical_after_kill_at_every_stage(
     tmp_path: Path,
 ) -> None:
-    """Prompt D2 / Claim R3: Kill after every stage, resume, byte-identical final mp4.
+    """Resume after simulated callback interruptions with byte-identical final MP4.
 
-    Exercises 7 kills across the 7 pipeline stages:
+    Exercises 7 callback exceptions, not OS process kills, across the stages:
     1. ingest
     2. transcript
     3. index
@@ -213,7 +213,6 @@ def test_pipeline_resume_is_byte_identical_after_kill_at_every_stage(
 
     judge_fn = MockJudge()
 
-    # Establish baseline non-interrupted ground-truth render
     baseline_work = tmp_path / "baseline_work"
     baseline_run = run_pipeline(
         fixture,
@@ -248,12 +247,12 @@ def test_pipeline_resume_is_byte_identical_after_kill_at_every_stage(
 
         def on_event(event: RunEvent, target: str = kill_stage) -> None:
             nonlocal killed
-            # Trigger kill once the targeted stage has completed
+            # Interrupt once the targeted stage has completed.
             if event.stage == target and event.state == RunState.COMPLETED:
                 killed = True
                 raise SimulatedKillError(f"Simulated kill after {target}")
 
-        with pytest.raises(SimulatedKillError):
+        with pytest.raises(EventPersistenceError) as interrupted:
             run_pipeline(
                 fixture,
                 trial_work,
@@ -264,6 +263,8 @@ def test_pipeline_resume_is_byte_identical_after_kill_at_every_stage(
                 judge=judge_fn,
                 on_event=on_event,
             )
+        assert type(interrupted.value.__cause__) is SimulatedKillError
+        assert str(interrupted.value.__cause__) == f"Simulated kill after {kill_stage}"
 
         assert killed is True, f"Kill event failed to fire for stage {kill_stage}"
 

@@ -46,3 +46,27 @@ C:/Users/Wareen/HawEdit-event-fence-test-first-20261008.xml.
 No measured extra provider calls or false completed publication. The protected
 producer must still adopt pre-effect and pre-result admission and full scope/
 billing reconciliation. BLOCKED #1/#3/#4/#24/#25 remain, #21 stays closed.
+
+Current first committed full gate at dfa455a finished 5612pass/3fail/0error/skip,
+exit1, fully unchanged clean source/observer/HEAD/producer/status. Terminal
+103f25de7f6f1b64fa19df082e7a47985b993113174e4ef491968149f72cb438;
+JUnit8a7a089df58ce6238165741515c296c6c41fe377db9c69bbcfe7f3f132ff0b04.
+Failures: checkpoint caller still expects a raw SimulatedKillError; a Windows
+PermissionError replacing a private copied FFmpeg executable; current VEX binding.
+No source edits until original gate processes absent/session53467closed.
+
+Actual current checkpoint/refusal/_publish/health four-pair map unchanged:
+C:/Users/Wareen/HawEditCheckpointEventMap-dfa455a-20261008/serena-map.json,
+df8bb9a285900f02926b4d62da39ff0326d608d3d550dfc65be0245becc62d95.
+Whole checkpoint diagnostic5pass/1valid caller failure/0error/skip;
+JUnit ee4405fd1df0284dbc2ba54fe5655606b4a780e5dcda5546e1599a1e7c6f414c.
+Correct caller expectation must require the distinct error AND exact original
+SimulatedKillError class/stage message; every seven-stage resume and actual MP4
+hash-equality assertion remains intact. Test description corrected: these are
+simulated callback exceptions with test editorial inputs, not actual OS kills.
+
+Whole unchanged ingest-cache module repeat16pass/0failure/error/skip,53.527s;
+JUnit78fc792a0c60dfa239c328a90ae549d800177bc8049a98c547a57e12747acd44.
+The earlier denied private executable replacement did not reproduce here.
+Cause remains unknown; do not attribute it to antivirus or claim it fixed.
+Keep the unchanged real binary-drift regression in the unfiltered full retest.

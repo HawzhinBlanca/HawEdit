@@ -34,3 +34,11 @@ running with only committed events. No automatic terminal release/reconciliation
 prepare_studio_execution and GuardedGeminiTransport._send mapped for future
 protected-producer admission only; unchanged, no new model/provider effects.
 JsonlEventSink unchanged; actual closed-handle test covers failure identity.
+
+Full gate exposed checkpoint's direct raw-callback-exception expectation.
+Additional actual four-pair current map in research.md before that caller edit.
+The corrected expectation requires EventPersistenceError plus exact original
+SimulatedKillError cause and its stage message. No stage, resume, or MP4 byte
+comparison removed/relaxed. All six checkpoint cases join focused caller tests.
+Ingest-cache binary-drift test remains unchanged; all16cases join focused
+callers and the full retest after its transient denied replacement observation.
