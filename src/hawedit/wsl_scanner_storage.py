@@ -54,7 +54,9 @@ def scanner_directory_identity(payload: bytes) -> ScannerDirectory:
 # Sent through the already pinned interpreter with -I: no environment import path,
 # shell expansion, package installation or dependency on a refreshed WSL snapshot.
 STORAGE_SCRIPT: Final = r"""
-import json, os, re, secrets, stat, sys, time
+import sys
+document_stream = sys.stdout
+import json, os, re, secrets, stat, time
 
 if sys.platform != "linux":
     raise RuntimeError("Linux directory descriptors are required")
@@ -113,8 +115,9 @@ try:
         try:
             info = os.fstat(root)
             verify(info, identity(info))
-            print(json.dumps(dict(path="/tmp/" + name, device=info.st_dev,
-                                  inode=info.st_ino, uid=info.st_uid), sort_keys=True))
+            document = dict(path="/tmp/" + name, device=info.st_dev,
+                            inode=info.st_ino, uid=info.st_uid)
+            print(json.dumps(document, sort_keys=True), file=document_stream)
         finally:
             os.close(root)
     elif len(sys.argv) == 6 and sys.argv[1] == "cleanup":
