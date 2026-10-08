@@ -30,3 +30,28 @@ hosts native tests establish refusal only, not Windows behavioral acceptance.
 Ruff check/format and strict mypy for both new files pass; original affected
 test processes absent before session8489 closure. Parent gate result belongs
 to2490df2, not this new source. Reviewed local commit and exact gate next.
+
+## Native Arena Correction
+
+Prior65bb556 exact gate5601pass/1qualified-VEX-binding failure, no errors/skips;
+watched bytes unchanged but unrelated untracked notes appeared, global unchanged
+false. Preserved external terminal97c55762fb44ea9d92f050a489c8d0c01a41ac1eb6834d19bb5dfabed206ef04;
+no clean acceptance or ledger/CI promotion.
+
+Scoped lifetime research/actual maps/approved parent plan precede corrections.
+Initial new6cases:5valid missing-allocation red failures and1confounded child
+test-package import failure. Original690039dd2876ec2bd43be2ac90d8d28b2ea9bd20c3be12f6f118ff5b80708ce7
+preserved; child query corrected to independently observed Windows pages.
+Actual3-pair corrective map95d216bf4a18eb3f4b2c69a4993da31adf82599768ea6494b2363b7c71c697a5.
+
+Six native-arena cases and35existing IO cases pass, raw first-product41case report
+ca3663e78202e75d09bc38fd9a871746a1a0415000b6854fec5dc1d9dec6877c.
+First212affected cases pass but full mypy found duplicate test module import and
+ruff caught redundant getattr. Corrected only test imports, not assertions.
+Final full affected212pass/zero failure/error/skip,22.872s diagnostic,
+C:/Users/Wareen/HawEdit-native-arena-corrected-affected-20261008.xml SHA256
+1bbb28443337ba54378a17e7f2e059ecf601c214e73e881625ae506d04cd0af4.
+Full ruff check/format and strict mypy362files pass. Original test/mypy processes
+absent before4446/63705/21574 closure. Native page evidence is not total process/
+GPU/Linux drain, producer adoption, model/quality or publication acceptance.
+Exact full gate remains required for corrected source, same-SHA CI unavailable.

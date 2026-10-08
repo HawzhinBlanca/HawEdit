@@ -102,6 +102,8 @@ def _libraries() -> tuple[Any, Any]:
         "GetHandleInformation": ([w.HANDLE, ctypes.POINTER(w.DWORD)], w.BOOL),
         "CloseHandle": ([w.HANDLE], w.BOOL),
         "LocalFree": ([w.LPVOID], w.LPVOID),
+        "VirtualAlloc": ([w.LPVOID, ctypes.c_size_t, w.DWORD, w.DWORD], w.LPVOID),
+        "VirtualFree": ([w.LPVOID, ctypes.c_size_t, w.DWORD], w.BOOL),
     }
     for name, (arguments, result) in signatures.items():
         function = getattr(k, name)
@@ -196,11 +198,10 @@ class _NativePipe:
         self.owner = os.getpid()
         self.reading = reading
         self.handle = self.event = 0
+        self.allocation = 0
         self.child: BinaryIO | None = None
         self.pending = self.eof = False
         self.submitted = 0
-        self.buffer = ctypes.create_string_buffer(_CHUNK)
-        self.overlap = _Overlap()
         sid = _current_user_sid()
         descriptor = w.LPVOID()
         _check(
@@ -210,6 +211,11 @@ class _NativePipe:
             "Private pipe descriptor",
         )
         try:
+            # Python view collection must not free memory used by uncertain native IO.
+            self.allocation = int(self.k.VirtualAlloc(None, 2 * _CHUNK, 0x3000, 4) or 0)
+            _check(self.allocation, "Native IO arena allocation")
+            self.buffer = (ctypes.c_char * _CHUNK).from_address(self.allocation)
+            self.overlap = _Overlap.from_address(self.allocation + _CHUNK)
             attributes = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, False)
             name = "\\\\.\\pipe\\HawEdit-IO-" + uuid.uuid4().hex
             handle = self.k.CreateNamedPipeW(
@@ -276,7 +282,9 @@ class _NativePipe:
             self.close()
             raise
         finally:
-            _check(not self.k.LocalFree(descriptor), "Private pipe descriptor release")
+            if self.k.LocalFree(descriptor):
+                _retain(self)
+                raise _error("Private pipe descriptor release")
 
     def _owned(self) -> None:
         if self.owner != os.getpid():
@@ -391,6 +399,9 @@ class _NativePipe:
                 if handle:
                     _check(self.k.CloseHandle(handle), "Native IO original handle release")
                     setattr(self, name, 0)
+            if self.allocation:
+                _check(self.k.VirtualFree(self.allocation, 0, 0x8000), "Native IO arena release")
+                self.allocation = 0
         except BaseException:
             _retain(self)
             raise

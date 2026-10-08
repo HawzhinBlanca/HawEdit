@@ -15406,6 +15406,17 @@ in that process. One active executor bounds the production quarantine to at most
 three channels and one native job; no automatic guessed quarantine release.
 Cleanup adds bounded native stop/IO drain windows, not an exact wall-clock SLA.
 
+Lifetime correction2026-10-08: buffer and aligned OVERLAPPED occupy one8192-byte
+VirtualAlloc read/write arena per pipe, with non-owning ctypes from_address
+views. Python/module collection cannot release this native arena. Checked
+VirtualFree(original base,0,MEM_RELEASE) occurs only after observed pending IO
+completion and owned handle cleanup; uncertain cleanup retains it until actual
+reconciliation or OS process teardown. No atexit free or executable pages.
+Three channels request24576 committed bytes total, distinct from allocation-
+granularity reservation or whole-process/GPU/Linux resource consumption.
+Actual VirtualQuery regressions check committed/private/read-write pages, real
+cancellation, view collection and release; review finding is not a crash claim.
+
 Raw exit code/bytes are not pipeline completion, source/model/runtime/qualified
 VEX admission, native/Linux producer-resource drain, billing reconciliation,
 editorial approval or publication. No HTTP/DBOS producer caller adopted in T2;
