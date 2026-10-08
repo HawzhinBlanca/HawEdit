@@ -61,6 +61,20 @@ required. HTTP/actual producer/review/revisions/export and independent/sustained
 acceptance are still open; source-bound staging needs revalidation. No ledger
 promotion, full ZAR/reel, native preemption/child-death or10/10 claim.
 
+## Truthful Count Refusals (M9.78, WIP)
+
+D-301 / approved phase2 / specs/count-refusal-diagnostics. Pre-count policy expiry
+retains its original refusal; native journal failure has a distinct diagnostic
+under the established external-count error contract. Actual HTTP disconnect
+still reports provider failure. Source3-case RED2 failures; first whole242 run
+240 passes/two compatibility failures retained; corrected whole242 pass with
+zero errors/skips. Existing assertions unchanged. Strict checks347 files pass
+on HawaPC01/Windows26300/CPython3.12.10/DBOS2.29.0. Parent a0707d9 exact gate
+finished5370/5372 passes: billing expiry diagnostic plus stale qualified VEX.
+This candidate still requires exact committed gate/current CI and qualified
+review. No ledger promotion, producer/HTTP activation, paid call, full ZAR reel
+or independent/sustained acceptance claim.
+
 ## Status legend
 
 | Mark | Meaning |

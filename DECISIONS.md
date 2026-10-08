@@ -15185,3 +15185,24 @@ current qualified VEX and same-SHA CI remain; no ledger promotion or release.
 This does not connect the protected producer/HTTP or prove native GPU preemption,
 WSL child death, actual whole-source editorial quality or sustained acceptance.
 
+## D-301 - Preserve truthful pre-count refusals and the established error contract
+
+2026-10-08; approved phase2 continuation, BLUEPRINT sections3/6;
+D-276/D-277. The internal count exception boundary must not label its own
+expired-policy refusal as an unavailable provider. Re-raise the existing
+ExternalReconciliationError unchanged. Native StudioStorageError remains bound
+as the cause of an ExternalReconciliationError with a journal-specific diagnosis,
+preserving the established count-stage caller contract. Actual provider failures
+retain the existing provider diagnostic. No route, reservation, replay, pricing,
+schema, signature, generation-uncertainty or dependency changes.
+
+Actual Serena mapping and controlled pre-count expiry precede source edits;
+three named test-first regressions use genuine private journals and a real HTTP
+disconnect. Two failures in the first whole caller run exposed the storage error
+compatibility mistake; corrected without editing existing assertions. Final242
+whole cases pass with no errors/skips; lint/types/format pass347 files. Exact
+hashes, intermediate failures and host versions are in
+specs/count-refusal-diagnostics/verification.md. Required exact committed gate,
+qualified current VEX and same-SHA CI remain. No ledger promotion, host authority,
+HTTP activation, paid call, complete ZAR result or acceptance verdict follows.
+

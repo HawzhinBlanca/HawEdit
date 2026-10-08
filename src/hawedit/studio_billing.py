@@ -606,6 +606,12 @@ class GuardedGeminiTransport:
             status, count_body = self._send(
                 base + ":countTokens", _canonical(count_document).encode("utf-8"), headers
             )
+        except ExternalReconciliationError:
+            raise
+        except StudioStorageError as exc:
+            raise ExternalReconciliationError(
+                "Billing journal refused during count; no generation sent"
+            ) from exc
         except Exception as exc:
             raise ExternalReconciliationError(
                 "Provider count unavailable; no generation sent"
