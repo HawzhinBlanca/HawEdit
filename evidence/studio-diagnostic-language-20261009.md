@@ -2,7 +2,7 @@
 
 ```yaml
 commit: 4ae10fb2624fea0355ac300c3c8f078b2a103c20
-media_sha256: n/a: diagnostic UI and history readbacks; no fresh model or rendered reel
+media_sha256: n/a
 host: HawaPC01 Windows11 build26300 CPython3.12.10
 command: .venv/Scripts/python.exe -B -m pytest tests/test_studio_ui_diagnostics.py tests/test_studio_ui.py tests/test_studio_ui_history.py tests/test_studio_ui_source_feedback.py tests/test_web.py tests/test_studio_artifacts.py tests/test_studio_history.py tests/test_robustness_audit.py tests/test_claims.py; bash scripts/verify.sh
 ```
@@ -63,6 +63,15 @@ reviewed81f6f606... differs from actual1024616359... . Original full failing
 receipt retained under HawEditEvidence/studio-diagnostic-language-clean-gate-20261009.
 No gate-green/CI/ledger promotion. Corrected documentation needs a new exact
 clean committed gate; source package itself is unchanged by this header repair.
+
+The first header correction's inline n/a explanation was invalid for actual
+PyYAML safe_load despite the compatibility header-contract test passing. Actual
+structured parser refused; corrected to plain n/a (UI only, no media inference).
+Superseded bc398c2 gate's original pytest PID48720/start22:29:32local/parent23916/
+actual clean-verifier command revalidated before exact-PID stop, no console event.
+That run is interrupted, not a full gate result. Preserve its original terminal
+and logs; do not infer passing tests or fresh completed JUnit. Final syntax
+correction requires the exact clean gate at the next committed SHA.
 
 Source files: src/hawedit/studio_ui.py,tests/test_studio_ui_diagnostics.py;
 research/spec/plan/impact/tasks/verification under specs/studio-diagnostic-language.
