@@ -6,6 +6,26 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Original Owner Bootstrap (WIP)
+
+D-320, specs/linux-owner-bootstrap: selected utility ELF is sealed/hash-bound,
+original creator pidfd/description anchors retained; only direct fork child
+installs verified parent-death/no-new-privileges and executes fixed namespaces.
+Actual first18cases pass, followed by four reproduced STD inheritance failures
+and one malformed-FD contextual-refusal failure; original red reports preserved.
+STD correction passes22cases. Further real closed-creator-STD faults now refuse
+before owned allocation. Final whole affected269cases pass;10actual retained
+Python3.12/glibc2.43/kernel6.18 CPU observations pass, unchanged source/ref.
+Failed external observer extraction is preserved separately from kernel evidence.
+Renewed strict fast checks379files and two-file format check pass; exact full
+committed gate and current CI remain required. No complete producer/model/
+GPU/effect/billing/Windows-owner EOF/HTTP/review/export or new reel acceptance.
+Evidence: evidence/linux-owner-bootstrap-20261009.md. No ledger DONE/current CI.
+
+Prior b11d5d9 exact clean gate FINAL5883pass/1stale-qualified-VEXfail/0error/skip;
+source/ref/package unchanged and original commands gone/session14062closed.
+No security-policy source/date/reviewer rebinding or10/10 claim.
+
 ## Held Original Linux Scope (WIP)
 
 D-319; actual current Serena/CPU research, EARS/impact/approved-parent plan in
@@ -531,6 +551,7 @@ review/revision/export and every independent/sustained threshold remain mandator
 | M9.86 | Original native process lifetime and observed-descendant shutdown before protected worker adoption | WIP | `src/hawedit/native_process.py`, `tests/test_native_process.py`; D-308, `specs/native-worker-owner`. 39 real native cases pass after reproducing and fixing empty-job-before-original-handle-signaling race; lint/strict typing pass. Bounded IO and complete native/Linux producer-resource handshake remain separate; no HTTP enablement, attempt completion, paid call, green whole gate/current CI or completed-system claim. |
 | M9.87 | Fair bounded overlapped native IO with actual ACL/cancellation/death evidence | WIP | `src/hawedit/native_io.py`, `tests/test_native_io.py`; D-309, `specs/native-worker-io`. Actual private ACL, simultaneous input/output, overflow/deadline, cancellation, uncertain-resource quarantine and pending-IO owner-death tests implemented. Complete producer/native/Linux/resource/billing handshake remains T3; no HTTP enablement, accepted reel, green exact gate/current CI or completed-system claim. |
 | M9.98 | Retain original Linux namespace/member capabilities before protected producer adoption | WIP | `src/hawedit/linux_scope.py`, `tests/test_linux_scope.py`; D-319, `specs/linux-original-scope`, `evidence/linux-original-scope-20261009.md`. Actual original pidfd namespace queries, kernel credentials, EOF-sealed handoff, description anchors, finite admitted-member stop, creator/exclusion and uncertainty refusals. Component regressions are not owner-death bootstrap, byte/model/GPU/effect admission, durable attempt release, HTTP generation or publication. Exact gate/current CI required. |
+| M9.99 | Adopt original owner-death and sealed utility bootstrap into real namespace launch | WIP | `src/hawedit/linux_bootstrap.py`, `tests/test_linux_bootstrap.py`; D-320, `specs/linux-owner-bootstrap`, `evidence/linux-owner-bootstrap-20261009.md`. Real LinuxScope chain/original normal/forced owner death, pre-handler refusal, immutable utility and child STD/control separation. Not full source/runtime/model/input/security/resource/effect admission or DBOS/HTTP generation. Exact gate and required current CI pending. |
 | M9.97 | Bound audit EOF/root waits without reducing independent scanner stream caps | WIP | `src/hawedit/bounded_audit_io.py`, `src/hawedit/wsl_vex_gate.py`, `src/hawedit/native_io.py`, `tests/test_audit_output_deadline.py`, `tests/test_native_independent_output.py`; D-318, `specs/audit-output-deadline`, `evidence/audit-output-deadline-20261009.md`. Actual test-first deadline/budget failures repaired; original Job/cancellable native IO and POSIX owned nonblocking descriptors, finite root cleanup, uncertainty refusal. Existing native combined callers unchanged. No launcher substitution, security policy rebind, admitted Linux/GPU/provider/billing/HTTP or media-quality claim. Exact corrected gate/current CI required. |
 | M9.88 | Native IO arena survives Python view teardown without guessed cleanup | WIP | `src/hawedit/native_io.py`, `tests/test_native_io_memory.py`; D-309 lifetime correction, `specs/native-worker-io/memory-lifetime.md`. Explicit read/write VirtualAlloc arena and checked post-drain release, independently observed actual native pages/cancellation/GC/uncertainty; no producer adoption or clean gate/current CI acceptance claim. |
 | M9.89 | Sticky event-persistence refusal without media-failure misclassification | WIP | `src/hawedit/events.py`, `tests/test_event_persistence.py`, `tests/test_studio_attempts.py`; D-310, `specs/event-persistence-fence`. Seven valid real-fault test-first failures; expanded 119 caller cases pass, including corrected exact-cause checkpoint interruption expectations with all seven resumed MP4 hash checks retained. Full static checks pass 363 files. Corrected clean committed 6fe060d gate:5614pass/1stale-VEX failure/0error/skip, unchanged source/observer/HEAD/package/status. Prior private executable replacement denial remains unexplained. No qualified security/CI/ledger promotion, protected producer pre-effect adoption, billing/resource reconciliation or completed-system claim. |

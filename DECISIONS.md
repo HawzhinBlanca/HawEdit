@@ -15758,3 +15758,41 @@ BLUEPRINT2-5/8.1-8.3 and D-263/D-274 remain the complete goal. Named regressions
 current Serena maps, EARS/approved-parent plan: specs/linux-original-scope;
 evidence/linux-original-scope-20261009.md. Local-only/WIP, not DONE/10/10.
 
+## D-320 - Sealed Original Owner Namespace Bootstrap (2026-10-09)
+
+Approved-parent evidence-based-studio phases1-2/native-worker-owner T3 requires
+an actual owner-death launch boundary, not only a namespace handoff helper.
+LinuxNamespaceBootstrap prepares a bounded caller-selected utility ELF in a
+dedicated single-thread controller. Hash the actual bytes, copy to executable
+memfd, apply checked kernel seals including EXEC/SEAL, and retain independent
+description anchors plus the creator's original self-pidfd before any fork.
+No new dependency, global runtime patch, guessed syscall or model-policy change.
+
+Only that creator's direct fork child may execute fixed user/PID/mount namespace
+flags using the original sealed descriptor. Checked typed local libc installs
+SIGKILL parent-death, reads it back, checks the same original owner after
+installation and before FD exec, and verifies no-new-privileges. The original
+owner capability, not numeric PID reopening or terminal True fields, is the
+liveness authority. Parent PID comparison checks direct relationship only;
+no numeric PID is signaled or used to reacquire a lost capability.
+
+The child removes inherited host descriptors except explicit bounded socket/pipe
+controls and its own CLOEXEC capabilities. STD0/1/2 use real inheritable null
+streams, never host control pipes; promote the temporary null FD above STD slots
+so closing it cannot destroy a synthesized standard stream. Parent descriptors
+are unchanged. A creator with a closed STD refuses before owned allocation,
+preventing original utility/owner capabilities from occupying STD slots.
+Substituted descriptors refuse without closing foreign objects;
+cleanup uncertainty retains owned references, not successful attempt release.
+
+Actual tests connect this bootstrap to unchanged LinuxScope and retain original
+controller/bootstrap/init/setsid-member pidfds before normal/forced owner death.
+The pre-handler race refuses before exec. This is not yet a complete production
+Windows-owner EOF supervisor, calibrated all-descendant/GPU/service/provider/
+billing drainage, durable attempt completion or protected DBOS producer.
+Sealing one utility does not admit the dynamic loader/interpreter/libraries,
+HawEdit source, model/adapter/input bytes or trusted security/owner authority.
+Those remain mandatory before model release and HTTP generation. Not a hostile
+same-user sandbox. BLUEPRINT2-5/8.1-8.3/D-263/D-274 and full original acceptance
+remain intact. Specs/linux-owner-bootstrap and its evidence, WIP until gate/CI.
+
