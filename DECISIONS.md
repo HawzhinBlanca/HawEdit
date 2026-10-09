@@ -15555,3 +15555,28 @@ not an admitted HawEdit model runtime; required supported-runtime CI remains.
 The ZAR timing warning and qualified current VEX#24 are not repaired by this unit.
 Full exact gate and same-SHA CI still govern task acceptance.
 
+## D-314 - Re-observe Short Native Lists Without Accepting Partial Evidence
+
+2026-10-09, approved parent evidence-based studio Phase2 corrective unit.
+BLUEPRINT sections3/5/8.3; existing D-308/D-311, no dependency or trust grant.
+
+Actual b290ae8 full suite refused native launcher-exit waiting with incomplete
+enumeration instead of reaching owned deadline cleanup. Kernel count values
+were not captured; exit-transition causation is inferred, not measured. Whole
+isolated native module passed. Preserve both results; no flaky-test suppression.
+
+On an actual successful query whose assigned count exceeds returned count,
+re-observe the same held job at most eight times, scheduling1ms between attempts.
+Each query gets a fresh bounded buffer. Never return the partial list. Accept
+only equal counts within the existing64-member ceiling. API failure, reversed
+or over-capacity counts, owner presence and exhausted short-list observations
+still refuse; final refusal records the actual counts. No job/root/observed
+handle acquisition, control, lifetime reset or quiescence predicate changed.
+
+Real16-cycle launcher/descendant transitions and actual wrong-type kernel-handle
+API errors are regressions, not a deterministic reproduction of every short-list
+OS timing. Sustained concurrency and supported-runner evidence still required.
+This policy does not certify Linux/GPU/provider/billing drainage or admit HTTP
+generation. Qualified VEX#24 stays separate; do not self-rebind its source.
+Research/EARS/callers/ledger: specs/native-members-transition; full gate/CI pending.
+

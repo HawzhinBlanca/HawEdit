@@ -6,6 +6,19 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Native Member Transition (M9.93, WIP)
+
+D-314, baseline b290ae8. Actual complete gate5702pass/2fail: incomplete native
+member enumeration and stale VEX. Bounded re-observation preserves exact-list,
+original-capability and sticky cleanup checks. Final six whole affected modules
+171pass/0failure/error/skip,27.862s JUnit /28.23s pytest on
+HawaPC01/Win26300/Python3.12.10/pytest9.1.1. Test-first16-cycle regression also
+passed against old code; original full-suite red is retained, no deterministic
+short-list reproduction claimed. Actual wrong-type Win32 API error still refuses.
+Evidence: evidence/native-member-transition-2026-10-09.md. Exact corrected clean
+gate and same-SHA required CI pending; no ledger promotion, inference, new reel,
+producer registration, publication or10/10 acceptance.
+
 ## Owned Scanner Cleanup (M9.82, WIP)
 
 D-304 local-only407de326f09ee8e57d630d55cfd6cc565d436600 replaces prohibited

@@ -571,22 +571,32 @@ class NativeJob:
         """Actual bounded job observation; IDs are not transferable capabilities."""
         with self._lock:
             self._live()
-            data = _ProcessList()
-            _check(
-                self._k.QueryInformationJobObject(
-                    self._job, 3, ctypes.byref(data), ctypes.sizeof(data), None
-                ),
-                "Native member enumeration",
+            # An exit may change the list while queried; never accept its partial IDs.
+            for observation in range(8):
+                data = _ProcessList()
+                _check(
+                    self._k.QueryInformationJobObject(
+                        self._job, 3, ctypes.byref(data), ctypes.sizeof(data), None
+                    ),
+                    "Native member enumeration",
+                )
+                assigned = int(data.NumberOfAssignedProcesses)
+                returned = int(data.NumberOfProcessIdsInList)
+                if not 0 <= returned <= assigned <= _MAX_MEMBERS:
+                    raise NativeProcessError(
+                        f"Native member enumeration counts refused: {assigned}/{returned}"
+                    )
+                members = tuple(int(pid) for pid in data.ProcessIdList[:returned])
+                if os.getpid() in members:
+                    raise NativeProcessError("Native scope contains its owner")
+                if assigned == returned:
+                    return members
+                if observation < 7:
+                    time.sleep(0.001)
+            raise NativeProcessError(
+                f"Native member enumeration is incomplete after 8 observations: "
+                f"{assigned}/{returned}"
             )
-            if (
-                data.NumberOfAssignedProcesses != data.NumberOfProcessIdsInList
-                or data.NumberOfProcessIdsInList > _MAX_MEMBERS
-            ):
-                raise NativeProcessError("Native member enumeration is incomplete")
-            members = tuple(int(pid) for pid in data.ProcessIdList[: data.NumberOfProcessIdsInList])
-            if os.getpid() in members:
-                raise NativeProcessError("Native scope contains its owner")
-            return members
 
     def resume(self) -> None:
         with self._lock:

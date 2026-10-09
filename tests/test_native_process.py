@@ -491,3 +491,66 @@ def test_native_owner_waits_for_actual_natural_descendant_exit(tmp_path: Path) -
             assert not job._observed
         finally:
             k.CloseHandle(child)
+
+
+def test_native_owner_members_during_exit_transition(tmp_path: Path) -> None:
+    if not _available():
+        return
+    k = _kernel()
+    for iteration in range(16):
+        directory = tmp_path / str(iteration)
+        directory.mkdir()
+        barrier = directory / "ready.json"
+        with (
+            _inputs(directory, _descendants_code(barrier, exit_root=True)) as kwargs,
+            NativeJob.create(**kwargs) as job,
+        ):
+            root = _observe(k, job.process_id, job)
+            child = 0
+            try:
+                assert job.members() == (job.process_id,)
+                job.resume()
+                deadline = time.monotonic() + 10
+                while not barrier.exists() and time.monotonic() < deadline:
+                    assert os.getpid() not in job.members()
+                    time.sleep(0)
+                ready = _ready(barrier)
+                child = _observe(k, ready["child"], job)
+                while k.WaitForSingleObject(root, 0) == 258 and time.monotonic() < deadline:
+                    assert ready["child"] in job.members()
+                    time.sleep(0)
+                assert k.WaitForSingleObject(root, 0) == 0
+                assert k.WaitForSingleObject(child, 0) == 258
+                assert ready["child"] in job.members()
+                with pytest.raises(NativeProcessError, match="deadline"):
+                    job.wait(0.01)
+                assert job.members() == ()
+                assert k.WaitForSingleObject(child, 0) == 0
+                assert not job._observed
+            finally:
+                if child:
+                    k.CloseHandle(child)
+                k.CloseHandle(root)
+
+
+def test_native_owner_members_api_failure_never_becomes_empty(tmp_path: Path) -> None:
+    if not _available():
+        return
+    k = _kernel()
+    event = k.CreateEventW(None, True, False, None)
+    assert event
+    try:
+        with _inputs(tmp_path) as kwargs, NativeJob.create(**kwargs) as job:
+            original = job._job
+            try:
+                job._job = int(event)
+                with pytest.raises(NativeProcessError, match="enumeration failed with Win32 error"):
+                    job.members()
+            finally:
+                job._job = original
+            assert job.members() == (job.process_id,)
+            job.resume()
+            assert job.wait(10) == 0
+            assert job.members() == ()
+    finally:
+        assert k.CloseHandle(event)
