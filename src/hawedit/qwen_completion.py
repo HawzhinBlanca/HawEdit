@@ -43,7 +43,7 @@ _SOURCES = {
     },
 }
 QWEN_COMPLETION_POLICY_ID = (
-    "qwen-natural-eos-greedy-before512-v1:"
+    "qwen-natural-eos-greedy-before512-v2:"
     + hashlib.sha256(
         json.dumps(_SOURCES, sort_keys=True, separators=(",", ":")).encode("ascii")
     ).hexdigest()
@@ -152,6 +152,9 @@ def _configuration(config: Any) -> str:
             "constraints",
             "force_words_ids",
             "penalty_alpha",
+            "prompt_lookup_num_tokens",
+            "assistant_early_exit",
+            "dola_layers",
             "watermarking_config",
             "exponential_decay_length_penalty",
         ):

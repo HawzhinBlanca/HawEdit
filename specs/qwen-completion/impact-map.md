@@ -17,3 +17,15 @@ three admission-policy expectations. _load and Omni EOS observer stay unchanged.
 New qwen_completion module has no pre-existing callers; add README module map,
 initial WIP PROGRESS accounting and proper evidence header. Whole test_claims
 must pass before the exact committed gate. No fixture/golden/harness edits.
+
+Mode repair: fresh three-pair map in research.md. _configuration -> observer
+initial freeze/check; QWEN_COMPLETION_POLICY_ID -> asr aggregate/native/WSL and
+asr_resume worker_journal, completion/resume tests. Configuration test definition
+mapped before adding three non-greedy mode cases. Policy v2 invalidates v1 cache;
+all previously mapped caller cohorts remain required. Superseded interrupted
+6c3b5d6 gate is not completed verification. New exact committed gate required.
+
+Two new named v1-to-v2 migration tests use the existing actual storage APIs;
+their assertions include original canonical/normalised/provenance and operation
+byte preservation, before cached correction consumption. Existing cache/journal
+implementations and test symbols are not changed by this follow-up.

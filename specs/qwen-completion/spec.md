@@ -12,3 +12,9 @@
 
 All criteria are engineering controls, not speech/editorial acceptance. Genuine
 admitted SDK consumer and bad-region acoustic/native-editor checks remain open.
+
+C3 includes assisted generation (prompt lookup/assistant early exit) and DoLa,
+which are not greedy despite one beam and no sampling. C5/C6 also cover v1-to-v2
+history via test_qwen_v2_policy_preserves_and_refuses_v1_canonical_cache and
+test_qwen_v2_policy_preserves_and_refuses_v1_operation_journal. No old bytes are
+rewritten or relabelled with the new policy.

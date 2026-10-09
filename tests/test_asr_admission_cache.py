@@ -219,3 +219,34 @@ def test_pipeline_reuses_matching_admission_policy(tmp_path: Path) -> None:
     run_pipeline(pipeline_fixtures.FIXTURE, work, media_id="probe", asr=producer)
     assert producer.calls == 1
     assert snapshot(work / "transcripts") == before
+
+
+def test_qwen_v2_policy_preserves_and_refuses_v1_canonical_cache(tmp_path: Path) -> None:
+    from hawedit.asr import ASR_COMPLETION_POLICY_ID, CONTEXT_GROUPING_POLICY_ID
+    from hawedit.asr_completion import COMPLETION_POLICY_ID
+    from hawedit.qwen_completion import QWEN_COMPLETION_POLICY_ID
+    from hawedit.transcripts import normalize_transcript
+
+    assert QWEN_COMPLETION_POLICY_ID.startswith("qwen-natural-eos-greedy-before512-v2:")
+    previous = "qwen-natural-eos-greedy-before512-v1:" + QWEN_COMPLETION_POLICY_ID.split(":")[1]
+    store = TranscriptStore(tmp_path)
+    raw = transcript_fixtures.a_raw()
+    store.write_raw(
+        raw,
+        audio_sha256="audio",
+        producer="producer",
+        admission_policy=COMPLETION_POLICY_ID + "+" + previous + "+" + CONTEXT_GROUPING_POLICY_ID,
+    )
+    store.write_norm(normalize_transcript(raw, store.raw_digest(raw.media_id)))
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    with pytest.raises(RawTranscriptImmutable, match="admission.*new work directory"):
+        store.reusable_raw(
+            raw.media_id,
+            "audio",
+            "producer",
+            transcript_fixtures.MEDIA_SHA256,
+            admission_policy=ASR_COMPLETION_POLICY_ID + "+" + CONTEXT_GROUPING_POLICY_ID,
+        )
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+    assert store.read_raw(raw.media_id) == raw
+    assert store.read_norm(raw.media_id).source_sha256 == store.raw_digest(raw.media_id)

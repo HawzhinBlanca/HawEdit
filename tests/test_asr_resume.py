@@ -369,3 +369,25 @@ def test_worker_checkpoint_resumes_validation_without_redrafting(
     assert result.unaligned == ()
     assert result.rejected_validator_corrections == ()
     assert output.is_file()
+
+
+def test_qwen_v2_policy_preserves_and_refuses_v1_operation_journal(tmp_path: Path) -> None:
+    from hawedit.asr_completion import COMPLETION_POLICY_ID
+    from hawedit.qwen_completion import QWEN_COMPLETION_POLICY_ID
+
+    assert QWEN_COMPLETION_POLICY_ID.startswith("qwen-natural-eos-greedy-before512-v2:")
+    previous = "qwen-natural-eos-greedy-before512-v1:" + QWEN_COMPLETION_POLICY_ID.split(":")[1]
+    path, root = audio(tmp_path), private(tmp_path)
+    old = {
+        "completion_policy": COMPLETION_POLICY_ID,
+        "validator_completion_policy": previous,
+    }
+    validator = Validator()
+    with OperationJournal(root, old) as journal:
+        assert ResumableValidator(validator, journal).transcribe_segment(path, 1.0) == "correction"
+    before = {file.name: file.read_bytes() for file in root.glob("*.json")}
+    current = {**old, "validator_completion_policy": QWEN_COMPLETION_POLICY_ID}
+    with pytest.raises(RuntimeError, match="binding"), OperationJournal(root, current):
+        pytest.fail("v1 text must not reach a v2 resumed operation")
+    assert {file.name: file.read_bytes() for file in root.glob("*.json")} == before
+    assert validator.calls == 1

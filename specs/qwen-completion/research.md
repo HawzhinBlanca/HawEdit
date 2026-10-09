@@ -43,3 +43,32 @@ BLUEPRINT sections2/3/8.1, D-281/D-303, canonical write-once invariant apply.
 Current independent VEX source binding and expired review remain open. No paid
 provider calls, runtime/model installations, neural run, review/publication,
 push, same-SHA CI or full acceptance claim is authorized by this component.
+
+## Actual Non-Greedy Mode Counterexample
+
+After local6c3b5d6, read the actual pinned GenerationConfig.get_generation_mode:
+prompt_lookup_num_tokens/assistant_early_exit select assisted_generation, and
+dola_layers selects dola_generation despite num_beams1/do_sampleFalse. Existing
+observer did not reject these three fields. Actual retained Python3.12.0/
+Torch2.8.0/Transformers4.57.6 configuration plus controlled real CPU tokens
+reproduces three unexpected observer admissions, no neural/model admission:
+real-configuration-mode-red.json SHAa0c2a7b49a9c039f16ec78d1b9b2cf4c6d9871396591584c24d2093ed67386ed.
+Initial retained-runtime pytest command refused because pytest is not installed;
+no dependency was installed and the independent standalone test preserves source
+and script bytes before/after. Add native named regressions, explicitly reject
+all three modes and bump validator policy to v2 so v1 history cannot bypass it.
+
+Fresh actual three-pair Serena map at6c3b5d6, unchanged source/ref/status:
+C:/Users/Wareen/HawEditQwenModes-6c3b5d6-20261009/serena-map.json,
+SHA46b4d256d5a1a5aebdced28766fa83988009ce30c3ace596a9d88f9229e0b14b.
+_configuration has two observer references; policy has eight import/constant/
+journal/test references; parametrized test has no callers.
+
+The superseded exact6c3b5d6 gate was deliberately interrupted by stopping only
+the verified original pytest PID53476 (exact command/start time), no Ctrl+C,
+console control or broad process kill. No direct child was live at cancellation.
+Original59548/37432/49252/48784/53476 exited; session84341closed. Terminal exit127,
+unchangedTrue,1159.52818199998seconds, no fresh JUnit or completed gate count.
+Terminal SHA c363aeace6a319356cab77b3dcfe705f65d6f97e62de2ab704f946be27307cbd.
+Do not represent this interruption as a passed or full failed suite. Corrected
+local commit requires the full exact gate anew; no ledger promotion or CI claim.

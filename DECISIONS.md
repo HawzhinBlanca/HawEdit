@@ -15907,3 +15907,11 @@ security review, protected producer adoption and all seven phases/AC1--AC12
 remain open. Unit WIP absent exact green committed gate and same-SHA CI.
 Research/spec/impact/approved plan/ledger: specs/qwen-completion.
 
+Same-unit correction: actual pinned GenerationConfig may select assisted or
+DoLa generation through prompt_lookup_num_tokens/assistant_early_exit/dola_layers
+with one beam and sampling off. Real retained configuration/controlled CPU
+tokens reproduced three unexpected observer admissions. Explicitly refuse all
+three fields and bump cache policy v2; no decoder/weight/cap change. Preserve
+original red and superseded exact6c3b5d6 gate interruption, then require new
+whole exact corrected-commit verification. No v1 history rebind or false pass.
+

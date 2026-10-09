@@ -127,6 +127,9 @@ def test_qwen_observer_requires_one_generation(calls: int) -> None:
         ("constraints", [1]),
         ("force_words_ids", [[151645]]),
         ("penalty_alpha", 0.5),
+        ("prompt_lookup_num_tokens", 4),
+        ("assistant_early_exit", 1),
+        ("dola_layers", "low"),
     ],
 )
 def test_qwen_observer_refuses_configuration(name: str, bad: object) -> None:

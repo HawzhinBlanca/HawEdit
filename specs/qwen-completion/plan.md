@@ -20,3 +20,9 @@ Approved-by: Wareen approved evidence-based-studio phases1--2/full-fix request, 
    fresh ZAR, full review/revision/export and independent/sustained acceptance.
 
 Do not award 10/10, suppress independent security refusal or shrink full scope.
+
+Approved-parent T1 correction: actual retained GenerationConfig selects assisted
+or DoLa mode via three previously unchecked fields. Preserve the real red,
+test-first refuse those fields, bump policy v2 (no decoder change), validate
+current/legacy cache identities, rerun whole caller/static/claims and full exact
+gate on corrected local commit. Interrupted6c3b5d6 run is not an exit gate.
