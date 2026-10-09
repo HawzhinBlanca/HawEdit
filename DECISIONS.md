@@ -15719,3 +15719,42 @@ Original Linux controller, resource/effect handshake and independent review
 remain required. Named regressions/callers: specs/audit-output-deadline;
 evidence/audit-output-deadline-20261009.md. WIP until exact gate/current CI.
 
+## D-319 - Held Original Linux Namespace Scope (2026-10-09)
+
+Approved-parent evidence-based-studio phases1-2/native-worker-owner T3 requires
+original Linux ownership before protected producer/HTTP adoption. LinuxScope
+receives a bounded kernel SCM_RIGHTS/SCM_CREDENTIALS handoff on a dedicated
+unnamed creator socketpair, binds an unpredictable challenge to the original
+namespace-init pidfd, and verifies direct child PID/user namespace relationships,
+owner UID and every original member through kernel pidfd namespace queries.
+Retain non-inherited rights and separate file-description anchors. Never signal
+host init, a numeric PID, substituted descriptor or unadmitted handoff.
+
+Descriptor transfer must end with actual peer write-shutdown/EOF. Empty packets
+do not establish that condition; checked Linux UAPI POLLRDHUP disambiguates it.
+Duplicates/truncation/trailing rights refuse and every received unadmitted right
+is cleaned while owner uncertainty remains retained. Reentry checks retained
+ownership before socket name validation: SO_PASSCRED/send may autobind a socket.
+Worker release/confirmation uses a separate direction/channel, not a reusable
+descriptor-transfer stream. No IO deadline reset or automatic uncertain retry.
+
+Checked local typed libc pidfd_send_signal supports the retained Python3.12 host
+without globally patching os/signal, changing models or guessing syscall numbers.
+Kernel ioctl/UAPI constants are corroborated by installed headers and actual
+retained-runtime CPU observations. Unsupported hosts/capabilities refuse. No
+new runtime dependency or third-party example code is bundled. System unshare
+is used only by current CPU tests; production utility/runtime byte admission
+and any actual bootstrap adoption require their separate integration evidence.
+
+Stop signals only the fully admitted original init anchor and waits for original
+admitted members under a finite deadline. Failed observation/descriptor cleanup
+retains uncertainty/capabilities and refuses new admission. Clean descriptor
+release is not durable attempt release, GPU driver drain, provider/billing
+settlement or publication. A later dedicated owner-death bootstrap and fixed-ID
+DBOS producer must adopt byte/source/model/security/raw-authority admission,
+sticky event/effect fences and resource reconciliation before HTTP generation.
+
+BLUEPRINT2-5/8.1-8.3 and D-263/D-274 remain the complete goal. Named regressions,
+current Serena maps, EARS/approved-parent plan: specs/linux-original-scope;
+evidence/linux-original-scope-20261009.md. Local-only/WIP, not DONE/10/10.
+
