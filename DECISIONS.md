@@ -15859,3 +15859,31 @@ remain unchanged. BLUEPRINT2/4.3.6/8.3 and D-263/D-277 remain obligations.
 Unit WIP until exact committed gate plus required same-SHA CI, not full studio
 integration, model-byte admission, improved ZAR result or10/10 acceptance.
 
+## D-323: Owned Immutable Linux Consumed-Byte Preparation
+
+2026-10-09, approved-parent evidence-based-studio phases1--2/native-worker-owner
+T3 preparation. Actual readonly descriptor-backed bind consumes changed bytes
+after original Windows backing custody is deliberately released. It cannot be
+treated as immutable storage. Anonymous sealed memfd accepts seals but its
+pathname bind refuses EINVAL22 on the actual kernel. Preserve both results.
+
+Use independently owned regular-file copies in a private readonly tmpfs tree
+for this prerequisite, with exact declared content/size, finite copied-byte/
+file-count/deadline, closed write descriptions, kernel readonly/capability
+readback and architecture-checked namespace-reentry fence. Same original owner/
+namespace/root descriptor is required for live use. Failures after irreversible
+namespace transition require owned process exit/reconciliation, not retry.
+No generic callbacks, JSON/receipt authority or transferred capabilities.
+
+No new runtime dependency or change to existing native image/utility bounds,
+canonical models, billing/owner/review/security policy. This component is not
+a complete loader tree, model/runtime/GPU/effect admission, malicious same-
+privilege sandbox, totalRSS/cgroup ceiling or registered producer. Initial
+trusted controller, complete consumed-byte closure, capacity and original
+native/Linux quiescence still must be proved before DBOS/HTTP release. No
+agent-owned policy source/reviewer/date rebinding. Whole system/acceptance open.
+
+Research/specs/impact/approved plan/ledger: specs/owned-linux-snapshot. Actual
+raw kernel/copy/loss evidence and versions:
+C:/Users/Wareen/HawEdit-producer-adoption-research-aeca0ae-20261009.md.
+

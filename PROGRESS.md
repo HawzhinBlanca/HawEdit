@@ -1229,3 +1229,18 @@ still required because identity of Git trees does not execute the program.
 
 
 
+# Owned Linux Snapshot Prerequisite, 2026-10-09
+
+Approved-parent phases1--2/native-worker-ownerT3, D-323, WIP. Independent owned
+regular copies replace unsafe mutable-backed readonly binds; finite exact
+hash/size/no-replace copies, readonly kernel readback, zero capability sets and
+namespace-reentry fence precede live original-description anchored use.
+Actual275affected tests pass/zero errors/skips, including36new real namespace
+controls; same-inode foreign-descriptor cleanup red preserved and corrected.
+Sourceb81ceb1a286aab2384774bd7b1f859d76c36e6991ec14b0d46ff7e8a5fec85ce;
+evidence/owned-linux-snapshot-20261009.md records commands/hashes/host/controller
+versions and failures. Exact clean committed full gate pending at this entry,
+required same-SHA CI absent/no push, no ledger DONE. This is not model/runtime/
+GPU/effect/producer admission or an improved ZAR reel. Full original seven-phase
+system and independent sustained acceptance remain open.
+
