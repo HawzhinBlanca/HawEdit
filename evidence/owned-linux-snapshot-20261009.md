@@ -1,5 +1,15 @@
 # Owned Linux Snapshot Implementation Evidence
 
+```yaml
+commit: 2d43b23c420d0347eb53a0e5ac04b1c858d335d2
+media_sha256: ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15
+host: HawaPC01 Windows11 build26300 nativePython3.12.10; Linux namespace controller Python3.14.4 glibc2.43 kernel6.18.40.1 x86_64
+command: bash scripts/verify.sh
+```
+
+Media identity names the unchanged test file bytes only; it is not speech,
+decoded render, speaker, caption or editorial accuracy evidence.
+
 2026-10-09. Baseline be6531656ad913be625b722160196cb734ab8532.
 New source package b81ceb1a286aab2384774bd7b1f859d76c36e6991ec14b0d46ff7e8a5fec85ce.
 Approved sequential local-only unit, D-323, specs/owned-linux-snapshot, WIP.
@@ -57,6 +67,18 @@ Record its terminal result externally instead of editing source post-gate.
 Prior exact5959pass/1stale independent-policy binding failure remains real;
 do not self-rebind source, dates, reviewer or dispositions. Required same-SHA
 CI absent and no push authorized; ledger remains WIP, no DONE/10-of-10 verdict.
+
+The original exact2d43b23gate finished5992pass/4fail/0error/skip/5996cases,
+exit1, source/ref/status/observer unchanged. JUnit2313.028seconds,
+pytest2313.23seconds/observer2372.77254549999seconds. XML
+0e298e2b6c8da98d4c3fec981c207fd8c3f04a75bb910329026e27c9de1d410a;
+terminalb50f44e2c24c3197b1901233b2423c0025abac9510744f7d609fd20a45ffbe18
+under Local/HawEditEvidence/owned-linux-snapshot-clean-gate-20261009.
+Three real documentation omissions: required YAML evidence header, README
+module row and initial WIP module-accounting ledger row. Repair those without
+weakening tests or promoting status; repeat whole claims and exact committed
+gate. Fourth stale independent qualified-policy binding failure remains; no
+source/reviewer/date self-rebind. Originals1732/bash16096gone/session48389closed.
 
 ## Remaining Full Scope
 

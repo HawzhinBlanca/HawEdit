@@ -15,3 +15,11 @@ failure and close. Tests invoke generated namespace code dynamically, not LSP
 discoverable. Correction preserves original owner APIs and every existing caller.
 No other production module edits; whole named bootstrap/scope/control/native
 process/IO/source/shared execution cohorts are included in verification.
+
+Exact committed gate discovered documentation integration callers in unchanged
+tests/test_claims.py: test_new_evidence_names_its_commit_media_and_host reads
+evidence headers; test_the_module_map_covers_every_module reads README module
+rows; test_the_ledger_accounts_for_every_module reads initial PROGRESS status
+rows. Repair the documentary inputs, never these assertions. New M9.100 WIP
+initialization records the module, not an existing task/status promotion. Whole
+claims module is required in the corrected cohort before repeating exact gate.
