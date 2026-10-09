@@ -1,0 +1,13 @@
+# Research
+
+Baseline975ec4a577445da2129f7f2b34d6a41b654b63db, package d0ae33671fbcc0336d4e740c58a0b07a0763daa1321bc117de440e5a9c4ed127. Vault project milestone and Kurdish invariants read2026-10-09. BLUEPRINT section3 Stage0 and section8.3 reliability require genuine decoded evidence; D-322/D-321 preserve review/artifact truth. No source-runtime architecture change is justified by this test preparation defect.
+
+Actual unchanged test20calls:10pass/10Windows5replacement refusal at tests/test_ingest_cache.py:201,108.118811seconds. Restart Manager reports DiagTrack for7and no holder for3. Association, not universal-cause proof. Separate finite10second/50ms actual mutation preparation20calls:20pass,4needed2--5waits,136.690503seconds; original post-mutation cache assertions retained. No installed executable/service/exclusion change. These are single-fixture diagnostics, not100source reliability acceptance.
+
+Receipts under C:/Users/Wareen/AppData/Local/HawEditEvidence: ingest-replacement-diagnostic-20261009/terminal.json SHA c7c5148742a4817e8c4fd73f6b80df3d81ffbb311b495a1b18a12cc164d1c808; ingest-bounded-mutation-diagnostic-20261009/terminal.json SHA04211b102f19d618a7aed9c7d49b1ca65df97e2e0d5926e373233f89589b4491. Original commands terminal/closed. Full external research C:/Users/Wareen/HawEdit-ingest-replacement-research-975ec4a-20261009.md.
+
+Fresh actual Serena3definition/reference pairs unchanged at975ec4a: C:/Users/Wareen/HawEditIngestReplacement-975ec4a-20261009/serena-map.json SHA73124924b95eae45d9f003f3ff0fdefa314e90f5f4b29aad29ad04af3c984d44. Edit target test_actual_ffmpeg_byte_drift_invalidates_ingest_cache has0static references/pytest dynamic collection. Reused initial has9module references, production ingest._run has2callers (extract_audio/extract_proxy), already bounded subprocess.run; no demonstrated production lifetime defect. Keep all three production/reused helpers unchanged.
+
+Pinned existing test fixture transcript/media untouched. No model/provider run, fixture/golden/harness/policy/runtime edits or new dependency. Prior exact gate5950pass/1stale independent-policy source-binding failure; no source self-rebinding. Finite Windows5/32retry does not claim every denial is transient: permanent denial must still fail visibly without byte changes.
+
+Primary references checked2026-10-09: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist and https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile. Native reusable read-only lease functions found in src/hawedit/native_process.py; tests will use the existing actual lease, not fake Windows errors.

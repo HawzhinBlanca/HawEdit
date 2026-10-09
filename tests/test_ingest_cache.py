@@ -19,6 +19,7 @@ from hawedit.events import RunEvent, RunState
 from hawedit.ingest import IngestResult, extract_audio
 from hawedit.ingest_cache import IngestCacheError, _open
 from hawedit.pipeline import StageSkipped, run_pipeline
+from ingest_mutation_support import replace_test_executable
 
 MEDIA = Path(__file__).resolve().parent / "fixtures/kurdish-speech-3cuts.mp4"
 
@@ -198,7 +199,7 @@ def test_actual_ffmpeg_byte_drift_invalidates_ingest_cache(tmp_path: Path) -> No
     before_stamps = {
         name: known_files(work)[name].stat().st_mtime_ns for name in ("audio.wav", "proxy.mp4")
     }
-    replacement.replace(binary)
+    replace_test_executable(replacement, binary)
     events: list[RunEvent] = []
     second = run_pipeline(MEDIA, work, ffmpeg=binary, on_event=events.append)
     assert isinstance(second.ingest, IngestResult)

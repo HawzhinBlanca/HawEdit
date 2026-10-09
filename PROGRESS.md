@@ -6,6 +6,19 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Ingest Mutation Readiness (WIP)
+
+specs/ingest-mutation-readiness T1: deliberate copied-FFmpeg byte drift now waits
+only for Windows5/32permission refusal within a finite10second budget, still
+fails visibly on retained locks and rejects invalid budgets before mutation.
+Original cache/decode/hash/recovery assertions unchanged; production untouched.
+Actual20call baseline10fail/Windows Restart Manager association recorded, not
+universal-cause proof. Nine real controls7baseline failures; whole25cases pass.
+Strict fast lint/type382files and changed-file format pass. Exact committed
+gate/current CI required; no DONE/security approval/publication/system10/10.
+Evidence: evidence/ingest-mutation-readiness-20261009.md. No service shutdown,
+installed-binary/fixture/golden/harness/model/policy changes or mocked files.
+
 ## Revision Review Truth (WIP)
 
 D-322/specs/revision-review-truth: render proposals now refuse occupied
