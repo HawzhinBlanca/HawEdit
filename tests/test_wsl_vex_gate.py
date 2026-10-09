@@ -551,6 +551,51 @@ def test_bounded_process_kills_excess_output() -> None:
         )
 
 
+@pytest.mark.parametrize("budget", [300, 900, 1800])
+def test_live_gate_forwards_selected_budget_to_final_integrity_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, budget: int
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(monkeypatch, tmp_path)
+    evidence = tmp_path / "must-not-be-published.json"
+
+    def final_probe(**options: Any) -> None:
+        assert options["distro"] == "Ubuntu"
+        assert options["runtime_root"] == runtime
+        assert options["package_source"] == source
+        assert options["executable"] == "wsl.exe"
+        assert options.get("timeout_seconds") == budget
+        raise WslRuntimeError("diagnostic final-probe refusal")
+
+    monkeypatch.setattr(gate, "probe_wsl_runtime", final_probe)
+    with pytest.raises(gate.LiveVexGateError, match="diagnostic final-probe refusal"):
+        gate.run_live_gate(
+            evidence_path=evidence,
+            runtime_root=runtime,
+            package_source=source,
+            distro="Ubuntu",
+            vex_path=POLICY,
+            timeout_seconds=budget,
+        )
+    assert len(commands) == 9
+    assert not evidence.exists()
+
+
+@pytest.mark.parametrize(
+    "budget", [None, True, False, 0, -1, 1801, 1.5, "300", float("nan"), float("inf")]
+)
+def test_live_gate_invalid_budget_refuses_before_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, budget: Any
+) -> None:
+    def no_receipt(**_kwargs: object) -> None:
+        pytest.fail("Invalid live integrity budget reached receipt or child work")
+
+    monkeypatch.setattr(gate, "load_wsl_runtime_receipt", no_receipt)
+    evidence = tmp_path / "must-not-be-published.json"
+    with pytest.raises(gate.LiveVexGateError, match="timeout_seconds.*1.*1800"):
+        gate.run_live_gate(evidence_path=evidence, timeout_seconds=budget)
+    assert not evidence.exists()
+
+
 def test_main_normalizes_live_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

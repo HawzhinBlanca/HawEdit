@@ -1373,8 +1373,11 @@ def probe_wsl_runtime(
     runtime_root: Path | None = None,
     package_source: Path | None = None,
     executable: str = "wsl.exe",
+    timeout_seconds: int = 300,
 ) -> WslRuntimeProbe:
     """Re-hash the live WSL assets; a setup-time receipt alone cannot prove mutable bytes."""
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 1_800:
+        raise WslRuntimeError("timeout_seconds must be an integer between 1 and 1800")
     receipt = load_wsl_runtime_receipt(
         distro=distro,
         runtime_root=runtime_root,
@@ -1383,20 +1386,31 @@ def probe_wsl_runtime(
     )
     runtime_python = wsl_path(receipt.generation_root, receipt.distro, executable) + "/bin/python"
     runtime_source = wsl_path(receipt.source_root, receipt.distro, executable)
-    result = subprocess.run(
-        [
-            *wsl_prefix(receipt.distro, executable),
-            "env",
-            "PYTHONDONTWRITEBYTECODE=1",
-            f"PYTHONPATH={runtime_source}",
-            runtime_python,
-            "-c",
-            _PROBE_SCRIPT,
-        ],
-        capture_output=True,
-        check=False,
-        timeout=120.0,
-    )
+    try:
+        result = subprocess.run(
+            [
+                *wsl_prefix(receipt.distro, executable),
+                "env",
+                "PYTHONDONTWRITEBYTECODE=1",
+                f"PYTHONPATH={runtime_source}",
+                runtime_python,
+                "-c",
+                _PROBE_SCRIPT,
+            ],
+            capture_output=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WslRuntimeError(
+            f"OmniASR WSL integrity check exceeded {timeout_seconds} seconds; "
+            "no verified readiness. Confirm the previous WSL check exited before "
+            "retrying with a larger bounded timeout_seconds."
+        ) from exc
+    except OSError as exc:
+        raise WslRuntimeError(
+            f"OmniASR WSL integrity check unavailable; no verified readiness: {exc}"
+        ) from exc
     if result.returncode != 0:
         error = result.stderr.decode("utf-8", "replace")[-1_200:]
         raise WslRuntimeError(f"OmniASR WSL live verification failed: {error or 'no detail'}")

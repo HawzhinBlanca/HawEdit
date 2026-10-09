@@ -618,8 +618,8 @@ def run_live_gate(
     timeout_seconds: int = 300,
 ) -> dict[str, object]:
     """Run the complete live boundary and publish one immutable success artifact."""
-    if not 1 <= timeout_seconds <= 1_800:
-        raise LiveVexGateError("timeout_seconds must be between 1 and 1800")
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 1_800:
+        raise LiveVexGateError("timeout_seconds must be an integer between 1 and 1800")
     _preflight_new_evidence(evidence_path)
     source = (package_source or Path(__file__).resolve().parent).resolve()
     policy_path = (vex_path or _default_vex_path()).resolve()
@@ -675,6 +675,7 @@ def run_live_gate(
             runtime_root=runtime,
             package_source=source,
             executable=executable,
+            timeout_seconds=timeout_seconds,
         )
     except WslRuntimeError as exc:
         raise LiveVexGateError(f"post-audit WSL runtime verification failed: {exc}") from exc
