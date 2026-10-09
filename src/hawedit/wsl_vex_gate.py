@@ -15,15 +15,14 @@ import json
 import os
 import re
 import stat
-import subprocess
 import sys
-import threading
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
+from hawedit.bounded_audit_io import AuditCaptureError, capture_bounded
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.omni_assets import OMNI_ASSETS
 from hawedit.vex import (
@@ -117,64 +116,17 @@ def _run_bounded(
     stdout_limit: int,
     stderr_limit: int,
 ) -> ProcessOutput:
-    """Run without a shell while capping both captured streams during execution."""
-    if timeout_seconds <= 0:
-        raise LiveVexGateError("process timeout must be positive")
+    """Bound both streams and EOF/root completion without daemon reader threads."""
     try:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except OSError as exc:
-        raise LiveVexGateError(f"cannot start WSL audit process: {exc}") from exc
-    stdout_stream = process.stdout
-    stderr_stream = process.stderr
-    if stdout_stream is None or stderr_stream is None:  # defensive for alternate Popen objects
-        process.kill()
-        raise LiveVexGateError("audit process did not expose both output streams")
-
-    outputs: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
-    overflow: list[str] = []
-    reader_errors: list[BaseException] = []
-    lock = threading.Lock()
-
-    def consume(name: str, limit: int) -> None:
-        stream = stdout_stream if name == "stdout" else stderr_stream
-        try:
-            while True:
-                chunk = stream.read(65_536)
-                if not chunk:
-                    return
-                with lock:
-                    if len(outputs[name]) + len(chunk) > limit:
-                        overflow.append(name)
-                        process.kill()
-                        return
-                    outputs[name].extend(chunk)
-        except BaseException as exc:  # pragma: no cover - defensive OS stream failure
-            with lock:
-                reader_errors.append(exc)
-            process.kill()
-
-    readers = [
-        threading.Thread(target=consume, args=("stdout", stdout_limit), daemon=True),
-        threading.Thread(target=consume, args=("stderr", stderr_limit), daemon=True),
-    ]
-    for reader in readers:
-        reader.start()
-    try:
-        returncode = process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as exc:
-        process.kill()
-        process.wait()
-        for reader in readers:
-            reader.join()
-        raise LiveVexGateError(f"WSL audit process exceeded {timeout_seconds} seconds") from exc
-    for reader in readers:
-        reader.join()
-    if reader_errors:
-        raise LiveVexGateError(f"cannot read WSL audit process output: {reader_errors[0]}")
-    if overflow:
-        label = "/".join(sorted(set(overflow)))
-        raise LiveVexGateError(f"WSL audit process exceeded its {label} output limit")
-    return ProcessOutput(returncode, bytes(outputs["stdout"]), bytes(outputs["stderr"]))
+        result = capture_bounded(
+            command,
+            timeout_seconds=timeout_seconds,
+            stdout_limit=stdout_limit,
+            stderr_limit=stderr_limit,
+        )
+    except AuditCaptureError as exc:
+        raise LiveVexGateError(str(exc)) from exc
+    return ProcessOutput(result.exit_code, result.stdout, result.stderr)
 
 
 def _safe_posix_home(value: str) -> PurePosixPath:

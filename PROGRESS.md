@@ -8,6 +8,11 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Complete Worker Result Publication (WIP)
 
+Current local-only1d750e1 exact clean gate FINAL5806pass/1stale-VEXfail/0error/skip,
+5807tests; source unchanged. All8new worker regressions pass. No same-SHA CI,
+policy rebind, ledger promotion or10/10. Full external verdict:
+C:/Users/Wareen/HawEdit-worker-result-publication-verdict-20261009.md.
+
 D-317; actual Serena/EARS/approved-parent plan in specs/worker-result-publication.
 Primary test-first4fail/4pass reproduces empty final results after encoding error
 and original-child death, plus inference before occupied-name refusal. Complete
@@ -20,6 +25,21 @@ required CI remain required; task WIP, no ledger promotion/10/10 claim.
 Prior6bbe exact clean gate5798pass/1stale-VEX-fail/0error/skip. Evidence header
 correction passes; expired/currently unbound independent policy remains refused.
 No qualified security attestation is manufactured or re-bound.
+
+## Bounded Audit Output Deadline (WIP)
+
+D-318; actual Serena/EARS/approved-parent plan in specs/audit-output-deadline.
+Test-first22fail/11pass; initial33new regressions pass and whole239caller checks
+pass. Type corrections pass full fast checks375files. Extended304pass/2fail
+exposes only missing README/module-status inventory; these WIP entries repair
+that accounting. Exact corrected callers/full gate/current CI and actual
+configured WSL retest remain required. No trusted security or worker admission.
+Evidence: evidence/audit-output-deadline-20261009.md.
+
+Corrected whole callers plus claims312pass/0failure/error/skip; all39new
+regressions pass, full fast/static/format375files pass. These are component
+checks, not exact committed gate/current CI, accepted security or completed
+pipeline. No policy binding or test is weakened; current VEX refusal remains.
 
 ## Truthful ASR Routing Reports (M9.95, WIP)
 
@@ -490,6 +510,7 @@ review/revision/export and every independent/sustained threshold remain mandator
 | M9.85 | Genuine caption measurements, bounded contextual cache and selected-font caller parity | WIP | `src/hawedit/captions.py`, `tests/test_caption_measurement.py`, `tests/test_caption_context.py`; D-307, `specs/caption-measurement`. T1 frozen e1f07fe gate: 5489/5490 pass, sole stale qualified VEX binding failure; T2 selected-font/canvas forwarding and 29 actual renderer regressions implemented, final exact gate pending. No golden change, native speech accuracy, accepted reel, green gate/current CI or completed-system claim. |
 | M9.86 | Original native process lifetime and observed-descendant shutdown before protected worker adoption | WIP | `src/hawedit/native_process.py`, `tests/test_native_process.py`; D-308, `specs/native-worker-owner`. 39 real native cases pass after reproducing and fixing empty-job-before-original-handle-signaling race; lint/strict typing pass. Bounded IO and complete native/Linux producer-resource handshake remain separate; no HTTP enablement, attempt completion, paid call, green whole gate/current CI or completed-system claim. |
 | M9.87 | Fair bounded overlapped native IO with actual ACL/cancellation/death evidence | WIP | `src/hawedit/native_io.py`, `tests/test_native_io.py`; D-309, `specs/native-worker-io`. Actual private ACL, simultaneous input/output, overflow/deadline, cancellation, uncertain-resource quarantine and pending-IO owner-death tests implemented. Complete producer/native/Linux/resource/billing handshake remains T3; no HTTP enablement, accepted reel, green exact gate/current CI or completed-system claim. |
+| M9.97 | Bound audit EOF/root waits without reducing independent scanner stream caps | WIP | `src/hawedit/bounded_audit_io.py`, `src/hawedit/wsl_vex_gate.py`, `src/hawedit/native_io.py`, `tests/test_audit_output_deadline.py`, `tests/test_native_independent_output.py`; D-318, `specs/audit-output-deadline`, `evidence/audit-output-deadline-20261009.md`. Actual test-first deadline/budget failures repaired; original Job/cancellable native IO and POSIX owned nonblocking descriptors, finite root cleanup, uncertainty refusal. Existing native combined callers unchanged. No launcher substitution, security policy rebind, admitted Linux/GPU/provider/billing/HTTP or media-quality claim. Exact corrected gate/current CI required. |
 | M9.88 | Native IO arena survives Python view teardown without guessed cleanup | WIP | `src/hawedit/native_io.py`, `tests/test_native_io_memory.py`; D-309 lifetime correction, `specs/native-worker-io/memory-lifetime.md`. Explicit read/write VirtualAlloc arena and checked post-drain release, independently observed actual native pages/cancellation/GC/uncertainty; no producer adoption or clean gate/current CI acceptance claim. |
 | M9.89 | Sticky event-persistence refusal without media-failure misclassification | WIP | `src/hawedit/events.py`, `tests/test_event_persistence.py`, `tests/test_studio_attempts.py`; D-310, `specs/event-persistence-fence`. Seven valid real-fault test-first failures; expanded 119 caller cases pass, including corrected exact-cause checkpoint interruption expectations with all seven resumed MP4 hash checks retained. Full static checks pass 363 files. Corrected clean committed 6fe060d gate:5614pass/1stale-VEX failure/0error/skip, unchanged source/observer/HEAD/package/status. Prior private executable replacement denial remains unexplained. No qualified security/CI/ledger promotion, protected producer pre-effect adoption, billing/resource reconciliation or completed-system claim. |
 | M9.90 | Preserve original native capabilities after cleanup refusal | WIP | `src/hawedit/native_process.py`, `tests/test_native_capability_retention.py`; D-311, `specs/native-capability-retention`. Five valid tracked real fault reds then complete396affected pass/0failure/error/skip, static364files pass. Exact clean committed7546659 gate5619pass/1stale-qualified-VEX failure/0error/skip; source unchanged. Sticky original-capability retention, no automatic retry/new create, detached snapshot finalization. No qualified security/CI/ledger, Linux/GPU/provider, producer/HTTP, billing or reel-quality acceptance. |

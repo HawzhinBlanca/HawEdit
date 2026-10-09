@@ -490,9 +490,11 @@ def run_native(
     expected_executable_sha256: str,
     input_bytes: bytes,
     timeout_seconds: float,
-    output_limit_bytes: int,
+    output_limit_bytes: int | None,
     control_channel: bool = False,
     control_timeout_seconds: float = 5.0,
+    stdout_limit_bytes: int | None = None,
+    stderr_limit_bytes: int | None = None,
 ) -> NativeIOResult:
     """Run one owned native scope; raw output does not certify a producer result."""
     if (
@@ -501,8 +503,23 @@ def run_native(
         or not 0 < timeout_seconds <= 43200
     ):
         raise NativeIOError("Native IO deadline must be finite, positive and bounded")
-    if type(output_limit_bytes) is not int or not 0 < output_limit_bytes <= _MAX_BYTES:
-        raise NativeIOError("Native IO output limit must be positive and at most16MiB")
+    stream_limits: tuple[int, int] | None = None
+    if output_limit_bytes is None:
+        if (
+            type(stdout_limit_bytes) is not int
+            or not 0 < stdout_limit_bytes <= _MAX_BYTES
+            or type(stderr_limit_bytes) is not int
+            or not 0 < stderr_limit_bytes <= _MAX_BYTES
+        ):
+            raise NativeIOError("Native IO independent output limits must each be1..16MiB")
+        stream_limits = (stdout_limit_bytes, stderr_limit_bytes)
+    elif (
+        type(output_limit_bytes) is not int
+        or not 0 < output_limit_bytes <= _MAX_BYTES
+        or stdout_limit_bytes is not None
+        or stderr_limit_bytes is not None
+    ):
+        raise NativeIOError("Native IO combined output limit must be1..16MiB without stream limits")
     if type(input_bytes) is not bytes or len(input_bytes) > _MAX_BYTES:
         raise NativeIOError("Native IO input must be immutable bytes and at most16MiB")
     if type(control_channel) is not bool:
@@ -563,8 +580,14 @@ def run_native(
             for index, pipe in enumerate((out, err)):
                 chunk = pipe.read()
                 if chunk:
-                    if sum(len(data) for data in captured) + len(chunk) > output_limit_bytes:
-                        raise NativeIOError("Native IO combined output limit exceeded")
+                    if stream_limits is not None:
+                        if len(captured[index]) + len(chunk) > stream_limits[index]:
+                            name = "stdout" if index == 0 else "stderr"
+                            raise NativeIOError(f"Native IO {name} output limit exceeded")
+                    else:
+                        assert output_limit_bytes is not None
+                        if sum(len(data) for data in captured) + len(chunk) > output_limit_bytes:
+                            raise NativeIOError("Native IO combined output limit exceeded")
                     captured[index].extend(chunk)
                     if index == 0 and control is not None:
                         # Poll the original submitted write, never infer it from stdout.

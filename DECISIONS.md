@@ -15680,3 +15680,42 @@ accurate speech, authenticated review or completed media publication.
 Specs/callers: specs/worker-result-publication;
 evidence/worker-result-publication-20261009.md. WIP until exact gate/current CI.
 
+## D-318 - Bound Audit EOF And Root Wait Without Reducing Stream Budgets
+
+2026-10-09, approved evidence-based-studio phases1-2/full-fix continuation;
+BLUEPRINT sections3/4.1/7; D-308/309/311/313. No new runtime dependency.
+
+Blocking audit reader threads joined indefinitely when a descendant kept an
+inherited pipe open after root exit or timeout. Actual generated pipe faults
+exceeded a one-second budget by waiting for the descendant's own exit. Replace
+daemon readers with owned bounded platform capture; caller ProcessOutput and
+scanner options/locks/receipt/VEX/asset acceptance remain unchanged.
+
+Windows reuses original NativeJob, private overlapped pipes, cancellation,
+image lease and uncertainty quarantine. Existing integer combined output
+budget behavior remains intact. Explicit independent mode requires combined
+None plus both exact positive stream caps, each at most16MiB; incomplete/mixed
+budgets refuse before launch. Scanner keeps16MiB stdout plus64KiB stderr, not
+a reduced combined cap. Full independent healthy bytes/limits are tested.
+
+Selected executable bytes are observed for an original image lease, not trusted
+runtime admission. The linked default System32 WSL stub refuses with an explicit
+configuration message; do not weaken the single-link image guard, copy a binary
+or silently substitute a launcher. Actual configured Program Files/WSL route
+requires fresh live retesting. Studio protected-launcher admission is separate.
+
+POSIX uses original Popen-owned nonblocking descriptors and a selector, with an
+absolute output/root deadline and five-second original-root cleanup. No reader
+threads, unbounded join/wait/communicate, guessed PID/group kill or resource
+substitution. Retain execution uncertainty after POSIX refusal and prohibit
+further audit launches in that owner; retain after WSL native failure because
+Windows Job shutdown does not certify original Linux/effect completion. Cleanup
+tries every owned stream and the original root even if a close fails. This is
+owner-process refusal, not persisted protected-worker admission/reconciliation.
+
+No Linux descendant/GPU/provider/billing quiescence, qualified VEX disposition,
+new speech quality, accepted publication, release or10/10 inferred from bytes.
+Original Linux controller, resource/effect handshake and independent review
+remain required. Named regressions/callers: specs/audit-output-deadline;
+evidence/audit-output-deadline-20261009.md. WIP until exact gate/current CI.
+
